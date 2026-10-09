@@ -151,10 +151,10 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
 }
 
 // A hole under QtPlasmaC's 32 mm default is written as one closed arc block.
-// Its load filter only recognises a hole from a single G2/G3 whose end is the
-// point the previous block left the torch at, and only inspects lines carrying
-// the G-code word itself; the simulator then asserts the speed reduction
-// actually runs. Arc fitting's ≤ 90° sub-arcs are folded back together here.
+// Its load filter recognises a hole from a single G2/G3 whose end is the point
+// the previous block left the torch at; the simulator then asserts the speed
+// reduction actually runs. Arc fitting's ≤ 90° sub-arcs are folded back
+// together here, and the folded block spells its own arc word.
 {
   const { result } = exportPlasma(PLASMA_EXPORT_SCENARIOS['small-hole']())
   assert.deepEqual(result.warnings, [])
@@ -168,6 +168,50 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
   assert.equal(circle[2], lead[2], 'the circle ends on its own start Y')
   const diameter = 2 * Math.hypot(Number(circle[3]), Number(circle[4]))
   assert.ok(diameter > 0 && diameter < 32, `the hole is under QtPlasmaC's 32 mm default, got ${diameter}`)
+}
+
+/** Index of the folded full circle: the move that ends where the one before left the tool. */
+function foldedCircleIndex(moves: string[]): number {
+  for (let index = 1; index < moves.length; index++) {
+    const end = /X(-?[\d.]+) Y(-?[\d.]+)/.exec(moves[index])
+    const previous = /X(-?[\d.]+) Y(-?[\d.]+)/.exec(moves[index - 1])
+    if (end && previous && end[1] === previous[1] && end[2] === previous[2]) return index
+  }
+  return -1
+}
+
+// The default arc lead-in leaves G3 modal, so a folded hole would be a bare
+// continuation if the emitter left its command to modal motion. The folded
+// block must still spell its own G3: that is the arc word QtPlasmaC's hole
+// handling reads, and the simulator's `exported-small-hole-arc-lead` case
+// asserts the reduction that block asks for actually runs.
+{
+  const { result } = exportPlasma(PLASMA_EXPORT_SCENARIOS['small-hole-arc-lead']())
+  assert.deepEqual(result.warnings, [])
+  const moves = cuts(result.gcode)[0].moves
+  const at = foldedCircleIndex(moves)
+  assert.ok(at >= 0, `the arc-lead hole is folded into one block, got ${JSON.stringify(moves)}`)
+  const circle = /^G3 X(-?[\d.]+) Y(-?[\d.]+) I(-?[\d.]+) J(-?[\d.]+)$/.exec(moves[at])
+  assert.ok(circle, `the folded arc-lead hole spells its own G3, got ${moves[at]}`)
+  const diameter = 2 * Math.hypot(Number(circle[3]), Number(circle[4]))
+  assert.ok(diameter > 0 && diameter < 32, `the hole is under QtPlasmaC's 32 mm default, got ${diameter}`)
+}
+
+// Radius format: LinuxCNC makes an R arc whose end is its current point an
+// error, so the fold is center-format only and an R machine keeps the ≤ 90°
+// sub-arcs the emitted-arc fallback validated. Before this was fixed the same
+// input came out as one closed R block the controller would refuse.
+{
+  const { result } = exportPlasma({
+    ...PLASMA_EXPORT_SCENARIOS['small-hole'](),
+    definition: (d) => ({ ...d, motion: { ...d.motion, arcFormat: 'r' as const } }),
+  })
+  assert.deepEqual(result.warnings, [], 'every R sub-arc survives emitted-arc validation')
+  const moves = cuts(result.gcode)[0].moves
+  const arcs = moves.filter((line) => / R-?[\d.]+$/.test(line))
+  assert.ok(arcs.length > 1, `an R hole is not one closed block, got ${JSON.stringify(moves)}`)
+  assert.ok(arcs.every((line) => !/\b[IJ]-?[\d.]/.test(line)), `every R arc carries a radius word only, got ${JSON.stringify(arcs)}`)
+  assert.equal(foldedCircleIndex(moves), -1, 'no R arc ends where the previous block left the tool')
 }
 
 // An outside contour in the real exporter keeps its sub-arcs: its cut run is
@@ -280,4 +324,4 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
 // A rectangle helper sanity check keeps the fixtures honest.
 assert.equal(rectangle(0, 0, 2, 3).segments.length, 4)
 
-console.log('plasmaOutput.test.ts: QtPlasmaC handshake, torch pairs, no Z/F, skips, material range, small-hole fold and mirrored direction passed')
+console.log('plasmaOutput.test.ts: QtPlasmaC handshake, torch pairs, no Z/F, skips, material range, small-hole fold in I/J and R, arc-lead hole, mirrored direction passed')

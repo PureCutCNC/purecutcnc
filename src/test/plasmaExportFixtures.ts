@@ -133,9 +133,8 @@ export const PLASMA_EXPORT_SCENARIOS: Record<string, () => PlasmaExportSpec> = {
   }),
   // A hole small enough for QtPlasmaC's own `#<holes>` handling: under its
   // 32 mm default it reduces the cut feed to 60%. Straight leads, as the
-  // manual recommends for holes, so the closed circle is written with an
-  // explicit G3 — QtPlasmaC's load filter only inspects lines that carry the
-  // G-code word itself.
+  // manual recommends for holes. The folded circle spells its own G3 either
+  // way; this case keeps the straight-lead shape covered.
   'small-hole': () => ({
     units: 'mm', thickness: 2,
     features: [
@@ -143,6 +142,17 @@ export const PLASMA_EXPORT_SCENARIOS: Record<string, () => PlasmaExportSpec> = {
       { id: 'hole-1', operation: 'subtract', profile: circleProfile(70, 60, 10) },
     ],
     operations: [{ featureIds: ['hole-1', 'plate'], operation: { plasmaLeadIn: 'line', plasmaLeadOut: 'line' } }],
+  }),
+  // The same hole with the operation's default arc lead-in, which leaves G3
+  // modal before the folded circle. The folded block still spells its own G3,
+  // so QtPlasmaC recognises the hole without reconstructing modal motion.
+  'small-hole-arc-lead': () => ({
+    units: 'mm', thickness: 2,
+    features: [
+      { id: 'plate', operation: 'add', profile: rectangle(20, 20, 120, 80) },
+      { id: 'hole-1', operation: 'subtract', profile: circleProfile(70, 60, 10) },
+    ],
+    operations: [{ featureIds: ['hole-1', 'plate'] }],
   }),
   'nested-sheet': () => ({
     units: 'mm', thickness: 2,

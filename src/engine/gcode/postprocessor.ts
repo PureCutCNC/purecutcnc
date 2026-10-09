@@ -268,7 +268,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       ? definition.motion.cwArcCommand
       : definition.motion.ccwArcCommand
 
-    if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
+    // A folded full circle — the only arc that ends where it began — always
+    // spells its motion word. QtPlasmaC's hole handling reads the arc command
+    // off the block, so leaving it to modal motion would make recognition
+    // depend on the controller reconstructing it. Nothing else is affected:
+    // such an arc exists only where `foldFullCircleArcs` ran, on the
+    // controller-pierced plasma path.
+    const foldedCircle = plasmaTorch
+      && arc.endPoint.x === arc.startPoint.x
+      && arc.endPoint.y === arc.startPoint.y
+
+    if (!definition.motion.modalMotion || state.motionCommand !== motionCmd || foldedCircle) {
       lineSegments.push(motionCmd)
       state.motionCommand = motionCmd
     }

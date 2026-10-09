@@ -171,6 +171,8 @@ export const NEGATIVE_CASES: PlasmaCase[] = [
  *   scenario a single disc;
  * - `inch-output`: the reference cuts a hole and an outline (two contours), the
  *   exported scenario a single outline;
+ * - `small-hole` and `small-hole-arc-lead`: same 20 mm hole, straight leads and
+ *   the default arc lead-in respectively;
  * - `single-outline` and `part-with-holes`: same subject and contour count as
  *   their reference.
  *
@@ -209,7 +211,8 @@ export const EXPORTED_CASES: PlasmaCase[] = [
   exported('part-with-holes', 'metric', 'two holes before the outline, arc-fitted circles'),
   exported('nested-sheet', 'metric', 'three parts, three pierces under one material select'),
   exported('arc-lead-ins', 'metric', 'a disc with arc lead-in and arc lead-out'),
-  exported('small-hole', 'metric', 'a 20 mm hole, which QtPlasmaC must reduce to 60% of the cut feed', { expectHoleReduction: true }),
+  exported('small-hole', 'metric', 'a 20 mm hole with straight leads, which QtPlasmaC must reduce to 60% of the cut feed', { expectHoleReduction: true }),
+  exported('small-hole-arc-lead', 'metric', 'the same 20 mm hole with the default arc lead-in, which QtPlasmaC must also reduce to 60%', { expectHoleReduction: true }),
   exported('inch-output', 'imperial', 'a G20 program on an inch machine'),
   exported('inch-output', 'metric', 'the same G20 program on a metric machine'),
 ]

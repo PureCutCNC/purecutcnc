@@ -84,7 +84,7 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
   still metadata only.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
-- `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, the selectable material range (0 and 1000000+ block), one torch pair per contour, no Z or numeric F, the small hole folded to one closed G3, skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
+- `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, the selectable material range (0 and 1000000+ block), one torch pair per contour, no Z or numeric F, the small hole folded to one closed G3 with both a straight and the default arc lead-in (and the fold kept off a radius-format machine, where a closed R arc is a controller error), skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

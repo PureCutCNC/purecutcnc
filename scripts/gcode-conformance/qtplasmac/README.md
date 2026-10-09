@@ -233,13 +233,15 @@ does not depend on a keyserver; the Containerfile checks its fingerprint.
   `src/test/plasmaExportFixtures.ts`, the same projects the unit tests export
   (#959). Each is the exporter's program for the *subject* of a reference case;
   the two are written independently, so a contour count can differ. The
-  small-hole case additionally must show QtPlasmaC's automatic feed reduction
+  small-hole cases additionally must show QtPlasmaC's automatic feed reduction
   in the run: `run.ts` checks `holeReduction(run)`, because the `#<holes> = 1`
   header alone is not evidence that a hole was recognised. QtPlasmaC only
   recognises a hole from one closed G2/G3 block, so the exporter folds a
   complete counter-clockwise circle back together (`foldFullCircleArcs`) and
-  the case's leads are straight, which is what puts an explicit `G3` on the
-  block.
+  spells the arc word on that block. Two cases cover the leads: a straight
+  lead-in (`small-hole`) and the operation's default arc lead-in
+  (`small-hole-arc-lead`), which would otherwise leave the folded block as a
+  modal continuation.
 - **Harness self-checks** — the harness checking itself in the real simulator:
   today one, `refused-cycle-start` (see "A second operator: the GUI").
 

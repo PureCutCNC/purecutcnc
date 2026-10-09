@@ -364,6 +364,12 @@ function sameMachinePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
  * and an outside contour is legitimately clockwise; folding only
  * counter-clockwise circles therefore cannot introduce that warning.
  *
+ * Center format only. In radius format LinuxCNC makes an arc whose end is its
+ * current point an error, so folding there would produce a block the
+ * controller rejects. The caller leaves an R-format machine the ≤ 90° sub-arcs
+ * the emitted-arc fallback already validated: folding runs after that
+ * validation, so the representation it creates is never itself checked.
+ *
  * Applied to plasma programs only, and before the motion trace is captured, so
  * the debug view reads the same descriptors the emitter writes.
  */
@@ -587,9 +593,12 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 
   // QtPlasmaC identifies a hole from a single closed arc block; a plasma
   // program folds one back together so its own feed reduction can run (see
-  // `foldFullCircleArcs`). Done before the trace is captured so the exported
-  // motion the debug view compares is the motion that was emitted.
-  if (definition.plasma?.pierceMode === 'controller') {
+  // `foldFullCircleArcs`). Folding runs after the emitted-arc fallback, so it
+  // is limited to center format: an R-format full circle is a LinuxCNC error,
+  // and only the sub-arcs the fallback validated may be emitted there. Done
+  // before the trace is captured so the exported motion the debug view
+  // compares is the motion that was emitted.
+  if (definition.plasma?.pierceMode === 'controller' && arcEmitOptions.arcFormat === 'ij') {
     steps = foldFullCircleArcs(steps)
   }
 
