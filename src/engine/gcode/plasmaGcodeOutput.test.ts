@@ -298,4 +298,172 @@ for (const name of SCENARIOS) {
   }
 }
 
-console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads and mirroring passed')
+// ── #983 modal feed after the raw probe ─────────────────────────────────────
+// `G38.2 ... F<probeFeed>` is emitted as a raw line, so it changes the
+// controller's modal feed without passing through `emitMotionLine`. The
+// emitter must treat its own feed model as unknown after the probe: every
+// contour's drop spells its own explicit configured plunge F, and every
+// cutting move runs at the configured cut feed — including equal cut/plunge
+// feeds, and a plunge feed that happens to equal the probe feed.
+
+/** Effective modal feed at each emitted code line, as the controller reads it. */
+function modalFeedByLine(gcode: string): Array<{ text: string; feed: number | null }> {
+  let feed: number | null = null
+  return codeLines(gcode).map((text) => {
+    const match = /(?:^|\s)F(-?\d*\.?\d+)/.exec(text)
+    if (match) feed = Number(match[1])
+    return { text, feed }
+  })
+}
+
+interface CycleFeed {
+  /** Configured plunge feed the drop must run at. */
+  plunge: number
+  /** Configured cut feed every cutting move must run at. */
+  cut: number
+}
+
+function closeEnough(actual: number | null, expected: number): boolean {
+  return actual !== null && Math.abs(actual - expected) < 1e-3
+}
+
+/**
+ * Walk each torch pair as the controller does and check the effective modal
+ * feed of its drop and every cutting move. `expected` is one entry per
+ * contour, in program order.
+ */
+function assertDropAndCutFeeds(name: string, gcode: string, expected: CycleFeed[]): void {
+  let torch = false
+  let cycle = -1
+  let dropSeen = false
+  let drops = 0
+  let cuts = 0
+  for (const { text, feed } of modalFeedByLine(gcode)) {
+    if (text === TORCH_ON) {
+      torch = true
+      dropSeen = false
+      cycle += 1
+      assert.ok(cycle < expected.length, `${name}: more torch pairs than expected`)
+      continue
+    }
+    if (text === TORCH_OFF) {
+      torch = false
+      continue
+    }
+    if (!torch) continue
+    const want = expected[cycle]
+    if (/^G1\s+Z/.test(text)) {
+      assert.ok(!dropSeen, `${name}: one drop per contour, got a second: ${text}`)
+      assert.ok(!/[XY]/.test(text), `${name}: the drop is Z only: ${text}`)
+      assert.ok(closeEnough(feed, want.plunge), `${name}: the drop runs at the configured plunge feed ${want.plunge}, effective ${feed}: ${text}`)
+      assert.ok(/\bF-?\d/.test(text), `${name}: the drop spells its own plunge F: ${text}`)
+      dropSeen = true
+      drops += 1
+      continue
+    }
+    if (/^G[123](\s|$)/.test(text) || /^[XYZIJ]-?\d/.test(text)) {
+      assert.ok(dropSeen, `${name}: a cutting move before the drop: ${text}`)
+      assert.ok(closeEnough(feed, want.cut), `${name}: the cut runs at the configured cut feed ${want.cut}, effective ${feed}: ${text}`)
+      cuts += 1
+    }
+  }
+  assert.equal(cycle + 1, expected.length, `${name}: every contour fires`)
+  assert.equal(drops, expected.length, `${name}: every contour drops`)
+  assert.ok(cuts > 0, `${name}: cutting moves are written`)
+}
+
+/** Per-cut safe Z, probe, zero, pierce rapid, dwell, drop, retract, order. */
+function assertPerCutSequence(name: string, gcode: string): void {
+  const lines = codeLines(gcode)
+  const safeZ = lines.find((line) => /^G0 Z-?[\d.]+$/.test(line))
+  assert.ok(safeZ, `${name}: the program opens with a safe-Z rapid`)
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === TORCH_OFF) {
+      assert.equal(lines[i + 1], safeZ, `${name}: the retract after torch-off returns to the program safe Z`)
+    }
+  }
+  for (const pair of cycles(gcode)) {
+    assert.ok(pair.prepare.some((line) => line.startsWith('G38.2 ')), `${name}: each contour is probed`)
+    assert.ok(pair.prepare.some((line) => line.startsWith('G10 L20 ')), `${name}: each contour sets Z zero`)
+    assert.ok(/^G0 Z-?[\d.]+$/.test(pair.prepare.at(-1)!), `${name}: the pierce-height rapid sits immediately before the torch`)
+    assert.ok(/^G4 P/.test(pair.moves[0]), `${name}: the dwell follows torch-on`)
+    assert.ok(/^G1 Z-?[\d.]+ F[\d.]+$/.test(pair.moves[1]), `${name}: the explicit-feed drop follows the dwell`)
+  }
+}
+
+// Equal cut and plunge feeds across a multi-contour part: the verified failing
+// case (cutFeed = plungeFeed = 300, probe feed 100). Every drop must carry its
+// own F300 rather than inherit the probe's F100.
+{
+  const spec = PLASMA_EXPORT_SCENARIOS['part-with-holes']()
+  const featureIds = ['hole-1', 'hole-2', 'plate']
+  const equal = grbl({ ...spec, operations: [{ featureIds, operation: { feed: 300, plungeFeed: 300 } }] })
+  assert.deepEqual(equal.result.warnings, [], 'equal cut/plunge raises nothing')
+  assertPerCutSequence('equal cut=plunge', equal.result.gcode)
+  assertDropAndCutFeeds('equal cut=plunge', equal.result.gcode, [
+    { plunge: 300, cut: 300 }, { plunge: 300, cut: 300 }, { plunge: 300, cut: 300 },
+  ])
+
+  // All three feeds equal the probe feed: invalidating the modal state is the
+  // only fix that still spells F100 on the second and third drops. Assigning
+  // the probe feed to the state would suppress them.
+  const probeEqual = grbl({ ...spec, operations: [{ featureIds, operation: { feed: 100, plungeFeed: 100 } }] })
+  assertDropAndCutFeeds('cut=plunge=probe', probeEqual.result.gcode, [
+    { plunge: 100, cut: 100 }, { plunge: 100, cut: 100 }, { plunge: 100, cut: 100 },
+  ])
+
+  // Differing feeds keep the ordinary modal behaviour: the drop at the plunge
+  // feed, the cuts restated at the cut feed.
+  const differing = grbl({ ...spec, operations: [{ featureIds, operation: { feed: 5560, plungeFeed: 2000 } }] })
+  assertDropAndCutFeeds('differing feeds', differing.result.gcode, [
+    { plunge: 2000, cut: 5560 }, { plunge: 2000, cut: 5560 }, { plunge: 2000, cut: 5560 },
+  ])
+}
+
+// Multiple operations in one program: the feed state carries across the
+// operation boundary, so the second operation's first drop is the same
+// suppression case as a second contour.
+{
+  const multi = grbl({
+    ...PLASMA_EXPORT_SCENARIOS['part-with-holes'](),
+    operations: [
+      { featureIds: ['hole-1'], operation: { feed: 300, plungeFeed: 300 } },
+      { featureIds: ['hole-2', 'plate'], operation: { feed: 700, plungeFeed: 300 } },
+    ],
+  })
+  assertDropAndCutFeeds('two operations', multi.result.gcode, [
+    { plunge: 300, cut: 300 }, { plunge: 300, cut: 700 }, { plunge: 300, cut: 700 },
+  ])
+  assertPerCutSequence('two operations', multi.result.gcode)
+}
+
+// Inch output: the same modal invariant over converted plunge, cut and probe
+// feeds, including a plunge feed equal to the converted probe feed.
+{
+  const inchMulti: PlasmaExportSpec = {
+    units: 'inch',
+    thickness: convertLength(2, 'mm', 'inch'),
+    features: [
+      { id: 'plate', operation: 'add', profile: rectangle(1, 1, 4, 3) },
+      { id: 'hole-1', operation: 'subtract', profile: rectangle(1.5, 1.5, 1, 1) },
+      { id: 'hole-2', operation: 'subtract', profile: rectangle(3, 1.5, 1, 1) },
+    ],
+    operations: [{ featureIds: ['hole-1', 'hole-2', 'plate'] }],
+  }
+  const plunge = convertLength(2000, 'mm', 'inch')
+  const cut = convertLength(5560, 'mm', 'inch')
+  assertDropAndCutFeeds('inch defaults', grbl(inchMulti).result.gcode, [
+    { plunge, cut }, { plunge, cut }, { plunge, cut },
+  ])
+
+  const probe = convertLength(100, 'mm', 'inch')
+  const probeEqual = grbl({
+    ...inchMulti,
+    operations: [{ featureIds: ['hole-1', 'hole-2', 'plate'], operation: { feed: cut, plungeFeed: probe } }],
+  })
+  assertDropAndCutFeeds('inch plunge=probe', probeEqual.result.gcode, [
+    { plunge: probe, cut }, { plunge: probe, cut }, { plunge: probe, cut },
+  ])
+}
+
+console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads, mirroring and #983 modal feed passed')

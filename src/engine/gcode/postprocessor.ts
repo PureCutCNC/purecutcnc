@@ -425,6 +425,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // G38.2 leaves the controller in its own motion mode: the pierce
           // rapid must spell G0 rather than continue the modal one.
           state.motionCommand = null
+          // The probe's own F word becomes the controller's modal feed, behind
+          // the emitter's back. Invalidate the tracked feed rather than copy the
+          // probe feed into it: the drop below must spell its configured plunge
+          // F even when that feed equals the probe feed (issue #983).
+          state.feedRate = null
           emitLine(setZero)
           emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
           emitLine(block.torchOnCommand)
