@@ -27,10 +27,16 @@
 
 import assert from 'node:assert/strict'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../../src/test/plasmaExportFixtures'
+import type { PlasmaExportSpec } from '../../../src/test/plasmaExportFixtures'
 import { judge, mismatch, parseProgram } from './verdict'
 import type { Rule } from './verdict'
 
-const BASE = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId: 'grbl-plasma' }).result.gcode
+function grbl(spec: PlasmaExportSpec): string {
+  return exportPlasma({ ...spec, machineId: 'grbl-plasma' }).result.gcode
+}
+
+const SINGLE = PLASMA_EXPORT_SCENARIOS['single-outline']()
+const BASE = grbl(SINGLE)
 assert.ok(BASE.includes('M3 S1000'), 'the fixture actually fires the torch')
 
 /** The base program with exactly one mutation applied. */
@@ -40,13 +46,49 @@ function mutate(pattern: RegExp, replacement: string): string {
   return mutated
 }
 
-// The real exported program passes every rule.
-assert.equal(mismatch('pass', judge(BASE)), null, `the exported program is the approved sequence: ${JSON.stringify(judge(BASE))}`)
+// The real exported programs pass every rule. The matrix covers both units,
+// line and arc leads, one and several contours, pierce height below cut height,
+// a switch offset present and absent, and a mirrored physical axis.
+const POSITIVES: Array<{ name: string; gcode: string }> = [
+  { name: 'single-outline (mm, arc lead)', gcode: BASE },
+  ...['part-with-holes', 'nested-sheet', 'small-hole', 'small-hole-arc-lead', 'arc-lead-ins', 'inch-output']
+    .map((name) => ({ name, gcode: grbl(PLASMA_EXPORT_SCENARIOS[name]()) })),
+  {
+    name: 'pierce height below cut height',
+    gcode: grbl({ ...SINGLE, operations: [{ featureIds: ['plate'], tool: { pierceHeight: 1, cutHeight: 2 } }] }),
+  },
+  {
+    name: 'switch offset present',
+    gcode: grbl({
+      ...SINGLE,
+      definition: (definition) => ({
+        ...definition,
+        plasma: { ...definition.plasma!, touchOff: { ...definition.plasma!.touchOff!, switchOffset: 5 } },
+      }),
+    }),
+  },
+  {
+    name: 'switch offset absent',
+    gcode: grbl({
+      ...SINGLE,
+      definition: (definition) => {
+        const { switchOffset: _offset, ...touchOff } = definition.plasma!.touchOff!
+        return { ...definition, plasma: { ...definition.plasma!, touchOff } }
+      },
+    }),
+  },
+  {
+    name: 'mirrored physical X axis',
+    gcode: grbl({
+      ...PLASMA_EXPORT_SCENARIOS['arc-lead-ins'](),
+      definition: (definition) => ({ ...definition, coordinateSystem: { ...definition.coordinateSystem, xAxis: '-X' } }),
+    }),
+  },
+]
 
-// Every reference scenario passes, including the inch and multi-contour ones.
-for (const name of ['part-with-holes', 'nested-sheet', 'arc-lead-ins', 'inch-output']) {
-  const gcode = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS[name](), machineId: 'grbl-plasma' }).result.gcode
-  assert.equal(mismatch('pass', judge(gcode)), null, `${name}: the exported sequence passes`)
+for (const positive of POSITIVES) {
+  assert.equal(mismatch('pass', judge(positive.gcode)), null,
+    `${positive.name}: the exported sequence passes: ${JSON.stringify(judge(positive.gcode))}`)
 }
 
 // Each mutation must trip exactly the rule it breaks.
@@ -96,6 +138,50 @@ const NEGATIVES: Array<{ name: string; program: string; fails: Rule[] }> = [
     program: mutate(/^M3 S1000$/m, 'M4 S1000'),
     fails: ['mode'],
   },
+  // The independent reviewer's three false passes, now rejected: the drop is a
+  // modal carve-out, the initial safe rapid is gone, and the program is
+  // truncated before M5.
+  {
+    name: 'missing explicit G1 Z drop',
+    program: mutate(/^G1 Z[\d.]+ F[\d.]+\n/m, ''),
+    fails: ['order'],
+  },
+  {
+    name: 'missing every safe Z rapid',
+    program: mutate(/^G0 Z5\.000\n/gm, ''),
+    fails: ['retract', 'safeZ'],
+  },
+  {
+    name: 'torch on at EOF (truncated before M5)',
+    program: BASE.slice(0, BASE.indexOf('\nM5\n')),
+    fails: ['openTorch'],
+  },
+  // Focused controls: each isolates one boundary.
+  {
+    name: 'missing only the initial safe Z',
+    program: mutate(/^G0 Z5\.000\n(?=X83)/m, ''),
+    fails: ['safeZ'],
+  },
+  {
+    name: 'missing only the final retract',
+    program: mutate(/^G0 Z5\.000\nM30$/m, 'M30'),
+    fails: ['retract'],
+  },
+  {
+    name: 'missing final M5',
+    program: mutate(/^M5$/m, ''),
+    fails: ['openTorch', 'rapid'],
+  },
+  {
+    name: 'inherited modal Z as pierce height',
+    program: mutate(/^G0 Z3\.800$/m, 'G0'),
+    fails: ['order'],
+  },
+  {
+    name: 'cut move leaves the drop cut height',
+    program: mutate(/^X19\.300 Y180\.700$/m, 'X19.300 Y180.700 Z3.000'),
+    fails: ['cutHeight'],
+  },
 ]
 
 for (const negative of NEGATIVES) {
@@ -114,14 +200,20 @@ for (const negative of NEGATIVES) {
   assert.match(mismatch({ fails: ['probe'] }, judge(BASE)) ?? '', /expected to be rejected \(probe\) but it passed/)
 }
 
-// The parser resolves modal motion and Z the way the controller reads them.
+// The parser resolves modal motion, feed and Z the way the controller reads
+// them, and keeps a line's own Z word distinct from the modal value it inherits.
 {
   const lines = parseProgram('G21\nG0 Z5.000\nX10 Y10\nG38.2 Z-30 F100\nG10 L20 P0 Z0\nG0 Z3.8\nM3 S1000\nG1 Z1.5 F2000\nX20 Y20 F3000\nM5\n')
-  assert.equal(lines.find((line) => line.text === 'X10 Y10')?.motion, 'G0', 'a modal XY line is a rapid')
+  const modalXY = lines.find((line) => line.text === 'X10 Y10')!
+  assert.equal(modalXY.motion, 'G0', 'a modal XY line is a rapid')
   assert.equal(lines.find((line) => line.text === 'X20 Y20 F3000')?.feed, 3000, 'a feed word carries forward')
   const probe = lines.find((line) => line.probe)!
   assert.equal(probe.motion, 'G0', 'a probe does not clear the modal motion it was preceded by')
   assert.equal(lines.find((line) => line.setZeroZ !== null)?.setZeroZ, 0)
+  assert.equal(modalXY.explicitZ, null, 'a modal XY line carries no Z word of its own')
+  assert.equal(modalXY.z, 5, 'but it inherits the modal Z')
+  assert.equal(lines.find((line) => line.text === 'G0 Z3.8')?.explicitZ, 3.8, 'an explicit rapid keeps its own Z word')
+  assert.equal(lines.find((line) => line.text === 'X20 Y20 F3000')?.explicitZ, null, 'a cut XY line inherits its Z')
 }
 
-console.log(`grbl-plasma verdict.test.ts: ${1 + 4} programs pass and ${NEGATIVES.length} mutations each trip exactly their own rule`)
+console.log(`grbl-plasma verdict.test.ts: ${POSITIVES.length} programs pass and ${NEGATIVES.length} mutations each trip exactly their own rule`)

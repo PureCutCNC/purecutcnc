@@ -13,7 +13,28 @@ feed -> lead-in/contour/lead-out at the cut feed -> M5 -> safe Z
 controller reads them, then reports one finding per violation. `verdict.test.ts`
 runs the exporter's own programs as positives and, for each rule, one mutation
 of that program as a negative, so a rule that stops working shows up as a
-negative that passes.
+negative that passes. The matrix covers both units, line and arc leads, one and
+several contours, pierce height below cut height, a switch offset present and
+absent, and a mirrored physical axis.
+
+## Boundaries are read from explicit words
+
+An inherited modal Z is not evidence that a move happened, so the rules read the
+Z word each line carries itself:
+
+- The probe must be preceded by a rapid carrying its own Z word (`safeZ`). For a
+  later contour the retract after the previous cut satisfies it; a modal Z left
+  over from the last cut does not.
+- The first feed move after the dwell must carry its own Z word (`order`): a
+  modal Z inherited from the pierce-height rapid is not a drop to cut height.
+- The pierce-height rapid must carry its own Z word (`order`), not inherit one.
+- Every later cut move must stay at the height that drop set (`cutHeight`).
+- A torch-off must be followed by a retract carrying its own Z word (`retract`).
+- A program that ends with the torch still on is rejected (`openTorch`): the
+  cycle never reached `M5`.
+
+A finding is reported only when the emitted program itself lacks the boundary; a
+parser property or a warning is never enough on its own.
 
 Run with `npm run check:gcode`, which runs the verdict test before the
 conformance corpus. The corpus itself holds the generated programs

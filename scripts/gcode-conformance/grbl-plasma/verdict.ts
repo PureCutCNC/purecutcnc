@@ -25,6 +25,13 @@
  * feed, leads/contour at the cut feed, torch off, safe Z — with no rapid while
  * the torch is on and every cutting move inside a torch pair.
  *
+ * The boundaries are read from explicit words, never from inherited modal
+ * state: the probe must be reached by a rapid that carries its own Z word, the
+ * drop to cut height must carry its own Z word, and every cut move must stay at
+ * the height that drop set. A program that ends with the torch on, or with a
+ * torch-off that never retracted, is rejected — an inherited modal Z is not
+ * evidence that any of those moves happened.
+ *
  * Pure functions, so the rules are unit-tested without a controller
  * (`verdict.test.ts`), and reusable on any program text.
  */
@@ -51,11 +58,15 @@ export interface ParsedLine {
   torch: 'on' | 'off' | null
   /** True for an M4, which must never fire the torch. */
   torchReverse: boolean
-  /** The Z word in effect after this line. */
+  /** The Z word in effect after this line, modal inheritance included. */
   z: number | null
+  /** The Z word this line carries itself, or null when it only inherits modal Z. */
+  explicitZ: number | null
 }
 
-export type Rule = 'probe' | 'zero' | 'order' | 'dwell' | 'feed' | 'z' | 'torch' | 'rapid' | 'mode'
+export type Rule =
+  | 'probe' | 'zero' | 'order' | 'dwell' | 'feed' | 'z' | 'torch' | 'rapid' | 'mode'
+  | 'safeZ' | 'retract' | 'openTorch' | 'cutHeight'
 
 export interface Finding {
   rule: Rule
@@ -108,6 +119,7 @@ export function parseProgram(program: string): ParsedLine[] {
       torch: ms.some((value) => value === 3 || value === 4) ? 'on' : ms.includes(5) ? 'off' : null,
       torchReverse: ms.includes(4),
       z,
+      explicitZ: words.Z !== undefined ? words.Z : null,
     })
   })
   return parsed
@@ -115,6 +127,15 @@ export function parseProgram(program: string): ParsedLine[] {
 
 function isFeedMove(line: ParsedLine): boolean {
   return line.commandsMotion && (line.motion === 'G1' || line.motion === 'G2' || line.motion === 'G3')
+}
+
+/**
+ * True when the line is a rapid that carries its own Z word: an actual safe-Z
+ * retract. A set-zero or probe line also carries a Z word but must not be read
+ * as one, and an inherited modal Z is not evidence the head ever moved.
+ */
+function isZRetract(line: ParsedLine): boolean {
+  return line.motion === 'G0' && line.explicitZ !== null && !line.probe && line.setZeroZ === null
 }
 
 function lastIndex(lines: ParsedLine[], predicate: (line: ParsedLine) => boolean): number {
@@ -147,19 +168,32 @@ export function judge(program: string): Finding[] {
   /** Lines between the last torch-on and now. */
   let cycle: ParsedLine[] = []
   let modalFeed: number | null = null
+  /** A torch-off has happened and no explicit-Z rapid has retracted since. */
+  let awaitingRetract = false
+  let torchOffLine = 0
 
   const judgeCycle = (torchLine: number): void => {
     const dwellAt = cycle.findIndex((line) => line.dwell !== null && line.dwell > 0)
     const firstFeedAt = cycle.findIndex(isFeedMove)
     if (dwellAt < 0) add('dwell', torchLine, 'torch-on with no G4 dwell before the cut')
     else if (firstFeedAt >= 0 && dwellAt > firstFeedAt) add('dwell', cycle[dwellAt].line, 'the dwell comes after the first feed move')
-    // The drop to cut height is the first feed move: it must be a Z drop and
-    // it must carry the plunge feed itself. A modal feed inherited from the
-    // probe's F word would be the probe feed, not the plunge feed.
+    // The drop to cut height is the first feed move: it must carry its own Z
+    // word (a modal Z inherited from the pierce rapid is not a drop) and its
+    // own plunge feed. A modal feed inherited from the probe's F word would be
+    // the probe feed, not the plunge feed.
     if (firstFeedAt >= 0) {
       const drop = cycle[firstFeedAt]
-      if (drop.z === null) add('order', drop.line, 'the first feed move after the torch-on is not the drop to cut height')
+      const cutZ = drop.explicitZ
+      if (cutZ === null) add('order', drop.line, 'the first feed move after the torch-on is not an explicit Z drop to cut height')
       if (!drop.explicitFeed) add('feed', drop.line, 'the drop to cut height carries no plunge feed of its own')
+      // Every later feed move is a cut at the height the drop established.
+      if (cutZ !== null) {
+        for (const line of cycle.slice(firstFeedAt + 1)) {
+          if (isFeedMove(line) && line.explicitZ !== null && line.explicitZ !== cutZ) {
+            add('cutHeight', line.line, `a cut move leaves the drop's cut height of ${cutZ}`)
+          }
+        }
+      }
     }
   }
 
@@ -167,6 +201,12 @@ export function judge(program: string): Finding[] {
     if (line.torchReverse) add('mode', line.line, 'M4 must never fire a plasma torch')
     if (line.torch === 'on') {
       firedTorch = true
+      // A cycle that closed without a retract never left the sheet before the
+      // next torch-on.
+      if (awaitingRetract) {
+        add('retract', torchOffLine, 'the torch-off is not followed by a retract to safe Z before the next torch-on')
+        awaitingRetract = false
+      }
       // Read the approved order off the prepare window. Both a missing probe
       // and a missing zero are reported once; the order is checked only when
       // both are present, so a mutation trips exactly the rule it breaks.
@@ -174,11 +214,24 @@ export function judge(program: string): Finding[] {
       const zeroAt = lastIndex(prepare, (candidate) => candidate.setZeroZ !== null)
       if (probeAt < 0) add('probe', line.line, 'torch-on with no G38 probe since the last torch-off')
       if (zeroAt < 0) add('zero', line.line, 'torch-on with no set-zero since the probe')
+      // The probe is reached from a safe height only when the last Z command
+      // before it was a rapid carrying its own Z word. An inherited modal Z
+      // says nothing about where the head actually is.
+      if (probeAt >= 0) {
+        const beforeProbe = prepare
+          .slice(0, probeAt)
+          .filter((candidate) => candidate.explicitZ !== null && candidate.setZeroZ === null && !candidate.probe)
+        if (beforeProbe.length === 0 || !isZRetract(beforeProbe[beforeProbe.length - 1])) {
+          add('safeZ', prepare[probeAt].line, 'the probe is not preceded by an explicit rapid to safe Z since the last torch-off')
+        }
+      }
       if (probeAt >= 0 && zeroAt >= 0) {
         if (probeAt > zeroAt) add('order', line.line, 'the set-zero must come after the probe')
-        const pierceAt = lastIndex(prepare, (candidate) => candidate.commandsMotion && candidate.motion === 'G0' && candidate.z !== null)
+        const pierceAt = lastIndex(prepare, (candidate) =>
+          candidate.commandsMotion && candidate.motion === 'G0' && candidate.explicitZ !== null
+          && !candidate.probe && candidate.setZeroZ === null)
         if (pierceAt < 0 || pierceAt < zeroAt || pierceAt !== prepare.length - 1) {
-          add('order', line.line, 'a G0 to pierce height must immediately precede the torch-on')
+          add('order', line.line, 'a G0 to pierce height carrying its own Z word must immediately precede the torch-on')
         }
         if (prepare[zeroAt].setZeroZ !== null && prepare[zeroAt].setZeroZ! > 0) {
           add('z', prepare[zeroAt].line, 'the set-zero Z must not be positive: the switch offset is applied negatively')
@@ -189,7 +242,11 @@ export function judge(program: string): Finding[] {
       prepare = []
       cycle = []
     } else if (line.torch === 'off') {
-      if (torchOn) judgeCycle(cycleStart)
+      if (torchOn) {
+        judgeCycle(cycleStart)
+        awaitingRetract = true
+        torchOffLine = line.line
+      }
       torchOn = false
       prepare = []
       cycle = []
@@ -202,9 +259,16 @@ export function judge(program: string): Finding[] {
       if (line.feed !== null) modalFeed = line.feed
       if (isFeedMove(line)) add('torch', line.line, 'a cutting move with the torch off')
       else prepare.push(line)
+      if (awaitingRetract && isZRetract(line)) awaitingRetract = false
     }
   }
 
+  // A program that stops while the torch is still on never finished its cycle.
+  if (torchOn) {
+    judgeCycle(cycleStart)
+    add('openTorch', cycleStart, 'the torch is still on at the end of the program: the cycle never reached M5')
+  }
+  if (awaitingRetract) add('retract', torchOffLine, 'the torch-off is not followed by a retract to safe Z')
   if (!firedTorch) add('torch', lines.length > 0 ? lines[0].line : 1, 'the program never fires the torch')
   return findings.sort((a, b) => a.line - b.line || a.rule.localeCompare(b.rule))
 }
