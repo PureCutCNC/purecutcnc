@@ -5,8 +5,8 @@ approved per-cut sequence, run on real exported output with no controller:
 
 ```
 safe Z (operator zero) -> probe -> set Z zero on the sheet -> pierce-height G0
--> M3 (never M4) -> G4 dwell (seconds) -> G1 drop to cut height at the plunge
-feed -> lead-in/contour/lead-out at the cut feed -> M5 -> safe Z
+-> M3 (never M4) -> G4 dwell (seconds) -> separate G1 Z-only drop to cut height
+at the plunge feed -> lead-in/contour/lead-out at the cut feed -> M5 -> safe Z
 ```
 
 `verdict.ts` is pure: it resolves modal motion, feed and Z the way the
@@ -24,9 +24,14 @@ Z word each line carries itself:
 
 - The probe must be preceded by a rapid carrying its own Z word (`safeZ`). For a
   later contour the retract after the previous cut satisfies it; a modal Z left
-  over from the last cut does not.
-- The first feed move after the dwell must carry its own Z word (`order`): a
-  modal Z inherited from the pierce-height rapid is not a drop to cut height.
+  over from the last cut does not. That retract must also come **before** any
+  lateral travel toward the pierce: a rapid carrying X or Y that happens first
+  has already dragged the torch, so a retract that only follows it is rejected.
+- The first feed move after the dwell must be a separate `G1` carrying its own Z
+  word and no X, Y or arc word (`order`), plus its own plunge feed (`feed`): a
+  modal Z inherited from the pierce-height rapid is not a drop, and a `G2`/`G3`
+  or a diagonal `G1` XY+Z move cuts while it descends. The cut starts afterwards
+  at the height that drop set.
 - The pierce-height rapid must carry its own Z word (`order`), not inherit one.
 - Every later cut move must stay at the height that drop set (`cutHeight`).
 - A torch-off must be followed by a retract carrying its own Z word (`retract`).

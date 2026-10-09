@@ -39,11 +39,19 @@ const SINGLE = PLASMA_EXPORT_SCENARIOS['single-outline']()
 const BASE = grbl(SINGLE)
 assert.ok(BASE.includes('M3 S1000'), 'the fixture actually fires the torch')
 
+/** A second, multi-contour program so the between-contours boundaries can be mutated. */
+const MULTI = grbl(PLASMA_EXPORT_SCENARIOS['part-with-holes']())
+
+/** A program with exactly one mutation applied. */
+function mutateOn(program: string, pattern: RegExp, replacement: string): string {
+  const mutated = program.replace(pattern, replacement)
+  assert.notEqual(mutated, program, `the mutation ${pattern} matched nothing`)
+  return mutated
+}
+
 /** The base program with exactly one mutation applied. */
 function mutate(pattern: RegExp, replacement: string): string {
-  const mutated = BASE.replace(pattern, replacement)
-  assert.notEqual(mutated, BASE, `the mutation ${pattern} matched nothing`)
-  return mutated
+  return mutateOn(BASE, pattern, replacement)
 }
 
 // The real exported programs pass every rule. The matrix covers both units,
@@ -182,6 +190,29 @@ const NEGATIVES: Array<{ name: string; program: string; fails: Rule[] }> = [
     program: mutate(/^X19\.300 Y180\.700$/m, 'X19.300 Y180.700 Z3.000'),
     fails: ['cutHeight'],
   },
+  // The two remaining reviewer false passes, now rejected: the safe-Z rapid is
+  // swapped after the travel to the pierce (initially and between contours), and
+  // a G2/G3 or diagonal XY+Z move is used in place of the separate G1 drop.
+  {
+    name: 'XY travel before the initial safe Z rapid',
+    program: mutate(/^G0 Z5\.000\n(X[^\n]+)\n/m, 'G0 $1\nG0 Z5.000\n'),
+    fails: ['safeZ'],
+  },
+  {
+    name: 'XY travel before the between-contour safe Z rapid',
+    program: mutateOn(MULTI, /^M5\nG0 Z5\.000\n(X[^\n]+)\n/m, 'M5\nG0 $1\nG0 Z5.000\n'),
+    fails: ['safeZ'],
+  },
+  {
+    name: 'arc instead of the separate linear drop',
+    program: mutate(/^G1 Z([\d.]+) F([\d.]+)$/m, 'G3 X1 Y1 Z$1 I1 J0 F$2'),
+    fails: ['order'],
+  },
+  {
+    name: 'diagonal XY+Z instead of the separate linear drop',
+    program: mutate(/^G1 Z([\d.]+) F([\d.]+)$/m, 'G1 X1 Y1 Z$1 F$2'),
+    fails: ['order'],
+  },
 ]
 
 for (const negative of NEGATIVES) {
@@ -203,7 +234,7 @@ for (const negative of NEGATIVES) {
 // The parser resolves modal motion, feed and Z the way the controller reads
 // them, and keeps a line's own Z word distinct from the modal value it inherits.
 {
-  const lines = parseProgram('G21\nG0 Z5.000\nX10 Y10\nG38.2 Z-30 F100\nG10 L20 P0 Z0\nG0 Z3.8\nM3 S1000\nG1 Z1.5 F2000\nX20 Y20 F3000\nM5\n')
+  const lines = parseProgram('G21\nG0 Z5.000\nX10 Y10\nG38.2 Z-30 F100\nG10 L20 P0 Z0\nG0 Z3.8\nM3 S1000\nG1 Z1.5 F2000\nX20 Y20 F3000\nG3 X0 Y0 I5 J0 F3000\nM5\n')
   const modalXY = lines.find((line) => line.text === 'X10 Y10')!
   assert.equal(modalXY.motion, 'G0', 'a modal XY line is a rapid')
   assert.equal(lines.find((line) => line.text === 'X20 Y20 F3000')?.feed, 3000, 'a feed word carries forward')
@@ -214,6 +245,14 @@ for (const negative of NEGATIVES) {
   assert.equal(modalXY.z, 5, 'but it inherits the modal Z')
   assert.equal(lines.find((line) => line.text === 'G0 Z3.8')?.explicitZ, 3.8, 'an explicit rapid keeps its own Z word')
   assert.equal(lines.find((line) => line.text === 'X20 Y20 F3000')?.explicitZ, null, 'a cut XY line inherits its Z')
+  // Lateral and arc words are tracked from the line itself: the drop is Z-only,
+  // the travel carries X/Y, and an arc word does not set a Z of its own.
+  assert.equal(modalXY.explicitX && modalXY.explicitY, true, 'a travel line carries its own X and Y words')
+  const drop = lines.find((line) => line.text === 'G1 Z1.5 F2000')!
+  assert.equal(drop.explicitX || drop.explicitY || drop.arcWord, false, 'the separate drop carries no X, Y or arc word')
+  const arc = lines.find((line) => line.text === 'G3 X0 Y0 I5 J0 F3000')!
+  assert.equal(arc.arcWord, true, 'an arc word is tracked')
+  assert.equal(arc.explicitZ, null, 'an arc word alone does not set a Z')
 }
 
 console.log(`grbl-plasma verdict.test.ts: ${POSITIVES.length} programs pass and ${NEGATIVES.length} mutations each trip exactly their own rule`)

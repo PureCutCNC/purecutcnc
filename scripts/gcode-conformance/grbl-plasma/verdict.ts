@@ -26,11 +26,13 @@
  * the torch is on and every cutting move inside a torch pair.
  *
  * The boundaries are read from explicit words, never from inherited modal
- * state: the probe must be reached by a rapid that carries its own Z word, the
- * drop to cut height must carry its own Z word, and every cut move must stay at
- * the height that drop set. A program that ends with the torch on, or with a
- * torch-off that never retracted, is rejected — an inherited modal Z is not
- * evidence that any of those moves happened.
+ * state: the probe must be reached by a rapid that carries its own Z word, and
+ * that retract must precede any lateral travel while the torch is off, the drop
+ * to cut height must be a separate G1 carrying its own Z and feed words with no
+ * X, Y or arc word, and every cut move must stay at the height that drop set. A
+ * program that ends with the torch on, or with a torch-off that never retracted,
+ * is rejected — an inherited modal Z is not evidence that any of those moves
+ * happened.
  *
  * Pure functions, so the rules are unit-tested without a controller
  * (`verdict.test.ts`), and reusable on any program text.
@@ -62,6 +64,12 @@ export interface ParsedLine {
   z: number | null
   /** The Z word this line carries itself, or null when it only inherits modal Z. */
   explicitZ: number | null
+  /** True when this line carries its own X word. */
+  explicitX: boolean
+  /** True when this line carries its own Y word. */
+  explicitY: boolean
+  /** True when this line carries its own I, J or K arc word. */
+  arcWord: boolean
 }
 
 export type Rule =
@@ -120,6 +128,9 @@ export function parseProgram(program: string): ParsedLine[] {
       torchReverse: ms.includes(4),
       z,
       explicitZ: words.Z !== undefined ? words.Z : null,
+      explicitX: words.X !== undefined,
+      explicitY: words.Y !== undefined,
+      arcWord: words.I !== undefined || words.J !== undefined || words.K !== undefined,
     })
   })
   return parsed
@@ -136,6 +147,28 @@ function isFeedMove(line: ParsedLine): boolean {
  */
 function isZRetract(line: ParsedLine): boolean {
   return line.motion === 'G0' && line.explicitZ !== null && !line.probe && line.setZeroZ === null
+}
+
+/**
+ * True when the line moves the head laterally: a rapid carrying its own X or Y
+ * word. The safe-Z retract must happen before one of these, because a lateral
+ * move at cutting height is the hazard — a retract that only follows the travel
+ * has already dragged the torch across the sheet.
+ */
+function isXYTravel(line: ParsedLine): boolean {
+  return line.motion === 'G0' && (line.explicitX || line.explicitY)
+}
+
+/**
+ * True when the line is the separate linear drop the approved sequence calls
+ * for: a G1 that carries its own Z word and no X, Y or arc word. Any other
+ * first feed move — a modal carve-out, a G2/G3, or a diagonal XY+Z move — is
+ * not the drop, so the cut height it sets cannot be trusted. The plunge feed is
+ * checked separately (`feed`).
+ */
+function isSeparateDrop(line: ParsedLine): boolean {
+  return line.motion === 'G1' && line.explicitZ !== null
+    && !line.explicitX && !line.explicitY && !line.arcWord
 }
 
 function lastIndex(lines: ParsedLine[], predicate: (line: ParsedLine) => boolean): number {
@@ -177,14 +210,17 @@ export function judge(program: string): Finding[] {
     const firstFeedAt = cycle.findIndex(isFeedMove)
     if (dwellAt < 0) add('dwell', torchLine, 'torch-on with no G4 dwell before the cut')
     else if (firstFeedAt >= 0 && dwellAt > firstFeedAt) add('dwell', cycle[dwellAt].line, 'the dwell comes after the first feed move')
-    // The drop to cut height is the first feed move: it must carry its own Z
-    // word (a modal Z inherited from the pierce rapid is not a drop) and its
-    // own plunge feed. A modal feed inherited from the probe's F word would be
-    // the probe feed, not the plunge feed.
+    // The drop to cut height is the first feed move: it must be a separate G1
+    // carrying its own Z word (a modal Z inherited from the pierce rapid is not
+    // a drop), its own plunge feed, and no X, Y or arc word (a G2/G3 or a
+    // diagonal XY+Z move cuts while it descends). A modal feed inherited from
+    // the probe's F word would be the probe feed, not the plunge feed.
     if (firstFeedAt >= 0) {
       const drop = cycle[firstFeedAt]
       const cutZ = drop.explicitZ
-      if (cutZ === null) add('order', drop.line, 'the first feed move after the torch-on is not an explicit Z drop to cut height')
+      if (!isSeparateDrop(drop)) {
+        add('order', drop.line, 'the first feed move after the torch-on is not a separate G1 Z-only drop to cut height')
+      }
       if (!drop.explicitFeed) add('feed', drop.line, 'the drop to cut height carries no plunge feed of its own')
       // Every later feed move is a cut at the height the drop established.
       if (cutZ !== null) {
@@ -214,15 +250,20 @@ export function judge(program: string): Finding[] {
       const zeroAt = lastIndex(prepare, (candidate) => candidate.setZeroZ !== null)
       if (probeAt < 0) add('probe', line.line, 'torch-on with no G38 probe since the last torch-off')
       if (zeroAt < 0) add('zero', line.line, 'torch-on with no set-zero since the probe')
-      // The probe is reached from a safe height only when the last Z command
-      // before it was a rapid carrying its own Z word. An inherited modal Z
-      // says nothing about where the head actually is.
+      // The probe is reached from a safe height only when a rapid carrying its
+      // own Z word happened before it, and before any lateral travel along the
+      // way. An inherited modal Z says nothing about where the head is, and a
+      // retract that only follows the XY move has already dragged the torch.
       if (probeAt >= 0) {
-        const beforeProbe = prepare
-          .slice(0, probeAt)
-          .filter((candidate) => candidate.explicitZ !== null && candidate.setZeroZ === null && !candidate.probe)
-        if (beforeProbe.length === 0 || !isZRetract(beforeProbe[beforeProbe.length - 1])) {
+        const beforeProbe = prepare.slice(0, probeAt)
+        const safeZAt = lastIndex(beforeProbe, isZRetract)
+        if (safeZAt < 0) {
           add('safeZ', prepare[probeAt].line, 'the probe is not preceded by an explicit rapid to safe Z since the last torch-off')
+        } else {
+          const earlyTravel = beforeProbe.slice(0, safeZAt).find(isXYTravel)
+          if (earlyTravel) {
+            add('safeZ', earlyTravel.line, 'the torch is off and the head travels in XY before retracting to safe Z')
+          }
         }
       }
       if (probeAt >= 0 && zeroAt >= 0) {
