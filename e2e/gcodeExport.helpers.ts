@@ -74,7 +74,7 @@ export interface GcodeExportSeedOptions {
    * Add a plasma through-cut of the same feature on a torch tool (issue #959).
    * `materialNumber: null` leaves the tool without a QtPlasmaC material.
    */
-  plasmaCut?: { materialNumber: number | null }
+  plasmaCut?: { materialNumber: number | null; toolName?: string }
 }
 
 const PLASMA_TORCH = {
@@ -193,6 +193,7 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
       ...(options.plasmaCut
         ? [{
           ...PLASMA_TORCH,
+          name: options.plasmaCut.toolName ?? PLASMA_TORCH.name,
           ...(options.plasmaCut.materialNumber === null ? {} : { qtplasmacMaterialNumber: options.plasmaCut.materialNumber }),
         }]
         : []),

@@ -929,6 +929,7 @@
    fully-shrunk layout is too tall, the left column scrolls as a fallback. */
 .dialog-body--gcode-export {
   overflow: hidden;
+  grid-template-columns: 320px minmax(0, 1fr);
   /* Pin the single row to the body height when the 90vh dialog cap engages,
      so the columns shrink/scroll internally instead of growing past it. */
   grid-template-rows: minmax(0, 1fr);
@@ -966,11 +967,17 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  min-width: 0;
 }
 
 .dialog-body--gcode-export .dialog-preview {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.dialog-body--gcode-export .export-error,
+.dialog-body--gcode-export .export-warning {
+  overflow-wrap: anywhere;
 }
 
 /* Long warning lists scroll too, instead of pushing the layout around. */
