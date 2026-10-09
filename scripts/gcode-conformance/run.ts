@@ -30,7 +30,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FABMO_COMMIT } from './fabmo-opensbp/validate'
@@ -74,8 +74,9 @@ const VALIDATORS: Validator[] = [
     binary: join(VALIDATOR_DIR, 'gvalidate.exe'),
     // Determined empirically: grbl parses these dialects, but rejects mach3
     // and uccnc output on the %% wrapper, O program number and N line numbers
-    // long before reaching any arc.
-    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc'],
+    // long before reaching any arc. grbl-plasma is grbl word syntax plus the
+    // G38.2/G10 L20 touch-off and M3/M5 torch words (issue #983).
+    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma'],
     args: (file) => [file],
     rejection: (output, status) => {
       // gvalidate prints `error:NN` and exits with that code.
@@ -224,6 +225,26 @@ function runValidator(validator: Validator, file: string): string | null {
   }
 }
 
+/**
+ * The file a validator actually parses.
+ *
+ * grbl-sim never triggers the probe pin — "set probe pin when probing" is an
+ * unfinished TODO in its interface — so a G38.x raises ALARM:4 and every later
+ * block is rejected with error:9. That is a simulator artefact, not a syntax
+ * verdict: the probe line itself is still parsed and reported. Inserting `$X`
+ * (Grbl's kill-alarm-lock realtime command) after each probe lets the parser
+ * reach the rest of the program, arcs included. The real program stays on
+ * disk; only the copy handed to the validator is altered.
+ */
+function validatorFile(validator: Validator, file: string): string {
+  if (validator.name !== 'grbl-gvalidate') return file
+  const gcode = readFileSync(file, 'utf8')
+  if (!/^\s*G38\.[0-9]/m.test(gcode)) return file
+  const unlockedFile = file.replace(/(\.[^.]+)$/, '-unlocked$1')
+  writeFileSync(unlockedFile, gcode.replace(/^(\s*G38\.[0-9].*)$/gm, '$1\n$X'), 'utf8')
+  return unlockedFile
+}
+
 function exportCorpus(): Array<{ entry: CorpusCase; file: string }> {
   rmSync(OUT_DIR, { recursive: true, force: true })
   mkdirSync(OUT_DIR, { recursive: true })
@@ -304,7 +325,7 @@ function main(): void {
       if (!validator.machines.includes(entry.machineId)) continue
       validated.add(entry.name)
       if (tier === 'strict') arcVerified.add(entry.name)
-      const rejection = runValidator(validator, file)
+      const rejection = runValidator(validator, validatorFile(validator, file))
       if (rejection) {
         failures += 1
         console.log(`  FAIL ${entry.name}: ${rejection}`)

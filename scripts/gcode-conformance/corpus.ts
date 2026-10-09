@@ -55,6 +55,7 @@ import { newProject, defaultTool, getStockBounds, rectProfile } from '../../src/
 import type { Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
 import { projectWithFeatures, withBottomSetup } from '../../src/test/projectFixtures'
+import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../src/test/plasmaExportFixtures'
 import { syncProjectSetups } from '../../src/store/helpers/setups'
 import { toolpathInStockFrame } from '../../src/engine/setupFrameProject'
 import { setupFrame } from '../../src/engine/setupOrientation'
@@ -439,6 +440,21 @@ function generatedBottomPocket(): { project: Project; operation: Operation; tool
   return cachedBottomPocket
 }
 
+/**
+ * A real #957 plasma toolpath over the QtPlasmaC reference shapes, exported to
+ * the Grbl plasma machine (#983). Generated from the current exporter, so the
+ * corpus describes what the G-code pierce path emits today.
+ */
+function generatedPlasma(
+  name: keyof typeof PLASMA_EXPORT_SCENARIOS,
+): () => { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  return () => {
+    const { input } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS[name](), machineId: 'grbl-plasma' })
+    const first = input.operations[0]
+    return { project: input.project, operation: first.operation, toolpath: first.toolpath }
+  }
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -701,6 +717,39 @@ export const CORPUS: CorpusCase[] = [
     machineId: 'shopbot',
     moves: [],
     generated: generatedBottomPocket,
+  },
+  {
+    name: 'grbl-plasma-outline-mm',
+    covers: 'issue #983 - a real plasma toolpath on the Grbl machine: probe, set zero, '
+      + 'pierce, dwell and drop to cut height in millimetres',
+    units: 'mm',
+    machineId: 'grbl-plasma',
+    moves: [],
+    generated: generatedPlasma('single-outline'),
+  },
+  {
+    name: 'grbl-plasma-outline-inch',
+    covers: 'issue #983 - the millimetre touch-off converted to inch at emission, on the inch grid',
+    units: 'inch',
+    machineId: 'grbl-plasma',
+    moves: [],
+    generated: generatedPlasma('inch-output'),
+  },
+  {
+    name: 'grbl-plasma-arc-leads',
+    covers: 'issue #983 - arc lead-ins and lead-outs at cut height inside the torch pair',
+    units: 'mm',
+    machineId: 'grbl-plasma',
+    moves: [],
+    generated: generatedPlasma('arc-lead-ins'),
+  },
+  {
+    name: 'grbl-plasma-nested',
+    covers: 'issue #983 - three contours, each probed and zeroed again before its pierce',
+    units: 'mm',
+    machineId: 'grbl-plasma',
+    moves: [],
+    generated: generatedPlasma('nested-sheet'),
   },
 ]
 

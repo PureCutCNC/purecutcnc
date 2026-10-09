@@ -36,10 +36,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   emitter: templates, modal tracking, canned drill cycles, line numbers.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
-  feed and speed fallbacks, pending plasma output and unexecutable tool-change
+  feed and speed fallbacks, and unexecutable tool-change
   warnings; its plasma branch decides skipped operations, the selectable
-  QtPlasmaC material range and the material handshake, #959), `planPlasmaPath`
-  (torch-off travel and torch-on cuts, #959), `foldFullCircleArcs` (a complete
+  QtPlasmaC material range and the material handshake for controller piercing,
+  #959, and serves either pierce mode), `planPlasmaPath`
+  (torch-off travel and torch-on cuts, #959), `plasmaSafeZ` and
+  `planPlasmaGcodeCut` (the G-code pierce safe height, per-cut heights and
+  touch-off, converted to output units at emission, #983),
+  `foldFullCircleArcs` (a complete
   counter-clockwise circle as one block, so QtPlasmaC's hole handling can
   recognise it), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
@@ -82,9 +86,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   non-G-code definition; see the note below. `qtplasmac.json` is the experimental
   QtPlasmaC table, controller-owned piercing, whose torch path is written (#959);
   `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
-  still metadata only.
+  whose probe/pierce/dwell/cut sequence is written on the same pipeline.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
 - `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, the selectable material range (0 and 1000000+ block), one torch pair per contour, no Z or numeric F, the small hole folded to one closed G3 with both a straight and the default arc lead-in (and the fold kept off a radius-format machine, where a closed R arc is a controller error), skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
+- `plasmaGcodeOutput.test.ts` — the Grbl plasma torch path (#983): safe Z in the
+  operator zero, probe → set zero → pierce-height rapid → M3 → dwell → drop at
+  the plunge feed → cut at the cut feed → M5 → safe Z for every contour, the
+  switch offset applied negatively (absent = 0), mm→inch conversion of the
+  touch-off fields at emission, configured heights emitted even when pierce is
+  below cut, line and arc leads, mirrored-axis direction, skipped milling
+  operations, and no M4.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
@@ -134,7 +145,10 @@ fields it does read are reachable under Advanced.
 - `npm test` runs every `*.test.ts` here.
 - `npm run check:gcode` runs real controller parsers over a G-code corpus
   (`scripts/gcode-conformance/`). It covers G-code definitions only: there is
-  no ShopBot interpreter to run, so SBP relies on the round-trip tests.
+  no ShopBot interpreter to run, so SBP relies on the round-trip tests. Since
+  #983 it also holds the generated Grbl plasma programs
+  (`grbl-plasma-*` in `CORPUS`, built from `src/test/plasmaExportFixtures.ts`)
+  and the sequence verdict in `scripts/gcode-conformance/grbl-plasma/`.
 - `npm run check:gcode:qtplasmac` runs plasma programs through LinuxCNC's
   QtPlasmaC simulator in a container
   (`scripts/gcode-conformance/qtplasmac/`, #954). It holds hand-written

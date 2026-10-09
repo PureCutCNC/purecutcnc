@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { BUNDLED_DEFINITIONS } from '../engine/gcode/definitions'
 import { MachineDefinitionSchema, resolveMachineKind, validateMachineDefinition } from '../engine/gcode/types'
-import { CORPUS, renderCase } from '../../scripts/gcode-conformance/corpus'
+import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../test/plasmaExportFixtures'
 import { DEFAULT_TOUCH_OFF, mergeFormData, toFormData, validateDef } from '../components/machine/machineDefinitionForm'
 import { duplicateMachineAsCustom, parseMachineImport, serializeMachineExport } from './registry'
 import grblRaw from '../engine/gcode/definitions/grbl.json'
@@ -106,12 +106,17 @@ assert.equal(back.ok, undefined, 'switching back needs the material sequence typ
 const restored = validateDef(mergeFormData(qt, qtForm)).ok
 assert.deepEqual(restored, qt, 'an unedited controller machine gains no touch-off')
 
-// Metadata only: the export still writes no torch, probe or zeroing words.
-const fixture = CORPUS.find((entry) => entry.name === 'sbp-mm-tool-change')
-assert.ok(fixture)
-const rendered = renderCase({ ...fixture, machineId: 'grbl-plasma' })
-assert.equal(rendered.warnings.filter((warning) => warning.includes('postPlasmaOutputPending')).length, 1)
-assert.ok(/G[01] /.test(rendered.gcode), 'fixture actually exports motion')
-assert.ok(!/\b(?:M[345]|G38\.\d|G10)\b/.test(rendered.gcode), 'no torch or touch-off sequence is emitted yet')
-assert.ok(rendered.gcode.includes('; Experimental plasma output: not verified on a real plasma table'))
-console.log('grblPlasmaMachine.test.ts: Grbl plasma schema, parity, form and no-torch assertions passed')
+// Delivered (#983): a Grbl plasma operation writes the per-cut touch-off,
+// pierce, dwell and cut-height sequence, and nothing is reported pending.
+{
+  const { result } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId: 'grbl-plasma' })
+  assert.deepEqual(result.warnings, [], 'a clean Grbl plasma export raises nothing')
+  assert.ok(result.gcode.includes('G38.2 Z-30.000 F100.000'), 'the probe is written')
+  assert.ok(result.gcode.includes('G10 L20 P0 Z0.000'), 'the sheet zero is set')
+  assert.ok(result.gcode.includes('M3 S1000'), 'the torch is M3')
+  assert.ok(result.gcode.includes('G4 P0.200'), 'the pierce dwell is written')
+  assert.ok(result.gcode.includes('G1 Z1.500 F2000.000'), 'the drop to cut height runs at the plunge feed')
+  assert.ok(!/\bM4\b/.test(result.gcode), 'the torch is never M4')
+  assert.ok(result.gcode.includes('; Experimental plasma output: not verified on a real plasma table'))
+}
+console.log('grblPlasmaMachine.test.ts: Grbl plasma schema, parity, form and torch-sequence assertions passed')

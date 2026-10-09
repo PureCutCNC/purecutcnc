@@ -82,13 +82,21 @@ export function exportPlasma(spec: PlasmaExportSpec): PlasmaExport {
   const base = newProject('Plasma export', spec.units)
   base.stock.thickness = spec.thickness
   // Project Y runs down the sheet; a machine origin 200 mm below the top
-  // edge keeps every scenario on the positive quadrant of the sim table.
-  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units) }
+  // edge keeps every scenario on the positive quadrant of the sim table. Z
+  // sits on the stock top — the operator touch-off — so G-code piercing
+  // (#983) emits its safe height in the operator's own zero rather than the
+  // pre-thickness default.
+  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units), z: spec.thickness }
   base.tools = spec.operations.map((op, index) => ({
     ...defaultPlasmaTool(spec.units),
     id: `torch-${index + 1}`,
     name: `Torch ${index + 1}`,
     qtplasmacMaterialNumber: 1,
+    // G-code-owned piercing drops from pierce height at the tool's plunge feed
+    // (#983); controller piercing ignores it and emits no feed word. The
+    // bundled example tool leaves it unset, so a scenario that cuts through the
+    // Grbl machine needs one or the drop would carry F0.
+    defaultPlungeFeed: convertLength(2000, 'mm', spec.units),
     ...op.tool,
   }))
   const project: Project = projectWithFeatures(base, spec.features.map((f) => sheetFeature(f.id, f.operation, f.profile, spec.thickness)))

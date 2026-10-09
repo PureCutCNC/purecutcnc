@@ -44,12 +44,12 @@
  */
 
 import type { Operation, Project } from '../../types/project'
-import type { DrillCycle, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
+import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
-import type { MachineDefinition, OperationMotionTrace, PostProcessorInput } from './types'
+import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
@@ -142,11 +142,10 @@ export interface SequenceCapabilities {
   coolant: boolean
   /** False when this definition cannot execute a requested tool change. */
   toolChange?: boolean
-  /** Metadata-only plasma support: the definition describes a plasma table
-   *  whose torch path is not written yet (G-code piercing, #983). */
-  plasmaOutputPending?: boolean
-  /** A plasma table whose torch path is written (issue #959). */
+  /** A plasma table whose torch path the controller owns (QtPlasmaC, #959). */
   plasmaTorch?: boolean
+  /** A plasma table whose torch path the program owns (G-code piercing, #983). */
+  plasmaGcode?: boolean
 }
 
 /**
@@ -158,7 +157,7 @@ export function planProgramSequence(
   capabilities: SequenceCapabilities,
 ): OperationSequence[] {
   const { project, operations, options } = input
-  if (capabilities.plasmaTorch) {
+  if (capabilities.plasmaTorch || capabilities.plasmaGcode) {
     return planPlasmaSequence(input, capabilities)
   }
   let currentToolId: string | null = null
@@ -168,7 +167,6 @@ export function planProgramSequence(
 
   return operations.map(({ operation, tool }, opIndex) => {
     const warnings: ToolpathWarning[] = []
-    if (opIndex === 0 && capabilities.plasmaOutputPending) warnings.push({ code: 'postPlasmaOutputPending' })
     const toolIndex = project.tools.findIndex((candidate) => candidate.id === tool.id) + 1
     const rpm = operation.rpm || tool.defaultRpm
 
@@ -236,16 +234,19 @@ export function planProgramSequence(
 }
 
 /**
- * The plasma half of `planProgramSequence` (issue #959). A torch is not a
+ * The plasma half of `planProgramSequence` (issues #959, #983). A torch is not a
  * spindle: nothing is started, restated or stopped around an operation, and no
  * tool-change or coolant word is written. The torch goes on and off per cut
- * (`planPlasmaPath`), and what changes between operations is the material.
+ * (`planPlasmaPath`). Controller piercing changes the material between
+ * operations; G-code piercing owns the heights itself and has no material
+ * table, so the tool's QtPlasmaC material number is ignored.
  */
 function planPlasmaSequence(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'options'>,
   capabilities: SequenceCapabilities,
 ): OperationSequence[] {
   const { project, operations, options } = input
+  const controllerPiercing = capabilities.plasmaTorch === true
   let currentToolId: string | null = null
   let selectedMaterial: number | null = null
   let coolantWarned = false
@@ -281,10 +282,12 @@ function planPlasmaSequence(
     // A stored number outside the selectable range is not a material: 0 is the
     // simulator's "nothing selected" sentinel and 1000000+ belongs to
     // QtPlasmaC's own temporary materials, which CAM must not emit. Both are
-    // reported exactly like an absent number, so the export blocks.
+    // reported exactly like an absent number, so the export blocks. Only
+    // controller piercing reads the field; a G-code pierce machine has no
+    // material table to select on (#983).
     const material = tool.qtplasmacMaterialNumber
-    const materialNumber = isSelectableQtPlasmacMaterialNumber(material) ? material : null
-    if (materialNumber === null) {
+    const materialNumber = controllerPiercing && isSelectableQtPlasmacMaterialNumber(material) ? material : null
+    if (controllerPiercing && materialNumber === null) {
       warnings.push({ code: 'postPlasmaMaterialMissing', params: { operation: operation.name, tool: tool.name } })
     }
     const selectMaterial = materialNumber !== null && materialNumber !== selectedMaterial
@@ -343,6 +346,71 @@ export function planPlasmaPath(steps: readonly FittedMoveDescriptor[]): PlasmaPa
 /** Two machine points on the same spot, within the fitting tolerance. */
 function sameMachinePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
   return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6 && Math.abs(a.z - b.z) <= 1e-6
+}
+
+// ── G-code-owned piercing (#983) ──────────────────────────────
+
+/** The heights and touch-off of one G-code-pierced plasma cut, in output units. */
+export interface PlasmaGcodeCut {
+  /** Safe height from the toolpath, in the operator's own zero (machine Z). */
+  safeZ: number
+  /** Pierce height above the sheet surface, from the tool. */
+  pierceHeight: number
+  /** Cut height above the sheet surface, from the tool. */
+  cutHeight: number
+  /** Seconds to dwell after the torch fires. */
+  pierceDelay: number
+  /** Probe distance below the current Z zero. */
+  probeDepth: number
+  /** Probe feed. */
+  probeFeed: number
+  /** Travel of a floating head before its switch trips; 0 when the definition
+   *  leaves the optional offset out. */
+  switchOffset: number
+}
+
+/**
+ * The machine-coordinate safe Z a plasma operation retracts to.
+ *
+ * Every rapid in the #957 toolpath ends at safe height — the retract after a
+ * contour and the travel to the next pierce alike — so any rapid's Z is it.
+ * The first contour has no travel rapid before its plunge, which is why this
+ * reads the fitted steps rather than the travel items `planPlasmaPath` builds.
+ */
+export function plasmaSafeZ(steps: readonly FittedMoveDescriptor[]): number | null {
+  for (const step of steps) {
+    if (step.kind === 'linear' && step.moveKind === 'rapid') return step.point.z
+  }
+  return null
+}
+
+/**
+ * Resolve one G-code-pierced plasma cut into the numbers the emitter writes
+ * (#983).
+ *
+ * Heights come from the tool, not the toolpath: the probe sets Z zero on the
+ * sheet, so pierce and cut heights are measured from the sheet surface and are
+ * emitted as configured — even when pierce height is the lower of the two. The
+ * touch-off fields are stored in millimetres and millimetres per minute
+ * whatever the project units, so they are converted here, once, and an absent
+ * switch offset is 0.
+ */
+export function planPlasmaGcodeCut(args: {
+  tool: NormalizedTool
+  touchOff: PlasmaTouchOff
+  units: 'mm' | 'inch'
+  safeZ: number
+}): PlasmaGcodeCut {
+  const { tool, touchOff, units, safeZ } = args
+  return {
+    safeZ,
+    pierceHeight: tool.pierceHeight ?? 0,
+    cutHeight: tool.cutHeight ?? 0,
+    pierceDelay: tool.pierceDelay ?? 0,
+    probeDepth: convertLength(touchOff.probeDepth, 'mm', units),
+    probeFeed: convertLength(touchOff.probeFeed, 'mm', units),
+    switchOffset: convertLength(touchOff.switchOffset ?? 0, 'mm', units),
+  }
 }
 
 /**

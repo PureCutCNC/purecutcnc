@@ -34,12 +34,14 @@ import {
   createEmittedValueFormatter,
   planDrillCycles,
   planOperationMotion,
+  planPlasmaGcodeCut,
   planPlasmaPath,
   planProgramSequence,
   planProgramSetup,
+  plasmaSafeZ,
   splitRapid,
 } from './motionPipeline'
-import type { PlasmaOperationSequence } from './motionPipeline'
+import type { OperationSequence } from './motionPipeline'
 import { emitOpenSbpProgram } from './opensbpEmitter'
 
 // What the emitter has written so far. Which tool is held and whether the
@@ -242,16 +244,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   // 4. Operations
-  // A plasma table either has its torch path written (controller piercing,
-  // #959) or is still metadata only (G-code piercing, #983).
+  // A plasma table's torch path is written in both pierce modes: controller
+  // piercing (QtPlasmaC, #959) and G-code piercing (Grbl, #983). They differ
+  // only in who owns pierce height, delay and the touch-off.
   const plasma = resolveMachineKind(definition) === 'plasma' ? definition.plasma : undefined
   const plasmaTorch = plasma?.pierceMode === 'controller'
-  const plasmaOutputPending = plasma !== undefined && !plasmaTorch
+  const plasmaGcode = plasma?.pierceMode === 'gcode'
   const sequence = planProgramSequence(input, {
     coolant: definition.coolant !== null,
-    plasmaOutputPending,
     plasmaTorch,
-    toolChange: !plasmaOutputPending || [
+    plasmaGcode,
+    toolChange: [
       ...definition.toolChange.commands,
       ...(definition.toolChange.pauseAfterChange ? [definition.toolChange.pauseCommand] : []),
     ].some((line) => {
@@ -336,23 +339,28 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     emitLine(`${definition.program.commentPrefix} ${safeCommentText(text)}${suffix ? ` ${suffix}` : ''}`)
   }
 
-  // One plasma operation with the torch path written (issue #959). QtPlasmaC
-  // owns pierce height, pierce delay, cut height and THC through its material
-  // table, so the program is XY motion, the material handshake and torch
-  // on/off: no Z word (its load filter strips Z motion anyway) and no numeric
-  // F on a cut (the cut runs at the material's feed).
+  // One plasma operation whose torch path is written. Controller piercing
+  // (#959) leaves pierce height, delay and cut height to QtPlasmaC's material
+  // table: the program is XY motion, the material handshake and torch on/off,
+  // with no Z word (its load filter strips Z motion) and no numeric F on a cut.
+  // G-code piercing (#983) owns all of it: per cut the program probes the
+  // sheet, sets Z zero on it, then pierces, dwells, drops to cut height and
+  // cuts at the cut feed. Safe Z is the toolpath's own safe height in the
+  // operator's zero; every height after the touch-off is measured from the
+  // sheet surface the probe just found.
   const emitPlasmaOperation = (
     operation: PostProcessorInput['operations'][number]['operation'],
     tool: PostProcessorInput['operations'][number]['tool'],
     toolpath: PostProcessorInput['operations'][number]['toolpath'],
-    sequence: PlasmaOperationSequence,
+    step: OperationSequence,
     block: NonNullable<MachineDefinition['plasma']>,
   ) => {
+    const sequence = step.plasma!
     const kerf = `${formatGCodeNumber(tool.diameter, definition, outputUnits)} ${outputUnits}`
-    comment(sequence.materialNumber === null
-      ? `Plasma: kerf ${kerf}, no material number`
-      : `Plasma: kerf ${kerf}, material ${sequence.materialNumber}`)
-    if (sequence.selectMaterial && sequence.materialNumber !== null) {
+    comment(block.pierceMode === 'controller'
+      ? `Plasma: kerf ${kerf}${sequence.materialNumber === null ? ', no material number' : `, material ${sequence.materialNumber}`}`
+      : `Plasma: kerf ${kerf}`)
+    if (block.pierceMode === 'controller' && sequence.selectMaterial && sequence.materialNumber !== null) {
       // Select, wait, then take the feed: the interpreter reads ahead, so a
       // feed word ahead of the wait takes the previous material's feed.
       emitLine(substituteTemplates(block.materialSelectCommand ?? '', { materialNumber: sequence.materialNumber }))
@@ -376,21 +384,66 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
       }
     }
-    for (const item of planPlasmaPath(plan.steps)) {
-      if (item.kind === 'travel') {
-        travelTo(item.to)
-        continue
-      }
-      travelTo(item.pierce)
-      emitLine(block.torchOnCommand)
-      for (const move of item.moves) {
-        if (move.kind === 'linear') {
-          emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y })
-        } else {
-          emitArcLine(move)
+    if (block.pierceMode === 'gcode') {
+      // The touch-off block is required for this mode by the schema; the guard
+      // covers a definition that reached the emitter without validation.
+      const touchOff = block.touchOff
+      const safeZ = plasmaSafeZ(plan.steps)
+      if (touchOff && safeZ !== null) {
+        const heights = planPlasmaGcodeCut({ tool, touchOff, units: outputUnits, safeZ })
+        const probe = `${touchOff.probeCommand} Z-${formatGCodeNumber(heights.probeDepth, definition, outputUnits)}`
+          + ` F${formatGCodeNumber(heights.probeFeed, definition, outputUnits)}`
+        // The offset is applied negatively: the sheet surface is that far above
+        // where the switch tripped. An absent offset is 0.
+        const setZero = `${touchOff.setZeroCommand} Z${formatGCodeNumber(-heights.switchOffset, definition, outputUnits)}`
+        const dwell = `G4 P${formatGCodeNumber(heights.pierceDelay, definition, outputUnits)}`
+        for (const item of planPlasmaPath(plan.steps)) {
+          // A cut does its own safe-Z and pierce rapids; the travel items exist
+          // for the controller path, where the torch fires on XY alone. The
+          // safe rapid is skipped when the retract after the previous cut
+          // already put the head there.
+          if (item.kind !== 'cut') continue
+          if (state.currentPosition?.z !== heights.safeZ) {
+            emitMotionLine(definition.motion.rapidCommand, { z: heights.safeZ })
+          }
+          emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
+          emitLine(probe)
+          // G38.2 leaves the controller in its own motion mode: the pierce
+          // rapid must spell G0 rather than continue the modal one.
+          state.motionCommand = null
+          emitLine(setZero)
+          emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
+          emitLine(block.torchOnCommand)
+          emitLine(dwell)
+          emitMotionLine(definition.motion.linearCommand, { z: heights.cutHeight }, step.plungeFeed)
+          for (const move of item.moves) {
+            if (move.kind === 'linear') {
+              emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y }, step.cutFeed)
+            } else {
+              emitArcLine(move, step.cutFeed)
+            }
+          }
+          emitLine(block.torchOffCommand)
+          emitMotionLine(definition.motion.rapidCommand, { z: heights.safeZ })
         }
       }
-      emitLine(block.torchOffCommand)
+    } else {
+      for (const item of planPlasmaPath(plan.steps)) {
+        if (item.kind === 'travel') {
+          travelTo(item.to)
+          continue
+        }
+        travelTo(item.pierce)
+        emitLine(block.torchOnCommand)
+        for (const move of item.moves) {
+          if (move.kind === 'linear') {
+            emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y })
+          } else {
+            emitArcLine(move)
+          }
+        }
+        emitLine(block.torchOffCommand)
+      }
     }
     if (plan.trace) {
       motionTraces.push(plan.trace)
@@ -425,7 +478,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     if (step.plasma && plasma) {
-      emitPlasmaOperation(operation, tool, toolpath, step.plasma, plasma)
+      emitPlasmaOperation(operation, tool, toolpath, step, plasma)
       return
     }
 
