@@ -25,6 +25,7 @@ import {
   type DimensionAnnotation,
   type Project,
 } from '../types/project'
+import { switchWorkspaceFace } from '../store/workspaceFace'
 import { useProjectStore } from '../store/projectStore'
 import type { ProjectStore } from '../store/types'
 import {
@@ -694,3 +695,24 @@ function getProject(): Project {
 }
 
 console.log('\nAll driving dimension resolver tests passed.')
+
+// #994: a newly placed annotation with any foreign construction anchor is a measurement.
+for (const face of ['top', 'bottom'] as const) {
+  resetStore()
+  const guideId = addRect('Construction', 20, 30, 10, 8)
+  useProjectStore.getState().updateFeature(guideId, { operation: 'construction' })
+  if (face === 'top') useProjectStore.getState().setFeatureAuthoringFace([guideId], 'bottom')
+  else switchWorkspaceFace('bottom')
+  const project = useProjectStore.getState().project
+  const annotation = linearAnnotation('foreign-measurement', 'horizontal', guideId, 0, 1)
+  const snapshot = JSON.stringify(project)
+  const resolved = resolveDrivingDimensionEdit(annotation, project)
+  assert(resolved !== null && 'disabled' in resolved && resolved.reason === 'Construction reference is on the other face', `${face}: foreign construction measurement cannot drive`)
+  const withForeignB = { ...annotation, a: { kind: 'free' as const, point: { x: 5, y: 5 } } }
+  const bResolved = resolveDrivingDimensionEdit(withForeignB, project)
+  assert(bResolved !== null && 'disabled' in bResolved, 'a foreign second anchor cannot create a driving relationship')
+  assert(JSON.stringify(project) === snapshot, 'resolving a measurement changes no project geometry')
+  switchWorkspaceFace(face === 'top' ? 'bottom' : 'top')
+  const own = resolveDrivingDimensionEdit(annotation, useProjectStore.getState().project)
+  assert(own !== null && !('disabled' in own), 'switching to the authoring face restores the existing driving edit')
+}

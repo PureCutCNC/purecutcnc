@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
+import { seedConstructionReferences, pickReference, referenceSnapshot } from './constructionReferences.helpers'
 import { expect, test } from './fixtures'
-import { getFeatureCount, selectFeatures } from './helpers'
+import { getFeatureCount, getProject, selectFeatures } from './helpers'
 import { canvasWorldPoint, clickCanvasWorld, seedObviousOverlapFeatureProject, seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
 
 const PANEL = '.canvas-workflow-panel--feature-distribution'
@@ -174,4 +175,82 @@ test.describe('tablet command bar', () => {
     await app.page.locator('.tool-rail__popover').getByRole('button', { name: 'Grid', exact: true }).click()
     await expect(app.page.locator(PANEL)).toBeVisible()
   })
+})
+
+for (const face of ['top', 'bottom'] as const) {
+  for (const overlap of [false, true]) {
+    test(`#994 ${face}/${overlap ? 'overlap' : 'direct'}: a foreign construction guide applies and undoes through the canvas`, async ({ app, ui }) => {
+      const options = { face, axis: 'y' as const, overlap }
+      await seedConstructionReferences(app.page, options)
+      const before = await getProject(app.page)
+      const guide = referenceSnapshot(before)
+      await selectFeatures(app.page, ['reference-source'])
+      await app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+      await app.page.getByRole('button', { name: 'Along path', exact: true }).click()
+      const panel = app.page.locator(PANEL)
+      await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
+      await pickReference(app.page.locator('canvas.sketch-canvas'), options, overlap ? 40 : 35, 15)
+      if (overlap) {
+        await expect(ui.overlapFeaturePicker.root(app.page)).toHaveCount(0)
+        await expect(app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]')).not.toHaveClass(/tree-row--selected/)
+      }
+      await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
+      await expect(panel.getByText('reference-guide', { exact: true })).toBeVisible()
+      expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+      await panel.getByLabel('Instances (incl. original)').fill('2')
+      await panel.getByRole('button', { name: 'Create copies', exact: true }).click()
+      const after = await getProject(app.page)
+      expect((after.features as unknown[]).length).toBe((before.features as unknown[]).length + 1)
+      expect(referenceSnapshot(after)).toEqual(guide)
+      await app.page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+      expect((await getProject(app.page)).features).toEqual(before.features)
+      expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+    })
+  }
+}
+
+test.describe('#994 tree guide touch capture', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
+  test('a visible foreign construction row can be a guide with the canvas overlay hidden', async ({ app, ui }) => {
+    await seedConstructionReferences(app.page, { face: 'bottom', axis: 'x' })
+    const guide = referenceSnapshot(await getProject(app.page))
+    await selectFeatures(app.page, ['reference-source'])
+    await app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().tap()
+    await app.page.getByRole('button', { name: 'Along path', exact: true }).tap()
+    const panel = app.page.locator(PANEL)
+    await panel.getByRole('button', { name: 'Pick guide', exact: true }).tap()
+    await panel.getByRole('button', { name: 'Cancel picking', exact: true }).tap()
+    const row = app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]')
+    await app.page.getByRole('button', { name: 'Open project panel', exact: true }).tap()
+    await row.tap()
+    await app.page.getByRole('button', { name: 'Close project panel', exact: true }).tap()
+    await expect(row).not.toHaveClass(/tree-row--selected/)
+    await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
+    await ui.face.otherSideToggle(app.page).tap()
+    await panel.getByRole('button', { name: 'Pick guide', exact: true }).tap()
+    await app.page.getByRole('button', { name: 'Open project panel', exact: true }).tap()
+    await row.tap()
+    await app.page.getByRole('button', { name: 'Close project panel', exact: true }).tap()
+    await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
+    await expect(row).not.toHaveClass(/tree-row--selected/)
+    expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+    await panel.getByRole('button', { name: 'Cancel', exact: true }).tap()
+    expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+  })
+})
+
+test('#994 a hidden construction row cannot supply a tree guide', async ({ app }) => {
+  await seedConstructionReferences(app.page, { face: 'top', axis: 'x', hidden: true })
+  const before = await getProject(app.page)
+  await selectFeatures(app.page, ['reference-source'])
+  await app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+  await app.page.getByRole('button', { name: 'Along path', exact: true }).click()
+  const panel = app.page.locator(PANEL)
+  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
+  await app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]').click()
+  await expect(panel.getByRole('button', { name: 'Cancel picking', exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
+  await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
+  await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect((await getProject(app.page)).features).toEqual(before.features)
 })

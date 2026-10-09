@@ -35,6 +35,8 @@ import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import type { ReferencePickIntent } from './referencePickIntent'
 import {
   canvasToWorld,
   computeBaseViewTransform,
@@ -114,6 +116,8 @@ export interface PointerGesturesCtx {
   suppressClickRef: MutableRefObject<boolean>
 
   // Other refs
+  getReferencePickIntent: () => ReferencePickIntent
+  showOtherSide: () => boolean
   projectRef: MutableRefObject<Project>
   selectionRef: MutableRefObject<SelectionState>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -267,6 +271,8 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     zoomWindowCurrentRef,
     suppressClickRef,
     projectRef,
+    getReferencePickIntent,
+    showOtherSide,
     selectionRef,
     viewStateRef,
     canvasRef,
@@ -451,7 +457,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const control = hitEditableControl(point)
     const hitClampId = findHitClampId(world, project.clamps)
     const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, editableProjectFeatures(project), vt)
+    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -636,6 +642,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || constraintPicking
         || radialCenterPicking
         || textCenterPicking
+        || getReferencePickIntent() === 'distribution-guide' || getReferencePickIntent() === 'text-guide'
       )
     const resolvedSnap = shouldPreviewSnap
       ? snap.resolveCurrentSketchSnap(world, vt, {
