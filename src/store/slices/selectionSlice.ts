@@ -977,7 +977,7 @@ export function createSelectionSlice(
     enterSketchEdit: (id) =>
       set((s) => {
         const feature = featureById(s.project, id)
-        if (!feature || feature.locked || isGhostFeature(s.project, feature)) return {}
+        if (!feature || isGhostFeature(s.project, feature)) return {}
         return {
           pendingTransform: null,
           pendingOffset: null,

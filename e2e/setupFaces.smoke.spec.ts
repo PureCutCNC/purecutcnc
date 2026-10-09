@@ -715,3 +715,93 @@ test.describe('#994 landscape construction references', () => {
     })
   }
 })
+
+// #994 review: clipboard placement is local canvas state, but reads the same references.
+for (const face of ['top', 'bottom'] as const) {
+  for (const axis of ['x', 'y'] as const) {
+    test(`#994 clipboard ${face}/${axis}: real paste snaps its placed centre to foreign construction`, async ({ app, ui }) => {
+      const { page } = app
+      const options = { face, axis }
+      await seedConstructionReferences(page, options)
+      const canvas = page.locator('canvas.sketch-canvas')
+      const before = withoutModified(await getProject(page))
+      const refs = referenceSnapshot(before)
+      await featureRow(page, 'reference-source').click()
+      await canvas.focus()
+      await page.keyboard.press('ControlOrMeta+c')
+      await page.keyboard.press('ControlOrMeta+v')
+      const paste = page.locator('.canvas-workflow-panel').filter({ has: page.locator('.canvas-workflow-panel__title', { hasText: 'Paste features' }) })
+      await expect(paste).toBeVisible()
+      const near = await referenceCanvasPoint(canvas, options, 20.3, 15.2)
+      await canvas.hover({ position: near })
+      const previewSnapped = await referenceSnapIndicator(page).count()
+      await canvas.click({ position: near })
+      await expect(paste).toHaveCount(0)
+      const after = await getProject(page)
+      const rows = after.features as SavedFeature[]
+      const originalIds = new Set((before.features as SavedFeature[]).map(row => row.id))
+      const placed = rows.find(row => !originalIds.has(row.id))!
+      expect(placed.authoringFace).toBe(face)
+      expect(placed.transform.e + 82.5).toBeCloseTo(20, 6)
+      expect(placed.transform.f + 42.5).toBeCloseTo(15, 6)
+      expect(previewSnapped).toBe(1)
+      expect(referenceSnapshot(after)).toEqual(refs)
+      await page.keyboard.press('ControlOrMeta+z')
+      expect(withoutModified(await getProject(page))).toEqual(before)
+
+      // Cancellation clears the local reference phase, including the next pointer preview.
+      await featureRow(page, 'reference-source').click()
+      await canvas.focus()
+      await page.keyboard.press('ControlOrMeta+v')
+      await expect(paste).toBeVisible()
+      await canvas.hover({ position: near })
+      await expect(referenceSnapIndicator(page)).toHaveCount(1)
+      await page.keyboard.press('Escape')
+      await expect(paste).toHaveCount(0)
+      await canvas.hover({ position: await referenceCanvasPoint(canvas, options, 20.4, 15.3) })
+      await expect(referenceSnapIndicator(page)).toHaveCount(0)
+      expect(withoutModified(await getProject(page))).toEqual(before)
+
+      // Other side off cannot satisfy point-only snapping; disabling snap permits raw placement.
+      await ui.face.otherSideToggle(page).click()
+      await canvas.focus()
+      await page.keyboard.press('ControlOrMeta+v')
+      await expect(paste).toBeVisible()
+      await canvas.hover({ position: near })
+      await expect(referenceSnapIndicator(page)).toHaveCount(0)
+      await canvas.click({ position: near })
+      await expect(paste).toBeVisible()
+      expect(withoutModified(await getProject(page))).toEqual(before)
+      await page.getByRole('button', { name: 'Disable snapping', exact: true }).click()
+      await canvas.click({ position: near })
+      const raw = ((await getProject(page)).features as SavedFeature[]).find(row => !originalIds.has(row.id))!
+      expect(raw.transform.e + 82.5).toBeCloseTo(20.3, 0)
+      expect(raw.transform.f + 42.5).toBeCloseTo(15.2, 0)
+      expect(Math.hypot(raw.transform.e + 82.5 - 20, raw.transform.f + 42.5 - 15)).toBeGreaterThan(0.15)
+      expect(referenceSnapshot(await getProject(page))).toEqual(refs)
+    })
+  }
+  test(`#994 clipboard ${face}: hidden construction cannot snap a real paste`, async ({ app }) => {
+    const { page } = app
+    const options = { face, axis: 'y' as const, hidden: true }
+    await seedConstructionReferences(page, options)
+    const canvas = page.locator('canvas.sketch-canvas')
+    const before = await getProject(page)
+    await featureRow(page, 'reference-source').click()
+    await canvas.focus()
+    await page.keyboard.press('ControlOrMeta+c')
+    await page.keyboard.press('ControlOrMeta+v')
+    await expect(page.locator('.canvas-workflow-panel').filter({ has: page.locator('.canvas-workflow-panel__title', { hasText: 'Paste features' }) })).toBeVisible()
+    await canvas.hover({ position: await referenceCanvasPoint(canvas, options, 20.3, 15.2) })
+    await expect(referenceSnapIndicator(page)).toHaveCount(0)
+    await pickReference(canvas, options, 20.3, 15.2)
+    expect(withoutModified(await getProject(page))).toEqual(withoutModified(before))
+    await page.getByRole('button', { name: 'Disable snapping', exact: true }).click()
+    await pickReference(canvas, options, 20.3, 15.2)
+    const ids = new Set((before.features as SavedFeature[]).map(row => row.id))
+    const placed = ((await getProject(page)).features as SavedFeature[]).find(row => !ids.has(row.id))!
+    expect(placed.authoringFace).toBe(face)
+    expect(Math.hypot(placed.transform.e + 82.5 - 20, placed.transform.f + 42.5 - 15)).toBeGreaterThan(0.15)
+    expect(referenceSnapshot(await getProject(page))).toEqual(referenceSnapshot(before))
+  })
+}

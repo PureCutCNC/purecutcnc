@@ -17,7 +17,7 @@
 import { strict as assert } from 'node:assert'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore } from '../../store/types'
-import { referencePickIntent } from './referencePickIntent'
+import { createReferencePickContext, referencePickIntent } from './referencePickIntent'
 
 const base = useProjectStore.getState()
 const idle = { ...base, pendingAdd: null, pendingMove: null, pendingTransform: null, pendingOffset: null,
@@ -46,4 +46,18 @@ assert.equal(intent({ pendingSketchEdit: { tool: 'extend', phase: 'pick-subject'
 const constraint: NonNullable<ProjectStore['pendingConstraint']> = { featureId: 'subject', anchor: null, reference: null, session: 1 }
 assert.equal(intent({ pendingConstraint: constraint, pendingTextLayout: text }), null, 'constraint exclusions win over stale reference state')
 assert.equal(intent({ pendingShapeAction: { kind: 'join', entityIds: ['subject'], keepOriginals: true, session: 1 }, pendingFeatureDistribution: distribution }), null, 'join operands stay face-local')
+assert.equal(referencePickIntent(idle, true), 'point', 'local clipboard placement accepts reference points')
+assert.equal(referencePickIntent(idle, false), null, 'cancelled clipboard placement clears reference intent')
+assert.equal(referencePickIntent({ ...idle, pendingConstraint: constraint }, true), null, 'paste cannot bypass constraint exclusion')
+assert.equal(referencePickIntent({ ...idle, pendingSketchEdit: { tool: 'trim', phase: 'pick-subject' } }, true), null, 'paste cannot bypass subject exclusion')
+const savedState = useProjectStore.getState()
+useProjectStore.setState(idle)
+let clipboardPending = false
+const context = createReferencePickContext(() => clipboardPending)
+assert.equal(context.getReferencePickIntent(), null)
+clipboardPending = true
+assert.equal(context.getReferencePickIntent(), 'point', 'context reads the live local paste phase')
+clipboardPending = false
+assert.equal(context.getReferencePickIntent(), null, 'same context observes local cancellation')
+useProjectStore.setState(savedState)
 console.log('referencePickIntent tests passed')

@@ -440,3 +440,29 @@ for (const face of ['top', 'bottom'] as const) {
   store().hoverFeature(foreignId)
   assert(!store().selection.selectedFeatureIds.includes(foreignId) && store().selection.hoveredFeatureId === null, 'ordinary ghost selection and hover remain refused')
 }
+
+// #994 review: locking an own-face sketch does not remove its existing edit session entry.
+for (const face of ['top', 'bottom'] as const) {
+  resetStore()
+  if (face === 'bottom') switchWorkspaceFace('bottom')
+  store().addRectFeature('Locked own sketch', 10, 10, 20, 10, project().stock.thickness)
+  const id = lastFeature().id
+  store().updateFeature(id, { locked: true })
+  useProjectStore.setState({ sketchEditSession: null, pendingSketchEdit: null, pendingTransform: null, pendingOffset: null,
+    history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const before = JSON.stringify(project())
+  store().enterSketchEdit(id)
+  assert(store().selection.mode === 'sketch_edit' && store().sketchEditSession?.entityId === id, `${face}: locked own-face sketch still opens its session`)
+  assert(JSON.stringify(project()) === before && store().history.past.length === 0 && !store().dirty, 'locked entry alone leaves document and history unchanged')
+  const geometryBefore = outlineOf(id)
+  store().moveFeatureControl(id, { kind: 'anchor', index: 1 }, { x: 80, y: 10 })
+  assert(outlineOf(id) === geometryBefore, 'locked control cannot move geometry')
+  store().setSketchEditTool('trim')
+  const pending = JSON.stringify(store().pendingSketchEdit)
+  store().setPendingSketchSubject({ featureId: id, segmentIndex: 0, point: { x: 20, y: 10 }, t: 0.5 })
+  assert(JSON.stringify(store().pendingSketchEdit) === pending, 'locked geometry cannot become a writable trim subject')
+  assert(outlineOf(id) === geometryBefore, 'locked subject refusal preserves geometry')
+  store().cancelPendingSketchEdit()
+  store().cancelSketchEdit()
+  assert(store().sketchEditSession === null && store().selection.mode === 'feature', 'locked session exits normally')
+}

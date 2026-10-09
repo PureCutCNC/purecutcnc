@@ -67,7 +67,7 @@ import { useClickPlacement } from './useClickPlacement'
 import { usePointerGestures } from './usePointerGestures'
 import { useNavigationViewState } from './useNavigationViewState'
 import { useSnapPreview } from './useSnapPreview'
-import { referencePickContext } from './referencePickIntent'
+import { createReferencePickContext } from './referencePickIntent'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
@@ -558,7 +558,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return n === 0 ? t('canvas.dimension.step.firstPoint') : n === 1 ? t('canvas.dimension.step.secondPoint') : t('canvas.dimension.step.setOffset')
   })()
 
-  const snap = useSnapPreview({ ...referencePickContext,
+  const snap = useSnapPreview({ ...createReferencePickContext(() => pendingClipboardPlacementRef.current !== null),
     snapSettingsRef,
     projectRef,
     selectionRef,
@@ -2765,7 +2765,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     resetLock,
   })
 
-  const gestures = usePointerGestures({ ...referencePickContext,
+  const gestures = usePointerGestures({ ...createReferencePickContext(() => pendingClipboardPlacementRef.current !== null),
     isDraggingNodeRef,
     dragStartWorldRef,
     touchDragPendingRef,
@@ -2844,7 +2844,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     onZoomWindowComplete,
   })
 
-  const clickPlacement = useClickPlacement({ ...referencePickContext,
+  const clickPlacement = useClickPlacement({ ...createReferencePickContext(() => pendingClipboardPlacementRef.current !== null),
     suppressClickRef,
     didPanRef,
     isDraggingNodeRef,

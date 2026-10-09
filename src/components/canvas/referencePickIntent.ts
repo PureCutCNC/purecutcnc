@@ -26,12 +26,12 @@ type ReferencePickState = Pick<ProjectStore,
 >
 
 /** The existing workflow decides whether the next pick reads or edits geometry. */
-export function referencePickIntent(state: ReferencePickState): ReferencePickIntent {
+export function referencePickIntent(state: ReferencePickState, clipboardPlacementPending = false): ReferencePickIntent {
   if (state.pendingConstraint || state.pendingShapeAction) return null
   if (state.pendingSketchEdit) return state.pendingSketchEdit.phase === 'pick-reference' ? 'segment' : null
   if (state.pendingFeatureDistribution?.pickTarget === 'guide') return 'distribution-guide'
   if (state.pendingTextLayout?.pickTarget === 'guide') return 'text-guide'
-  if (state.pendingAdd || state.pendingMove || state.pendingTransform || state.pendingOffset
+  if (clipboardPlacementPending || state.pendingAdd || state.pendingMove || state.pendingTransform || state.pendingOffset
     || state.pendingDimension || state.tapeMeasure
     || state.pendingFeatureDistribution?.pickTarget === 'radial-center'
     || state.pendingTextLayout?.pickTarget === 'center'
@@ -40,7 +40,11 @@ export function referencePickIntent(state: ReferencePickState): ReferencePickInt
 }
 
 /** Live reads keep preview, pointer-down and click on the same pending phase. */
-export const referencePickContext = {
-  getReferencePickIntent: () => referencePickIntent(useProjectStore.getState()),
-  showOtherSide: () => useFaceViewStore.getState().showOtherSide,
+export function createReferencePickContext(isClipboardPlacementPending: () => boolean = () => false) {
+  return {
+    getReferencePickIntent: () => referencePickIntent(useProjectStore.getState(), isClipboardPlacementPending()),
+    showOtherSide: () => useFaceViewStore.getState().showOtherSide,
+  }
 }
+
+export const referencePickContext = createReferencePickContext()

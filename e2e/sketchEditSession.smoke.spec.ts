@@ -243,3 +243,24 @@ for (const face of ['top', 'bottom'] as const) {
   })
 }
 }
+
+// #994 review: the enabled Properties action retains locked own-face entry.
+for (const face of ['top', 'bottom'] as const) {
+  test(`#994 locked own-face ${face}: Properties Edit sketch opens and cancels without writes`, async ({ app }) => {
+    const { page } = app
+    const saved = await seedConstructionReferences(page, { face, axis: 'x' })
+    saved.features = (saved.features as Array<{ id: string; locked: boolean }>).map(row => row.id === 'reference-source' ? { ...row, locked: true } : row)
+    await seedProject(page, JSON.stringify(saved))
+    const before = await getProject(page)
+    await page.locator('.tree-row--feature[data-feature-id="reference-source"]').click()
+    const edit = page.locator('.properties-panel').getByRole('button', { name: 'Edit sketch', exact: true })
+    await expect(edit).toBeEnabled()
+    await edit.click()
+    await expect(page.locator(EDIT_PANEL)).toBeVisible()
+    expect(await getSketchEditState(page)).toMatchObject({ mode: 'sketch_edit' })
+    await page.locator(EDIT_PANEL).getByRole('button', { name: 'Cancel editing', exact: true }).click()
+    await expect(page.locator(EDIT_PANEL)).toHaveCount(0)
+    const after = await getProject(page)
+    expect({ ...after, meta: { ...(after.meta as object), modified: '' } }).toEqual({ ...before, meta: { ...(before.meta as object), modified: '' } })
+  })
+}
