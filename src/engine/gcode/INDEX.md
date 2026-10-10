@@ -113,7 +113,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `plasmaGcodeFeedRegression.test.ts` — the #983 drop feed through the real
   store → generation → export path, with no fixture feed override: the example
   torch drops at its own 300 mm/min, so a first export from a new project
-  (Add operation importing from the bundled library) is not blocked and every
+  (Add operation importing from the bundled library, which gives the entry
+  written in the project's units, as it stands) is not blocked and every
   drop spells it, `F300.000` or `F11.8110`; a torch with no drop feed — cleared
   by the operator, stored without the field or with 0, or imported from a
   library entry that lacks it — still blocks; configuring the tool before or

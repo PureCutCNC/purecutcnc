@@ -45,7 +45,7 @@ import { normalizeProject } from '../../store/helpers/projectFormat'
 import type { ProjectFormatInput } from '../../store/helpers/projectFormat'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { sheetFeature, exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../test/plasmaExportFixtures'
-import { defaultPlasmaTool } from '../../toolPolicy'
+import { defaultPlasmaTool, samePlasmaParameters } from '../../toolPolicy'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength } from '../../utils/units'
 import { parseToolLibraryFile, type ToolLibraryEntry } from '../../toolLibrary'
@@ -406,6 +406,17 @@ async function main(): Promise<void> {
       const { tools, operations } = useProjectStore.getState().project
       const torches = tools.filter((tool: Tool) => tool.type === 'plasma')
       assert.equal(torches.length, 1, `${units}: one torch was imported`)
+      // The library holds the example once per unit. The project gets the one
+      // written in its own units, as it stands: its name, its exact values,
+      // and still the same tool as that library entry.
+      const entry = bundledLibrary.tools.find((tool) => tool.type === 'plasma' && tool.units === units)
+      assert.ok(entry, `${units}: the bundled library has an example torch in ${units}`)
+      assert.equal(torches[0].name, entry.name, `${units}: the torch is the ${units} entry`)
+      assert.equal(/inch units/.test(torches[0].name), units === 'inch', `${units}: and is named for its own units`)
+      for (const field of ['units', 'diameter', 'defaultFeed', 'defaultPlungeFeed', 'pierceHeight', 'cutHeight', 'pierceDelay'] as const) {
+        assert.equal(torches[0][field], entry[field], `${units}: ${field} is the entry's own value`)
+      }
+      assert.equal(samePlasmaParameters(torches[0], entry), true, `${units}: the torch matches its library entry`)
       assert.ok(Math.abs(torches[0].defaultPlungeFeed - convertLength(300, 'mm', units)) < 1e-9,
         `${units}: the imported torch carries 300 mm/min, got ${torches[0].defaultPlungeFeed}`)
       assert.equal(operations[0].plungeFeed, torches[0].defaultPlungeFeed, `${units}: the operation is seeded from it`)
