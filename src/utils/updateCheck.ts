@@ -178,6 +178,20 @@ export function classifyManifest(
   return { kind: 'up-to-date', current: currentVersion, latest }
 }
 
+/**
+ * Whether a desktop deploy may replace a published manifest with `version`:
+ * only with the same or a newer one (issue #1000). The deploy workflows ask
+ * this before they write downloads/{channel}/{platform}.json, so a tester
+ * build with a deliberately low version (`0.0.0-release-0.6.0-preview.1`) or
+ * an old version dispatched by mistake leaves the public download in place.
+ * It uses `compareVersions`, so CI and the update check agree on "newer". A
+ * missing or versionless manifest is always replaced.
+ */
+export function manifestAcceptsVersion(manifest: DownloadManifest | null, version: string): boolean {
+  if (!manifest || !manifest.version) return true
+  return compareVersions(version, manifest.version) >= 0
+}
+
 /** Map a webview userAgent to a manifest platform key. */
 export function detectPlatform(
   userAgent: string = typeof navigator !== 'undefined' ? navigator.userAgent : ''

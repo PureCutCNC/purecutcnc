@@ -23,6 +23,7 @@
 import {
   compareVersions,
   classifyManifest,
+  manifestAcceptsVersion,
   detectPlatform,
   checkDesktopUpdate,
   loadChannel,
@@ -101,6 +102,28 @@ function testClassify() {
   const blank = classifyManifest('1.0.0', {}, 'stable')
   assert(blank.kind === 'no-release', 'versionless manifest = no-release')
   console.log('testClassify PASS')
+}
+
+// ---------------------------------------------------------------------------
+// manifestAcceptsVersion (deploy-side gate, issue #1000)
+// ---------------------------------------------------------------------------
+
+function testManifestAcceptsVersion() {
+  const published: DownloadManifest = { version: '0.5.1-rc.1' }
+  assert(manifestAcceptsVersion(published, '0.5.1-rc.2'), 'newer prerelease replaces the manifest')
+  assert(manifestAcceptsVersion(published, '0.6.0-rc.1'), 'newer core replaces the manifest')
+  assert(manifestAcceptsVersion(published, '0.5.1-rc.1'), 'the same version may be re-published')
+  assert(
+    !manifestAcceptsVersion(published, '0.0.0-release-0.6.0-preview.1'),
+    'a tester build below the published version keeps the manifest'
+  )
+  assert(!manifestAcceptsVersion(published, '0.5.0'), 'an older release keeps the manifest')
+  assert(!manifestAcceptsVersion({ version: '0.5.1' }, '0.5.1-rc.2'), 'a prerelease of the published core keeps the manifest')
+  assert(manifestAcceptsVersion({ version: 'v0.5.1' }, '0.5.1'), 'leading v in the manifest is tolerated')
+
+  assert(manifestAcceptsVersion(null, '0.0.0-release-0.6.0-preview.1'), 'no manifest yet: any version is written')
+  assert(manifestAcceptsVersion({}, '0.0.1'), 'versionless manifest is replaced')
+  console.log('testManifestAcceptsVersion PASS')
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +247,7 @@ testCompareCore()
 testComparePrefixAndShape()
 testComparePrerelease()
 testClassify()
+testManifestAcceptsVersion()
 testDetectPlatform()
 testChannelPersistence()
 await testCheckDesktopUpdate()

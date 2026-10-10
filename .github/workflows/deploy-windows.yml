@@ -76,7 +76,15 @@ jobs:
           token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
           path: pages-repo
 
+      - name: Check Windows download manifest version
+        id: manifest-gate
+        uses: ./.github/actions/download-manifest-gate
+        with:
+          version: ${{ inputs.version }}
+          platform: windows
+
       - name: Write Windows download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: v${{ inputs.version }}
@@ -116,6 +124,7 @@ jobs:
           "
 
       - name: Commit and push Windows download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         shell: bash
         run: |
           cd pages-repo

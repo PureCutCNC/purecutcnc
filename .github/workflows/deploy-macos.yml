@@ -71,7 +71,15 @@ jobs:
           token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
           path: pages-repo
 
+      - name: Check macOS download manifest version
+        id: manifest-gate
+        uses: ./.github/actions/download-manifest-gate
+        with:
+          version: ${{ inputs.version }}
+          platform: macos
+
       - name: Write macOS download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: v${{ inputs.version }}
@@ -105,6 +113,7 @@ jobs:
           "
 
       - name: Commit and push macOS download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         run: |
           cd pages-repo
           git config user.name "github-actions[bot]"
