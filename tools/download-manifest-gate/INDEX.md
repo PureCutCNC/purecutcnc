@@ -7,3 +7,5 @@
 A tester build dispatched from a feature branch uses a version below everything published, such as `0.0.0-release-0.6.0-preview.1`: its installer is built and attached to a GitHub prerelease, and the public downloads page and update channel stay as they are.
 
 The gate also refuses to move a manifest back on purpose. To point a channel at an earlier version again, edit that manifest in the pages repo by hand.
+
+When the gate step fails, the installer is already on the release but the job is red and the manifest untouched. Repair or delete the manifest it names in the pages repo (or fix the pages checkout path), then re-run the job, which rebuilds.

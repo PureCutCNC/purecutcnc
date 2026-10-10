@@ -28,7 +28,8 @@
 import { appendFileSync } from 'node:fs'
 import { GateError, decideManifestPublish } from './gate.ts'
 
-const [platform = '', version = '', pagesDir = 'pages-repo'] = process.argv.slice(2)
+const [platform = '', rawVersion = '', pagesDir = 'pages-repo'] = process.argv.slice(2)
+const version = rawVersion.trim()
 
 try {
   const decision = decideManifestPublish({ pagesDir, platform, version })

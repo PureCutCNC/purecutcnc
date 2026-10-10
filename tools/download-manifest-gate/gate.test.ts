@@ -81,7 +81,7 @@ try {
   assert.equal(decide('windows', '0.6.0-rc.1').publish, true)
   assert.equal(decide('windows', '0.6.0').publish, true, 'a newer stable release replaces the stable manifest')
   assert.equal(decide('windows', 'v0.6.0').publish, true, 'a leading v is tolerated')
-  assert.equal(decide('windows', ' 0.6.0-rc.1 ').channel, 'snapshot', 'the version is trimmed')
+  assert.equal(decide('windows', ' 0.5.1-rc.1 ').publish, true, 'the version is trimmed before it is compared')
 
   // Channels are independent: a prerelease is compared with the snapshot
   // manifest only, whatever stable holds.
