@@ -119,7 +119,6 @@ const fixture = CORPUS.find((entry) => entry.name === 'sbp-mm-tool-change')
 assert.ok(fixture)
 const rendered = renderCase({ ...fixture, machineId: 'qtplasmac' })
 const output = rendered.gcode
-assert.equal(rendered.warnings.filter((warning) => warning.includes('postPlasmaOutputPending')).length, 0, 'the torch path is written, so nothing is pending')
 assert.ok(rendered.warnings.length > 0 && rendered.warnings.every((warning) => warning.includes('postPlasmaOperationSkipped')), 'every milling operation is skipped')
 for (const word of ['G92.1', 'G97', 'M52 P1', '#<holes> = 1']) assert.ok(output.includes(word), 'QtPlasmaC preamble includes ' + word)
 assert.ok(!/^G[0-3]\b/m.test(output), 'skipped operations export no motion')

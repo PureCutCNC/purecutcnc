@@ -306,7 +306,7 @@ const SENTENCE_CASE_TERMS = new Set([
   // Axes, G-code words, and machine addresses. `V` is the bit profile, as in
   // "V flanks" and "V groove", not an axis.
   'X', 'Y', 'Z', 'V', 'XY', 'XZ', 'YZ', 'XYZ', 'X0', 'Y0', 'Z0',
-  'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6',
+  'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6', 'F0',
   // ShopBot part-file commands (issue #953): `C9` is the tool-change macro.
   'C9',
   // Compound tool, fixture, and geometry terms whose capital is part of the name.

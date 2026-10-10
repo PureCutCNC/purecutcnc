@@ -6,3 +6,5 @@
 - [`setup-validators.sh`](setup-validators.sh) — build GRBL and the pinned external FabMo grammar.
 - [`fabmo-opensbp/`](fabmo-opensbp/INDEX.md) — Level 1 SBP grammar adapter and mutation tests (#966).
 - [`qtplasmac/`](qtplasmac/README.md) — separate LinuxCNC QtPlasmaC simulator check (#954).
+- [`grbl-plasma/`](grbl-plasma/README.md) — sequence verdict for the G-code
+  pierce path (#983), run by `npm run check:gcode`.

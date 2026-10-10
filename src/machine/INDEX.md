@@ -27,7 +27,7 @@ is always an explicit user action. See
   the library synchronously during a file open).
 - `useMachineLibrary.ts` — React binding (`useSyncExternalStore`) for the
   library snapshot; pair with the pure `machineSnapshotStatus()`.
-- `grblPlasmaMachine.test.ts` — G-code pierce mode (#983): touch-off validation, the bundled Grbl plasma machine's parity with `grbl.json`, QtPlasmaC key-order stability, pierce-mode switching in the focused form, and no torch/probe output yet.
+- `grblPlasmaMachine.test.ts` — G-code pierce mode (#983): touch-off validation, the bundled Grbl plasma machine's parity with `grbl.json`, QtPlasmaC key-order stability, pierce-mode switching in the focused form, and the delivered probe/pierce/dwell/cut sequence.
 - `plasmaMachine.test.ts` — plasma schema, library import/duplicate, storage, 3.3 project snapshot, focused form and no-torch-output regression checks.
 - `*.test.ts` — registry validation/fingerprint/import/duplication/merge
   coverage and store persistence behavior.

@@ -144,9 +144,13 @@ const staleMilling = { ...plasma, flutes: 17, defaultRpm: 19000, defaultStepdown
   defaultPlungeFeed: 800, defaultStepover: 0.8, maxCutDepth: 90 }
 const normalized = normalizeToolForProject(staleMilling, project)
 assert.equal(normalized.radius, 0.6, 'offset radius is half the full kerf')
-for (const field of ['flutes', 'defaultRpm', 'defaultStepdown', 'defaultPlungeFeed', 'defaultStepover', 'maxCutDepth'] as const) {
+for (const field of ['flutes', 'defaultRpm', 'defaultStepdown', 'defaultStepover', 'maxCutDepth'] as const) {
   assert.equal(normalized[field], 0, 'normalized plasma ignores milling field ' + field)
 }
+// The plunge feed is not a milling-only field on a plasma tool: it is the drop
+// feed a G-code pierce writes (#983), so it survives normalization instead of
+// being zeroed. Zero still means unconfigured and blocks the export.
+assert.equal(normalized.defaultPlungeFeed, 800, 'the plasma drop feed is preserved, not zeroed')
 assert.equal(normalized.defaultFeed, 2200)
 assert.equal(normalized.pierceHeight, 3.8)
 assert.equal(normalized.cutHeight, 1.5)
@@ -217,7 +221,7 @@ const library = parseToolLibraryFile({ tools: [{ ...plasma, key: 'plasma-45' }] 
 assert.equal(library.tools.length, 1, 'library parser accepts plasma without positive milling values')
 assert.ok(toolMatchesTemplate(plasma, library.tools[0]))
 assert.ok(toolMatchesLibraryEntry(plasma, library.tools[0]))
-for (const field of ['pierceHeight', 'cutHeight', 'pierceDelay', 'qtplasmacMaterialNumber'] as const) {
+for (const field of ['pierceHeight', 'cutHeight', 'pierceDelay', 'qtplasmacMaterialNumber', 'defaultPlungeFeed'] as const) {
   const changed = { ...library.tools[0], [field]: plasma[field]! + 1 }
   assert.equal(toolMatchesTemplate(plasma, changed), false, field + ' prevents wrong consumable reuse')
   assert.equal(toolMatchesLibraryEntry(plasma, changed), false, field + ' remains importable')
@@ -234,8 +238,14 @@ assert.equal(starting.pierceHeight, 3.8)
 assert.equal(starting.cutHeight, 1.5)
 assert.equal(starting.pierceDelay, 0.2)
 assert.equal(starting.qtplasmacMaterialNumber, undefined)
+// The example carries a drop feed, from the OpenBuilds sample on #983 rather
+// than the cut chart, so a first Grbl plasma export is not blocked. The shape
+// defaults a stored or imported torch is filled from stay unconfigured.
+assert.equal(starting.defaultPlungeFeed, 300, 'the example torch drops at 300 mm/min')
+assert.equal(plasmaToolDefaults('mm').defaultPlungeFeed, 0, 'an absent plunge feed stays unconfigured')
+assert.equal(plasmaToolDefaults('inch').defaultPlungeFeed, 0)
 const startingInch = defaultPlasmaTool('inch')
-for (const field of ['diameter', 'defaultFeed', 'pierceHeight', 'cutHeight'] as const) {
+for (const field of ['diameter', 'defaultFeed', 'defaultPlungeFeed', 'pierceHeight', 'cutHeight'] as const) {
   assert.equal(startingInch[field], starting[field]! / 25.4, 'new defaults honor tool units')
 }
 assert.equal(startingInch.pierceDelay, 0.2)

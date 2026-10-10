@@ -249,6 +249,54 @@ function testImportConvertsUnits(): void {
   assert(Math.abs(sel.tool.diameter - 12.7) < 1e-6, `0.5in → 12.7mm, got ${sel.tool.diameter}`)
 }
 
+function testSameSizeEntriesPreferProjectUnits(): void {
+  // The bundled library holds its example torch once per unit. Both are the
+  // same size once converted, so the first one listed used to win: a
+  // millimetre project got the inch entry converted, with the right values
+  // under the name "… — inch units", and matched neither library entry.
+  const inchTorch = { ...libEntry('torch-in', 'plasma', 1.4 / 25.4, 'inch'), name: 'Torch — inch units', defaultFeed: 200 }
+  const mmTorch = { ...libEntry('torch-mm', 'plasma', 1.4, 'mm'), name: 'Torch', defaultFeed: 5000 }
+  const orders: Array<[string, ToolLibraryEntry[]]> = [['inch first', [inchTorch, mmTorch]], ['mm first', [mmTorch, inchTorch]]]
+  for (const [order, library] of orders) {
+    const metric = selectToolForOperation(projectWith([], [makeFeature('f', 'add', 100, 100)], 'mm'), 'plasma_profile', featureTarget('f'), library)
+    assert(metric?.source === 'import', `${order}: a mm project imports a torch`)
+    assert(metric.tool.name === 'Torch' && metric.tool.units === 'mm', `${order}: a mm project takes the mm entry, got "${metric.tool.name}"`)
+    assert(metric.tool.diameter === 1.4 && metric.tool.defaultFeed === 5000, `${order}: with the mm entry's own values, got ${metric.tool.diameter} / ${metric.tool.defaultFeed}`)
+
+    const imperial = selectToolForOperation(projectWith([], [makeFeature('f', 'add', 4, 4)], 'inch'), 'plasma_profile', featureTarget('f'), library)
+    assert(imperial?.source === 'import', `${order}: an inch project imports a torch`)
+    assert(imperial.tool.name === 'Torch — inch units' && imperial.tool.units === 'inch', `${order}: an inch project takes the inch entry, got "${imperial.tool.name}"`)
+    assert(imperial.tool.diameter === 1.4 / 25.4 && imperial.tool.defaultFeed === 200, `${order}: with the inch entry's own values`)
+  }
+
+  // With no entry in the project's units the other one is still imported, by
+  // conversion.
+  const converted = selectToolForOperation(projectWith([], [makeFeature('f', 'add', 100, 100)], 'mm'), 'plasma_profile', featureTarget('f'), [inchTorch])
+  assert(converted?.source === 'import' && converted.tool.name === 'Torch — inch units', 'the only torch is imported whatever its units')
+  assert(converted.tool.units === 'mm' && Math.abs(converted.tool.diameter - 1.4) < 1e-9, `converted to mm, got ${converted.tool.diameter}`)
+  assert(Math.abs(converted.tool.defaultFeed - 200 * 25.4) < 1e-9, `feed converted too, got ${converted.tool.defaultFeed}`)
+}
+
+function testUnitPreferenceNeverChangesTheSize(): void {
+  // The preference only decides between entries of one size. A larger cutter
+  // that fits still wins over a smaller one in the project's units: a 150 mm
+  // pocket takes the 1/4" endmill (6.35 mm, the ceiling) over the 6 mm one.
+  const quarterInch = libEntry('quarter-inch', 'flat_endmill', 0.25, 'inch')
+  const sixMm = libEntry('six-mm', 'flat_endmill', 6, 'mm')
+  const project = projectWith([], [makeFeature('f', 'subtract', 150, 150)], 'mm')
+  for (const library of [[quarterInch, sixMm], [sixMm, quarterInch]]) {
+    const sel = selectToolForOperation(project, 'pocket', featureTarget('f'), library)
+    assert(sel?.source === 'import' && sel.tool.name === 'quarter-inch', `the larger cutter that fits is kept, got ${JSON.stringify(sel && sel.source === 'import' ? sel.tool.name : sel)}`)
+    assert(Math.abs(sel.tool.diameter - 6.35) < 1e-9, `converted to mm, got ${sel.tool.diameter}`)
+  }
+  // Two cutters of one size, one per unit: the project's own is taken.
+  const sameSizeMm = libEntry('six-three-five-mm', 'flat_endmill', 6.35, 'mm')
+  for (const library of [[quarterInch, sameSizeMm, sixMm], [sameSizeMm, sixMm, quarterInch]]) {
+    const sel = selectToolForOperation(project, 'pocket', featureTarget('f'), library)
+    assert(sel?.source === 'import' && sel.tool.name === 'six-three-five-mm', 'of two cutters the same size the mm one is taken in a mm project')
+  }
+}
+
 function testReturnsNullWhenNoCandidates(): void {
   const project = projectWith([], [makeFeature('f', 'subtract', 2, 2)])
   assert(selectToolForOperation(project, 'pocket', featureTarget('f'), []) === null, 'no tools and no library → null')
@@ -268,6 +316,8 @@ testImportsVBitWhenProjectHasNone()
 testPrefersIdealTypeOverExistingLesserType()
 testDrillingFallsBackToFlatWhenNoDrill()
 testImportConvertsUnits()
+testSameSizeEntriesPreferProjectUnits()
+testUnitPreferenceNeverChangesTheSize()
 testReturnsNullWhenNoCandidates()
 
 console.log('toolSelection tests passed')

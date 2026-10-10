@@ -64,6 +64,9 @@ export interface PlasmaExportSpec {
   /** In feature order: parts (`add`) before the holes cut in them. */
   features: Array<{ id: string; operation: SketchFeature['operation']; profile: SketchProfile }>
   operations: PlasmaOperationSpec[]
+  /** Project Z zero, in project units from the stock bottom. Defaults to the
+   *  sheet top, where the app puts it. */
+  originZ?: number
   machineId?: string
   definition?: (definition: MachineDefinition) => MachineDefinition
 }
@@ -82,13 +85,24 @@ export function exportPlasma(spec: PlasmaExportSpec): PlasmaExport {
   const base = newProject('Plasma export', spec.units)
   base.stock.thickness = spec.thickness
   // Project Y runs down the sheet; a machine origin 200 mm below the top
-  // edge keeps every scenario on the positive quadrant of the sim table.
-  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units) }
+  // edge keeps every scenario on the positive quadrant of the sim table. Z
+  // zero is on the sheet top unless the scenario moves it: that is where the
+  // app puts it, and `newProject` placed it before the thickness above was
+  // set. G-code piercing (#983) is correct wherever it sits; a scenario that
+  // passes `originZ` proves that.
+  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units), z: spec.originZ ?? spec.thickness }
   base.tools = spec.operations.map((op, index) => ({
     ...defaultPlasmaTool(spec.units),
     id: `torch-${index + 1}`,
     name: `Torch ${index + 1}`,
     qtplasmacMaterialNumber: 1,
+    // G-code-owned piercing drops from pierce height at the tool's plunge feed
+    // (#983); controller piercing ignores it and emits no feed word. The
+    // example torch's own drop feed is 300 mm/min. The fixtures keep their own
+    // value, one that is neither that default, the cut feed nor the probe
+    // feed, so an emitted drop can only have come from this tool; a scenario
+    // overrides it through `tool`.
+    defaultPlungeFeed: convertLength(2000, 'mm', spec.units),
     ...op.tool,
   }))
   const project: Project = projectWithFeatures(base, spec.features.map((f) => sheetFeature(f.id, f.operation, f.profile, spec.thickness)))

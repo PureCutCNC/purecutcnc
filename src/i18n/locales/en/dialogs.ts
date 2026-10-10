@@ -372,7 +372,7 @@ export const dialogsEn = {
   'dialogs.machineEditor.probeFeed': 'Probe feed (mm/min)',
   'dialogs.machineEditor.setZeroCommand': 'Set Z zero command',
   'dialogs.machineEditor.switchOffset': 'Touch-off switch offset (mm)',
-  'dialogs.machineEditor.touchOffNote': 'Before each cut the program probes down to the material, sets Z zero there plus the switch offset, then pierces at the tool’s pierce height. Use 0 for ohmic sensing or a probe that trips at the surface. Plasma output is not yet implemented.',
+  'dialogs.machineEditor.touchOffNote': 'Before each cut the program probes down to the material, sets Z zero there plus the switch offset, then pierces at the tool’s pierce height. Use 0 for ohmic sensing or a probe that trips at the surface.',
   'dialogs.machineEditor.general': 'General',
   'dialogs.machineEditor.name': 'Name',
   'dialogs.machineEditor.fileExtension': 'File extension',
