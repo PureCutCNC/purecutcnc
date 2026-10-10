@@ -48,6 +48,7 @@ jobs:
         run: npm run tauri build -- --target universal-apple-darwin --config ${{ steps.build-mode.outputs.tauri-config }}
 
       - name: Upload prerelease DMG to release
+        id: release-prerelease
         if: contains(inputs.version, '-')
         uses: softprops/action-gh-release@v2
         with:
@@ -57,12 +58,21 @@ jobs:
         continue-on-error: true
 
       - name: Upload stable DMG to release
+        id: release-stable
         if: ${{ !contains(inputs.version, '-') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
         continue-on-error: true
+
+      # The release uploads above continue on error so a hiccup there does not
+      # lose the build. Say so instead of leaving a green run with no installer
+      # on the release.
+      - name: Report a failed release upload
+        if: steps.release-prerelease.outcome == 'failure' || steps.release-stable.outcome == 'failure'
+        shell: bash
+        run: echo "::warning::The release upload failed, so the release has no installer from this run. Check the run's artifacts."
 
       - name: Checkout pages repo
         uses: actions/checkout@v4
@@ -71,7 +81,15 @@ jobs:
           token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
           path: pages-repo
 
+      - name: Check macOS download manifest version
+        id: manifest-gate
+        uses: ./.github/actions/download-manifest-gate
+        with:
+          version: ${{ inputs.version }}
+          platform: macos
+
       - name: Write macOS download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: v${{ inputs.version }}
@@ -105,6 +123,7 @@ jobs:
           "
 
       - name: Commit and push macOS download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         run: |
           cd pages-repo
           git config user.name "github-actions[bot]"
