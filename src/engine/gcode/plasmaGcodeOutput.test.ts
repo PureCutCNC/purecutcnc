@@ -23,6 +23,8 @@
  * Per cut: safe Z (operator zero) -> rapid to the pierce point -> probe ->
  * set Z zero on the sheet -> pierce-height rapid -> M3 -> dwell -> drop to cut
  * height at the plunge feed -> leads/contour at the cut feed -> M5 -> safe Z.
+ * Only the program's first safe Z is in the operator's zero: after a touch-off
+ * every Z, the retract included, is measured from the sheet.
  */
 
 import assert from 'node:assert/strict'
@@ -30,6 +32,8 @@ import { exportPlasma, PLASMA_EXPORT_SCENARIOS, rectangle } from '../../test/pla
 import type { PlasmaExportSpec } from '../../test/plasmaExportFixtures'
 import { defaultPlasmaTool } from '../../toolPolicy'
 import { convertLength } from '../../utils/units'
+import { warningSeverity } from '../toolpaths/warningCodes'
+import { runPostProcessor } from './postprocessor'
 
 const TORCH_ON = 'M3 S1000'
 const TORCH_OFF = 'M5'
@@ -105,10 +109,8 @@ for (const name of SCENARIOS) {
   const lines = codeLines(result.gcode)
   assert.deepEqual(result.warnings, [], `${name}: a delivered G-code pierce export raises nothing`)
 
-  // No QtPlasmaC material table: the tool's material number is ignored, and
-  // the pending-output warning is gone now that the mode is written.
+  // No QtPlasmaC material table: the tool's material number is ignored.
   assert.ok(!lines.some((line) => line.startsWith('M190')), `${name}: no material select`)
-  assert.ok(!lines.some((line) => /postPlasmaOutputPending/.test(line)), `${name}: nothing is pending`)
 
   const contours = input.operations.reduce((sum, op) => sum + (op.operation.target.source === 'features' ? op.operation.target.featureIds.length : 0), 0)
   const pairs = cycles(result.gcode)
@@ -466,4 +468,197 @@ function assertPerCutSequence(name: string, gcode: string): void {
   ])
 }
 
-console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads, mirroring and #983 modal feed passed')
+// ── #983 Z frames around the touch-off ──────────────────────────────────────
+// The safe height is the toolpath's, in the project's Z zero. That number is
+// right only until the first `G10 L20`: the touch-off puts Z zero on the sheet,
+// so the retract after every cut, and a safe rapid before any later cut, are
+// the same clearance measured from the sheet surface. Wherever the operator's
+// zero sits, only the program's first safe rapid may show it.
+
+/** The Z of every Z-only rapid, by where it sits in the cut cycle. */
+function zRapids(gcode: string): { first: number[]; pierce: number[]; retract: number[]; laterSafe: number[] } {
+  const lines = resolve(gcode)
+  const out = { first: [] as number[], pierce: [] as number[], retract: [] as number[], laterSafe: [] as number[] }
+  let touchedOff = false
+  lines.forEach((line, index) => {
+    if (line.setZeroZ !== null) {
+      touchedOff = true
+      return
+    }
+    const zOnly = line.motion === 'G0' && !line.probe
+      && line.words.Z !== undefined && line.words.X === undefined && line.words.Y === undefined
+    if (!zOnly) return
+    const before = lines[index - 1]
+    if (!touchedOff) out.first.push(line.words.Z)
+    else if (before.setZeroZ !== null) out.pierce.push(line.words.Z)
+    else if (before.torch === 'off') out.retract.push(line.words.Z)
+    else out.laterSafe.push(line.words.Z)
+  })
+  return out
+}
+
+/**
+ * Once Z zero is on the sheet, the head never travels in XY, and never comes
+ * to rest after a cut, at or below the height it just cut at.
+ */
+function assertTravelClearsTheCut(name: string, gcode: string): void {
+  let torch = false
+  let touchedOff = false
+  let z: number | null = null
+  let cutZ: number | null = null
+  let travels = 0
+  const lines = resolve(gcode)
+  lines.forEach((line, index) => {
+    if (line.torch === 'on') torch = true
+    else if (line.torch === 'off') torch = false
+    if (line.setZeroZ !== null) {
+      touchedOff = true
+      z = line.setZeroZ
+      return
+    }
+    if (line.words.Z !== undefined && !line.probe) z = line.words.Z
+    if (torch && line.motion === 'G1' && line.words.Z !== undefined) cutZ = line.words.Z
+    if (!touchedOff || torch || cutZ === null || line.motion !== 'G0' || line.probe) return
+    if (lines[index - 1].torch === 'off') {
+      assert.ok(z !== null && z > cutZ, `${name}: the retract clears the cut height ${cutZ}, got Z${z}: ${line.text}`)
+    }
+    if (line.words.X !== undefined || line.words.Y !== undefined) {
+      assert.ok(z !== null && z > cutZ, `${name}: XY travel at Z${z} is not above the cut height ${cutZ}: ${line.text}`)
+      travels += 1
+    }
+  })
+  assert.ok(travels > 0, `${name}: the program travels between cuts`)
+}
+
+for (const units of ['mm', 'inch'] as const) {
+  const len = (mm: number) => convertLength(mm, 'mm', units)
+  const emitted = (value: number) => Number(value.toFixed(units === 'mm' ? 3 : 4))
+  const thickness = len(6)
+  const features: PlasmaExportSpec['features'] = [
+    { id: 'part-a', operation: 'add', profile: rectangle(len(20), len(20), len(60), len(40)) },
+    { id: 'part-b', operation: 'add', profile: rectangle(len(100), len(20), len(60), len(40)) },
+    { id: 'part-c', operation: 'add', profile: rectangle(len(20), len(80), len(60), len(40)) },
+  ]
+  // Two contours in one operation, then a second operation. With the same
+  // consumable the second starts at the first one's retract; with a taller cut
+  // height its own safe height is higher, so it has to rise before travelling.
+  const sameHeights: PlasmaExportSpec = {
+    units, thickness, features,
+    operations: [{ featureIds: ['part-a', 'part-b'] }, { featureIds: ['part-c'] }],
+  }
+  const tallerSecond: PlasmaExportSpec = {
+    ...sameHeights,
+    operations: [
+      { featureIds: ['part-a', 'part-b'] },
+      { featureIds: ['part-c'], tool: { pierceHeight: len(5.5), cutHeight: len(5) } },
+    ],
+  }
+  const placements = [
+    ['on the sheet top', thickness],
+    ['on the table', 0],
+    ['above the sheet', thickness + len(20)],
+  ] as const
+  for (const [label, originZ] of placements) {
+    for (const [shape, spec] of [['same heights', sameHeights], ['taller second cut', tallerSecond]] as const) {
+      const name = `${units}, Z zero ${label}, ${shape}`
+      const { result, input } = grbl({ ...spec, originZ })
+      assert.deepEqual(result.warnings.map((warning) => warning.code), ['postNoToolChangeCommands'], `${name}: only the second torch is reported`)
+      // The toolpath's own safe height per operation, in project Z from the
+      // stock bottom: the expectations below are derived from it and from the
+      // stock, not from the emitter.
+      const safe = input.operations.map((op) => op.toolpath.moves.find((move) => move.kind === 'rapid')!.to.z)
+      const pierce = input.operations.map((op) => op.tool.pierceHeight!)
+      const z = zRapids(result.gcode)
+      assert.deepEqual(z.first, [emitted(safe[0] - originZ)], `${name}: the first safe rapid is in the operator's zero`)
+      assert.deepEqual(z.retract, [safe[0], safe[0], safe[1]].map((value) => emitted(value - thickness)),
+        `${name}: every retract is measured from the sheet`)
+      assert.deepEqual(z.pierce, [pierce[0], pierce[0], pierce[1]].map(emitted), `${name}: every pierce rapid follows its set-zero`)
+      if (shape === 'same heights') {
+        assert.deepEqual(z.laterSafe, [], `${name}: a later cut starts from the retract it is already at`)
+      } else {
+        assert.ok(safe[1] > safe[0], `${name}: the taller cut raises the second operation's safe height`)
+        assert.deepEqual(z.laterSafe, [emitted(safe[1] - thickness)],
+          `${name}: the second operation rises to its own safe height, measured from the sheet`)
+      }
+      assertTravelClearsTheCut(name, result.gcode)
+    }
+  }
+
+  // The same numbers spelled out, so the frames are pinned against the sheet
+  // and not only against the helper arithmetic above: 5 mm (0.2 in) of
+  // clearance over a 6 mm sheet.
+  const clearance = units === 'mm' ? 5 : 0.2
+  for (const [originZ, first] of [[thickness, clearance], [0, emitted(thickness + clearance)], [thickness + len(20), emitted(clearance - len(20))]] as const) {
+    const z = zRapids(grbl({ ...sameHeights, originZ }).result.gcode)
+    assert.deepEqual(z.first, [first], `${units}: first safe rapid with Z zero at ${originZ}`)
+    assert.deepEqual(z.retract, [clearance, clearance, clearance], `${units}: retracts with Z zero at ${originZ}`)
+  }
+}
+
+// Literal lines of the reviewed case: two parts on a 6 mm sheet. Z zero on the
+// table used to retract to Z11 (11 above the sheet instead of 5), and Z zero 20
+// above the sheet to Z-15 (15 below its surface, then an XY rapid).
+{
+  const spec: PlasmaExportSpec = {
+    units: 'mm', thickness: 6,
+    features: [
+      { id: 'part-a', operation: 'add', profile: rectangle(20, 20, 60, 40) },
+      { id: 'part-b', operation: 'add', profile: rectangle(100, 20, 60, 40) },
+    ],
+    operations: [{ featureIds: ['part-a', 'part-b'] }],
+  }
+  for (const [originZ, first] of [[6, 'G0 Z5.000'], [0, 'G0 Z11.000'], [26, 'G0 Z-15.000']] as const) {
+    const lines = codeLines(grbl({ ...spec, originZ }).result.gcode)
+    const zLines = lines.filter((line) => /^G0 Z-?[\d.]+$/.test(line))
+    assert.deepEqual(zLines, [first, 'G0 Z3.800', 'G0 Z5.000', 'G0 Z3.800', 'G0 Z5.000'],
+      `Z zero at ${originZ}: first safe rapid, then pierce and retract from the sheet`)
+    lines.forEach((line, index) => {
+      if (line === TORCH_OFF) assert.equal(lines[index + 1], 'G0 Z5.000', `Z zero at ${originZ}: the line after M5 retracts 5 above the sheet`)
+    })
+  }
+}
+
+// ── A cut with no safe height blocks the export ─────────────────────────────
+// The safe height is read off the toolpath's rapids. Cuts with none cannot be
+// retracted between, so they are not written — and a program that quietly
+// lacks an operation's cuts must not be saved.
+{
+  const { input } = grbl(PLASMA_EXPORT_SCENARIOS['single-outline']())
+  const [first] = input.operations
+  const noRapids = runPostProcessor({
+    ...input,
+    operations: [{ ...first, toolpath: { ...first.toolpath, moves: first.toolpath.moves.filter((move) => move.kind !== 'rapid') } }],
+  })
+  assert.deepEqual(noRapids.warnings, [{ code: 'postPlasmaSafeHeightMissing', params: { operation: 'Cut 1' } }],
+    'cuts with no safe height are reported')
+  assert.equal(warningSeverity('postPlasmaSafeHeightMissing'), 'error', 'and the report blocks the export')
+  assert.ok(!codeLines(noRapids.gcode).some((line) => line === TORCH_ON || line.startsWith('G38.2')), 'nothing of the cut is written')
+
+  // An operation that generated no cuts has nothing to leave out: as on every
+  // other machine it writes its header and no motion, with no new report.
+  const empty = runPostProcessor({ ...input, operations: [{ ...first, toolpath: { ...first.toolpath, moves: [] } }] })
+  assert.deepEqual(empty.warnings, [], 'an empty toolpath raises nothing here')
+  assert.ok(!codeLines(empty.gcode).includes(TORCH_ON), 'and fires nothing')
+}
+
+// ── A plasma operation on a machine that is not a plasma table ──────────────
+// Not a shipped configuration, but reachable from the CAM panel. It goes
+// through the ordinary emitters, which take the plunge feed by the rule every
+// milling operation uses: the operation's own, else the tool's. #983 made the
+// plasma tool's plunge feed a real setting, so an operation with none of its
+// own now plunges at the tool's feed where it used to write F0.
+{
+  const spec = PLASMA_EXPORT_SCENARIOS['single-outline']()
+  const fallback: PlasmaExportSpec = { ...spec, operations: [{ featureIds: ['plate'], operation: { plungeFeed: 0 } }] }
+  const router = codeLines(exportPlasma({ ...fallback, machineId: 'grbl' }).result.gcode)
+  assert.ok(router.includes('G1 X83.000 Y96.300 Z1.500 F2000.000'),
+    `a router plunges at the tool's plunge feed, got ${JSON.stringify(router.slice(0, 8))}`)
+  assert.ok(!router.some((line) => /F0(\.0+)?(\s|$)/.test(line)), 'and writes no F0')
+  const shopbot = exportPlasma({ ...fallback, machineId: 'shopbot' }).result.gcode.split(/\r?\n/)
+  assert.ok(shopbot.includes('MS,33.333,33.333'), 'ShopBot takes the same fallback, in mm/s')
+
+  const own = codeLines(exportPlasma({ ...spec, machineId: 'grbl', operations: [{ featureIds: ['plate'], operation: { plungeFeed: 900 } }] }).result.gcode)
+  assert.ok(own.includes('G1 X83.000 Y96.300 Z1.500 F900.000'), 'the operation\'s own plunge feed still wins')
+}
+
+console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads, mirroring, #983 modal feed, Z frames, missing safe height and router fallback passed')

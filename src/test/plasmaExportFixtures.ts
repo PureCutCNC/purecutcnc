@@ -64,6 +64,9 @@ export interface PlasmaExportSpec {
   /** In feature order: parts (`add`) before the holes cut in them. */
   features: Array<{ id: string; operation: SketchFeature['operation']; profile: SketchProfile }>
   operations: PlasmaOperationSpec[]
+  /** Project Z zero, in project units from the stock bottom. Defaults to the
+   *  sheet top, where the app puts it. */
+  originZ?: number
   machineId?: string
   definition?: (definition: MachineDefinition) => MachineDefinition
 }
@@ -83,10 +86,11 @@ export function exportPlasma(spec: PlasmaExportSpec): PlasmaExport {
   base.stock.thickness = spec.thickness
   // Project Y runs down the sheet; a machine origin 200 mm below the top
   // edge keeps every scenario on the positive quadrant of the sim table. Z
-  // sits on the stock top — the operator touch-off — so G-code piercing
-  // (#983) emits its safe height in the operator's own zero rather than the
-  // pre-thickness default.
-  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units), z: spec.thickness }
+  // zero is on the sheet top unless the scenario moves it: that is where the
+  // app puts it, and `newProject` placed it before the thickness above was
+  // set. G-code piercing (#983) is correct wherever it sits; a scenario that
+  // passes `originZ` proves that.
+  base.origin = { ...base.origin, x: 0, y: convertLength(200, 'mm', spec.units), z: spec.originZ ?? spec.thickness }
   base.tools = spec.operations.map((op, index) => ({
     ...defaultPlasmaTool(spec.units),
     id: `torch-${index + 1}`,

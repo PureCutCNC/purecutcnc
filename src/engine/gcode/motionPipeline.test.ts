@@ -30,7 +30,7 @@ import type { Operation, Project, Tool } from '../../types/project'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { DrillCycle, ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { BUNDLED_DEFINITIONS } from './definitions'
-import { planDrillCycles, planProgramSequence, splitRapid } from './motionPipeline'
+import { planDrillCycles, planPlasmaGcodeCut, planProgramSequence, plasmaSheetZ, splitRapid } from './motionPipeline'
 import type { OperationSequence } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
@@ -387,16 +387,41 @@ console.log('motion pipeline tests passed')
 
 // Both plasma pierce modes are delivered now (#959, #983). A plasma machine
 // takes the shared plasma sequence, so a milling operation is skipped with a
-// warning and nothing of it is emitted; the pending-output warning is gone
-// because the G-code pierce torch path is written.
+// warning and nothing of it is emitted.
 {
   const input = programInput([['t1', 12000], ['t2', 12000]])
   const result = runPostProcessor({ ...input, definition: bundled('grbl-plasma') })
   assertEqual(result.warnings, [
     { code: 'postPlasmaOperationSkipped', params: { operation: 'Op op1' } },
     { code: 'postPlasmaOperationSkipped', params: { operation: 'Op op2' } },
-  ], 'a G-code pierce machine skips milling operations and reports nothing pending')
+  ], 'a G-code pierce machine skips milling operations and reports nothing else')
   assert(!/^G[0-3]\b|^M[345]\b/m.test(result.gcode), 'a skipped operation emits no motion, spindle or torch')
+}
+
+// The sheet surface of a G-code pierce cut (#983) is the stock top mapped like
+// any toolpath point, so it follows the origin and the machine's own Z axis.
+// The safe height measured from it is what a program writes after a touch-off.
+{
+  const project = makeProject(1)
+  project.stock.thickness = 6
+  const operation = makeOperation('op1', 't1', { kind: 'plasma_profile' })
+  const grblPlasma = bundled('grbl-plasma')
+  for (const originZ of [6, 0, 26]) {
+    const placed = { ...project, origin: { ...project.origin, z: originZ } }
+    assertEqual(plasmaSheetZ(placed, grblPlasma, operation), 6 - originZ, `sheet surface with Z zero at ${originZ}`)
+    const inverted = { ...grblPlasma, coordinateSystem: { ...grblPlasma.coordinateSystem, zAxis: '-Z' as const } }
+    assertEqual(plasmaSheetZ(placed, inverted, operation), originZ - 6, `sheet surface on an inverted Z axis, Z zero at ${originZ}`)
+    // Toolpath safe Z 11 in project Z is 11 - originZ on the machine, and 5
+    // above the sheet wherever the operator's zero is.
+    const cut = planPlasmaGcodeCut({
+      tool: normalizeToolForProject(placed.tools[0], placed),
+      touchOff: grblPlasma.plasma!.touchOff!,
+      units: 'mm',
+      safeZ: 11 - originZ,
+      sheetZ: plasmaSheetZ(placed, grblPlasma, operation),
+    })
+    assertEqual([cut.safeZ, cut.sheetSafeZ], [11 - originZ, 5], `safe height in both frames, Z zero at ${originZ}`)
+  }
 }
 
 // Tool-change capability on a router: an empty or comment-only change sequence

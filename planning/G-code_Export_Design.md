@@ -168,19 +168,31 @@ block such an export.
 
 Per cut (the requester's OpenBuilds sample, and the approved plan):
 
-1. `G0 Z<safe>` in the operator's own zero, then `G0 X Y` to the pierce point;
+1. `G0 Z<safe>`, then `G0 X Y` to the pierce point. The safe height is in the
+   operator's own zero for the first cut of the program only; from then on it
+   is measured from the sheet, and is left out when the retract of the
+   previous cut already put the head there;
 2. `probeCommand Z-<probeDepth> F<probeFeed>`;
 3. `setZeroCommand Z<-switchOffset>`;
 4. `G0 Z<pierceHeight>`, `torchOnCommand`, then `G4 P<pierceDelay>`;
 5. `G1 Z<cutHeight> F<plungeFeed>`;
 6. the lead-in, contour and lead-out at cut height and the cut feed;
-7. `torchOffCommand`, then `G0 Z<safe>`.
+7. `torchOffCommand`, then `G0 Z<safe>` measured from the sheet.
 
 Z after the touch-off is relative to the sheet surface, not the stock top: the
 probe sets Z zero on the sheet, and pierce and cut heights come from the tool as
 configured — even when pierce height is the lower of the two. The first
 `G0 Z<safe>` is still in the operator's own zero, taken from the toolpath's safe
-height. The touch-off fields are stored in millimetres and millimetres per
+height. That number is only valid until the first `G10 L20`: afterwards the
+same height is written as its clearance above the sheet, toolpath safe Z minus
+the stock top, both mapped to machine coordinates the way every move is
+(`plasmaSheetZ`). The two agree only when the project's Z zero is on the sheet
+top; with it on the table the old number retracted too high, and with it above
+the sheet the retract went below the sheet surface. The emitter remembers
+across operations that a touch-off has happened, so a later operation's first
+safe rapid is in the sheet frame as well. Cuts that carry no rapid to read the
+safe height from are not written, and `postPlasmaSafeHeightMissing` blocks the
+export. The touch-off fields are stored in millimetres and millimetres per
 minute whatever the project units, so `planPlasmaGcodeCut` converts them once at
 emission; an absent switch offset is 0 and the offset is applied negatively
 (`G10 L20 ... Z<-offset>`). Every contour is probed and zeroed again, because

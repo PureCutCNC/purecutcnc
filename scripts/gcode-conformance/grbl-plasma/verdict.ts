@@ -34,6 +34,10 @@
  * is rejected — an inherited modal Z is not evidence that any of those moves
  * happened.
  *
+ * Every Z after a touch-off is measured from the sheet, so a retract or a later
+ * safe rapid has to be above the height the torch just cut at: one at or below
+ * it — the operator-zero safe height written into the sheet frame — is rejected.
+ *
  * Pure functions, so the rules are unit-tested without a controller
  * (`verdict.test.ts`), and reusable on any program text.
  */
@@ -42,7 +46,9 @@
 export interface ParsedLine {
   line: number
   text: string
-  /** Last G0/G1/G2/G3 in effect, including modal continuation. */
+  /** Last G0/G1/G2/G3 in effect, including modal continuation. Null on a
+   *  G38 probe and after it: the probe takes over the motion modal group, so
+   *  nothing that follows is a rapid or a feed move until it says so. */
   motion: 'G0' | 'G1' | 'G2' | 'G3' | null
   /** True when the line itself commands motion: a G0-G3 word or an axis word. */
   commandsMotion: boolean
@@ -111,7 +117,12 @@ export function parseProgram(program: string): ParsedLine[] {
     if (!code) return
     const { gs, ms, words } = code
     const plainG = gs.filter((value) => Number.isInteger(value) && value >= 0 && value <= 3)
+    const probe = gs.some((value) => value === 38.2 || value === 38.3)
     if (plainG.length > 0) motion = `G${plainG[plainG.length - 1]}` as ParsedLine['motion']
+    // G38 is in the same modal group as G0-G3. A later line with no motion
+    // word of its own is another probe on the controller, never the rapid
+    // that was modal before it.
+    if (probe) motion = null
     if (words.F !== undefined) feed = words.F
     if (words.Z !== undefined) z = words.Z
     parsed.push({
@@ -119,7 +130,7 @@ export function parseProgram(program: string): ParsedLine[] {
       text: text.trim(),
       motion,
       commandsMotion: plainG.length > 0 || words.X !== undefined || words.Y !== undefined || words.Z !== undefined,
-      probe: gs.some((value) => value === 38.2 || value === 38.3),
+      probe,
       setZeroZ: gs.includes(10) && words.Z !== undefined ? words.Z : null,
       dwell: gs.includes(4) ? words.P ?? null : null,
       feed,
@@ -204,6 +215,9 @@ export function judge(program: string): Finding[] {
   /** A torch-off has happened and no explicit-Z rapid has retracted since. */
   let awaitingRetract = false
   let torchOffLine = 0
+  /** The height the last cut ran at, from its drop. Null until a cut has run:
+   *  before the first touch-off Z is in the operator's zero and says nothing. */
+  let lastCutZ: number | null = null
 
   const judgeCycle = (torchLine: number): void => {
     const dwellAt = cycle.findIndex((line) => line.dwell !== null && line.dwell > 0)
@@ -224,6 +238,7 @@ export function judge(program: string): Finding[] {
       if (!drop.explicitFeed) add('feed', drop.line, 'the drop to cut height carries no plunge feed of its own')
       // Every later feed move is a cut at the height the drop established.
       if (cutZ !== null) {
+        lastCutZ = cutZ
         for (const line of cycle.slice(firstFeedAt + 1)) {
           if (isFeedMove(line) && line.explicitZ !== null && line.explicitZ !== cutZ) {
             add('cutHeight', line.line, `a cut move leaves the drop's cut height of ${cutZ}`)
@@ -298,6 +313,17 @@ export function judge(program: string): Finding[] {
       if (isFeedMove(line) && (line.feed ?? modalFeed ?? 0) <= 0) add('feed', line.line, 'a cut move with no positive feed')
     } else {
       if (line.feed !== null) modalFeed = line.feed
+      // After a touch-off Z zero is on the sheet. The retract and any later
+      // safe rapid, up to the next probe, must clear the height just cut at;
+      // the pierce-height rapid comes after that probe and is not one of them.
+      if (isZRetract(line) && lastCutZ !== null && line.explicitZ! <= lastCutZ
+        && !prepare.some((candidate) => candidate.probe)) {
+        if (awaitingRetract) {
+          add('retract', line.line, `the retract after the torch-off is not above the cut height of ${lastCutZ}`)
+        } else {
+          add('safeZ', line.line, `a safe rapid before the probe is not above the cut height of ${lastCutZ}`)
+        }
+      }
       if (isFeedMove(line)) add('torch', line.line, 'a cutting move with the torch off')
       else prepare.push(line)
       if (awaitingRetract && isZRetract(line)) awaitingRetract = false

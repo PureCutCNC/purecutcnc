@@ -39,6 +39,7 @@ import {
   planProgramSequence,
   planProgramSetup,
   plasmaSafeZ,
+  plasmaSheetZ,
   splitRapid,
 } from './motionPipeline'
 import type { OperationSequence } from './motionPipeline'
@@ -345,9 +346,14 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // with no Z word (its load filter strips Z motion) and no numeric F on a cut.
   // G-code piercing (#983) owns all of it: per cut the program probes the
   // sheet, sets Z zero on it, then pierces, dwells, drops to cut height and
-  // cuts at the cut feed. Safe Z is the toolpath's own safe height in the
-  // operator's zero; every height after the touch-off is measured from the
-  // sheet surface the probe just found.
+  // cuts at the cut feed. Until the program's first touch-off, safe Z is the
+  // toolpath's own safe height in the operator's zero; every height after one,
+  // the retract and later safe rapids included, is measured from the sheet
+  // surface the probe found.
+  //
+  // True once a touch-off has put Z zero on the sheet. It outlives the
+  // operation: a later operation in the same program starts in that frame.
+  let plasmaZeroOnSheet = false
   const emitPlasmaOperation = (
     operation: PostProcessorInput['operations'][number]['operation'],
     tool: PostProcessorInput['operations'][number]['tool'],
@@ -403,22 +409,37 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       // covers a definition that reached the emitter without validation.
       const touchOff = block.touchOff
       const safeZ = plasmaSafeZ(plan.steps)
+      const path = planPlasmaPath(plan.steps)
+      // Cuts with no rapid to read the safe height from cannot be placed, and
+      // leaving them out would save a program that quietly lacks the pass.
+      if (touchOff && safeZ === null && path.some((item) => item.kind === 'cut')) {
+        warnings.push({ code: 'postPlasmaSafeHeightMissing', params: { operation: operation.name } })
+      }
       if (touchOff && safeZ !== null) {
-        const heights = planPlasmaGcodeCut({ tool, touchOff, units: outputUnits, safeZ })
+        const heights = planPlasmaGcodeCut({
+          tool,
+          touchOff,
+          units: outputUnits,
+          safeZ,
+          sheetZ: plasmaSheetZ(project, definition, operation),
+        })
         const probe = `${touchOff.probeCommand} Z-${formatGCodeNumber(heights.probeDepth, definition, outputUnits)}`
           + ` F${formatGCodeNumber(heights.probeFeed, definition, outputUnits)}`
         // The offset is applied negatively: the sheet surface is that far above
         // where the switch tripped. An absent offset is 0.
         const setZero = `${touchOff.setZeroCommand} Z${formatGCodeNumber(-heights.switchOffset, definition, outputUnits)}`
         const dwell = `G4 P${formatGCodeNumber(heights.pierceDelay, definition, outputUnits)}`
-        for (const item of planPlasmaPath(plan.steps)) {
+        for (const item of path) {
           // A cut does its own safe-Z and pierce rapids; the travel items exist
           // for the controller path, where the torch fires on XY alone. The
-          // safe rapid is skipped when the retract after the previous cut
-          // already put the head there.
+          // safe rapid is in the operator's zero only before the program's
+          // first touch-off. After one, Z zero is on the sheet and the head
+          // sits at the sheet-relative retract of the previous cut, so the
+          // rapid is skipped unless this operation's safe height differs.
           if (item.kind !== 'cut') continue
-          if (state.currentPosition?.z !== heights.safeZ) {
-            emitMotionLine(definition.motion.rapidCommand, { z: heights.safeZ })
+          const safe = plasmaZeroOnSheet ? heights.sheetSafeZ : heights.safeZ
+          if (state.currentPosition?.z !== safe) {
+            emitMotionLine(definition.motion.rapidCommand, { z: safe })
           }
           emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
           emitLine(probe)
@@ -431,6 +452,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // F even when that feed equals the probe feed (issue #983).
           state.feedRate = null
           emitLine(setZero)
+          plasmaZeroOnSheet = true
           emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
           emitLine(block.torchOnCommand)
           emitLine(dwell)
@@ -443,7 +465,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
             }
           }
           emitLine(block.torchOffCommand)
-          emitMotionLine(definition.motion.rapidCommand, { z: heights.safeZ })
+          // Z zero is on the sheet now: the operator-zero safe height would be
+          // a different height, below the sheet when their zero sits above it.
+          emitMotionLine(definition.motion.rapidCommand, { z: heights.sheetSafeZ })
         }
       }
     } else {

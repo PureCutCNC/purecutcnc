@@ -352,8 +352,12 @@ function sameMachinePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
 
 /** The heights and touch-off of one G-code-pierced plasma cut, in output units. */
 export interface PlasmaGcodeCut {
-  /** Safe height from the toolpath, in the operator's own zero (machine Z). */
+  /** Safe height from the toolpath, in the operator's own zero (machine Z).
+   *  Valid only until the program's first touch-off. */
   safeZ: number
+  /** The same safe height measured from the sheet surface: what every safe
+   *  rapid and retract is written as once a touch-off has put Z zero there. */
+  sheetSafeZ: number
   /** Pierce height above the sheet surface, from the tool. */
   pierceHeight: number
   /** Cut height above the sheet surface, from the tool. */
@@ -385,25 +389,43 @@ export function plasmaSafeZ(steps: readonly FittedMoveDescriptor[]): number | nu
 }
 
 /**
+ * The machine-coordinate Z of the sheet surface for a plasma operation: the
+ * stock top the #957 toolpath measures its heights from, mapped exactly as the
+ * operation's moves are (setup, origin and axis mapping). It is 0 only when
+ * the operator's Z zero is on the sheet top.
+ */
+export function plasmaSheetZ(project: Project, definition: MachineDefinition, operation: Operation): number {
+  const setup = setupFrameForOperation(project, operation)
+  return projectToMachinePoint({ x: 0, y: 0, z: project.stock.thickness }, project.origin, definition, setup).z
+}
+
+/**
  * Resolve one G-code-pierced plasma cut into the numbers the emitter writes
  * (#983).
  *
  * Heights come from the tool, not the toolpath: the probe sets Z zero on the
  * sheet, so pierce and cut heights are measured from the sheet surface and are
  * emitted as configured — even when pierce height is the lower of the two. The
- * touch-off fields are stored in millimetres and millimetres per minute
- * whatever the project units, so they are converted here, once, and an absent
- * switch offset is 0.
+ * safe height comes from the toolpath and is resolved in both frames: the
+ * operator's zero for the rapid before the program's first touch-off, and the
+ * sheet surface (`safeZ - sheetZ`) for everything after one, because the
+ * touch-off moved Z zero and the operator's number no longer means the same
+ * height. The touch-off fields are stored in millimetres and millimetres per
+ * minute whatever the project units, so they are converted here, once, and an
+ * absent switch offset is 0.
  */
 export function planPlasmaGcodeCut(args: {
   tool: NormalizedTool
   touchOff: PlasmaTouchOff
   units: 'mm' | 'inch'
   safeZ: number
+  /** Machine Z of the sheet surface (`plasmaSheetZ`). */
+  sheetZ: number
 }): PlasmaGcodeCut {
-  const { tool, touchOff, units, safeZ } = args
+  const { tool, touchOff, units, safeZ, sheetZ } = args
   return {
     safeZ,
+    sheetSafeZ: safeZ - sheetZ,
     pierceHeight: tool.pierceHeight ?? 0,
     cutHeight: tool.cutHeight ?? 0,
     pierceDelay: tool.pierceDelay ?? 0,

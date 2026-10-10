@@ -28,6 +28,7 @@
 import assert from 'node:assert/strict'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../../src/test/plasmaExportFixtures'
 import type { PlasmaExportSpec } from '../../../src/test/plasmaExportFixtures'
+import { convertLength } from '../../../src/utils/units'
 import { judge, mismatch, parseProgram } from './verdict'
 import type { Rule } from './verdict'
 
@@ -56,7 +57,8 @@ function mutate(pattern: RegExp, replacement: string): string {
 
 // The real exported programs pass every rule. The matrix covers both units,
 // line and arc leads, one and several contours, pierce height below cut height,
-// a switch offset present and absent, and a mirrored physical axis.
+// a switch offset present and absent, a mirrored physical axis, and the project
+// Z zero below and above the sheet top.
 const POSITIVES: Array<{ name: string; gcode: string }> = [
   { name: 'single-outline (mm, arc lead)', gcode: BASE },
   ...['part-with-holes', 'nested-sheet', 'small-hole', 'small-hole-arc-lead', 'arc-lead-ins', 'inch-output']
@@ -90,6 +92,24 @@ const POSITIVES: Array<{ name: string; gcode: string }> = [
     gcode: grbl({
       ...PLASMA_EXPORT_SCENARIOS['arc-lead-ins'](),
       definition: (definition) => ({ ...definition, coordinateSystem: { ...definition.coordinateSystem, xAxis: '-X' } }),
+    }),
+  },
+  // Z zero off the sheet top changes the first safe rapid only: every Z after
+  // the touch-off is measured from the sheet whatever the operator's zero was.
+  ...(['part-with-holes', 'inch-output'] as const).flatMap((name) => {
+    const spec = PLASMA_EXPORT_SCENARIOS[name]()
+    return [
+      { name: `${name}, Z zero on the table`, gcode: grbl({ ...spec, originZ: 0 }) },
+      { name: `${name}, Z zero above the sheet`, gcode: grbl({ ...spec, originZ: spec.thickness + convertLength(20, 'mm', spec.units) }) },
+    ]
+  }),
+  // A later operation starts in the sheet frame the first one left.
+  {
+    name: 'two operations, Z zero above the sheet',
+    gcode: grbl({
+      ...PLASMA_EXPORT_SCENARIOS['part-with-holes'](),
+      operations: [{ featureIds: ['hole-1'] }, { featureIds: ['hole-2', 'plate'] }],
+      originZ: 22,
     }),
   },
 ]
@@ -185,6 +205,31 @@ const NEGATIVES: Array<{ name: string; program: string; fails: Rule[] }> = [
     program: mutate(/^G0 Z3\.800$/m, 'G0'),
     fails: ['order'],
   },
+  // The probe takes over the motion modal group, so a pierce-height line that
+  // lost its G0 word is another probe on the controller, not a rapid.
+  {
+    name: 'pierce-height rapid without its G0 word',
+    program: mutate(/^G0 Z3\.800$/m, 'Z3.800'),
+    fails: ['order'],
+  },
+  // Z zero is on the sheet after a touch-off. A retract written as the
+  // operator-zero safe height lands at or below the cut height when that zero
+  // sits above the sheet: at cut height, and under the sheet surface.
+  {
+    name: 'retract at the cut height',
+    program: mutate(/^M5\nG0 Z5\.000$/m, 'M5\nG0 Z1.500'),
+    fails: ['retract'],
+  },
+  {
+    name: 'retract below the sheet surface',
+    program: mutateOn(MULTI, /^M5\nG0 Z5\.000$/m, 'M5\nG0 Z-15.000'),
+    fails: ['retract'],
+  },
+  {
+    name: 'safe rapid before a later probe not above the cut height',
+    program: mutateOn(MULTI, /^M5\nG0 Z5\.000\n/m, 'M5\nG0 Z5.000\nG0 Z1.000\n'),
+    fails: ['safeZ'],
+  },
   {
     name: 'cut move leaves the drop cut height',
     program: mutate(/^X19\.300 Y180\.700$/m, 'X19.300 Y180.700 Z3.000'),
@@ -239,7 +284,8 @@ for (const negative of NEGATIVES) {
   assert.equal(modalXY.motion, 'G0', 'a modal XY line is a rapid')
   assert.equal(lines.find((line) => line.text === 'X20 Y20 F3000')?.feed, 3000, 'a feed word carries forward')
   const probe = lines.find((line) => line.probe)!
-  assert.equal(probe.motion, 'G0', 'a probe does not clear the modal motion it was preceded by')
+  assert.equal(probe.motion, null, 'a probe is not a rapid: it takes over the motion modal group')
+  assert.equal(lines.find((line) => line.setZeroZ !== null)?.motion, null, 'and the rapid before it is no longer modal after it')
   assert.equal(lines.find((line) => line.setZeroZ !== null)?.setZeroZ, 0)
   assert.equal(modalXY.explicitZ, null, 'a modal XY line carries no Z word of its own')
   assert.equal(modalXY.z, 5, 'but it inherits the modal Z')

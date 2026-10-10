@@ -35,16 +35,23 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch) and the G-code
   emitter: templates, modal tracking, canned drill cycles, line numbers. Its
   G-code plasma branch blocks a missing, non-finite, non-positive or
-  round-to-zero effective drop/cut feed as an error before export (#983).
+  round-to-zero effective drop/cut feed as an error before export (#983), and
+  cuts it cannot read a safe height for (`postPlasmaSafeHeightMissing`). It
+  tracks whether a touch-off has happened in the program: the safe rapid
+  before the first one is in the operator's zero, and every Z after it — the
+  retract, and a safe rapid before any later cut or operation — is measured
+  from the sheet.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
   warnings; its plasma branch decides skipped operations, the selectable
   QtPlasmaC material range and the material handshake for controller piercing,
   #959, and serves either pierce mode), `planPlasmaPath`
-  (torch-off travel and torch-on cuts, #959), `plasmaSafeZ` and
-  `planPlasmaGcodeCut` (the G-code pierce safe height, per-cut heights and
-  touch-off, converted to output units at emission, #983),
+  (torch-off travel and torch-on cuts, #959), `plasmaSafeZ`, `plasmaSheetZ` and
+  `planPlasmaGcodeCut` (the G-code pierce safe height in the operator's zero
+  and measured from the sheet surface, the stock top mapped like any toolpath
+  point, per-cut heights and touch-off, converted to output units at emission,
+  #983),
   `foldFullCircleArcs` (a complete
   counter-clockwise circle as one block, so QtPlasmaC's hole handling can
   recognise it), `planOperationMotion`
@@ -97,7 +104,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   switch offset applied negatively (absent = 0), mm→inch conversion of the
   touch-off fields at emission, configured heights emitted even when pierce is
   below cut, line and arc leads, mirrored-axis direction, skipped milling
-  operations, and no M4.
+  operations, and no M4. Also the two Z frames around the touch-off, with the
+  project Z zero on, below and above the sheet top in both units: only the
+  first safe rapid is in the operator's zero, every retract and later safe
+  rapid is measured from the sheet, and nothing travels at or below cut
+  height. Cuts with no safe height block the export, and a plasma operation
+  on a router takes the tool's plunge feed when it has none of its own.
 - `plasmaGcodeFeedRegression.test.ts` — the #983 drop feed through the real
   store → generation → export path, with no fixture feed override: unconfigured
   blocks, configuring the tool before or after operation creation succeeds,
