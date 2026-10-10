@@ -111,12 +111,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   height. Cuts with no safe height block the export, and a plasma operation
   on a router takes the tool's plunge feed when it has none of its own.
 - `plasmaGcodeFeedRegression.test.ts` — the #983 drop feed through the real
-  store → generation → export path, with no fixture feed override: unconfigured
-  blocks, configuring the tool before or after operation creation succeeds,
-  mm/inch conversion including a tool in another unit, and every invalid
-  effective feed (missing, NaN, Infinity, negative, positive-but-rounds-to-zero)
-  blocks with `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while
-  QtPlasmaC stays unaffected.
+  store → generation → export path, with no fixture feed override: the example
+  torch drops at its own 300 mm/min, so a first export from a new project
+  (Add operation importing from the bundled library) is not blocked and every
+  drop spells it, `F300.000` or `F11.8110`; a torch with no drop feed — cleared
+  by the operator, stored without the field or with 0, or imported from a
+  library entry that lacks it — still blocks; configuring the tool before or
+  after operation creation succeeds, mm/inch conversion including a tool in
+  another unit, and every invalid effective feed (missing, NaN, Infinity,
+  negative, positive-but-rounds-to-zero) blocks with
+  `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while QtPlasmaC
+  writes the same program whatever the drop feed.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

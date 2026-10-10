@@ -238,8 +238,14 @@ assert.equal(starting.pierceHeight, 3.8)
 assert.equal(starting.cutHeight, 1.5)
 assert.equal(starting.pierceDelay, 0.2)
 assert.equal(starting.qtplasmacMaterialNumber, undefined)
+// The example carries a drop feed, from the OpenBuilds sample on #983 rather
+// than the cut chart, so a first Grbl plasma export is not blocked. The shape
+// defaults a stored or imported torch is filled from stay unconfigured.
+assert.equal(starting.defaultPlungeFeed, 300, 'the example torch drops at 300 mm/min')
+assert.equal(plasmaToolDefaults('mm').defaultPlungeFeed, 0, 'an absent plunge feed stays unconfigured')
+assert.equal(plasmaToolDefaults('inch').defaultPlungeFeed, 0)
 const startingInch = defaultPlasmaTool('inch')
-for (const field of ['diameter', 'defaultFeed', 'pierceHeight', 'cutHeight'] as const) {
+for (const field of ['diameter', 'defaultFeed', 'defaultPlungeFeed', 'pierceHeight', 'cutHeight'] as const) {
   assert.equal(startingInch[field], starting[field]! / 25.4, 'new defaults honor tool units')
 }
 assert.equal(startingInch.pierceDelay, 0.2)

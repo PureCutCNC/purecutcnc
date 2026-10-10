@@ -98,8 +98,10 @@ export function exportPlasma(spec: PlasmaExportSpec): PlasmaExport {
     qtplasmacMaterialNumber: 1,
     // G-code-owned piercing drops from pierce height at the tool's plunge feed
     // (#983); controller piercing ignores it and emits no feed word. The
-    // bundled example tool leaves it unset, so a scenario that cuts through the
-    // Grbl machine needs one or the drop would carry F0.
+    // example torch's own drop feed is 300 mm/min. The fixtures keep their own
+    // value, one that is neither that default, the cut feed nor the probe
+    // feed, so an emitted drop can only have come from this tool; a scenario
+    // overrides it through `tool`.
     defaultPlungeFeed: convertLength(2000, 'mm', spec.units),
     ...op.tool,
   }))

@@ -512,6 +512,10 @@ test('plasma tool editor persists consumable fields and hides milling controls (
     ['Cut height', '1.5'], ['Pierce delay (s)', '0.2']]) {
     await expect(panel.getByLabel(label, { exact: true })).toHaveValue(value)
   }
+  // The example's drop feed (#983), labelled with its unit: 300 mm/min.
+  const dropFeed = panel.locator('.properties-field').filter({ hasText: 'Plunge feed' })
+  await expect(dropFeed).toContainText('(mm/min)')
+  await expect(dropFeed.locator('input')).toHaveValue('300')
   await expect(panel.getByLabel('QtPlasmaC material number (optional)')).toHaveValue('')
   for (const [label, value] of [['Name', 'Plasma 45 A'], ['Kerf width', '1.2'], ['Cut feed', '2200'],
     ['Pierce height', '3.8'], ['Cut height', '1.5'], ['Pierce delay (s)', '0.65']]) {
@@ -574,7 +578,7 @@ test('bundled plasma consumable filters and imports with starting settings (#955
   await dialog.getByRole('button', { name: 'Import tool', exact: true }).click()
   const project = await getProject(app.page)
   expect((project.tools as Array<Record<string, unknown>>).find((tool) => tool.type === 'plasma')).toMatchObject({
-    diameter: 1.4, defaultFeed: 5560, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
+    diameter: 1.4, defaultFeed: 5560, defaultPlungeFeed: 300, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
   })
 })
 

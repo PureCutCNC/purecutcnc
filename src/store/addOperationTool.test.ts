@@ -30,6 +30,7 @@ import {
 } from '../types/project'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { toolMatchesLibraryEntry } from '../components/cam/toolLibraryDialogModel'
 import { convertLength } from '../utils/units'
 import { projectWithFeatures } from '../test/projectFixtures'
 
@@ -106,7 +107,8 @@ const plasmaLibraryEntry: ToolLibraryEntry = {
   material: 'carbide',
   defaultRpm: 0,
   defaultFeed: 218.8976377952756,
-  defaultPlungeFeed: 0,
+  // 300 mm/min: the example's drop feed (#983).
+  defaultPlungeFeed: 11.811023622047244,
   defaultStepdown: 0,
   defaultStepover: 0,
   maxCutDepth: 0,
@@ -232,6 +234,7 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
   assert(torch.pierceHeight === plasmaLibraryEntry.pierceHeight, `pierce height survives the import, got ${torch.pierceHeight}`)
   assert(torch.cutHeight === plasmaLibraryEntry.cutHeight, `cut height survives the import, got ${torch.cutHeight}`)
   assert(torch.pierceDelay === plasmaLibraryEntry.pierceDelay, `pierce delay survives the import, got ${torch.pierceDelay}`)
+  assert(torch.defaultPlungeFeed === plasmaLibraryEntry.defaultPlungeFeed, `the drop feed survives the import, got ${torch.defaultPlungeFeed}`)
   // Normalization must keep them: the same whitelist gap made them arrive absent
   // and left normalization to turn absent into the unconfigured 0.
   const normalized = normalizeToolForProject(torch, next)
@@ -240,6 +243,15 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
   assert(normalized.pierceDelay === plasmaLibraryEntry.pierceDelay, 'normalization keeps the pierce delay')
   const op = next.operations.find((operation) => operation.id === opId)
   assert(op?.toolRef === torch.id, 'the operation references the imported torch')
+  assert(op.plungeFeed === plasmaLibraryEntry.defaultPlungeFeed, `the operation drops at the example feed, got ${op.plungeFeed}`)
+  // Imported as it is, the torch is still its library entry, so the library
+  // dialog does not offer the example a second time. It stops being that
+  // entry once the operator edits a value, the drop feed included.
+  assert(toolMatchesLibraryEntry(torch, plasmaLibraryEntry), 'the imported example torch matches its library entry')
+  assert(
+    !toolMatchesLibraryEntry({ ...torch, defaultPlungeFeed: 20 }, plasmaLibraryEntry),
+    'an edited drop feed makes it a different tool',
+  )
 
   // A library value in another unit is converted, not dropped or copied raw.
   seed(project)
@@ -249,12 +261,17 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
     units: 'mm',
     diameter: 1.4,
     defaultFeed: 5560,
+    defaultPlungeFeed: 300,
     pierceHeight: 3.8,
     cutHeight: 1.5,
   }
   useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [mmEntry])
   const converted = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
   assert(converted?.units === 'inch', 'the imported torch takes the project units')
+  assert(
+    Math.abs(converted.defaultPlungeFeed - convertLength(300, 'mm', 'inch')) < 1e-9,
+    `the drop feed is converted, got ${converted.defaultPlungeFeed}`,
+  )
   assert(
     converted !== undefined && Math.abs(converted.pierceHeight! - convertLength(3.8, 'mm', 'inch')) < 1e-9,
     `the pierce height is converted, got ${converted?.pierceHeight}`,
@@ -263,16 +280,18 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
   // A genuinely zero library value stays zero: the import must not invent a
   // physical standoff any more than normalization may.
   seed(project)
-  const zeroEntry: ToolLibraryEntry = { ...plasmaLibraryEntry, key: 'lib-plasma-zero', pierceHeight: 0, cutHeight: 0, pierceDelay: 0 }
+  const zeroEntry: ToolLibraryEntry = { ...plasmaLibraryEntry, key: 'lib-plasma-zero', pierceHeight: 0, cutHeight: 0, pierceDelay: 0, defaultPlungeFeed: 0 }
   useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [zeroEntry])
   const zeroTorch = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
   assert(zeroTorch?.pierceHeight === 0 && zeroTorch?.cutHeight === 0 && zeroTorch?.pierceDelay === 0, 'a zero consumable stays zero')
+  // Nor a drop feed: a library torch that has none stays unconfigured, and a
+  // Grbl plasma export of it is blocked until the operator enters one.
+  assert(zeroTorch.defaultPlungeFeed === 0, `an absent drop feed stays unconfigured, got ${zeroTorch.defaultPlungeFeed}`)
 }
 
 function testAddPlasmaReusesTorchWithEditedPlungeFeed(): void {
-  // The bundled example torch has no plunge feed, and a Grbl plasma export is
-  // blocked until the operator enters one. That edit makes the project's torch
-  // differ from its library entry (#983), and the next plasma operation must
+  // An operator who changes the example torch's plunge feed has a torch that
+  // differs from its library entry (#983). The next plasma operation must
   // still use that torch rather than import the unedited example beside it.
   const base = newProject('t', 'inch')
   const torch: Tool = { ...plasmaLibraryEntry, id: 't-torch', defaultPlungeFeed: 80 }

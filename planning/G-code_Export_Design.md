@@ -198,6 +198,15 @@ emission; an absent switch offset is 0 and the offset is applied negatively
 (`G10 L20 ... Z<-offset>`). Every contour is probed and zeroed again, because
 the sheet warps as it heats.
 
+The drop in step 5 runs at the operation's plunge feed, or else the torch's.
+The example torch (`defaultPlasmaTool`, and the two bundled library entries)
+carries 300 mm/min. That one value is not from the Hypertherm cut chart, which
+gives no Z transition speed: it is the drop feed in the requester's OpenBuilds
+sample (`G1 F300 Z7`, #983). A torch stored or imported without a plunge feed
+keeps 0, and a cut or drop feed that is missing, not positive, or rounds to
+zero blocks the export (`postPlasmaCutFeedMissing` /
+`postPlasmaPlungeFeedMissing`) rather than writing `F0` after the torch fires.
+
 There is no `G0` between `M3` and `M5` and the torch is always `M3`, never `M4`,
 so Grbl laser mode (`$32`) cannot drop the torch. Only Grbl 1.1 words are
 written, so grblHAL reads the same program.
