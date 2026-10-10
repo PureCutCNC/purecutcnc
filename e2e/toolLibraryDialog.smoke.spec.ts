@@ -502,13 +502,16 @@ test('plasma tool editor persists consumable fields and hides milling controls (
   await field('Units').getByRole('option', { name: 'Millimeters', exact: true }).click()
   await field('Type').locator('.ui-select__trigger').click()
   await field('Type').getByRole('option', { name: 'Plasma', exact: true }).click()
-  for (const label of ['Kerf width', 'Cut feed', 'Pierce height', 'Cut height', 'Pierce delay (s)', 'QtPlasmaC material number (optional)']) {
+  // A torch keeps a Plunge feed: its drop feed from pierce height to cut height
+  // (#983). The label carries no unit, like every other field of the tool.
+  for (const label of ['Kerf width', 'Cut feed', 'Plunge feed', 'Pierce height', 'Cut height', 'Pierce delay (s)', 'QtPlasmaC material number (optional)']) {
     await expect(panel.getByLabel(label, { exact: true })).toBeVisible()
   }
-  for (const label of ['Diameter', 'Flutes', 'Material', 'Default RPM', 'Default feed', 'Plunge feed', 'Stepdown', 'Max cut depth', 'Stepover ratio']) {
+  for (const label of ['Diameter', 'Flutes', 'Material', 'Default RPM', 'Default feed', 'Stepdown', 'Max cut depth', 'Stepover ratio']) {
     await expect(panel.getByText(label, { exact: true })).toHaveCount(0)
   }
-  for (const [label, value] of [['Kerf width', '1.4'], ['Cut feed', '5560'], ['Pierce height', '3.8'],
+  // The example's values, the drop feed of 300 mm/min among them.
+  for (const [label, value] of [['Kerf width', '1.4'], ['Cut feed', '5560'], ['Plunge feed', '300'], ['Pierce height', '3.8'],
     ['Cut height', '1.5'], ['Pierce delay (s)', '0.2']]) {
     await expect(panel.getByLabel(label, { exact: true })).toHaveValue(value)
   }
@@ -574,7 +577,7 @@ test('bundled plasma consumable filters and imports with starting settings (#955
   await dialog.getByRole('button', { name: 'Import tool', exact: true }).click()
   const project = await getProject(app.page)
   expect((project.tools as Array<Record<string, unknown>>).find((tool) => tool.type === 'plasma')).toMatchObject({
-    diameter: 1.4, defaultFeed: 5560, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
+    diameter: 1.4, defaultFeed: 5560, defaultPlungeFeed: 300, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
   })
 })
 

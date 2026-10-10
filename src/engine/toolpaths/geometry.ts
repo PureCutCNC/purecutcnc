@@ -171,7 +171,13 @@ export function normalizeToolForProject(tool: Tool, project: Project): Normalize
     material: normalizedTool.material,
     defaultRpm: milling ? normalizedTool.defaultRpm : 0,
     defaultFeed: normalizedTool.defaultFeed,
-    defaultPlungeFeed: milling ? normalizedTool.defaultPlungeFeed : 0,
+    // A plasma tool's plunge feed is its drop feed: G-code piercing drops from
+    // pierce height to cut height at it (#983). It is a consumable value the
+    // operator configures, so it survives normalization (converted to project
+    // units with the rest of the tool) instead of being zeroed like the
+    // milling-only fields below. Zero stays zero: an unconfigured tool blocks
+    // the export rather than inventing a physical feed.
+    defaultPlungeFeed: normalizedTool.defaultPlungeFeed,
     defaultStepdown: milling ? normalizedTool.defaultStepdown : 0,
     defaultStepover: milling ? normalizedTool.defaultStepover : 0,
     maxCutDepth: milling ? normalizedTool.maxCutDepth : 0,

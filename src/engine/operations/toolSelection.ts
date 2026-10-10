@@ -23,6 +23,8 @@
  * Selection considers, in this order:
  *  - operation type → a best-first list of acceptable tool types,
  *  - project units → bundled-library entries are converted before comparison,
+ *    and of two entries of the same size the one written in the project's
+ *    units is imported, as it stands,
  *  - feature size → the largest tool within `autoToolDiameterLimit()` (a
  *    fraction of the feature's smallest dimension, capped at 1/4" for routing
  *    kinds); smallest available otherwise.
@@ -158,6 +160,9 @@ export function autoToolDiameterLimit(project: Project, kind: OperationKind, tar
   return capAutoToolDiameter(kind, project.meta.units, span == null ? null : span * fraction)
 }
 
+/** Two diameters closer than this, in project units, are the same size. */
+const SAME_SIZE_TOLERANCE = 1e-9
+
 /**
  * Picks the largest candidate whose diameter is within `maxDiameter`; if none
  * fit (or `maxDiameter` is unknown), picks the smallest candidate.
@@ -194,6 +199,19 @@ function entryToProjectTool(entry: ToolLibraryEntry, toUnits: Tool['units']): Om
     defaultStepdown: converted.defaultStepdown,
     defaultStepover: converted.defaultStepover,
     maxCutDepth: converted.maxCutDepth,
+    // Plasma consumables are not optional extras to this list: a G-code pierce
+    // program writes its pierce height, cut height and dwell straight from
+    // them, so dropping them hands the first torch an operator ever gets (Add
+    // operation on a project with no torch yet) a tool that fires at the sheet
+    // with no standoff and no dwell — and nothing blocks it. A library value
+    // that is genuinely 0 still arrives as 0; normalization is what turns a
+    // missing consumable into that unconfigured 0 (issue #983).
+    ...(converted.type === 'plasma' ? {
+      pierceHeight: converted.pierceHeight,
+      cutHeight: converted.cutHeight,
+      pierceDelay: converted.pierceDelay,
+      qtplasmacMaterialNumber: converted.qtplasmacMaterialNumber,
+    } : {}),
   }
 }
 
@@ -224,10 +242,24 @@ export function selectToolForOperation(
 
     const libraryCandidates = libraryTools
       .filter((entry) => entry.type === type)
-      .map((entry) => entryToProjectTool(entry, units))
-    const imported = pickBySize(libraryCandidates, maxDiameter)
-    if (imported) {
-      return { source: 'import', tool: imported }
+      .map((entry) => {
+        const tool = entryToProjectTool(entry, units)
+        return { tool, diameter: tool.diameter, native: entry.units === units }
+      })
+    const picked = pickBySize(libraryCandidates, maxDiameter)
+    if (picked) {
+      // A library can hold the same tool once per unit, as the bundled one
+      // does for its example torch. Take the entry written in the project's
+      // units when there is one: it is imported as it stands, under its own
+      // name, and still matches its library entry afterwards, where the
+      // converted twin would carry the other unit's name. Only an entry of
+      // the same size can take the pick's place, so the size that was chosen
+      // never changes; with no such entry the pick is imported by conversion.
+      const imported = picked.native
+        ? picked
+        : libraryCandidates.find((candidate) => candidate.native
+          && Math.abs(candidate.diameter - picked.diameter) <= SAME_SIZE_TOLERANCE) ?? picked
+      return { source: 'import', tool: imported.tool }
     }
   }
 

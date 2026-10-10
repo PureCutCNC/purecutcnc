@@ -1,7 +1,7 @@
 {
   "id": "grbl-plasma",
   "name": "Grbl plasma (OpenBuilds CONTROL) (experimental)",
-  "description": "Experimental Grbl 1.1 plasma table with a touch-off probe and no THC, such as OpenBuilds CONTROL. The program probes the sheet before every cut and owns pierce height, delay and cut height. Torch sequencing is not yet implemented.",
+  "description": "Experimental Grbl 1.1 plasma table with a touch-off probe and no THC, such as OpenBuilds CONTROL. The program probes the sheet before every cut and owns pierce height, delay and cut height.",
   "builtin": true,
   "fileExtension": "gcode",
   "coordinateSystem": {
@@ -57,8 +57,8 @@
   "feedSpeed": {
     "feedCommand": "F",
     "rpmCommand": "",
-    "spindleOnCW": "; Plasma sequencing pending (#983). Unused router RPM:",
-    "spindleOnCCW": "; Plasma sequencing pending (#983). Unused router RPM:",
+    "spindleOnCW": "; Plasma torch, no spindle. Unused router RPM:",
+    "spindleOnCCW": "; Plasma torch, no spindle. Unused router RPM:",
     "spindleOff": "",
     "inlineWithMotion": true,
     "modalFeedSpeed": true

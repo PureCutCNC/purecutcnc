@@ -27,6 +27,7 @@
 
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
+import { getProject } from './helpers'
 
 test.describe('Export G-code operation checklist smoke', () => {
   test('per-operation export pre-checks only that operation', async ({ app, ui }) => {
@@ -189,6 +190,42 @@ test('a QtPlasmaC torch without a material number blocks the export', async ({ a
   await expect(ui.exportDialog.errors(app.page).filter({ hasText: 'Plasma Torch' })).toContainText('no material number')
   await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
   await expect(ui.exportPreview.body(app.page)).not.toContainText('M190')
+})
+
+// #983 feed repair: the G-code plasma drop feed is a rendered tool control, and
+// an unconfigured one blocks the export instead of writing F0.
+test('Grbl plasma blocks the export while the drop feed is unconfigured', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'grbl-plasma', plasmaCut: { materialNumber: null, plungeFeed: 0 } })
+  await ui.operations.headerExportButton(app.page).click()
+  await expect(ui.exportDialog.errors(app.page).filter({ hasText: 'Plasma Cut' })).toContainText('no positive plunge feed')
+  await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+})
+
+test('the plasma drop feed control configures the exported feed', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'grbl-plasma', plasmaCut: { materialNumber: null, plungeFeed: 0 } })
+
+  // The tool panel renders the drop feed as "Plunge feed", with no unit in the
+  // label, and editing it writes the tool's plunge feed.
+  await app.page.getByRole('tab', { name: 'Tools' }).click()
+  await app.page.locator('.cam-tool-tree .tree-row--feature').filter({ hasText: 'Plasma Torch' }).click()
+  const dropFeed = app.page.locator('.cam-tool-properties .properties-field').filter({ hasText: 'Plunge feed' })
+  await expect(dropFeed.locator('span').first()).toHaveText('Plunge feed')
+  const input = dropFeed.locator('input')
+  await input.fill('200')
+  await input.press('Enter')
+
+  const project = await getProject(app.page)
+  const torch = (project.tools as Array<{ name: string; defaultPlungeFeed: number }>)
+    .find((tool) => tool.name === 'Plasma Torch')
+  expect(torch?.defaultPlungeFeed).toBe(200)
+
+  // The configured drop feed unblocks the export and reaches the program.
+  await app.page.getByRole('tab', { name: 'Operations' }).click()
+  await ui.operations.headerExportButton(app.page).click()
+  await expect(ui.exportDialog.errors(app.page)).toHaveCount(0)
+  await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  // The drop line (not the contour feed) now carries the configured value.
+  await expect(ui.exportPreview.body(app.page)).toContainText(/G1 Z[\d.]+ F200\.0+/)
 })
 
 // #959 / PR #993: long preview lines must scroll inside their own column,

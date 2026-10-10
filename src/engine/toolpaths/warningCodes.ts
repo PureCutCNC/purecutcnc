@@ -325,13 +325,27 @@ export type ToolpathWarningCode =
   | 'postWcsNullSelect'
   | 'postToolChangesDisabled'
   | 'postNoCoolantCommands'
-  | 'postPlasmaOutputPending'
   /** A milling operation was exported to a plasma machine. It has no torch
    *  path, so it is left out of the program (issue #959). */
   | 'postPlasmaOperationSkipped'
   /** A plasma operation's tool has no QtPlasmaC material number, so the
    *  program cannot select the material it cuts with (issue #959). */
   | 'postPlasmaMaterialMissing'
+  /** A G-code pierce operation has no effective cut feed: it is missing,
+   *  non-finite, non-positive, or positive but rounds to zero at the
+   *  definition's emitted precision. The program would cut with F0. G-code
+   *  piercing owns the cut feed, unlike controller piercing, which takes it
+   *  from the material table (issue #983). */
+  | 'postPlasmaCutFeedMissing'
+  /** The same for the plunge (drop) feed: the torch would drop from pierce
+   *  height to cut height with F0 (issue #983). */
+  | 'postPlasmaPlungeFeedMissing'
+  /** A G-code pierce operation has cuts but no rapid to read its safe height
+   *  from, so the retracts between them cannot be placed and the cuts are not
+   *  written. The #957 toolpath ends every contour with a rapid, so this
+   *  guards a toolpath that reached the emitter in another shape (issue
+   *  #983). */
+  | 'postPlasmaSafeHeightMissing'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -372,12 +386,21 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postPlasmaMaterialMissing` — QtPlasmaC would fire the torch with
  *   whatever material happens to be loaded: the wrong cut feed, heights and
  *   pierce delay for the sheet on the table (issue #959).
+ * - `postPlasmaCutFeedMissing` / `postPlasmaPlungeFeedMissing` — a G-code
+ *   pierce program would command F0 on a cut or on the drop to cut height, so
+ *   the torch fires and the machine then does not move (issue #983).
+ * - `postPlasmaSafeHeightMissing` — a G-code pierce operation's cuts are left
+ *   out because no safe height could be read for them, so the saved file
+ *   would quietly lack that operation's cuts (issue #983).
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',
   'postPlasmaMaterialMissing',
+  'postPlasmaCutFeedMissing',
+  'postPlasmaPlungeFeedMissing',
+  'postPlasmaSafeHeightMissing',
 ])
 
 /**

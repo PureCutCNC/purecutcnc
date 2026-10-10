@@ -82,12 +82,21 @@ export function plasmaToolDefaults(units: Tool['units']): Omit<Tool, 'id' | 'nam
  * Hypertherm 809230 Service Manual, p. 134, metric best-quality settings:
  * https://xnet.hypertherm.com/Xnet/library/library.jsp?file=HYP174752
  * The controller's material table number is installation-specific and stays unset.
+ *
+ * The plunge (drop) feed is the one value here that is NOT from the Hypertherm
+ * cut chart: the chart gives no speed for the Z move from pierce height to cut
+ * height. 300 mm/min is the drop feed in the OpenBuilds CAM sample the Grbl
+ * plasma requester supplied (`G1 F300 Z7`), recorded on issue #983. Only a
+ * G-code pierce program reads it. `plasmaToolDefaults` keeps 0, so a stored or
+ * imported torch that carries no value stays unconfigured and still blocks a
+ * Grbl plasma export.
  */
 export function defaultPlasmaTool(units: Tool['units']): Omit<Tool, 'id' | 'name'> {
   return {
     ...plasmaToolDefaults(units),
     diameter: convertLength(1.4, 'mm', units),
     defaultFeed: convertLength(5560, 'mm', units),
+    defaultPlungeFeed: convertLength(300, 'mm', units),
     pierceHeight: convertLength(3.8, 'mm', units),
     cutHeight: convertLength(1.5, 'mm', units),
     pierceDelay: 0.2,
@@ -121,8 +130,11 @@ export function normalizePlasmaTool(tool: Tool): Tool {
 }
 
 export function samePlasmaParameters(a: Omit<Tool, 'id'>, b: Omit<Tool, 'id'>): boolean {
+  // The plunge feed is the drop feed of a G-code pierce program (#983): two
+  // torches that differ in it are different settings, like the fields below.
   return a.name === b.name && a.units === b.units && a.type === b.type
     && a.diameter === b.diameter && a.defaultFeed === b.defaultFeed
+    && a.defaultPlungeFeed === b.defaultPlungeFeed
     && a.pierceHeight === b.pierceHeight && a.cutHeight === b.cutHeight
     && a.pierceDelay === b.pierceDelay && a.qtplasmacMaterialNumber === b.qtplasmacMaterialNumber
 }

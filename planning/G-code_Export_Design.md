@@ -155,16 +155,77 @@ The exported programs run through the QtPlasmaC simulator
 (`scripts/gcode-conformance/qtplasmac/`, `EXPORTED_CASES`), the exporter's own
 program for each reference subject. The exported small-hole case must show the
 controller's automatic feed reduction in the run trace, not merely carry the
-`#<holes>` header. `pierceMode: gcode` (#983) is still metadata only and keeps
-`postPlasmaOutputPending` until its torch path lands on the same pipeline.
+`#<holes>` header.
+
+### Plasma G-code pierce path (#983)
+
+A plasma machine with `pierceMode: gcode` (Grbl / OpenBuilds CONTROL) writes the
+torch path itself on the same pipeline as #959: `planProgramSequence` takes the
+same plasma branch, and `planPlasmaPath` groups the moves into torch-off travel
+and torch-on cuts. The material handshake is controller-only, so the tool's
+`qtplasmacMaterialNumber` is ignored and no `postPlasmaMaterialMissing` can
+block such an export.
+
+Per cut (the requester's OpenBuilds sample, and the approved plan):
+
+1. `G0 Z<safe>`, then `G0 X Y` to the pierce point. The safe height is in the
+   operator's own zero for the first cut of the program only; from then on it
+   is measured from the sheet, and is left out when the retract of the
+   previous cut already put the head there;
+2. `probeCommand Z-<probeDepth> F<probeFeed>`;
+3. `setZeroCommand Z<-switchOffset>`;
+4. `G0 Z<pierceHeight>`, `torchOnCommand`, then `G4 P<pierceDelay>`;
+5. `G1 Z<cutHeight> F<plungeFeed>`;
+6. the lead-in, contour and lead-out at cut height and the cut feed;
+7. `torchOffCommand`, then `G0 Z<safe>` measured from the sheet.
+
+Z after the touch-off is relative to the sheet surface, not the stock top: the
+probe sets Z zero on the sheet, and pierce and cut heights come from the tool as
+configured — even when pierce height is the lower of the two. The first
+`G0 Z<safe>` is still in the operator's own zero, taken from the toolpath's safe
+height. That number is only valid until the first `G10 L20`: afterwards the
+same height is written as its clearance above the sheet, toolpath safe Z minus
+the stock top, both mapped to machine coordinates the way every move is
+(`plasmaSheetZ`). The two agree only when the project's Z zero is on the sheet
+top; with it on the table the old number retracted too high, and with it above
+the sheet the retract went below the sheet surface. The emitter remembers
+across operations that a touch-off has happened, so a later operation's first
+safe rapid is in the sheet frame as well. Cuts that carry no rapid to read the
+safe height from are not written, and `postPlasmaSafeHeightMissing` blocks the
+export. The touch-off fields are stored in millimetres and millimetres per
+minute whatever the project units, so `planPlasmaGcodeCut` converts them once at
+emission; an absent switch offset is 0 and the offset is applied negatively
+(`G10 L20 ... Z<-offset>`). Every contour is probed and zeroed again, because
+the sheet warps as it heats.
+
+The drop in step 5 runs at the operation's plunge feed, or else the torch's.
+The example torch (`defaultPlasmaTool`, and the two bundled library entries)
+carries 300 mm/min. That one value is not from the Hypertherm cut chart, which
+gives no Z transition speed: it is the drop feed in the requester's OpenBuilds
+sample (`G1 F300 Z7`, #983). A torch stored or imported without a plunge feed
+keeps 0, and a cut or drop feed that is missing, not positive, or rounds to
+zero blocks the export (`postPlasmaCutFeedMissing` /
+`postPlasmaPlungeFeedMissing`) rather than writing `F0` after the torch fires.
+
+There is no `G0` between `M3` and `M5` and the torch is always `M3`, never `M4`,
+so Grbl laser mode (`$32`) cannot drop the torch. Only Grbl 1.1 words are
+written, so grblHAL reads the same program.
+
+The generated programs are in the `grbl-plasma-*` corpus cases and are checked
+two ways (`npm run check:gcode`): GRBL's own parser (`grbl-gvalidate`) for the
+words and arcs, and the sequence verdict in
+`scripts/gcode-conformance/grbl-plasma/verdict.ts` for the per-cut order, torch
+pairing, feeds, Z signs and units. gvalidate cannot trigger the probe, so it is
+fed a copy with `$X` after each probe (see that folder's README); the program
+itself is unchanged. Both Grbl and QtPlasmaC machines stay "experimental" until
+a tester runs files on a real table (#952).
 
 The bundled **Grbl plasma (OpenBuilds CONTROL) (experimental)** machine is the
 `gcode` counterpart, from a requester's OpenBuilds CONTROL table (#983). Its
 word syntax is a copy of `grbl.json` (a test keeps the shared fields equal, so
 GRBL's own parser verdicts apply), with `.gcode` files, torch `M3 S1000` / `M5`,
-and touch-off `G38.2`, 30 mm, 100 mm/min, `G10 L20 P0`, offset 0. Like
-QtPlasmaC it is metadata only until the torch path lands: spindle words are
-comments and no torch, probe or zeroing sequence is emitted.
+and touch-off `G38.2`, 30 mm, 100 mm/min, `G10 L20 P0`, offset 0. Its spindle
+words are comments: the torch sequence is the only thing written.
 
 The library shows machine kind for every row, including legacy routers and
 project-only snapshots. The focused editor exposes kind and the plasma block;

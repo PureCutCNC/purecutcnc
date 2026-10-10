@@ -9,6 +9,7 @@
       "type": "plasma",
       "diameter": 0.05511811023622047,
       "defaultFeed": 218.8976377952756,
+      "defaultPlungeFeed": 11.811023622047244,
       "pierceHeight": 0.14960629921259844,
       "cutHeight": 0.05905511811023623,
       "pierceDelay": 0.2
@@ -20,6 +21,7 @@
       "type": "plasma",
       "diameter": 1.4,
       "defaultFeed": 5560,
+      "defaultPlungeFeed": 300,
       "pierceHeight": 3.8,
       "cutHeight": 1.5,
       "pierceDelay": 0.2

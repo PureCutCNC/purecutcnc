@@ -368,7 +368,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.probeFeed': 'Antastvorschub (mm/min)',
   'dialogs.machineEditor.setZeroCommand': 'Befehl Z-Null setzen',
   'dialogs.machineEditor.switchOffset': 'Schalterversatz beim Antasten (mm)',
-  'dialogs.machineEditor.touchOffNote': 'Vor jedem Schnitt tastet das Programm das Material an, setzt dort Z-Null plus Schalterversatz und sticht dann in der Einstechhöhe des Werkzeugs ein. 0 für ohmsches Antasten oder einen Taster, der an der Oberfläche auslöst. Die Plasmaausgabe ist noch nicht implementiert.',
+  'dialogs.machineEditor.touchOffNote': 'Vor jedem Schnitt tastet das Programm das Material an, setzt dort Z-Null plus Schalterversatz und sticht dann in der Einstechhöhe des Werkzeugs ein. 0 für ohmsches Antasten oder einen Taster, der an der Oberfläche auslöst.',
   'dialogs.machineEditor.general': 'Allgemein',
   'dialogs.machineEditor.name': 'Name',
   'dialogs.machineEditor.fileExtension': 'Dateiendung',
