@@ -269,8 +269,39 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
   assert(zeroTorch?.pierceHeight === 0 && zeroTorch?.cutHeight === 0 && zeroTorch?.pierceDelay === 0, 'a zero consumable stays zero')
 }
 
+function testAddPlasmaReusesTorchWithEditedPlungeFeed(): void {
+  // The bundled example torch has no plunge feed, and a Grbl plasma export is
+  // blocked until the operator enters one. That edit makes the project's torch
+  // differ from its library entry (#983), and the next plasma operation must
+  // still use that torch rather than import the unedited example beside it.
+  const base = newProject('t', 'inch')
+  const torch: Tool = { ...plasmaLibraryEntry, id: 't-torch', defaultPlungeFeed: 80 }
+  const project = projectWithFeatures({
+    ...base,
+    tools: [torch],
+  }, [makeFeature('f', 'subtract', 2, 2), makeFeature('g', 'subtract', 3, 3)])
+  seed(project)
+
+  for (const featureId of ['f', 'g']) {
+    const opId = useProjectStore.getState().addOperation(
+      'plasma_profile',
+      'rough',
+      { source: 'features', featureIds: [featureId] },
+      [plasmaLibraryEntry],
+    )
+    const next = useProjectStore.getState().project
+    const torches = next.tools.filter((tool) => tool.type === 'plasma')
+    assert(torches.length === 1, `expected the edited torch to be reused, got ${torches.length} torches`)
+    assert(torches[0].defaultPlungeFeed === 80, 'the operator\'s plunge feed is untouched')
+    const op = next.operations.find((operation) => operation.id === opId)
+    assert(op?.toolRef === 't-torch', 'the operation references the existing torch')
+    assert(op.plungeFeed === 80, `the operation takes the torch's plunge feed, got ${op.plungeFeed}`)
+  }
+}
+
 testAddVCarveImportsVBit()
 testAddPocketReusesExistingFlatNoImport()
+testAddPlasmaReusesTorchWithEditedPlungeFeed()
 testVCarveDepthFallsBackToStockThickness()
 testEngraveKeepsShallowDefault()
 testAddPlasmaImportsTorchWithConsumables()

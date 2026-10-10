@@ -121,8 +121,11 @@ export function normalizePlasmaTool(tool: Tool): Tool {
 }
 
 export function samePlasmaParameters(a: Omit<Tool, 'id'>, b: Omit<Tool, 'id'>): boolean {
+  // The plunge feed is the drop feed of a G-code pierce program (#983): two
+  // torches that differ in it are different settings, like the fields below.
   return a.name === b.name && a.units === b.units && a.type === b.type
     && a.diameter === b.diameter && a.defaultFeed === b.defaultFeed
+    && a.defaultPlungeFeed === b.defaultPlungeFeed
     && a.pierceHeight === b.pierceHeight && a.cutHeight === b.cutHeight
     && a.pierceDelay === b.pierceDelay && a.qtplasmacMaterialNumber === b.qtplasmacMaterialNumber
 }

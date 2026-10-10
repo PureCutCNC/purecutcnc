@@ -221,7 +221,7 @@ const library = parseToolLibraryFile({ tools: [{ ...plasma, key: 'plasma-45' }] 
 assert.equal(library.tools.length, 1, 'library parser accepts plasma without positive milling values')
 assert.ok(toolMatchesTemplate(plasma, library.tools[0]))
 assert.ok(toolMatchesLibraryEntry(plasma, library.tools[0]))
-for (const field of ['pierceHeight', 'cutHeight', 'pierceDelay', 'qtplasmacMaterialNumber'] as const) {
+for (const field of ['pierceHeight', 'cutHeight', 'pierceDelay', 'qtplasmacMaterialNumber', 'defaultPlungeFeed'] as const) {
   const changed = { ...library.tools[0], [field]: plasma[field]! + 1 }
   assert.equal(toolMatchesTemplate(plasma, changed), false, field + ' prevents wrong consumable reuse')
   assert.equal(toolMatchesLibraryEntry(plasma, changed), false, field + ' remains importable')

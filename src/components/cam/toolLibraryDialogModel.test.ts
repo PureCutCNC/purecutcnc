@@ -100,6 +100,15 @@ describe('toolMatchesLibraryEntry', () => {
     const tool = makeTool({ maxCutDepth: 1.0 })
     assert.equal(toolMatchesLibraryEntry(tool, entry), true)
   })
+
+  it('compares a plasma torch on its plunge feed', () => {
+    // The drop feed of a G-code pierce program (#983): a torch whose plunge
+    // feed the operator edited is no longer its library entry.
+    const torch = { type: 'plasma' as const, name: 'Torch', pierceHeight: 0.15, cutHeight: 0.06, pierceDelay: 0.2, defaultPlungeFeed: 0 }
+    const entry = makeEntry(torch)
+    assert.equal(toolMatchesLibraryEntry(makeTool(torch), entry), true)
+    assert.equal(toolMatchesLibraryEntry(makeTool({ ...torch, defaultPlungeFeed: 80 }), entry), false)
+  })
 })
 
 // ── filterLibraryEntries ─────────────────────────────────────────────
