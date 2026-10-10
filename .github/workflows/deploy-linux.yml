@@ -89,6 +89,7 @@ jobs:
           rm -rf squashfs-root runtime appimagetool
 
       - name: Upload prerelease Linux bundles to release
+        id: release-prerelease
         if: contains(inputs.version, '-')
         uses: softprops/action-gh-release@v2
         with:
@@ -100,6 +101,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload stable Linux bundles to release
+        id: release-stable
         if: ${{ !contains(inputs.version, '-') }}
         uses: softprops/action-gh-release@v2
         with:
@@ -109,6 +111,14 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
         continue-on-error: true
 
+      # The release uploads above continue on error so a hiccup there does not
+      # lose the build. Say so instead of leaving a green run with no installer
+      # on the release.
+      - name: Report a failed release upload
+        if: steps.release-prerelease.outcome == 'failure' || steps.release-stable.outcome == 'failure'
+        shell: bash
+        run: echo "::warning::The release upload failed, so the release has no installer from this run. Check the run's artifacts."
+
       - name: Checkout pages repo
         uses: actions/checkout@v4
         with:
@@ -116,7 +126,15 @@ jobs:
           token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
           path: pages-repo
 
+      - name: Check Linux download manifest version
+        id: manifest-gate
+        uses: ./.github/actions/download-manifest-gate
+        with:
+          version: ${{ inputs.version }}
+          platform: linux
+
       - name: Write Linux download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: v${{ inputs.version }}
@@ -156,6 +174,7 @@ jobs:
           "
 
       - name: Commit and push Linux download metadata
+        if: steps.manifest-gate.outputs.publish == 'true'
         run: |
           cd pages-repo
           git config user.name "github-actions[bot]"

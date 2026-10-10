@@ -17,7 +17,7 @@
     "check:gcode:qtplasmac": "npx tsx scripts/gcode-conformance/qtplasmac/verdict.test.ts && npx tsx scripts/gcode-conformance/qtplasmac/run.ts",
     "check:fast-lane": "bash scripts/check-fast-lane.sh",
     "docs:check": "npx tsx scripts/check-docs.test.ts && npx tsx scripts/check-docs.ts",
-    "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/run-build.ts scripts/build-phases.ts scripts/build-phases.test.ts scripts/check-license-headers.ts scripts/check-i18n-format.ts scripts/check-portable-paths.ts scripts/docs-check-core.ts scripts/check-docs.ts scripts/check-docs.test.ts scripts/backlog-hygiene.ts scripts/gcode-conformance/corpus.ts scripts/gcode-conformance/run.ts scripts/gcode-conformance/fabmo-opensbp scripts/gcode-conformance/qtplasmac scripts/gcode-conformance/grbl-plasma tools/resume-work tools/manual-impact",
+    "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/run-build.ts scripts/build-phases.ts scripts/build-phases.test.ts scripts/check-license-headers.ts scripts/check-i18n-format.ts scripts/check-portable-paths.ts scripts/docs-check-core.ts scripts/check-docs.ts scripts/check-docs.test.ts scripts/backlog-hygiene.ts scripts/gcode-conformance/corpus.ts scripts/gcode-conformance/run.ts scripts/gcode-conformance/fabmo-opensbp scripts/gcode-conformance/qtplasmac scripts/gcode-conformance/grbl-plasma tools/resume-work tools/manual-impact tools/download-manifest-gate",
     "lint:scripts": "eslint scripts",
     "preview": "vite preview",
     "sync-icons": "npx tsx scripts/build-icon-sprite.ts",
