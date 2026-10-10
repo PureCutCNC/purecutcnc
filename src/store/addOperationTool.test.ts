@@ -29,6 +29,8 @@ import {
   type Tool,
 } from '../types/project'
 import type { ToolLibraryEntry } from '../toolLibrary'
+import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { convertLength } from '../utils/units'
 import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -90,6 +92,27 @@ const vBitLibraryEntry: ToolLibraryEntry = {
   defaultStepdown: 0.1,
   defaultStepover: 0.4,
   maxCutDepth: 0.5,
+}
+
+/** The shipped example torch, inch units, as `public/tool-library.json` carries it. */
+const plasmaLibraryEntry: ToolLibraryEntry = {
+  key: 'lib-plasma-inch',
+  name: 'Powermax45 XP 45 A — 2 mm mild steel (example) — inch units',
+  units: 'inch',
+  type: 'plasma',
+  diameter: 0.05511811023622047,
+  vBitAngle: null,
+  flutes: 0,
+  material: 'carbide',
+  defaultRpm: 0,
+  defaultFeed: 218.8976377952756,
+  defaultPlungeFeed: 0,
+  defaultStepdown: 0,
+  defaultStepover: 0,
+  maxCutDepth: 0,
+  pierceHeight: 0.14960629921259844,
+  cutHeight: 0.05905511811023623,
+  pierceDelay: 0.2,
 }
 
 function seed(project: Project): void {
@@ -182,9 +205,74 @@ function testAddPocketReusesExistingFlatNoImport(): void {
   assert(op?.toolRef === 't-flat', 'pocket should reference the existing flat endmill')
 }
 
+function testAddPlasmaImportsTorchWithConsumables(): void {
+  // The first-use path: a project with no torch, so adding a plasma operation
+  // imports one from the library. A G-code pierce program writes its pierce
+  // height, cut height and dwell from these fields, so an import that dropped
+  // them emitted a program that fired the torch at the sheet with no standoff
+  // and no dwell (#983).
+  const base = newProject('t', 'inch')
+  const project = projectWithFeatures({
+    ...base,
+    tools: [flatTool('t-flat', 0.25)],
+  }, [makeFeature('f', 'subtract', 2, 2)])
+  seed(project)
+
+  const opId = useProjectStore.getState().addOperation(
+    'plasma_profile',
+    'rough',
+    { source: 'features', featureIds: ['f'] },
+    [plasmaLibraryEntry],
+  )
+  assert(opId !== null, 'expected a plasma operation to be created')
+
+  const next = useProjectStore.getState().project
+  const torch = next.tools.find((tool) => tool.type === 'plasma')
+  assert(torch !== undefined, 'expected the plasma torch to be imported')
+  assert(torch.pierceHeight === plasmaLibraryEntry.pierceHeight, `pierce height survives the import, got ${torch.pierceHeight}`)
+  assert(torch.cutHeight === plasmaLibraryEntry.cutHeight, `cut height survives the import, got ${torch.cutHeight}`)
+  assert(torch.pierceDelay === plasmaLibraryEntry.pierceDelay, `pierce delay survives the import, got ${torch.pierceDelay}`)
+  // Normalization must keep them: the same whitelist gap made them arrive absent
+  // and left normalization to turn absent into the unconfigured 0.
+  const normalized = normalizeToolForProject(torch, next)
+  assert(normalized.pierceHeight === plasmaLibraryEntry.pierceHeight, 'normalization keeps the pierce height')
+  assert(normalized.cutHeight === plasmaLibraryEntry.cutHeight, 'normalization keeps the cut height')
+  assert(normalized.pierceDelay === plasmaLibraryEntry.pierceDelay, 'normalization keeps the pierce delay')
+  const op = next.operations.find((operation) => operation.id === opId)
+  assert(op?.toolRef === torch.id, 'the operation references the imported torch')
+
+  // A library value in another unit is converted, not dropped or copied raw.
+  seed(project)
+  const mmEntry: ToolLibraryEntry = {
+    ...plasmaLibraryEntry,
+    key: 'lib-plasma-mm',
+    units: 'mm',
+    diameter: 1.4,
+    defaultFeed: 5560,
+    pierceHeight: 3.8,
+    cutHeight: 1.5,
+  }
+  useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [mmEntry])
+  const converted = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
+  assert(converted?.units === 'inch', 'the imported torch takes the project units')
+  assert(
+    converted !== undefined && Math.abs(converted.pierceHeight! - convertLength(3.8, 'mm', 'inch')) < 1e-9,
+    `the pierce height is converted, got ${converted?.pierceHeight}`,
+  )
+
+  // A genuinely zero library value stays zero: the import must not invent a
+  // physical standoff any more than normalization may.
+  seed(project)
+  const zeroEntry: ToolLibraryEntry = { ...plasmaLibraryEntry, key: 'lib-plasma-zero', pierceHeight: 0, cutHeight: 0, pierceDelay: 0 }
+  useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [zeroEntry])
+  const zeroTorch = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
+  assert(zeroTorch?.pierceHeight === 0 && zeroTorch?.cutHeight === 0 && zeroTorch?.pierceDelay === 0, 'a zero consumable stays zero')
+}
+
 testAddVCarveImportsVBit()
 testAddPocketReusesExistingFlatNoImport()
 testVCarveDepthFallsBackToStockThickness()
 testEngraveKeepsShallowDefault()
+testAddPlasmaImportsTorchWithConsumables()
 
 console.log('addOperationTool tests passed')

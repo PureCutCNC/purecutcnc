@@ -374,7 +374,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.probeFeed': '探测进给（mm/min）',
   'dialogs.machineEditor.setZeroCommand': '设置 Z 零点命令',
   'dialogs.machineEditor.switchOffset': '对刀开关偏移（mm）',
-  'dialogs.machineEditor.touchOffNote': '每次切割前，程序向下探测板材，在触发点加开关偏移处设置 Z 零点，然后按刀具的穿孔高度穿孔。欧姆感应或在表面触发的探头请填 0。等离子输出尚未实现。',
+  'dialogs.machineEditor.touchOffNote': '每次切割前，程序向下探测板材，在触发点加开关偏移处设置 Z 零点，然后按刀具的穿孔高度穿孔。欧姆感应或在表面触发的探头请填 0。',
   'dialogs.machineEditor.general': '常规',
   'dialogs.machineEditor.name': '名称',
   'dialogs.machineEditor.fileExtension': '文件扩展名',

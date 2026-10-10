@@ -194,6 +194,19 @@ function entryToProjectTool(entry: ToolLibraryEntry, toUnits: Tool['units']): Om
     defaultStepdown: converted.defaultStepdown,
     defaultStepover: converted.defaultStepover,
     maxCutDepth: converted.maxCutDepth,
+    // Plasma consumables are not optional extras to this list: a G-code pierce
+    // program writes its pierce height, cut height and dwell straight from
+    // them, so dropping them hands the first torch an operator ever gets (Add
+    // operation on a project with no torch yet) a tool that fires at the sheet
+    // with no standoff and no dwell — and nothing blocks it. A library value
+    // that is genuinely 0 still arrives as 0; normalization is what turns a
+    // missing consumable into that unconfigured 0 (issue #983).
+    ...(converted.type === 'plasma' ? {
+      pierceHeight: converted.pierceHeight,
+      cutHeight: converted.cutHeight,
+      pierceDelay: converted.pierceDelay,
+      qtplasmacMaterialNumber: converted.qtplasmacMaterialNumber,
+    } : {}),
   }
 }
 

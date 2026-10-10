@@ -325,7 +325,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.probeFeed': 'Avance de palpado (mm/min)',
   'dialogs.machineEditor.setZeroCommand': 'Comando para fijar el cero Z',
   'dialogs.machineEditor.switchOffset': 'Desfase del interruptor de palpado (mm)',
-  'dialogs.machineEditor.touchOffNote': 'Antes de cada corte el programa palpa el material, fija allí el cero Z más el desfase del interruptor y perfora a la altura de perforación de la herramienta. Use 0 con detección óhmica o un palpador que actúe en la superficie. La salida de plasma aún no está implementada.',
+  'dialogs.machineEditor.touchOffNote': 'Antes de cada corte el programa palpa el material, fija allí el cero Z más el desfase del interruptor y perfora a la altura de perforación de la herramienta. Use 0 con detección óhmica o un palpador que actúe en la superficie.',
   'dialogs.machineEditor.general': 'General',
   'dialogs.machineEditor.name': 'Nombre',
   'dialogs.machineEditor.fileExtension': 'Extensión de archivo',

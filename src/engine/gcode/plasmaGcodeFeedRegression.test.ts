@@ -32,12 +32,15 @@
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { sheetFeature, exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../test/plasmaExportFixtures'
 import { defaultPlasmaTool } from '../../toolPolicy'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength } from '../../utils/units'
+import { parseToolLibraryFile, type ToolLibraryEntry } from '../../toolLibrary'
 import { BUNDLED_DEFINITIONS, getActiveMachineDefinition } from './definitions'
 import { runPostProcessor } from './postprocessor'
 import { createToolpathGenerationService } from '../../app/toolpathGeneration/service'
@@ -48,6 +51,16 @@ import {
   programHasError,
   type ExportPreparation,
 } from '../../app/toolpathGeneration/exportPreparation'
+
+/** The shipped example torch an operator gets when Add operation imports one. */
+const bundledLibrary = parseToolLibraryFile(
+  JSON.parse(readFileSync(fileURLToPath(new URL('../../../public/tool-library.json', import.meta.url)), 'utf8')),
+)
+const bundledInchTorch: ToolLibraryEntry = (() => {
+  const found = bundledLibrary.tools.find((tool) => tool.key === 'plasma_powermax45xp_45a_mild_steel_2mm_in')
+  if (!found) throw new Error('public/tool-library.json no longer carries the inch plasma example')
+  return found
+})()
 
 type Units = 'mm' | 'inch'
 
@@ -68,6 +81,9 @@ interface RunOptions {
   operationFeed?: number
   /** QtPlasmaC blocks without a material number; give it one where needed. */
   materialNumber?: number
+  /** Start with no torch and let `addOperation` import this library entry, the
+   *  way an operator adding their first plasma operation does. */
+  importEntry?: ToolLibraryEntry
 }
 
 /** Build the project with the production actions and post it, as the export does. */
@@ -79,21 +95,27 @@ async function runExport(options: RunOptions): Promise<ExportPreparation> {
   const store = () => useProjectStore.getState()
   store().loadProject(project)
 
-  const toolId = store().addTool()
-  // Exactly the tool-type change the CAM panel performs.
-  store().updateTool(toolId, {
-    ...defaultPlasmaTool(options.toolUnits ?? options.units),
-    type: 'plasma',
-    ...(options.materialNumber === undefined ? {} : { qtplasmacMaterialNumber: options.materialNumber }),
-  })
-  if (options.feedBefore !== undefined) store().updateTool(toolId, { defaultPlungeFeed: options.feedBefore })
-  if (options.cutFeedBefore !== undefined) store().updateTool(toolId, { defaultFeed: options.cutFeedBefore })
+  let toolId: string | null = null
+  if (!options.importEntry) {
+    toolId = store().addTool()
+    // Exactly the tool-type change the CAM panel performs.
+    store().updateTool(toolId, {
+      ...defaultPlasmaTool(options.toolUnits ?? options.units),
+      type: 'plasma',
+      ...(options.materialNumber === undefined ? {} : { qtplasmacMaterialNumber: options.materialNumber }),
+    })
+    if (options.feedBefore !== undefined) store().updateTool(toolId, { defaultPlungeFeed: options.feedBefore })
+    if (options.cutFeedBefore !== undefined) store().updateTool(toolId, { defaultFeed: options.cutFeedBefore })
+  }
 
   const machine = BUNDLED_DEFINITIONS.find((candidate) => candidate.id === options.machineId)
   assert.ok(machine, `bundled machine ${options.machineId}`)
   store().setProjectMachine(machine)
 
-  const operationId = store().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['part'] }, [])
+  const operationId = store().addOperation(
+    'plasma_profile', 'rough', { source: 'features', featureIds: ['part'] },
+    options.importEntry ? [options.importEntry] : [],
+  )
   assert.ok(operationId, 'the plasma operation is accepted')
   if (options.operationPlungeFeed !== undefined || options.operationFeed !== undefined) {
     store().updateOperation(operationId, {
@@ -101,7 +123,7 @@ async function runExport(options: RunOptions): Promise<ExportPreparation> {
       ...(options.operationFeed === undefined ? {} : { feed: options.operationFeed }),
     })
   }
-  if (options.feedAfter !== undefined) store().updateTool(toolId, { defaultPlungeFeed: options.feedAfter })
+  if (options.feedAfter !== undefined && toolId !== null) store().updateTool(toolId, { defaultPlungeFeed: options.feedAfter })
 
   const context = { project: store().project, documentKey: store().projectKey }
   const definition = getActiveMachineDefinition(context.project)
@@ -149,6 +171,18 @@ function dropLine(program: string): string {
 /** The numeric F word of a line, or null when it carries none. */
 function feedOf(line: string): number | null {
   const match = /F(-?[\d.]+)/.exec(line)
+  return match ? Number(match[1]) : null
+}
+
+/** The numeric Z word of a line, or null when it carries none. */
+function zOf(line: string): number | null {
+  const match = /Z(-?[\d.]+)/.exec(line)
+  return match ? Number(match[1]) : null
+}
+
+/** The numeric P word of a dwell line, or null when it carries none. */
+function pOf(line: string): number | null {
+  const match = /P(-?[\d.]+)/.exec(line)
   return match ? Number(match[1]) : null
 }
 
@@ -262,7 +296,36 @@ async function main(): Promise<void> {
     assert.ok(!lines.some((line) => /\bZ-?\d/.test(line)), 'no Z word')
   }
 
-  console.log('plasmaGcodeFeedRegression.test.ts: store -> generation -> export drop feed, units, invalid feeds and QtPlasmaC parity passed')
+  // 8. The first-use path: a project with no torch lets Add operation import
+  //    one. The emitted pierce height, cut height and dwell must be the
+  //    library example's, not a missing field normalized to 0 — the previous
+  //    behaviour fired the torch at the sheet surface with no standoff and no
+  //    dwell, and nothing blocked it. The drop feed still arrives unset, so the
+  //    export keeps blocking on it rather than inventing a value.
+  {
+    const prepared = await runExport({ units: 'inch', machineId: 'grbl-plasma', importEntry: bundledInchTorch })
+    assert.deepEqual(warningCodes(prepared), ['postPlasmaPlungeFeedMissing'], 'the imported torch still has no drop feed')
+    const lines = codeLines(gcode(prepared))
+    const torchOn = lines.indexOf('M3 S1000')
+    assert.ok(torchOn > 0, 'the program turns the torch on')
+    const pierceZ = zOf(lines[torchOn - 1])
+    assert.ok(
+      pierceZ !== null && Math.abs(pierceZ - bundledInchTorch.pierceHeight!) < 1e-4,
+      `the pierce rapid uses the library pierce height, got ${lines[torchOn - 1]}`,
+    )
+    const dwell = pOf(lines[torchOn + 1])
+    assert.ok(
+      dwell !== null && Math.abs(dwell - bundledInchTorch.pierceDelay!) < 1e-6,
+      `the dwell uses the library pierce delay, got ${lines[torchOn + 1]}`,
+    )
+    const dropZ = zOf(dropLine(gcode(prepared)))
+    assert.ok(
+      dropZ !== null && Math.abs(dropZ - bundledInchTorch.cutHeight!) < 1e-4,
+      `the drop uses the library cut height, got ${dropLine(gcode(prepared))}`,
+    )
+  }
+
+  console.log('plasmaGcodeFeedRegression.test.ts: store -> generation -> export drop feed, units, invalid feeds, imported-torch consumables and QtPlasmaC parity passed')
 }
 
 main().catch((error) => {

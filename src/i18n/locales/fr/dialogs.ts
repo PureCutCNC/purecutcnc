@@ -323,7 +323,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.probeFeed': 'Avance de palpage (mm/min)',
   'dialogs.machineEditor.setZeroCommand': 'Commande de mise à zéro Z',
   'dialogs.machineEditor.switchOffset': 'Décalage du contact de palpage (mm)',
-  'dialogs.machineEditor.touchOffNote': 'Avant chaque coupe, le programme palpe la tôle, y fixe le zéro Z plus le décalage du contact, puis perce à la hauteur de perçage de l’outil. Indiquez 0 pour une détection ohmique ou un palpeur qui déclenche à la surface. La sortie plasma n’est pas encore implémentée.',
+  'dialogs.machineEditor.touchOffNote': 'Avant chaque coupe, le programme palpe la tôle, y fixe le zéro Z plus le décalage du contact, puis perce à la hauteur de perçage de l’outil. Indiquez 0 pour une détection ohmique ou un palpeur qui déclenche à la surface.',
   'dialogs.machineEditor.general': 'Général',
   'dialogs.machineEditor.name': 'Nom',
   'dialogs.machineEditor.fileExtension': 'Extension de fichier',
