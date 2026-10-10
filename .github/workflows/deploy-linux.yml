@@ -94,9 +94,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
-          # Tag the commit that was built. Without this the tag is created on
-          # the default branch, wrong for a build dispatched from another one.
-          target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             src-tauri/target/release/bundle/appimage/*.AppImage
@@ -109,21 +106,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
-          # Tag the commit that was built. Without this the tag is created on
-          # the default branch, wrong for a build dispatched from another one.
-          target_commitish: ${{ github.sha }}
           files: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
         continue-on-error: true
 
       # The release uploads above continue on error so a hiccup there does not
-      # lose the build. Say so loudly instead of leaving a green run with no
-      # installer on the release (the workflow artifact below still has it).
+      # lose the build. Say so instead of leaving a green run with no installer
+      # on the release.
       - name: Report a failed release upload
         if: steps.release-prerelease.outcome == 'failure' || steps.release-stable.outcome == 'failure'
         shell: bash
-        run: echo "::warning::The release upload failed. The installer is only in this run's artifacts."
+        run: echo "::warning::The release upload failed, so the release has no installer from this run. Check the run's artifacts."
 
       - name: Checkout pages repo
         uses: actions/checkout@v4
