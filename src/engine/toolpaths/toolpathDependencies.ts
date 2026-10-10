@@ -295,6 +295,11 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
  * reach me", which is the right question for an ownership change too. Stated
  * here because this comment previously claimed no such dependency existed, and
  * that claim is what let the fold ship with a cache that ignored it.
+ *
+ * A plasma operation has a second: its outline-before-hole warning reads the
+ * plasma operations that run after it, and its cut order starts from the
+ * machine origin (issue #958). Both are captured the same way, outside this
+ * model, by `plasmaCutOrderInputs` in `cacheInputsValid`.
  */
 export interface OperationFootprint {
   /** World XY region in which a feature change can affect this operation. `null` = unknown. */
