@@ -204,12 +204,12 @@ test('Grbl plasma blocks the export while the drop feed is unconfigured', async 
 test('the plasma drop feed control configures the exported feed', async ({ app, ui }) => {
   await seedGcodeExportProject(app.page, { machineId: 'grbl-plasma', plasmaCut: { materialNumber: null, plungeFeed: 0 } })
 
-  // The tool panel renders the drop feed with its unit, and editing it writes
-  // the tool's plunge feed.
+  // The tool panel renders the drop feed as "Plunge feed", with no unit in the
+  // label, and editing it writes the tool's plunge feed.
   await app.page.getByRole('tab', { name: 'Tools' }).click()
   await app.page.locator('.cam-tool-tree .tree-row--feature').filter({ hasText: 'Plasma Torch' }).click()
   const dropFeed = app.page.locator('.cam-tool-properties .properties-field').filter({ hasText: 'Plunge feed' })
-  await expect(dropFeed).toContainText('(inch/min)')
+  await expect(dropFeed.locator('span').first()).toHaveText('Plunge feed')
   const input = dropFeed.locator('input')
   await input.fill('200')
   await input.press('Enter')

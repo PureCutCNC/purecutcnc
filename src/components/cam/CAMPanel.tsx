@@ -2048,11 +2048,9 @@ export function CAMPanel({
                           <label className="properties-field">
                             {/* The plunge feed is the plasma drop feed: G-code
                                 piercing drops from pierce height to cut height
-                                at it (#983). The unit is spelled out because
-                                the field is a rate, not a length like the
-                                heights below it. 0 stays allowed and means
+                                at it (#983). 0 stays allowed and means
                                 unconfigured, which blocks the export. */}
-                            <span>{camT('cam.tool.plungeFeed')} ({selectedTool.units}/min)</span>
+                            <span>{camT('cam.tool.plungeFeed')}</span>
                             <DraftLengthInput value={selectedTool.defaultPlungeFeed} units={selectedTool.units} min={0}
                               onCommit={(value) => updateTool(selectedTool.id, { defaultPlungeFeed: value })} />
                           </label>
