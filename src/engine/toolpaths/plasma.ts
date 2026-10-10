@@ -24,6 +24,7 @@ import { convertLength } from '../../utils/units'
 import { flattenProfile, fromClipperPath, getOperationSafeZ, normalizeToolForProject, normalizeWinding, resolveDimensionRef, offsetKeepOutPaths, toClipperPath, DEFAULT_CLIPPER_SCALE } from './geometry'
 import { buildTangentLeadPath } from './tangentLink'
 import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals } from './plasmaGeometry'
+import { orderPlasmaCuts, outlinesEnclosingLaterCuts } from './plasmaOrder'
 import type { ToolpathMove, ToolpathResult } from './types'
 
 export function plasmaLeadLength(project: Project, operation: Operation): number {
@@ -49,6 +50,44 @@ export function plasmaSetupIsTop(project: Project, operation: Operation): boolea
     const setup = setupForOperation(project, operation)
     return !setup || setupFace(setup) === 'top'
   } catch { return false }
+}
+
+/**
+ * The enabled plasma operations of the same setup that run after this one, in
+ * program order. Empty when the operation is not in the project's list, since
+ * then nothing says what comes after it.
+ */
+function laterPlasmaOperations(project: Pick<Project, 'operations'>, operation: Operation): Operation[] {
+  const index = project.operations.findIndex((candidate) => candidate.id === operation.id)
+  if (index < 0) return []
+  return project.operations.slice(index + 1).filter((later) => later.enabled && later.kind === 'plasma_profile'
+    && later.setupId === operation.setupId && later.target.source === 'features')
+}
+
+/**
+ * What the cut order reads from the project beyond the operation's own row
+ * and the features (issue #958): the machine origin, where the first cut is
+ * chosen from, and what later plasma operations cut, which decides the
+ * `plasmaOutlineBeforeHole` warning. One string, so the toolpath cache can
+ * compare the snapshot a path was generated from with the current project
+ * without modelling either read itself.
+ */
+export function plasmaCutOrderInputs(project: Pick<Project, 'operations' | 'origin'>, operation: Operation): string {
+  return JSON.stringify([
+    project.origin.x, project.origin.y,
+    laterPlasmaOperations(project, operation).map((later) => [later.name, later.target.source === 'features' ? later.target.featureIds : []]),
+  ])
+}
+
+/** One contour resolved to its finished cut. Ordering picks among these; it never alters one. */
+interface PlasmaCut {
+  id: string
+  name: string
+  /** The drawn contour, for containment. */
+  source: Point[]
+  entry: Point[]
+  ring: Point[]
+  exit: Point[]
 }
 
 export function generatePlasmaProfileToolpath(authoritativeProject: Project, operation: Operation): ToolpathResult {
@@ -82,6 +121,9 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
   const move = (kind: ToolpathMove['kind'], from: Point & { z?: number }, to: Point & { z?: number }): void => {
     result.moves.push({ kind, from: { ...from, z: from.z ?? z }, to: { ...to, z: to.z ?? z } })
   }
+  // Step 1: resolve every contour to its finished cut, in selection order, so
+  // each contour's own warnings come out in the order they always did.
+  const cuts: PlasmaCut[] = []
   for (const target of targets) {
     if (!target) continue
     const shape = shapes.find((s) => s.feature.id === target.id)
@@ -156,15 +198,40 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     if (chosen.centrePierce) warn('plasmaCentrePierce', target.name)
     else if (chosen.straightFallback) warn('plasmaStraightLead', target.name)
     if (outLength > 0 && chosen.exit.length === 0) warn('plasmaLeadOutOmitted', target.name)
-    const pierce = chosen.entry[0]
+    cuts.push({ id: target.id, name: target.name, source: shape.ring, entry: chosen.entry, ring: chosen.ring, exit: chosen.exit })
+  }
+  // Step 2: the order (issue #958). Inside contours before the contour that
+  // encloses them, part by part, nearest next from the machine origin.
+  const cutEnd = (cut: PlasmaCut): Point => cut.exit.at(-1) ?? cut.ring.at(-1) ?? cut.entry[0]
+  const order = orderPlasmaCuts(cuts.map((cut) => ({ ring: cut.source, pierce: cut.entry[0], end: cutEnd(cut) })), authoritativeProject.origin)
+  // Step 3: write the moves. Each cut's own block is the same whatever its
+  // place in the order; only the rapid that reaches it differs.
+  for (const index of order) {
+    const cut = cuts[index]
+    const pierce = cut.entry[0]
     const previous = result.moves[result.moves.length - 1]?.to
     if (previous) move('rapid', previous, { ...pierce, z: safeZ })
     move('plunge', { ...pierce, z: safeZ }, pierce)
-    for (let i = 1; i < chosen.entry.length; i += 1) move('lead_in', chosen.entry[i - 1], chosen.entry[i])
-    for (let i = 1; i < chosen.ring.length; i += 1) move('cut', chosen.ring[i - 1], chosen.ring[i])
-    for (let i = 1; i < chosen.exit.length; i += 1) move('lead_out', chosen.exit[i - 1], chosen.exit[i])
-    const end = chosen.exit.at(-1) ?? chosen.ring.at(-1) ?? pierce
+    for (let i = 1; i < cut.entry.length; i += 1) move('lead_in', cut.entry[i - 1], cut.entry[i])
+    for (let i = 1; i < cut.ring.length; i += 1) move('cut', cut.ring[i - 1], cut.ring[i])
+    for (let i = 1; i < cut.exit.length; i += 1) move('lead_out', cut.exit[i - 1], cut.exit[i])
+    const end = cutEnd(cut)
     move('rapid', end, { ...end, z: safeZ })
+  }
+  // Ordering works inside one operation. It cannot help when this operation
+  // cuts an outline and a later one is left to cut something inside it: by
+  // then the part is loose. Say which outline, and which operation.
+  const cutHere = new Set(cuts.map((cut) => cut.id))
+  const warned = new Set<number>()
+  for (const later of laterPlasmaOperations(authoritativeProject, operation)) {
+    const laterIds = new Set((later.target.source === 'features' ? later.target.featureIds : [])
+      .flatMap((id) => { const feature = project.features.find((f) => f.id === id); return feature ? expandFeatureGeometry(feature, false).map((part) => part.id) : [] }))
+    const laterRings = shapes.filter((shape) => laterIds.has(shape.feature.id) && !cutHere.has(shape.feature.id)).map((shape) => shape.ring)
+    for (const index of outlinesEnclosingLaterCuts(cuts.map((cut) => cut.source), laterRings)) {
+      if (warned.has(index)) continue
+      warned.add(index)
+      result.warnings.push({ code: 'plasmaOutlineBeforeHole', params: { name: cuts[index].name, operation: later.name } })
+    }
   }
   if (result.moves.length) {
     const points = result.moves.flatMap((m) => [m.from, m.to])

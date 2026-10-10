@@ -34,6 +34,13 @@ export type ToolpathWarningCode =
   | 'plasmaSmallHole'
   | 'plasmaCentrePierce'
   | 'plasmaLeadOutOmitted'
+  /** This operation cuts an outline while a later plasma operation of the
+   *  same setup cuts a contour inside it (issue #958). Inside one operation
+   *  the cut order puts inside contours first; across operations the user's
+   *  operation order decides, and an outline cut first leaves a loose part
+   *  whose holes can no longer be cut in place. A warning, not an export
+   *  block: the program is the one the operation list asks for. */
+  | 'plasmaOutlineBeforeHole'
   // resolver
   | 'targetsMissingOrWrongRole'
   | 'closedProfilesOnly'

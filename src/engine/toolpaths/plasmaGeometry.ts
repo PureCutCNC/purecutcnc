@@ -37,7 +37,7 @@ export function insideContour(p: Point, ring: Point[]): boolean {
   return inside
 }
 const cross = (a: Point, b: Point, p: Point): number => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
-function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+export function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
   const abC = cross(a, b, c), abD = cross(a, b, d), cdA = cross(c, d, a), cdB = cross(c, d, b)
   if (abC * abD < 0 && cdA * cdB < 0) return true
   return [pointDistance(a, projectOnSegment(a, c, d)), pointDistance(b, projectOnSegment(b, c, d)), pointDistance(c, projectOnSegment(c, a, b)), pointDistance(d, projectOnSegment(d, a, b))].some((v) => v < 1e-9)

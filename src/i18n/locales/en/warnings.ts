@@ -33,6 +33,7 @@ export const warningsEn = {
   'warnings.plasmaSmallHole': '{name}: hole diameter is below 1.5 × stock thickness; plasma may leave a tapered, out-of-round hole. Controller hole handling owns any slowdown.',
   'warnings.plasmaCentrePierce': '{name}: the hole is too small for the requested lead; pierce at its centre and lead straight to the contour.',
   'warnings.plasmaLeadOutOmitted': '{name}: the requested lead-out would gouge the part or a neighbour; lead-out omitted.',
+  'warnings.plasmaOutlineBeforeHole': '{name}: this outline is cut here, but operation "{operation}" cuts a contour inside it later. Once the outline is cut the part is loose. Move "{operation}" before this operation, or cut both in one operation.',
   'warnings.finishSlopeInvalid': 'Surface slope bounds must be finite angles from 0 to 90°, with minimum no greater than maximum. No toolpath generated.',
   'warnings.finishScallopHeightOutOfRange': 'Scallop height must be greater than zero and smaller than the ball-endmill radius. No toolpath generated.',
   'warnings.finishSlopeEmpty': 'No reachable surface matches the selected slope range.',

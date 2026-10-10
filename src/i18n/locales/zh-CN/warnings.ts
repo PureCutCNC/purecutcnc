@@ -32,6 +32,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.plasmaSmallHole': '{name}：孔径小于板厚的 1.5 倍；等离子切割可能产生锥度和失圆。孔减速由控制器负责。',
   'warnings.plasmaCentrePierce': '{name}：孔太小，无法容纳指定引入；在孔中心穿孔并直线引入轮廓。',
   'warnings.plasmaLeadOutOmitted': '{name}：指定引出会切伤零件或相邻零件；已省略引出。',
+  'warnings.plasmaOutlineBeforeHole': '{name}：此外轮廓在这里切割，但加工操作“{operation}”稍后才切割其内部的轮廓。外轮廓切开后零件即松动。请将“{operation}”移到此操作之前，或在同一操作中切割两者。',
   'warnings.finishSlopeInvalid': '曲面坡度限值必须为 0 至 90° 的有限角度，且最小值不得大于最大值。未生成刀具路径。',
   'warnings.finishScallopHeightOutOfRange': '残脊高度必须大于零且小于球头铣刀半径。未生成刀具路径。',
   'warnings.finishSlopeEmpty': '没有可达曲面符合所选坡度范围。',

@@ -28,6 +28,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.plasmaSmallHole': '{name}: diámetro del agujero inferior a 1,5 × espesor; puede quedar cónico y ovalado. El controlador gestiona la ralentización.',
   'warnings.plasmaCentrePierce': '{name}: el agujero es demasiado pequeño para la entrada solicitada; se perfora en el centro y se entra en línea recta.',
   'warnings.plasmaLeadOutOmitted': '{name}: la salida solicitada dañaría la pieza o una vecina; se omitió la salida.',
+  'warnings.plasmaOutlineBeforeHole': '{name}: este contorno exterior se corta aquí, pero la operación "{operation}" corta después un contorno situado en su interior. Una vez cortado el contorno exterior, la pieza queda suelta. Mueva "{operation}" antes de esta operación o corte ambos en una sola operación.',
   'warnings.finishSlopeInvalid': 'Los límites de pendiente deben ser ángulos finitos entre 0 y 90°, con el mínimo no mayor que el máximo. No se ha generado trayectoria.',
   'warnings.finishScallopHeightOutOfRange': 'La altura de cresta debe ser mayor que cero y menor que el radio de la fresa esférica. No se ha generado trayectoria.',
   'warnings.finishSlopeEmpty': 'Ninguna superficie accesible coincide con el intervalo de pendiente seleccionado.',
