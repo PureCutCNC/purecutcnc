@@ -73,6 +73,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 ## Tests
 - `constructionWorkflows.test.ts` — construction geometry (issue #199): creation target, conversions construction↔feature↔region, folder/section integrity, deferred constraints, 3.0 save stamping, open-profile round trip
 - `camPlanApply.test.ts` — CAM Plan atomic store apply, one shared tab layout, excluded-edge tab omission, and exact one-step undo
+- `addToolMachineMode.test.ts` — issue #960: `addTool` creates the `defaultPlasmaTool` example torch on a plasma project (mm and inch), gives a second torch a unique name, and leaves the created tool byte-for-byte the previous `defaultTool` on a router project and on a project with no machine
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior

@@ -19,6 +19,7 @@ import { activeFace, activeSetup, projectUsesBothFaces } from '../../store/helpe
 import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import { FaceSwitch } from './FaceSwitch'
+import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 
 interface FaceBannerProps {
   /**
@@ -39,11 +40,15 @@ export function FaceBanner({ withSwitch = false }: FaceBannerProps) {
   const face = useProjectStore((state) => activeFace(state.project))
   const flipAxis = useProjectStore((state) => activeSetup(state.project).orientation.axis)
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
-  if (!bothFaces && !withSwitch) return null
+  const machine = useProjectStore((state) => machineMode(state.project))
+  // The switch follows the machine's rule, and the row only exists when it has
+  // something to carry: a hidden switch must not leave an empty banner behind.
+  const showSwitch = withSwitch && showsFaceSwitch(machine, bothFaces)
+  if (!bothFaces && !showSwitch) return null
 
   return (
     <div className={`face-banner face-banner--${face}`} data-face={face}>
-      {withSwitch ? <FaceSwitch /> : null}
+      {showSwitch ? <FaceSwitch /> : null}
       {bothFaces && face === 'bottom' && (
         <div className="face-banner__note" role="status">
           <Icon id="refresh" size={16} />

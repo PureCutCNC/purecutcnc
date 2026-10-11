@@ -33,6 +33,7 @@ import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../te
 import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { featureReachableFromFace, judgeTargetsFromFace } from '../../engine/setupTargets'
 import { camT } from './camI18n'
+import { machineMode, operationOffer } from './machineMode'
 
 type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
 
@@ -392,6 +393,7 @@ const QUICK_OPERATION_KINDS: OperationKind[] = [
   'surface_clean',
   'follow_line',
   'drilling',
+  'plasma_profile',
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',
@@ -426,6 +428,8 @@ export function quickOperationLabel(kind: OperationKind): string {
       return camT('cam.quickOp.followLine')
     case 'drilling':
       return camT('cam.quickOp.drilling')
+    case 'plasma_profile':
+      return camT('cam.quickOp.plasmaProfile')
     case 'rough_surface':
       return camT('cam.quickOp.roughSurface')
     case 'finish_surface':
@@ -478,7 +482,13 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
   }
 
   const selection = singleFeatureSelection(featureId)
+  const mode = machineMode(project)
   return QUICK_OPERATION_KINDS
+    // The menu follows the machine exactly as the CAM panel's Add menu does:
+    // plasma mode offers only the plasma cut, router mode only the milling
+    // family. A kind the machine cannot add is dropped rather than shown
+    // disabled — the Add menu is where that explanation lives (issue #960).
+    .filter((kind) => operationOffer(mode, kind) === 'available')
     .filter((kind) => getOperationAddHintWithMap(selection, kind, featureById) === null)
     .map((kind) => ({
       kind,

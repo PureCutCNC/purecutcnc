@@ -103,6 +103,7 @@ export const camEn = {
   'cam.quickOp.surfaceClean': 'Create surface clean',
   'cam.quickOp.followLine': 'Create engraving',
   'cam.quickOp.drilling': 'Create drilling',
+  'cam.quickOp.plasmaProfile': 'Create plasma through-cut',
   // The 3D kinds reuse the CAM panel's `cam.opLabel.*` names verbatim, so an
   // operation is called the same thing wherever it is created (issue #398).
   'cam.quickOp.roughSurface': 'Create 3D surface rough',
@@ -366,6 +367,7 @@ export const camEn = {
   'cam.treeRow.show': 'Show',
   'cam.treeRow.toolpathFor': '{action} toolpath for {name}',
   'cam.treeRow.off': 'Off',
+  'cam.treeRow.notOnMachine': 'not on this machine',
   'cam.treeRow.duplicateOperation': 'Duplicate operation',
   'cam.treeRow.deleteOperation': 'Delete operation',
   'cam.treeRow.dragToReorder': 'Drag to reorder',
@@ -393,6 +395,11 @@ export const camEn = {
   'cam.addMenu.exampleImage': '{title} example',
   'cam.addMenu.unavailable': 'Not available for this selection ({count})',
   'cam.addMenu.selectFirst': 'Select geometry in the sketch or feature tree, then choose an operation',
+  'cam.addMenu.needsPlasmaMachine': 'Needs a plasma machine. Select one in the machine field of the project properties.',
+
+  // ── What the selected machine cannot cut (#960) ──
+  'cam.operations.leftOutPlasma': 'Not plasma cuts, left out of the export on this machine: {count}',
+  'cam.operations.leftOutRouter': 'Plasma cuts, left out of the export on this machine: {count}',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Select one or more circle features first',

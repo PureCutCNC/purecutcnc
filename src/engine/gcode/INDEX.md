@@ -8,11 +8,12 @@ exports native part files (`.sbp`). Design reference:
 
 ## How export is split
 
-`runPostProcessor` picks the dialect and does nothing else. What the machine
-is asked to do is decided once, for every dialect, in `motionPipeline.ts`; a
-dialect's emitter only spells the result. New behaviour goes in the pipeline.
-New syntax goes in an emitter. A dialect is never special-cased inside another
-dialect's emitter.
+`runPostProcessor` picks the dialect — dropping a plasma cut on a machine that
+is not a plasma table before the emitter sees it (#960) — and does nothing else.
+What the machine is asked to do is decided once, for every dialect, in
+`motionPipeline.ts`; a dialect's emitter only spells the result. New behaviour
+goes in the pipeline. New syntax goes in an emitter. A dialect is never
+special-cased inside another dialect's emitter.
 
 That covers sequencing as well as motion. Whether the tool changes, when the
 spindle starts, is restated at a new speed and stops, and when coolant comes
@@ -32,8 +33,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
   `arcFormat`, the optional `outputDialect`, `machineKind` and `plasma` block), `resolveOutputDialect`,
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
-- `postprocessor.ts` — `runPostProcessor` (the dialect switch) and the G-code
-  emitter: templates, modal tracking, canned drill cycles, line numbers. Its
+- `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
+  plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
+  #960) and the G-code emitter: templates, modal tracking, canned drill cycles,
+  line numbers. Its
   G-code plasma branch blocks a missing, non-finite, non-positive or
   round-to-zero effective drop/cut feed as an error before export (#983), and
   cuts it cannot read a safe height for (`postPlasmaSafeHeightMissing`). It
@@ -108,8 +111,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   project Z zero on, below and above the sheet top in both units: only the
   first safe rapid is in the operator's zero, every retract and later safe
   rapid is measured from the sheet, and nothing travels at or below cut
-  height. Cuts with no safe height block the export, and a plasma operation
-  on a router takes the tool's plunge feed when it has none of its own.
+  height. Cuts with no safe height block the export, and a plasma cut on a
+  machine that is not a plasma table is left out before the emitter with
+  `postPlasmaCutSkipped` (#960).
 - `plasmaGcodeFeedRegression.test.ts` — the #983 drop feed through the real
   store → generation → export path, with no fixture feed override: the example
   torch drops at its own 300 mm/min, so a first export from a new project

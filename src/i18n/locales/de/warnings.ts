@@ -245,6 +245,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',
   'warnings.postNoToolChangeCommands': 'Operation „{operation}“ benötigt Werkzeug „{tool}“, aber diese Maschine hat keine ausführbaren Werkzeugwechselbefehle. Das vorherige Werkzeug bleibt aktiv; exportieren Sie jeweils nur ein Werkzeug.',
   'warnings.postPlasmaOperationSkipped': 'Operation „{operation}“ ist kein Plasmaschnitt und wird in diesem Plasmaprogramm weggelassen.',
+  'warnings.postPlasmaCutSkipped': 'Operation „{operation}“ ist ein Plasmaschnitt und wird in diesem Programm weggelassen. Wählen Sie eine Plasmaschneidanlage, um sie zu exportieren.',
   'warnings.postPlasmaMaterialMissing': 'Operation „{operation}“ verwendet Werkzeug „{tool}“ ohne QtPlasmaC-Materialnummer. Legen Sie die Materialnummer am Werkzeug fest: Ohne sie zündet der Brenner mit dem gerade geladenen Material.',
   'warnings.postPlasmaCutFeedMissing': 'Operation „{operation}“ hat keinen positiven Schnittvorschub für dieses Plasmaprogramm. Der Brenner würde mit F0 schneiden: Legen Sie den Schnittvorschub an der Operation oder am Werkzeug fest, bevor Sie exportieren.',
   'warnings.postPlasmaPlungeFeedMissing': 'Operation „{operation}“ hat keinen positiven Eintauchvorschub für dieses G-Code-Plasmaprogramm. Der Brenner würde mit F0 auf Schnitthöhe absinken: Legen Sie den Eintauch- (Absenk-)Vorschub am Plasma-Werkzeug fest, bevor Sie exportieren.',

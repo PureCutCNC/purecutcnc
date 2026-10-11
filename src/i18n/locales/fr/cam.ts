@@ -89,6 +89,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': 'Créer un nettoyage de surface',
   'cam.quickOp.followLine': 'Créer une gravure',
   'cam.quickOp.drilling': 'Créer un perçage',
+  'cam.quickOp.plasmaProfile': 'Créer une découpe traversante plasma',
   'cam.quickOp.roughSurface': 'Créer une ébauche de surface 3D',
   'cam.quickOp.finishSurface': 'Créer une finition de surface 3D',
   'cam.quickOp.finishSurfaceCleanup': 'Créer un nettoyage de surface 3D',
@@ -331,6 +332,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.treeRow.show': 'Afficher',
   'cam.treeRow.toolpathFor': '{action} le parcours d’outil de {name}',
   'cam.treeRow.off': 'Désactivée',
+  'cam.treeRow.notOnMachine': 'absente de cette machine',
   'cam.treeRow.duplicateOperation': 'Dupliquer l’opération',
   'cam.treeRow.deleteOperation': 'Supprimer l’opération',
   'cam.treeRow.dragToReorder': 'Glisser pour réorganiser',
@@ -356,6 +358,11 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': 'Exemple {title}',
   'cam.addMenu.unavailable': 'Non disponible pour cette sélection ({count})',
   'cam.addMenu.selectFirst': 'Sélectionnez une géométrie dans l’arborescence ou l’esquisse, puis choisissez une opération',
+  'cam.addMenu.needsPlasmaMachine': 'Nécessite une machine plasma. Sélectionnez-en une dans le champ Machine des propriétés du projet.',
+
+  // ── What the selected machine cannot cut (#960) ──
+  'cam.operations.leftOutPlasma': 'Découpes non plasma, exclues de l’export sur cette machine\u00A0: {count}',
+  'cam.operations.leftOutRouter': 'Découpes plasma, exclues de l’export sur cette machine\u00A0: {count}',
   'cam.hint.empty.drilling': 'Sélectionnez d’abord une ou plusieurs entités circulaires',
   'cam.hint.empty.followLine': 'Sélectionnez d’abord une ou plusieurs entités ouvertes ou fermées ; les régions fermées sont des filtres facultatifs',
   'cam.hint.empty.surfaceClean': 'Sélectionnez d’abord une ou plusieurs entités ajout/modèle ; les régions fermées sont des filtres facultatifs',

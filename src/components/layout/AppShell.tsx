@@ -29,6 +29,7 @@ import { isTabletMode, useShellMode } from './useShellMode'
 import { Icon } from '../Icon'
 import { ChangeFaceDialog } from '../feature-tree/ChangeFaceDialog'
 import { projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 import { FaceBanner } from './FaceBanner'
 import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
@@ -126,6 +127,10 @@ export function AppShell({
   // The sketch gets a face row above the canvas once both faces are in use,
   // and always on a tablet shell, where the row carries the face switch (#945).
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
+  // #960: a plasma machine hides the switch, so the tablet row must not reserve
+  // space for a banner that renders nothing.
+  const machine = useProjectStore((state) => machineMode(state.project))
+  const faceBannerVisible = bothFaces || (tabletShell && showsFaceSwitch(machine, bothFaces))
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
@@ -621,7 +626,7 @@ export function AppShell({
             <div className="centre-stage">
               <div
                 id="workspace-panel-sketch"
-                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}${bothFaces || tabletShell ? ' centre-view--face-banner' : ''}`}
+                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}${faceBannerVisible ? ' centre-view--face-banner' : ''}`}
                 role="tabpanel"
                 aria-labelledby="workspace-tab-sketch"
                 aria-hidden={centerTab !== 'sketch'}

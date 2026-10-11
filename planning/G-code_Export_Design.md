@@ -119,6 +119,11 @@ the spindle path. What the machine is asked to do is decided in
   no selectable `qtplasmacMaterialNumber` raises `postPlasmaMaterialMissing`,
   which blocks the export. A different plasma tool raises
   `postNoToolChangeCommands`: a consumable swap is not paused for.
+- The mirror case is settled before the dialect is even chosen: a
+  `plasma_profile` operation exported on a machine that is not a plasma table
+  never reaches the emitters, and `runPostProcessor` reports it as
+  `postPlasmaCutSkipped` so that tool-change, spindle and coolant sequencing
+  behave exactly as if the operation were not in the project (#960).
 - A persistent QtPlasmaC material number must be an integer from 1 to 999999.
   The manual reserves 1000000 and above for the temporary materials QtPlasmaC
   numbers itself, whose material change CAM must never emit; 0 is the sentinel

@@ -245,6 +245,7 @@ export const warningsEn = {
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',
   'warnings.postNoToolChangeCommands': 'Operation "{operation}" needs tool "{tool}", but this machine has no executable tool-change commands. The program keeps the previous tool; export one tool at a time.',
   'warnings.postPlasmaOperationSkipped': 'Operation "{operation}" is not a plasma cut, so it is left out of this plasma program.',
+  'warnings.postPlasmaCutSkipped': 'Operation "{operation}" is a plasma cut, so it is left out of this program. Select a plasma machine to export it.',
   'warnings.postPlasmaMaterialMissing': 'Operation "{operation}" uses tool "{tool}", which has no material number. Set it on the tool: without it the torch would fire on whatever material is loaded.',
   'warnings.postPlasmaCutFeedMissing': 'Operation "{operation}" has no positive cut feed for this plasma program. The torch would cut with F0: set the cut feed on the operation or the tool before exporting.',
   'warnings.postPlasmaPlungeFeedMissing': 'Operation "{operation}" has no positive plunge feed for this G-code plasma program. The torch would drop to cut height with F0: set the plunge (drop) feed on the plasma tool before exporting.',

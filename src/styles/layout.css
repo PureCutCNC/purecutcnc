@@ -3754,6 +3754,11 @@
   line-height: 1.35;
 }
 
+/* #960: what the selected machine cannot cut, above the operation list. */
+.cam-operations-notice {
+  padding-top: 8px;
+}
+
 .cam-operation-tree {
   padding-top: 8px;
   min-height: 0;

@@ -51,7 +51,11 @@ export function PlasmaStartPointPicker({ canvasRef, project, projectKey, viewSta
     const canvas = canvasRef.current
     if (!canvas) return
     const resize = () => setSize({ width: canvas.width, height: canvas.height, left: canvas.offsetLeft, top: canvas.offsetTop, cssWidth: canvas.clientWidth, cssHeight: canvas.clientHeight })
-    const observer = new ResizeObserver(resize)
+    // Measure a frame later: SketchCanvas resizes the canvas's pixel size from
+    // its own observer, and reading it in this one can see the old size next to
+    // the new CSS size, which draws every marker a few pixels off (#960).
+    let frame = 0
+    const observer = new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(resize) })
     observer.observe(canvas); resize()
     const pointers = new Map<number, { x: number; y: number }>()
     let moved = false, multiple = false, suppressClick = false
@@ -106,7 +110,7 @@ export function PlasmaStartPointPicker({ canvasRef, project, projectKey, viewSta
     canvas.addEventListener('click', click, true)
     canvas.addEventListener('keydown', key, true)
     return () => {
-      observer.disconnect()
+      observer.disconnect(); cancelAnimationFrame(frame)
       canvas.removeEventListener('pointerdown', down, true); canvas.removeEventListener('pointermove', move, true)
       canvas.removeEventListener('pointerup', up, true); canvas.removeEventListener('pointercancel', up, true)
       canvas.removeEventListener('click', click, true); canvas.removeEventListener('keydown', key, true)

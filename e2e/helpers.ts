@@ -44,6 +44,21 @@ export async function getProject(page: Page): Promise<Record<string, unknown>> {
   })
 }
 
+/**
+ * Select a bundled machine the way a user does: Project → Machine in the
+ * project properties. Mirrors the local helper in plasmaMode.smoke.spec.ts so
+ * every machine-dependent spec selects through one path (#960).
+ */
+export async function selectMachine(
+  page: Page,
+  ui: typeof import('./selectors'),
+  name: string,
+): Promise<void> {
+  await ui.tree.projectRow(page).click()
+  await ui.properties.machineTrigger(page).click()
+  await ui.properties.machineOption(page, name).click()
+}
+
 /** Return the feature currently preview-highlighted by the live store. */
 export async function getHoveredFeatureId(page: Page): Promise<string | null> {
   return page.evaluate(async () => {

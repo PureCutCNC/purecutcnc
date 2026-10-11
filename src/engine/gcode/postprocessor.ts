@@ -85,6 +85,31 @@ function safeCommentLines(text: string): string[] {
  * dialect and no dialect is special-cased inside another's emitter.
  */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  // A plasma cut belongs to a plasma table. On any other machine the ordinary
+  // emitters would run it as a spindle path above the stock, so it never
+  // reaches them: the program is the one its remaining operations ask for
+  // (issue #960). The mirror case, a milling operation on a plasma table, is
+  // decided in `planPlasmaSequence`.
+  const skipped = resolveMachineKind(input.definition) === 'plasma'
+    ? []
+    : input.operations.filter((entry) => entry.operation.kind === 'plasma_profile')
+  if (skipped.length === 0) {
+    return emitProgramForDialect(input)
+  }
+  const result = emitProgramForDialect({
+    ...input,
+    operations: input.operations.filter((entry) => entry.operation.kind !== 'plasma_profile'),
+  })
+  return {
+    ...result,
+    warnings: [
+      ...skipped.map(({ operation }) => ({ code: 'postPlasmaCutSkipped' as const, params: { operation: operation.name } })),
+      ...result.warnings,
+    ],
+  }
+}
+
+function emitProgramForDialect(input: PostProcessorInput): PostProcessorResult {
   switch (resolveOutputDialect(input.definition)) {
     case 'opensbp':
       return emitOpenSbpProgram(input)

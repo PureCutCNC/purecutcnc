@@ -105,6 +105,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': '创建表面清理',
   'cam.quickOp.followLine': '创建雕刻',
   'cam.quickOp.drilling': '创建钻孔',
+  'cam.quickOp.plasmaProfile': '创建等离子贯穿切割',
   // 3D 名称与 CAM 面板（`cam.opLabel.*`）保持一致，见 issue #398。
   'cam.quickOp.roughSurface': '创建 3D 曲面粗加工',
   'cam.quickOp.finishSurface': '创建 3D 曲面精加工',
@@ -367,6 +368,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.treeRow.show': '显示',
   'cam.treeRow.toolpathFor': '{action}{name} 的刀路',
   'cam.treeRow.off': '关闭',
+  'cam.treeRow.notOnMachine': '此机床不适用',
   'cam.treeRow.duplicateOperation': '复制操作',
   'cam.treeRow.deleteOperation': '删除操作',
   'cam.treeRow.dragToReorder': '拖动以重新排序',
@@ -394,6 +396,11 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': '{title} 示例',
   'cam.addMenu.unavailable': '不适用于当前选择（{count}）',
   'cam.addMenu.selectFirst': '请在特征树或草图中选择几何图形，然后选择一项操作',
+  'cam.addMenu.needsPlasmaMachine': '需要等离子机床。请在项目属性的“机床”字段中选择一台。',
+
+  // ── What the selected machine cannot cut (#960) ──
+  'cam.operations.leftOutPlasma': '非等离子切割，已在导出时从此机床排除：{count}',
+  'cam.operations.leftOutRouter': '等离子切割，已在导出时从此机床排除：{count}',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': '请先选择一个或多个圆形特征',

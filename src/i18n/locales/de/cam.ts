@@ -99,6 +99,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': 'Oberflächensäuberung erstellen',
   'cam.quickOp.followLine': 'Gravur erstellen',
   'cam.quickOp.drilling': 'Bohrung erstellen',
+  'cam.quickOp.plasmaProfile': 'Plasma-Durchschnitt erstellen',
   // Terminologie wie im CAM-Panel (`cam.opLabel.*`: "3D-Oberfläche schruppen"),
   // hier aber substantiviert — "3D-Oberfläche schruppen erstellen" wäre kein
   // Deutsch. Issue #398.
@@ -363,6 +364,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.treeRow.show': 'Anzeigen',
   'cam.treeRow.toolpathFor': 'Werkzeugweg {action} für {name}',
   'cam.treeRow.off': 'Aus',
+  'cam.treeRow.notOnMachine': 'nicht auf dieser Maschine',
   'cam.treeRow.duplicateOperation': 'Operation duplizieren',
   'cam.treeRow.deleteOperation': 'Operation löschen',
   'cam.treeRow.dragToReorder': 'Zum Umsortieren ziehen',
@@ -390,6 +392,11 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': 'Beispiel für {title}',
   'cam.addMenu.unavailable': 'Für diese Auswahl nicht verfügbar ({count})',
   'cam.addMenu.selectFirst': 'Geometrie im Baum oder in der Skizze auswählen, dann eine Operation wählen',
+  'cam.addMenu.needsPlasmaMachine': 'Erfordert eine Plasma-Maschine. Wählen Sie eine im Feld Maschine in den Projekteigenschaften.',
+
+  // ── What the selected machine cannot cut (#960) ──
+  'cam.operations.leftOutPlasma': 'Keine Plasmaschnitte, auf dieser Maschine vom Export ausgelassen: {count}',
+  'cam.operations.leftOutRouter': 'Plasmaschnitte, auf dieser Maschine vom Export ausgelassen: {count}',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Zuerst ein oder mehrere Kreis-Features auswählen',

@@ -31,12 +31,18 @@ import assert from 'node:assert/strict'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS, rectangle } from '../../test/plasmaExportFixtures'
 import type { PlasmaExportSpec } from '../../test/plasmaExportFixtures'
 import { defaultPlasmaTool } from '../../toolPolicy'
+import { defaultTool } from '../../types/project'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { normalizeToolForProject } from '../toolpaths/geometry'
 import { convertLength } from '../../utils/units'
 import { warningSeverity } from '../toolpaths/warningCodes'
 import { runPostProcessor } from './postprocessor'
+import type { PostProcessorInput } from './types'
 
 const TORCH_ON = 'M3 S1000'
 const TORCH_OFF = 'M5'
+
+type PostProcessorEntry = PostProcessorInput['operations'][number]
 
 function codeLines(gcode: string): string[] {
   return gcode.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith(';') && !line.startsWith('('))
@@ -642,23 +648,62 @@ for (const units of ['mm', 'inch'] as const) {
 }
 
 // ── A plasma operation on a machine that is not a plasma table ──────────────
-// Not a shipped configuration, but reachable from the CAM panel. It goes
-// through the ordinary emitters, which take the plunge feed by the rule every
-// milling operation uses: the operation's own, else the tool's. #983 made the
-// plasma tool's plunge feed a real setting, so an operation with none of its
-// own now plunges at the tool's feed where it used to write F0.
-{
-  const spec = PLASMA_EXPORT_SCENARIOS['single-outline']()
-  const fallback: PlasmaExportSpec = { ...spec, operations: [{ featureIds: ['plate'], operation: { plungeFeed: 0 } }] }
-  const router = codeLines(exportPlasma({ ...fallback, machineId: 'grbl' }).result.gcode)
-  assert.ok(router.includes('G1 X83.000 Y96.300 Z1.500 F2000.000'),
-    `a router plunges at the tool's plunge feed, got ${JSON.stringify(router.slice(0, 8))}`)
-  assert.ok(!router.some((line) => /F0(\.0+)?(\s|$)/.test(line)), 'and writes no F0')
-  const shopbot = exportPlasma({ ...fallback, machineId: 'shopbot' }).result.gcode.split(/\r?\n/)
-  assert.ok(shopbot.includes('MS,33.333,33.333'), 'ShopBot takes the same fallback, in mm/s')
-
-  const own = codeLines(exportPlasma({ ...spec, machineId: 'grbl', operations: [{ featureIds: ['plate'], operation: { plungeFeed: 900 } }] }).result.gcode)
-  assert.ok(own.includes('G1 X83.000 Y96.300 Z1.500 F900.000'), 'the operation\'s own plunge feed still wins')
+// Not a shipped configuration, but reachable from the CAM panel. A plasma cut
+// is not a spindle path, so it never reaches the emitter (issue #960): the
+// program is the one the project's other operations ask for, and the cut is
+// reported by name. The only difference from the same project with nothing to
+// export is that one warning.
+for (const machineId of ['grbl', 'shopbot'] as const) {
+  const { input, result } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId })
+  assert.deepEqual(result.warnings, [{ code: 'postPlasmaCutSkipped', params: { operation: 'Cut 1' } }],
+    `${machineId}: the plasma cut is reported, and nothing else is`)
+  assert.ok(!/(?:^|[\s,])[XYZIJ]-?\d/.test(result.gcode), `${machineId}: no motion from the cut is written`)
+  assert.equal(result.stats.operationCount, 0, `${machineId}: the operation never reaches the emitter`)
+  const empty = runPostProcessor({ ...input, operations: [] })
+  assert.equal(result.gcode, empty.gcode, `${machineId}: the program is the one an empty project exports`)
 }
 
-console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads, mirroring, #983 modal feed, Z frames, missing safe height and router fallback passed')
+// ── A plasma cut between two milling operations ─────────────────────────────
+// Filtering happens once, in `runPostProcessor`, before the emitter sees the
+// list, so tool-change, spindle and coolant sequencing cannot tell the cut was
+// ever there. The same program comes out of the same project without it.
+for (const machineId of ['grbl', 'shopbot'] as const) {
+  const { input } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId })
+  const mill = { ...defaultTool('mm'), id: 'mill', name: 'Mill' }
+  const project = { ...input.project, tools: [...input.project.tools, mill] }
+  const entry = (id: string, name: string): PostProcessorEntry => {
+    const operation = {
+      ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'features', featureIds: ['plate'] }, 0),
+      id, name, toolRef: 'mill',
+    }
+    return {
+      operation,
+      tool: normalizeToolForProject(mill, project),
+      toolpath: {
+        operationId: id,
+        moves: [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 5, y: 5, z: 0 } }],
+        warnings: [], bounds: null,
+      },
+    }
+  }
+  const [cut] = input.operations
+  const withCut = runPostProcessor({ ...input, project, operations: [entry('mill-1', 'Mill 1'), cut, entry('mill-2', 'Mill 2')] })
+  const withoutCut = runPostProcessor({ ...input, project, operations: [entry('mill-1', 'Mill 1'), entry('mill-2', 'Mill 2')] })
+  assert.equal(withCut.warnings.length, withoutCut.warnings.length + 1, `${machineId}: the cut adds exactly one report`)
+  assert.deepEqual(withCut.warnings[0], { code: 'postPlasmaCutSkipped', params: { operation: 'Cut 1' } },
+    `${machineId}: the report names the cut and comes ahead of the emitter's own`)
+  assert.deepEqual(withCut.warnings.slice(1), withoutCut.warnings, `${machineId}: the emitter's own reports are unchanged`)
+  assert.deepEqual({ ...withCut, warnings: withoutCut.warnings }, withoutCut,
+    `${machineId}: the program, stats and traces are byte-identical without the cut`)
+}
+
+// ── Nothing changes on a plasma table ───────────────────────────────────────
+// The router skip is the mirror of `planPlasmaSequence`'s own skipped
+// operations and never fires here (issue #960).
+for (const machineId of ['qtplasmac', 'grbl-plasma'] as const) {
+  const { result } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId })
+  assert.deepEqual(result.warnings, [], `${machineId}: a plasma-only program still exports clean`)
+  assert.ok(result.stats.moveCount > 0, `${machineId}: the torch path is still written`)
+}
+
+console.log('plasmaGcodeOutput.test.ts: Grbl probe/zero/pierce/dwell/drop sequence, offsets, units, height order, leads, mirroring, #983 modal feed, Z frames, missing safe height and the router plasma-cut skip passed')

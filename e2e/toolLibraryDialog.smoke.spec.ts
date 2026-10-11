@@ -15,8 +15,14 @@
  */
 
 import { test, expect } from './fixtures'
-import { getProject, seedProject, openRowContextMenu, rowByName, clickMenuItem } from './helpers'
+import { readFileSync } from 'node:fs'
+import { getProject, seedProject, openRowContextMenu, rowByName, clickMenuItem, selectMachine } from './helpers'
 import { seedCamQuickOperationProject } from './camOperations.helpers'
+
+/** The bundled plasma machine the picker offers, read from the shipped JSON. */
+const QT_PLASMAC = JSON.parse(
+  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
+) as { name: string }
 
 test.describe('Tool library import dialog smoke', () => {
   test('opens and closes by button, Escape and backdrop without mutation', async ({ app }) => {
@@ -493,7 +499,9 @@ test.describe('Tool library import dialog — tablet', () => {
 })
 
 
-test('plasma tool editor persists consumable fields and hides milling controls (#955)', async ({ app }) => {
+test('plasma tool editor persists consumable fields and hides milling controls (#955)', async ({ app, ui }) => {
+  // Plasma is only a tool type with a plasma machine selected (#960).
+  await selectMachine(app.page, ui, QT_PLASMAC.name)
   await app.page.getByRole('tab', { name: 'Tools' }).click()
   await app.page.getByRole('button', { name: 'Add tool', exact: true }).click()
   const panel = app.page.locator('.cam-tool-properties')
@@ -563,7 +571,9 @@ test('milling operation selector excludes plasma consumables (#955)', async ({ a
 })
 
 
-test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app }) => {
+test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app, ui }) => {
+  // The library only offers torches with a plasma machine selected (#960).
+  await selectMachine(app.page, ui, QT_PLASMAC.name)
   await app.page.getByRole('tab', { name: 'Tools' }).click()
   await app.page.getByRole('button', { name: /Import from library/ }).click()
   const dialog = app.page.getByRole('dialog')
