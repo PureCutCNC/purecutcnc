@@ -19,6 +19,7 @@ import { defaultTool, newProject } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import type { ToolpathMove } from './types'
 import { generateFollowLineToolpath } from './carving'
+import { getOperationSafeZ, resolveFeatureZSpan } from './geometry'
 
 // ---------------------------------------------------------------------------
 // Minimal helpers
@@ -812,6 +813,306 @@ function testTrochoidalLevelsAreIdentical(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Travel order (issue #1005)
+// ---------------------------------------------------------------------------
+
+/**
+ * Two clusters of three short open lines, far enough apart that travel order
+ * cannot mix them, listed the interleaved way a copy or nest adds its features:
+ * A1, B1, A2, B2, A3, B3.
+ */
+function travelOrderFixture(): { project: Project; features: SketchFeature[]; ids: string[] } {
+  const tool = makeFlatEndmill('t1', 4)
+  const a = [
+    makeLineFeature('a1', 0, 0, 10, 0),
+    makeLineFeature('a2', 0, 10, 10, 10),
+    makeLineFeature('a3', 0, 20, 10, 20),
+  ]
+  const b = [
+    makeLineFeature('b1', 200, 0, 210, 0),
+    makeLineFeature('b2', 200, 10, 210, 10),
+    makeLineFeature('b3', 200, 20, 210, 20),
+  ]
+  const features = [a[0], b[0], a[1], b[1], a[2], b[2]]
+  return { project: baseProject([tool], features), features, ids: features.map((f) => f.id) }
+}
+
+function travelOrderOp(ids: string[], strategy: 'direct' | 'trochoidal'): Operation {
+  return makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ids },
+    toolRef: 't1',
+    carveDepth: 1,
+    carveStrategy: strategy,
+    ...(strategy === 'trochoidal' ? { trochoidalCutWidth: 6, trochoidalAdvance: 0.2 } : {}),
+  })
+}
+
+/** Which cluster a cut belongs to, from its coordinates. */
+function cutCluster(move: ToolpathMove): 'A' | 'B' {
+  return move.from.x < 100 ? 'A' : 'B'
+}
+
+/** Cluster A must be finished before the first cut in cluster B. */
+function assertClusterOrder(moves: ToolpathMove[], label: string): void {
+  const cuts = cutMoves(moves)
+  assert(cuts.length > 0, `${label}: expected cuts`)
+  let seenB = false
+  for (const move of cuts) {
+    if (cutCluster(move) === 'B') {
+      seenB = true
+    } else {
+      assert(!seenB, `${label}: cluster A must be finished before cluster B is touched`)
+    }
+  }
+}
+
+function moveKey(move: ToolpathMove): string {
+  return JSON.stringify([
+    move.kind,
+    move.from.x, move.from.y, move.from.z,
+    move.to.x, move.to.y, move.to.z,
+    move.source ?? null,
+  ])
+}
+
+/** Whether `needle` appears as a contiguous run inside `haystack`. */
+function containsContiguous(haystack: ToolpathMove[], needle: ToolpathMove[]): boolean {
+  if (needle.length === 0) return false
+  const haystackKeys = haystack.map(moveKey)
+  const needleKeys = needle.map(moveKey)
+  for (let start = 0; start + needleKeys.length <= haystackKeys.length; start += 1) {
+    let matches = true
+    for (let index = 0; index < needleKeys.length; index += 1) {
+      if (haystackKeys[start + index] !== needleKeys[index]) {
+        matches = false
+        break
+      }
+    }
+    if (matches) return true
+  }
+  return false
+}
+
+function testEngraveOrdersTargetsByTravel(): void {
+  console.log('Testing Engrave cuts targets in travel order (direct)...')
+
+  const { project, ids } = travelOrderFixture()
+  const result = generateFollowLineToolpath(project, travelOrderOp(ids, 'direct'))
+
+  assert(result.warnings.length === 0,
+    `unexpected warnings: ${result.warnings.map((w) => w.code).join(', ')}`)
+  assertClusterOrder(result.moves, 'direct travel order')
+
+  console.log('Engrave travel order (direct): PASSED')
+}
+
+function testEngraveOrdersTargetsByTravelTrochoidal(): void {
+  console.log('Testing Engrave cuts targets in travel order (trochoidal)...')
+
+  const { project, ids } = travelOrderFixture()
+  const result = generateFollowLineToolpath(project, travelOrderOp(ids, 'trochoidal'))
+
+  assert(result.warnings.length === 0,
+    `unexpected warnings: ${result.warnings.map((w) => w.code).join(', ')}`)
+  assertClusterOrder(result.moves, 'trochoidal travel order')
+
+  console.log('Engrave travel order (trochoidal): PASSED')
+}
+
+function testEachTargetBlockMatchesStandalone(): void {
+  console.log('Testing each target block matches its standalone generation...')
+
+  const { project, ids } = travelOrderFixture()
+
+  for (const strategy of ['direct', 'trochoidal'] as const) {
+    const op = travelOrderOp(ids, strategy)
+    const mergedCuts = cutMoves(generateFollowLineToolpath(project, op).moves)
+
+    let total = 0
+    for (const id of ids) {
+      const singleCuts = cutMoves(generateFollowLineToolpath(project, {
+        ...op,
+        target: { source: 'features', featureIds: [id] },
+      }).moves)
+      assert(singleCuts.length > 0, `${strategy}/${id}: standalone generation must cut`)
+      assert(containsContiguous(mergedCuts, singleCuts),
+        `${strategy}/${id}: its cut moves must appear contiguously and unchanged in the merged result`)
+      total += singleCuts.length
+    }
+
+    assert(total === mergedCuts.length,
+      `${strategy}: merged cut count ${mergedCuts.length} must equal the sum of standalone targets ${total}`)
+  }
+
+  console.log('per-target block identity: PASSED')
+}
+
+function testTravelRapidsStayAtSafeZ(): void {
+  console.log('Testing cross-target rapids stay at safe Z...')
+
+  const { project, features, ids } = travelOrderFixture()
+  const safeZ = getOperationSafeZ(project, features.map((f) => resolveFeatureZSpan(project, f)))
+
+  for (const strategy of ['direct', 'trochoidal'] as const) {
+    const result = generateFollowLineToolpath(project, travelOrderOp(ids, strategy))
+    const travels = result.moves.filter((move) =>
+      move.kind === 'rapid' && (move.from.x !== move.to.x || move.from.y !== move.to.y))
+    assert(travels.length > 0, `${strategy}: expected XY rapids between targets`)
+    for (const rapid of travels) {
+      assert(rapid.from.z === safeZ && rapid.to.z === safeZ,
+        `${strategy}: an XY rapid must start and end at safe Z ${safeZ}, got ${rapid.from.z} -> ${rapid.to.z}`)
+    }
+    // A trochoidal target has no closing retract: the next target emits it. A
+    // target started from nowhere would leave a jump out of the cut instead of
+    // an unsafe rapid, so the stream itself has to be unbroken.
+    for (let index = 1; index < result.moves.length; index += 1) {
+      const previous = result.moves[index - 1].to
+      const next = result.moves[index].from
+      assert(approx(previous.x, next.x) && approx(previous.y, next.y) && approx(previous.z, next.z),
+        `${strategy}: move ${index} must start where move ${index - 1} ended`)
+    }
+  }
+
+  console.log('cross-target rapids at safe Z: PASSED')
+}
+
+function testTargetWarningsKeepTargetOrder(): void {
+  console.log('Testing per-target warnings keep target order when travel order differs...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // Target order is a1, far, near; travel order is a1, near, far. Both `far`
+  // and `near` clamp, so the warnings prove which order they were harvested in.
+  const features = [
+    makeLineFeature('a1', 0, 0, 10, 0),
+    makeLineFeature('far', 400, 0, 410, 0),
+    makeLineFeature('near', 200, 0, 210, 0),
+  ]
+  const project = baseProject([tool], features)
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['a1', 'far', 'near'] },
+    toolRef: 't1',
+    carveDepth: 6, // deeper than z_top, so every target clamps at Z0
+  })
+
+  const result = generateFollowLineToolpath(project, op)
+  const clamped = result.warnings
+    .filter((warning) => warning.code === 'carveDepthClamped')
+    .map((warning) => warning.params?.name)
+  assert(clamped.length === 3, `expected three clamped targets, got [${clamped.join(', ')}]`)
+  assert(clamped.join(',') === 'a1,far,near',
+    `warnings must stay in target order, got [${clamped.join(', ')}]`)
+
+  const cutOrder: string[] = []
+  for (const move of cutMoves(result.moves)) {
+    const id = move.from.x < 50 ? 'a1' : (move.from.x < 300 ? 'near' : 'far')
+    if (cutOrder.at(-1) !== id) cutOrder.push(id)
+  }
+  assert(cutOrder.join(',') === 'a1,near,far',
+    `cuts must be in travel order, got [${cutOrder.join(', ')}]`)
+
+  console.log('per-target warning order: PASSED')
+}
+
+function testFirstTargetAndTieOrder(): void {
+  console.log('Testing the first target stays first and exact ties keep target order...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // The first target is far from the origin, so passing an explicit start would
+  // pick a follower first. The two followers are an exact tie from its end.
+  const first = makeLineFeature('first', 200, 0, 210, 0)
+  const second = makeLineFeature('second', 10, 20, 20, 20)
+  const third = makeLineFeature('third', 10, -20, 20, -20)
+  assert((200 ** 2 + 20 ** 2) === (200 ** 2 + (-20) ** 2),
+    'the two followers must tie exactly for this test to mean anything')
+
+  const project = baseProject([tool], [first, second, third])
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['first', 'second', 'third'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+
+  const order: string[] = []
+  for (const move of cutMoves(generateFollowLineToolpath(project, op).moves)) {
+    const id = move.from.x > 100 ? 'first' : (move.from.y > 0 ? 'second' : 'third')
+    if (order.at(-1) !== id) order.push(id)
+  }
+  assert(order.join(',') === 'first,second,third',
+    `first target must stay first and a tie must keep target order, got [${order.join(', ')}]`)
+
+  console.log('first target and tie order: PASSED')
+}
+
+function testTargetWithNothingToCutKeepsOrder(): void {
+  console.log('Testing a target with nothing to cut keeps order and still warns...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const a = makeLineFeature('a', 0, 0, 10, 0)
+  const empty = makeLineFeature('empty', 50, 50, 50, 50)
+  empty.sketch.profile.segments = []
+  const b = makeLineFeature('b', 200, 0, 210, 0)
+
+  const project = baseProject([tool], [a, empty, b])
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['a', 'empty', 'b'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+
+  const result = generateFollowLineToolpath(project, op)
+  const emptyWarnings = result.warnings.filter((warning) => warning.code === 'carveNotEnoughGeometry')
+  assert(emptyWarnings.length === 1 && emptyWarnings[0].params?.name === 'empty',
+    `the empty target must still report carveNotEnoughGeometry, got [${result.warnings.map((w) => w.code).join(', ') || 'none'}]`)
+
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'the two cutting targets must be cut')
+  let seenB = false
+  for (const move of cuts) {
+    if (move.from.x > 100) {
+      seenB = true
+    } else {
+      assert(!seenB, 'the two cutting targets must still be cut in travel order')
+    }
+  }
+
+  console.log('empty target keeps order: PASSED')
+}
+
+function testOrderUsesBlockExit(): void {
+  console.log('Testing the next target is chosen from the block exit, not its entry...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // `long` runs 200 mm to the right. `nearExit` is closer to its END than to
+  // its start; `nearEntry` is the reverse. Ordering by start alone would pick
+  // `nearEntry` after `long`.
+  const long = makeLineFeature('long', 0, 0, 200, 0)
+  const nearExit = makeLineFeature('nearExit', 190, 50, 200, 50)
+  const nearEntry = makeLineFeature('nearEntry', 0, 50, 10, 50)
+
+  const project = baseProject([tool], [long, nearExit, nearEntry])
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['long', 'nearExit', 'nearEntry'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+
+  const order: string[] = []
+  for (const move of cutMoves(generateFollowLineToolpath(project, op).moves)) {
+    const id = move.from.y > 0 ? (move.from.x > 100 ? 'nearExit' : 'nearEntry') : 'long'
+    if (order.at(-1) !== id) order.push(id)
+  }
+  assert(order.join(',') === 'long,nearExit,nearEntry',
+    `the block exit must choose the next target, got [${order.join(', ')}]`)
+
+  console.log('order follows block exit: PASSED')
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
@@ -826,5 +1127,13 @@ testDegenerateAdvance()
 testBudgetExhaustion()
 testCutDirectionParityOnOpenGuide()
 testTrochoidalLevelsAreIdentical()
+testEngraveOrdersTargetsByTravel()
+testEngraveOrdersTargetsByTravelTrochoidal()
+testEachTargetBlockMatchesStandalone()
+testTravelRapidsStayAtSafeZ()
+testTargetWarningsKeepTargetOrder()
+testFirstTargetAndTieOrder()
+testTargetWithNothingToCutKeepsOrder()
+testOrderUsesBlockExit()
 
 console.log('\ncarving tests passed.')
