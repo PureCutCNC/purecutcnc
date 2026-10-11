@@ -335,6 +335,10 @@ export type ToolpathWarningCode =
   /** A milling operation was exported to a plasma machine. It has no torch
    *  path, so it is left out of the program (issue #959). */
   | 'postPlasmaOperationSkipped'
+  /** A plasma cut was exported to a machine that is not a plasma table. It
+   *  has no spindle path, so it is left out of the program rather than run
+   *  1.5 mm above the stock (issue #960). */
+  | 'postPlasmaCutSkipped'
   /** A plasma operation's tool has no QtPlasmaC material number, so the
    *  program cannot select the material it cuts with (issue #959). */
   | 'postPlasmaMaterialMissing'

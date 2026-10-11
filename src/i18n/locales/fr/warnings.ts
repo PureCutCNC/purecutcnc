@@ -225,6 +225,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',
   'warnings.postNoToolChangeCommands': 'L’opération « {operation} » nécessite l’outil « {tool} », mais cette machine n’a aucune commande de changement d’outil exécutable. Le programme conserve l’outil précédent ; exportez un seul outil à la fois.',
   'warnings.postPlasmaOperationSkipped': 'L’opération « {operation} » n’est pas une découpe plasma : elle est omise de ce programme plasma.',
+  'warnings.postPlasmaCutSkipped': 'L’opération « {operation} » est une découpe plasma : elle est omise de ce programme. Sélectionnez une machine plasma pour l’exporter.',
   'warnings.postPlasmaMaterialMissing': 'L’opération « {operation} » utilise l’outil « {tool} », qui n’a pas de numéro de matériau QtPlasmaC. Indiquez le numéro de matériau sur l’outil : sans lui, la torche s’allumerait avec le matériau chargé à ce moment.',
   'warnings.postPlasmaCutFeedMissing': 'L’opération « {operation} » n’a pas d’avance de coupe positive pour ce programme plasma. La torche couperait à F0 : indiquez l’avance de coupe sur l’opération ou sur l’outil avant d’exporter.',
   'warnings.postPlasmaPlungeFeedMissing': 'L’opération « {operation} » n’a pas d’avance de plongée positive pour ce programme plasma en G-code. La torche descendrait à la hauteur de coupe à F0 : indiquez l’avance de plongée (descente) sur l’outil plasma avant d’exporter.',

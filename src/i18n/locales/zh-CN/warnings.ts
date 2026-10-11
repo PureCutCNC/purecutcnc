@@ -229,6 +229,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',
   'warnings.postNoToolChangeCommands': '加工操作“{operation}”需要刀具“{tool}”，但此机床没有可执行的换刀指令。程序继续使用上一把刀具；请每次仅导出一把刀具。',
   'warnings.postPlasmaOperationSkipped': '加工操作“{operation}”不是等离子切割，因此不包含在此等离子程序中。',
+  'warnings.postPlasmaCutSkipped': '加工操作“{operation}”是等离子切割，因此不包含在此程序中。请选择等离子切割机以导出。',
   'warnings.postPlasmaMaterialMissing': '加工操作“{operation}”使用的刀具“{tool}”没有 QtPlasmaC 材料编号。请在刀具上设置材料编号：否则割炬会按当前加载的材料点火。',
   'warnings.postPlasmaCutFeedMissing': '加工操作“{operation}”没有正的切割进给，等离子程序将以 F0 切割。请在导出前为操作或刀具设置切割进给。',
   'warnings.postPlasmaPlungeFeedMissing': '加工操作“{operation}”没有正的下扎进给，等离子割炬将以 F0 下降到切割高度。请在导出前为等离子刀具设置下扎（下降）进给。',
