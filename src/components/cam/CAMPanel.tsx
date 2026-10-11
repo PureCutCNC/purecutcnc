@@ -69,6 +69,7 @@ import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBooklet
 import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
+import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
 import { Icon } from '../Icon'
@@ -542,6 +543,11 @@ export function CAMPanel({
     autoPlaceTabsForOperation,
     createRestOperation,
   } = useProjectStore()
+  // #960: the machine this CAM panel follows, derived once from the selected
+  // definition. It restricts what may be *added* — an operation or tool the
+  // project already has stays listed and editable (machineMode.ts).
+  const machine = machineMode(project)
+  const uncutOperations = uncutOperationCount(machine, project.operations)
   // The export action is named after what the project's machine exports:
   // G-code, or a ShopBot part file (issue #953).
   const exportLabels = exportDialectLabels(getActiveMachineDefinition(project))
@@ -631,6 +637,16 @@ export function CAMPanel({
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
     () => {
       const button = (kind: OperationKind) => {
+        // #960: a kind this machine cannot author is still offered, blocked with
+        // the reason, so the menu can say what would make it available.
+        if (operationOffer(machine, kind) === 'needs-plasma-machine') {
+          return {
+            kind,
+            label: operationAddButtonLabel(kind),
+            hint: camT('cam.addMenu.needsPlasmaMachine'),
+            selectAllFeatureIds: [],
+          }
+        }
         const hint = getOperationAddHint(project, addSelection, kind)
         return {
           kind,
@@ -641,6 +657,7 @@ export function CAMPanel({
           selectAllFeatureIds: hint ? selectAllCompatibleFeatureIds(project, kind) : [],
         }
       }
+      // The other family's kinds are left out of the menu entirely.
       return [
         button('pocket'),
         button('v_carve'),
@@ -654,13 +671,15 @@ export function CAMPanel({
         button('finish_surface_cleanup'),
         button('finish_surface'),
         button('plasma_profile'),
-      ]
+      ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
-    [project, addSelection]
+    [project, addSelection, machine]
   )
 
   const selectedNewOperationHint = selectedNewOperationKind
-    ? getOperationAddHint(project, addSelection, selectedNewOperationKind)
+    ? operationOffer(machine, selectedNewOperationKind) === 'needs-plasma-machine'
+      ? camT('cam.addMenu.needsPlasmaMachine')
+      : getOperationAddHint(project, addSelection, selectedNewOperationKind)
     : null
 
   // #732: with nothing selected every kind is invalid for the same reason, so
@@ -1182,14 +1201,17 @@ export function CAMPanel({
           ) : null}
         </div>
       ),
-      tabs: () => (
+      // #960: adding tabs is milling authoring, so a plasma machine does not
+      // offer it. Tabs the project already has stay listed and editable in the
+      // feature tree.
+      tabs: () => showsMillingAuthoring(machine) ? (
         <div className="properties-field">
           <span>{camT('cam.operation.tabs')}</span>
           <button className="feat-btn" type="button" onClick={handleAutoPlaceTabs}>
             {camT('cam.operation.autoPlaceTabs')}
           </button>
         </div>
-      ),
+      ) : null,
       tool: () => (
         <label className="properties-field">
           <span>{camT('cam.operation.tool')}</span>
@@ -2002,13 +2024,10 @@ export function CAMPanel({
                         <span>{camT('cam.tool.type')}</span>
                         <Select
                           value={selectedTool.type}
-                          options={[
-                            { value: 'flat_endmill', label: toolTypeLabel('flat_endmill') },
-                            { value: 'ball_endmill', label: toolTypeLabel('ball_endmill') },
-                            { value: 'v_bit', label: toolTypeLabel('v_bit') },
-                            { value: 'drill', label: toolTypeLabel('drill') },
-                            { value: 'plasma', label: toolTypeLabel('plasma') },
-                          ]}
+                          options={selectableToolTypes(machine, selectedTool.type).map((type) => ({
+                            value: type,
+                            label: toolTypeLabel(type),
+                          }))}
                           onChange={(nextType) => updateTool(selectedTool.id, {
                             ...(nextType === 'plasma' ? defaultPlasmaTool(selectedTool.units)
                               : selectedTool.type === 'plasma' ? defaultTool(selectedTool.units) : {}),
@@ -2205,15 +2224,17 @@ export function CAMPanel({
                   >
                     <Icon id="eye-off" />
                   </button>
-                  <button
-                    ref={camPlanButtonRef}
-                    className="cam-header-action cam-header-action--plan"
-                    type="button"
-                    disabled={project.features.length === 0}
-                    onClick={() => void handleOpenCamPlan()}
-                  >
-                    {camT('cam.plan.launch')}
-                  </button>
+                  {showsMillingAuthoring(machine) ? (
+                    <button
+                      ref={camPlanButtonRef}
+                      className="cam-header-action cam-header-action--plan"
+                      type="button"
+                      disabled={project.features.length === 0}
+                      onClick={() => void handleOpenCamPlan()}
+                    >
+                      {camT('cam.plan.launch')}
+                    </button>
+                  ) : null}
                   <button
                     className="cam-header-action"
                     type="button"
@@ -2254,6 +2275,17 @@ export function CAMPanel({
                   </div>
                 </div>
                 <div className="cam-section-body">
+                {uncutOperations > 0 ? (
+                  // #960: the selected machine cannot run these operations, so
+                  // the export leaves them out. Say so before the list rather
+                  // than only on each row.
+                  <div className="cam-section-note cam-operations-notice" role="note">
+                    {camT(
+                      machine === 'plasma' ? 'cam.operations.leftOutPlasma' : 'cam.operations.leftOutRouter',
+                      { count: uncutOperations },
+                    )}
+                  </div>
+                ) : null}
                 {project.operations.length === 0 && !setupSections.grouped ? (
                   <div className="panel-empty">
                     {camT('cam.panel.operationsEmpty')}
@@ -2375,6 +2407,7 @@ export function CAMPanel({
                               <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">{camT('cam.treeRow.off')}</span> : null}
+                            {!operationCutOnMachine(machine, operation.kind) ? <span className="cam-operation-badge">{camT('cam.treeRow.notOnMachine')}</span> : null}
                             <button
                               className="tree-action-btn"
                               type="button"
@@ -2604,6 +2637,7 @@ export function CAMPanel({
       {showLibraryDialog && (
         <ToolLibraryDialog
           libraryEntries={libraryTools}
+          mode={machine}
           loading={libraryLoading}
           error={libraryError}
           onRetry={() => {

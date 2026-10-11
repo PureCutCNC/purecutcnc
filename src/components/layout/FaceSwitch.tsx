@@ -21,22 +21,30 @@ import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { useI18n } from '../../i18n/i18nContext'
 import type { SetupFace } from '../../types/project'
 import { Icon } from '../Icon'
+import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 
 const FACES: readonly SetupFace[] = ['top', 'bottom']
 
 /**
  * The Top | Bottom segmented control in the workspace header, plus the
  * "Other side" ghost toggle once the project uses both faces.
+ *
+ * A plasma machine hides the switch entirely (#960) — a plasma table cuts
+ * through one sheet — unless the project already carries content on both
+ * faces, which must stay reachable.
  */
 export function FaceSwitch() {
   const { t } = useI18n()
   const face = useProjectStore((state) => activeFace(state.project))
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
+  const machine = useProjectStore((state) => machineMode(state.project))
   // A feature being edited, moved or combined belongs to the face it is on:
   // finishing that first keeps an edit from landing on a ghost.
   const busy = useProjectStore(isFaceEditInProgress)
   const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
   const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
+
+  if (!showsFaceSwitch(machine, bothFaces)) return null
 
   return (
     <div className="face-switch">
