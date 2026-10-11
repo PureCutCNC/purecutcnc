@@ -71,7 +71,10 @@ export function plasmaKerfWidth(project: Project, operationId: string): number |
   const operation = project.operations.find((candidate) => candidate.id === operationId)
   if (!operation || operation.kind !== 'plasma_profile') return null
   const tool = findOperationTool(project, operation)
-  if (!tool) return null
+  // `findOperationTool` already refuses a milling tool for a plasma operation;
+  // the explicit type check keeps the kerf preview null even if that policy is
+  // ever relaxed, so a milling cutter can never be read as a torch diameter.
+  if (!tool || tool.type !== 'plasma') return null
   const width = 2 * normalizeToolForProject(tool, project).radius
   return Number.isFinite(width) && width > 0 ? width : null
 }

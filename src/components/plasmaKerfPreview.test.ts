@@ -151,6 +151,17 @@ function samePoint(a: PointLike, b: PointLike): boolean {
     null,
     'a milling tool assigned to a plasma operation has no kerf width',
   )
+  // The tool-type guard itself (slice B correction): the flat endmill is a
+  // real, present tool with a positive diameter, and a plasma_profile
+  // operation whose toolRef points at it still reads null.
+  const endmill = project.tools[1]
+  assert.equal(endmill.type, 'flat_endmill', 'the fixture’s second tool is a flat endmill')
+  assert.ok(endmill.diameter > 0, 'the endmill has a positive diameter, so a null is a refusal, not a missing tool')
+  assert.equal(
+    plasmaKerfWidth(withOperation(project, { ...plasmaOperation, toolRef: endmill.id }), plasmaOperation.id),
+    null,
+    'a plasma_profile operation whose toolRef is a flat endmill gives null',
+  )
   for (const diameter of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
     const broken = withOperation({ ...project, tools: [{ ...project.tools[0], diameter }, project.tools[1]] }, plasmaOperation)
     assert.equal(plasmaKerfWidth(broken, plasmaOperation.id), null, `a torch of diameter ${diameter} has no kerf width`)

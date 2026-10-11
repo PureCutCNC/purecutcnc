@@ -36,6 +36,7 @@ import {
   simulationSetups,
   type SimulationSetupInput,
 } from './simulationSetup'
+import { selectSimulationPlasmaKerf, type SimulationPlasmaKerfItem } from './simulationPlasmaKerf'
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
 const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
@@ -97,6 +98,11 @@ export function useSimulationModel({
   simulationSetupPicker: SimulationSetupPicker
   /** Visible clamps, placed where they sit in the simulated setup's frame. */
   simulationClamps: Clamp[]
+  /**
+   * The plasma kerf bands the Simulation tab draws (issue #961). Read from the
+   * setup input's project and paths — never generated here.
+   */
+  simulationPlasmaKerf: readonly SimulationPlasmaKerfItem[]
 } {
   /**
    * The simulated setup (issue #947). A pick from the panel holds while the
@@ -416,6 +422,14 @@ export function useSimulationModel({
     [project, setupInput],
   )
 
+  // The plasma kerf bands, in the simulated setup's frame (issue #961). Derived
+  // from the same `setupInput` the heightfield reads, so a turned setup shows
+  // them on the stock it is actually cutting.
+  const simulationPlasmaKerf = useMemo(
+    () => selectSimulationPlasmaKerf(centerTab === 'simulation', setupInput, simulationMode, selectedOperationId),
+    [centerTab, selectedOperationId, setupInput, simulationMode],
+  )
+
   return {
     simulationResult,
     simulationOperationCount,
@@ -423,5 +437,6 @@ export function useSimulationModel({
     simulationInputPending,
     simulationSetupPicker,
     simulationClamps,
+    simulationPlasmaKerf,
   }
 }
