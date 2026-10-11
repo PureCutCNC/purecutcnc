@@ -15,7 +15,7 @@
  */
 
 import { defaultPlasmaTool, isToolCompatibleWithOperation } from '../../toolPolicy'
-import { machineMode } from '../../components/cam/machineMode'
+import { projectMachineKind } from '../../engine/gcode/definitions'
 import type { StateCreator } from 'zustand'
 import type { Tool } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -69,7 +69,7 @@ export function createToolsSlice(
     addTool: () => {
       const state = get()
       const nextId = nextUniqueGeneratedId(state.project, 't')
-      const tool: Tool = machineMode(state.project) === 'plasma'
+      const tool: Tool = projectMachineKind(state.project) === 'plasma'
         ? {
             ...defaultPlasmaTool(state.project.meta.units),
             id: nextId,
