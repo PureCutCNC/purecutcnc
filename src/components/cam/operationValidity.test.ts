@@ -39,6 +39,8 @@ import {
 import type { SelectionState } from '../../store/types'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { getTextFontOptions } from '../../text'
+import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
+import type { MachineDefinition } from '../../engine/gcode/types'
 import {
   newProject,
   rectProfile,
@@ -617,6 +619,119 @@ function testTargetFromSelectionRefusesUnknownIds(): void {
   )
 }
 
+// ── quick operations follow the machine (issue #960) ──────────────
+
+/**
+ * The feature context menu's "Create operation" submenu used to offer the
+ * eleven milling kinds on every machine and never the plasma cut. It now takes
+ * the machine from the same derived mode the CAM panel's Add menu uses
+ * (`machineMode` + `operationOffer`), so plasma mode offers only the plasma
+ * cut and router mode only the milling family. The underlying feature rules
+ * (`getOperationAddHintWithMap`) are unchanged — the mode is an extra gate.
+ */
+function bundled(id: string): MachineDefinition {
+  const definition = BUNDLED_DEFINITIONS.find((candidate) => candidate.id === id)
+  assert(definition !== undefined, `expected the bundled ${id} definition`)
+  return definition
+}
+
+function projectWithMachine(definition: MachineDefinition | null, features: SketchFeature[]): Project {
+  const project = projectWith(features)
+  return {
+    ...project,
+    meta: {
+      ...project.meta,
+      machineDefinitions: definition ? [definition] : [],
+      selectedMachineId: definition?.id ?? null,
+    },
+  }
+}
+
+const ROUTER_MACHINE = bundled('generic')
+const PLASMA_MACHINES = [bundled('qtplasmac'), bundled('grbl-plasma')]
+
+/** The milling menu each feature offered before the plasma kind existed. */
+const MILLING_MENU_BY_FEATURE: Record<'add' | 'subtract' | 'model', OperationKind[]> = {
+  add: ['edge_route_outside', 'surface_clean', 'follow_line'],
+  subtract: ['pocket', 'edge_route_inside', 'v_carve', 'v_carve_medial', 'follow_line'],
+  model: [
+    'edge_route_outside',
+    'surface_clean',
+    'follow_line',
+    'rough_surface',
+    'finish_surface',
+    'finish_surface_cleanup',
+  ],
+}
+
+function testPlasmaMachineOffersOnlyThePlasmaCut(): void {
+  for (const machine of PLASMA_MACHINES) {
+    for (const operation of ['add', 'subtract'] as const) {
+      const project = projectWithMachine(machine, [makeFeature('f', operation)])
+      const ops = validQuickOperationsForFeature(project, 'f')
+      const kinds = ops.map((op) => op.kind)
+
+      assert(
+        JSON.stringify(kinds) === JSON.stringify(['plasma_profile']),
+        `plasma (${machine.id}) + closed ${operation} should offer exactly the plasma cut, got ${JSON.stringify(kinds)}`,
+      )
+
+      const plasma = ops[0]
+      assert(plasma.pass === 'rough', `plasma quick op on ${machine.id} should default to the rough pass`)
+      assert(plasma.group === '2d', `plasma quick op on ${machine.id} should be a 2D quick operation`)
+      assert(
+        plasma.label === quickOperationLabel('plasma_profile'),
+        `plasma quick op label should be quickOperationLabel('plasma_profile'), got ${plasma.label}`,
+      )
+      assert(
+        plasma.label === 'Create plasma through-cut',
+        `plasma quick op label mismatch, got ${plasma.label}`,
+      )
+    }
+  }
+}
+
+function testPlasmaMachineRejectsFeaturesThePlasmaHintRejects(): void {
+  for (const machine of PLASMA_MACHINES) {
+    const openLine = projectWithMachine(machine, [makeFeature('openLine', 'line', 'polygon', false)])
+    assert(
+      validQuickOperationsForFeature(openLine, 'openLine').length === 0,
+      `plasma (${machine.id}) + open line should offer nothing`,
+    )
+
+    const model = projectWithMachine(machine, [makeFeature('model', 'model', 'stl')])
+    assert(
+      validQuickOperationsForFeature(model, 'model').length === 0,
+      `plasma (${machine.id}) + stl model should offer nothing`,
+    )
+  }
+}
+
+function testRouterAndMachineLessProjectsKeepTheMillingMenu(): void {
+  const features: Record<'add' | 'subtract' | 'model', SketchFeature> = {
+    add: makeFeature('add', 'add'),
+    subtract: makeFeature('sub', 'subtract'),
+    model: makeFeature('model', 'model', 'stl'),
+  }
+
+  for (const key of ['add', 'subtract', 'model'] as const) {
+    for (const machine of [ROUTER_MACHINE, null]) {
+      const project = projectWithMachine(machine, [features[key]])
+      const kinds = validQuickOperationsForFeature(project, features[key].id).map((op) => op.kind)
+      const where = machine === null ? 'no machine' : `router ${machine.id}`
+
+      assert(
+        !kinds.includes('plasma_profile'),
+        `${where} should not offer the plasma cut on a ${key} feature`,
+      )
+      assert(
+        JSON.stringify(kinds) === JSON.stringify(MILLING_MENU_BY_FEATURE[key]),
+        `${where} + ${key} quick operations must be unchanged, got ${JSON.stringify(kinds)}`,
+      )
+    }
+  }
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -647,5 +762,8 @@ testAddTextWithoutCountersIsRefusedForInsideRoute()
 testSubtractTextWithIslandsOffersOutsideRoute()
 testTargetFromMultiSelectionOfAddTexts()
 testTargetFromSelectionRefusesUnknownIds()
+testPlasmaMachineOffersOnlyThePlasmaCut()
+testPlasmaMachineRejectsFeaturesThePlasmaHintRejects()
+testRouterAndMachineLessProjectsKeepTheMillingMenu()
 
 console.log('operationValidity tests passed')

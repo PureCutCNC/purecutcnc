@@ -89,6 +89,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': 'Créer un nettoyage de surface',
   'cam.quickOp.followLine': 'Créer une gravure',
   'cam.quickOp.drilling': 'Créer un perçage',
+  'cam.quickOp.plasmaProfile': 'Créer une découpe traversante plasma',
   'cam.quickOp.roughSurface': 'Créer une ébauche de surface 3D',
   'cam.quickOp.finishSurface': 'Créer une finition de surface 3D',
   'cam.quickOp.finishSurfaceCleanup': 'Créer un nettoyage de surface 3D',

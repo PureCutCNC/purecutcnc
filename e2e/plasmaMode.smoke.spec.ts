@@ -200,4 +200,37 @@ test.describe('plasma mode follows the machine (#960)', () => {
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toHaveText([PLASMA_OP])
   })
+
+  test('the feature context menu offers the plasma cut on a plasma machine', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+    await selectMachine(app.page, ui, QT_PLASMAC.name)
+
+    // A closed subtract is a valid target for both families, so the same
+    // feature shows what each machine does with it.
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(ui.contextMenu.item(submenu, PLASMA_OP)).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create pocket')).toHaveCount(0)
+
+    await clickMenuItem(submenu, 'Create plasma through-cut')
+
+    // The operation is added and selected in the CAM panel.
+    const operation = ui.operations.rowByName(app.page, PLASMA_OP)
+    await expect(operation).toBeVisible()
+    await expect(operation).toHaveClass(/tree-row--selected/)
+  })
+
+  test('the feature context menu offers the milling kinds on a router machine', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+    await selectMachine(app.page, ui, GRBL.name)
+
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(ui.contextMenu.item(submenu, 'Create pocket')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, PLASMA_OP)).toHaveCount(0)
+  })
 })

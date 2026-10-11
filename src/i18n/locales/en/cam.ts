@@ -103,6 +103,7 @@ export const camEn = {
   'cam.quickOp.surfaceClean': 'Create surface clean',
   'cam.quickOp.followLine': 'Create engraving',
   'cam.quickOp.drilling': 'Create drilling',
+  'cam.quickOp.plasmaProfile': 'Create plasma through-cut',
   // The 3D kinds reuse the CAM panel's `cam.opLabel.*` names verbatim, so an
   // operation is called the same thing wherever it is created (issue #398).
   'cam.quickOp.roughSurface': 'Create 3D surface rough',

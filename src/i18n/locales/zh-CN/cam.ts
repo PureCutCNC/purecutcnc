@@ -105,6 +105,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': '创建表面清理',
   'cam.quickOp.followLine': '创建雕刻',
   'cam.quickOp.drilling': '创建钻孔',
+  'cam.quickOp.plasmaProfile': '创建等离子贯穿切割',
   // 3D 名称与 CAM 面板（`cam.opLabel.*`）保持一致，见 issue #398。
   'cam.quickOp.roughSurface': '创建 3D 曲面粗加工',
   'cam.quickOp.finishSurface': '创建 3D 曲面精加工',

@@ -99,6 +99,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': 'Oberflächensäuberung erstellen',
   'cam.quickOp.followLine': 'Gravur erstellen',
   'cam.quickOp.drilling': 'Bohrung erstellen',
+  'cam.quickOp.plasmaProfile': 'Plasma-Durchschnitt erstellen',
   // Terminologie wie im CAM-Panel (`cam.opLabel.*`: "3D-Oberfläche schruppen"),
   // hier aber substantiviert — "3D-Oberfläche schruppen erstellen" wäre kein
   // Deutsch. Issue #398.
