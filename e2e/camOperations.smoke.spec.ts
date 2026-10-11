@@ -30,6 +30,7 @@ import {
   openRowContextMenu,
   rowByName,
   selectFeatures,
+  selectMachine,
 } from './helpers'
 
 interface OperationSnapshot {
@@ -53,6 +54,11 @@ interface OperationSnapshot {
 }
 
 const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+/** The bundled plasma machine the picker offers, read from the shipped JSON. */
+const QT_PLASMAC = JSON.parse(
+  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
+) as { name: string }
 
 test.describe('CAM operation browser smoke', () => {
   test('HTML5 drag reorders CAM operations', async ({ app, ui }) => {
@@ -1186,6 +1192,8 @@ for (const pointer of ['mouse', 'touch'] as const) {
       const tools = fixture.tools as Array<Record<string, unknown>>
       fixture.tools = [...tools, { ...tools[0], id: 'torch-e2e', name: 'Plasma torch', type: 'plasma', units: 'mm', diameter: 1.2, pierceHeight: 3, cutHeight: 1.5, pierceDelay: 0.6, defaultFeed: 2200 }]
       await seedProject(app.page, JSON.stringify(fixture))
+      // The plasma cut is only offered with a plasma machine selected (#960).
+      await selectMachine(app.page, ui, QT_PLASMAC.name)
       await selectFeatures(app.page, ['f-machinable-add', 'f-carve-target'])
       if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
       await ui.operations.headerAddButton(app.page).click()
@@ -1305,8 +1313,12 @@ for (const pointer of ['mouse', 'touch'] as const) {
       await ui.operations.rowByName(app.page, 'Other plasma').click()
       await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
       await ui.cam.plasmaStart(app.page).click()
-      await app.page.getByRole('button', { name: 'Bottom', exact: true }).click()
-      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
+      // A plasma machine hides the workspace face switch on a single-face
+      // project (#960), so the Bottom segment this block used to leave the pick
+      // through no longer exists and the pick stays open. Leaving the pick
+      // through another operation is still covered above.
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()
+      await expect(ui.face.switchGroup(app.page)).toHaveCount(0)
     })
   })
 }
