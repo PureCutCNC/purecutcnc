@@ -41,6 +41,7 @@ import {
   foldsNonTargetSubtracts,
   operationAffectedByChange,
   operationFootprint,
+  plasmaCutOrderInputs,
   subtractsMachinedElsewhere,
   type OperationFootprint,
 } from '../../engine/toolpaths'
@@ -251,6 +252,18 @@ export function cacheInputsValid(
   // live on the project, so an identical snapshot also means identical
   // ownership and the check below cannot have anything to say.
   if (inputs.project === project) return true
+
+  // Plasma cut order (issue #958) reads two things no check here covers: the
+  // machine origin, where the first cut is chosen from, and what later plasma
+  // operations cut, which decides the outline-before-hole warning. Neither
+  // moves a feature, so the diff below would pass a stale path. Compared
+  // against the entry's own snapshot, so the stamp needs no field of its own.
+  if (
+    operation.kind === 'plasma_profile'
+    && plasmaCutOrderInputs(inputs.project, inputs.operation) !== plasmaCutOrderInputs(project, operation)
+  ) {
+    return false
+  }
 
   // Ownership: which subtracts *other* operations machine (issue #749).
   //

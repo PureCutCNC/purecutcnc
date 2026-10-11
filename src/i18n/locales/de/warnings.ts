@@ -33,6 +33,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.plasmaSmallHole': '{name}: Lochdurchmesser kleiner als 1,5 × Materialdicke; das Loch kann konisch und unrund werden. Die Steuerung übernimmt die Lochverlangsamung.',
   'warnings.plasmaCentrePierce': '{name}: Loch zu klein für den gewünschten Einlauf; Einstich in der Mitte und gerader Einlauf zur Kontur.',
   'warnings.plasmaLeadOutOmitted': '{name}: der gewünschte Auslauf würde das Teil oder ein Nachbarteil beschädigen; Auslauf weggelassen.',
+  'warnings.plasmaOutlineBeforeHole': '{name}: diese Außenkontur wird hier geschnitten, aber Operation „{operation}“ schneidet später eine Kontur darin. Nach dem Schnitt der Außenkontur liegt das Teil lose. „{operation}“ vor diese Operation verschieben oder beide in einer Operation schneiden.',
   'warnings.finishSlopeInvalid': 'Neigungsgrenzen müssen endliche Winkel von 0 bis 90° sein; das Minimum darf das Maximum nicht überschreiten. Kein Werkzeugweg erzeugt.',
   'warnings.finishScallopHeightOutOfRange': 'Die Riefenhöhe muss größer als null und kleiner als der Radius des Kugelfräsers sein. Kein Werkzeugweg erzeugt.',
   'warnings.finishSlopeEmpty': 'Keine erreichbare Oberfläche entspricht dem gewählten Neigungsbereich.',

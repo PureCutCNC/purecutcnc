@@ -28,6 +28,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.plasmaSmallHole': '{name} : diamètre du trou inférieur à 1,5 × épaisseur ; le trou peut être conique et ovalisé. Le contrôleur gère le ralentissement des trous.',
   'warnings.plasmaCentrePierce': '{name} : trou trop petit pour l’entrée demandée ; perçage au centre et entrée droite vers le contour.',
   'warnings.plasmaLeadOutOmitted': '{name} : la sortie demandée entaillerait la pièce ou une voisine ; sortie omise.',
+  'warnings.plasmaOutlineBeforeHole': '{name} : ce contour extérieur est découpé ici, mais l’opération « {operation} » découpe plus tard un contour situé à l’intérieur. Une fois le contour extérieur découpé, la pièce est libre. Placez « {operation} » avant cette opération, ou découpez les deux dans une seule opération.',
   'warnings.finishSlopeInvalid': 'Les limites de pente doivent être des angles finis entre 0 et 90°, avec un minimum inférieur ou égal au maximum. Aucun parcours généré.',
   'warnings.finishScallopHeightOutOfRange': 'La hauteur de crête doit être supérieure à zéro et inférieure au rayon de la fraise boule. Aucun parcours généré.',
   'warnings.finishSlopeEmpty': 'Aucune surface accessible ne correspond à la plage de pente choisie.',

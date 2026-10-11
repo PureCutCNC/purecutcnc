@@ -50,7 +50,8 @@ export function sheetFeature(id: string, operation: SketchFeature['operation'], 
   }
 }
 
-/** One plasma operation over `featureIds`, in that cut order, with its tool. */
+/** One plasma operation over `featureIds`, with its tool. The listing is the
+ *  selection; the generator decides the cut order (issue #958). */
 export interface PlasmaOperationSpec {
   featureIds: string[]
   tool?: Partial<Tool>

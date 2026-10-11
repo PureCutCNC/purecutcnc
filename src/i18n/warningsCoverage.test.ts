@@ -30,6 +30,7 @@ function assert(condition: boolean, message: string): void {
 const ALL_CODES = [
   'plasmaTopOnly', 'plasmaHoleBeforePart', 'plasmaPartialDepth', 'plasmaStraightLead',
   'plasmaInvalid', 'plasmaOpenPath', 'plasmaNoLead', 'plasmaSmallHole', 'plasmaCentrePierce', 'plasmaLeadOutOmitted',
+  'plasmaOutlineBeforeHole',
   'finishScallopHeightOutOfRange', 'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'regionExtendedBySubtractDepth',
