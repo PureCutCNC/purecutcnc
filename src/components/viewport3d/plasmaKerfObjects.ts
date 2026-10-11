@@ -27,6 +27,17 @@
  * the centre line; the markers are a screen-space `THREE.Points` sprite whose
  * ring texture is built in code, so the module loads without a DOM (the tests
  * run it under `npx tsx`).
+ *
+ * The band materials write the **stencil buffer** so that every pixel of a band
+ * is painted at most once. A `LineSegments2` is one quad per segment with round
+ * caps, so where two quads overlap — every corner, and every place a long arc
+ * is made of short segments — the alpha adds up and the overlap reads darker
+ * than a straight run. The 2D band does not have the problem because one canvas
+ * path is stroked once. Contour and lead bands use different stencil refs, so a
+ * lead still shows in its own colour where it meets the contour, and two bands
+ * of the same kind (the same operation's segments, or two operations) never add
+ * up on each other. The pierce markers do not write the stencil: they are
+ * screen-space sprites, not band pixels.
  */
 
 import * as THREE from 'three'
@@ -47,6 +58,16 @@ import {
 
 /** Sprite edge of the pierce marker's ring texture, in texels. */
 const PIERCE_RING_TEXTURE_SIZE = 64
+
+/**
+ * Stencil ref a contour band writes and then tests `NotEqual` against. One
+ * constant per band kind keeps the two kinds from suppressing each other, and
+ * keeps two bands of the same kind from adding up.
+ */
+export const PLASMA_KERF_CONTOUR_STENCIL_REF = 1
+
+/** Stencil ref a lead band writes and then tests `NotEqual` against. */
+export const PLASMA_KERF_LEAD_STENCIL_REF = 2
 
 /**
  * Segment positions `[x, topZ, y]` for every segment's two endpoints, in the
@@ -150,6 +171,7 @@ export interface PlasmaKerfObjectOptions {
 function buildPlasmaKerfBand(
   segments: readonly PlasmaKerfSegment[],
   color: number,
+  stencilRef: number,
   options: PlasmaKerfObjectOptions,
 ): THREE.Object3D[] {
   const material = new LineMaterial({
@@ -161,6 +183,15 @@ function buildPlasmaKerfBand(
     opacity: toolpathOverlayOpacity(0.98, options.emphasized, options.muted) * PLASMA_KERF_BAND_ALPHA,
     depthWrite: false,
     depthTest: false,
+    // Paint each band pixel once: a fragment survives only while the stencil
+    // does not already hold this band kind's ref, and the passing fragment
+    // writes the ref so later overlaps of the same kind are discarded.
+    stencilWrite: true,
+    stencilFunc: THREE.NotEqualStencilFunc,
+    stencilRef,
+    stencilFail: THREE.KeepStencilOp,
+    stencilZFail: THREE.KeepStencilOp,
+    stencilZPass: THREE.ReplaceStencilOp,
   })
 
   const chunkSize = Math.max(1, Math.floor(DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK))
@@ -205,10 +236,10 @@ export function buildPlasmaKerfObjects(
 ): THREE.Object3D[] {
   const objects: THREE.Object3D[] = []
   if (options.showContour && geometry.contour.length > 0) {
-    objects.push(...buildPlasmaKerfBand(geometry.contour, options.cutColor, options))
+    objects.push(...buildPlasmaKerfBand(geometry.contour, options.cutColor, PLASMA_KERF_CONTOUR_STENCIL_REF, options))
   }
   if (options.showLeads && geometry.leads.length > 0) {
-    objects.push(...buildPlasmaKerfBand(geometry.leads, options.leadColor, options))
+    objects.push(...buildPlasmaKerfBand(geometry.leads, options.leadColor, PLASMA_KERF_LEAD_STENCIL_REF, options))
   }
   if (options.showPierces && geometry.pierces.length > 0) {
     objects.push(buildPlasmaPierceMarkers(geometry.pierces, options))

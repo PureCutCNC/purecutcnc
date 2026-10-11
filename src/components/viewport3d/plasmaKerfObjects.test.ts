@@ -19,13 +19,17 @@
  *
  * The properties that matter are pinned on the objects themselves: the world
  * mapping `[x, topZ, y]`, a band in world units exactly one kerf wide, contour
- * and leads in different colours, and a screen-space marker sprite. Nothing
- * here renders, so it runs under `npx tsx` with no DOM.
+ * and leads in different colours, a screen-space marker sprite, and the stencil
+ * state that keeps a band's overlapping quads from adding up. Nothing here
+ * renders, so it runs under `npx tsx` with no DOM.
  *
  * Mutations these assertions were checked against:
  * - `worldUnits: false` on the band material → the world-unit assertion fails;
  * - dropping the `PlasmaKerfGeometry` part from `buildPlasmaKerfObjects` (e.g.
- *   always emitting the contour band) → the switched-off assertions fail.
+ *   always emitting the contour band) → the switched-off assertions fail;
+ * - `stencilWrite: false` on the band material → the stencil assertions fail;
+ * - giving both bands the same stencil ref → the differing-refs assertion
+ *   fails.
  *
  * Run with: npx tsx src/components/viewport3d/plasmaKerfObjects.test.ts
  */
@@ -44,6 +48,8 @@ import {
   disposePlasmaKerfMaterial,
   plasmaKerfSegmentPositions,
   plasmaPiercePositions,
+  PLASMA_KERF_CONTOUR_STENCIL_REF,
+  PLASMA_KERF_LEAD_STENCIL_REF,
   type PlasmaKerfObjectOptions,
 } from './plasmaKerfObjects'
 
@@ -129,6 +135,26 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
     Math.abs(contourMaterial.opacity - 0.98 * PLASMA_KERF_BAND_ALPHA) < 1e-9,
     'an emphasized band uses the band alpha at full strength',
   )
+
+  // Stencil: one band pixel each, two kinds that do not swallow each other.
+  assert.equal(contourMaterial.stencilWrite, true, 'the contour band writes the stencil buffer')
+  assert.equal(contourMaterial.stencilFunc, THREE.NotEqualStencilFunc, 'a contour pixel already holding the ref is discarded')
+  assert.equal(contourMaterial.stencilRef, PLASMA_KERF_CONTOUR_STENCIL_REF, 'the contour band uses the contour ref')
+  assert.equal(contourMaterial.stencilZPass, THREE.ReplaceStencilOp, 'a drawn contour pixel replaces the stencil with its ref')
+  assert.equal(contourMaterial.stencilFail, THREE.KeepStencilOp, 'a discarded contour pixel leaves the stencil alone')
+  assert.equal(contourMaterial.stencilZFail, THREE.KeepStencilOp, 'a depth-failed contour pixel leaves the stencil alone')
+
+  assert.equal(leadMaterial.stencilWrite, true, 'the lead band writes the stencil buffer')
+  assert.equal(leadMaterial.stencilFunc, THREE.NotEqualStencilFunc, 'a lead pixel already holding the ref is discarded')
+  assert.equal(leadMaterial.stencilRef, PLASMA_KERF_LEAD_STENCIL_REF, 'the lead band uses the lead ref')
+  assert.equal(leadMaterial.stencilZPass, THREE.ReplaceStencilOp, 'a drawn lead pixel replaces the stencil with its ref')
+
+  assert.notEqual(
+    PLASMA_KERF_CONTOUR_STENCIL_REF,
+    PLASMA_KERF_LEAD_STENCIL_REF,
+    'contour and lead bands use different refs so a lead still shows where it meets the contour',
+  )
+
   const mutedMaterial = (buildPlasmaKerfObjects(geometry, options({ emphasized: false, muted: true }))[0] as LineSegments2)
     .material as LineMaterial
   assert.ok(mutedMaterial.opacity < contourMaterial.opacity, 'a muted band is fainter than an emphasized one')
@@ -153,6 +179,7 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
   assert.ok(material.map instanceof THREE.DataTexture, 'the marker carries a code-built ring texture')
   assert.equal(material.depthWrite, false, 'the marker does not write depth')
   assert.equal(material.depthTest, false, 'the marker is not depth-tested')
+  assert.equal(material.stencilWrite, false, 'the pierce marker does not touch the stencil buffer')
 
   const position = object.geometry.getAttribute('position')
   assert.equal(position.count, 1, 'one pierce gives one point')
