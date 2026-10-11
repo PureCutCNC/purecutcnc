@@ -30,7 +30,6 @@ import {
   openRowContextMenu,
   rowByName,
   selectFeatures,
-  selectMachine,
 } from './helpers'
 
 interface OperationSnapshot {
@@ -58,7 +57,7 @@ const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 /** The bundled plasma machine the picker offers, read from the shipped JSON. */
 const QT_PLASMAC = JSON.parse(
   readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
-) as { name: string }
+) as { id: string; name: string }
 
 test.describe('CAM operation browser smoke', () => {
   test('HTML5 drag reorders CAM operations', async ({ app, ui }) => {
@@ -1191,9 +1190,12 @@ for (const pointer of ['mouse', 'touch'] as const) {
       const meta = fixture.meta as Record<string, unknown>; meta.units = 'mm'
       const tools = fixture.tools as Array<Record<string, unknown>>
       fixture.tools = [...tools, { ...tools[0], id: 'torch-e2e', name: 'Plasma torch', type: 'plasma', units: 'mm', diameter: 1.2, pierceHeight: 3, cutHeight: 1.5, pierceDelay: 0.6, defaultFeed: 2200 }]
-      await seedProject(app.page, JSON.stringify(fixture))
       // The plasma cut is only offered with a plasma machine selected (#960).
-      await selectMachine(app.page, ui, QT_PLASMAC.name)
+      // Seeded rather than picked in the tree: the touch layout keeps the
+      // project row behind a drawer.
+      meta.machineDefinitions = [QT_PLASMAC]
+      meta.selectedMachineId = QT_PLASMAC.id
+      await seedProject(app.page, JSON.stringify(fixture))
       await selectFeatures(app.page, ['f-machinable-add', 'f-carve-target'])
       if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
       await ui.operations.headerAddButton(app.page).click()
