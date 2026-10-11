@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import type { MachineDefinition } from '../types'
+import { resolveMachineKind } from '../types'
+import type { MachineDefinition, MachineKind } from '../types'
 import type { Project } from '../../../types/project'
 import generic from './generic.json'
 import grbl from './grbl.json'
@@ -58,4 +59,14 @@ export function getActiveMachineDefinition(project: Project): MachineDefinition 
   }
 
   return project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
+}
+
+/**
+ * The kind of the machine this project cuts on, resolved from the same embedded
+ * snapshot `getActiveMachineDefinition` reads. A project with no machine
+ * selected is a router project.
+ */
+export function projectMachineKind(project: Project): MachineKind {
+  const definition = getActiveMachineDefinition(project)
+  return definition ? resolveMachineKind(definition) : 'router'
 }
