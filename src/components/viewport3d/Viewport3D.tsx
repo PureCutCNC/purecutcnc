@@ -51,6 +51,8 @@ import { ViewPresetMenu } from './ViewPresetMenu'
 import { attachWebglContextGuard } from './webglContextGuard'
 import { createViewportRenderer, type WebglStatus } from './webglRenderer'
 import { WebglStatusOverlay } from './WebglStatusOverlay'
+import { plasmaKerfGeometry, plasmaKerfWidth } from '../plasmaKerfPreview'
+import { buildPlasmaKerfObjects, disposePlasmaKerfMaterial } from './plasmaKerfObjects'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -105,13 +107,12 @@ interface Viewport3DProps {
 
 function disposeObject3D(object: THREE.Object3D) {
   object.traverse((entry) => {
-    if (entry instanceof THREE.Mesh || entry instanceof THREE.Line) {
+    // `LineSegments2` extends `Mesh`, so the band's geometry and material take
+    // this branch too. `Points` is the pierce markers, whose material owns the
+    // one texture in the kerf preview.
+    if (entry instanceof THREE.Mesh || entry instanceof THREE.Line || entry instanceof THREE.Points) {
       entry.geometry.dispose()
-      if (Array.isArray(entry.material)) {
-        entry.material.forEach((material) => material.dispose())
-      } else {
-        entry.material.dispose()
-      }
+      disposePlasmaKerfMaterial(entry.material)
     }
   })
 }
@@ -607,12 +608,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   }, [syncGridVisibility])
 
   const disposeObjectMaterial = useCallback((material: THREE.Material | THREE.Material[]) => {
-    if (Array.isArray(material)) {
-      material.forEach((entry) => entry.dispose())
-      return
-    }
-
-    material.dispose()
+    // Also drops a `PointsMaterial`'s sprite texture (the pierce ring); the
+    // band and line materials carry none.
+    disposePlasmaKerfMaterial(material)
   }, [])
 
   const rebuildGridHelpers = useCallback(() => {
@@ -689,7 +687,16 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         object.geometry.dispose()
         disposeObjectMaterial(object.material)
       } else if (object instanceof THREE.Mesh) {
-        // Mesh geometries are shared/cached so only dispose material.
+        // Mesh geometries are shared/cached so only dispose material — except
+        // the plasma kerf band, which owns the flat mesh geometry it built.
+        if (object.userData.plasmaKerfBand) {
+          object.geometry.dispose()
+        }
+        disposeObjectMaterial(object.material)
+      } else if (object instanceof THREE.Points) {
+        // The plasma pierce markers: geometry is per-object and the material
+        // owns the ring texture.
+        object.geometry.dispose()
         disposeObjectMaterial(object.material)
       } else if (object instanceof THREE.Sprite) {
         object.material.dispose()
@@ -921,19 +928,41 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       if (toolpath.moves.length === 0) {
         return []
       }
+      const emphasized = toolpath.operationId === selectedOperationId
+      const isMuted = muted.has(toolpath.operationId)
       // Colour rungs derive from the toolpath's own operation slot feed so the
       // thresholds match the scales that operation emitted (issue #498 S5).
       const slotFeedPercent = pocketSlotFeedPercent(projectRef.current.operations.find((op) => op.id === toolpath.operationId))
-      return buildToolpathOverlay(
-        toolpath,
-        toolpath.operationId === selectedOperationId,
-        toolpathVisibility,
-        threePalette,
-        resolution,
-        slotFeedPercent === null ? 1 : slotFeedPercent / 100,
-        toolpathLevel,
-        muted.has(toolpath.operationId),
-      )
+      // Plasma kerf band and pierce markers for a `plasma_profile` operation,
+      // drawn BEFORE that toolpath's lines so the centre line stays on top
+      // (issue #961). A non-plasma toolpath gets none and draws as before.
+      const kerfWidth = plasmaKerfWidth(projectRef.current, toolpath.operationId)
+      const kerfObjects = kerfWidth === null
+        ? []
+        : buildPlasmaKerfObjects(plasmaKerfGeometry(toolpath), {
+            width: kerfWidth,
+            topZ: projectRef.current.stock.thickness,
+            cutColor: threePalette.toolpathCut,
+            leadColor: threePalette.toolpathPlunge,
+            emphasized,
+            muted: isMuted,
+            showContour: toolpathVisibility.cuts,
+            showLeads: toolpathVisibility.leadIns,
+            showPierces: toolpathVisibility.plunges,
+          })
+      return [
+        ...kerfObjects,
+        ...buildToolpathOverlay(
+          toolpath,
+          emphasized,
+          toolpathVisibility,
+          threePalette,
+          resolution,
+          slotFeedPercent === null ? 1 : slotFeedPercent / 100,
+          toolpathLevel,
+          isMuted,
+        ),
+      ]
     })
     if (nextObjects.length === 0) {
       return

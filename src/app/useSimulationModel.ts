@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { findMillingOperationTool } from '../toolPolicy'
+import { findOperationTool } from '../toolPolicy'
 import { useEffect, useMemo, useState } from 'react'
 import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
 import {
@@ -147,7 +147,7 @@ export function useSimulationModel({
   const requiredOperationIds = useMemo(() => {
     if (centerTab !== 'simulation') return []
     const eligible = (operation: Operation): boolean =>
-      operation.enabled && operation.showToolpath && findMillingOperationTool(project, operation) !== null
+      operation.enabled && operation.showToolpath && findOperationTool(project, operation) !== null
     // Only the simulated setup's operations: each setup starts from fresh
     // stock, so another setup's cuts are never part of its starting state.
     if (simulationMode === 'visible') {
@@ -243,7 +243,7 @@ export function useSimulationModel({
 
     if (simulationMode === 'selected') {
       const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
-      if (!selectedInSetup || !selectedLocalToolpath || !findMillingOperationTool(localProject, selectedInSetup)) {
+      if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
         return emptySimulationResult
       }
 
@@ -256,7 +256,7 @@ export function useSimulationModel({
       .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
       .map((operation) => {
         const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
-        const toolRecord = findMillingOperationTool(localProject, operation)
+        const toolRecord = findOperationTool(localProject, operation)
 
         if (!toolpath || !toolRecord) {
           return null
@@ -285,14 +285,12 @@ export function useSimulationModel({
   }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
   const simulationOperationCount = useMemo(() => {
-    const hasPlasmaTool = (operation: Operation): boolean =>
-      project.tools.some((tool) => tool.id === operation.toolRef && tool.type === 'plasma')
     if (simulationMode === 'selected') {
-      return selectedInSetup && selectedCanonicalToolpath && !hasPlasmaTool(selectedInSetup) ? 1 : 0
+      return selectedInSetup && selectedCanonicalToolpath ? 1 : 0
     }
 
-    return setupScopedOperations.filter((operation) => operation.enabled && operation.showToolpath && !hasPlasmaTool(operation)).length
-  }, [project, selectedCanonicalToolpath, selectedInSetup, setupScopedOperations, simulationMode])
+    return setupScopedOperations.filter((operation) => operation.enabled && operation.showToolpath).length
+  }, [selectedCanonicalToolpath, selectedInSetup, setupScopedOperations, simulationMode])
 
   const simulationPlaybackInput = useMemo<SimulationPlaybackInput | null>(() => {
     if (centerTab !== 'simulation' || simulationMode !== 'selected' || !setupInput) {
@@ -300,10 +298,10 @@ export function useSimulationModel({
     }
     const localProject = setupInput.project
     const selectedLocalToolpath = selectedInSetup ? setupInput.toolpaths.get(selectedInSetup.id) ?? null : null
-    if (!selectedInSetup || !selectedLocalToolpath || !findMillingOperationTool(localProject, selectedInSetup)) {
+    if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
       return null
     }
-    const toolRecord = findMillingOperationTool(localProject, selectedInSetup)
+    const toolRecord = findOperationTool(localProject, selectedInSetup)
     if (!toolRecord || toolRecord.type === 'drill') {
       return null
     }
@@ -342,7 +340,7 @@ export function useSimulationModel({
           // supplier that could start work would be generation on the playback
           // path — the thing acquiring these up front exists to prevent.
           const toolpath = resolvedPaths.get(operation.id) ?? null
-          const operationTool = findMillingOperationTool(localProject, operation)
+          const operationTool = findOperationTool(localProject, operation)
           if (!toolpath || !operationTool) {
             return null
           }

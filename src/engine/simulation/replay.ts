@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { findMillingOperationTool } from '../../toolPolicy'
+import { findOperationTool } from '../../toolPolicy'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
@@ -48,7 +48,6 @@ export function applyMoveToGrid(
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
 ): ApplyMoveResult {
-  if (toolType === 'plasma') return { changedCount: 0, dirtyRegion: null }
   const minX = Math.min(move.from.x, move.to.x) + -toolRadius
   const maxX = Math.max(move.from.x, move.to.x) + toolRadius
   const minY = Math.min(move.from.y, move.to.y) + -toolRadius
@@ -81,6 +80,10 @@ export function applyMoveToGrid(
   const radiusSqWithTolerance = radiusWithTolerance * radiusWithTolerance
   const isBall = toolType === 'ball_endmill'
   const isVBit = toolType === 'v_bit'
+  // A torch is a flat through-cut: one kerf wide, the full sheet deep, at any Z
+  // its path carries (the torch rides at cut height above the sheet). Like
+  // `isBall`/`isVBit`, the profile is chosen once per move, not per cell.
+  const isPlasma = toolType === 'plasma'
   const toolRadiusSq = toolRadius * toolRadius
   let vBitInvSlope = 0
   if (isVBit) {
@@ -116,7 +119,9 @@ export function applyMoveToGrid(
         continue
       }
 
-      const toolCenterZ = xyStationary ? stationaryZ : z0 + segDz * t
+      const toolCenterZ = isPlasma
+        ? stockBottomZ
+        : xyStationary ? stationaryZ : z0 + segDz * t
 
       let cutZ: number
       if (isBall) {
@@ -125,7 +130,8 @@ export function applyMoveToGrid(
       } else if (isVBit) {
         cutZ = toolCenterZ + Math.sqrt(distanceSq) * vBitInvSlope
       } else {
-        // flat_endmill and drill cut a flat bottom at the tool center Z.
+        // flat_endmill, drill and the plasma torch cut a flat bottom at the
+        // tool center Z (the torch's is forced to the stock bottom above).
         cutZ = toolCenterZ
       }
 
@@ -171,7 +177,6 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
-  if (item.toolType === 'plasma') return { processedMoveCount, warnings }
   for (const move of item.toolpath.moves) {
     if (!moveIsMaterialRemoving(move)) {
       continue
@@ -214,7 +219,7 @@ export function simulateOperationHeightfield(
 ): SimulationResult {
   const grid = createSimulationGrid(project, options)
   const warnings: ToolpathWarning[] = []
-  const toolRecord = findMillingOperationTool(project, operation)
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     warnings.push({ code: 'replayNoTool' })

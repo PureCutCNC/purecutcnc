@@ -59,7 +59,6 @@ export function buildToolMesh(info: ToolMeshInfo): THREE.Group {
   const shankLength = resolveShankLength(diameter, info.shankLength)
   const group = new THREE.Group()
   group.name = 'toolMesh'
-  if (info.toolType === 'plasma') return group
 
   const cutterMaterial = new THREE.MeshStandardMaterial({
     color: info.threePalette.toolCutter,
@@ -120,6 +119,7 @@ export function buildToolMesh(info: ToolMeshInfo): THREE.Group {
     }
     case 'drill':
     case 'flat_endmill':
+    case 'plasma':
     default: {
       const cylinderGeom = new THREE.CylinderGeometry(radius, radius, cutLength, 24, 1, false)
       const cylinder = new THREE.Mesh(cylinderGeom, cutterMaterial)

@@ -20,6 +20,7 @@ import { pocketSlotFeedPercent } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import { canvasColors } from './canvasPalette'
+import { drawPlasmaKerfBands, drawPlasmaPierceMarkers } from './plasmaKerfBand'
 import { drawToolpath } from './previewPrimitives'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
 import { reflectContextForView } from './viewTransform'
@@ -45,6 +46,11 @@ export function renderSketchToolpaths(
       selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100,
     }
   }).sort((a, b) => Number(b.muted) - Number(a.muted))
+  // The plasma kerf band goes on the base canvas, beneath every line renderer:
+  // the GPU canvas and the foreground canvas both sit above it, and the Canvas
+  // path draws its lines here afterwards, so the centre line reads on top
+  // (issue #961). Nothing is drawn for a project with no plasma operation.
+  drawPlasmaKerfBands(ctx, project, entries, vt, visible)
   // A Bottom view shows the stock turned over (issue #945). Both backends
   // draw it from the same stock-space caches: the GPU through a mirrored view
   // map, Canvas through a mirrored context.
@@ -86,5 +92,8 @@ export function renderSketchToolpaths(
       observeCanvasDraw?.({ durationMs: now - start, now, navigating: deferArrows })
     }
   }
+  // The markers mark places, so they are not part of the band's underlay: they
+  // land on the context the caller keeps drawing on, above every line.
+  drawPlasmaPierceMarkers(ctx, project, entries, vt, visible)
   return ctx
 }
