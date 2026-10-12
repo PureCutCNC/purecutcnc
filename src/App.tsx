@@ -450,7 +450,7 @@ function App() {
             setupPicker={simulationSetupPicker}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
-            origin={project.origin} units={project.meta.units}
+            origin={project.origin} units={project.meta.units} stock={project.stock}
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}

@@ -5,7 +5,8 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 ## Top-level files
 - `clipperOpenPaths.ts` — typed seam for clipper-lib's open-path API (`addOpenSubject`, `openPathsFromPolyTree`); confines the casts the local clipper-lib typings force
 - `clipperOpenPaths.test.ts` — tests for the above
-- `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache. Feature input is gated through `store/helpers/featureRoles.modelFeatures()` — construction geometry never reaches the model (issue #199).
+- `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache. Feature input is gated through `store/helpers/featureRoles.modelFeatures()` — construction geometry never reaches the model (issue #199). Round stock (issue #392) draws as a cylinder on its centreline, as do a chuck/tailstock on a bar; an axis-aligned block and every other fixture keep the extruded box
+- `csgRoundStock.test.ts` — round stock in the scene (issue #392 slice D): the bar's cylinder matches the block's box and every lateral vertex is one radius from the centreline, a chuck/tailstock on a bar is a cylinder about the axis, and a block stock, a step clamp on a bar and a chuck with no stock all keep today's box, position for position
 - `constructionExclusion.test.ts` — guard test: construction geometry can never become a machining target, region mask, or CSG input; fails the build if the exclusion regresses
 - `profilePolyline.ts` — shared, acyclic profile-to-polyline flattening and contour-closing helpers used by CSG and batched 3D Line overlays
 - `lineRendering.test.ts` — unit tests for `closeLinePolygonIfNeeded`: closed Line profiles append the first point for independent-segment closing; open profiles are unchanged

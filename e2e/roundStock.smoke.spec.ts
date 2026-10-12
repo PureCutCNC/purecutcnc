@@ -15,11 +15,12 @@
  */
 
 /**
- * Choosing and sizing round stock in the Properties panel (#392 slices B and C):
+ * Choosing and sizing round stock in the Properties panel (#392 slices B–D):
  * the Shape field turns a block into a bar and swaps Width/Height/Thickness for
  * Diameter/Length/Axis, a diameter edit reaches the status bar, an axis change
  * is one undo step, the bar gains a chuck the store keeps centred, plasma mode
- * hides the Shape field for a block but not a bar (#960).
+ * hides the Shape field for a block but not a bar (#960), and the bar and its
+ * chuck build a scene in the 3D view.
  */
 
 import { readFileSync } from 'node:fs'
@@ -137,4 +138,28 @@ test('plasma mode hides the Shape field only for a block', async ({ app, ui }) =
   await ui.properties.stockShapeOption(app.page, 'Block').click()
   await expect(ui.properties.exactText(app.page, 'Width')).toBeVisible()
   await expect(ui.properties.stockShape(app.page)).toHaveCount(0)
+})
+
+// Slice D is drawing only: the bar draws as a cylinder and its chuck as a round
+// fixture. No engine, format or store behaviour is asserted here. The fixture
+// already fails the test on any console error, which is what a broken scene
+// build (a bad geometry or a NaN transform) emits.
+test('the round bar builds its scene in the 3D view', async ({ app, ui }) => {
+  const page = app.page
+  await ui.tree.stockRow(page).click()
+  await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
+  await ui.properties.stockShapeOption(page, 'Round bar').click()
+
+  const project = await getProject(page) as unknown as Project
+  expect((project.stock as RoundStock).shape).toBe('round')
+
+  await ui.viewMenu.tab3d(page).click()
+  const canvas = page.locator('#workspace-panel-preview3d canvas')
+  await expect(canvas).toBeVisible()
+  const size = await canvas.evaluate((element) => ({
+    width: element.clientWidth,
+    height: element.clientHeight,
+  }))
+  expect(size.width).toBeGreaterThan(0)
+  expect(size.height).toBeGreaterThan(0)
 })
