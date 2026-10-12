@@ -26,9 +26,12 @@ import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
-import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection, tabShape } from '../../types/project'
-import type { TabShape } from '../../types/project'
+import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
+import type { StockAxis, TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { originAfterStockEdit, resizeRoundStock } from '../../store/helpers/stockShape'
+import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
+import { machineMode } from '../cam/machineMode'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
@@ -83,6 +86,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const startRotateBackdrop = useProjectStore((s) => s.startRotateBackdrop)
   const setGrid = useProjectStore((s) => s.setGrid)
   const setStock = useProjectStore((s) => s.setStock)
+  const setStockAndOrigin = useProjectStore((s) => s.setStockAndOrigin)
+  const setStockShape = useProjectStore((s) => s.setStockShape)
   const setStockSourceFeature = useProjectStore((s) => s.setStockSourceFeature)
   const updateTab = useProjectStore((s) => s.updateTab)
   const updateClamp = useProjectStore((s) => s.updateClamp)
@@ -469,6 +474,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const bounds = getStockBounds(project.stock)
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
+    const round = isRoundStock(project.stock) ? project.stock : null
+    // Plasma mode follows the selected machine (#960). Plasma is sheet work, so
+    // a block hides the Shape field; a bar keeps it, so the user can go back.
+    const plasmaMode = machineMode(project) === 'plasma'
+    const hideShape = plasmaMode && !round
+    const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
+      if (!round) return
+      const next = resizeRoundStock(round, change)
+      setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
+    }
 
     if (isFeatureStock) {
       const sourceFeature = project.stock.sourceFeature!
@@ -543,82 +558,162 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <span>{t('featureTree.properties.name')}</span>
             <DraftTextInput value={t('featureTree.properties.stock.nameDisabled')} disabled />
           </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.width")}</span>
-            <DraftNumberInput
-              key={`stock-width-${width}-${height}-${project.stock.thickness}`}
-              value={width}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(next, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.height")}</span>
-            <DraftNumberInput
-              key={`stock-height-${width}-${height}-${project.stock.thickness}`}
-              value={height}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(width, next, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.thickness")}</span>
-            <DraftNumberInput
-              key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
-              value={project.stock.thickness}
-              units={units}
-              min={minimumLength}
-              onCommit={(next) => {
-                const stock = defaultStock(width, height, next)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.color")}</span>
-            <input
-              type="color"
-              value={project.stock.color}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = event.target.value
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-check">
-            <input
-              type="checkbox"
-              checked={project.stock.visible}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = event.target.checked
-                setStock(stock)
-              }}
-            />
-            <span>{t("featureTree.properties.visible")}</span>
-          </label>
+          {hideShape ? null : (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.shape')}</span>
+              <div data-testid="stock-shape">
+                <Select
+                  value={round ? 'round' : 'block'}
+                  options={[
+                    { value: 'block', label: t('featureTree.properties.stock.block') },
+                    { value: 'round', label: t('featureTree.properties.stock.roundBar') },
+                  ]}
+                  onChange={(value) => setStockShape(value)}
+                />
+              </div>
+            </label>
+          )}
+          {round ? (
+            <>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.diameter')}</span>
+                <div data-testid="stock-diameter">
+                  <DraftNumberInput
+                    key={`stock-diameter-${roundStockDiameter(round)}`}
+                    value={roundStockDiameter(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ diameter: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.length')}</span>
+                <div data-testid="stock-length">
+                  <DraftNumberInput
+                    key={`stock-length-${roundStockLength(round)}`}
+                    value={roundStockLength(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ length: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.axis')}</span>
+                <div data-testid="stock-axis">
+                  <Select
+                    value={round.axis}
+                    options={[
+                      { value: 'x', label: t('featureTree.properties.axis.x') },
+                      { value: 'y', label: t('featureTree.properties.axis.y') },
+                    ]}
+                    onChange={(value) => commitRound({ axis: value })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    // Keep the bar: rebuild only the colour, never defaultStock.
+                    setStock({ ...project.stock, color: event.target.value })
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    setStock({ ...project.stock, visible: event.target.checked })
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.width")}</span>
+                <DraftNumberInput
+                  key={`stock-width-${width}-${height}-${project.stock.thickness}`}
+                  value={width}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(next, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.height")}</span>
+                <DraftNumberInput
+                  key={`stock-height-${width}-${height}-${project.stock.thickness}`}
+                  value={height}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, next, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.thickness")}</span>
+                <DraftNumberInput
+                  key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
+                  value={project.stock.thickness}
+                  units={units}
+                  min={minimumLength}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, height, next)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = event.target.value
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = event.target.checked
+                    setStock(stock)
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          )}
         </div>
       </div>
     )
@@ -925,11 +1020,30 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   if (selectedClamp) {
+    const round = isRoundStock(project.stock) ? project.stock : null
+    const roundWorkholding = round && isRoundWorkholding(selectedClamp) ? round : null
     const clampDomain = clampDomainMax(
       [selectedClamp.height],
       convertLength(5, 'mm', units),
       convertLength(5, 'mm', units),
     )
+    const clampType: 'clamp' | 'chuck' | 'tailstock' =
+      selectedClamp.type === 'chuck'
+        ? 'chuck'
+        : selectedClamp.type === 'tailstock'
+          ? 'tailstock'
+          : 'clamp'
+    // "Clamp" stands for every plain type; the two round types take their
+    // default place and size from the bar they sit on.
+    const chooseClampType = (value: 'clamp' | 'chuck' | 'tailstock') => {
+      if (value === 'clamp') {
+        updateClamp(selectedClamp.id, { type: 'step_clamp' })
+        return
+      }
+      if (round) {
+        updateClamp(selectedClamp.id, defaultRoundWorkholding(value, round, units))
+      }
+    }
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -941,19 +1055,51 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
             />
           </label>
-          <ZRangeSlider
-            selectionKey={`clamp-${selectedClamp.id}`}
-            zTop={selectedClamp.height}
-            zBottom={0}
-            domainMin={0}
-            domainMax={clampDomain}
-            units={units}
-            bottomLocked
-            onCommit={(patch) => {
-              if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
-              return true
-            }}
-          />
+          {round ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.clampType')}</span>
+              <div data-testid="clamp-type">
+                <Select
+                  value={clampType}
+                  options={[
+                    { value: 'clamp', label: t('featureTree.properties.clampType.clamp') },
+                    { value: 'chuck', label: t('featureTree.properties.clampType.chuck') },
+                    { value: 'tailstock', label: t('featureTree.properties.clampType.tailstock') },
+                  ]}
+                  onChange={chooseClampType}
+                />
+              </div>
+            </label>
+          ) : null}
+          {roundWorkholding ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.diameter')}</span>
+              <div data-testid="clamp-diameter">
+                <DraftNumberInput
+                  key={`clamp-diameter-${selectedClamp.id}-${roundWorkholdingDiameter(selectedClamp, roundWorkholding)}`}
+                  value={roundWorkholdingDiameter(selectedClamp, roundWorkholding)}
+                  units={units}
+                  min={minimumLength}
+                  // The store derives the height from whatever size is set here.
+                  onCommit={(next) => updateClamp(selectedClamp.id, roundWorkholding.axis === 'x' ? { h: next } : { w: next })}
+                />
+              </div>
+            </label>
+          ) : (
+            <ZRangeSlider
+              selectionKey={`clamp-${selectedClamp.id}`}
+              zTop={selectedClamp.height}
+              zBottom={0}
+              domainMin={0}
+              domainMax={clampDomain}
+              units={units}
+              bottomLocked
+              onCommit={(patch) => {
+                if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
+                return true
+              }}
+            />
+          )}
           <label className="properties-check">
             <input
               type="checkbox"

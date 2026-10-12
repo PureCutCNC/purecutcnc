@@ -15,7 +15,7 @@
  */
 
 import type { SketchControlRef } from '../../store/types'
-import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
+import { getProfileBounds, getStockBounds, isRoundStock, profileVertices, rectProfile, roundStockCentre } from '../../types/project'
 import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
@@ -366,6 +366,24 @@ export function drawStockOutline(
   ctx.fill()
 
   const bounds = getStockBounds(stock)
+
+  if (isRoundStock(stock)) {
+    // The centreline the bar turns about, dash-dot down its whole length.
+    const centre = roundStockCentre(stock)
+    const start = stock.axis === 'x' ? { x: bounds.minX, y: centre } : { x: centre, y: bounds.minY }
+    const end = stock.axis === 'x' ? { x: bounds.maxX, y: centre } : { x: centre, y: bounds.maxY }
+    const from = worldToCanvas(start, vt)
+    const to = worldToCanvas(end, vt)
+    ctx.strokeStyle = exceeded ? stockExceededStroke() : hexToRgba(stock.color, 0.7)
+    ctx.lineWidth = 1
+    ctx.setLineDash([8, 3, 2, 3])
+    ctx.beginPath()
+    ctx.moveTo(from.cx, from.cy)
+    ctx.lineTo(to.cx, to.cy)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
   const widthWorld = bounds.maxX - bounds.minX
   const heightWorld = bounds.maxY - bounds.minY
   if (widthWorld * vt.scale < STOCK_LABEL_MIN_WIDTH_PX) {
@@ -381,8 +399,10 @@ export function drawStockOutline(
   const unitSuffix = units === 'inch' ? 'in' : 'mm'
 
   ctx.save()
-  const widthLabelText = `${formatLength(widthWorld, units)} ${unitSuffix}`
-  const heightLabelText = `${formatLength(heightWorld, units)} ${unitSuffix}`
+  // A bar's dimension across its axis is a diameter, so it carries the Ø.
+  const barAxis = isRoundStock(stock) ? stock.axis : null
+  const widthLabelText = `${barAxis === 'y' ? 'Ø' : ''}${formatLength(widthWorld, units)} ${unitSuffix}`
+  const heightLabelText = `${barAxis === 'x' ? 'Ø' : ''}${formatLength(heightWorld, units)} ${unitSuffix}`
   const widthCx = (minCx + maxCx) / 2
   const widthCy = minCy - 12
   drawStockDimensionLabel(

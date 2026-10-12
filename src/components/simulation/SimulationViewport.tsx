@@ -32,7 +32,7 @@ import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
-import type { Clamp, MachineOrigin, Operation, SetupFace, ToolType } from '../../types/project'
+import type { Clamp, MachineOrigin, Operation, SetupFace, Stock, ToolType } from '../../types/project'
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -106,6 +106,8 @@ interface SimulationViewportProps {
    *  Deliberately not derived from `playbackInput`, which is absent until an
    *  operation is simulated and would fall back to mm for an inch project. */
   units: Units
+  /** The project's stock: a round bar draws its chuck and tailstock round too. */
+  stock: Stock
   stockColor?: string
   stockHasProfile?: boolean
   zoomWindowActive?: boolean
@@ -266,6 +268,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   collidingClampIds,
   origin,
   units,
+  stock,
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
@@ -993,7 +996,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     const collidingClampIdSet = new Set(collidingClampIds)
     const nextClampMeshes = clamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette),
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, stock),
     )
     for (const mesh of nextClampMeshes) {
       scene.add(mesh)
@@ -1005,7 +1008,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeClampMeshes(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units])
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock])
 
   useEffect(() => {
     const scene = sceneRef.current

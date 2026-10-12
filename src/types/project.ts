@@ -550,7 +550,7 @@ export type FeatureTreeEntry =
 // Stock
 // ============================================================
 
-export interface Stock {
+interface StockBase {
   // Stock boundary is also a profile (defaults to rectangle)
   profile: SketchProfile
   thickness: number           // Z height of stock block
@@ -563,6 +563,26 @@ export interface Stock {
   /** Lightweight source instance retained while the stock source is out of the feature tree. */
   sourceFeature?: FeatureInstance | null
 }
+
+/** The project axis a round bar lies along and turns about. */
+export type StockAxis = 'x' | 'y'
+
+/** A block: an outline extruded by `thickness`. `shape` is absent in files written before round stock existed and is never written for a block. */
+export interface BlockStock extends StockBase {
+  shape?: 'block'
+}
+
+/**
+ * A round bar lying along `axis`. `profile` is the rectangle the bar shows
+ * from above (length along `axis`, diameter across it) and `thickness` is the
+ * diameter, so every reader of the stock's box needs no round case.
+ */
+export interface RoundStock extends StockBase {
+  shape: 'round'
+  axis: StockAxis
+}
+
+export type Stock = BlockStock | RoundStock
 
 export interface GridSettings {
   extent: number
@@ -868,7 +888,7 @@ export function isTrochoidalPocket(operation: Operation): boolean {
 // Clamps
 // ============================================================
 
-export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw'
+export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw' | 'chuck' | 'tailstock'
 
 export interface Clamp {
   id: string
@@ -1439,6 +1459,75 @@ export function stockFromFeature(feature: SketchFeature): Stock {
   }
 }
 
+/** True when the stock is a round bar rather than a block. */
+export function isRoundStock(stock: Stock): stock is RoundStock {
+  return stock.shape === 'round'
+}
+
+/**
+ * A round bar of `diameter` and `length` lying along `axis`. `at` is the min
+ * corner of the rectangle the bar shows from above; axis `'x'` puts the length
+ * along X, axis `'y'` puts it along Y.
+ */
+export function roundStock(
+  diameter: number,
+  length: number,
+  axis: StockAxis = 'x',
+  at: Point = { x: 0, y: 0 },
+): RoundStock {
+  return {
+    shape: 'round',
+    axis,
+    profile: axis === 'x'
+      ? rectProfile(at.x, at.y, length, diameter)
+      : rectProfile(at.x, at.y, diameter, length),
+    thickness: diameter,
+    material: 'aluminum_6061',
+    color: '#b9a83c', // theme-exempt: default stock colour is project data, not UI chrome
+    visible: true,
+    origin: { x: 0, y: 0 },
+  }
+}
+
+export function roundStockDiameter(stock: RoundStock): number {
+  return stock.thickness
+}
+
+/** The bar's length: its extent along {@link RoundStock.axis}. */
+export function roundStockLength(stock: RoundStock): number {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
+}
+
+/** The centreline's coordinate across the bar: a Y value for axis 'x', an X value for axis 'y'. */
+export function roundStockCentre(stock: RoundStock): number {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+}
+
+/**
+ * The canonical round bar: a plain rectangle along `axis` that keeps the
+ * current bounds' min/max, centred across `axis` on the existing centreline and
+ * exactly `thickness` wide. Drops the feature source — a bar cannot be derived
+ * from a feature — and maps an unknown axis to `'x'`. Idempotent.
+ */
+export function normalizeRoundStock(stock: RoundStock): RoundStock {
+  const axis: StockAxis = stock.axis === 'y' ? 'y' : 'x'
+  const bounds = getStockBounds(stock)
+  const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+  const at = axis === 'x'
+    ? { x: bounds.minX, y: centre - stock.thickness / 2 }
+    : { x: centre - stock.thickness / 2, y: bounds.minY }
+  const { sourceFeatureId: _sourceFeatureId, sourceFeature: _sourceFeature, ...rest } = stock
+  return {
+    ...rest,
+    axis,
+    profile: axis === 'x'
+      ? rectProfile(at.x, at.y, bounds.maxX - bounds.minX, stock.thickness)
+      : rectProfile(at.x, at.y, stock.thickness, bounds.maxY - bounds.minY),
+  }
+}
+
 /**
  * Transform a feature's sketch profile by applying sketch.origin translation and
  * orientationAngle rotation, producing a profile in project coordinates.
@@ -1580,6 +1669,16 @@ export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): numb
 
 export function defaultOrigin(stock: Stock): MachineOrigin {
   const bounds = getStockBounds(stock)
+  if (isRoundStock(stock)) {
+    const centre = roundStockCentre(stock)
+    return {
+      name: 'Origin',
+      x: stock.axis === 'x' ? bounds.minX : centre,
+      y: stock.axis === 'x' ? centre : bounds.maxY,
+      z: stock.thickness,
+      visible: true,
+    }
+  }
   return {
     name: 'Origin',
     x: bounds.minX,

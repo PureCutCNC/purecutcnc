@@ -208,6 +208,13 @@ export const featureTreeEn = {
   'featureTree.properties.stock.editSketch': 'Edit sketch',
   'featureTree.properties.stock.resetToRect': 'Reset to rectangle',
   'featureTree.properties.stock.nameDisabled': 'Stock',
+  'featureTree.properties.stock.block': 'Block',
+  'featureTree.properties.stock.roundBar': 'Round bar',
+  'featureTree.properties.diameter': 'Diameter',
+  'featureTree.properties.length': 'Length',
+  'featureTree.properties.axis': 'Axis',
+  'featureTree.properties.axis.x': 'X',
+  'featureTree.properties.axis.y': 'Y',
 
   // ── Properties: backdrop ──
   'featureTree.properties.backdrop.noImage': 'No image loaded',
@@ -382,6 +389,12 @@ export const featureTreeEn = {
   'featureTree.properties.tabShape.rect': 'Rectangular',
   'featureTree.properties.tabShape.smooth': 'Smooth',
   'featureTree.properties.tabShape.hint': 'Smooth reduces abrupt Z motion but leaves less material than Rectangular at the same size.',
+
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Type',
+  'featureTree.properties.clampType.clamp': 'Clamp',
+  'featureTree.properties.clampType.chuck': 'Chuck',
+  'featureTree.properties.clampType.tailstock': 'Tailstock',
 
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z top',

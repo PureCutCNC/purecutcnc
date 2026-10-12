@@ -16,8 +16,8 @@
 
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
-import { rectProfile } from '../types/project'
-import type { Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
+import type { Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
@@ -150,12 +150,46 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
 
 // ── Stock mesh ───────────────────────────────────────────────────────────────
 
+/** Chords around a round bar — 64 reads as round without a visible facet. */
+const ROUND_BAR_SEGMENTS = 64
+
+/**
+ * A round bar's cylinder in project coordinates: `diameter` across, lying along
+ * `axis` on the centreline, centred at Z = diameter / 2. The bar occupies Z from
+ * 0 to the diameter, so that is the centreline (#392).
+ */
+function roundBarGeometry(stock: RoundStock): THREE.CylinderGeometry {
+  const diameter = roundStockDiameter(stock)
+  const bounds = getStockBounds(stock)
+  const centre = roundStockCentre(stock)
+  const geometry = new THREE.CylinderGeometry(
+    diameter / 2,
+    diameter / 2,
+    roundStockLength(stock),
+    ROUND_BAR_SEGMENTS,
+  )
+  // CylinderGeometry is Y-aligned. Axis 'y' is already right; axis 'x' turns it
+  // onto X. Both then move to the bar's centre on the centreline.
+  if (stock.axis === 'x') {
+    geometry.rotateZ(-Math.PI / 2)
+    geometry.translate((bounds.minX + bounds.maxX) / 2, centre, diameter / 2)
+  } else {
+    geometry.translate(centre, (bounds.minY + bounds.maxY) / 2, diameter / 2)
+  }
+  return geometry
+}
+
 export function buildStockMesh(stock: Stock, threePalette: ThreeThemePalette): THREE.Mesh {
-  const shape = profileToShape(stock.profile)
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: stock.thickness,
-    bevelEnabled: false,
-  })
+  let geometry: THREE.BufferGeometry
+  if (isRoundStock(stock)) {
+    geometry = roundBarGeometry(stock)
+  } else {
+    const shape = profileToShape(stock.profile)
+    geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: stock.thickness,
+      bevelEnabled: false,
+    })
+  }
   // Rotate so Z is up (Three.js extrudes along Z by default, we want Y-up world)
   geometry.rotateX(-Math.PI / 2)
 
@@ -613,12 +647,46 @@ export function applyTabHighlight(mesh: THREE.Mesh, selected: boolean, threePale
   material.opacity = selected ? 0.72 : 0.56
 }
 
-export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, units: Units, threePalette?: ThreeThemePalette): THREE.Mesh {
-  const shape = profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: Math.max(clamp.height, minRenderHeight(units)),
-    bevelEnabled: false,
-  })
+/**
+ * A chuck or tailstock on a round bar, as a cylinder about the bar's axis. Its
+ * diameter is the clamp's own — the clamp's size across the axis (`h` for axis
+ * `'x'`, `w` for axis `'y'`) — its length is the clamp rectangle's extent along
+ * the axis, and its centre sits on the bar's centreline at Z = bar diameter / 2.
+ * `src/store/helpers/roundWorkholding.ts` is what keeps that rectangle centred
+ * on the centreline and `height` = bar radius + own radius.
+ */
+function roundWorkholdingGeometry(clamp: Clamp, stock: RoundStock): THREE.CylinderGeometry {
+  const diameter = stock.axis === 'x' ? clamp.h : clamp.w
+  const length = stock.axis === 'x' ? clamp.w : clamp.h
+  const geometry = new THREE.CylinderGeometry(
+    diameter / 2,
+    diameter / 2,
+    length,
+    ROUND_BAR_SEGMENTS,
+  )
+  const centre = roundStockCentre(stock)
+  const barRadius = roundStockDiameter(stock) / 2
+  if (stock.axis === 'x') {
+    geometry.rotateZ(-Math.PI / 2)
+    geometry.translate(clamp.x + clamp.w / 2, centre, barRadius)
+  } else {
+    geometry.translate(centre, clamp.y + clamp.h / 2, barRadius)
+  }
+  return geometry
+}
+
+/** True for the two round workholding types, which draw round on a round bar. */
+function isRoundWorkholdingClamp(clamp: Clamp): boolean {
+  return clamp.type === 'chuck' || clamp.type === 'tailstock'
+}
+
+export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, units: Units, threePalette?: ThreeThemePalette, stock?: Stock): THREE.Mesh {
+  const geometry: THREE.BufferGeometry = stock && isRoundStock(stock) && isRoundWorkholdingClamp(clamp)
+    ? roundWorkholdingGeometry(clamp, stock)
+    : new THREE.ExtrudeGeometry(profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)), {
+        depth: Math.max(clamp.height, minRenderHeight(units)),
+        bevelEnabled: false,
+      })
   geometry.rotateX(-Math.PI / 2)
 
   const material = new THREE.MeshStandardMaterial({
@@ -948,18 +1016,69 @@ async function buildBooleanModel(
 
 // ── Wireframe outline for stock ──────────────────────────────────────────────
 
+/**
+ * A round bar's wireframe in project coordinates: its two end circles plus four
+ * lines along it (top, bottom and the two sides). Built explicitly — running
+ * `EdgesGeometry` over the faceted cylinder would draw every chord (#392).
+ */
+function roundBarWireframeGeometry(stock: RoundStock): THREE.BufferGeometry {
+  const radius = roundStockDiameter(stock) / 2
+  const bounds = getStockBounds(stock)
+  const centre = roundStockCentre(stock)
+  const alongMin = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const alongMax = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const positions: number[] = []
+  // `along` runs down the bar; `across` is the centreline's own axis (Y for
+  // axis 'x', X for axis 'y'); `z` is height. The centreline is at z = radius.
+  const push = (along: number, across: number, z: number): void => {
+    if (stock.axis === 'x') positions.push(along, across, z)
+    else positions.push(across, along, z)
+  }
+
+  for (const along of [alongMin, alongMax]) {
+    for (let i = 0; i < ROUND_BAR_SEGMENTS; i++) {
+      const a = (i / ROUND_BAR_SEGMENTS) * Math.PI * 2
+      const b = ((i + 1) / ROUND_BAR_SEGMENTS) * Math.PI * 2
+      push(along, centre + radius * Math.cos(a), radius + radius * Math.sin(a))
+      push(along, centre + radius * Math.cos(b), radius + radius * Math.sin(b))
+    }
+  }
+
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2
+    const across = centre + radius * Math.cos(angle)
+    const z = radius + radius * Math.sin(angle)
+    push(alongMin, across, z)
+    push(alongMax, across, z)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  return geometry
+}
+
 export function buildStockWireframe(stock: Stock, threePalette: ThreeThemePalette): THREE.LineSegments {
+  const material = new THREE.LineBasicMaterial({
+    color: new THREE.Color(stock.color ?? threePalette.stockWireframeFallback),
+    linewidth: 1,
+  })
+
+  let geometry: THREE.BufferGeometry
+  if (isRoundStock(stock)) {
+    geometry = roundBarWireframeGeometry(stock)
+    geometry.rotateX(-Math.PI / 2)
+    const bar = new THREE.LineSegments(geometry, material)
+    bar.scale.z = -1
+    return bar
+  }
+
   const shape = profileToShape(stock.profile)
-  const geometry = new THREE.ExtrudeGeometry(shape, {
+  geometry = new THREE.ExtrudeGeometry(shape, {
     depth: stock.thickness,
     bevelEnabled: false,
   })
   geometry.rotateX(-Math.PI / 2)
   const edges = new THREE.EdgesGeometry(geometry)
-  const material = new THREE.LineBasicMaterial({
-    color: new THREE.Color(stock.color ?? threePalette.stockWireframeFallback),
-    linewidth: 1,
-  })
   const lines = new THREE.LineSegments(edges, material)
   lines.scale.z = -1
   return lines
@@ -1059,7 +1178,7 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   }
 
   for (const clamp of visibleClamps) {
-    clampMeshes.set(clamp.id, buildClampMesh(clamp, false, false, project.meta.units, threePalette))
+    clampMeshes.set(clamp.id, buildClampMesh(clamp, false, false, project.meta.units, threePalette, project.stock))
   }
 
   for (const bounds of expandedClampBounds(project, worstCaseClampCheckToolRadius(project))) {

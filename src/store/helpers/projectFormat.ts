@@ -24,9 +24,12 @@ import {
   defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
+  isRoundStock,
   LATEST_PROJECT_VERSION, cloneTextLayout,
+  normalizeRoundStock,
 } from '../../types/project'
 import type {
+  BlockStock,
   FeatureDefinition,
   FeatureInstance,
   MachiningSetup,
@@ -37,6 +40,7 @@ import type {
   PersistedImportedMesh,
   Project,
   SketchFeature,
+  Stock,
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
@@ -59,6 +63,7 @@ import { invertMatrix, multiplyMatrix } from './instanceTransforms'
 import { resolveFeatureRow } from './resolveFeatures'
 import { transformProfileAffine, transformStlFeatureData } from './transform'
 import { assertOperationSetupsExist, decodeSetups, isSetupFace, syncProjectSetups } from './setups'
+import { syncRoundWorkholding } from './roundWorkholding'
 import { normalizeBackdrop } from '../slices/backdropSlice'
 
 export type LegacyFeatureRow = SketchFeature & {
@@ -554,6 +559,21 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   }
 }
 
+/**
+ * A loaded stock in canonical form. A round bar is repaired by
+ * {@link normalizeRoundStock}; anything else — `shape` absent, `'block'`, or an
+ * unknown value — becomes a block with no `shape` and no `axis` key, so files
+ * written before round stock existed normalize exactly as they did before.
+ */
+function canonicalizeStock(stock: Stock): Stock {
+  const profile = { ...stock.profile, closed: stock.profile.closed ?? true }
+  if (stock.shape === 'round') {
+    return normalizeRoundStock({ ...stock, profile })
+  }
+  const { shape: _shape, axis: _axis, ...block } = stock as BlockStock & { axis?: unknown }
+  return { ...block, profile }
+}
+
 /** Normalize a decoded project without ever placing resolved geometry in features. */
 export function normalizeProject(input: ProjectFormatInput, migrationInfo?: ProjectMigrationInfo): Project {
   // Read before the envelope below is stamped with LATEST_PROJECT_VERSION:
@@ -695,21 +715,19 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   }
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
+  // The legacy rule moves an origin that sits on the block's min corner (its
+  // former default). A round bar is never a legacy file, so a bar whose origin
+  // the user put on its min corner reloads unchanged.
   const legacyDefaultOrigin = authoritativeProject.origin
     && authoritativeProject.origin.name === 'Origin'
     && authoritativeProject.origin.x === stockBounds.minX
     && authoritativeProject.origin.y === stockBounds.minY
     && authoritativeProject.origin.z === authoritativeProject.stock.thickness
+    && !isRoundStock(authoritativeProject.stock)
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,
-    stock: {
-      ...authoritativeProject.stock,
-      profile: {
-        ...authoritativeProject.stock.profile,
-        closed: authoritativeProject.stock.profile.closed ?? true,
-      },
-    },
+    stock: canonicalizeStock(authoritativeProject.stock),
     // normalizeTool backfills missing plasma fields, even in mid-release 3.3 files.
     tools: authoritativeProject.tools.map((tool, index) => normalizeTool(tool, authoritativeProject.meta.units, index)),
     tabs: authoritativeProject.tabs.map((tab, index) => normalizeTab(tab, authoritativeProject.meta.units, index)),
@@ -749,5 +767,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     migrationInfo.edgeEntryStrategiesReset = edgeEntry.rewritten
   }
   syncIdCounter(edgeEntry.project)
-  return edgeEntry.project
+  // A round bar's chuck and tailstock are centred and their height derived
+  // (#392 slice C). The stock and clamps are canonical by now.
+  return syncRoundWorkholding(edgeEntry.project)
 }

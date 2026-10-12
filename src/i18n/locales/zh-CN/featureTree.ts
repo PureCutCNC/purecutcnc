@@ -209,6 +209,13 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.editSketch': '编辑草图',
   'featureTree.properties.stock.resetToRect': '重置为矩形',
   'featureTree.properties.stock.nameDisabled': '毛坯',
+  'featureTree.properties.stock.block': '方块',
+  'featureTree.properties.stock.roundBar': '圆棒',
+  'featureTree.properties.diameter': '直径',
+  'featureTree.properties.length': '长度',
+  'featureTree.properties.axis': '轴',
+  'featureTree.properties.axis.x': 'X',
+  'featureTree.properties.axis.y': 'Y',
 
   // ── Properties: backdrop ──
   'featureTree.properties.backdrop.noImage': '未加载图像',
@@ -383,6 +390,12 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.tabShape.rect': '矩形',
   'featureTree.properties.tabShape.smooth': '平滑',
   'featureTree.properties.tabShape.hint': '平滑减少Z轴急动，但相同尺寸下比矩形留下的材料更少。',
+
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': '类型',
+  'featureTree.properties.clampType.clamp': '夹具',
+  'featureTree.properties.clampType.chuck': '卡盘',
+  'featureTree.properties.clampType.tailstock': '尾座',
 
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z 顶',

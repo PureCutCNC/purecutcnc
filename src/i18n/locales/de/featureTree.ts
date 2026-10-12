@@ -203,6 +203,13 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.editSketch': 'Skizze bearbeiten',
   'featureTree.properties.stock.resetToRect': 'Auf Rechteck zurücksetzen',
   'featureTree.properties.stock.nameDisabled': 'Rohteil',
+  'featureTree.properties.stock.block': 'Block',
+  'featureTree.properties.stock.roundBar': 'Rundstab',
+  'featureTree.properties.diameter': 'Durchmesser',
+  'featureTree.properties.length': 'Länge',
+  'featureTree.properties.axis': 'Achse',
+  'featureTree.properties.axis.x': 'X',
+  'featureTree.properties.axis.y': 'Y',
 
   // ── Properties: backdrop ──
   'featureTree.properties.backdrop.noImage': 'Kein Bild geladen',
@@ -377,6 +384,12 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.tabShape.rect': 'Rechteckig',
   'featureTree.properties.tabShape.smooth': 'Sanft',
   'featureTree.properties.tabShape.hint': 'Sanft reduziert abrupte Z-Bewegungen, lässt aber bei gleicher Größe weniger Material als Rechteckig.',
+
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Typ',
+  'featureTree.properties.clampType.clamp': 'Spannzwinge',
+  'featureTree.properties.clampType.chuck': 'Spannfutter',
+  'featureTree.properties.clampType.tailstock': 'Reitstock',
 
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z oben',

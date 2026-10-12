@@ -46,6 +46,7 @@ import {
   IDENTITY_MATRIX,
 } from '../../types/project'
 import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
+import { toBlockStock } from '../helpers/stockShape'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
@@ -679,7 +680,7 @@ export function createFeatureSlice(
           const width = Math.max(stockBounds.maxX - stockBounds.minX, 1)
           const height = Math.max(stockBounds.maxY - stockBounds.minY, 1)
           stock = {
-            ...stock,
+            ...toBlockStock(stock),
             profile: rectProfile(stockBounds.minX, stockBounds.minY, width, height),
             sourceFeatureId: null as string | null | undefined,
             sourceFeature: null,

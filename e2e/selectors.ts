@@ -250,6 +250,9 @@ export const tree = {
   /** Project root row. */
   projectRow: (page: Page) => page.locator('.tree-row--project'),
 
+  /** Stock row (opens the stock properties, #392). */
+  stockRow: (page: Page) => page.locator('.tree-row--stock'),
+
   /** Feature rows only (excludes folders, section headers, etc.). */
   featureRows: (page: Page) => page.locator('.tree-row.tree-row--feature'),
 
@@ -439,6 +442,38 @@ export const properties = {
   /** Section headers in the expanded Properties dialog (#808). */
   expandedSectionHeaders: (page: Page) =>
     page.locator('.dialog--panel-expand .disclosure-section__header'),
+
+  // ── Stock shape controls (#392) ──
+  /** The Shape field's custom-select root (Block / Round bar). */
+  stockShape: (page: Page) => page.getByTestId('stock-shape'),
+
+  /** An option in the open Shape select. */
+  stockShapeOption: (page: Page, label: 'Block' | 'Round bar') =>
+    properties.stockShape(page).getByRole('option', { name: label, exact: true }),
+
+  /** The Diameter number input, present only for a round bar. */
+  stockDiameter: (page: Page) => page.getByTestId('stock-diameter').locator('input'),
+
+  /** The Length number input, present only for a round bar. */
+  stockLength: (page: Page) => page.getByTestId('stock-length').locator('input'),
+
+  /** The Axis custom-select root, present only for a round bar. */
+  stockAxis: (page: Page) => page.getByTestId('stock-axis'),
+
+  /** An option in the open Axis select. */
+  stockAxisOption: (page: Page, label: 'X' | 'Y') =>
+    properties.stockAxis(page).getByRole('option', { name: label, exact: true }),
+
+  // ── Clamp type and diameter (#392 slice C) ──
+  /** The Type select for a single clamp, present only on a round bar. */
+  clampType: (page: Page) => page.getByTestId('clamp-type'),
+
+  /** An option in the open clamp Type select. */
+  clampTypeOption: (page: Page, label: 'Clamp' | 'Chuck' | 'Tailstock') =>
+    properties.clampType(page).getByRole('option', { name: label, exact: true }),
+
+  /** The Diameter number input for a chuck or tailstock. */
+  clampDiameter: (page: Page) => page.getByTestId('clamp-diameter').locator('input'),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────
