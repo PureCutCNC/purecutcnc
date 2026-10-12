@@ -70,6 +70,7 @@ Current smoke targets:
 - `modelOrientation.smoke.spec.ts` — post-import 3D orientation for imported models (issue #241): real STL import, 90° quick-rotate committing a rigid Z band and a re-projected silhouette, non-deforming lift, and reset to import orientation.
 - `machineLibrary.smoke.spec.ts` — application machine library (issue #403): My Machines persistence across projects and restarts, one-snapshot embedding on selection, the non-blocking update warning (keep vs. explicit update), and library deletion leaving a project's embedded machine usable; plasma kind, validated command editing, raw JSON synchronization, persistence and desktop/tablet coverage (#956).
 - `overlapFeatureSelection.smoke.spec.ts` — direct selection for clear outline clicks and interior clicks over stacked shapes (issue #521), picker wiring for coincident-outline clicks, candidate hover/focus previews, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
+- `roundStock.smoke.spec.ts` — choosing and sizing round stock (#392 slice B): the stock Shape field turns a block into a bar, swapping Width/Height/Thickness for Diameter/Length/Axis; a diameter edit reaches the status bar; an axis change is one undo step; switching back restores the block fields; plasma mode (#960) hides the Shape field.
 
 ## Adding a test
 

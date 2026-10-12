@@ -20,6 +20,7 @@ import {
   IDENTITY_MATRIX,
   LATEST_PROJECT_VERSION,
   defaultGrid,
+  defaultOrigin,
   defaultStock,
   getProfileBounds,
   getStockBounds,
@@ -506,6 +507,27 @@ test('a banana shape loads as a block; a mismatched round bar is repaired', () =
   assert(mismatched.stock.thickness === 20, 'its diameter is kept')
   assert(JSON.stringify(getStockBounds(mismatched.stock)) === JSON.stringify({ minX: 25, maxX: 45, minY: 7, maxY: 107 }),
     'the profile is repaired to 20 across, centred on the old centreline 35')
+})
+
+test('the legacy origin rule skips a round bar but still repairs a block', () => {
+  const input = makeLegacyProject('2.1', [])
+  const barOrigin = { name: 'Origin', x: 5, y: 7, z: 20, visible: true }
+  const bar = normalizeProject({
+    ...input,
+    stock: roundStock(20, 100, 'x', { x: 5, y: 7 }),
+    origin: barOrigin,
+  })
+  assert(JSON.stringify(bar.origin) === JSON.stringify(barOrigin),
+    'a bar origin on its min corner reloads exactly as it was written')
+
+  // The block path is unchanged: an origin on the min corner is still moved to
+  // the block default (min X, max Y).
+  const block = normalizeProject({
+    ...input,
+    origin: { name: 'Origin', x: 0, y: 0, z: 20, visible: true },
+  })
+  assert(JSON.stringify(block.origin) === JSON.stringify(defaultOrigin(input.stock)),
+    'the block legacy repair still applies')
 })
 
 console.log(`\nProject format migration: ${passed} passed, ${failed} failed`)

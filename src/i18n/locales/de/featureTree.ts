@@ -203,6 +203,13 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.editSketch': 'Skizze bearbeiten',
   'featureTree.properties.stock.resetToRect': 'Auf Rechteck zurücksetzen',
   'featureTree.properties.stock.nameDisabled': 'Rohteil',
+  'featureTree.properties.stock.block': 'Block',
+  'featureTree.properties.stock.roundBar': 'Rundstab',
+  'featureTree.properties.diameter': 'Durchmesser',
+  'featureTree.properties.length': 'Länge',
+  'featureTree.properties.axis': 'Achse',
+  'featureTree.properties.axis.x': 'X',
+  'featureTree.properties.axis.y': 'Y',
 
   // ── Properties: backdrop ──
   'featureTree.properties.backdrop.noImage': 'Kein Bild geladen',

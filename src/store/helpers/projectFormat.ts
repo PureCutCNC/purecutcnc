@@ -24,6 +24,7 @@ import {
   defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
+  isRoundStock,
   LATEST_PROJECT_VERSION, cloneTextLayout,
   normalizeRoundStock,
 } from '../../types/project'
@@ -713,11 +714,15 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   }
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
+  // The legacy rule moves an origin that sits on the block's min corner (its
+  // former default). A round bar is never a legacy file, so a bar whose origin
+  // the user put on its min corner reloads unchanged.
   const legacyDefaultOrigin = authoritativeProject.origin
     && authoritativeProject.origin.name === 'Origin'
     && authoritativeProject.origin.x === stockBounds.minX
     && authoritativeProject.origin.y === stockBounds.minY
     && authoritativeProject.origin.z === authoritativeProject.stock.thickness
+    && !isRoundStock(authoritativeProject.stock)
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,

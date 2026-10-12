@@ -18,11 +18,14 @@ import type { StateCreator } from 'zustand'
 import { convertProjectUnits } from '../../utils/units'
 import {
   getStockBounds,
+  isRoundStock,
+  normalizeRoundStock,
   rectProfile,
   stockFromFeature,
   type FeatureInstance,
 } from '../../types/project'
 import { originPlacementFromStock } from '../helpers/activeFace'
+import { toBlockStock } from '../helpers/stockShape'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
@@ -32,6 +35,7 @@ export type WorkpieceSlice = Pick<
   ProjectStore,
   | 'setCreationTarget'
   | 'setStock'
+  | 'setStockAndOrigin'
   | 'setStockSourceFeature'
   | 'enterStockSketchEdit'
   | 'setRectStockDimension'
@@ -142,6 +146,35 @@ export function createWorkpieceSlice(
       }),
 
     /**
+     * Set the stock and the machine origin together, as one undo step. Switching
+     * between a block and a bar moves both — a block's corner origin sits in the
+     * air on a bar — so the two must never history separately.
+     */
+    setStockAndOrigin: (stock, origin) =>
+      set((s) => {
+        const nextProject = {
+          ...s.project,
+          stock,
+          origin,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        if (s.history.transactionStart) {
+          return { project: nextProject }
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    /**
      * Set a feature as the stock source. The feature is removed from project.features
      * and its geometry is used as the stock profile/thickness.
      * Pass null to reset to rectangle stock (restores the feature to the tree).
@@ -166,7 +199,7 @@ export function createWorkpieceSlice(
           const rectH = Math.max(height, 1)
 
           const nextStock = {
-            ...s.project.stock,
+            ...toBlockStock(s.project.stock),
             profile: rectProfile(stockBounds.minX, stockBounds.minY, rectW, rectH),
             sourceFeatureId: null as string | null | undefined,
             sourceFeature: null as FeatureInstance | null | undefined,
@@ -203,7 +236,8 @@ export function createWorkpieceSlice(
 
         // If another feature is already the stock source, restore it first
         let features = s.project.features
-        let stock = { ...s.project.stock }
+        // A feature stock is a block: a bar is never derived from a feature.
+        let stock = toBlockStock(s.project.stock)
 
         if (stock.sourceFeature && stock.sourceFeatureId) {
           // Restore old source feature to features array
@@ -338,10 +372,20 @@ export function createWorkpieceSlice(
           }
         }
 
-        const nextStock = {
-          ...s.project.stock,
-          profile: rectProfile(newMinX, newMinY, newW, newH),
-        }
+        const nextStock = isRoundStock(s.project.stock)
+          ? normalizeRoundStock({
+              ...s.project.stock,
+              // A change across the bar's axis is a diameter change; along it is
+              // a length change. Either way the held side stays where it is.
+              thickness: (s.project.stock.axis === 'x' ? axis === 'height' : axis === 'width')
+                ? value
+                : s.project.stock.thickness,
+              profile: rectProfile(newMinX, newMinY, newW, newH),
+            })
+          : {
+              ...s.project.stock,
+              profile: rectProfile(newMinX, newMinY, newW, newH),
+            }
 
         const nextProject = {
           ...s.project,

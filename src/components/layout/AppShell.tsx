@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, isRoundStock, roundStockDiameter, roundStockLength } from '../../types/project'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { platform } from '../../platform'
@@ -388,12 +388,18 @@ export function AppShell({
     from: currentUnitLabel,
     to: nextUnitLabel,
   })
-  const stockDimensionsLabel = t('appShell.status.stockDim', {
-    width: formatLength(stockWidth, project.meta.units),
-    height: formatLength(stockHeight, project.meta.units),
-    thickness: formatLength(project.stock.thickness, project.meta.units),
-    units: project.meta.units,
-  })
+  const stockDimensionsLabel = isRoundStock(project.stock)
+    ? t('appShell.status.stockDimRound', {
+        diameter: formatLength(roundStockDiameter(project.stock), project.meta.units),
+        length: formatLength(roundStockLength(project.stock), project.meta.units),
+        units: project.meta.units,
+      })
+    : t('appShell.status.stockDim', {
+        width: formatLength(stockWidth, project.meta.units),
+        height: formatLength(stockHeight, project.meta.units),
+        thickness: formatLength(project.stock.thickness, project.meta.units),
+        units: project.meta.units,
+      })
 
   return (
     <UnitConversionContext.Provider value={requestUnitConversion}>

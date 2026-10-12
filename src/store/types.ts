@@ -410,6 +410,8 @@ export interface ProjectStore {
   setDimensionDeleteArmed: (armed: boolean) => void
 
   setStock: (stock: Stock) => void
+  /** Set the stock and the machine origin in one undo step (a block↔bar switch moves both). */
+  setStockAndOrigin: (stock: Stock, origin: Project['origin']) => void
   setStockSourceFeature: (featureId: string | null) => void
   enterStockSketchEdit: (featureId: string) => void
   /** Resize rectangular stock by changing width or height while holding one side fixed. */

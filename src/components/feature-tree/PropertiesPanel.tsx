@@ -26,9 +26,11 @@ import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
-import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection, tabShape } from '../../types/project'
-import type { TabShape } from '../../types/project'
+import { defaultOrigin, defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
+import type { Stock, StockAxis, TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { originAfterStockEdit, resizeRoundStock, toBlockStock, toRoundStock } from '../../store/helpers/stockShape'
+import { machineMode } from '../cam/machineMode'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
@@ -83,6 +85,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const startRotateBackdrop = useProjectStore((s) => s.startRotateBackdrop)
   const setGrid = useProjectStore((s) => s.setGrid)
   const setStock = useProjectStore((s) => s.setStock)
+  const setStockAndOrigin = useProjectStore((s) => s.setStockAndOrigin)
   const setStockSourceFeature = useProjectStore((s) => s.setStockSourceFeature)
   const updateTab = useProjectStore((s) => s.updateTab)
   const updateClamp = useProjectStore((s) => s.updateClamp)
@@ -469,6 +472,24 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const bounds = getStockBounds(project.stock)
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
+    const round = isRoundStock(project.stock) ? project.stock : null
+    // Plasma mode follows the selected machine (#960); a bar is a lathe workpiece.
+    const plasmaMode = machineMode(project) === 'plasma'
+    // A block's corner origin sits in the air on a bar, so a shape switch always
+    // moves the origin to the new stock's default, as one undo step.
+    const switchShape = (next: Stock) => {
+      setStockAndOrigin(next, {
+        ...project.origin,
+        ...defaultOrigin(next),
+        name: project.origin.name,
+        visible: project.origin.visible,
+      })
+    }
+    const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
+      if (!round) return
+      const next = resizeRoundStock(round, change)
+      setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
+    }
 
     if (isFeatureStock) {
       const sourceFeature = project.stock.sourceFeature!
@@ -543,82 +564,164 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <span>{t('featureTree.properties.name')}</span>
             <DraftTextInput value={t('featureTree.properties.stock.nameDisabled')} disabled />
           </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.width")}</span>
-            <DraftNumberInput
-              key={`stock-width-${width}-${height}-${project.stock.thickness}`}
-              value={width}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(next, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.height")}</span>
-            <DraftNumberInput
-              key={`stock-height-${width}-${height}-${project.stock.thickness}`}
-              value={height}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(width, next, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.thickness")}</span>
-            <DraftNumberInput
-              key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
-              value={project.stock.thickness}
-              units={units}
-              min={minimumLength}
-              onCommit={(next) => {
-                const stock = defaultStock(width, height, next)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.color")}</span>
-            <input
-              type="color"
-              value={project.stock.color}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = event.target.value
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-check">
-            <input
-              type="checkbox"
-              checked={project.stock.visible}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = event.target.checked
-                setStock(stock)
-              }}
-            />
-            <span>{t("featureTree.properties.visible")}</span>
-          </label>
+          {!plasmaMode ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.shape')}</span>
+              <div data-testid="stock-shape">
+                <Select
+                  value={round ? 'round' : 'block'}
+                  options={[
+                    { value: 'block', label: t('featureTree.properties.stock.block') },
+                    { value: 'round', label: t('featureTree.properties.stock.roundBar') },
+                  ]}
+                  onChange={(value) => {
+                    switchShape(value === 'round' ? toRoundStock(project.stock) : toBlockStock(project.stock))
+                  }}
+                />
+              </div>
+            </label>
+          ) : null}
+          {round ? (
+            <>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.diameter')}</span>
+                <div data-testid="stock-diameter">
+                  <DraftNumberInput
+                    key={`stock-diameter-${roundStockDiameter(round)}`}
+                    value={roundStockDiameter(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ diameter: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.length')}</span>
+                <div data-testid="stock-length">
+                  <DraftNumberInput
+                    key={`stock-length-${roundStockLength(round)}`}
+                    value={roundStockLength(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ length: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.axis')}</span>
+                <div data-testid="stock-axis">
+                  <Select
+                    value={round.axis}
+                    options={[
+                      { value: 'x', label: t('featureTree.properties.axis.x') },
+                      { value: 'y', label: t('featureTree.properties.axis.y') },
+                    ]}
+                    onChange={(value) => commitRound({ axis: value })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    // Keep the bar: rebuild only the colour, never defaultStock.
+                    setStock({ ...project.stock, color: event.target.value })
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    setStock({ ...project.stock, visible: event.target.checked })
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.width")}</span>
+                <DraftNumberInput
+                  key={`stock-width-${width}-${height}-${project.stock.thickness}`}
+                  value={width}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(next, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.height")}</span>
+                <DraftNumberInput
+                  key={`stock-height-${width}-${height}-${project.stock.thickness}`}
+                  value={height}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, next, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.thickness")}</span>
+                <DraftNumberInput
+                  key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
+                  value={project.stock.thickness}
+                  units={units}
+                  min={minimumLength}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, height, next)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = event.target.value
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = event.target.checked
+                    setStock(stock)
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          )}
         </div>
       </div>
     )
