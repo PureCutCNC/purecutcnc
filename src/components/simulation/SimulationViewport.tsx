@@ -189,8 +189,8 @@ function disposeSceneObject(object: THREE.Object3D): void {
   const materials = new Set<THREE.Material>()
 
   object.traverse((entry) => {
-    // `LineSegments2` (the plasma kerf band) extends `Mesh`; `Points` is the
-    // pierce markers, whose material owns the one sprite texture in the scene.
+    // `Mesh` is the flat plasma kerf band; `Points` is the pierce markers,
+    // whose material owns the one sprite texture in the scene.
     if (entry instanceof THREE.Mesh || entry instanceof THREE.Line || entry instanceof THREE.Points) {
       geometries.add(entry.geometry)
       const material = entry.material
@@ -662,11 +662,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    const mount = mountRef.current
-    const resolution = new THREE.Vector2(
-      mount?.clientWidth || window.innerWidth,
-      mount?.clientHeight || window.innerHeight,
-    )
     const topZ = simulation.grid.stockTopZ
     const objects = plasmaKerf.flatMap((item) => buildPlasmaKerfObjects(item.geometry, {
       width: item.width,
@@ -675,7 +670,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       leadColor: threePalette.toolpathPlunge,
       emphasized: true,
       muted: false,
-      resolution,
       showContour: true,
       showLeads: true,
       showPierces: true,

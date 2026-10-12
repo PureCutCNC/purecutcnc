@@ -15,18 +15,22 @@
  */
 
 /**
- * The 3D plasma kerf band and pierce markers (issue #961, slice B).
+ * The 3D plasma kerf band and pierce markers (issue #961).
  *
  * The properties that matter are pinned on the objects themselves: the world
- * mapping `[x, topZ, y]`, a band in world units exactly one kerf wide, contour
- * and leads in different colours, a screen-space marker sprite, and the stencil
- * state that keeps a band's overlapping quads from adding up. Nothing here
- * renders, so it runs under `npx tsx` with no DOM.
+ * mapping `[x, topZ, y]`, a flat band in the sheet-top plane exactly one kerf
+ * wide (caps included), contour and leads in different colours, a screen-space
+ * marker sprite, and the stencil state that keeps the band's overlapping quads
+ * and caps from adding up. Nothing here renders, so it runs under `npx tsx`
+ * with no DOM.
  *
  * Mutations these assertions were checked against:
- * - `worldUnits: false` on the band material → the world-unit assertion fails;
- * - dropping the `PlasmaKerfGeometry` part from `buildPlasmaKerfObjects` (e.g.
- *   always emitting the contour band) → the switched-off assertions fail;
+ * - one band vertex at `topZ + 1` → the "every vertex has Y === topZ" assertion
+ *   fails (this is the regression test for the camera-facing ribbon defect);
+ * - `width` instead of `width / 2` as the half width → the one-kerf-wide
+ *   assertions fail;
+ * - dropping the cap discs → the vertex-count and zero-length-disc assertions
+ *   fail;
  * - `stencilWrite: false` on the band material → the stencil assertions fail;
  * - giving both bands the same stencil ref → the differing-refs assertion
  *   fails.
@@ -36,17 +40,17 @@
 
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
   PLASMA_KERF_BAND_ALPHA,
   PLASMA_PIERCE_MARKER_RADIUS_PX,
   type PlasmaKerfGeometry,
+  type PlasmaKerfSegment,
 } from '../plasmaKerfPreview'
 import {
   buildPlasmaKerfObjects,
   disposePlasmaKerfMaterial,
-  plasmaKerfSegmentPositions,
+  plasmaKerfBandPositions,
   plasmaPiercePositions,
   PLASMA_KERF_CONTOUR_STENCIL_REF,
   PLASMA_KERF_LEAD_STENCIL_REF,
@@ -56,6 +60,19 @@ import {
 const CUT_COLOR = 0x112233
 const LEAD_COLOR = 0x445566
 
+/** Triangle-fan steps per cap, mirrored from the module's named constant. */
+const CAP_STEPS = 16
+/** Vertices: one 6-vertex quad plus one `CAP_STEPS`-triangle disc per endpoint. */
+const VERTICES_PER_SEGMENT = 6 + 2 * CAP_STEPS * 3
+
+/**
+ * The spec's ideal slack is `1e-9`, but the positions are a `Float32Array`:
+ * storing a half width of 1 already rounds by ~1.2e-7, so the one-kerf-wide
+ * budget is the smallest epsilon the stored values can meet. A wrong half width
+ * misses it by half the width, orders of magnitude above this.
+ */
+const HALF_WIDTH_TOLERANCE = 1e-6
+
 function options(overrides: Partial<PlasmaKerfObjectOptions> = {}): PlasmaKerfObjectOptions {
   return {
     width: 2,
@@ -64,7 +81,6 @@ function options(overrides: Partial<PlasmaKerfObjectOptions> = {}): PlasmaKerfOb
     leadColor: LEAD_COLOR,
     emphasized: true,
     muted: false,
-    resolution: new THREE.Vector2(800, 600),
     showContour: true,
     showLeads: true,
     showPierces: true,
@@ -78,30 +94,115 @@ const geometry: PlasmaKerfGeometry = {
   pierces: [{ x: -2, y: -2 }],
 }
 
-function bands(objects: readonly THREE.Object3D[]): LineSegments2[] {
-  return objects.filter((object): object is LineSegments2 => object instanceof LineSegments2)
+/** Read one vertex of a `[x, topZ, y]` position array as `[x, y]` in plan view. */
+function vertexAt(positions: Float32Array, index: number): { x: number; y: number; worldY: number } {
+  return { x: positions[index * 3], y: positions[index * 3 + 2], worldY: positions[index * 3 + 1] }
+}
+
+/** Distance from a point to the segment `a`–`b` (not its infinite line). */
+function distanceToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSquared = dx * dx + dy * dy
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
+
+function bands(objects: readonly THREE.Object3D[]): THREE.Mesh[] {
+  return objects.filter((object): object is THREE.Mesh => object.userData.plasmaKerfBand === true)
 }
 
 function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
   return objects.filter((object): object is THREE.Points => object instanceof THREE.Points)
 }
 
-// ── Positions: the world mapping is [x, topZ, y] ──────────────────────────
+// ── Positions: a flat mesh in the sheet-top plane ─────────────────────────
 
 {
-  const segments = [
-    { fromX: 1, fromY: 2, toX: 3, toY: 4 },
-    { fromX: 5, fromY: 6, toX: 7, toY: 8 },
-  ]
-  const positions = plasmaKerfSegmentPositions(segments, 9)
-  assert.ok(positions instanceof Float32Array, 'segment positions are a Float32Array')
-  assert.equal(positions.length, 12, 'two segments give two triplets of endpoints')
-  assert.deepEqual(
-    [...positions],
-    [1, 9, 2, 3, 9, 4, 5, 9, 6, 7, 9, 8],
-    'each endpoint maps to [x, topZ, y]',
+  const positions = plasmaKerfBandPositions(
+    [
+      { fromX: 1, fromY: 2, toX: 3, toY: 4 },
+      { fromX: 5, fromY: 6, toX: 7, toY: 8 },
+    ],
+    2,
+    9,
   )
-  assert.equal(plasmaKerfSegmentPositions([], 9).length, 0, 'no segments give no positions')
+  assert.ok(positions instanceof Float32Array, 'band positions are a Float32Array')
+  assert.equal(positions.length, 2 * VERTICES_PER_SEGMENT * 3, 'each non-zero segment is a quad plus two caps')
+  for (let index = 0; index < positions.length; index += 3) {
+    // The regression test for the defect: the band lies in the sheet-top plane,
+    // so no vertex may rise above or sink below `topZ`.
+    assert.equal(positions[index + 1], 9, 'every band vertex has world Y exactly topZ')
+  }
+}
+
+{
+  const positions = plasmaKerfBandPositions([], 2, 6)
+  assert.ok(positions instanceof Float32Array, 'empty input still gives a Float32Array')
+  assert.equal(positions.length, 0, 'no segments give no positions')
+}
+
+// ── One horizontal segment is exactly one kerf wide, caps included ────────
+
+{
+  const width = 2
+  const half = width / 2
+  const topZ = 6
+  const segment: PlasmaKerfSegment = { fromX: 0, fromY: 0, toX: 10, toY: 0 }
+  const positions = plasmaKerfBandPositions([segment], width, topZ)
+
+  assert.equal(positions.length, VERTICES_PER_SEGMENT * 3, 'one segment is a quad plus two cap discs')
+
+  // The first six vertices are the quad. Its corners sit exactly `W / 2` off
+  // the segment's line, on both sides — the band is one kerf wide, not two.
+  const sides = new Set<number>()
+  for (let index = 0; index < 6; index += 1) {
+    const vertex = vertexAt(positions, index)
+    assert.ok(
+      Math.abs(Math.abs(vertex.y) - half) <= HALF_WIDTH_TOLERANCE,
+      'every quad corner is W / 2 from the segment line',
+    )
+    sides.add(Math.sign(vertex.y))
+  }
+  assert.deepEqual([...sides].sort(), [-1, 1], 'the quad straddles the segment line on both sides')
+
+  // Caps included, nothing reaches outside the kerf: every vertex is within
+  // `W / 2` of the segment itself, so the band is exactly one kerf wide.
+  for (let index = 0; index < positions.length / 3; index += 1) {
+    const vertex = vertexAt(positions, index)
+    const distance = distanceToSegment(
+      vertex.x,
+      vertex.y,
+      segment.fromX,
+      segment.fromY,
+      segment.toX,
+      segment.toY,
+    )
+    assert.ok(
+      distance <= half + HALF_WIDTH_TOLERANCE,
+      'no band vertex lies outside half the kerf width from the segment',
+    )
+  }
+}
+
+{
+  // A zero-length segment contributes its disc only: one fan of CAP_STEPS
+  // triangles around the point, no quad.
+  const positions = plasmaKerfBandPositions([{ fromX: 3, fromY: 4, toX: 3, toY: 4 }], 2, 6)
+  assert.equal(positions.length, CAP_STEPS * 3 * 3, 'a zero-length segment gives one cap disc')
+  for (let index = 0; index < positions.length / 3; index += 1) {
+    const vertex = vertexAt(positions, index)
+    const distance = Math.hypot(vertex.x - 3, vertex.y - 4)
+    assert.ok(distance <= 1 + HALF_WIDTH_TOLERANCE, 'every disc vertex is within the kerf radius')
+    assert.equal(vertex.worldY, 6, 'the disc lies in the sheet-top plane')
+  }
 }
 
 {
@@ -112,22 +213,25 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
   assert.equal(plasmaPiercePositions([], 5).length, 0, 'no pierces give no positions')
 }
 
-// ── The band: world units, one kerf wide, two colours ─────────────────────
+// ── The band: a flat mesh, one kerf wide, two colours ─────────────────────
 
 {
   const objects = buildPlasmaKerfObjects(geometry, options())
   assert.equal(objects.length, 3, 'a contour band, a lead band and one marker object')
   const contourBand = bands(objects)[0]
   const leadBand = bands(objects)[1]
-  assert.ok(contourBand && leadBand, 'both bands are LineSegments2')
+  assert.ok(contourBand && leadBand, 'both bands are meshes')
+  assert.ok(contourBand instanceof THREE.Mesh, 'the band is a THREE.Mesh')
+  assert.ok(!(contourBand instanceof LineSegments2), 'the band is no longer a LineSegments2')
+  assert.equal(contourBand.userData.plasmaKerfBand, true, 'the band is marked for its own geometry disposal')
 
-  const contourMaterial = contourBand.material as LineMaterial
-  const leadMaterial = leadBand.material as LineMaterial
-  assert.equal(contourMaterial.worldUnits, true, 'the band is in world units')
-  assert.equal(contourMaterial.linewidth, 2, 'the band line width is the kerf width')
+  const contourMaterial = contourBand.material as THREE.MeshBasicMaterial
+  const leadMaterial = leadBand.material as THREE.MeshBasicMaterial
+  assert.ok(contourMaterial instanceof THREE.MeshBasicMaterial, 'the band uses a MeshBasicMaterial')
   assert.equal(contourMaterial.color.getHex(), CUT_COLOR, 'the contour band uses the cut colour')
   assert.equal(leadMaterial.color.getHex(), LEAD_COLOR, 'the lead band uses the plunge colour')
   assert.notEqual(contourMaterial.color.getHex(), leadMaterial.color.getHex(), 'the two band colours differ')
+  assert.equal(contourMaterial.side, THREE.DoubleSide, 'the flat band paints from both sides')
   assert.equal(contourMaterial.transparent, true, 'the band is translucent')
   assert.equal(contourMaterial.depthWrite, false, 'the band does not write depth')
   assert.equal(contourMaterial.depthTest, false, 'the band is not depth-tested')
@@ -155,19 +259,20 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
     'contour and lead bands use different refs so a lead still shows where it meets the contour',
   )
 
-  const mutedMaterial = (buildPlasmaKerfObjects(geometry, options({ emphasized: false, muted: true }))[0] as LineSegments2)
-    .material as LineMaterial
+  const mutedBand = bands(buildPlasmaKerfObjects(geometry, options({ emphasized: false, muted: true })))[0]
+  const mutedMaterial = mutedBand.material as THREE.MeshBasicMaterial
   assert.ok(mutedMaterial.opacity < contourMaterial.opacity, 'a muted band is fainter than an emphasized one')
 
-  // The contour geometry is the mapped contour, not the leads.
-  const start = contourBand.geometry.getAttribute('instanceStart')
-  const end = contourBand.geometry.getAttribute('instanceEnd')
-  assert.equal(start.count, 1, 'one contour segment')
-  assert.deepEqual([start.getX(0), start.getY(0), start.getZ(0)], [0, 6, 0], 'the contour starts on the part line at topZ')
-  assert.deepEqual([end.getX(0), end.getY(0), end.getZ(0)], [10, 6, 0], 'the contour ends on the part line at topZ')
+  // The contour geometry is the mapped contour, flat at topZ.
+  const position = contourBand.geometry.getAttribute('position')
+  assert.equal(position.count, VERTICES_PER_SEGMENT, 'one contour segment is a quad plus two cap discs')
+  assert.equal(position.itemSize, 3, 'positions are [x, topZ, y] triples')
+  for (let index = 0; index < position.count; index += 1) {
+    assert.equal(position.getY(index), 6, 'every contour band vertex sits on the sheet top')
+  }
 }
 
-// ── The markers: a fixed-size screen sprite ───────────────────────────────
+// ── The markers: a fixed-size screen sprite, unchanged ────────────────────
 
 {
   const object = markers(buildPlasmaKerfObjects(geometry, options()))[0]
@@ -226,7 +331,7 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
   const noContour = buildPlasmaKerfObjects(geometry, options({ showContour: false }))
   assert.equal(bands(noContour).length, 1, 'switching off the contour leaves exactly the lead band')
   assert.equal(
-    (bands(noContour)[0].material as LineMaterial).color.getHex(),
+    (bands(noContour)[0].material as THREE.MeshBasicMaterial).color.getHex(),
     LEAD_COLOR,
     'the surviving band is the lead band',
   )
@@ -235,7 +340,7 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
   const noLeads = buildPlasmaKerfObjects(geometry, options({ showLeads: false }))
   assert.equal(bands(noLeads).length, 1, 'switching off the leads leaves exactly the contour band')
   assert.equal(
-    (bands(noLeads)[0].material as LineMaterial).color.getHex(),
+    (bands(noLeads)[0].material as THREE.MeshBasicMaterial).color.getHex(),
     CUT_COLOR,
     'the surviving band is the contour band',
   )
@@ -256,6 +361,10 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
 
 {
   const objects = buildPlasmaKerfObjects(geometry, options())
+  const bandGeometry = bands(objects)[0].geometry
+  let bandGeometryDisposed = false
+  bandGeometry.addEventListener('dispose', () => { bandGeometryDisposed = true })
+
   const markerMaterial = (markers(objects)[0].material as THREE.PointsMaterial)
   const texture = markerMaterial.map as THREE.DataTexture
   let disposed = 0
@@ -268,6 +377,7 @@ function markers(objects: readonly THREE.Object3D[]): THREE.Points[] {
       }
     })
   }
+  assert.equal(bandGeometryDisposed, true, 'the band mesh owns a geometry that a disposal reaches')
   assert.equal(disposed, 1, 'disposing a marker material disposes its ring texture with it')
 }
 

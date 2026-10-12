@@ -687,7 +687,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         object.geometry.dispose()
         disposeObjectMaterial(object.material)
       } else if (object instanceof THREE.Mesh) {
-        // Mesh geometries are shared/cached so only dispose material.
+        // Mesh geometries are shared/cached so only dispose material — except
+        // the plasma kerf band, which owns the flat mesh geometry it built.
+        if (object.userData.plasmaKerfBand) {
+          object.geometry.dispose()
+        }
         disposeObjectMaterial(object.material)
       } else if (object instanceof THREE.Points) {
         // The plasma pierce markers: geometry is per-object and the material
@@ -942,7 +946,6 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             leadColor: threePalette.toolpathPlunge,
             emphasized,
             muted: isMuted,
-            resolution,
             showContour: toolpathVisibility.cuts,
             showLeads: toolpathVisibility.leadIns,
             showPierces: toolpathVisibility.plunges,

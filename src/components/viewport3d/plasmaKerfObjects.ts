@@ -15,7 +15,7 @@
  */
 
 /**
- * Plasma kerf band and pierce markers as 3D scene objects (issue #961, slice B).
+ * Plasma kerf band and pierce markers as 3D scene objects (issue #961).
  *
  * Display only, exactly like the 2D band in `plasmaKerfBand.ts`: the geometry
  * comes from `plasmaKerfGeometry`, the width from `plasmaKerfWidth`, and the
@@ -23,27 +23,34 @@
  * the centre line sit on the same coordinates. Nothing here feeds toolpath
  * generation, G-code, the store or the `.camj` format.
  *
- * The band is a `LineSegments2` in **world units**, one kerf wide, drawn under
- * the centre line; the markers are a screen-space `THREE.Points` sprite whose
- * ring texture is built in code, so the module loads without a DOM (the tests
- * run it under `npx tsx`).
+ * The band is a **flat triangle mesh lying in the sheet-top plane**, one kerf
+ * wide. It used to be a world-unit `LineSegments2`, whose ribbon always turns
+ * to face the camera: from a steep angle that reads as a flat band, but from a
+ * low angle the ribbon stands up like a wall, half above and half below the
+ * sheet top, and looks detached from the sheet. A mesh built from
+ * `plasmaKerfBandPositions` is fixed in the plane of the sheet from every
+ * angle, so it always looks painted on the top face.
  *
- * The band materials write the **stencil buffer** so that every pixel of a band
- * is painted at most once. A `LineSegments2` is one quad per segment with round
- * caps, so where two quads overlap — every corner, and every place a long arc
- * is made of short segments — the alpha adds up and the overlap reads darker
- * than a straight run. The 2D band does not have the problem because one canvas
- * path is stroked once. Contour and lead bands use different stencil refs, so a
- * lead still shows in its own colour where it meets the contour, and two bands
- * of the same kind (the same operation's segments, or two operations) never add
- * up on each other. The pierce markers do not write the stencil: they are
- * screen-space sprites, not band pixels.
+ * Each segment contributes one quad (two triangles) plus a round cap disc at
+ * each endpoint, so the band has a single closed silhouette exactly one kerf
+ * wide, caps included. The discs and quads overlap — every corner, and every
+ * place a long arc is made of short segments — so the band materials still
+ * write the **stencil buffer**: a fragment survives only while the stencil does
+ * not already hold this band kind's ref, and a passing fragment writes the ref,
+ * which keeps every band pixel painted at most once instead of adding up and
+ * reading darker at an overlap. Contour and lead bands use different stencil
+ * refs, so a lead still shows in its own colour where it meets the contour, and
+ * two bands of the same kind (the same operation's segments, or two operations)
+ * never add up on each other.
+ *
+ * The markers are a screen-space `THREE.Points` sprite whose ring texture is
+ * built in code, so the module loads without a DOM (the tests run it under
+ * `npx tsx`). A screen-space sprite is the right shape for a marker, unlike the
+ * band. The pierce markers do not write the stencil: they are sprites, not band
+ * pixels.
  */
 
 import * as THREE from 'three'
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
-import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
-import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import {
   PLASMA_KERF_BAND_ALPHA,
   PLASMA_PIERCE_MARKER_RADIUS_PX,
@@ -51,13 +58,13 @@ import {
   type PlasmaKerfPoint,
   type PlasmaKerfSegment,
 } from '../plasmaKerfPreview'
-import {
-  DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK,
-  toolpathOverlayOpacity,
-} from './toolpathOverlay'
+import { toolpathOverlayOpacity } from './toolpathOverlay'
 
 /** Sprite edge of the pierce marker's ring texture, in texels. */
 const PIERCE_RING_TEXTURE_SIZE = 64
+
+/** Triangle-fan steps in each round kerf-band cap. */
+const KERF_BAND_CAP_STEPS = 16
 
 /**
  * Stencil ref a contour band writes and then tests `NotEqual` against. One
@@ -70,27 +77,62 @@ export const PLASMA_KERF_CONTOUR_STENCIL_REF = 1
 export const PLASMA_KERF_LEAD_STENCIL_REF = 2
 
 /**
- * Segment positions `[x, topZ, y]` for every segment's two endpoints, in the
- * world mapping of `toolpathPointToWorldTuple` (`[x, z, y]`). One `Float32Array`
- * of 6 floats per segment, which is what `LineSegmentsGeometry.setPositions`
- * consumes.
+ * Non-indexed triangle positions for the kerf band, in the world mapping of
+ * `toolpathPointToWorldTuple` (`[x, z, y]`), every vertex at exactly `topZ`.
+ *
+ * One quad (two triangles) per segment with non-zero length, its corners the
+ * two endpoints offset by `+/- width / 2` along the segment's in-plane normal,
+ * plus a round cap disc of radius `width / 2` at each endpoint as a triangle
+ * fan. A zero-length segment contributes its disc only — the two endpoints
+ * coincide, so one disc is the cap at both.
  */
-export function plasmaKerfSegmentPositions(
+export function plasmaKerfBandPositions(
   segments: readonly PlasmaKerfSegment[],
+  width: number,
   topZ: number,
 ): Float32Array {
-  const positions = new Float32Array(segments.length * 6)
-  let offset = 0
-  for (const segment of segments) {
-    positions[offset] = segment.fromX
-    positions[offset + 1] = topZ
-    positions[offset + 2] = segment.fromY
-    positions[offset + 3] = segment.toX
-    positions[offset + 4] = topZ
-    positions[offset + 5] = segment.toY
-    offset += 6
+  const half = width / 2
+  // The cap ring, shared by every cap: the fan triangles reuse it by offset.
+  const ring: number[] = []
+  for (let step = 0; step < KERF_BAND_CAP_STEPS; step += 1) {
+    const angle = (step / KERF_BAND_CAP_STEPS) * Math.PI * 2
+    ring.push(Math.cos(angle) * half, Math.sin(angle) * half)
   }
-  return positions
+
+  const vertices: number[] = []
+  const push = (x: number, y: number): void => {
+    vertices.push(x, topZ, y)
+  }
+  const pushCap = (centerX: number, centerY: number): void => {
+    for (let step = 0; step < KERF_BAND_CAP_STEPS; step += 1) {
+      const next = (step + 1) % KERF_BAND_CAP_STEPS
+      push(centerX, centerY)
+      push(centerX + ring[step * 2], centerY + ring[step * 2 + 1])
+      push(centerX + ring[next * 2], centerY + ring[next * 2 + 1])
+    }
+  }
+
+  for (const segment of segments) {
+    const dx = segment.toX - segment.fromX
+    const dy = segment.toY - segment.fromY
+    const length = Math.hypot(dx, dy)
+    if (length > 0) {
+      // In-plane normal of the segment, scaled to the half width.
+      const normalX = (-dy / length) * half
+      const normalY = (dx / length) * half
+      push(segment.fromX + normalX, segment.fromY + normalY)
+      push(segment.fromX - normalX, segment.fromY - normalY)
+      push(segment.toX + normalX, segment.toY + normalY)
+      push(segment.fromX - normalX, segment.fromY - normalY)
+      push(segment.toX - normalX, segment.toY - normalY)
+      push(segment.toX + normalX, segment.toY + normalY)
+    }
+    pushCap(segment.fromX, segment.fromY)
+    if (length > 0) {
+      pushCap(segment.toX, segment.toY)
+    }
+  }
+  return new Float32Array(vertices)
 }
 
 /** Pierce positions `[x, topZ, y]`, one point per pierce. */
@@ -157,35 +199,40 @@ export interface PlasmaKerfObjectOptions {
   leadColor: number
   emphasized: boolean
   muted: boolean
-  resolution: THREE.Vector2
   showContour: boolean
   showLeads: boolean
   showPierces: boolean
 }
 
 /**
- * One kerf band: a world-unit `LineSegments2` per chunk, all sharing one
- * material, so a long contour costs one material and not one per chunk — the
- * same trade `buildToolpathOverlay` makes.
+ * One kerf band: a flat mesh in the sheet-top plane. The mesh owns its geometry
+ * (nothing shares it), so `clearToolpathObjects` disposes it with the object;
+ * `userData.plasmaKerfBand` marks it for that.
  */
 function buildPlasmaKerfBand(
   segments: readonly PlasmaKerfSegment[],
   color: number,
   stencilRef: number,
   options: PlasmaKerfObjectOptions,
-): THREE.Object3D[] {
-  const material = new LineMaterial({
+): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(
+    plasmaKerfBandPositions(segments, options.width, options.topZ),
+    3,
+  ))
+  const material = new THREE.MeshBasicMaterial({
     color,
-    linewidth: options.width,
-    worldUnits: true,
-    resolution: options.resolution,
     transparent: true,
     opacity: toolpathOverlayOpacity(0.98, options.emphasized, options.muted) * PLASMA_KERF_BAND_ALPHA,
+    // The band is a zero-thickness sheet in the plane of the stock: from below,
+    // or after an orbit past edge-on, the back face must paint too.
+    side: THREE.DoubleSide,
     depthWrite: false,
     depthTest: false,
     // Paint each band pixel once: a fragment survives only while the stencil
     // does not already hold this band kind's ref, and the passing fragment
-    // writes the ref so later overlaps of the same kind are discarded.
+    // writes the ref so overlapping caps and quads of the same kind are
+    // discarded instead of adding their alpha up.
     stencilWrite: true,
     stencilFunc: THREE.NotEqualStencilFunc,
     stencilRef,
@@ -193,16 +240,9 @@ function buildPlasmaKerfBand(
     stencilZFail: THREE.KeepStencilOp,
     stencilZPass: THREE.ReplaceStencilOp,
   })
-
-  const chunkSize = Math.max(1, Math.floor(DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK))
-  const objects: THREE.Object3D[] = []
-  for (let start = 0; start < segments.length; start += chunkSize) {
-    const chunk = segments.slice(start, start + chunkSize)
-    const geometry = new LineSegmentsGeometry()
-    geometry.setPositions(plasmaKerfSegmentPositions(chunk, options.topZ))
-    objects.push(new LineSegments2(geometry, material))
-  }
-  return objects
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.userData.plasmaKerfBand = true
+  return mesh
 }
 
 function buildPlasmaPierceMarkers(
@@ -236,10 +276,10 @@ export function buildPlasmaKerfObjects(
 ): THREE.Object3D[] {
   const objects: THREE.Object3D[] = []
   if (options.showContour && geometry.contour.length > 0) {
-    objects.push(...buildPlasmaKerfBand(geometry.contour, options.cutColor, PLASMA_KERF_CONTOUR_STENCIL_REF, options))
+    objects.push(buildPlasmaKerfBand(geometry.contour, options.cutColor, PLASMA_KERF_CONTOUR_STENCIL_REF, options))
   }
   if (options.showLeads && geometry.leads.length > 0) {
-    objects.push(...buildPlasmaKerfBand(geometry.leads, options.leadColor, PLASMA_KERF_LEAD_STENCIL_REF, options))
+    objects.push(buildPlasmaKerfBand(geometry.leads, options.leadColor, PLASMA_KERF_LEAD_STENCIL_REF, options))
   }
   if (options.showPierces && geometry.pierces.length > 0) {
     objects.push(buildPlasmaPierceMarkers(geometry.pierces, options))
