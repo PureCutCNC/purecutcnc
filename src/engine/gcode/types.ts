@@ -127,6 +127,31 @@ const PlasmaDefinitionSchema = z.object({
   Object.entries({ ...block, thcOnCommand, thcOffCommand, touchOff }).filter(([, value]) => value !== undefined),
 ) as typeof block & { thcOnCommand?: string, thcOffCommand?: string, touchOff?: PlasmaTouchOff })
 
+/**
+ * How a machine turns a round bar (issue #393). The block is optional and
+ * absent on every bundled definition: a definition without it is exactly what
+ * it was before the field existed.
+ *
+ * - `about` — the PROJECT axis the bar lies along and turns about.
+ * - `drive` — `own` means the controller has a fourth axis and the program
+ *   uses the word `A`; `borrowed` means the rotary is plugged into the output
+ *   of the other horizontal axis, so the program uses that axis's letter and
+ *   that linear travel is gone.
+ * - `reversed` — a positive angle turns the other way.
+ * - `inverseTimeFeed` — the commands that switch inverse-time feed on and off;
+ *   `null` means the controller has none.
+ */
+export const RotaryDefinitionSchema = z.object({
+  about: z.enum(['x', 'y']),
+  drive: z.enum(['own', 'borrowed']),
+  reversed: z.boolean().default(false),
+  inverseTimeFeed: z.object({
+    on: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
+    off: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
+  }).nullable().default({ on: 'G93', off: 'G94' }),
+})
+export type RotaryDefinition = z.infer<typeof RotaryDefinitionSchema>
+
 export const MachineDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -141,6 +166,7 @@ export const MachineDefinitionSchema = z.object({
   outputDialect: z.enum(OUTPUT_DIALECTS).optional(),
   machineKind: z.enum(MACHINE_KINDS).optional(),
   plasma: PlasmaDefinitionSchema.optional(),
+  rotary: RotaryDefinitionSchema.optional(),
   coordinateSystem: z.object({
     xAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
     yAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
@@ -218,6 +244,22 @@ export const MachineDefinitionSchema = z.object({
   if (definition.machineKind === 'plasma' && !definition.plasma) {
     context.addIssue({ code: 'custom', path: ['plasma'], message: 'A plasma machine requires a plasma block.' })
   }
+  if (definition.rotary) {
+    if (resolveOutputDialect(definition) === 'opensbp') {
+      context.addIssue({ code: 'custom', path: ['rotary'], message: 'A rotary axis requires the G-code output dialect.' })
+    }
+    if (definition.machineKind === 'plasma') {
+      context.addIssue({ code: 'custom', path: ['rotary'], message: 'A plasma machine cannot have a rotary axis.' })
+    }
+    if (definition.rotary.drive === 'borrowed') {
+      const borrowed = definition.rotary.about === 'x'
+        ? definition.coordinateSystem.yAxis
+        : definition.coordinateSystem.xAxis
+      if (borrowed === 'Z' || borrowed === '-Z') {
+        context.addIssue({ code: 'custom', path: ['rotary', 'drive'], message: 'The rotary cannot borrow the Z motor.' })
+      }
+    }
+  }
 })
 
 export type MachineDefinition = z.infer<typeof MachineDefinitionSchema>
@@ -234,6 +276,49 @@ export function resolveMachineKind(definition: Pick<MachineDefinition, 'machineK
 /** The dialect a definition exports; a definition without the field is G-code. */
 export function resolveOutputDialect(definition: Pick<MachineDefinition, 'outputDialect'>): OutputDialect {
   return definition.outputDialect ?? 'gcode'
+}
+
+/**
+ * The coordinate-system entry a borrowed rotary motor drives: the other
+ * horizontal project axis from the one the bar lies along.
+ */
+function borrowedMotorEntry(
+  definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>,
+): MachineDefinition['coordinateSystem']['xAxis'] | null {
+  const rotary = definition.rotary
+  if (!rotary || rotary.drive !== 'borrowed') return null
+  return rotary.about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis
+}
+
+/** The letter the program uses for rotation, or null when the machine has no rotary axis. */
+export function rotaryWord(definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>): 'A' | 'X' | 'Y' | null {
+  const rotary = definition.rotary
+  if (!rotary) return null
+  if (rotary.drive === 'own') return 'A'
+  const entry = borrowedMotorEntry(definition)
+  // A borrowed Z motor is refused by validation; bailing here keeps the helper
+  // total and never invents a rotary word for a definition that cannot run.
+  return entry === 'X' || entry === '-X' ? 'X' : entry === 'Y' || entry === '-Y' ? 'Y' : null
+}
+
+/** The PROJECT axis whose linear travel is gone because its motor drives the rotary, or null. */
+export function rotaryBorrowedAxis(definition: Pick<MachineDefinition, 'rotary'>): 'x' | 'y' | null {
+  const rotary = definition.rotary
+  if (!rotary || rotary.drive !== 'borrowed') return null
+  return rotary.about === 'x' ? 'y' : 'x'
+}
+
+/** +1 or -1: what a positive angle is multiplied by on its way into the program. */
+export function rotaryDirection(definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>): 1 | -1 {
+  const rotary = definition.rotary
+  if (!rotary) return 1
+  let direction: 1 | -1 = rotary.reversed ? -1 : 1
+  // A borrowed motor rides an output that may already run backwards.
+  const entry = borrowedMotorEntry(definition)
+  if (entry !== null && entry.startsWith('-')) {
+    direction = direction === 1 ? -1 : 1
+  }
+  return direction
 }
 
 export interface PostProcessorInput {

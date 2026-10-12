@@ -31,7 +31,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 
 - `index.ts` — public API.
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
-  `arcFormat`, the optional `outputDialect`, `machineKind` and `plasma` block), `resolveOutputDialect`,
+  `arcFormat`, the optional `outputDialect`, `machineKind`, `plasma` and
+  `rotary` blocks), `resolveOutputDialect`, the rotary helpers `rotaryWord` /
+  `rotaryBorrowedAxis` / `rotaryDirection` (which letter the program uses for
+  rotation, which project axis a borrowed motor costs, and the sign a positive
+  angle is multiplied by),
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
@@ -132,7 +136,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
-  `trochoidalArcExport.test.ts`, `setupExport.test.ts` (a Bottom operation
+  `trochoidalArcExport.test.ts`, `rotaryDefinition.test.ts` (the optional
+  `rotary` block: bundled definitions gain no key, the block round-trips and
+  its refusals, the `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection`
+  helpers, and the block surviving project save/load and the machine library),
+  `setupExport.test.ts` (a Bottom operation
   exports turned for both dialects, the shared origin on and off the flip
   centreline, arc direction reversal, drill cycles, and Top with setups
   byte-identical to a project without them), `setupPrograms.test.ts` (how an
