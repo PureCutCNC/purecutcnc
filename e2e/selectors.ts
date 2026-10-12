@@ -463,6 +463,17 @@ export const properties = {
   /** An option in the open Axis select. */
   stockAxisOption: (page: Page, label: 'X' | 'Y') =>
     properties.stockAxis(page).getByRole('option', { name: label, exact: true }),
+
+  // ── Clamp type and diameter (#392 slice C) ──
+  /** The Type select for a single clamp, present only on a round bar. */
+  clampType: (page: Page) => page.getByTestId('clamp-type'),
+
+  /** An option in the open clamp Type select. */
+  clampTypeOption: (page: Page, label: 'Clamp' | 'Chuck' | 'Tailstock') =>
+    properties.clampType(page).getByRole('option', { name: label, exact: true }),
+
+  /** The Diameter number input for a chuck or tailstock. */
+  clampDiameter: (page: Page) => page.getByTestId('clamp-diameter').locator('input'),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────

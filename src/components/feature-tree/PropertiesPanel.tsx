@@ -26,10 +26,11 @@ import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
-import { defaultOrigin, defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
-import type { Stock, StockAxis, TabShape } from '../../types/project'
+import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
+import type { StockAxis, TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
-import { originAfterStockEdit, resizeRoundStock, toBlockStock, toRoundStock } from '../../store/helpers/stockShape'
+import { originAfterStockEdit, resizeRoundStock } from '../../store/helpers/stockShape'
+import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
 import { machineMode } from '../cam/machineMode'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -86,6 +87,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const setGrid = useProjectStore((s) => s.setGrid)
   const setStock = useProjectStore((s) => s.setStock)
   const setStockAndOrigin = useProjectStore((s) => s.setStockAndOrigin)
+  const setStockShape = useProjectStore((s) => s.setStockShape)
   const setStockSourceFeature = useProjectStore((s) => s.setStockSourceFeature)
   const updateTab = useProjectStore((s) => s.updateTab)
   const updateClamp = useProjectStore((s) => s.updateClamp)
@@ -473,18 +475,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
     const round = isRoundStock(project.stock) ? project.stock : null
-    // Plasma mode follows the selected machine (#960); a bar is a lathe workpiece.
+    // Plasma mode follows the selected machine (#960). Plasma is sheet work, so
+    // a block hides the Shape field; a bar keeps it, so the user can go back.
     const plasmaMode = machineMode(project) === 'plasma'
-    // A block's corner origin sits in the air on a bar, so a shape switch always
-    // moves the origin to the new stock's default, as one undo step.
-    const switchShape = (next: Stock) => {
-      setStockAndOrigin(next, {
-        ...project.origin,
-        ...defaultOrigin(next),
-        name: project.origin.name,
-        visible: project.origin.visible,
-      })
-    }
+    const hideShape = plasmaMode && !round
     const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
       if (!round) return
       const next = resizeRoundStock(round, change)
@@ -564,7 +558,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <span>{t('featureTree.properties.name')}</span>
             <DraftTextInput value={t('featureTree.properties.stock.nameDisabled')} disabled />
           </label>
-          {!plasmaMode ? (
+          {hideShape ? null : (
             <label className="properties-field">
               <span>{t('featureTree.properties.shape')}</span>
               <div data-testid="stock-shape">
@@ -574,13 +568,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                     { value: 'block', label: t('featureTree.properties.stock.block') },
                     { value: 'round', label: t('featureTree.properties.stock.roundBar') },
                   ]}
-                  onChange={(value) => {
-                    switchShape(value === 'round' ? toRoundStock(project.stock) : toBlockStock(project.stock))
-                  }}
+                  onChange={(value) => setStockShape(value)}
                 />
               </div>
             </label>
-          ) : null}
+          )}
           {round ? (
             <>
               <label className="properties-field">
@@ -1028,11 +1020,30 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   if (selectedClamp) {
+    const round = isRoundStock(project.stock) ? project.stock : null
+    const roundWorkholding = round && isRoundWorkholding(selectedClamp) ? round : null
     const clampDomain = clampDomainMax(
       [selectedClamp.height],
       convertLength(5, 'mm', units),
       convertLength(5, 'mm', units),
     )
+    const clampType: 'clamp' | 'chuck' | 'tailstock' =
+      selectedClamp.type === 'chuck'
+        ? 'chuck'
+        : selectedClamp.type === 'tailstock'
+          ? 'tailstock'
+          : 'clamp'
+    // "Clamp" stands for every plain type; the two round types take their
+    // default place and size from the bar they sit on.
+    const chooseClampType = (value: 'clamp' | 'chuck' | 'tailstock') => {
+      if (value === 'clamp') {
+        updateClamp(selectedClamp.id, { type: 'step_clamp' })
+        return
+      }
+      if (round) {
+        updateClamp(selectedClamp.id, defaultRoundWorkholding(value, round, units))
+      }
+    }
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -1044,19 +1055,51 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
             />
           </label>
-          <ZRangeSlider
-            selectionKey={`clamp-${selectedClamp.id}`}
-            zTop={selectedClamp.height}
-            zBottom={0}
-            domainMin={0}
-            domainMax={clampDomain}
-            units={units}
-            bottomLocked
-            onCommit={(patch) => {
-              if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
-              return true
-            }}
-          />
+          {round ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.clampType')}</span>
+              <div data-testid="clamp-type">
+                <Select
+                  value={clampType}
+                  options={[
+                    { value: 'clamp', label: t('featureTree.properties.clampType.clamp') },
+                    { value: 'chuck', label: t('featureTree.properties.clampType.chuck') },
+                    { value: 'tailstock', label: t('featureTree.properties.clampType.tailstock') },
+                  ]}
+                  onChange={chooseClampType}
+                />
+              </div>
+            </label>
+          ) : null}
+          {roundWorkholding ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.diameter')}</span>
+              <div data-testid="clamp-diameter">
+                <DraftNumberInput
+                  key={`clamp-diameter-${selectedClamp.id}-${roundWorkholdingDiameter(selectedClamp, roundWorkholding)}`}
+                  value={roundWorkholdingDiameter(selectedClamp, roundWorkholding)}
+                  units={units}
+                  min={minimumLength}
+                  // The store derives the height from whatever size is set here.
+                  onCommit={(next) => updateClamp(selectedClamp.id, roundWorkholding.axis === 'x' ? { h: next } : { w: next })}
+                />
+              </div>
+            </label>
+          ) : (
+            <ZRangeSlider
+              selectionKey={`clamp-${selectedClamp.id}`}
+              zTop={selectedClamp.height}
+              zBottom={0}
+              domainMin={0}
+              domainMax={clampDomain}
+              units={units}
+              bottomLocked
+              onCommit={(patch) => {
+                if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
+                return true
+              }}
+            />
+          )}
           <label className="properties-check">
             <input
               type="checkbox"

@@ -305,6 +305,11 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.tabShape.rect': 'Rectangular',
   'featureTree.properties.tabShape.smooth': 'Suave',
   'featureTree.properties.tabShape.hint': 'Suave reduce el movimiento brusco en Z pero deja menos material que Rectangular para el mismo tamaño.',
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Tipo',
+  'featureTree.properties.clampType.clamp': 'Mordaza',
+  'featureTree.properties.clampType.chuck': 'Plato',
+  'featureTree.properties.clampType.tailstock': 'Contrapunto',
   'featureTree.zRange.zTop': 'Z superior',
   'featureTree.zRange.zBottom': 'Z inferior',
   'featureTree.zRange.handleTopAria': 'Tirador Z superior',

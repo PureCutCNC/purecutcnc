@@ -15,15 +15,17 @@
  */
 
 /**
- * Choosing and sizing round stock in the Properties panel (#392 slice B): the
- * Shape field turns a block into a bar and swaps Width/Height/Thickness for
+ * Choosing and sizing round stock in the Properties panel (#392 slices B and C):
+ * the Shape field turns a block into a bar and swaps Width/Height/Thickness for
  * Diameter/Length/Axis, a diameter edit reaches the status bar, an axis change
- * is one undo step, and plasma mode hides the Shape field (#960).
+ * is one undo step, the bar gains a chuck the store keeps centred, plasma mode
+ * hides the Shape field for a block but not a bar (#960).
  */
 
 import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
-import { selectMachine } from './helpers'
+import { getProject, selectMachine } from './helpers'
+import { roundStockCentre, type Project, type RoundStock } from '../src/types/project'
 
 const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -42,6 +44,15 @@ test('the stock switches to a round bar, is sized, and switches back', async ({ 
 
   await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
   await ui.properties.stockShapeOption(page, 'Round bar').click()
+
+  // A bar gains a chuck, centred on the bar's centreline; the origin follows.
+  const bar = await getProject(page) as unknown as Project
+  const barStock = bar.stock as RoundStock
+  const chuck = bar.clamps.find((clamp) => clamp.type === 'chuck')
+  expect(chuck?.name).toBe('Chuck')
+  expect(chuck?.y).toBeCloseTo(roundStockCentre(barStock) - (chuck?.h ?? 0) / 2, 6)
+  expect(bar.origin.y).toBeCloseTo(roundStockCentre(barStock), 6)
+  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(1)
 
   // Diameter / Length / Axis replace Width / Height / Thickness.
   await expect(ui.properties.exactText(page, 'Diameter')).toBeVisible()
@@ -78,12 +89,52 @@ test('the stock switches to a round bar, is sized, and switches back', async ({ 
   await expect(ui.properties.exactText(page, 'Thickness')).toBeVisible()
   await expect(ui.properties.exactText(page, 'Diameter')).toHaveCount(0)
   await expect(ui.properties.exactText(page, 'Axis')).toHaveCount(0)
+
+  // A block cannot hold a chuck: it is gone with the bar.
+  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(0)
+
+  // One undo brings the bar and its chuck back.
+  await page.keyboard.press(`${modKey}+z`)
+  await expect(ui.properties.exactText(page, 'Diameter')).toBeVisible()
+  await expect(ui.properties.exactText(page, 'Axis')).toBeVisible()
+  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(1)
+})
+
+test('selecting the chuck shows Type and Diameter and no Z control', async ({ app, ui }) => {
+  const page = app.page
+  await ui.tree.stockRow(page).click()
+  await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
+  await ui.properties.stockShapeOption(page, 'Round bar').click()
+
+  await ui.tree.clampRows(page).filter({ hasText: 'Chuck' }).click()
+
+  await expect(ui.properties.clampType(page)).toBeVisible()
+  await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
+  await expect(ui.properties.clampDiameter(page)).toBeVisible()
+  // The height is derived from the bar, so there is no Z control to set it.
+  await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 })
 
 test('plasma mode hides the Shape field', async ({ app, ui }) => {
   await selectMachine(app.page, ui, QT_PLASMAC.name)
   await ui.tree.stockRow(app.page).click()
 
+  await expect(ui.properties.exactText(app.page, 'Width')).toBeVisible()
+  await expect(ui.properties.stockShape(app.page)).toHaveCount(0)
+})
+
+test('plasma mode hides the Shape field only for a block', async ({ app, ui }) => {
+  // A bar keeps the Shape field under a plasma machine, so the user can go back.
+  await ui.tree.stockRow(app.page).click()
+  await ui.properties.stockShape(app.page).locator('.ui-select__trigger').click()
+  await ui.properties.stockShapeOption(app.page, 'Round bar').click()
+
+  await selectMachine(app.page, ui, QT_PLASMAC.name)
+  await ui.tree.stockRow(app.page).click()
+  await expect(ui.properties.stockShape(app.page)).toBeVisible()
+
+  await ui.properties.stockShape(app.page).locator('.ui-select__trigger').click()
+  await ui.properties.stockShapeOption(app.page, 'Block').click()
   await expect(ui.properties.exactText(app.page, 'Width')).toBeVisible()
   await expect(ui.properties.stockShape(app.page)).toHaveCount(0)
 })

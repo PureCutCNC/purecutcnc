@@ -391,6 +391,12 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.tabShape.smooth': '平滑',
   'featureTree.properties.tabShape.hint': '平滑减少Z轴急动，但相同尺寸下比矩形留下的材料更少。',
 
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': '类型',
+  'featureTree.properties.clampType.clamp': '夹具',
+  'featureTree.properties.clampType.chuck': '卡盘',
+  'featureTree.properties.clampType.tailstock': '尾座',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z 顶',
   'featureTree.zRange.zBottom': 'Z 底',

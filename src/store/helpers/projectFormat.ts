@@ -63,6 +63,7 @@ import { invertMatrix, multiplyMatrix } from './instanceTransforms'
 import { resolveFeatureRow } from './resolveFeatures'
 import { transformProfileAffine, transformStlFeatureData } from './transform'
 import { assertOperationSetupsExist, decodeSetups, isSetupFace, syncProjectSetups } from './setups'
+import { syncRoundWorkholding } from './roundWorkholding'
 import { normalizeBackdrop } from '../slices/backdropSlice'
 
 export type LegacyFeatureRow = SketchFeature & {
@@ -766,5 +767,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     migrationInfo.edgeEntryStrategiesReset = edgeEntry.rewritten
   }
   syncIdCounter(edgeEntry.project)
-  return edgeEntry.project
+  // A round bar's chuck and tailstock are centred and their height derived
+  // (#392 slice C). The stock and clamps are canonical by now.
+  return syncRoundWorkholding(edgeEntry.project)
 }

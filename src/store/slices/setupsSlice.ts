@@ -32,6 +32,7 @@ import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
 import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
+import { syncRoundWorkholding } from '../helpers/roundWorkholding'
 import type { ProjectStore, SelectionState } from '../types'
 
 export type SetupsSlice = Pick<
@@ -54,6 +55,11 @@ type SetFn = Parameters<StateCreator<ProjectStore>>[0]
  * never have to know setups exist. A face that is only being looked at stays
  * provisional, and gets its setup with the first content created on it
  * (issue #945).
+ *
+ * The same pass keeps a round bar's chuck and tailstock centred with the
+ * height the bar's diameter implies (#392), so a stock resize, a clamp drag,
+ * a duplicate or an undo needs no workholding case of its own. A write that
+ * does not affect them leaves the project's identity alone.
  */
 export function withSetupSync<S extends { project: Project }>(
   set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
@@ -61,7 +67,7 @@ export function withSetupSync<S extends { project: Project }>(
   return (update) => set((state) => {
     const patch = typeof update === 'function' ? update(state) : update
     if (!patch.project) return patch
-    const project = syncWorkspaceSetups(state.project, patch.project)
+    const project = syncRoundWorkholding(syncWorkspaceSetups(state.project, patch.project))
     return project === patch.project ? patch : { ...patch, project }
   })
 }

@@ -305,6 +305,11 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.tabShape.rect': 'Rectangulaire',
   'featureTree.properties.tabShape.smooth': 'Lisse',
   'featureTree.properties.tabShape.hint': 'Lisse réduit les mouvements brusques en Z mais laisse moins de matière que Rectangulaire à taille égale.',
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Type',
+  'featureTree.properties.clampType.clamp': 'Bride',
+  'featureTree.properties.clampType.chuck': 'Mandrin',
+  'featureTree.properties.clampType.tailstock': 'Contre-pointe',
   'featureTree.zRange.zTop': 'Z haut',
   'featureTree.zRange.zBottom': 'Z bas',
   'featureTree.zRange.handleTopAria': 'Poignée Z haut',

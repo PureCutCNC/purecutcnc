@@ -390,6 +390,12 @@ export const featureTreeEn = {
   'featureTree.properties.tabShape.smooth': 'Smooth',
   'featureTree.properties.tabShape.hint': 'Smooth reduces abrupt Z motion but leaves less material than Rectangular at the same size.',
 
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Type',
+  'featureTree.properties.clampType.clamp': 'Clamp',
+  'featureTree.properties.clampType.chuck': 'Chuck',
+  'featureTree.properties.clampType.tailstock': 'Tailstock',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z top',
   'featureTree.zRange.zBottom': 'Z bottom',

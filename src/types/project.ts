@@ -888,7 +888,7 @@ export function isTrochoidalPocket(operation: Operation): boolean {
 // Clamps
 // ============================================================
 
-export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw'
+export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw' | 'chuck' | 'tailstock'
 
 export interface Clamp {
   id: string

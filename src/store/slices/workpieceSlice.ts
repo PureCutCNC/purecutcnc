@@ -25,17 +25,19 @@ import {
   type FeatureInstance,
 } from '../../types/project'
 import { originPlacementFromStock } from '../helpers/activeFace'
-import { toBlockStock } from '../helpers/stockShape'
+import { projectWithStockShape, toBlockStock } from '../helpers/stockShape'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
+import { sanitizeSelection } from './selectionSlice'
 
 export type WorkpieceSlice = Pick<
   ProjectStore,
   | 'setCreationTarget'
   | 'setStock'
   | 'setStockAndOrigin'
+  | 'setStockShape'
   | 'setStockSourceFeature'
   | 'enterStockSketchEdit'
   | 'setRectStockDimension'
@@ -166,6 +168,38 @@ export function createWorkpieceSlice(
         }
         return {
           project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    /**
+     * Switch the stock between a block and a round bar as one undo step: the
+     * origin follows the new shape, a bar gains a chuck, and a block loses
+     * every chuck and tailstock. A removed clamp is dropped from the selection
+     * the way `deleteClamp` drops it.
+     */
+    setStockShape: (shape) =>
+      set((s) => {
+        const edited = projectWithStockShape(s.project, shape)
+        if (edited === s.project) {
+          return {}
+        }
+        const nextProject = {
+          ...edited,
+          meta: { ...edited.meta, modified: new Date().toISOString() },
+        }
+        const removedClamp = s.project.clamps.some((clamp) => !nextProject.clamps.includes(clamp))
+        const selection = removedClamp ? sanitizeSelection(nextProject, s.selection) : s.selection
+        if (s.history.transactionStart) {
+          return { project: nextProject, selection }
+        }
+        return {
+          project: nextProject,
+          selection,
           history: {
             past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
