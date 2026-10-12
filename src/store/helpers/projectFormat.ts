@@ -25,8 +25,10 @@ import {
   getStockBounds,
   IDENTITY_MATRIX,
   LATEST_PROJECT_VERSION, cloneTextLayout,
+  normalizeRoundStock,
 } from '../../types/project'
 import type {
+  BlockStock,
   FeatureDefinition,
   FeatureInstance,
   MachiningSetup,
@@ -37,6 +39,7 @@ import type {
   PersistedImportedMesh,
   Project,
   SketchFeature,
+  Stock,
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
@@ -554,6 +557,21 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   }
 }
 
+/**
+ * A loaded stock in canonical form. A round bar is repaired by
+ * {@link normalizeRoundStock}; anything else — `shape` absent, `'block'`, or an
+ * unknown value — becomes a block with no `shape` and no `axis` key, so files
+ * written before round stock existed normalize exactly as they did before.
+ */
+function canonicalizeStock(stock: Stock): Stock {
+  const profile = { ...stock.profile, closed: stock.profile.closed ?? true }
+  if (stock.shape === 'round') {
+    return normalizeRoundStock({ ...stock, profile })
+  }
+  const { shape: _shape, axis: _axis, ...block } = stock as BlockStock & { axis?: unknown }
+  return { ...block, profile }
+}
+
 /** Normalize a decoded project without ever placing resolved geometry in features. */
 export function normalizeProject(input: ProjectFormatInput, migrationInfo?: ProjectMigrationInfo): Project {
   // Read before the envelope below is stamped with LATEST_PROJECT_VERSION:
@@ -703,13 +721,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,
-    stock: {
-      ...authoritativeProject.stock,
-      profile: {
-        ...authoritativeProject.stock.profile,
-        closed: authoritativeProject.stock.profile.closed ?? true,
-      },
-    },
+    stock: canonicalizeStock(authoritativeProject.stock),
     // normalizeTool backfills missing plasma fields, even in mid-release 3.3 files.
     tools: authoritativeProject.tools.map((tool, index) => normalizeTool(tool, authoritativeProject.meta.units, index)),
     tabs: authoritativeProject.tabs.map((tab, index) => normalizeTab(tab, authoritativeProject.meta.units, index)),

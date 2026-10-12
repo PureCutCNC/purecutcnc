@@ -22,10 +22,14 @@ import {
   defaultGrid,
   defaultStock,
   getProfileBounds,
+  getStockBounds,
   newProject,
   rectProfile,
+  roundStock,
   type Matrix2D,
+  type RoundStock,
   type SketchFeature,
+  type Stock,
 } from '../types/project'
 import { computeMeshBounds, serializeImportedMesh, type ImportedTriangleMesh } from '../engine/importedMesh'
 import { projectWithFeatures, resolvedFeature } from '../test/projectFixtures'
@@ -443,6 +447,65 @@ test('linked-instance serialization is materially smaller than baked rows', () =
   assert(resolved.length === current.features.length, 'every linked instance should resolve in the bulk read pass')
   console.log(`     linked-size current=${currentBytes} baked=${bakedBytes}`)
   console.log(`     linked-load current=${currentLoadMs.toFixed(2)}ms legacy=${legacyLoadMs.toFixed(2)}ms resolve=${resolveMs.toFixed(2)}ms`)
+})
+
+// ── Round stock (#392 slice A) ────────────────────────────────
+
+test('a block loads with no shape or axis key and the fixture stock unchanged', () => {
+  const input = makeLegacyProject('2.1', [makeRectFeature('rect-block')])
+  const normalized = normalizeProject(input)
+  assert(!('shape' in normalized.stock), 'a block stock carries no shape key')
+  assert(!('axis' in normalized.stock), 'a block stock carries no axis key')
+  assert(JSON.stringify(normalized.stock) === JSON.stringify(defaultStock(200, 200, 20, 'mm')),
+    'the serialized block stock is the fixture stock, key for key')
+})
+
+test('stray shape/axis keys on a block are dropped, leaving the project identical', () => {
+  const input = makeLegacyProject('2.1', [makeRectFeature('rect-stray')])
+  const stray = {
+    ...input,
+    stock: { ...input.stock, shape: 'block', axis: 'y' } as unknown as Stock,
+  }
+  const normalized = normalizeProject(stray)
+  assert(!('shape' in normalized.stock), 'the block shape key is dropped')
+  assert(!('axis' in normalized.stock), 'the stray axis key is dropped')
+  assert(JSON.stringify(normalized) === JSON.stringify(normalizeProject(input)),
+    'a block file with those keys serializes exactly like the same file without them')
+})
+
+test('a round bar survives the project round trip, shape and axis included', () => {
+  const bar = roundStock(20, 100, 'y', { x: 5, y: 7 })
+  const project: ProjectFormatInput = {
+    ...makeLegacyProject('2.1', [makeRectFeature('rect-round')]),
+    stock: bar,
+  }
+  const reopened = decodeProjectFormat(JSON.parse(JSON.stringify(project))).project
+  assert(reopened.stock.shape === 'round', 'the bar comes back round')
+  assert((reopened.stock as RoundStock).axis === 'y', 'the bar keeps its axis')
+  assert(JSON.stringify(reopened.stock) === JSON.stringify(bar), 'the bar round-trips deep-equal')
+
+  const again = decodeProjectFormat(JSON.parse(JSON.stringify(reopened))).project
+  assert(JSON.stringify(again.stock) === JSON.stringify(reopened.stock), 're-saving the reopened bar changes nothing')
+})
+
+test('a banana shape loads as a block; a mismatched round bar is repaired', () => {
+  const input = makeLegacyProject('2.1', [])
+  const banana = normalizeProject({
+    ...input,
+    stock: { ...input.stock, shape: 'banana' } as unknown as Stock,
+  })
+  assert(!('shape' in banana.stock), 'an unknown shape becomes a block')
+  assert(!('axis' in banana.stock), 'a block carries no axis')
+
+  const mismatched = normalizeProject({
+    ...input,
+    stock: { ...roundStock(20, 100, 'y', { x: 5, y: 7 }), profile: rectProfile(5, 7, 60, 100) },
+  })
+  assert(mismatched.stock.shape === 'round', 'a round bar stays round')
+  assert((mismatched.stock as RoundStock).axis === 'y', 'its axis is kept')
+  assert(mismatched.stock.thickness === 20, 'its diameter is kept')
+  assert(JSON.stringify(getStockBounds(mismatched.stock)) === JSON.stringify({ minX: 25, maxX: 45, minY: 7, maxY: 107 }),
+    'the profile is repaired to 20 across, centred on the old centreline 35')
 })
 
 console.log(`\nProject format migration: ${passed} passed, ${failed} failed`)

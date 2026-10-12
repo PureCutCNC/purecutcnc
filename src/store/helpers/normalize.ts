@@ -20,7 +20,7 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { getBundledMachine, isBundledMachineId } from '../../machine/registry'
 import { convertLength } from '../../utils/units'
-import { defaultTool, inferFeatureKind, newProject, profileVertices, tabShape } from '../../types/project'
+import { defaultTool, inferFeatureKind, isRoundStock, newProject, profileVertices, tabShape } from '../../types/project'
 import type {
   Clamp,
   FeatureDefinition,
@@ -523,6 +523,9 @@ export function syncFeatureTreeProject(project: Project): Project {
 
 export function syncFeatureBasedStock(project: Project): Project {
   const stock = project.stock
+  // A bar cannot be derived from a feature: its rectangle is the bar's box, not
+  // a feature outline, and re-deriving would replace the diameter with z_top.
+  if (isRoundStock(stock)) return project
   if (!stock.sourceFeature || !stock.sourceFeatureId) {
     return project
   }
