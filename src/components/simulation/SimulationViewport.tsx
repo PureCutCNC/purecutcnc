@@ -33,6 +33,7 @@ import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
 import type { Clamp, MachineOrigin, Operation, SetupFace, ToolType } from '../../types/project'
+import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -101,6 +102,10 @@ interface SimulationViewportProps {
   selectedClampId: string | null
   collidingClampIds: string[]
   origin: MachineOrigin
+  /** The project's real units, used for unit-aware minimum render heights.
+   *  Deliberately not derived from `playbackInput`, which is absent until an
+   *  operation is simulated and would fall back to mm for an inch project. */
+  units: Units
   stockColor?: string
   stockHasProfile?: boolean
   zoomWindowActive?: boolean
@@ -260,6 +265,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   selectedClampId,
   collidingClampIds,
   origin,
+  units,
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
@@ -987,7 +993,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     const collidingClampIdSet = new Set(collidingClampIds)
     const nextClampMeshes = clamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), threePalette),
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette),
     )
     for (const mesh of nextClampMeshes) {
       scene.add(mesh)
@@ -999,7 +1005,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeClampMeshes(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId])
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units])
 
   useEffect(() => {
     const scene = sceneRef.current
