@@ -333,7 +333,7 @@ assert.equal(nestGapForPart({ ...malformed, operations: [outside] }, ['f1']), nu
 assert.equal(nestEdgeClearance({ ...malformed, operations: [outside] }, ['f1']), null, 'nesting ignores invalid plasma cutter clearance')
 const threePalette = THEME_PALETTES.dark.three
 const mesh = buildToolMesh({ toolType: 'plasma', toolRadius: 0.6, vBitAngle: null, threePalette })
-assert.equal(mesh.children.length, 0, 'plasma produces no milling cutter/shank mesh')
+assert.equal(mesh.children.length, 2, 'a plasma torch gets the flat-endmill cutter and shank mesh (issue #961)')
 disposeToolMesh(mesh)
 const millMesh = buildToolMesh({ toolType: 'flat_endmill', toolRadius: 2, vBitAngle: null, threePalette })
 assert.equal(millMesh.children.length, 2, 'milling mesh remains intact')
@@ -343,9 +343,14 @@ const x = grid.originX + 5.5 * grid.cellSize
 const y = grid.originY + 5.5 * grid.cellSize
 const move: ToolpathMove = { kind: 'cut', from: { x, y, z: 5 }, to: { x: x + grid.cellSize, y, z: 5 } }
 const before = grid.topZ.slice()
-assert.equal(applyMoveToGrid(grid, move, 2, 'plasma', null).changedCount, 0, 'direct optimized simulation kernel skips plasma')
-assert.deepEqual(grid.topZ, before)
-assert.ok(applyMoveToGrid(grid, move, 2, 'flat_endmill', null).changedCount > 0, 'control: the same move cuts with a mill')
+assert.ok(applyMoveToGrid(grid, move, 2, 'plasma', null).changedCount > 0, 'direct optimized simulation kernel cuts a torch kerf (issue #961)')
+for (let index = 0; index < grid.topZ.length; index += 1) {
+  if (grid.topZ[index] !== before[index]) {
+    assert.equal(grid.topZ[index], grid.stockBottomZ, 'a torch kerf reaches the stock bottom whatever Z the move carries')
+  }
+}
+const millGrid = createSimulationGrid(project, { targetLongAxisCells: 30 })
+assert.ok(applyMoveToGrid(millGrid, move, 2, 'flat_endmill', null).changedCount > 0, 'control: the same move cuts with a mill')
 const emptyPath = generatePocketToolpath(malformed, badOperation)
 const cachedPath = { ...emptyPath, moves: [move] }
 const rejectedSimulation = simulateOperationHeightfield(malformed, badOperation, cachedPath, { targetLongAxisCells: 30 })
@@ -353,9 +358,11 @@ assert.equal(rejectedSimulation.stats.processedMoveCount, 0)
 assert.deepEqual(rejectedSimulation.warnings, [{ code: 'replayNoTool' }],
   'static simulation rejects an incompatible tool at lookup, before the replay guard')
 assert.deepEqual(rejectedSimulation.grid.topZ, before, 'rejected static simulation preserves the stock')
-assert.equal(simulateReplayItemsHeightfield(malformed, [{ operationId: badOperation.id, operationName: badOperation.name,
+const plasmaReplay = simulateReplayItemsHeightfield(malformed, [{ operationId: badOperation.id, operationName: badOperation.name,
   toolRef: plasma.id, toolType: 'plasma', toolRadius: 2, vBitAngle: null, toolpath: cachedPath }],
-{ targetLongAxisCells: 30 }).stats.processedMoveCount, 0, 'replay refuses stale plasma cutter moves')
+{ targetLongAxisCells: 30 })
+assert.equal(plasmaReplay.stats.processedMoveCount, 1, 'replay applies a plasma cutter move (issue #961)')
+assert.ok(plasmaReplay.stats.removedCellCount > 0, 'a plasma replay item removes material')
 function simulationProbe(source: Project): string {
   function Probe() {
     const result = useSimulationModel({ project: source, centerTab: 'simulation', simulationMode: 'selected',
@@ -366,8 +373,8 @@ function simulationProbe(source: Project): string {
   }
   return renderToString(createElement(Probe))
 }
-assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:0,&quot;playback&quot;:false,&quot;moves&quot;:0}</span>',
-  'real simulation hook excludes plasma playback even with a cached path')
+assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:1,&quot;playback&quot;:false,&quot;moves&quot;:0}</span>',
+  'the hook counts a selected operation with a path but refuses a torch for a milling operation (issue #961)')
 assert.ok(simulationProbe({ ...project, operations: [operation] }).includes('&quot;playback&quot;:true'),
   'milling playback remains available')
 // Isolate the independent lookup boundaries: outer preflight/acquisition guards
@@ -404,15 +411,16 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
     const exportsFor = (namespace) => Object.fromEntries(Object.entries(namespace)
       .filter(([name]) => name !== 'default' && name !== 'module.exports'))
     // Assume the two outer selected-operation preflights already passed. The
-    // selected-tool lookup must still independently refuse the plasma record.
+    // selected-tool lookup must still independently refuse the incompatible
+    // plasma record for a milling operation.
     let preflightPasses = boundary === 'selected' ? 2 : 0
     mock.module(aliases.policy, { cache: true, namedExports: { ...exportsFor(policy),
-      findMillingOperationTool(project, operation) {
+      findOperationTool(project, operation) {
         if (operation.id === selected.id && preflightPasses > 0) {
           preflightPasses--
           return project.tools.find((tool) => tool.id === operation.toolRef)
         }
-        return policy.findMillingOperationTool(project, operation)
+        return policy.findOperationTool(project, operation)
       },
     } })
     // Seed already-acquired paths, including a stale incompatible prior path.
@@ -421,7 +429,7 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
     // eligible operations before the selected one, all in its one setup.
     const requiredKey = project.operations.slice(0, -1)
       .filter((operation) => operation.enabled && operation.showToolpath
-        && policy.findMillingOperationTool(project, operation) !== null)
+        && policy.findOperationTool(project, operation) !== null)
       .map((operation) => operation.id).join(',')
     mock.module(aliases.react, { cache: true, namedExports: { ...exportsFor(React),
       useState(initial) {
@@ -432,7 +440,7 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
     } })
     mock.module(aliases.geometry, { cache: true, namedExports: { ...exportsFor(geometry),
       normalizeToolForProject(tool, project) {
-        assert.notEqual(tool.type, 'plasma', boundary + ' playback must reject plasma before cutter normalization')
+        assert.notEqual(tool.type, 'plasma', boundary + ' playback must reject an incompatible torch before cutter normalization')
         normalizedTools.push(tool.id)
         return geometry.normalizeToolForProject(tool, project)
       },

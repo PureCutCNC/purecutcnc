@@ -32,8 +32,6 @@ import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
-import type { PlasmaKerfGeometry } from '../plasmaKerfPreview'
-import { buildPlasmaKerfObjects, disposePlasmaKerfMaterial } from '../viewport3d/plasmaKerfObjects'
 import type { Clamp, MachineOrigin, Operation, SetupFace, ToolType } from '../../types/project'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -110,11 +108,6 @@ interface SimulationViewportProps {
   playbackInput: SimulationPlaybackInput | null
   /** The setup picker; hidden, with its fresh-stock note, for a single-setup project. */
   setupPicker?: SimulationSetupPicker
-  /**
-   * Plasma kerf bands to draw on the uncut sheet (issue #961). Empty for a
-   * simulation with no plasma operation in scope.
-   */
-  plasmaKerf?: readonly { operationId: string; width: number; geometry: PlasmaKerfGeometry }[]
   /** True while a new simulation result is being computed (e.g. detail slider change). */
   isComputing?: boolean
   /** True while the simulation tab is the active centre tab. When false the
@@ -189,9 +182,7 @@ function disposeSceneObject(object: THREE.Object3D): void {
   const materials = new Set<THREE.Material>()
 
   object.traverse((entry) => {
-    // `Mesh` is the flat plasma kerf band; `Points` is the pierce markers,
-    // whose material owns the one sprite texture in the scene.
-    if (entry instanceof THREE.Mesh || entry instanceof THREE.Line || entry instanceof THREE.Points) {
+    if (entry instanceof THREE.Mesh || entry instanceof THREE.Line) {
       geometries.add(entry.geometry)
       const material = entry.material
       if (Array.isArray(material)) {
@@ -203,7 +194,7 @@ function disposeSceneObject(object: THREE.Object3D): void {
   })
 
   geometries.forEach((geometry) => geometry.dispose())
-  materials.forEach((material) => disposePlasmaKerfMaterial(material))
+  materials.forEach((material) => material.dispose())
 }
 
 function buildHeightfieldSurfaceObject(
@@ -274,7 +265,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   onZoomWindowComplete,
   playbackInput,
   setupPicker,
-  plasmaKerf = [],
   isComputing = false,
   isActive = true,
   projectKey,
@@ -387,7 +377,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const controlsRef = useRef<OrbitControls | null>(null)
   const frameRef = useRef<number>(0)
   const objectRef = useRef<THREE.Object3D | null>(null)
-  const plasmaKerfObjectsRef = useRef<THREE.Object3D[]>([])
   const clampObjectsRef = useRef<THREE.Mesh[]>([])
   const originObjectRef = useRef<THREE.Object3D | null>(null)
   const hasAutoFramedRef = useRef(false)
@@ -406,15 +395,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(boundaryMeshRef.current)
       boundaryMeshRef.current = null
     }
-    needsRenderRef.current = true
-  }, [])
-
-  const disposePlasmaKerfObjects = useCallback((scene: THREE.Scene) => {
-    for (const object of plasmaKerfObjectsRef.current) {
-      scene.remove(object)
-      disposeSceneObject(object)
-    }
-    plasmaKerfObjectsRef.current = []
     needsRenderRef.current = true
   }, [])
 
@@ -646,45 +626,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
-
-  // Plasma kerf bands and pierce markers on the uncut sheet (issue #961).
-  // Display-only overlays, rebuilt when the list or the simulated grid changes
-  // and disposed with the same helper the other scene objects use. `topZ` is
-  // the simulated stock's top, so the band lies on the sheet the tab shows.
-  useEffect(() => {
-    const scene = sceneRef.current
-    if (!scene) {
-      return
-    }
-
-    disposePlasmaKerfObjects(scene)
-    if (!simulation || plasmaKerf.length === 0) {
-      return
-    }
-
-    const topZ = simulation.grid.stockTopZ
-    const objects = plasmaKerf.flatMap((item) => buildPlasmaKerfObjects(item.geometry, {
-      width: item.width,
-      topZ,
-      cutColor: threePalette.toolpathCut,
-      leadColor: threePalette.toolpathPlunge,
-      emphasized: true,
-      muted: false,
-      showContour: true,
-      showLeads: true,
-      showPierces: true,
-    }))
-    for (const object of objects) {
-      scene.add(object)
-    }
-    plasmaKerfObjectsRef.current = objects
-    needsRenderRef.current = true
-
-    return () => {
-      disposePlasmaKerfObjects(scene)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
-  }, [disposePlasmaKerfObjects, plasmaKerf, simulation])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells

@@ -244,7 +244,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps, simulationPlasmaKerf } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -448,7 +448,6 @@ function App() {
             operationCount={simulationOperationCount}
             clamps={simulationClamps}
             setupPicker={simulationSetupPicker}
-            plasmaKerf={simulationPlasmaKerf}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin}

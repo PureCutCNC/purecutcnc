@@ -405,5 +405,10 @@ test.describe('plasma kerf preview (#961)', () => {
     await expect(panel.locator('.viewport-webgl-overlay')).toHaveCount(0)
     await expect(panel.getByRole('status').filter({ hasText: "3D simulation isn't available" })).toHaveCount(0)
     await expect(panel.locator('.simulation-viewport__canvas canvas')).toHaveCount(1)
+
+    // The selected plasma operation is a simulated through-cut (issue #961), so
+    // it offers tool playback like any routing operation instead of being
+    // filtered out as a torch.
+    await expect(ui.simSetup.playTool(page)).toBeEnabled()
   })
 })

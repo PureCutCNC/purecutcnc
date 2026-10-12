@@ -29,7 +29,9 @@ export function cutterSurfaceZ(
 
   switch (toolType) {
     case 'plasma':
-      // Torch motion has no milling cutter surface; plasma preview is #961.
+      // Not a milling cutter surface. The replay kernel does not ask for one:
+      // `applyMoveToGrid` inlines a flat, full-depth one-kerf cut for a torch
+      // (issue #961), so this milling-profile reader stays milling-only.
       return null
     case 'flat_endmill':
       return toolCenterZ

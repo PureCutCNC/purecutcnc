@@ -204,6 +204,31 @@ function testPlaybackBaseGridIsLazyAndCached() {
   console.log('lazy cached playback base grid: PASSED')
 }
 
+function testPlasmaOperationIsCountedAndPlayable() {
+  console.log('Testing a selected plasma operation is counted and gets playback input...')
+
+  const plasmaTool = makeTool({ id: 'torch-1', name: 'Plasma torch', type: 'plasma', diameter: 2 })
+  const plasmaOperation = makeOperation({ id: 'plasma-op', kind: 'plasma_profile', toolRef: 'torch-1' })
+  const project = { ...makeProject([plasmaOperation]), tools: [plasmaTool] }
+
+  const result = renderUseSimulationModel(makeArgs({
+    project,
+    centerTab: 'simulation',
+    simulationMode: 'selected',
+    selectedOperation: plasmaOperation,
+    selectedToolpath: makeToolpath(plasmaOperation.id),
+  }))
+
+  assert(result.simulationOperationCount === 1, 'a selected plasma operation is counted')
+
+  const playbackInput = result.simulationPlaybackInput
+  assert(playbackInput !== null, 'a selected plasma operation gets a playback input')
+  assert(playbackInput!.toolType === 'plasma', 'the playback input carries the torch')
+  assert(playbackInput!.toolRadius === 1, 'the playback radius is half the torch diameter')
+
+  console.log('selected plasma operation counted and playable: PASSED')
+}
+
 function testVisibleOperationCount() {
   console.log('Testing visible simulation operation count...')
 
@@ -230,6 +255,7 @@ try {
   testSimulationResultIsNullOffSimulationTab()
   testSelectedOperationCount()
   testPlaybackBaseGridIsLazyAndCached()
+  testPlasmaOperationIsCountedAndPlayable()
   testVisibleOperationCount()
   console.log('\nAll useSimulationModel tests PASSED.')
 } catch (e) {
