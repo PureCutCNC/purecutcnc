@@ -303,6 +303,17 @@ test('the 3D view draws the wrapped Around pass on the real bar', async ({ app, 
   expect(size.width).toBeGreaterThan(0)
   expect(size.height).toBeGreaterThan(0)
 
+  // What the overlay itself drew (issue #395 review), not a path regenerated
+  // beside it: the wrapped line is over a hundred pieces, and its lowest drawn
+  // point is below the bar's centreline — it really goes under the bar.
+  const overlay = page.locator('#workspace-panel-preview3d .viewport-3d')
+  await expect.poll(
+    async () => Number(await overlay.getAttribute('data-toolpath-segments')),
+    { timeout: 15_000 },
+  ).toBeGreaterThanOrEqual(100)
+  const drawnMinZ = Number(await overlay.getAttribute('data-toolpath-min-z'))
+  expect(drawnMinZ).toBeLessThan(BAR.thickness / 2)
+
   // The scene build is asynchronous; give it a frame and capture the default
   // isometric view the workspace opens on.
   await page.waitForTimeout(500)

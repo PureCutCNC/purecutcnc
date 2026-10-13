@@ -232,12 +232,23 @@ export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_
  * would start at. Drawing tools reason as if the face in front of them were
  * the top of the stock; this carries that span into stock space, so a new
  * Bottom feature opens at the bottom face instead of the top one.
+ *
+ * On Around a new shape is a shallow cut into the bar's surface (issue #395):
+ * the Top span would run through the whole bar, to `z_bottom = 0`, which is at
+ * the centreline every radial operation refuses. The depth is one millimetre
+ * (0.04 in), or half the bar's radius when that is less.
  */
 export function newFeatureSpan(
-  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'meta'>,
   faceLocalTopZ: number,
 ): { z_top: number; z_bottom: number } {
-  return activeFace(project) !== 'bottom'
+  const face = activeFace(project)
+  if (face === 'around') {
+    const defaultDepth = project.meta.units === 'inch' ? 0.04 : 1
+    const depth = Math.min(defaultDepth, project.stock.thickness / 4)
+    return { z_top: project.stock.thickness, z_bottom: project.stock.thickness - depth }
+  }
+  return face !== 'bottom'
     ? { z_top: faceLocalTopZ, z_bottom: 0 }
     : { z_top: project.stock.thickness, z_bottom: project.stock.thickness - faceLocalTopZ }
 }

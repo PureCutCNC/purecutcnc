@@ -515,7 +515,63 @@ function testDisplayBucketsOfAnAngleFreePathAreUnchanged(): void {
   }
 }
 
+/**
+ * The level filter and the retract split decide on the **generated** move, not
+ * the drawn piece (issue #395 review). A wrapped cut at machining level 36
+ * draws at stock Z 36, 20 and 4 around one turn, so filtering the pieces would
+ * keep only a sliver of it; a retract at a = 180 ascends in the tool frame
+ * while its drawn Z falls, so the pieces would file it as an ordinary rapid.
+ *
+ * Mutation killed: filtering after mapping again. `at36.cuts` would then hold
+ * the one piece at Z 36 instead of the whole 72-piece turn, and `rapids` would
+ * hold the retract.
+ */
+function testDisplayBucketsChoosePiecesByGeneratedLevel(): void {
+  console.log('Testing the drawn buckets are chosen by the generated move (issue #395 review)...')
+  const bar = AROUND_BAR_X
+  // A cut 16 mm from the axis is at machining level Z36 on a Ø40 bar, and a
+  // 360° sweep is a full turn of 5° pieces.
+  const cut: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(bar, 60, 16, 0),
+    to: wrappedToolPoint(bar, 60, 16, 360),
+  }
+  // A radial retract at a = 180: the tool rises away from the axis, which is
+  // downwards in stock space because it is under the bar.
+  const retract: ToolpathMove = {
+    kind: 'rapid',
+    from: wrappedToolPoint(bar, 60, 4, 180),
+    to: wrappedToolPoint(bar, 60, 14, 180),
+  }
+  const moves = [cut, retract]
+  const toolpath = { operationId: 'wrapped', moves, warnings: [], bounds: toolpathBoundsOfMoves(moves) }
+
+  const unlevelled = displayToolpathLayerBuckets(toolpath, bar)
+  assert(unlevelled.retractions.length === 1, `a retract under the bar is a retraction, got ${unlevelled.retractions.length}`)
+  assert(unlevelled.rapids.length === 0, `and not an ordinary rapid, got ${unlevelled.rapids.length}`)
+
+  const at36 = displayToolpathLayerBuckets(toolpath, bar, 36)
+  assert(at36.cuts.length >= 72, `a 360° cut at level 36 draws its whole turn (>= 72 pieces), got ${at36.cuts.length}`)
+  for (const piece of at36.cuts) {
+    assert(
+      Math.abs(distanceFromBarAxis(bar, piece.to) - 16) < 1e-9,
+      `every piece stays at the cut radius, got ${distanceFromBarAxis(bar, piece.to)}`,
+    )
+  }
+  // The retract's generated Z runs 24→34, so level 36 is not its level.
+  assert(at36.retractions.length === 0 && at36.rapids.length === 0, 'the retract is not drawn on the cut level')
+
+  const at30 = displayToolpathLayerBuckets(toolpath, bar, 30)
+  assert(at30.cuts.length === 0, `a level the cut never reaches draws no cut, got ${at30.cuts.length}`)
+
+  // Cached per level, so a scene rebuild gets the same buckets, not a refilter.
+  const again = displayToolpathLayerBuckets(toolpath, bar, 36)
+  assert(again === at36, 'the same level returns the very same buckets object')
+  assert(again.cuts === at36.cuts, 'and the very same cut array')
+}
+
 testDisplayBucketsFollowTheWrappedMoves()
 testDisplayBucketsOfAnAngleFreePathAreUnchanged()
+testDisplayBucketsChoosePiecesByGeneratedLevel()
 
 console.log('toolpathOverlay tests passed')

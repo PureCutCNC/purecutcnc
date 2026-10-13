@@ -113,15 +113,29 @@ async function sheetInfo(page: Page): Promise<SheetInfo | null> {
   })
 }
 
-/** The world rectangle the canvas shows at its current size, from the view the app draws. */
+/**
+ * The world rectangle the canvas is actually showing, from the live pan/zoom
+ * the canvas published (issue #395 review). A fit recomputed in the test would
+ * hide a broken Zoom to model.
+ */
 async function visibleWorldBounds(page: Page): Promise<{ minX: number; maxX: number; minY: number; maxY: number }> {
   return page.locator('canvas.sketch-canvas').evaluate(async (canvas) => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     const viewUrl = '/src/components/canvas/viewTransform.ts'
-    const { canvasToWorld, computeFitViewState, computeSketchViewTransform } = await import(viewUrl) as typeof import('../src/components/canvas/viewTransform')
+    const { canvasToWorld, computeSketchViewTransform } = await import(viewUrl) as typeof import('../src/components/canvas/viewTransform')
     const element = canvas as HTMLCanvasElement
+    // Let React commit the view change and the effect publish it.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    const viewState = {
+      zoom: Number(element.dataset.viewZoom),
+      panX: Number(element.dataset.viewPanX),
+      panY: Number(element.dataset.viewPanY),
+    }
+    if (!Number.isFinite(viewState.zoom) || !Number.isFinite(viewState.panX) || !Number.isFinite(viewState.panY)) {
+      throw new Error('e2e: the canvas published no live view state')
+    }
     const project = useProjectStore.getState().project
-    const vt = computeSketchViewTransform(project, element.width, element.height, computeFitViewState(project, element.width, element.height))
+    const vt = computeSketchViewTransform(project, element.width, element.height, viewState)
     const a = canvasToWorld(0, 0, vt)
     const b = canvasToWorld(element.width, element.height, vt)
     return { minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minY: Math.min(a.y, b.y), maxY: Math.max(a.y, b.y) }

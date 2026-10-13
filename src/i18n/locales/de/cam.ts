@@ -411,7 +411,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.hint.construction': 'Konstruktionsgeometrie wird nie bearbeitet – zuerst Konstruktions-Features abwählen',
   'cam.hint.otherFaceFromTop': '{features} ist auf der Unterseite gezeichnet und kein durchgehender Ausschnitt, daher kann die Aufspannung „Oben" es nicht bearbeiten. Wechseln Sie zu „Unten", um es zu bearbeiten.',
   'cam.hint.otherFaceFromBottom': '{features} ist auf der Oberseite gezeichnet und kein durchgehender Ausschnitt, daher kann die Aufspannung „Unten" es nicht bearbeiten. Wechseln Sie zu „Oben", um es zu bearbeiten.',
-  'cam.hint.otherFaceFromAround': '{features} ist auf einer ebenen Fläche gezeichnet und durchdringt den Werkstoff nicht, kann also nicht von der Oberfläche der Stange bearbeitet werden. Wechseln Sie zu dieser Fläche, um es zu bearbeiten.',
+  'cam.hint.otherFaceFromAround': '{features} ist auf einer ebenen Fläche gezeichnet. Eine Operation auf der Rundum-Fläche kann nur Formen bearbeiten, die auf der Rundum-Fläche gezeichnet sind.',
 
   // ── Validation hints: drilling ──
   'cam.hint.drilling': 'Bohren erfordert Kreis-Features; geschlossene Bereiche sind optionale Filter',

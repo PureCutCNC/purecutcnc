@@ -373,7 +373,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.hint.construction': 'La geometría de construcción nunca se mecaniza; deseleccione primero los elementos de construcción.',
   'cam.hint.otherFaceFromTop': '{features} está dibujado en la cara inferior y no es un corte pasante, así que la sujeción Superior no puede mecanizarlo. Cambie a Inferior para mecanizarlo.',
   'cam.hint.otherFaceFromBottom': '{features} está dibujado en la cara superior y no es un corte pasante, así que la sujeción Inferior no puede mecanizarlo. Cambie a Superior para mecanizarlo.',
-  'cam.hint.otherFaceFromAround': '{features} está dibujado en una cara plana y no atraviesa el material, así que no se puede mecanizar desde la superficie de la barra. Cambia a esa cara para mecanizarlo.',
+  'cam.hint.otherFaceFromAround': '{features} está dibujado en una cara plana. Una operación en la cara alrededor solo puede mecanizar formas dibujadas en la cara alrededor.',
   'cam.hint.drilling': 'El taladrado requiere elementos de círculo; las regiones cerradas son filtros opcionales.',
   'cam.hint.followLine': 'El grabado requiere al menos un elemento de trayectoria; las regiones cerradas son filtros opcionales.',
   'cam.hint.surfaceCleanNoFeature': 'La limpieza de superficie requiere al menos un elemento de adición/modelo; las regiones son solo filtros.',
