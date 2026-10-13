@@ -120,12 +120,18 @@ export function machineToProjectPoint(
   //   dx = x - origin.x   =>   x = dx + origin.x
   //   dy = origin.y - y   =>   y = origin.y - dy
   //   dz = z - origin.z   =>   z = dz + origin.z
-  const local = {
+  const local: ToolpathPoint = {
     x: dx + origin.x,
     y: origin.y - dy,
     z: dz + origin.z,
   }
-  // Undo the setup's turn last, mirroring the forward order.
+  // The rotary angle came in multiplied by `rotaryDirection` (issue #393), so
+  // the way back divides it out. A point with no `a` gains no key, exactly as
+  // before. The setup's turn is undone last, mirroring the forward order; it
+  // leaves the angle alone, which is about the bar's own axis.
+  if (point.a !== undefined) {
+    local.a = point.a / rotaryDirection(definition)
+  }
   return setup ? setupToCanonicalPoint(local, setup) : local
 }
 

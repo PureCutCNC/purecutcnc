@@ -92,6 +92,11 @@ function isPositioningDirective(move: ToolpathMove): boolean {
 }
 
 function isZeroLength(move: ToolpathMove): boolean {
+  // A rotation-only move travels nowhere but turns the stock, so it is not
+  // zero-length (issue #393); dropping it would silently lose the turn. An
+  // absent angle equals only another absent one, so a toolpath with no `a` is
+  // optimized exactly as before.
+  if (move.from.a !== move.to.a) return false
   return (
     Math.abs(move.to.x - move.from.x) < EPSILON &&
     Math.abs(move.to.y - move.from.y) < EPSILON &&
@@ -106,6 +111,13 @@ function canMerge(a: ToolpathMove, b: ToolpathMove): boolean {
   if (a.kind !== b.kind) return false
   if (a.source !== b.source) return false
   if (a.feedScale !== b.feedScale) return false
+
+  // A move that turns the stock is never merged (issue #393): the merged move
+  // would keep only one endpoint's angle, and the middle angle would be lost.
+  // Two moves merge only when neither turns and they are at the same angle;
+  // an absent angle counts as an angle of its own.
+  if (a.from.a !== a.to.a || b.from.a !== b.to.a) return false
+  if (a.to.a !== b.from.a) return false
 
   // Both moves must be constant-Z and at the same Z
   if (!sameZ(a) || !sameZ(b)) return false

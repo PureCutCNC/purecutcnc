@@ -115,6 +115,40 @@ function testHalfTurns(): void {
   assertEqual(point, { x: 12, y: 7, z: 3 }, 'the input is not mutated')
 }
 
+function testRotaryAngleCarried(): void {
+  console.log('Testing a setup turn carries the rotary angle untouched...')
+  for (const point of [
+    { x: 12, y: 7, z: 3, a: 90 },
+    { x: 12, y: 7, z: 3, a: -370 },
+  ]) {
+    for (const orientation of [BOTTOM_X, BOTTOM_Y]) {
+      const frame = setupFrame(orientation, STOCK)
+      const expected = {
+        x: orientation.axis === 'x' ? 12 : 108,
+        y: orientation.axis === 'x' ? 83 : 7,
+        z: 17,
+        a: point.a,
+      }
+      assertEqual(canonicalToSetupPoint(point, frame), expected, `the angle survives the half turn about ${orientation.axis}`)
+      assertEqual(setupToCanonicalPoint(expected, frame), point, `the inverse carries it back about ${orientation.axis}`)
+    }
+  }
+
+  // A plain point gains no `a` key, at every orientation and in both directions.
+  for (const orientation of [TOP, BOTTOM_X, BOTTOM_Y]) {
+    const frame = setupFrame(orientation, STOCK)
+    const plain = { x: 12, y: 7, z: 3 }
+    assert(!('a' in canonicalToSetupPoint(plain, frame)), `no a key is invented (${orientation.angleDeg}° about ${orientation.axis})`)
+    assert(!('a' in setupToCanonicalPoint(plain, frame)), 'no a key is invented on the way back')
+  }
+
+  // 0° still returns the very same object, angle and all: Top adds no work.
+  const withAngle = { x: 12, y: 7, z: 3, a: 45 }
+  const top = setupFrame(TOP, STOCK)
+  assert(canonicalToSetupPoint(withAngle, top) === withAngle, '0° still returns the point itself')
+  assert(setupToCanonicalPoint(withAngle, top) === withAngle, '0° inverse still returns the point itself')
+}
+
 function testStockMapsOntoItself(): void {
   console.log('Testing the turned stock occupies the same box...')
   for (const orientation of [BOTTOM_X, BOTTOM_Y]) {
@@ -286,6 +320,7 @@ function testFaceDepth(): void {
 testPivot()
 testIdentityAtZero()
 testHalfTurns()
+testRotaryAngleCarried()
 testStockMapsOntoItself()
 testRoundTrip()
 testOtherAnglesRejected()

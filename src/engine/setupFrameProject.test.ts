@@ -308,6 +308,29 @@ function testToolpathBackToStockSpace(): void {
 }
 
 /**
+ * The rotary angle is about the bar's own axis, which a setup turn leaves
+ * alone: the trip back into stock space must carry it, not rebuild the points
+ * from x/y/z and drop it (issue #393).
+ */
+function testRotaryAngleRidesThroughToolpath(): void {
+  console.log('Testing the rotary angle survives the trip back into stock space...')
+  const project = makeProject()
+  const frame = setupFrame({ axis: 'x', angleDeg: 180 }, project.stock)
+  const local: ToolpathResult = {
+    operationId: 'op',
+    warnings: [],
+    moves: [
+      { kind: 'cut', from: { x: 20, y: 30, z: 14, a: 0 }, to: { x: 40, y: 50, z: 14, a: 90 } },
+    ],
+    bounds: null,
+  }
+  const stock = toolpathInStockFrame(local, frame)
+  assertEqual(stock.moves[0].from, { x: 20, y: 60, z: 6, a: 0 }, 'the start angle is carried')
+  assertEqual(stock.moves[0].to, { x: 40, y: 40, z: 6, a: 90 }, 'the end angle is carried, unchanged')
+  assertEqual(toolpathInStockFrame(stock, frame).moves, local.moves, 'the round trip is the identity, angle included')
+}
+
+/**
  * An imported model is turned over with the stock (issue #946): what a
  * generator loads for the turned project is, vertex for vertex, the half turn
  * of what it loads for the project as drawn. The mesh is a wedge with no
@@ -428,5 +451,6 @@ testStockTabsAndClamps()
 testPlanMirrorMatchesThePointTransform()
 testTextTurns()
 testToolpathBackToStockSpace()
+testRotaryAngleRidesThroughToolpath()
 
 console.log('setup frame project tests passed')

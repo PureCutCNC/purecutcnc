@@ -96,6 +96,32 @@ export interface CorpusCase {
    * point is the real generated toolpath of a real project.
    */
   generated?: () => { project: Project; operation: Operation; toolpath: ToolpathResult }
+  /**
+   * Validator ids this case is fed to, when they are not all the validators
+   * that claim its machine (issue #393). Absent means every claiming validator,
+   * exactly as before the field existed. A restricted case still runs only
+   * where the validator claims its machine.
+   */
+  validators?: readonly string[]
+}
+
+/**
+ * Whether a case runs on a validator (issue #393).
+ *
+ * The machine claim always applies: a validator that cannot parse the dialect
+ * would report a syntax error that says nothing about the case. On top of it,
+ * a case with no `validators` list runs everywhere its machine is claimed —
+ * the behaviour every pre-#393 case must keep — while a case that names ids
+ * runs only on those. The own-axis `A` program uses the list to stay away from
+ * Grbl, which rejects the `A` word outright.
+ */
+export function caseRunsOnValidator(
+  entry: Pick<CorpusCase, 'machineId' | 'validators'>,
+  validatorName: string,
+  validatorMachines: readonly string[],
+): boolean {
+  if (!validatorMachines.includes(entry.machineId)) return false
+  return entry.validators === undefined || entry.validators.includes(validatorName)
 }
 
 export interface BottomSetupCase {
@@ -491,6 +517,31 @@ function generatedRotaryBorrowedY(): { project: Project; operation: Operation; t
   }
 }
 
+/**
+ * A hand-built turning toolpath on an own-axis rotary (issue #393). The
+ * program writes the angle under `A` and runs the turning move in inverse time
+ * (`G93`), which plain Grbl rejects — the case is therefore restricted to the
+ * LinuxCNC validator with `validators` (see the case below).
+ */
+function generatedRotaryOwnAxis(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  const project = newProject('Conformance rotary own axis', 'mm')
+  project.stock = roundStock(20, 100, 'x')
+  // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
+  project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  const { operation } = buildOperation(project)
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: rotaryPt(0, 10, 30, 0), to: rotaryPt(20, 10, 30, 0) },
+    { kind: 'plunge', from: rotaryPt(20, 10, 30, 0), to: rotaryPt(20, 10, 20, 0) },
+    { kind: 'cut', from: rotaryPt(20, 10, 20, 0), to: rotaryPt(40, 10, 20, 90) },
+    { kind: 'cut', from: rotaryPt(40, 10, 20, 90), to: rotaryPt(50, 10, 20, 90) },
+  ]
+  return {
+    project,
+    operation,
+    toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+  }
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -609,6 +660,26 @@ export const CORPUS: CorpusCase[] = [
     }),
     moves: [],
     generated: generatedRotaryBorrowedY,
+  },
+  {
+    name: 'rotary-own-axis-inverse-time',
+    covers: 'issue #393 - an own-axis program: the angle written under A, G93 before the '
+      + 'turning move and an inverse-time F on it. Restricted to the LinuxCNC validator '
+      + 'because plain Grbl rejects the A word, which is a dialect verdict, not an arc one.',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'own',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    validators: ['linuxcnc-rs274'],
+    moves: [],
+    generated: generatedRotaryOwnAxis,
   },
   {
     name: 'trochoidal-edge-outside',

@@ -388,6 +388,17 @@ function testSplitRapidRotary(): void {
   // own block before the drop, so the Z block is still written last.
   assertEqual(splitRapid(at(0, 0, 30, 0), at(0, 0, 5, 45)),
     [{ a: 45 }, { z: 5 }], 'Z falls with no XY travel: an angle block, then Z')
+  // Z rises while the bar turns and nothing else moves: the angle still gets a
+  // block of its own. Writing it on the last block would put it on the Z block
+  // (issue #393), which the "angle on the XY block" cases above do not catch.
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 30, 45)),
+    [{ z: 30 }, { a: 45 }], 'Z rises with no XY travel: an angle block, then nothing')
+  // From an unknown position the XY block is always written, so the angle
+  // rides it — the one case where Z rising and no XY difference still has an
+  // XY block to carry the angle.
+  assertEqual(splitRapid(null, at(0, 0, 30, 45)),
+    [{ z: 30 }, { x: 0, y: 0, a: 45 }],
+    'an unknown start turns with no XY difference: the angle rides the written XY block')
 }
 
 function testGcodeRapidsUseTheSplit(): void {

@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FABMO_COMMIT } from './fabmo-opensbp/validate'
-import { CORPUS, caseExtension, renderCase } from './corpus'
+import { CORPUS, caseExtension, caseRunsOnValidator, renderCase } from './corpus'
 import type { CorpusCase } from './corpus'
 
 const ROOT_DIR = resolve(process.cwd(), '.gcode-conformance')
@@ -322,7 +322,9 @@ function main(): void {
   for (const { validator, tier } of available) {
     console.log(`\n── ${validator.name} (${tier}) ─────────────────────`)
     for (const { entry, file } of files) {
-      if (!validator.machines.includes(entry.machineId)) continue
+      // The machine claim plus, for a case that names validators, its own list
+      // (issue #393). A case with no list runs exactly where it used to.
+      if (!caseRunsOnValidator(entry, validator.name, validator.machines)) continue
       validated.add(entry.name)
       if (tier === 'strict') arcVerified.add(entry.name)
       const rejection = runValidator(validator, validatorFile(validator, file))

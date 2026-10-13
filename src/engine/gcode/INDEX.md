@@ -73,8 +73,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
   split of a rapid, carrying a rotary angle so a rotation-only rapid is never
-  dropped — the angle rides the block at the higher of the rapid's two Z values,
-  never a Z block), `planStepFeeds` / `inverseTimeFeedValue` and
+  dropped — the angle rides the XY block when there is one and otherwise a
+  block of its own, never a Z block, in either direction of Z), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, measured from the bar's centreline with the mean of the move's
@@ -106,16 +106,26 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   stock is never part of a run (#393): an arc is one planar circular motion, and
   a rotary axis moving through it is not.
 - `gcodeMotionParser.ts` — read-only parser for the emitted G-code (issue
-  #356); reconstructs planar motion analytically.
+  #356); reconstructs planar motion analytically. Given the definition's rotary
+  word and inverse-time commands (issue #393) it reads the angle modally — the
+  borrowed motor's letter is the angle, never a linear coordinate — and keeps a
+  `G93` F word as inverse time (`inverseTimeFeed`, 1/min) rather than a speed. A
+  program with no rotary word and no `G93` parses exactly as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
   `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
 - `motionDebug.ts` — exported-motion debug helpers (issue #356):
-  `parseExportedMotion` (parses in the definition's own dialect), eligibility,
-  the exported-vs-source diagnostic, and the three-layer model builder.
+  `parseExportedMotion` (parses in the definition's own dialect, handing the
+  G-code parser the definition's rotary word and inverse-time commands),
+  eligibility, the exported-vs-source diagnostic — which compares the rotary
+  angle at each endpoint as well as X/Y/Z, and does not compare a borrowed
+  axis's coordinate the program cannot carry — and the three-layer model
+  builder.
 - `utils.ts` — number formatting, `projectToMachinePoint` and its inverse
   `machineToProjectPoint`. Both take an optional setup frame
   (`src/engine/setupOrientation.ts`): the point is turned into the setup-local
-  frame before the origin offset, and Top passes none.
+  frame before the origin offset, and Top passes none. The rotary angle
+  (issue #393) goes out multiplied by `rotaryDirection` and comes back divided
+  by it; a point with no `a` gains no key in either direction.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
   non-G-code definition; see the note below. `qtplasmac.json` is the experimental

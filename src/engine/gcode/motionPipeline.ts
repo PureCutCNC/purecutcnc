@@ -1050,11 +1050,14 @@ export function splitRapid(
   const zFirst = !turning || current === null || target.z >= current.z
   if (zFirst) {
     if (zChanges) blocks.push({ z: target.z })
-    if (xyChanges) blocks.push({ x: target.x, y: target.y })
-    if (turning) {
-      const last = blocks[blocks.length - 1]
-      if (last === undefined) blocks.push({ a: angle })
-      else blocks[blocks.length - 1] = { ...last, a: angle }
+    // The angle rides the XY block when there is one and otherwise a block of
+    // its own — never the Z block, in either order (issue #393). Attaching it
+    // to the last block written would put it on the Z block whenever Z rose
+    // with no XY change.
+    if (xyChanges) {
+      blocks.push(turning ? { x: target.x, y: target.y, a: angle } : { x: target.x, y: target.y })
+    } else if (turning) {
+      blocks.push({ a: angle })
     }
     return blocks
   }
