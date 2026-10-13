@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { resolveOutputDialect } from '../../engine/gcode/types'
+import { resolveOutputDialect, rotaryWord } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { DisclosureSection } from '../common/DisclosureSection'
 import {
@@ -165,6 +165,19 @@ function renderVar(name: string, desc: string, context?: string) {
   // fields would offer edits that change nothing, so they are left out.
   const usesGcodeFields = resolveOutputDialect(mergedDef ?? definition) === 'gcode'
 
+  // A rotary axis can exist only on a G-code router (issue #393): a plasma
+  // machine and a ShopBot are refused by validation, so the group is hidden.
+  const rotaryAvailable = usesGcodeFields && form.machineKind !== 'plasma'
+  // The word follows the edited definition, so a coordinate system that maps
+  // project Y to machine X shows that letter instead of a hard-coded one.
+  const rotaryProgramWord = rotaryWord(mergeFormData(mergedDef ?? definition, form))
+  // A block error belongs on the Driven by field it names, but only while that
+  // field is on screen; otherwise the Advanced section keeps showing it.
+  const rotaryFieldVisible = rotaryAvailable && form.rotaryAbout !== 'none'
+  const rotaryError = rotaryFieldVisible && validationError && /\(at rotary[.)]/.test(validationError)
+    ? validationError
+    : null
+
   function renderTextAreaField(label: string, value: string, onChange: (v: string) => void) {
     return (
       <label className="machine-editor-field">
@@ -251,6 +264,66 @@ function renderVar(name: string, desc: string, context?: string) {
 
             {usesGcodeFields ? <PlasmaMachineFields form={form} onChange={handleFormChange} /> : null}
 
+            {rotaryAvailable ? (
+              <div className="dialog-section-group">
+                <span className="dialog-section-title">{td('dialogs.machineEditor.rotary')}</span>
+                <label className="machine-editor-field">
+                  <span className="machine-editor-label">{td('dialogs.machineEditor.rotary')}</span>
+                  <select
+                    className="machine-editor-input"
+                    data-testid="machine-rotary-axis"
+                    value={form.rotaryAbout}
+                    onChange={(event) => handleFormChange({
+                      rotaryAbout: event.target.value === 'x' ? 'x' : event.target.value === 'y' ? 'y' : 'none',
+                    })}
+                  >
+                    <option value="none">{td('dialogs.machineEditor.rotaryNone')}</option>
+                    <option value="x">{td('dialogs.machineEditor.rotaryBarX')}</option>
+                    <option value="y">{td('dialogs.machineEditor.rotaryBarY')}</option>
+                  </select>
+                </label>
+                {form.rotaryAbout === 'none' ? null : (
+                  <>
+                    <label className="machine-editor-field">
+                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryDrivenBy')}</span>
+                      <select
+                        className="machine-editor-input"
+                        data-testid="machine-rotary-drive"
+                        value={form.rotaryDrive}
+                        onChange={(event) => handleFormChange({
+                          rotaryDrive: event.target.value === 'borrowed' ? 'borrowed' : 'own',
+                        })}
+                      >
+                        <option value="own">{td('dialogs.machineEditor.rotaryOwn')}</option>
+                        <option value="borrowed">
+                          {form.rotaryAbout === 'x'
+                            ? td('dialogs.machineEditor.rotaryYMotor')
+                            : td('dialogs.machineEditor.rotaryXMotor')}
+                        </option>
+                      </select>
+                    </label>
+                    {rotaryProgramWord ? (
+                      <p className="machine-editor-note" data-testid="machine-rotary-word">
+                        {td('dialogs.machineEditor.rotaryWord', { word: rotaryProgramWord })}
+                      </p>
+                    ) : null}
+                    {rotaryError ? (
+                      <div className="machine-editor-error" role="alert">{rotaryError}</div>
+                    ) : null}
+                    <label className="machine-editor-field">
+                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryReverse')}</span>
+                      <input
+                        type="checkbox"
+                        data-testid="machine-rotary-reversed"
+                        checked={form.rotaryReversed}
+                        onChange={(event) => handleFormChange({ rotaryReversed: event.target.checked })}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            ) : null}
+
             {usesGcodeFields ? (
               <>
                 <div className="dialog-section-group">
@@ -327,7 +400,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 </div>
               ) : null}
             </DisclosureSection>
-            {validationError ? (
+            {validationError && !rotaryError ? (
               <div className="machine-editor-error" role="alert">
                 {validationError}
               </div>

@@ -380,3 +380,81 @@ test('OpenSBP machines hide plasma controls and reject Advanced plasma kind', as
   await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
   await expect(ui.machineEditor.dialog(app.page)).toContainText('Plasma machines require the G-code output dialect')
 })
+
+test('the rotary axis group writes, persists and clears a rotary block (#393)', async ({ app, ui }) => {
+  await seedMachineProject(app.page)
+  await openManager(app.page, ui)
+  await ui.machineManager.item(app.page, 'GRBL 1.1').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+
+  const editor = ui.machineEditor.dialog(app.page)
+  const axis = ui.machineEditor.rotaryAxis(app.page)
+  const drive = ui.machineEditor.rotaryDrive(app.page)
+  const reversed = ui.machineEditor.rotaryReversed(app.page)
+  const word = ui.machineEditor.rotaryWord(app.page)
+  await expect(editor).toBeVisible()
+  await expect(axis).toHaveValue('none')
+  await expect(drive).toHaveCount(0)
+  await expect(reversed).toHaveCount(0)
+
+  // The drive and reverse controls appear with the axis, and the word is A.
+  await axis.selectOption('x')
+  await expect(drive).toBeVisible()
+  await expect(reversed).toBeVisible()
+  await expect(word).toHaveText('Program word: A')
+
+  // Borrowing the Y motor names the project axis across the bar and shows the
+  // word the program will use.
+  await expect(drive.locator('option[value="borrowed"]')).toHaveText('The Y motor')
+  await drive.selectOption('borrowed')
+  await expect(word).toHaveText('Program word: Y')
+  await reversed.check()
+
+  await ui.machineEditor.saveButton(app.page).click()
+  await expect(editor).toBeHidden()
+
+  // The manager's preview summarizes the axis.
+  await expect(ui.machineManager.rotarySummary(app.page))
+    .toHaveText('Rotary axis: bar along X, on the Y motor (word Y)')
+
+  // Reopening keeps every choice, and the raw JSON carries the block.
+  await ui.machineManager.editButton(app.page).click()
+  await expect(editor).toBeVisible()
+  await expect(ui.machineEditor.rotaryAxis(app.page)).toHaveValue('x')
+  await expect(ui.machineEditor.rotaryDrive(app.page)).toHaveValue('borrowed')
+  await expect(ui.machineEditor.rotaryReversed(app.page)).toBeChecked()
+  await expect(ui.machineEditor.rotaryWord(app.page)).toHaveText('Program word: Y')
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const json = ui.machineEditor.advancedJson(app.page)
+  expect(JSON.parse(await json.inputValue()).rotary).toEqual({
+    about: 'x', drive: 'borrowed', reversed: true, inverseTimeFeed: { on: 'G93', off: 'G94' },
+  })
+
+  // The word follows the definition's coordinate system, not a hard-coded
+  // letter: mapping project Y to machine X makes the borrowed word X.
+  const mapped = JSON.parse(await json.inputValue())
+  mapped.coordinateSystem.yAxis = 'X'
+  await json.fill(JSON.stringify(mapped, null, 2))
+  await expect(ui.machineEditor.rotaryWord(app.page)).toHaveText('Program word: X')
+
+  // None removes the block, from the form and from the saved definition.
+  await ui.machineEditor.rotaryAxis(app.page).selectOption('none')
+  await expect(ui.machineEditor.rotaryDrive(app.page)).toHaveCount(0)
+  expect(JSON.parse(await json.inputValue()).rotary).toBeUndefined()
+  await ui.machineEditor.saveButton(app.page).click()
+  await expect(editor).toBeHidden()
+  await expect(ui.machineManager.rotarySummary(app.page)).toHaveCount(0)
+  await ui.machineManager.editButton(app.page).click()
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const reopened = ui.machineEditor.advancedJson(app.page)
+  expect(JSON.parse(await reopened.inputValue()).rotary).toBeUndefined()
+  await ui.machineEditor.cancelButton(app.page).click()
+
+  // A plasma machine cannot have a rotary axis, so the group is absent.
+  await ui.machineManager.item(app.page, 'QtPlasmaC (experimental)').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+  await expect(editor).toBeVisible()
+  await expect(ui.machineEditor.rotaryAxis(app.page)).toHaveCount(0)
+  await expect(ui.machineEditor.rotaryDrive(app.page)).toHaveCount(0)
+  await ui.machineEditor.cancelButton(app.page).click()
+})
