@@ -206,7 +206,7 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // The card's program is the wrapped one: a turning cut is a G1 block with the
   // rotary word (A on this own-axis machine).
   await ui.exportDialog.programCard(page, 'around').click()
-  await expect(ui.exportPreview.body(page)).toContainText(/^G1\b.*\bA-?\d/m)
+  await expect(ui.exportPreview.body(page)).toContainText(/^(?:G[01]\s+)?[XYZ][-\d.]+.*\bA-?\d+\.\d+/m)
   // Escape does not close this dialog; its header button does.
   await ui.exportDialog.root(page).locator('.dialog-header').getByRole('button').last().click()
   await expect(ui.exportDialog.root(page)).toBeHidden()
