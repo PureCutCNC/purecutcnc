@@ -445,7 +445,7 @@ test('the rotary axis group writes, persists and clears a rotary block (#393)', 
   await expect(editor).toBeHidden()
   await expect(ui.machineManager.rotarySummary(app.page)).toHaveCount(0)
   await ui.machineManager.editButton(app.page).click()
-  await ui.machineEditor.advancedToggle(app.page).click()
+  // The Advanced section remembers that it was opened above.
   const reopened = ui.machineEditor.advancedJson(app.page)
   expect(JSON.parse(await reopened.inputValue()).rotary).toBeUndefined()
   await ui.machineEditor.cancelButton(app.page).click()
