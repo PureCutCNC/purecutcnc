@@ -31,6 +31,7 @@ import type { BlockStock, MachineOrigin, Operation, Project, RoundStock, Stock }
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { runPostProcessor } from './postprocessor'
+import { parseGcodeMotion } from './gcodeMotionParser'
 import { rotaryDirection, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { warningSeverity } from '../toolpaths/warningCodes'
@@ -345,6 +346,51 @@ function bruteForceStockPathLength(
     'a mirrored borrowed output flips the sign')
 }
 
+// ── 3b. a feed move must carry its angle on both ends or on neither (rule 2) ─
+//
+// With an angle on one end only, feed planning reads the absent angle as zero
+// and the emitter writes no angle word: the bar would stay where it is while
+// the cut ran at the speed planned for a turn.
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(OWN_AXIS)
+  // The establishing rapid leaves the controller at A90.
+  const establishing: ToolpathMove = { kind: 'rapid', from: at(0, 10, 20, 90), to: at(0, 10, 20, 90) }
+  const arrangements: Array<[string, ToolpathMove[]]> = [
+    ['ends without an angle', [
+      establishing,
+      { kind: 'cut', from: at(0, 10, 20, 90), to: at(0, 10, 15) },
+    ]],
+    ['starts without an angle', [
+      establishing,
+      { kind: 'cut', from: at(0, 10, 15), to: at(0, 10, 20, 90) },
+    ]],
+  ]
+  for (const [name, moves] of arrangements) {
+    // With inverse-time feed and without it: the refusal names the angle rule,
+    // not the missing feed mode.
+    for (const machine of [definition, rotaryMachine({ ...OWN_AXIS, inverseTimeFeed: null })]) {
+      const result = exportProgram(project, machine, [{ operation: operation('Partial'), moves }])
+      assert.deepEqual(result.warnings, [{
+        code: 'postRotaryAngleNotEstablished',
+        params: { operation: 'Partial' },
+      }], `a feed move that ${name} is refused`)
+      assert.doesNotMatch(result.gcode, /A(15|90)\b/, `${name}: the refused operation emits no motion`)
+    }
+  }
+
+  // A rapid may still carry the angle on one end: that is how the first angle
+  // is established, and the same move with a whole feed pair still exports.
+  const control = exportProgram(project, definition, [{
+    operation: operation('Whole'),
+    moves: [{ kind: 'rapid', from: at(0, 10, 30), to: at(0, 10, 30, 90) }, {
+      kind: 'cut', from: at(0, 10, 30, 90), to: at(0, 10, 20, 90),
+    }],
+  }])
+  assert.deepEqual(control.warnings, [], 'a rapid may establish an angle at one end of its own move')
+  assert.match(control.gcode, /A90\b/, 'and the established angle is written')
+}
+
 // ── 4. no arc across a turning move ───────────────────────────
 
 /** A circle of radius `r` about (cx, cy) at height `z`, as `count` chords. */
@@ -389,6 +435,23 @@ function circleMoves(
     moves: established(circleMoves(0, 10, 5, 20, 16, () => 45)),
   }]).gcode
   assert.match(constant, /G[23]\b/, 'the same points at a constant angle still fit an arc')
+  // The arcs are only correct because the establishing rapid wrote the angle
+  // first: the emitter keeps the angle modal, so an arc carries no A word of
+  // its own. Dropping that word from the rapid would leave the whole run at the
+  // controller's previous angle.
+  const constantLines = motionLines(constant)
+  const firstArc = constantLines.findIndex((line) => /G[23]\b/.test(line))
+  const writtenAngle = constantLines.findIndex((line) => /A45\b/.test(line))
+  assert.ok(writtenAngle >= 0 && writtenAngle < firstArc,
+    `the A45 rapid is written before the first arc:\n${constantLines.join('\n')}`)
+  const constantParse = parseGcodeMotion(constant, 'ij', ';', '', {
+    word: 'A',
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  })
+  const constantArcs = constantParse.moves.filter((move) => move.kind === 'arc')
+  assert.ok(constantArcs.length > 0, 'the constant-angle run reads back as arcs')
+  assert.ok(constantArcs.every((arc) => arc.from.a === 45 && arc.to.a === 45),
+    'every arc read back is at 45°, established by the rapid before it')
 
   // A turning move must not seed a run either: the first move is never a
   // candidate for its own run, so it would otherwise join the arc the
@@ -576,15 +639,23 @@ const NINETY = Math.PI / 2
     `no turning move follows the final G94:\n${lines.join('\n')}`)
 }
 
-// A program whose last feed move turns switches inverse time off before the
-// footer (rule 4: the program never ends in inverse-time mode).
+// A program whose last feed move turns switches inverse time off *before* the
+// spindle stop and the footer (rule 4: the program never ends in inverse-time
+// mode, and an `M5` is not a turning move).
 {
   const project = projectWith(bar())
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('EndsTurning'),
     moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
   }])
-  assert.match(result.gcode, /G94\nM30/, 'a program ending while turning switches the mode off first')
+  const raw = result.gcode.split('\n')
+  const restored = raw.indexOf('G94')
+  const spindleOff = raw.indexOf('M5')
+  const end = raw.indexOf('M30')
+  assert.ok(restored > 0 && spindleOff > restored && end > spindleOff,
+    `G94 comes before the spindle stop and the program end:\n${result.gcode}`)
+  assert.match(result.gcode, /G94\nM5\nM30/,
+    'the spindle stop and the end are written in ordinary mode')
 }
 
 // ── 6. inverseTimeFeedValue alone ─────────────────────────────
@@ -605,10 +676,11 @@ const NINETY = Math.PI / 2
 
   // The across-axis offset counts, not just the height: the corner (0, 0, 20)
   // is hypot(10, 10) from the centreline, while a point straight above it at
-  // the same height (0, 10, 20) is exactly 10 mm out.
-  const atRadius = inverseTimeFeedValue(at(0, 0, 20), at(0, 0, 20, 90), 600, centre, tolerance)
+  // the same height (0, 10, 20) is exactly 10 mm out. Both ends carry the angle
+  // (rule 2): the length is never asked to guess an absent one.
+  const atRadius = inverseTimeFeedValue(at(0, 0, 20, 0), at(0, 0, 20, 90), 600, centre, tolerance)
   assert.equal(atRadius, 600 / (Math.hypot(10, 10) * NINETY), 'the across-axis offset is measured')
-  const heightOnly = inverseTimeFeedValue(at(0, 10, 20), at(0, 10, 20, 90), 600, centre, tolerance)
+  const heightOnly = inverseTimeFeedValue(at(0, 10, 20, 0), at(0, 10, 20, 90), 600, centre, tolerance)
   assert.equal(heightOnly, 600 / (10 * NINETY), 'a point above the centreline is 10 mm out')
   assert.notEqual(atRadius, heightOnly, 'ignoring the across-axis offset would give the wrong word')
 }
@@ -684,6 +756,86 @@ const NINETY = Math.PI / 2
   assert.equal(pureTurn, 600 / (10 * NINETY), 'a constant-radius turn keeps its word')
   const overCentre = inverseTimeFeedValue(at(0, 10, 10, 0), at(7, 10, 10, 90), 600, centre, tolerance)
   assert.equal(overCentre, 600 / 7, 'a turn over the centreline keeps its word')
+
+  // ── the tip speed touching zero ─────────────────────────────
+  //
+  // The squared speed is a sum of squares, so it can touch zero *inside* a move
+  // and the integrand acquires a corner. A fixed Gauss-Legendre rule is not
+  // enough there: the case below is a perfect square, the rule was off by 8e-4,
+  // and the program wrote F19.084 where the true word is F19.099.
+  //
+  // Bar along X, centreline at Y10 / Z10, feed 600: from 20 mm across the bar
+  // to 20 mm the other side over a full turn, each end 10/π below the
+  // centreline. The speed is 40π·|t − ½| and the length is exactly 10π.
+  const cuspFrom = at(0, 0, 10 - 10 / Math.PI, 0)
+  const cuspTo = at(0, 20, 10 - 10 / Math.PI, 360)
+  const cusp = inverseTimeFeedValue(cuspFrom, cuspTo, 600, centre, tolerance)
+  assert.equal(Number(cusp.toFixed(3)), 19.099, 'the cusp writes F19.099, not the 32-point rule\'s F19.084')
+  const cuspLength = 600 / cusp
+  assert.ok(Math.abs(cuspLength - 10 * Math.PI) / (10 * Math.PI) < 1e-12,
+    `the cusp length is the exact 10π (got ${cuspLength})`)
+
+  // The same geometry with the double zero just outside each end: the minimum
+  // sits at `t* = -ε` and at `t* = 1 + ε`, so the corner is off the interval.
+  // The length is `40π·(½ + ε)` exactly.
+  const epsilon = 1e-3
+  const outsideLength = 20 * Math.PI + 40 * Math.PI * epsilon
+  const outsideCases: Array<[string, ToolpathPoint, ToolpathPoint]> = [
+    ['the zero just before the start', at(0, 10 + 20 * epsilon, 10 - 10 / Math.PI, 0),
+      at(0, 30 + 20 * epsilon, 10 - 10 / Math.PI, 360)],
+    ['the zero just after the end', at(0, -10 - 20 * epsilon, 10 - 10 / Math.PI, 0),
+      at(0, 10 - 20 * epsilon, 10 - 10 / Math.PI, 360)],
+  ]
+  for (const [name, from, to] of outsideCases) {
+    const value = inverseTimeFeedValue(from, to, 600, centre, tolerance)
+    const length = 600 / value
+    assert.ok(Math.abs(length - outsideLength) / outsideLength < 1e-12,
+      `${name}: the closed form is exact (got ${length}, expected ${outsideLength})`)
+    const expectedLength = bruteForceStockPathLength(from, to, stock)
+    assert.ok(Math.abs(length - expectedLength) / expectedLength < 1e-9,
+      `${name}: the polyline agrees (relative error ${(Math.abs(length - expectedLength) / expectedLength).toExponential(2)})`)
+  }
+
+  // A near miss: the minimum speed is ~1e-6 of the maximum, so the corner is
+  // present but shallow — the case a split-interval quadrature would still
+  // strain on.
+  const nearMissFrom = at(0, 0, 10 - 10 / Math.PI, 0)
+  const nearMissTo = at(0, 20 + 6.32e-5, 10 - 10 / Math.PI, 360)
+  let minSpeed = Infinity
+  let maxSpeed = 0
+  const speedChords = 200_000
+  for (let index = 0; index < speedChords; index++) {
+    const previous = stockSpacePoint({
+      x: 0,
+      y: 0 + (20 + 6.32e-5) * (index / speedChords),
+      z: 10 - 10 / Math.PI,
+      a: 360 * (index / speedChords),
+    }, stock)
+    const next = stockSpacePoint({
+      x: 0,
+      y: 0 + (20 + 6.32e-5) * ((index + 1) / speedChords),
+      z: 10 - 10 / Math.PI,
+      a: 360 * ((index + 1) / speedChords),
+    }, stock)
+    const speed = Math.hypot(next.x - previous.x, next.y - previous.y, next.z - previous.z)
+    if (speed < minSpeed) minSpeed = speed
+    if (speed > maxSpeed) maxSpeed = speed
+  }
+  assert.ok(minSpeed / maxSpeed < 1e-5, `the near miss really is a near miss (ratio ${minSpeed / maxSpeed})`)
+  const nearMiss = inverseTimeFeedValue(nearMissFrom, nearMissTo, 600, centre, tolerance)
+  const nearMissExpected = bruteForceStockPathLength(nearMissFrom, nearMissTo, stock)
+  assert.ok(Math.abs(600 / nearMiss - nearMissExpected) / nearMissExpected < 1e-9,
+    `the near miss agrees with the polyline (relative error ${(Math.abs(600 / nearMiss - nearMissExpected) / nearMissExpected).toExponential(2)})`)
+
+  // A long move: ten full turns while the tool drops from 10 mm above the
+  // centreline to 5 mm above it. A 100,000-chord polyline is not enough here
+  // (the chord error is ~1.6e-8), so this one uses a million.
+  const longFrom = at(0, 10, 20, 0)
+  const longTo = at(0, 10, 15, 3600)
+  const longValue = inverseTimeFeedValue(longFrom, longTo, 600, centre, tolerance)
+  const longExpected = bruteForceStockPathLength(longFrom, longTo, stock, 1_000_000)
+  assert.ok(Math.abs(600 / longValue - longExpected) / longExpected < 1e-9,
+    `the 3600° move agrees with the polyline (relative error ${(Math.abs(600 / longValue - longExpected) / longExpected).toExponential(2)})`)
 }
 
 // A rapid that turns: the angle word is never written on a block that also
@@ -817,6 +969,7 @@ const NINETY = Math.PI / 2
   for (const code of [
     'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel',
     'postRotaryNeedsRoundStock', 'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis',
+    'postRotaryDrillNotExpanded',
   ] as const) {
     assert.equal(warningSeverity(code), 'error', `${code} blocks the export`)
   }
@@ -1003,14 +1156,16 @@ const NINETY = Math.PI / 2
   assert.match(control.gcode, /G81\b/, 'a plain machine still writes its canned cycle')
 
   // A borrowed-motor machine whose operation has drill holes but no expanded
-  // moves would be silently dropped: it is refused instead.
+  // moves would be silently dropped: it is refused instead, with a warning that
+  // names the real reason (rule 3b) rather than travel it does not have.
   const empty = exportProgram(project, rotaryOn(LINUXCNC, BORROWED_Y), [
     { operation: op, moves: [], drillCycles: cycles },
   ])
   assert.deepEqual(empty.warnings, [{
-    code: 'postRotaryBorrowedAxisTravel',
-    params: { operation: 'Drill', axis: 'Y' },
+    code: 'postRotaryDrillNotExpanded',
+    params: { operation: 'Drill' },
   }], 'drill holes with no moves to expand are refused')
+  assert.doesNotMatch(empty.gcode, /G8[13]\b/, 'no canned cycle is written for the refused operation')
 }
 
 // ── 12. the machine's own templates may not drive the borrowed motor (1c) ─
@@ -1044,6 +1199,107 @@ const NINETY = Math.PI / 2
   // The other axis is not the borrowed letter.
   const otherAxis = exportProgram(project, withHeader(['G0 X0']), [{ operation: operation('One'), moves }])
   assert.deepEqual(otherAxis.warnings, [], 'an X word on a machine that borrows Y is harmless')
+
+  // The three spellings a raw-template scan missed. `G0 Y{feed}` is only a word
+  // once rendered; whitespace between the letter and its value is still a word;
+  // and a line that starts with a parenthesised comment still carries code.
+  const withOperationHeader = (operationHeader: string[]): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: BORROWED_Y,
+    program: {
+      ...structuredClone(GRBL.program),
+      operationHeader: [...GRBL.program.operationHeader, ...operationHeader],
+    },
+  })
+  const rendered = exportProgram(project, withOperationHeader(['G0 X0 Y{feed}']), [{ operation: operation('One'), moves }])
+  assert.deepEqual(rendered.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'a template rendered to a real Y word refuses the program')
+
+  const spaced = exportProgram(project, withHeader(['Y 0']), [{ operation: operation('One'), moves }])
+  assert.deepEqual(spaced.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'whitespace between the letter and its value is still a word')
+
+  // LINUXCNC writes `( … )` comments; a naive scan skipped such a line whole
+  // even though the code after the comment is code.
+  const parenMachine = validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: BORROWED_Y,
+    program: { ...structuredClone(LINUXCNC.program), header: [...LINUXCNC.program.header, '(position) G0 Y0'] },
+  })
+  const paren = exportProgram(project, parenMachine, [{ operation: operation('One'), moves }])
+  assert.deepEqual(paren.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'code after a leading parenthesised comment still counts')
+
+  // A command the program never writes cannot refuse anything: with
+  // `pauseAfterChange` off, `pauseCommand` is not emitted even though it names Y.
+  const inactivePause = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: BORROWED_Y,
+    toolChange: { ...structuredClone(GRBL.toolChange), pauseCommand: 'G0 Y0', pauseAfterChange: false },
+  })
+  const paused = exportProgram(project, inactivePause, [{ operation: operation('One'), moves }])
+  assert.deepEqual(paused.warnings, [], 'a pause command that is never written does not refuse the program')
+  assert.match(paused.gcode, /X20\b/, 'and the operation is exported')
+}
+
+// A machine with its own axis: a template that writes A turns the bar behind
+// the planner's back. Operation one ends at A90, the tool change runs `G0 A0`,
+// and operation two's opening rapid to A90 writes no angle word because the
+// emitter still believes it is at A90 — so the second operation would cut at
+// the wrong angle. Such a program is refused; an angle-free one is untouched.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  const ownAxisChange = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, 'G0 A0'] },
+  })
+  const secondTool = { ...defaultTool('mm', 2), id: 't2', name: 'Second Tool' }
+  project.tools = [...project.tools, secondTool]
+  const tools = new Map(project.tools.map((tool) => [tool.id, normalizeToolForProject(tool, project)]))
+  const turnOp = operation('Turn')
+  const nextOp = operation('Next', { toolRef: 't2' })
+  const turned = runPostProcessor({
+    project,
+    definition: ownAxisChange,
+    operations: [
+      {
+        operation: turnOp,
+        tool: tools.get('t1')!,
+        toolpath: toolpathOf(turnOp, established([
+          { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+        ])),
+      },
+      {
+        operation: nextOp,
+        tool: tools.get('t2')!,
+        toolpath: toolpathOf(nextOp, [{ kind: 'cut', from: at(0, 10, 20), to: at(5, 10, 20) }]),
+      },
+    ],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.deepEqual(turned.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'A' },
+  }], 'an own-axis tool-change template that writes A refuses the turning program')
+  assert.equal(turned.gcode, '', 'the refused program carries no program text')
+
+  // The same template on a program that never turns is harmless: nothing is
+  // rotated, so the extra `A` word cannot contradict the planner.
+  const angleFree = exportProgram(project, validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    program: { ...structuredClone(GRBL.program), header: [...GRBL.program.header, 'G0 A0'] },
+  }), [{ operation: operation('Flat'), moves }])
+  assert.deepEqual(angleFree.warnings, [], 'an own-axis template that writes A is harmless while nothing turns')
+  assert.match(angleFree.gcode, /G0 A0/, 'and the template is written unchanged')
 }
 
 // ── 13. the angle the controller is at is reconciled (2) ──────
@@ -1071,6 +1327,21 @@ const NINETY = Math.PI / 2
   }])
   assert.deepEqual(establishedRun.warnings, [])
   assert.match(establishedRun.gcode, /G[23]\b/, 'the arcs are emitted once the angle is established')
+  // Accepted is not enough: the rapid must actually write the angle before the
+  // run, and reading the program back must show every arc at 45°.
+  const establishedLines = motionLines(establishedRun.gcode)
+  const establishedFirstArc = establishedLines.findIndex((line) => /G[23]\b/.test(line))
+  const establishedAngle = establishedLines.findIndex((line) => /A45\b/.test(line))
+  assert.ok(establishedAngle >= 0 && establishedAngle < establishedFirstArc,
+    `the A45 rapid precedes the first arc:\n${establishedLines.join('\n')}`)
+  const establishedParse = parseGcodeMotion(establishedRun.gcode, 'ij', ';', '', {
+    word: 'A',
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  })
+  const establishedArcs = establishedParse.moves.filter((move) => move.kind === 'arc')
+  assert.ok(establishedArcs.length > 0, 'the run reads back as arcs')
+  assert.ok(establishedArcs.every((arc) => arc.from.a === 45 && arc.to.a === 45),
+    'every arc read back is at 45°')
 }
 
 // A feed move that starts and ends at 90 after the program left the bar at 0
@@ -1226,6 +1497,15 @@ const NINETY = Math.PI / 2
   assert.ok(restored > -1 && restored < changeIndex, 'G94 is restored before the tool change')
   assert.ok(raw.slice(restored, changeIndex).every((line) => !/A-?[0-9]/.test(line)),
     'no turning move is written between the restored mode and the tool change')
+
+  // The spindle stop that ends the turning operation is itself output: it must
+  // be written in ordinary mode, before the tool change, not inside `G93`.
+  const turningIndex = raw.findIndex((line) => /A90\b/.test(line))
+  const stopIndex = raw.findIndex((line, index) => index > turningIndex && line === 'M5')
+  const modeBeforeStop = raw.lastIndexOf('G94', stopIndex)
+  assert.ok(turningIndex > 0 && stopIndex > turningIndex && modeBeforeStop > turningIndex
+    && modeBeforeStop < stopIndex && changeIndex > stopIndex,
+    `G94 comes before the spindle stop, which comes before the tool change:\n${raw.join('\n')}`)
 }
 
 // ── the planner in isolation ──────────────────────────────────

@@ -93,6 +93,31 @@ function safeCommentLines(text: string): string[] {
 }
 
 /**
+ * True when a rendered machine-template line carries `letter` as an axis word
+ * (issue #393, rule 3c). A word is a letter followed by a value — `Y0`,
+ * `Y-5.0`, `Y 0`, `Y#1` — with or without whitespace between them, so
+ * `G53 G0 Y0`, `G92 Y0` and the compact `X0Y0` all match while prose does not.
+ *
+ * Comments are prose and are removed before the scan: an embedded or leading
+ * `( … )` comment, and everything from the definition's own line-comment
+ * prefix to the end of the line. Code after a parenthesised comment is still
+ * code, which is why a line is never skipped just because it starts with one.
+ */
+function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
+  let code = line.replace(/\([^)]*\)/g, ' ')
+  // `(` is the parenthesised-comment marker, already removed above; slicing at
+  // it would throw away the code that follows.
+  if (commentPrefix.length > 0 && commentPrefix !== '(') {
+    const at = code.indexOf(commentPrefix)
+    if (at >= 0) code = code.slice(0, at)
+  }
+  for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
+    if (match[1].toUpperCase() === letter) return true
+  }
+  return false
+}
+
+/**
  * Export a program for the machine definition's output dialect.
  *
  * This is the only place a dialect is chosen. Each dialect owns its line
@@ -189,6 +214,18 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
   }
 
+  // Every line written from a machine template, in the exact rendered form the
+  // program carries (issue #393, rule 3c). The check at the end of the program
+  // reads these rather than the raw template strings: a template that renders
+  // to a real axis word (`G0 Y{feed}`), whitespace between the letter and its
+  // value, and a command that is never written at all (`pauseCommand` with
+  // `pauseAfterChange` off) are all judged by what was actually emitted.
+  const templateLines: string[] = []
+  const emitTemplateLine = (content: string) => {
+    templateLines.push(content)
+    emitLine(content)
+  }
+
   const substituteTemplates = (text: string, context: Record<string, string | number>): string => {
     return text.replace(/{(\w+)}/g, (_, key) => context[key] !== undefined ? context[key].toString() : `{${key}}`)
   }
@@ -206,7 +243,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         : substituteTemplates(template, context)
       for (const line of expanded.split(/\r?\n/)) {
         if (line.trim().length > 0) {
-          emitLine(line)
+          emitTemplateLine(line)
         }
       }
     }
@@ -230,7 +267,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const leaveInverseTime = () => {
     if (!state.inverseTime) return
     const off = definition.rotary?.inverseTimeFeed?.off
-    if (off) emitLine(off)
+    if (off) emitTemplateLine(off)
     state.inverseTime = false
     // The controller's modal F is no longer the feed the emitter tracks (it is
     // a 1/min value, or a command the controller replaced), so the next normal
@@ -317,7 +354,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     if (directive.mode === 'inverse') {
       if (!state.inverseTime) {
         const on = definition.rotary?.inverseTimeFeed?.on
-        if (on) emitLine(on)
+        if (on) emitTemplateLine(on)
         state.inverseTime = true
       }
       const axes: Partial<ToolpathPoint> = {
@@ -358,19 +395,19 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   // 1. Header
   definition.program.header.forEach(line => {
-    emitLine(substituteTemplates(line, commonContext))
+    emitTemplateLine(substituteTemplates(line, commonContext))
   })
 
   // 2. Units (if not already in header)
   const headerContainsUnits = definition.program.header.some(l => l.includes('{unitsCommand}'))
   if (unitsCommand && !headerContainsUnits) {
-    emitLine(unitsCommand)
+    emitTemplateLine(unitsCommand)
   }
 
   // 3. WCS (if not already in header)
   const headerContainsWCS = definition.program.header.some(l => l.includes('{wcsCommand}'))
   if (wcsCommand && !headerContainsWCS) {
-    emitLine(wcsCommand)
+    emitTemplateLine(wcsCommand)
   } else if (headerContainsWCS && !definition.workCoordinates.selectCommand) {
     warnings.push({ code: 'postWcsNullSelect' })
   }
@@ -677,7 +714,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       // feed mode whose F means something else.
       leaveInverseTime()
       if (definition.toolChange.stopSpindleFirst && step.spindleRunningAtToolChange) {
-        emitLine(definition.feedSpeed.spindleOff)
+        emitTemplateLine(definition.feedSpeed.spindleOff)
       }
 
       const toolContext = {
@@ -685,22 +722,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
 
       definition.toolChange.commands.forEach(cmd => {
-        emitLine(substituteTemplates(cmd, toolContext))
+        emitTemplateLine(substituteTemplates(cmd, toolContext))
       })
 
       if (definition.toolChange.pauseAfterChange) {
-        emitLine(definition.toolChange.pauseCommand)
+        emitTemplateLine(definition.toolChange.pauseCommand)
       }
     }
 
     // Spindle On
     if (step.startSpindle) {
-      emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
+      emitTemplateLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
     }
 
     // Coolant
     if (step.startCoolant && definition.coolant) {
-      emitLine(definition.coolant.floodOnCommand)
+      emitTemplateLine(definition.coolant.floodOnCommand)
     }
 
     // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
@@ -912,9 +949,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     // Spindle off after the last move when the program ends here, or a tool
-    // change that is actually going to be written comes next.
+    // change that is actually going to be written comes next. The spindle stop
+    // is not a turning move, so inverse-time mode is left *before* it (rule 4):
+    // an `M5` written while `G93` is in force stops the spindle under a feed
+    // mode whose F means something else.
     if (step.stopSpindleAfter) {
-       emitLine(definition.feedSpeed.spindleOff)
+      leaveInverseTime()
+      emitTemplateLine(definition.feedSpeed.spindleOff)
     }
   })
 
@@ -923,11 +964,35 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   // 5. Footer
   definition.program.footer.forEach(line => {
-    emitLine(substituteTemplates(line, commonContext))
+    emitTemplateLine(substituteTemplates(line, commonContext))
   })
 
   // 6. Program end
-  emitLine(definition.stop.programEndCommand)
+  emitTemplateLine(definition.stop.programEndCommand)
+
+  // The machine's own templates may not write the word that turns the rotary
+  // (issue #393, rule 3c), judged on the lines the program actually wrote. On a
+  // machine that borrows a motor any such line refuses the program; on one with
+  // its own axis it refuses only a program that turns, because the line is
+  // harmless while nothing rotates. A refused program carries no text.
+  const rotaryLetter = rotaryWord(definition)
+  if (rotaryLetter !== null) {
+    const prefix = definition.program.commentPrefix
+    const templateDrivesRotary = templateLines.some(
+      (line) => lineCarriesAxisWord(line, rotaryLetter, prefix),
+    )
+    const operationTurns = operations.some(({ toolpath }) => toolpath.moves.some(
+      (move) => move.from.a !== undefined || move.to.a !== undefined,
+    ))
+    if (templateDrivesRotary && (rotaryBorrowedAxis(definition) !== null || operationTurns)) {
+      return {
+        gcode: '',
+        warnings: [{ code: 'postRotaryTemplateUsesBorrowedAxis', params: { axis: rotaryLetter } }],
+        stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+        ...(captureTrace ? { motionTraces: [] } : null),
+      }
+    }
+  }
 
   return {
     gcode: lines.join('\n'),
