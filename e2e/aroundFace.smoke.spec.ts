@@ -117,17 +117,20 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // ── A base and a pocket target, both Around ──
   await drawRect(page, 10, 5, 100, 15)
   await drawRect(page, 20, 8, 40, 12)
-  const features = (await getProject(page)).features as SavedFeature[]
+  const drawn = await getProject(page)
+  const features = drawn.features as SavedFeature[]
+  // A feature's operation lives on its shared definition, not on the instance.
+  const definitions = drawn.featureDefinitions as Record<string, { operation?: string }>
   expect(features).toHaveLength(2)
   for (const feature of features) {
     expect(feature.authoringFace).toBe('around')
     // The bar is already solid, so a shape drawn on it is a cut, never a base.
-    expect(feature.operation).toBe('subtract')
+    expect(definitions[(feature as unknown as { definitionId: string }).definitionId]?.operation).toBe('subtract')
   }
   // The tree shows its face layers once the project has a feature; before that
   // it shows its empty message.
   await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
-  await expect(ui.face.layer(page, 'around')).toContainText('AROUND')
+  await expect(ui.face.layer(page, 'around')).toContainText('Around')
   // An Around subtract takes no part in the solid: no "first feature must be Add".
   await expect(ui.tree.warning(page)).toHaveCount(0)
   await expect(featureRow(page, features[1].id)).toBeVisible()
@@ -150,7 +153,8 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   const pocketRow = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
-  await pocketRow.getByRole('button', { name: 'Add', exact: true }).click()
+  // A pocket offers its passes rather than a single Add.
+  await pocketRow.getByRole('button', { name: 'Rough', exact: true }).click()
   await expect(ui.operations.rowByName(page, 'Pocket Rough')).toBeVisible()
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
   const withOperation = await getProject(page)
@@ -161,11 +165,13 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await ui.operations.headerExportButton(page).click()
   await expect(ui.exportDialog.setupHeading(page, 'around')).toContainText('Around')
   await expect(ui.exportDialog.programCard(page, 'around')).toBeVisible()
-  await page.keyboard.press('Escape')
+  // Escape does not close this dialog; its header button does.
+  await ui.exportDialog.root(page).locator('.dialog-header').getByRole('button').last().click()
+  await expect(ui.exportDialog.root(page)).toBeHidden()
 
   // ── Print is disabled on Around, saying why ──
-  await expect(ui.toolbar.printButton(page)).toBeDisabled()
-  await expect(ui.toolbar.printButton(page)).toHaveAttribute('title', 'Printing shows the flat faces. Switch to the top or bottom face to print.')
+  await expect(ui.toolbar.printButton(page).first()).toBeDisabled()
+  await expect(ui.toolbar.printButton(page).first()).toHaveAttribute('aria-label', 'Printing shows the flat faces. Switch to the top or bottom face to print.')
 
   // ── A flat face sees the Around features as ghosts that name their face ──
   await ui.face.segment(page, 'Top').click()
@@ -177,5 +183,5 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await page.keyboard.press('Escape')
 
   // From a flat face Print works as it did.
-  await expect(ui.toolbar.printButton(page)).toBeEnabled()
+  await expect(ui.toolbar.printButton(page).first()).toBeEnabled()
 })
