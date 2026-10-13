@@ -17,6 +17,7 @@
 import { withCompatibleOperationTool } from '../toolPolicy'
 import {
   defaultOrigin,
+  isRoundStock,
   defaultTopSetup,
   type FeatureDefinition,
   type FeatureFolder,
@@ -443,12 +444,16 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   const setupIdFor = (operation: Operation): string => {
     const sourceSetup = operation.setupId === undefined ? undefined : sourceSetupById.get(operation.setupId)
     const template = sourceSetup ?? defaultTopSetup()
-    const existing = findSetupWithTurn(nextSetups, template.orientation)
+    const orientation = template.kind === 'around' && isRoundStock(currentProject.stock)
+      ? { axis: currentProject.stock.axis, angleDeg: 0 } : template.orientation
+    const existing = findSetupWithTurn(nextSetups, orientation, template.kind)
+      ?? (template.kind === 'around' ? nextSetups.find((setup) => setup.kind === 'around') : undefined)
     if (existing) return existing.id
     const created: MachiningSetup = {
       id: nextId('su'),
       name: uniqueName(template.name, nextSetups.map((setup) => setup.name)),
-      orientation: { ...template.orientation },
+      ...(template.kind === 'around' ? { kind: 'around' as const } : {}),
+      orientation: { ...orientation },
       indexing: 'manual',
       registration: [],
       notes: '',

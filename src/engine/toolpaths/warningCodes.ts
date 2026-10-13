@@ -317,6 +317,10 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
+  /** Around needs the original round-bar axis. */
+  | 'aroundStockMismatch'
+  /** A radial cut must stop above the bar centreline. */
+  | 'aroundCentreline'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */

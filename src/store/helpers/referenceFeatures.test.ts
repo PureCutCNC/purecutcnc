@@ -43,3 +43,9 @@ for (const face of ['top', 'bottom'] as const) {
   assert.equal(JSON.stringify(project), snapshot, 'resolving reference candidates changes no document state')
 }
 console.log('referenceFeatures tests passed')
+
+const aroundReferences = projectWithFeatures(newProject(), [row('around-guide', 'around', 'construction'), row('top-guide', 'top', 'construction')])
+assert.deepEqual(referenceProjectFeatures(aroundReferences, true).map(f => f.id), ['top-guide'], 'Around construction is never a flat reference')
+aroundReferences.setups.push({ ...aroundReferences.setups[0], id: 'around', kind: 'around' })
+aroundReferences.activeSetupId = 'around'
+assert.deepEqual(referenceProjectFeatures(aroundReferences, true).map(f => f.id), ['around-guide'], 'flat construction is never an Around reference')

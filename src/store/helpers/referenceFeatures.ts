@@ -15,13 +15,13 @@
  */
 
 import type { Project } from '../../types/project'
-import { ghostPredicate } from './activeFace'
+import { activeFace, ghostPredicate } from './activeFace'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from './resolveFeatures'
 
 /** Reference geometry stays canonical and never becomes an edit selection. */
 export function referenceProjectFeatures(project: Project, showOtherSide: boolean): readonly ResolvedSketchFeature[] {
   const isGhost = ghostPredicate(project)
   return resolvedProjectFeatures(project).filter((feature) => (
-    !isGhost(feature) || (showOtherSide && feature.operation === 'construction')
+    !isGhost(feature) || (showOtherSide && activeFace(project) !== 'around' && feature.authoringFace !== 'around' && feature.operation === 'construction')
   ))
 }

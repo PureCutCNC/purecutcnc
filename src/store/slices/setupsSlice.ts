@@ -30,7 +30,7 @@ import { applyOperationMove, planOperationMove } from '../../engine/setupOperati
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
-import { dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
+import { aroundUnavailableReason, dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
 import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
 import { syncRoundWorkholding } from '../helpers/roundWorkholding'
 import type { ProjectStore, SelectionState } from '../types'
@@ -123,12 +123,15 @@ export function createSetupsSlice(
     createSetup: (input) => {
       if (!isSupportedSetupOrientation(input.orientation)) return null
       const project = get().project
+      if (input.kind === 'around' && (aroundUnavailableReason(project) !== null
+        || input.orientation.angleDeg !== 0 || project.setups.some((setup) => setup.kind === 'around'))) return null
       const id = nextUniqueGeneratedId(project, 'su')
       const face = setupFace(input)
       const setup: MachiningSetup = {
+        ...(input.kind === 'around' ? { kind: 'around' as const } : {}),
         id,
         name: uniqueName(
-          input.name?.trim() || (face === 'top' ? 'Top' : 'Bottom'),
+          input.name?.trim() || (face === 'around' ? 'Around' : face === 'top' ? 'Top' : 'Bottom'),
           project.setups.map((entry) => entry.name),
         ),
         orientation: { axis: input.orientation.axis, angleDeg: input.orientation.angleDeg },
@@ -158,7 +161,8 @@ export function createSetupsSlice(
       if (patch.name !== undefined && !patch.name.trim()) return null
       if (patch.flipAxis !== undefined && patch.flipAxis !== 'x' && patch.flipAxis !== 'y') return null
       const { project, id: setupId } = realizeProvisionalSetup(current, id)
-      if (!project.setups.some((setup) => setup.id === setupId)) return null
+      const targetSetup = project.setups.find((setup) => setup.id === setupId)
+      if (!targetSetup || (targetSetup.kind === 'around' && patch.flipAxis !== undefined)) return null
       return {
         ...project,
         setups: project.setups.map((setup) => setup.id === setupId ? {
@@ -190,8 +194,8 @@ export function createSetupsSlice(
     setActiveSetup: (id) =>
       set((s) => {
         const known = s.project.setups.some((setup) => setup.id === id)
-          || (['top', 'bottom'] as const).some((face) => (
-            id === provisionalSetupId(face) && !findSetupForFace(s.project, face)
+          || (['top', 'bottom', 'around'] as const).some((face) => (
+            id === provisionalSetupId(face) && (face !== 'around' || aroundUnavailableReason(s.project) === null) && !findSetupForFace(s.project, face)
           ))
         return s.project.activeSetupId === id || !known
           ? {}
@@ -218,6 +222,7 @@ export function createSetupsSlice(
         ...project,
         features: project.features.map((feature) => (
           ids.has(feature.id) && !feature.locked && feature.authoringFace !== face
+            && face !== 'around' && feature.authoringFace !== 'around'
             ? { ...feature, authoringFace: face }
             : feature
         )),

@@ -331,3 +331,11 @@ testOperationSetupLookup()
 testFaceDepth()
 
 console.log('setup orientation tests passed')
+
+assertEqual(orientationForFace('around', 'y'), { axis: 'y', angleDeg: 0 }, 'Around orientation is zero on bar axis')
+assertEqual(depthFromFace({ z_top: 18, z_bottom: 15 }, 'around', STOCK), depthFromFace({ z_top: 18, z_bottom: 15 }, 'top', STOCK), 'Around depth is Top depth')
+assertEqual(spanFromFaceDepth({ start: 2, end: 5 }, 'around', STOCK), spanFromFaceDepth({ start: 2, end: 5 }, 'top', STOCK), 'Around span is Top span')
+const aroundRotation = { ...setupFrame(TOP, STOCK), kind: 'around' as const }
+let aroundRefused = false
+try { canonicalToSetupPoint({ x: 1, y: 2, z: 3 }, aroundRotation) } catch { aroundRefused = true }
+assert(aroundRefused, 'Around refuses a rotation frame')

@@ -120,3 +120,5 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 ## Gotchas
 - The store owns history — call actions, do not bypass them.
 - Clipper math is integer-scaled; helpers in `clipping.ts` handle the factor. Don't roll your own.
+
+- `helpers/aroundFace.test.ts` — Around model creation, rotary generation, save/reload parity, targeting and domain refusals, and cross-domain paste (#395 slice B).

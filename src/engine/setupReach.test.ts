@@ -174,3 +174,9 @@ testNeighborDoesNotReachTinyHole()
 testGeometryAndUnits()
 testSegmentDepthAndTransforms()
 console.log('Setup reach attribution tests passed')
+
+// An invalid saved target on Around cannot contribute planar through coverage.
+const onlyAround = fixture()
+onlyAround.operations = [onlyAround.operations[0]]
+onlyAround.setups = [{ ...onlyAround.setups[0], kind: 'around' }]
+equal(throughFeatureCoverage(onlyAround, 'tiny', new Map()), null, 'Around operations take no part in planar coverage')

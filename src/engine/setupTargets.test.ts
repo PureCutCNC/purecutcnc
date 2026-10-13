@@ -515,3 +515,11 @@ testThroughCoverage()
 testCoverageFromGeneratedToolpaths()
 
 console.log('setup target tests passed')
+
+const aroundTargetProject = projectWithFeatures(newProject(), [{
+  id: 'radial', name: 'radial', kind: 'rect', operation: 'subtract', authoringFace: 'around',
+  z_top: 20, z_bottom: 0, folderId: null, visible: true, locked: false,
+  sketch: { profile: rectProfile(0, 0, 5, 5), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+}])
+assert(!isThroughFeature(aroundTargetProject, aroundTargetProject.features[0]), 'Around never earns a through-face exception')
+assertEqual(judgeTargetFromFace(aroundTargetProject, aroundTargetProject.features[0], 'top').status, 'rejected', 'Top cannot target Around even across full thickness')

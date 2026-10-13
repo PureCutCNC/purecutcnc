@@ -700,7 +700,7 @@ const TURNED_SETUP_ERROR = 'CAM Plan proposes operations for the Top setup only.
 
 function activeSetupTurnsStock(project: Project): boolean {
   const setup = activeSetup(project)
-  return setup !== undefined && setup.orientation.angleDeg !== 0
+  return setup !== undefined && (setup.kind === 'around' || setup.orientation.angleDeg !== 0)
 }
 
 export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]): CamPlanDraft {

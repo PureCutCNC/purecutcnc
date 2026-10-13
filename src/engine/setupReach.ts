@@ -41,6 +41,7 @@
  * depth.
  */
 
+import { aroundFrameForOperation, unwrapPoint } from './aroundFrame'
 import type { Operation, Project, FlatFace, SetupFace } from '../types/project'
 import { resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 import { normalizeToolForProject } from './toolpaths/geometry'
@@ -86,16 +87,21 @@ export function operationCutRange(
   const thickness = project.stock.thickness
   const face: SetupFace = operationFace(project, operation)
 
+  const around = face === 'around' ? aroundFrameForOperation(project, operation) : undefined
   let reached: number | null = null
-  for (const move of toolpath.moves) {
+  for (const stored of toolpath.moves) {
+    const move = around ? { ...stored,
+      from: { ...unwrapPoint(stored.from, around), z: stored.from.z },
+      to: { ...unwrapPoint(stored.to, around), z: stored.to.z },
+    } : stored
     for (const z of cutMoveZAtFeature(footprint, move)) {
       // Above the face that is up the cutter is in air.
-      if (face === 'top' ? z >= thickness : z <= 0) continue
-      reached = reached === null ? z : face === 'top' ? Math.min(reached, z) : Math.max(reached, z)
+      if (face !== 'bottom' ? z >= thickness : z <= 0) continue
+      reached = reached === null ? z : face !== 'bottom' ? Math.min(reached, z) : Math.max(reached, z)
     }
   }
   if (reached === null) return null
-  return face === 'top'
+  return face !== 'bottom'
     ? { min: Math.max(reached, 0), max: thickness }
     : { min: 0, max: Math.min(reached, thickness) }
 }
@@ -151,6 +157,7 @@ export function throughFeatureCoverage(
 
   const operations = project.operations.filter((operation) => (
     operation.enabled
+    && operationFace(project, operation) !== 'around'
     && operation.target.source === 'features'
     && operation.target.featureIds.includes(featureId)
   ))
@@ -162,7 +169,9 @@ export function throughFeatureCoverage(
     bottom: { operationIds: [], ranges: [], measured: true },
   }
   for (const operation of operations) {
-    const side = sides[operationFace(project, operation) as FlatFace]
+    const face = operationFace(project, operation)
+    if (face === 'around') continue
+    const side = sides[face]
     side.operationIds.push(operation.id)
     const toolpath = toolpaths.get(operation.id)
     if (!toolpath) {

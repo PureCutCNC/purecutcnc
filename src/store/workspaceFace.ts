@@ -16,7 +16,7 @@
 
 import type { SetupFace } from '../types/project'
 import { useFaceViewStore } from './faceViewStore'
-import { activeFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
+import { aroundUnavailableReason, activeFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
 import { provisionalSetupId } from './helpers/provisionalSetup'
 import { useProjectStore } from './projectStore'
 
@@ -36,6 +36,7 @@ import { useProjectStore } from './projectStore'
  */
 export function switchWorkspaceFace(face: SetupFace): boolean {
   const store = useProjectStore.getState()
+  if (face === 'around' && aroundUnavailableReason(store.project) !== null) return false
   if (activeFace(store.project) === face) return true
   if (isFaceEditInProgress(store)) return false
   store.setActiveSetup(findSetupForFace(store.project, face)?.id ?? provisionalSetupId(face))
@@ -49,6 +50,8 @@ export function switchWorkspaceFace(face: SetupFace): boolean {
  */
 export function requestAuthoringFaceChange(featureIds: readonly string[]): boolean {
   if (isFaceEditInProgress(useProjectStore.getState())) return false
+  const project = useProjectStore.getState().project
+  if (activeFace(project) === 'around' || project.features.some((feature) => featureIds.includes(feature.id) && feature.authoringFace === 'around')) return false
   useFaceViewStore.getState().requestFaceChange(featureIds)
   return true
 }

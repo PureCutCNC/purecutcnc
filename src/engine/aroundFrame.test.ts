@@ -165,6 +165,8 @@ function testUnrolledProject(): void {
       ? { minX: 10, minY: 30, maxX: 210, maxY: 30 + 40 * Math.PI }
       : { minX: 3, minY: 5, maxX: 3 + 2 * Math.PI, maxY: 13 }, 'stock box length and circumference')
     equal(flat.stock.thickness, radius, 'flat thickness')
+    equal(flat.meta.maxTravelZ, Math.max(0, project.meta.maxTravelZ - radius), 'travel ceiling lowered by radius')
+    equal(unrolledProject({ ...project, meta: { ...project.meta, maxTravelZ: radius / 2 } }, aroundFrame(stock)).meta.maxTravelZ, 0, 'travel ceiling floored at zero')
     for (const key of ['shape', 'axis', 'sourceFeature']) assert(!(key in flat.stock), `plain block has no ${key}`)
     equal(flat.features.map((f) => f.id), ['around'], 'only Around features')
     equal(flat.features[0].z_top, radius, 'surface lowered')

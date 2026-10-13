@@ -23,7 +23,7 @@
 import { create } from 'zustand'
 
 interface FaceViewState {
-  /** Whether the other face's features are drawn as a ghost overlay. */
+  /** Whether compatible flat-face features are drawn as a ghost overlay; Around has no cross-domain references. */
   showOtherSide: boolean
   setShowOtherSide: (visible: boolean) => void
   /**

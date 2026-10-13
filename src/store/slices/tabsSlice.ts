@@ -15,6 +15,8 @@
  */
 
 import type { StateCreator } from 'zustand'
+import { activeFace } from '../helpers/activeFace'
+import { operationFace } from '../../engine/setupTargets'
 import type { Tab } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { buildAutoTabsForFeature } from '../../engine/operations/autoTabs'
@@ -42,6 +44,7 @@ export function createTabsSlice(
   return {
     updateTab: (id, patch) =>
       set((s) => {
+        if (activeFace(s.project) === 'around') return {}
         const nextProject = {
           ...s.project,
           tabs: s.project.tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
@@ -62,6 +65,7 @@ export function createTabsSlice(
 
     updateTabs: (ids, patch) =>
       set((s) => {
+        if (activeFace(s.project) === 'around') return {}
         if (ids.length === 0) return {}
         const idSet = new Set(ids)
         // No-op when none of the requested IDs exist.
@@ -202,6 +206,7 @@ export function createTabsSlice(
 
     moveTabControl: (tabId, control, point) =>
       set((s) => {
+        if (activeFace(s.project) === 'around') return {}
         const minSize = convertLength(0.1, 'mm', s.project.meta.units)
         const nextProject = {
           ...s.project,
@@ -255,6 +260,7 @@ export function createTabsSlice(
     autoPlaceTabsForOperation: (operationId) =>
       set((s) => {
         const operation = s.project.operations.find((entry) => entry.id === operationId) ?? null
+        if (activeFace(s.project) === 'around' || (operation && operationFace(s.project, operation) === 'around')) return {}
         if (!operation || (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside')) {
           return {}
         }

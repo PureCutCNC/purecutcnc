@@ -161,3 +161,8 @@ check('a setup that no longer exists invalidates its operation', !cacheInputsVal
 
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) throw new Error(`${failed} cache setup-orientation check(s) failed`)
+
+// Around is a distinct frame even under an unchanged zero-angle setup id.
+const aroundTop = { ...project, setups: project.setups.map((setup) => setup.id === topOp.setupId ? { ...setup, kind: 'around' as const } : setup) }
+check('zero-angle Around invalidates Top cache', !cacheInputsValid(topInputs, topOp, aroundTop))
+if (failed > 0) throw new Error(`${failed} cache setup-orientation check(s) failed`)

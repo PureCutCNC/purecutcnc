@@ -217,6 +217,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'No se pudo limpiar de forma segura una esquina redondeada de la pared del vaciado; se mantuvo la trayectoria de pared afilada para ese anillo.',
   'warnings.pocketFinishIslandWallTooTight': 'La fresa no cabe entre una isla y la pared del vaciado; la pasada de acabado de la isla se recortó hasta donde sí cabe, por lo que queda material en ese hueco.',
   'warnings.setupTargetNotThrough': '{features}: dibujado en la otra cara y no es un corte pasante, por lo que esta sujeción no puede alcanzarlo. Solo una sustracción que llega a las dos caras del material, o un modelo 3D importado, puede mecanizarse desde el otro lado. No se generó nada.',
+  'warnings.aroundStockMismatch': '{operation}: la cara Around necesita una barra redonda situada sobre el mismo eje que cuando se configuró.',
+  'warnings.aroundCentreline': '{operation}: {feature} alcanza la línea central de la barra; un corte en la cara Around debe detenerse antes de ella.',
   'warnings.postMixedSetups': 'El programa contiene operaciones de más de una sujeción ({setups}). La pieza se voltea a mano entre sujeciones, por lo que cada sujeción se exporta como su propio programa.',
   'warnings.postSetupOperationRefused': 'La operación "{operation}" no tiene trayectoria porque su sujeción no puede cortarla. Corrija o elimine la operación antes de exportar.',
   'warnings.postSetupNoRegistration': 'La sujeción "{setup}" no tiene referencia de registro, así que nada indica cómo se ubica la pieza después de voltearla. Añada una referencia de pasador, tope o esquina en los ajustes de la sujeción.',

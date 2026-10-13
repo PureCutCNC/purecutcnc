@@ -139,7 +139,7 @@ export function createPendingAddSlice(
       })),
 
     startAddTabPlacement: () =>
-      set((s) => ({
+      set((s) => activeFace(s.project) === 'around' ? {} : ({
         pendingAdd: { shape: 'tab', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -327,6 +327,7 @@ export function createPendingAddSlice(
         const height = Math.max(Math.abs(y2 - y1), minSize)
 
         if (state.pendingAdd.shape === 'tab') {
+          if (activeFace(state.project) === 'around') return
           const id = nextUniqueGeneratedId(state.project, 'tb')
           const tabEntry: Tab = {
             id,

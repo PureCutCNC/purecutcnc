@@ -272,7 +272,7 @@ const stlTransformedGeometryCache = new Map<string, STLTransformedCacheEntry>()
  * placement and its Z range.  Keeping that boundary structural lets CAM read
  * a resolved feature instance without falling back to definition-local data.
  */
-type STLTransformFeature = Pick<SketchFeature, 'id' | 'kind' | 'stl' | 'z_top' | 'z_bottom'> & {
+type STLTransformFeature = Pick<SketchFeature, 'id' | 'kind' | 'stl' | 'z_top' | 'z_bottom' | 'authoringFace'> & {
   transform?: Matrix2D
 }
 
@@ -361,6 +361,7 @@ export function loadSTLTransformedGeometry(
   feature: STLTransformFeature,
   project: Project
 ): STLTransformedData | null {
+  if (feature.authoringFace === 'around') return null
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
   if (!asset) return null
 

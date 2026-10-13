@@ -95,7 +95,9 @@ export interface OperationToolpathEnvelope {
   raw: ToolpathResult | null
 }
 
-function setupBlockWarning(block: SetupGenerationBlock): ToolpathWarning {
+function setupBlockWarning(block: SetupGenerationBlock, operation: Operation): ToolpathWarning {
+  if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
+  if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
   return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
 }
 
@@ -126,7 +128,7 @@ export function computeOperationToolpath(
   const block = setupGenerationBlock(project, operation)
   if (block) {
     return {
-      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block)], bounds: null },
+      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation)], bounds: null },
       raw: null,
     }
   }

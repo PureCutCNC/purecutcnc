@@ -95,6 +95,7 @@ export function unrolledProject(project: Project, frame: AroundFrame): Project {
   void _axis
   return {
     ...project,
+    meta: { ...project.meta, maxTravelZ: Math.max(0, project.meta.maxTravelZ - frame.radius) },
     stock: {
       ...plainStock,
       profile: frame.axis === 'x'

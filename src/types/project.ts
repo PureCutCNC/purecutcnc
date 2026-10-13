@@ -526,7 +526,8 @@ export interface FeatureInstance {
    * The stock face this feature is drawn and edited on (issue #944). It says
    * where the feature is authored, not what it means: the span above is
    * unchanged by it. Files saved before setups existed have no value and load
-   * as `'top'`.
+   * as `'top'`. Around stores unrolled plan coordinates with the surface at
+   * `thickness` and depths downward, exactly like Top on the same bar.
    */
   authoringFace: SetupFace
   folderId: string | null
@@ -1010,6 +1011,7 @@ export interface BackdropImage {
 
 /** A stock face: where a feature is drawn, and which face a setup turns up. */
 export type SetupFace = 'top' | 'bottom' | 'around'
+/** A planar authoring face, with no unrolled rotary coordinates. */
 export type FlatFace = Exclude<SetupFace, 'around'>
 
 /**
@@ -1025,7 +1027,7 @@ export interface SetupOrientation {
   angleDeg: number
 }
 
-/** `'manual'`: the operator turns the part and each setup is its own program. */
+/** `'manual'`: the operator mounts the part for each setup; Around wrapping is distinguished by `kind`. */
 export type SetupIndexing = 'manual'
 
 export type RegistrationKind = 'dowel' | 'fence' | 'corner'
@@ -1052,6 +1054,7 @@ export interface RegistrationReference {
  * setups; the face is derived from the orientation (`setupFace`), not stored.
  */
 export interface MachiningSetup {
+/** Around uses an unrolled sheet and Top-style heights; absent for flat setups. */
   kind?: 'around'
   id: string
   name: string
@@ -1067,6 +1070,7 @@ export interface MachiningSetup {
   operationIds: string[]
 }
 
+/** Whether a setup wraps its unrolled toolpath around a round bar. */
 export function isAroundSetup(setup: Pick<MachiningSetup, 'kind'>): boolean {
   return setup.kind === 'around'
 }

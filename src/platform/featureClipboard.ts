@@ -144,10 +144,10 @@ function readableOnActiveFace<T extends ReferencedSketchFeature>(feature: T, pro
   if (feature.kind !== 'text' || (feature.authoringFace ?? 'top') === activeFace(project)) return feature
   const bounds = getProfileBounds(feature.sketch.profile)
   const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
-  const mirror = crossFaceArtworkMirror(project, centre)
+  const mirror = crossFaceArtworkMirror(project, centre, feature.authoringFace)
   return {
     ...feature,
-    transform: multiplyMatrix(crossFaceArtworkTransform(project, centre), feature.transform),
+    transform: multiplyMatrix(crossFaceArtworkTransform(project, centre, feature.authoringFace), feature.transform),
     sketch: {
       ...feature.sketch,
       origin: mirror(feature.sketch.origin),
@@ -185,7 +185,12 @@ export function pasteClipboardFeatures(
   // Pasting puts the copies on the face the workspace is on (issue #945).
   const authoringFace = activeFace(store.project)
   for (const feature of features) {
-    store.addFeature({ ...feature, authoringFace })
+    const sourceFace = feature.authoringFace ?? 'top'
+    const crossesAround = sourceFace !== authoringFace && (sourceFace === 'around' || authoringFace === 'around')
+    const z = (value: typeof feature.z_top): number => typeof value === 'number' ? value : store.project.dimensions[value]?.value ?? 0
+    const depth = Math.abs(z(feature.z_top) - z(feature.z_bottom))
+    store.addFeature({ ...feature, authoringFace, ...(crossesAround
+      ? { z_top: store.project.stock.thickness, z_bottom: store.project.stock.thickness - depth } : {}) })
   }
   store.selectFeatures(features.map((feature) => feature.id))
   store.commitHistoryTransaction()

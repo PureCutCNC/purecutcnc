@@ -87,7 +87,7 @@ export interface ToolpathCacheInputs {
    * equal says nothing about whether the path was generated in the frame the
    * setup has now.
    */
-  setupOrientation: SetupOrientation | null
+  setupOrientation: (SetupOrientation & { kind?: 'around' }) | null
 }
 
 /** Captured inputs plus the result they produced. */
@@ -163,14 +163,15 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
 }
 
 /** The turn of the setup an operation belongs to; null when it names none that exists. */
-function operationSetupOrientation(project: Project, operation: Operation): SetupOrientation | null {
+function operationSetupOrientation(project: Project, operation: Operation): (SetupOrientation & { kind?: 'around' }) | null {
   if (operation.setupId === undefined) return null
-  return project.setups?.find((setup) => setup.id === operation.setupId)?.orientation ?? null
+  const setup = project.setups?.find((setup) => setup.id === operation.setupId)
+  return setup ? { ...setup.orientation, kind: setup.kind } : null
 }
 
-function sameOrientation(a: SetupOrientation | null, b: SetupOrientation | null): boolean {
+function sameOrientation(a: (SetupOrientation & { kind?: 'around' }) | null, b: (SetupOrientation & { kind?: 'around' }) | null): boolean {
   if (a === b) return true
-  return a !== null && b !== null && a.axis === b.axis && a.angleDeg === b.angleDeg
+  return a !== null && b !== null && a.axis === b.axis && a.angleDeg === b.angleDeg && a.kind === b.kind
 }
 
 /**

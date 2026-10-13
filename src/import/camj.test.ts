@@ -831,3 +831,18 @@ testMergeStockImportNoOpWhenSourceNotFeatureBased()
 testMergePreservesLinkedInstanceTransform()
 testMergeRemapsIntersectionConstraintReferences()
 console.log('camj import tests passed')
+
+function testMergeAroundKind(): void {
+  const source = makeSourceProject('mm')
+  source.setups = [{ ...source.setups[0], kind: 'around' }]
+  source.operations = [{ ...makeOperation('around-op', 'Around pocket', ['f-src-1'], null), setupId: source.setups[0].id }]
+  source.features = source.features.map(feature => ({ ...feature, authoringFace: 'around' }))
+  const merged = mergeCamjFolders({ currentProject: newProject('Target', 'mm'), sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
+  const around = merged.setups.find(setup => setup.kind === 'around')
+  assert(around !== undefined, 'Around setup is copied instead of matched to Top')
+  assert(merged.operations.length > 0 && merged.operations.every(operation => operation.setupId === around!.id), 'imported operations retain Around ownership')
+  assert(merged.features.every(feature => feature.authoringFace === 'around'), 'imported features retain Around authoring face')
+  const twice = mergeCamjFolders({ currentProject: merged, sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
+  assert(twice.setups.filter(setup => setup.kind === 'around').length === 1, 'second import reuses Around')
+}
+testMergeAroundKind()

@@ -502,6 +502,8 @@ export function createFeatureSlice(
         // A new feature belongs to the face the workspace is on (issue #945);
         // one that names its face — a copy of derived geometry — keeps it.
         const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
+        if ((activeFace(s.project) === 'around' || authoringFace === 'around')
+          && (featureForInsert.kind === 'stl' || featureForInsert.operation === 'model')) return {}
         const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation
           ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace, operation: 'add' })
           : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace })

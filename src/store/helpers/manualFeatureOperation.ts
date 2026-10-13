@@ -97,7 +97,7 @@ export function inferLineTopZFromEnclosingFeature(
 
   let bestArea = Infinity
   let bestZ: number | null = null
-  const onTop = activeFace(project) === 'top'
+  const onTop = activeFace(project) !== 'bottom'
 
   for (const feature of featuresAtActiveFace(project, resolveFeatureInstances(project))) {
     if (feature.operation !== 'add' && feature.operation !== 'subtract') continue

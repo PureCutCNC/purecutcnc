@@ -237,6 +237,8 @@ export const warningsEn = {
   'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
   'warnings.setupTargetNotThrough': '{features}: drawn on the other face and not a cut that goes through the stock, so this setup cannot reach it. Only a subtract that reaches both stock faces, or an imported 3D model, can be machined from the other side. Nothing was generated.',
+  'warnings.aroundStockMismatch': '{operation}: the Around face needs a round bar lying along the same axis as when it was set up.',
+  'warnings.aroundCentreline': "{operation}: {feature} reaches the bar's centreline; a cut on the Around face must stop short of it.",
   'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',
   'warnings.postSetupOperationRefused': 'Operation "{operation}" has no toolpath because its setup cannot cut it. Fix or remove the operation before exporting.',
   'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
