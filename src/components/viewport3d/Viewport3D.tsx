@@ -22,7 +22,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
 import { moveMatchesToolpathLevel, movesAtToolpathLevel } from '../toolpathLevels'
-import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { ToolpathMove, ToolpathMoveKind, ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -34,9 +34,11 @@ import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
   moveMatchesZFilter,
+  stockSpaceToolpath,
   toolpathLayerBuckets,
   toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
+  type DisplayToolpath,
   type ToolpathLayerZFilter,
   type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
@@ -44,7 +46,7 @@ import { useTheme } from '../../theme/themeContext'
 import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
-import type { FlatFace } from '../../types/project'
+import type { FlatFace, SetupFace } from '../../types/project'
 import { activeFace } from '../../store/helpers/activeFace'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import type { ViewPreset } from './viewPresets'
@@ -126,7 +128,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: boolean, palette: ThreeThemePalette, selectedLevel: number | null): THREE.Object3D[] {
+/**
+ * True for the workspace faces the camera has a named preset for. Around
+ * (issue #395) is not one: the 3D view keeps showing the physical bar, so
+ * switching to it moves nothing.
+ */
+function isFlatFace(face: SetupFace): face is FlatFace {
+  return face === 'top' || face === 'bottom'
+}
+
+function buildToolpathEndpointMarkers(toolpath: DisplayToolpath, emphasized: boolean, palette: ThreeThemePalette, selectedLevel: number | null): THREE.Object3D[] {
   const moves = movesAtToolpathLevel(toolpath.moves, selectedLevel)
   if (moves.length === 0) {
     return []
@@ -179,7 +190,7 @@ function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: bool
 }
 
 function buildToolpathDirectionMarkers(
-  toolpath: ToolpathResult,
+  toolpath: DisplayToolpath,
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
@@ -299,6 +310,9 @@ function buildToolpathDirectionMarkers(
 
 function buildToolpathOverlay(
   toolpath: ToolpathResult,
+  /** The same path ready to draw: stock-space for a wrapped Around toolpath
+   *  (issue #395), the toolpath itself otherwise. */
+  display: DisplayToolpath,
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
@@ -312,7 +326,7 @@ function buildToolpathOverlay(
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
     key: ToolpathOverlayLayerKey
-    kinds: ToolpathResult['moves'][number]['kind'][]
+    kinds: ToolpathMoveKind[]
     color: number
     opacity: number
     linewidth: number
@@ -342,7 +356,9 @@ function buildToolpathOverlay(
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
   // Cached by toolpath identity — see `toolpathLayerBuckets` (issue #664).
-  const buckets = toolpathLayerBuckets(toolpath)
+  // A wrapped display caches on the generated path it came from, so a scene
+  // rebuild reuses the split rather than re-deriving it (issue #395).
+  const buckets = toolpathLayerBuckets(display.toolpath ?? display)
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
     if (!layer.visible) continue
@@ -353,7 +369,7 @@ function buildToolpathOverlay(
       continue
     }
 
-    const pushLines = (layerMoves: readonly ToolpathResult['moves'][number][], color: number): void => {
+    const pushLines = (layerMoves: readonly ToolpathMove[], color: number): void => {
       const material = new LineMaterial({
         color,
         linewidth: layer.linewidth,
@@ -375,7 +391,7 @@ function buildToolpathOverlay(
     if (layer.key === 'cuts' && feedColoursOn) {
       // One material per emitted feed bucket. Cuts only — lead-ins, rapids,
       // plunges and retractions keep their existing tokens.
-      const byStep = new Map<number, ToolpathResult['moves']>()
+      const byStep = new Map<number, ToolpathMove[]>()
       for (const move of moves) {
         const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
@@ -395,8 +411,8 @@ function buildToolpathOverlay(
   }
 
   if (emphasized && visibility.directions) {
-    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized, visibility, palette, selectedLevel))
-    objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized, palette, selectedLevel))
+    objects.push(...buildToolpathDirectionMarkers(display, emphasized, visibility, palette, selectedLevel))
+    objects.push(...buildToolpathEndpointMarkers(display, emphasized, palette, selectedLevel))
   }
 
   return objects
@@ -463,9 +479,12 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   useEffect(() => {
     if (presetFaceRef.current === workspaceFace) return
     presetFaceRef.current = workspaceFace
+    // Around has no camera preset: the 3D view keeps showing the real bar
+    // (issue #395), so turning the workspace to it leaves the camera alone.
+    if (!isFlatFace(workspaceFace)) return
     const preset = activePresetRef.current
     if ((preset === 'top' || preset === 'bottom') && preset !== workspaceFace) {
-      controlsRef.current?.setPreset(workspaceFace as FlatFace)
+      controlsRef.current?.setPreset(workspaceFace)
     } else if (preset === 'iso') {
       controlsRef.current?.setPreset('iso')
     }
@@ -638,7 +657,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     let extent = defaultExtent
 
     // Dynamically extend the grid to cover feature geometry on all sides.
-    const featureWorldBounds = getFeaturesWorldBounds(resolvedProjectFeatures(project))
+    // Around features are unrolled onto the bar's surface (issue #395), so
+    // their sheet coordinates must not stretch the grid around the solid.
+    const featureWorldBounds = getFeaturesWorldBounds(
+      resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around'),
+    )
     if (featureWorldBounds) {
       const toLeft = Math.abs(featureWorldBounds.minX - centerX)
       const toRight = Math.abs(featureWorldBounds.maxX - centerX)
@@ -833,8 +856,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const controls = controlsRef.current
         if (controls) {
           // Construction geometry is absent from the 3D scene — keep it out of
-          // the camera-fit bounds as well (issue #199).
-          const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
+          // the camera-fit bounds as well (issue #199), and keep unrolled
+          // Around features out for the same reason (issue #395).
+          const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
+          const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
           const visibleTabs = project.tabs.filter((tab) => tab.visible)
           const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =
@@ -923,14 +948,19 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       mount?.clientHeight || window.innerHeight,
     )
     // Every setup's passes, in stock space as generated: a Bottom pass comes
-    // from under the stock. Another setup's are muted (issue #947).
+    // from under the stock. Another setup's are muted (issue #947). A wrapped
+    // Around pass is drawn wrapped around the bar (issue #395).
     const muted = mutedToolpathOperationIds(projectRef.current)
+    const stock = projectRef.current.stock
     const nextObjects = toolpaths.flatMap((toolpath) => {
       if (toolpath.moves.length === 0) {
         return []
       }
       const emphasized = toolpath.operationId === selectedOperationId
       const isMuted = muted.has(toolpath.operationId)
+      // A wrapped Around toolpath is drawn wrapped around the bar (issue
+      // #395); every other toolpath is drawn from its own moves unchanged.
+      const display = stockSpaceToolpath(toolpath, stock)
       // Colour rungs derive from the toolpath's own operation slot feed so the
       // thresholds match the scales that operation emitted (issue #498 S5).
       const slotFeedPercent = pocketSlotFeedPercent(projectRef.current.operations.find((op) => op.id === toolpath.operationId))
@@ -955,6 +985,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         ...kerfObjects,
         ...buildToolpathOverlay(
           toolpath,
+          display,
           emphasized,
           toolpathVisibility,
           threePalette,

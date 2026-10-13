@@ -42,10 +42,13 @@
  */
 
 import type { MachiningSetup, Operation, Project } from '../types/project'
+import { isAroundSetup, isRoundStock } from '../types/project'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
 import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameProject'
+import { aroundFrameForOperation, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
+import type { AroundFrame } from '../engine/aroundFrame'
 import { activeSetup } from '../store/helpers/activeFace'
 
 /** Everything one setup's simulation needs, all of it in that setup's frame. */
@@ -61,10 +64,30 @@ export interface SimulationSetupInput {
 /**
  * The frame a setup turns the stock through, or undefined for Top. Reuses
  * `setupFrame`, so an orientation this build cannot machine is refused here
- * exactly as it is everywhere else.
+ * exactly as it is everywhere else. An Around setup is not a rotation: its
+ * frame is the unroll frame resolved by the caller.
  */
 function frameForSetup(setup: MachiningSetup, project: Pick<Project, 'stock'>): SetupFrame | undefined {
   return setup.orientation.angleDeg === 0 ? undefined : setupFrame(setup.orientation, project.stock)
+}
+
+/**
+ * The unroll frame of an Around setup, or null when the project's stock is no
+ * longer a round bar on the setup's axis. `aroundFrameForOperation` throws
+ * for such a project, and a simulation must not: it reports no simulation for
+ * that setup instead of raising out of a render pass.
+ */
+function aroundSimulationFrame(project: Project, operations: readonly Operation[]): AroundFrame | null {
+  if (!isRoundStock(project.stock)) return null
+  for (const operation of operations) {
+    try {
+      const frame = aroundFrameForOperation(project, operation)
+      if (frame) return frame
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 /**
@@ -82,23 +105,38 @@ function frameForSetup(setup: MachiningSetup, project: Pick<Project, 'stock'>): 
  * the CAM panel: an operation whose `setupId` names a setup belongs to it,
  * and one with no `setupId` at all reads as Top. A `setupId` that names no
  * setup is an error, not a silent Top operation.
+ *
+ * An Around setup (issue #395) has no rotation frame: its job is the unrolled
+ * sheet, so its project is `unrolledProject` — a block one circumference
+ * across and one radius thick, its Around features lowered onto it — and each
+ * of its paths is `unwrapToolpath`ed back onto that sheet. Everything
+ * downstream then cuts a flat job unchanged. An Around setup whose bar is no
+ * longer a round bar on its axis yields `null` — no simulation for that setup
+ * — rather than throwing.
  */
 export function buildSimulationSetupInput(
   project: Project,
   setup: MachiningSetup,
   toolpaths: ReadonlyMap<string, ToolpathResult>,
-): SimulationSetupInput {
+): SimulationSetupInput | null {
   const operations = setupOperations(project, setup)
 
-  const frame = frameForSetup(setup, project)
+  const around = isAroundSetup(setup) ? aroundSimulationFrame(project, operations) : null
+  if (isAroundSetup(setup) && !around) return null
+
+  const frame = around ? undefined : frameForSetup(setup, project)
   const localToolpaths = new Map<string, ToolpathResult>()
   for (const operation of operations) {
     const toolpath = toolpaths.get(operation.id)
-    if (toolpath) localToolpaths.set(operation.id, toolpathInSetupFrame(toolpath, frame))
+    if (!toolpath) continue
+    localToolpaths.set(
+      operation.id,
+      around ? unwrapToolpath(toolpath, around) : toolpathInSetupFrame(toolpath, frame),
+    )
   }
 
   return {
-    project: projectInSetupFrame(project, frame),
+    project: around ? unrolledProject(project, around) : projectInSetupFrame(project, frame),
     operations,
     toolpaths: localToolpaths,
   }

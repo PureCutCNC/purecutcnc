@@ -1114,7 +1114,11 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // Fixtures are built unhighlighted: selection/collision only tint the clamp
   // and tab meshes, which Viewport3D recolors via applyClampHighlight /
   // applyTabHighlight without rebuilding this (expensive) CSG model (issue #261).
-  const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
+  // Around features are unrolled onto the bar's surface (issue #395): never
+  // carved into the round solid, drawn as a mesh or measured for bounds until
+  // wrapped display lands. Top and Bottom features draw exactly as before.
+  const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
+  const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const stockMesh = buildStockMesh(project.stock, threePalette)
