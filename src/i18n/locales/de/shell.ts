@@ -28,6 +28,7 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'file.importGeometry': 'Geometrie importieren',
   'file.exportModel': 'Modell exportieren',
   'file.printDesign': 'Design drucken',
+  'file.flatFacesOnly': 'Der Druck zeigt die ebenen Flächen. Wechseln Sie zu Oben oder Unten, um zu drucken.',
   'file.saveProject': 'Projekt speichern',
   'file.saveProjectDirty': 'Projekt mit nicht gespeicherten Änderungen speichern',
   'file.undo': 'Rückgängig',

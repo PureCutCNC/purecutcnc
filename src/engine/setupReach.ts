@@ -87,7 +87,18 @@ export function operationCutRange(
   const thickness = project.stock.thickness
   const face: SetupFace = operationFace(project, operation)
 
-  const around = face === 'around' ? aroundFrameForOperation(project, operation) : undefined
+  // The frame is only needed to unwrap stored motion. When the bar is no
+  // longer a round bar on the setup's axis the frame cannot be built; that is
+  // a generation-time refusal (`aroundStockMismatch`), not a reason for a
+  // property panel that is merely rendering to throw. Report no reach.
+  let around: ReturnType<typeof aroundFrameForOperation>
+  if (face === 'around') {
+    try {
+      around = aroundFrameForOperation(project, operation)
+    } catch {
+      return null
+    }
+  }
   let reached: number | null = null
   for (const stored of toolpath.moves) {
     const move = around ? { ...stored,

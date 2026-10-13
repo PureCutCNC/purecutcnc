@@ -74,7 +74,10 @@ export function camSetupSections(project: Project): { grouped: boolean; sections
     registrationCount: setup.registration.length,
     registrationMissing: setupLacksRegistration(project, setup) || (!saved.includes(setup) && saved.length > 0),
   }))
-  return { grouped: projectExportsPerSetup(project) || setups.length > saved.length, sections }
+  // An Around setup is always its own section (issue #395), even as the
+  // project's only setup, so its "Around operations" heading and "Add to
+  // Around" target are never the flat, unlabelled list.
+  return { grouped: projectExportsPerSetup(project) || setups.length > saved.length || setups.some((setup) => setup.kind === 'around'), sections }
 }
 
 /** The targets of an operation that are through-features cut from the other face. */

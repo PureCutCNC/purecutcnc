@@ -20,12 +20,12 @@ import { useProjectStore } from '../../store/projectStore'
 import { requestAuthoringFaceChange } from '../../store/workspaceFace'
 import type { SetupFace } from '../../types/project'
 
-/** The small TOP / BOTTOM tag that names a stock face (issue #945). */
+/** The small TOP / BOTTOM / AROUND tag that names a stock face (issue #945). */
 export function FaceChip({ face }: { face: SetupFace }) {
   const { t } = useI18n()
   return (
     <span className={`face-chip face-chip--${face}`}>
-      {t(face === 'top' ? 'featureTree.face.chipTop' : 'featureTree.face.chipBottom')}
+      {t(face === 'top' ? 'featureTree.face.chipTop' : face === 'bottom' ? 'featureTree.face.chipBottom' : 'featureTree.face.chipAround')}
     </span>
   )
 }
@@ -33,7 +33,9 @@ export function FaceChip({ face }: { face: SetupFace }) {
 /**
  * The properties row that names the face the selection is authored on and
  * opens the confirmation for changing it. The change itself is never made
- * from here.
+ * from here. An Around feature is never offered the change (issue #395): the
+ * entry is left out rather than shown disabled, because geometry cannot move
+ * between a flat face and the unrolled bar.
  */
 export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featureIds: readonly string[] }) {
   const { t } = useI18n()
@@ -43,15 +45,17 @@ export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featur
       <span>{t('featureTree.face.authoringFace')}</span>
       <div className="face-row__value">
         <FaceChip face={face} />
-        <button
-          className="feat-btn face-row__change"
-          type="button"
-          onClick={() => requestAuthoringFaceChange(featureIds)}
-          disabled={busy}
-          title={busy ? t('featureTree.face.changeBusy') : undefined}
-        >
-          {t('featureTree.face.change')}
-        </button>
+        {face === 'around' ? null : (
+          <button
+            className="feat-btn face-row__change"
+            type="button"
+            onClick={() => requestAuthoringFaceChange(featureIds)}
+            disabled={busy}
+            title={busy ? t('featureTree.face.changeBusy') : undefined}
+          >
+            {t('featureTree.face.change')}
+          </button>
+        )}
       </div>
     </div>
   )

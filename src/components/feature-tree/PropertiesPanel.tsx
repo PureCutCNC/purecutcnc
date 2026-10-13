@@ -968,7 +968,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => { startAddTabPlacement(); closeExpanded() }}>
+          <button
+            className="feat-btn"
+            type="button"
+            disabled={workspaceFace === 'around'}
+            title={workspaceFace === 'around' ? t('featureTree.treeRow.addEntry.tabAround') : undefined}
+            onClick={() => { startAddTabPlacement(); closeExpanded() }}
+          >
             {t('featureTree.properties.actions.addTab')}
           </button>
         </div>
@@ -1532,7 +1538,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           {linkedOnOtherFace > 0 ? (
             <p className="properties-linked-face-note" data-testid="linked-other-face-note">
               {t(
-                `featureTree.face.linkedOtherFace.${selectedFace === 'top' ? 'bottom' : 'top'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+                `featureTree.face.linkedOtherFace.${selectedFace === 'top' ? 'bottom' : selectedFace === 'bottom' ? 'top' : 'around'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
                 { count: linkedOnOtherFace },
               )}
             </p>

@@ -546,4 +546,6 @@ export const canvasEn = {
   'canvas.face.topIsGhost': 'Top features are a ghost and cannot be edited here.',
   'canvas.face.drawingOnTop': 'Drawing on top face',
   'canvas.face.drawingOnBottom': 'Drawing on bottom face',
+  'canvas.face.aroundTurnsBar': 'The bar turns in the rotary. This view is its surface unrolled: along the bar, and around it.',
+  'canvas.face.drawingOnAround': 'Drawing on the surface of the bar',
 } as const satisfies Record<string, string>

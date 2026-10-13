@@ -36,6 +36,8 @@ import {
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { exportDialectLabels } from './exportDialectLabels'
+import { setupFace } from '../../engine/setupOrientation'
+import { Icon } from '../Icon'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -113,6 +115,9 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     [preparation],
   )
   const perSetup = projectExportsPerSetup(project)
+  // An Around-only project still gets its named program card (issue #395),
+  // even though a single flat setup keeps the unlabelled list it always had.
+  const showPrograms = perSetup || project.setups.some((setup) => setupFace(setup) === 'around')
   const [previewProgramNumber, setPreviewProgramNumber] = useState<number | null>(null)
   const previewProgram = programs.find((program) => program.programNumber === previewProgramNumber) ?? programs[0] ?? null
   const previewResult = previewProgram?.result ?? null
@@ -346,6 +351,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                     <Fragment key={group.setup?.id ?? 'all'}>
                       {group.setup ? (
                         <div className="export-setup-heading" data-setup-face={group.face}>
+                          {group.face === 'around' ? <Icon id="face-around" size={14} /> : null}
                           {programLabel({ programNumber: group.programNumber, setupName: group.setup.name })}
                         </div>
                       ) : null}
@@ -415,10 +421,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               </div>
             )}
-            {perSetup && programs.length > 0 ? (
+            {showPrograms && programs.length > 0 ? (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">{td('dialogs.export.programs')}</label>
-                <div className="export-setup-note">{td('dialogs.export.perSetupNote')}</div>
+                {perSetup ? <div className="export-setup-note">{td('dialogs.export.perSetupNote')}</div> : null}
                 <div className="export-program-list" role="group" aria-label={td('dialogs.export.programs')}>
                   {programs.map((program) => (
                     <button
@@ -429,7 +435,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                       aria-pressed={program === previewProgram}
                       onClick={() => setPreviewProgramNumber(program.programNumber)}
                     >
-                      <span className="export-program-title">{programLabel(program)}</span>
+                      <span className="export-program-title">
+                        {program.face === 'around' ? <Icon id="face-around" size={14} /> : null}
+                        {programLabel(program)}
+                      </span>
                       <span className="export-program-file">{`${program.fileStem}.${activeDefinition?.fileExtension ?? ''}`}</span>
                       <span className="export-program-meta">
                         {td(

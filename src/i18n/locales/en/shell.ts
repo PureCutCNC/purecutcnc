@@ -28,6 +28,7 @@ export const shellEn = {
   'file.importGeometry': 'Import geometry',
   'file.exportModel': 'Export model',
   'file.printDesign': 'Print design',
+  'file.flatFacesOnly': 'Printing shows the flat faces. Switch to the top or bottom face to print.',
   'file.saveProject': 'Save project',
   'file.saveProjectDirty': 'Save project with unsaved changes',
   'file.undo': 'Undo',

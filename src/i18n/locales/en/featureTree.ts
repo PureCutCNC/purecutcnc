@@ -101,6 +101,7 @@ export const featureTreeEn = {
 
   // ── TreeRow: add entry (tab / clamp) ──
   'featureTree.treeRow.addEntry.tab': 'Add tab',
+  'featureTree.treeRow.addEntry.tabAround': 'Tabs are not used on the around face',
   'featureTree.treeRow.addEntry.clamp': 'Add clamp',
 
   // ── TreeRow: operation button tooltips ──
@@ -405,16 +406,20 @@ export const featureTreeEn = {
   // ── Stock faces: tree layers, face-local depth, changing a face (issue #945) ──
   'featureTree.face.topFace': 'Top face',
   'featureTree.face.bottomFace': 'Bottom face',
+  'featureTree.face.aroundLayer': 'Around',
   'featureTree.face.stateActive': 'ACTIVE',
   'featureTree.face.stateGhost': 'GHOST',
   'featureTree.face.chipTop': 'TOP',
   'featureTree.face.chipBottom': 'BOTTOM',
+  'featureTree.face.chipAround': 'AROUND',
   'featureTree.face.chipThrough': 'THRU',
   'featureTree.face.throughTooltip': 'Reaches both faces, so either side can cut it',
   'featureTree.face.ghostRowTop': 'On the top face. Switch to the top face to edit it.',
   'featureTree.face.ghostRowBottom': 'On the bottom face. Switch to the bottom face to edit it.',
+  'featureTree.face.ghostRowAround': 'On the around face. Switch to it to edit.',
   'featureTree.face.switchToTopToEdit': 'Switch to top face to edit',
   'featureTree.face.switchToBottomToEdit': 'Switch to bottom face to edit',
+  'featureTree.face.switchToAroundToEdit': 'Switch to around face to edit',
   'featureTree.face.changeAuthoringFace': 'Change authoring face…',
   'featureTree.face.authoringFace': 'Authoring face',
   'featureTree.face.change': 'Change…',
@@ -439,6 +444,8 @@ export const featureTreeEn = {
   'featureTree.face.linkedOtherFace.top.other': 'This shape is shared with {count} linked copies on the top face. Editing the shape changes them too.',
   'featureTree.face.linkedOtherFace.bottom.one': 'This shape is shared with {count} linked copy on the bottom face. Editing the shape changes that copy too.',
   'featureTree.face.linkedOtherFace.bottom.other': 'This shape is shared with {count} linked copies on the bottom face. Editing the shape changes them too.',
+  'featureTree.face.linkedOtherFace.around.one': 'This shape is shared with {count} linked copy on another face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.around.other': 'This shape is shared with {count} linked copies on another face. Editing the shape changes them too.',
   'featureTree.face.dialog.linkedStay.top.one': '{count} linked copy stays on the top face. It keeps sharing this shape, so editing the shape on either face changes both.',
   'featureTree.face.dialog.linkedStay.top.other': '{count} linked copies stay on the top face. They keep sharing this shape, so editing the shape on either face changes all of them.',
   'featureTree.face.dialog.linkedStay.bottom.one': '{count} linked copy stays on the bottom face. It keeps sharing this shape, so editing the shape on either face changes both.',

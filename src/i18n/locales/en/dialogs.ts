@@ -112,6 +112,7 @@ export const dialogsEn = {
   'dialogs.importGeometry.error.selectFolder': 'Select at least one folder to import, or check "import stock from source".',
   'dialogs.importGeometry.error.noFeaturesImported': 'No features were imported from the selected folders.',
   'dialogs.importGeometry.error.noGeometryFound': 'No importable geometry found in the selected file.',
+  'dialogs.importGeometry.error.modelOnAround': 'A 3D model cannot be placed on the around face. Switch to the top face to import it.',
   'dialogs.importGeometry.error.importFailed': 'Failed to import geometry file.',
   'dialogs.importGeometry.error.stepTolerance': 'Surface tolerance must be a positive number.',
   'dialogs.importGeometry.error.stepFileTooLarge': 'STEP files larger than {limit} MB cannot be imported.',

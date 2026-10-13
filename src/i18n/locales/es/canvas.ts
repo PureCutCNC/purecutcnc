@@ -488,4 +488,6 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.face.topIsGhost': 'Los elementos de la cara superior se muestran como fantasma y no se pueden editar aquí.',
   'canvas.face.drawingOnTop': 'Dibujando en la cara superior',
   'canvas.face.drawingOnBottom': 'Dibujando en la cara inferior',
+  'canvas.face.aroundTurnsBar': 'La barra gira en el rotativo. Esta vista es su superficie desplegada: a lo largo de la barra y alrededor de ella.',
+  'canvas.face.drawingOnAround': 'Dibujando sobre la superficie de la barra',
 }

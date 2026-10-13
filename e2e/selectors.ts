@@ -591,6 +591,14 @@ export const exportDialog = {
    *  exactly one eligible operation is selected. */
   inspectButton: (page: Page) =>
     exportDialog.root(page).locator('.dialog-footer button', { hasText: 'Inspect exported motion' }),
+
+  /** A setup heading in the operation checklist, by the face it cuts. */
+  setupHeading: (page: Page, face: 'top' | 'bottom' | 'around') =>
+    exportDialog.root(page).locator(`.export-setup-heading[data-setup-face="${face}"]`),
+
+  /** A program card in the per-setup program list, by the face it cuts. */
+  programCard: (page: Page, face: 'top' | 'bottom' | 'around') =>
+    exportDialog.root(page).locator(`.export-program[data-setup-face="${face}"]`),
 }
 
 /** The G-code preview body and its move/line summary. */
@@ -698,6 +706,14 @@ export const toolbar = {
 
   /** Opens the New Project dialog. */
   newProjectButton: (page: Page) => page.getByRole('button', { name: 'New project' }),
+
+  /** The Print design action (desktop command bar and the rail toolbar). */
+  printButton: (page: Page) =>
+    page.locator('[data-command="print-design"], .toolbar-icon-btn[aria-label^="Print"]'),
+
+  /** The Export model action (desktop command bar and the rail toolbar). */
+  exportModelButton: (page: Page) =>
+    page.locator('[data-command="export-model"], .toolbar-icon-btn[aria-label^="Export"]'),
 }
 
 // ── View preset menu (3D + simulation viewports) ───────────────────
@@ -782,16 +798,18 @@ export const panelHandles = {
   sketchStage: (page: Page) => page.locator('#workspace-panel-sketch'),
 }
 
-// ── Top / Bottom faces (issue #945) ────────────────────────────────
+// ── Top / Bottom / Around faces (issues #945, #395) ────────────────
 
 export const face = {
   switchGroup: (page: Page) => page.getByRole('group', { name: 'Face' }),
-  segment: (page: Page, name: 'Top' | 'Bottom') =>
+  segment: (page: Page, name: 'Top' | 'Bottom' | 'Around') =>
     face.switchGroup(page).getByRole('button', { name, exact: true }),
   otherSideToggle: (page: Page) => page.locator('.face-switch__ghost'),
   banner: (page: Page) => page.locator('.face-banner'),
-  layer: (page: Page, which: 'top' | 'bottom') => page.locator(`[data-face-layer="${which}"]`),
+  layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   ghostRows: (page: Page) => page.locator('.tree-row--feature[data-ghost="true"]'),
+  /** The face tag on a tree row or properties row. */
+  chip: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`.face-chip--${which}`),
   /** The Z range of a Bottom feature: the same slider Top uses, read with the stock flipped. */
   zRange: (page: Page): Locator => page.locator('.properties-panel .face-z-range'),
   zField: (page: Page, which: 'top' | 'bottom'): Locator =>
@@ -809,11 +827,13 @@ export const simSetup = {
   playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),
 }
 
-// CAM setup sections, scoped Add targets and setup dialogs (#946).
+// CAM setup sections, scoped Add targets and setup dialogs (#946, #395).
 export const setupCam = {
-  section: (page: Page, face: 'top' | 'bottom') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),
+  section: (page: Page, face: 'top' | 'bottom' | 'around') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),
   properties: (page: Page) => page.locator('.cam-section--properties'),
-  add: (page: Page) => page.getByRole('button', { name: /^Add to (Top|Bottom)$/ }),
+  add: (page: Page) => page.getByRole('button', { name: /^Add to (Top|Bottom|Around)$/ }),
   addMenu: (page: Page) => page.locator('.cam-add-menu'),
   dialog: (page: Page) => page.locator('.dialog--setup'),
+  /** The "Plan" (automatic CAM plan) header action. */
+  planButton: (page: Page) => page.locator('.cam-header-action--plan'),
 }

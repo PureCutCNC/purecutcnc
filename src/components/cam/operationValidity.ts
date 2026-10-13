@@ -110,7 +110,7 @@ export function activeSetupTargetHint(project: Project, featureIds: readonly str
     .filter((verdict) => verdict.status === 'rejected')
   if (rejected.length === 0) return null
   return camT(
-    face === 'top' ? 'cam.hint.otherFaceFromTop' : 'cam.hint.otherFaceFromBottom',
+    face === 'top' ? 'cam.hint.otherFaceFromTop' : face === 'bottom' ? 'cam.hint.otherFaceFromBottom' : 'cam.hint.otherFaceFromAround',
     { features: rejected.map((verdict) => verdict.featureName).join(', ') },
   )
 }

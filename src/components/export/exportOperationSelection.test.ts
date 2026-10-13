@@ -22,11 +22,12 @@
  */
 
 import {
+  groupExportOperationOptions,
   listExportOperationOptions,
   reusableExportPath,
   suggestGcodeFileName,
 } from './exportOperationSelection'
-import { newProject, type Operation, type Project } from '../../types/project'
+import { newProject, roundStock, type MachiningSetup, type Operation, type Project } from '../../types/project'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -171,6 +172,36 @@ function testExportPathIsReusedOnlyForTheSameKindOfFile(): void {
   assert(reusableExportPath('/jobs/nc', 'nc') === null, 'a name that merely ends in the letters is not that extension')
 }
 
+// ── groupExportOperationOptions (issues #946, #395) ───────────────
+
+function testAroundOnlySetupIsItsOwnGroup(): void {
+  const project = newProject('Around only', 'mm')
+  const aroundSetup: MachiningSetup = {
+    id: 'su-around', kind: 'around', name: 'Around',
+    orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: ['op1'],
+  }
+  const withAround: Project = {
+    ...project,
+    stock: roundStock(25, 120, 'x'),
+    setups: [aroundSetup],
+    activeSetupId: aroundSetup.id,
+    tools: [{ ...project.tools[0], id: 'tool-1' }],
+    operations: [{ ...makeOperation('op1'), setupId: aroundSetup.id }],
+  }
+  const groups = groupExportOperationOptions(withAround, listExportOperationOptions(withAround))
+  assert(groups.length === 1 && groups[0].setup?.id === aroundSetup.id, 'an Around-only project gets its named group')
+  assert(groups[0].face === 'around', 'the group carries the around face')
+
+  // A single flat setup keeps the unlabelled legacy group.
+  const flat: Project = {
+    ...project,
+    tools: [{ ...project.tools[0], id: 'tool-1' }],
+    operations: [makeOperation('op1')],
+  }
+  const flatGroups = groupExportOperationOptions(flat, listExportOperationOptions(flat))
+  assert(flatGroups[0].setup === null && flatGroups[0].face === 'top', 'a single flat setup stays the unlabelled group')
+}
+
 const tests = [
   testHealthyVisibleOperationIsExportableAndDefaultSelected,
   testHiddenToolpathIsExportableButNotDefaultSelected,
@@ -180,6 +211,7 @@ const tests = [
   testFileNameUsesProjectNameForMultipleOperations,
   testFileNameAppendsSingleOperationName,
   testExportPathIsReusedOnlyForTheSameKindOfFile,
+  testAroundOnlySetupIsItsOwnGroup,
 ]
 
 for (const test of tests) {

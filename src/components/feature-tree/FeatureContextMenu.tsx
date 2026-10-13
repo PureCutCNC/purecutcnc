@@ -95,11 +95,16 @@ export function FeatureContextMenu({
   onCloseRemoveFromOperationSubmenu,
 }: FeatureContextMenuProps) {
   const { t } = useI18n()
+  const project = useProjectStore((state) => state.project)
   const workspaceFace = useProjectStore((state) => activeFace(state.project))
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
   // The face of the workspace, and of a feature, stays put while an edit is
   // in progress — the same rule the header switch follows.
   const faceBusy = useProjectStore(isFaceEditInProgress)
+  // Geometry cannot move between a flat face and the unrolled bar, so the
+  // change-face entry is left out for an Around selection (issue #395).
+  const selectionOnAround = workspaceFace === 'around'
+    || project.features.some((feature) => ids.includes(feature.id) && (feature.authoringFace ?? 'top') === 'around')
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -128,18 +133,22 @@ export function FeatureContextMenu({
           disabled={faceBusy}
           title={faceBusy ? t('appShell.face.busy') : undefined}
         >
-          {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : 'featureTree.face.switchToTopToEdit')}
+          {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : menuFeatureFace === 'around' ? 'featureTree.face.switchToAroundToEdit' : 'featureTree.face.switchToTopToEdit')}
         </button>
-        <div className="feature-context-menu__separator" />
-        <button
-          className="feature-context-menu__item"
-          type="button"
-          onClick={() => actions.changeAuthoringFace([menuFeature.id])}
-          disabled={menuFeature.locked || faceBusy}
-          title={menuFeature.locked ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
-        >
-          {t('featureTree.face.changeAuthoringFace')}
-        </button>
+        {menuFeatureFace === 'around' ? null : (
+          <>
+            <div className="feature-context-menu__separator" />
+            <button
+              className="feature-context-menu__item"
+              type="button"
+              onClick={() => actions.changeAuthoringFace([menuFeature.id])}
+              disabled={menuFeature.locked || faceBusy}
+              title={menuFeature.locked ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
+            >
+              {t('featureTree.face.changeAuthoringFace')}
+            </button>
+          </>
+        )}
       </div>
     )
   }
@@ -493,7 +502,7 @@ export function FeatureContextMenu({
           >
             {t('featureTree.contextMenu.useAsStock')}
           </button>
-          {bothFaces ? (
+          {bothFaces && !selectionOnAround ? (
             <>
               <div className="feature-context-menu__separator" />
               <button

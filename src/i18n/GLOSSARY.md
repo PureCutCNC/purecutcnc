@@ -44,6 +44,7 @@ has no case, so the check does not apply to the other locales.
 | nest / nesting | imbriquer / imbrication | Arranging part copies on the stock (issue #741) |
 | machine | machine | CNC machine |
 | rotary axis | axe rotatif | Round-bar turning (issue #393) |
+| around (face) | autour (face) | The bar's unrolled surface; the segment label is `Autour` (issue #395) |
 | pocket | poche | |
 | profile / edge route | contournage | Add `intérieur` / `extérieur` where needed |
 | drill / drilling | foret / perçage | Tool / operation respectively |
@@ -91,6 +92,7 @@ has no case, so the check does not apply to the other locales.
 | nest / nesting | 排样 | Arranging part copies on the stock (issue #741) |
 | machine | 机床 | the CNC machine; 机器 only for generic machinery |
 | rotary axis | 旋转轴 | Round-bar turning (issue #393) |
+| around (face) | 环绕面 | The bar's unrolled surface; the segment label is 环绕 (issue #395) |
 | profile (operation) | 轮廓 | |
 | pocket (operation) | 挖槽 | |
 | drill (operation) | 钻孔 | |
@@ -148,6 +150,7 @@ second-person regional forms. Use European-CNC vocabulary where it differs
 | nest / nesting | anidar / anidado | Arranging part copies on the stock (issue #741) |
 | machine | máquina | CNC machine in context |
 | rotary axis | eje rotativo | Round-bar turning (issue #393) |
+| around (face) | alrededor (cara) | The bar's unrolled surface; the segment label is `Alrededor` (issue #395) |
 | profile (operation) | perfil | |
 | pocket (operation) | cajera | Common European-CNC term; avoid literal `bolsillo`. |
 | edge route inside / outside | fresado de borde interior / exterior | |
@@ -223,6 +226,7 @@ the requester) settles it; the choice below is the shipped default.
 | nest / nesting | verschachteln / Verschachtelung | Arranging part copies on the stock (issue #741) |
 | machine | Maschine | the CNC machine |
 | rotary axis | Drehachse | Round-bar turning (issue #393) |
+| around (face) | Rundum-Fläche | The bar's unrolled surface; the segment label is `Rundum` (issue #395) |
 | origin (work zero) | Nullpunkt | Werkstücknullpunkt; machine X0 Y0 |
 | pocket | Tasche | |
 | edge route inside / outside | Kontur innen / Kontur außen | contour routing |

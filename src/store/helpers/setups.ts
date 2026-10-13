@@ -231,9 +231,18 @@ export function syncProjectSetups(project: Project): Project {
     featureIds ??= new Set(project.features.map((feature) => feature.id))
     return featureIds.has(id)
   }
+  // The bar is only followed while the Around setup is empty: once it holds a
+  // feature or an operation, turning the bar from X to Y would silently
+  // re-read every stored drawing on a transposed sheet. The axis then stays
+  // put and `aroundStockMismatch` tells the user at generation time.
+  const aroundSetup = setups.find((setup) => setup.kind === 'around')
+  const aroundEmpty = aroundSetup === undefined || (
+    !project.features.some((feature) => (feature.authoringFace ?? 'top') === 'around')
+    && (members.get(aroundSetup.id)?.length ?? 0) === 0
+  )
   let setupsChanged = setups !== currentSetups
   const nextSetups = setups.map((setup) => {
-    const orientation = setup.kind === 'around' && isRoundStock(project.stock) && setup.orientation.axis !== project.stock.axis
+    const orientation = setup.kind === 'around' && aroundEmpty && isRoundStock(project.stock) && setup.orientation.axis !== project.stock.axis
       ? { axis: project.stock.axis, angleDeg: 0 } : setup.orientation
     const operationIds = members.get(setup.id) ?? []
     const registration = setup.registration.filter((reference) => (
