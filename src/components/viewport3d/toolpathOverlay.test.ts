@@ -26,6 +26,7 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
+  displayToolpathLayerBuckets,
   moveMatchesZFilter,
   movesForToolpathLayer,
   splitMovesIntoLayers,
@@ -449,5 +450,72 @@ function testWrappedToolpathIsADrawnCopyWithItsOwnBounds(): void {
 testWrappedTurningMoveFollowsTheBar()
 testConstantAngleAndAngleFreeMoves()
 testWrappedToolpathIsADrawnCopyWithItsOwnBounds()
+
+// ── The 3D overlay's own layer split (issue #395) ─────────────────────
+//
+// The tests above cover `stockSpaceMoves`; the overlay never called it
+// directly — it bucketed `display.toolpath ?? display`, the raw generated
+// path, so a wrapped pass was drawn unwrapped (one straight line over the bar).
+// `displayToolpathLayerBuckets` is the step the overlay now calls, and this is
+// the only test of what the overlay actually draws.
+
+function testDisplayBucketsFollowTheWrappedMoves(): void {
+  console.log('Testing the drawn layer split follows the wrapped display moves...')
+  // A cut one and a half times round the bar (540°) at a constant 4 mm from
+  // its axis: at 5° a piece that is 108 pieces, not the one generated move.
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(AROUND_BAR_X, 60, 4, 0),
+    to: wrappedToolPoint(AROUND_BAR_X, 60, 4, 540),
+  }
+  const toolpath = { operationId: 'wrapped', moves: [move], warnings: [], bounds: toolpathBoundsOfMoves([move]) }
+  const buckets = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  const cuts = buckets.cuts
+
+  assert(cuts.length >= 108, `540° at 5° a piece is at least 108 pieces, got ${cuts.length}`)
+  assert(cuts.every((piece) => piece.kind === 'cut'), 'every piece keeps the move kind')
+  for (const piece of cuts) {
+    assert(
+      Math.abs(distanceFromBarAxis(AROUND_BAR_X, piece.to) - 4) < 1e-9,
+      `every drawn piece end stays at the cut radius from the bar axis, got ${distanceFromBarAxis(AROUND_BAR_X, piece.to)}`,
+    )
+  }
+  const centrelineHeight = AROUND_BAR_X.thickness / 2
+  assert(cuts.some((piece) => piece.to.z < centrelineHeight), 'some piece ends are on the underside of the bar')
+
+  // The generated path holds the tool over the centreline the whole way round,
+  // so its across coordinate for a = 90 is the raw centreline. The drawn piece
+  // that ends at a = 90 — the 18th 5° piece — must sit on the bar's surface
+  // instead. This is the assertion the raw-path buckets cannot satisfy.
+  const rawAcrossAt90 = move.from.y
+  assert(cuts.length > 17, `expected a piece ending at a = 90, got ${cuts.length} pieces`)
+  assert(
+    Math.abs(cuts[17].to.y - rawAcrossAt90) > 1e-9,
+    `the piece ending at a = 90 must leave the raw centre ${rawAcrossAt90}, got ${cuts[17].to.y}`,
+  )
+
+  // Cached on the display object's identity, so a scene rebuild gets the very
+  // same arrays instead of redoing the split.
+  const again = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  assert(again === buckets, 'a repeated call returns the very same buckets object')
+  for (const key of ALL_LAYER_KEYS) {
+    assert(again[key] === buckets[key], `layer ${key}: the cached array must be reused, not rebuilt`)
+  }
+}
+
+function testDisplayBucketsOfAnAngleFreePathAreUnchanged(): void {
+  console.log('Testing an angle-free toolpath splits exactly as it does today...')
+  const moves = mixedMoves()
+  const toolpath = { operationId: 'flat', moves, warnings: [], bounds: toolpathBoundsOfMoves(moves) }
+  const today = toolpathLayerBuckets(toolpath)
+  const drawn = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  assert(drawn === today, 'an angle-free toolpath keeps the same buckets object')
+  for (const key of ALL_LAYER_KEYS) {
+    assert(drawn[key] === today[key], `layer ${key}: the same array object, so its line data cannot change`)
+  }
+}
+
+testDisplayBucketsFollowTheWrappedMoves()
+testDisplayBucketsOfAnAngleFreePathAreUnchanged()
 
 console.log('toolpathOverlay tests passed')

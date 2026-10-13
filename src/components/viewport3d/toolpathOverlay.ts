@@ -23,9 +23,9 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 
 /**
  * The display view of a toolpath: the original with its drawn moves and
- * bounds substituted, plus the wrapped path it came from. The wrapped object
- * is rebuilt per scene build while the generated toolpath is stable between
- * regenerations, so the layer split caches on `toolpath` when there is one.
+ * bounds substituted, plus the wrapped path it came from. A scene rebuild asks
+ * {@link stockSpaceToolpath} for it and gets the same object back, so the layer
+ * split — which caches on object identity — is not redone (issue #395).
  */
 export interface DisplayToolpath {
   readonly moves: readonly ToolpathMove[]
@@ -34,11 +34,37 @@ export interface DisplayToolpath {
   readonly toolpath?: { readonly moves: readonly ToolpathMove[] }
 }
 
+/**
+ * The display toolpath per generated toolpath, then per stock. Both keys are
+ * the caller's own objects — the generated result comes from the generation
+ * cache and the stock from the project — so a WeakMap holds no object alive
+ * and a regenerated path or an edited stock simply misses.
+ */
+const displayToolpathCache = new WeakMap<object, WeakMap<object, DisplayToolpath>>()
+
 /** The toolpath to draw (issue #395). A wrapped Around toolpath — any point
  *  carrying `a` — is drawn at `stockSpacePoint`, its turning moves subdivided;
  *  an angle-free toolpath is handed back unchanged, so its line data is
- *  exactly what it is today. */
+ *  exactly what it is today.
+ *
+ *  The result is cached on the pair, so the split and the subdivided move
+ *  array survive a scene rebuild (issue #395) and the layer split below can
+ *  key on the display object's identity. */
 export function stockSpaceToolpath<T extends { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null }>(
+  toolpath: T,
+  stock: Stock,
+): DisplayToolpath {
+  const cachedByStock = displayToolpathCache.get(toolpath)
+  const cached = cachedByStock?.get(stock)
+  if (cached !== undefined) return cached
+
+  const display = computeStockSpaceToolpath(toolpath, stock)
+  if (cachedByStock) cachedByStock.set(stock, display)
+  else displayToolpathCache.set(toolpath, new WeakMap([[stock, display]]))
+  return display
+}
+
+function computeStockSpaceToolpath<T extends { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null }>(
   toolpath: T,
   stock: Stock,
 ): DisplayToolpath {
@@ -182,6 +208,24 @@ export function toolpathLayerBuckets(toolpath: { moves: readonly ToolpathMove[] 
   const buckets = splitMovesIntoLayers(toolpath.moves)
   layerBucketsCache.set(toolpath, buckets)
   return buckets
+}
+
+/**
+ * The layer split the 3D overlay draws for one generated toolpath (issue
+ * #395). A wrapped Around toolpath's generated points sit over the bar's
+ * centreline, so bucketing the generated moves draws the wrap as the straight
+ * line over the bar that it never is; the lines are built from the stock-space
+ * display moves, and so must the split be.
+ *
+ * `stockSpaceToolpath` caches the display object per generated toolpath and
+ * stock and `toolpathLayerBuckets` caches the split per object, so a scene
+ * rebuild reuses both instead of redoing the subdivision every build.
+ */
+export function displayToolpathLayerBuckets(
+  toolpath: { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null },
+  stock: Stock,
+): ToolpathLayerBuckets {
+  return toolpathLayerBuckets(stockSpaceToolpath(toolpath, stock))
 }
 
 export interface ToolpathLinePositionChunk {

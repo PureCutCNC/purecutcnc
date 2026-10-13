@@ -308,15 +308,15 @@ test('the 3D view draws the wrapped Around pass on the real bar', async ({ app, 
   await page.waitForTimeout(500)
   await page.screenshot({ path: testInfo.outputPath('around-3d-default.png') })
 
-  // A low angle: drag the panel down and sideways so the camera drops under the
-  // bar, then zoom in. The wrapped passes must still be there, underside
-  // included.
+  // A low angle: drag the panel down and sideways so the camera drops towards
+  // the bar's underside without going under the floor, then zoom in. The
+  // wrapped passes must still be there, underside included.
   const box = await canvas.boundingBox()
   expect(box).not.toBeNull()
   const centrePx = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
   await page.mouse.move(centrePx.x, centrePx.y)
   await page.mouse.down()
-  await page.mouse.move(centrePx.x - 60, centrePx.y - 120, { steps: 12 })
+  await page.mouse.move(centrePx.x - 60, centrePx.y - 40, { steps: 12 })
   await page.mouse.up()
   await page.mouse.move(centrePx.x, centrePx.y)
   await page.mouse.wheel(0, -240)

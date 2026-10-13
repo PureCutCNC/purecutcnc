@@ -60,7 +60,8 @@ export function useFileCommands({
   const fileActions = useFileActions()
   const { dirty, history, undo, redo, project } = useProjectStore()
   // Print and the design SVG export show the flat faces only: on Around they
-  // are disabled and say why (issue #395).
+  // are disabled and each says why in its own words (issue #395) — one shared
+  // sentence spoke about printing on the Export model command.
   const flatFaceOnly = activeFace(project) === 'around'
 
   async function handleNewProject() {
@@ -110,7 +111,7 @@ export function useFileCommands({
       exportModel: {
         id: 'exportModel',
         icon: 'export',
-        label: flatFaceOnly ? t('file.flatFacesOnly') : t('file.exportModel'),
+        label: flatFaceOnly ? t('file.exportModelFlatFacesOnly') : t('file.exportModel'),
         enabled: !flatFaceOnly,
         active: false,
         onActivate: onExportModel,

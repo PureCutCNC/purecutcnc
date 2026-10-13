@@ -710,13 +710,14 @@ export const toolbar = {
   /** Opens the New Project dialog. */
   newProjectButton: (page: Page) => page.getByRole('button', { name: 'New project' }),
 
-  /** The Print design action (desktop command bar and the rail toolbar). */
-  printButton: (page: Page) =>
-    page.locator('[data-command="print-design"], .toolbar-icon-btn[aria-label^="Print"]'),
+  /** The Print design action (desktop rail toolbar and the top command bar).
+   *  Matched by its stable command hook: on Around its accessible name is the
+   *  print-disabled sentence, and the Export model button carries a different
+   *  one now, so a name prefix cannot tell the two apart. */
+  printButton: (page: Page) => page.locator('[data-command="print-design"]'),
 
-  /** The Export model action (desktop command bar and the rail toolbar). */
-  exportModelButton: (page: Page) =>
-    page.locator('[data-command="export-model"], .toolbar-icon-btn[aria-label^="Export"]'),
+  /** The Export model action (desktop rail toolbar and the top command bar). */
+  exportModelButton: (page: Page) => page.locator('[data-command="export-model"]'),
 }
 
 // ── View preset menu (3D + simulation viewports) ───────────────────

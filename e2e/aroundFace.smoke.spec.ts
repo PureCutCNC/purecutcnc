@@ -169,9 +169,13 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await ui.exportDialog.root(page).locator('.dialog-header').getByRole('button').last().click()
   await expect(ui.exportDialog.root(page)).toBeHidden()
 
-  // ── Print is disabled on Around, saying why ──
-  await expect(ui.toolbar.printButton(page).first()).toBeDisabled()
-  await expect(ui.toolbar.printButton(page).first()).toHaveAttribute('aria-label', 'Printing shows the flat faces. Switch to the top or bottom face to print.')
+  // ── Print is disabled on Around, saying why; Export model says its own line ──
+  await expect(ui.toolbar.printButton(page)).toBeDisabled()
+  await expect(ui.toolbar.printButton(page)).toHaveAttribute('aria-label', 'Printing shows the flat faces. Switch to the top or bottom face to print.')
+  // One shared sentence used to serve both commands, so Export model was
+  // disabled with the printing text (issue #395).
+  await expect(ui.toolbar.exportModelButton(page)).toBeDisabled()
+  await expect(ui.toolbar.exportModelButton(page)).toHaveAttribute('aria-label', 'The design export shows the flat faces. Switch to the top or bottom face to export.')
 
   // ── A flat face sees the Around features as ghosts that name their face ──
   await ui.face.segment(page, 'Top').click()
@@ -183,5 +187,5 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await page.keyboard.press('Escape')
 
   // From a flat face Print works as it did.
-  await expect(ui.toolbar.printButton(page).first()).toBeEnabled()
+  await expect(ui.toolbar.printButton(page)).toBeEnabled()
 })

@@ -33,12 +33,13 @@ import { getFeatureGeometryProfiles } from '../../text'
 import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
+  displayToolpathLayerBuckets,
   moveMatchesZFilter,
   stockSpaceToolpath,
-  toolpathLayerBuckets,
   toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
   type DisplayToolpath,
+  type ToolpathLayerBuckets,
   type ToolpathLayerZFilter,
   type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
@@ -313,6 +314,10 @@ function buildToolpathOverlay(
   /** The same path ready to draw: stock-space for a wrapped Around toolpath
    *  (issue #395), the toolpath itself otherwise. */
   display: DisplayToolpath,
+  /** The display moves split into layers — from `display`, never the raw
+   *  generated path: bucketing the generated points drew the wrap unwrapped
+   *  (issue #395). */
+  buckets: ToolpathLayerBuckets,
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
@@ -355,10 +360,8 @@ function buildToolpathOverlay(
   // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
-  // Cached by toolpath identity — see `toolpathLayerBuckets` (issue #664).
-  // A wrapped display caches on the generated path it came from, so a scene
-  // rebuild reuses the split rather than re-deriving it (issue #395).
-  const buckets = toolpathLayerBuckets(display.toolpath ?? display)
+  // The caller splits the display moves, not the generated ones, and caches
+  // that split on the display object's identity (issue #395).
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
     if (!layer.visible) continue
@@ -961,6 +964,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       // A wrapped Around toolpath is drawn wrapped around the bar (issue
       // #395); every other toolpath is drawn from its own moves unchanged.
       const display = stockSpaceToolpath(toolpath, stock)
+      // The layer split must see the same moves the lines are built from: the
+      // generated wrapped points sit over the bar's centreline, so bucketing
+      // them drew the wrap unwrapped (issue #395). Both calls hit the same
+      // cached display object, so a rebuild redoes neither.
+      const buckets = displayToolpathLayerBuckets(toolpath, stock)
       // Colour rungs derive from the toolpath's own operation slot feed so the
       // thresholds match the scales that operation emitted (issue #498 S5).
       const slotFeedPercent = pocketSlotFeedPercent(projectRef.current.operations.find((op) => op.id === toolpath.operationId))
@@ -986,6 +994,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         ...buildToolpathOverlay(
           toolpath,
           display,
+          buckets,
           emphasized,
           toolpathVisibility,
           threePalette,

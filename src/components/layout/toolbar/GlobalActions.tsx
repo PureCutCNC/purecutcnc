@@ -63,8 +63,8 @@ function GlobalActions({
         <ToolbarActionButton icon="new" label={t('file.newProject')} onClick={onNew} />
         <ToolbarActionButton icon="open" label={t('file.openProject')} onClick={onOpen} />
         <ToolbarActionButton icon="import" label={t('file.importGeometry')} onClick={onImport} />
-        <ToolbarActionButton icon="export" label={exportModelLabel} disabled={!exportModelEnabled} onClick={onExportModel} />
-        <ToolbarActionButton icon="print" label={printDesignLabel} disabled={!printDesignEnabled} onClick={onPrintDesign} />
+        <ToolbarActionButton icon="export" command="export-model" label={exportModelLabel} disabled={!exportModelEnabled} onClick={onExportModel} />
+        <ToolbarActionButton icon="print" command="print-design" label={printDesignLabel} disabled={!printDesignEnabled} onClick={onPrintDesign} />
         <ToolbarActionButton
           icon="save"
           label={projectDirty ? t('file.saveProjectDirty') : t('file.saveProject')}
