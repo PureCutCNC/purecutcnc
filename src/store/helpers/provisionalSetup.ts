@@ -29,11 +29,11 @@
 
 import { orientationForFace, setupFace } from '../../engine/setupOrientation'
 import { uniqueName } from '../../import/normalize'
-import type { MachiningSetup, Project, SetupFace } from '../../types/project'
+import type { MachiningSetup, Project, FlatFace, SetupFace } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { syncProjectSetups } from './setups'
 
-const PROVISIONAL_SETUPS: Readonly<Record<SetupFace, MachiningSetup>> = {
+const PROVISIONAL_SETUPS: Readonly<Record<FlatFace, MachiningSetup>> = {
   top: {
     id: 'provisional-top',
     name: 'Top',
@@ -56,12 +56,12 @@ const PROVISIONAL_SETUPS: Readonly<Record<SetupFace, MachiningSetup>> = {
 
 /** The setup a face is seen through until the project has one of its own (Bottom: flipped about X). */
 export function defaultSetupForFace(face: SetupFace): MachiningSetup {
-  return PROVISIONAL_SETUPS[face]
+  return PROVISIONAL_SETUPS[face as FlatFace]
 }
 
 /** The id `activeSetupId` holds while the workspace looks at `face` without a setup for it. */
 export function provisionalSetupId(face: SetupFace): string {
-  return PROVISIONAL_SETUPS[face].id
+  return PROVISIONAL_SETUPS[face as FlatFace].id
 }
 
 /**

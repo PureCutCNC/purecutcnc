@@ -20,7 +20,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { flippedZRange, linkedCopiesOffFace, resolveStockSpan } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
-import type { FeatureInstance, Project, SetupFace } from '../../types/project'
+import type { FeatureInstance, Project, FlatFace, SetupFace } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { FaceChip } from './FaceChip'
@@ -66,7 +66,7 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
   const close = useFaceViewStore((state) => state.clearFaceChangeRequest)
 
   const requested = project.features.filter((feature) => featureIds.includes(feature.id))
-  const fromFace: SetupFace = requested[0]?.authoringFace ?? 'top'
+  const fromFace = (requested[0]?.authoringFace ?? 'top') as FlatFace
   const toFace = oppositeFace(fromFace)
   // One direction per confirmation: the features on the first one's face.
   const movable = requested.filter((feature) => feature.authoringFace === fromFace && !feature.locked)

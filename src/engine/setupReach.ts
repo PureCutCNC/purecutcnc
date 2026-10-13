@@ -41,7 +41,7 @@
  * depth.
  */
 
-import type { Operation, Project, SetupFace } from '../types/project'
+import type { Operation, Project, FlatFace, SetupFace } from '../types/project'
 import { resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 import { normalizeToolForProject } from './toolpaths/geometry'
 import type { ToolpathResult } from './toolpaths/types'
@@ -157,12 +157,12 @@ export function throughFeatureCoverage(
   if (operations.length === 0) return null
 
   const thickness = project.stock.thickness
-  const sides: Record<SetupFace, { operationIds: string[]; ranges: Array<StockZRange | null>; measured: boolean }> = {
+  const sides: Record<FlatFace, { operationIds: string[]; ranges: Array<StockZRange | null>; measured: boolean }> = {
     top: { operationIds: [], ranges: [], measured: true },
     bottom: { operationIds: [], ranges: [], measured: true },
   }
   for (const operation of operations) {
-    const side = sides[operationFace(project, operation)]
+    const side = sides[operationFace(project, operation) as FlatFace]
     side.operationIds.push(operation.id)
     const toolpath = toolpaths.get(operation.id)
     if (!toolpath) {
@@ -172,7 +172,7 @@ export function throughFeatureCoverage(
     side.ranges.push(operationCutRange(project, operation, toolpath, featureId))
   }
 
-  const combined = (face: SetupFace): StockZRange | null => {
+  const combined = (face: FlatFace): StockZRange | null => {
     const ranges = sides[face].ranges.filter((range): range is StockZRange => range !== null)
     if (!sides[face].measured || ranges.length === 0) return null
     return face === 'top'

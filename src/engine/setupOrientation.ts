@@ -77,7 +77,8 @@ function assertSupported(orientation: SetupOrientation): void {
 }
 
 /** The stock face a setup turns up. Derived from the orientation, never stored. */
-export function setupFace(setup: Pick<MachiningSetup, 'orientation'>): SetupFace {
+export function setupFace(setup: Pick<MachiningSetup, 'orientation' | 'kind'>): SetupFace {
+  if (setup.kind === 'around') return 'around'
   assertSupported(setup.orientation)
   return setup.orientation.angleDeg === 0 ? 'top' : 'bottom'
 }
@@ -196,6 +197,9 @@ export function setupFrameForOperation(
 ): SetupFrame | undefined {
   const setup = setupForOperation(project, operation)
   if (!setup) return undefined
+  // Around is not a rigid turn: its stored toolpath is already wrapped, with
+  // `a` on every point, so export must apply no setup turn.
+  if (setup.kind === 'around') return undefined
   assertSupported(setup.orientation)
   return setup.orientation.angleDeg === 0 ? undefined : setupFrame(setup.orientation, project.stock)
 }

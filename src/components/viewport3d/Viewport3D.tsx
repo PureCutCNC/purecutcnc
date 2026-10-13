@@ -44,6 +44,7 @@ import { useTheme } from '../../theme/themeContext'
 import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
+import type { FlatFace } from '../../types/project'
 import { activeFace } from '../../store/helpers/activeFace'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import type { ViewPreset } from './viewPresets'
@@ -464,7 +465,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     presetFaceRef.current = workspaceFace
     const preset = activePresetRef.current
     if ((preset === 'top' || preset === 'bottom') && preset !== workspaceFace) {
-      controlsRef.current?.setPreset(workspaceFace)
+      controlsRef.current?.setPreset(workspaceFace as FlatFace)
     } else if (preset === 'iso') {
       controlsRef.current?.setPreset('iso')
     }

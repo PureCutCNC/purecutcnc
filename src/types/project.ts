@@ -1009,7 +1009,8 @@ export interface BackdropImage {
 // ============================================================
 
 /** A stock face: where a feature is drawn, and which face a setup turns up. */
-export type SetupFace = 'top' | 'bottom'
+export type SetupFace = 'top' | 'bottom' | 'around'
+export type FlatFace = Exclude<SetupFace, 'around'>
 
 /**
  * How the stock is turned for a setup, stored as a rotation rather than a
@@ -1051,6 +1052,7 @@ export interface RegistrationReference {
  * setups; the face is derived from the orientation (`setupFace`), not stored.
  */
 export interface MachiningSetup {
+  kind?: 'around'
   id: string
   name: string
   orientation: SetupOrientation
@@ -1063,6 +1065,10 @@ export interface MachiningSetup {
    * `syncProjectSetups` rewrites this list to match both.
    */
   operationIds: string[]
+}
+
+export function isAroundSetup(setup: Pick<MachiningSetup, 'kind'>): boolean {
+  return setup.kind === 'around'
 }
 
 /** Id of the Top setup every new and every migrated project starts with. */

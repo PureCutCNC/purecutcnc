@@ -63,6 +63,7 @@ import type { ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project } from '../../types/project'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
+import { aroundFrameForOperation, unrolledProject, wrapToolpath } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
@@ -127,6 +128,16 @@ export function computeOperationToolpath(
     return {
       result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block)], bounds: null },
       raw: null,
+    }
+  }
+
+  const around = aroundFrameForOperation(project, operation)
+  if (around) {
+    const envelope = computeTopDownToolpath(unrolledProject(project, around), operation, options)
+    if (!envelope) return null
+    return {
+      result: wrapToolpath(envelope.result, around),
+      raw: envelope.raw ? wrapToolpath(envelope.raw, around) : null,
     }
   }
 
