@@ -15,10 +15,13 @@
  */
 
 import { getFeatureGeometryProfiles } from '../../text'
-import { getProfileBounds, rectProfile } from '../../types/project'
-import type { Operation, Project, SketchProfile } from '../../types/project'
+import { getProfileBounds, isRoundStock, rectProfile } from '../../types/project'
+import type { Clamp, Operation, Project, SketchProfile, Stock } from '../../types/project'
+import { aroundFrame, unwrapToolpath } from '../../engine/aroundFrame'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+import { aroundSheetForOperation, aroundSheetStock, authoredOnFace } from './aroundSheet'
+import type { AroundSheet } from './aroundSheet'
 import { drawToolpath } from './previewPrimitives'
 import { traceProfilePath } from './profilePrimitives'
 import { drawClampFootprint, drawTabFootprint } from './scenePrimitives'
@@ -92,16 +95,27 @@ function operationTargetIds(operation: Operation): Set<string> {
     : new Set<string>()
 }
 
-function snapshotBounds(project: Project, operation: Operation, toolpath: ToolpathResult | null): Bounds2D {
+function snapshotBounds(
+  project: Project,
+  operation: Operation,
+  toolpath: ToolpathResult | null,
+  sheet: AroundSheet | null,
+  frameStock: Stock,
+): Bounds2D {
   let bounds = includeProfileBounds({
     minX: Infinity,
     minY: Infinity,
     maxX: -Infinity,
     maxY: -Infinity,
-  }, project.stock.profile)
+  }, frameStock.profile)
 
   const targetIds = operationTargetIds(operation)
   for (const feature of resolvedProjectFeatures(project)) {
+    // Around draws only its own sheet, never the flat faces' geometry, which
+    // shares no plane with it (issue #395).
+    if (sheet && !authoredOnFace(feature, 'around')) {
+      continue
+    }
     if (!feature.visible && !targetIds.has(feature.id)) {
       continue
     }
@@ -110,21 +124,27 @@ function snapshotBounds(project: Project, operation: Operation, toolpath: Toolpa
     }
   }
 
-  for (const tab of project.tabs) {
+  // A bar has no tabs, and only the clamps that hold it (issue #395).
+  for (const tab of sheet ? [] : project.tabs) {
     if (tab.visible) {
       bounds = includeProfileBounds(bounds, rectProfile(tab.x, tab.y, tab.w, tab.h))
     }
   }
 
-  for (const clamp of project.clamps) {
+  for (const clamp of clampsOf(project, sheet)) {
     if (clamp.visible) {
       bounds = includeProfileBounds(bounds, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
     }
   }
 
-  bounds = includePointBounds(bounds, project.origin)
+  bounds = includePointBounds(bounds, sheet ? sheet.origin : project.origin)
 
   return includeToolpathBounds(bounds, toolpath)
+}
+
+/** The clamps a snapshot draws: every one, or the sheet's bands on Around. */
+function clampsOf(project: Project, sheet: AroundSheet | null): readonly Clamp[] {
+  return sheet ? sheet.clampBands : project.clamps
 }
 
 function drawProfile(
@@ -157,11 +177,11 @@ function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 
 function drawSnapshotOrigin(
   ctx: CanvasRenderingContext2D,
-  project: Project,
+  origin: { x: number; y: number },
   vt: ViewTransform,
   pixelRatio: number,
 ): void {
-  const anchor = worldToCanvas(project.origin, vt)
+  const anchor = worldToCanvas(origin, vt)
   const arm = 22 * pixelRatio
   const radius = 5 * pixelRatio
 
@@ -235,17 +255,30 @@ export function drawOperationSnapshot(
   ctx.fillStyle = printPalette.snapshot.sheetBackground
   ctx.fillRect(0, 0, canvasW, canvasH)
 
-  const viewState = computeFitViewStateForBounds(project.stock, snapshotBounds(project, operation, toolpath), canvasW, canvasH)
-  const vt = computeViewTransform(project.stock, canvasW, canvasH, viewState)
+  // An Around operation is cut on the bar's surface unrolled flat, so the
+  // snapshot shows the sheet and the path on it, not the bar's rectangle
+  // (issue #395).
+  const sheet = aroundSheetForOperation(project, operation)
+  const frameStock = sheet ? aroundSheetStock(project.stock, sheet) : project.stock
+  // `aroundSheetForOperation` only answers on a bar, so this is a type narrowing.
+  const displayToolpath = sheet && toolpath && isRoundStock(project.stock)
+    ? unwrapToolpath(toolpath, aroundFrame(project.stock))
+    : toolpath
+
+  const viewState = computeFitViewStateForBounds(frameStock, snapshotBounds(project, operation, displayToolpath, sheet, frameStock), canvasW, canvasH)
+  const vt = computeViewTransform(frameStock, canvasW, canvasH, viewState)
   const targetIds = operationTargetIds(operation)
 
-  drawProfile(ctx, project.stock.profile, vt, {
+  drawProfile(ctx, frameStock.profile, vt, {
     fill: printPalette.snapshot.stockFill,
     stroke: printPalette.snapshot.stockOutline,
     lineWidth: 2 * pixelRatio,
   })
 
   for (const feature of resolvedProjectFeatures(project)) {
+    if (sheet && !authoredOnFace(feature, 'around')) {
+      continue
+    }
     const isTarget = targetIds.has(feature.id) || operation.target.source === 'stock'
     const profiles = getFeatureGeometryProfiles(feature)
     for (const profile of profiles) {
@@ -264,28 +297,28 @@ export function drawOperationSnapshot(
     }
   }
 
-  for (const tab of project.tabs) {
+  for (const tab of sheet ? [] : project.tabs) {
     if (tab.visible) {
       drawTabFootprint(ctx, tab, vt, false)
     }
   }
 
-  for (const clamp of project.clamps) {
+  for (const clamp of clampsOf(project, sheet)) {
     if (clamp.visible) {
       drawClampFootprint(ctx, clamp, vt, false, false)
     }
   }
 
-  if (toolpath) {
+  if (displayToolpath) {
     // Simplified the way the live canvas draws it (issue #924): connected
     // same-feed runs merge up to a few canvas pixels at the snapshot's own
     // scale, which the printed overview cannot resolve anyway. Stroking every
     // emitted move made a dense surface finish the slowest step of the export.
     // The booklet's figures come from the full toolpath in `report.ts`.
-    drawToolpath(ctx, toolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY, 0.4)
+    drawToolpath(ctx, displayToolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY, 0.4)
   }
 
-  drawSnapshotOrigin(ctx, project, vt, pixelRatio)
+  drawSnapshotOrigin(ctx, sheet ? sheet.origin : project.origin, vt, pixelRatio)
 
   ctx.fillStyle = printPalette.snapshot.labelText
   ctx.font = `${Math.round(14 * pixelRatio)}px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace`

@@ -18,7 +18,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
-import { newProject } from '../../types/project'
+import { newProject, roundStock } from '../../types/project'
+import type { MachiningSetup, Operation, Project } from '../../types/project'
 import { drawOperationSnapshot } from './operationSnapshot'
 
 /** A 2D context that accepts every call and counts `lineTo`. */
@@ -72,4 +73,60 @@ test('the booklet snapshot draws a dense toolpath simplified, not move by move (
   // LP-carved-top.camj's 287,049-move finish: 70,895 strokes at 1x.
   assert(toolpathLines > 0, 'the toolpath must be drawn')
   assert(toolpathLines < toolpath.moves.length / 4, `${toolpathLines} line segments for ${toolpath.moves.length} moves`)
+})
+
+/** A 2D context that records the coordinates of every geometric call. */
+function recordingContext(): { ctx: CanvasRenderingContext2D; width: () => number; height: () => number } {
+  const xs: number[] = []
+  const ys: number[] = []
+  const record = (x: number, y: number): void => { xs.push(x); ys.push(y) }
+  const noop = (): void => undefined
+  const target: Record<string | symbol, unknown> = {}
+  const ctx = new Proxy(target, {
+    get(object, property) {
+      if (property === 'moveTo' || property === 'lineTo') return (x: number, y: number) => record(x, y)
+      if (property === 'arc') return (x: number, y: number) => record(x, y)
+      if (property === 'measureText') return () => ({ width: 0 })
+      if (property in object) return object[property]
+      return noop
+    },
+    set(object, property, value) {
+      object[property] = value
+      return true
+    },
+  }) as unknown as CanvasRenderingContext2D
+  return {
+    ctx,
+    width: () => Math.max(...xs) - Math.min(...xs),
+    height: () => Math.max(...ys) - Math.min(...ys),
+  }
+}
+
+test('an Around operation snapshot frames the unrolled sheet, not the bar (#395)', () => {
+  const base = newProject('Around snapshot', 'inch')
+  const stock = roundStock(0.75, 4, 'x', { x: 0, y: 0 })
+  const setup: MachiningSetup = {
+    id: 'setup-around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+  }
+  const project: Project = { ...base, stock, setups: [...base.setups, setup], activeSetupId: setup.id }
+  const operation: Operation = {
+    ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'stock' }, 0),
+    setupId: setup.id,
+  }
+
+  const sheet = recordingContext()
+  drawOperationSnapshot(sheet.ctx, 1200, 760, 1, project, operation, null)
+  const aspect = sheet.width() / sheet.height()
+  // The sheet is 4 in long and one circumference (pi * 0.75) across: about
+  // 1.7:1. The bar's own rectangle is 4 x 0.75, about 5.3:1, so the ratio
+  // tells which one was framed.
+  assert(aspect < 3, `the snapshot frames the sheet (${aspect.toFixed(2)}:1), not the bar's rectangle`)
+  assert(sheet.width() > 0 && sheet.height() > 0, 'the snapshot draws the stock outline')
 })

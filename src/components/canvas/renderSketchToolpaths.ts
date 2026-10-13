@@ -19,6 +19,7 @@ import type { Project } from '../../types/project'
 import { pocketSlotFeedPercent } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
+import { toolpathForActiveFace } from './aroundToolpaths'
 import { canvasColors } from './canvasPalette'
 import { drawPlasmaKerfBands, drawPlasmaPierceMarkers } from './plasmaKerfBand'
 import { drawToolpath } from './previewPrimitives'
@@ -36,9 +37,14 @@ export function renderSketchToolpaths(
   const visible = visibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
   // Every setup's passes are drawn, in stock space as generated; another
   // setup's are muted and painted first, so the active setup's read on top
-  // (issue #947).
+  // (issue #947). A setup on another face is not drawn at all — the flat faces
+  // and the unrolled sheet share no plane — and an Around operation's wrapped
+  // path comes back on the sheet (issue #395).
   const muted = mutedToolpathOperationIds(project)
-  const entries = toolpaths.filter(tp => tp.moves.length > 0).map(toolpath => {
+  const entries = toolpaths
+    .map((toolpath) => toolpathForActiveFace(project, toolpath))
+    .filter((toolpath): toolpath is ToolpathResult => toolpath !== null && toolpath.moves.length > 0)
+    .map(toolpath => {
     const percent = pocketSlotFeedPercent(project.operations.find(op => op.id === toolpath.operationId))
     const emphasized = toolpath.operationId === selectedId
     return {

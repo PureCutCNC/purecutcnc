@@ -37,6 +37,7 @@ import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
@@ -975,14 +976,17 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       }
     }
 
-    const hitClampId = findHitClampId(world, project.clamps)
+    // Clamp bands and tabs are reference, not selection targets, on the sheet
+    // (issue #395): a click there falls through to features and empty space.
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode
       selectClamp(hitClampId, additive)
       return
     }
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode
       selectTab(hitTabId, additive)
