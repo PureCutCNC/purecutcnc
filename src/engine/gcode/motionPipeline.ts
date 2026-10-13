@@ -51,7 +51,7 @@ import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
-import { rotaryBorrowedAxis, rotaryWord } from './types'
+import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
@@ -585,28 +585,97 @@ export function rotaryCentreline(stock: Project['stock']): RotaryCentreline | nu
 }
 
 /**
- * How far the cutter tip at `point` is from the bar's centreline, in the plane
- * across the bar (issue #393). Both the offset across the bar and the height
- * above the centreline count: a shallow cut on the side of the bar and a deep
- * one on top turn through arcs of different length, which is why a turning
- * move's feed cannot be the ordinary one.
- *
- * `point` and `centre` must be in the same frame. The distance is invariant
- * under the project → machine transform — a signed axis permutation plus
- * translation — so either frame gives the same number.
+ * The two coordinates of `point` across and above the bar's centreline, in the
+ * plane the bar turns in (issue #393). `point` and `centre` must be in the same
+ * frame; both quantities are invariant under the project → machine transform —
+ * a signed axis permutation plus translation — so either frame gives the same
+ * number.
  */
-function turningRadius(point: ToolpathPoint, centre: RotaryCentreline): number {
+function centrelineFrame(point: ToolpathPoint, centre: RotaryCentreline): { across: number; up: number } {
   return centre.axis === 'x'
-    ? Math.hypot(point.y - centre.point.y, point.z - centre.point.z)
-    : Math.hypot(point.x - centre.point.x, point.z - centre.point.z)
+    ? { across: point.y - centre.point.y, up: point.z - centre.point.z }
+    : { across: point.x - centre.point.x, up: point.z - centre.point.z }
+}
+
+/** The coordinate of `point` along the bar, which no turn moves. */
+function alongBar(point: ToolpathPoint, centre: RotaryCentreline): number {
+  return centre.axis === 'x' ? point.x : point.y
+}
+
+/**
+ * The positive half of the 32-point Gauss-Legendre rule on [-1, 1], with the
+ * matching weights; the rule is symmetric, so each node is used at both signs.
+ * The integrand below is the square root of a quadratic, which this evaluates
+ * to machine precision — unlike the closed form, which loses precision through
+ * cancellation when the speed is nearly constant.
+ */
+const GAUSS_LEGENDRE_NODES: readonly number[] = [
+  0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
+  0.33186860228212766710, 0.42135127613063533270, 0.50689990893222935942,
+  0.58771575724076230429, 0.66304426693021523143, 0.73218211874028971131,
+  0.79448379596794238555, 0.84936761373256997043, 0.89632115576605209117,
+  0.93490607593773966677, 0.96476225558750638989, 0.98561151154526838170,
+  0.99726386184948156988,
+]
+const GAUSS_LEGENDRE_WEIGHTS: readonly number[] = [
+  0.096540088514727853686, 0.095638720079274847086, 0.093844399080804538626,
+  0.091173878695763904689, 0.087652093004403741627, 0.083311924226946720839,
+  0.078193895787070435976, 0.072345794108848615611, 0.065822222776361946628,
+  0.058684093478535578892, 0.050998059262376153888, 0.042835898022226703841,
+  0.034273862913021410637, 0.025392065309262138589, 0.016274394730905708539,
+  0.0070186100094701362601,
+]
+
+/**
+ * The length of the path the cutter tip draws **in the stock's own frame** for
+ * one turning move (issue #393, rule 4).
+ *
+ * The tool travels in a straight line while the stock turns linearly, so at
+ * parameter `t` the tip is at `lerp(from, to, t)` and the point of the unturned
+ * stock under it is `stockSpacePoint(lerp(from, to, t))` (`rotaryFrame.ts`).
+ * Writing `A` and `U` for the across and up offsets of that lerp and `ω` for
+ * the sweep in radians, the squared speed in stock space is
+ *
+ *   `along'² + (A' + ω·U(t))² + (U' − ω·A(t))²`,
+ *
+ * a quadratic in `t`; the length is its square root integrated over [0, 1].
+ * The mean of the two end radii is *not* this length: a move that plunges while
+ * it turns traces a longer spiral than either end's arc suggests, and a move
+ * at a constant radius reduces to the ordinary `sqrt(along'² + (R·ω)²)`.
+ */
+function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: RotaryCentreline): number {
+  const start = centrelineFrame(from, centre)
+  const end = centrelineFrame(to, centre)
+  const dAcross = end.across - start.across
+  const dUp = end.up - start.up
+  const dAlong = alongBar(to, centre) - alongBar(from, centre)
+  const sweep = (((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180
+  const c1 = dAcross + sweep * start.up
+  const c2 = dUp - sweep * start.across
+  const alpha = sweep * sweep * (dUp * dUp + dAcross * dAcross)
+  const beta = 2 * sweep * (c1 * dUp - c2 * dAcross)
+  const gamma = c1 * c1 + c2 * c2 + dAlong * dAlong
+  // A move at a constant radius — a pure turn, a turn travelling along the bar,
+  // or an ordinary straight move — has a constant tip speed. Returning it
+  // directly keeps the exact word those moves write today; the quadrature below
+  // would agree only to a few ulps.
+  if (alpha === 0 && beta === 0) return Math.sqrt(Math.max(gamma, 0))
+  let total = 0
+  for (let index = 0; index < GAUSS_LEGENDRE_NODES.length; index++) {
+    const node = GAUSS_LEGENDRE_NODES[index]
+    const weight = GAUSS_LEGENDRE_WEIGHTS[index]
+    for (const sign of [1, -1]) {
+      const t = 0.5 + 0.5 * sign * node
+      total += weight * Math.sqrt(Math.max(alpha * t * t + beta * t + gamma, 0))
+    }
+  }
+  return 0.5 * total
 }
 
 /**
  * The inverse-time feed word for one turning feed move: `feed / length` in
- * 1/min, where `length` is the true path length at the cutter tip,
- * `sqrt(linear² + (r × Δθ)²)`. `linear` is the straight-line distance over the
- * linear axes that move; `Δθ` is the angle the stock turns through, in radians;
- * `r` is the mean of the move's two ends' distance from the bar's centreline.
+ * 1/min, where `length` is the true path length at the cutter tip in the
+ * stock's own frame ({@link stockFramePathLength}).
  *
  * Exported alone so the arithmetic can be tested without an export. The length
  * is never taken below `tolerance`, so a move that neither travels nor turns
@@ -619,12 +688,9 @@ export function inverseTimeFeedValue(
   centre: RotaryCentreline,
   tolerance: number,
 ): number {
-  const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
-  const sweep = (Math.abs((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180
-  const radius = (turningRadius(from, centre) + turningRadius(to, centre)) / 2
+  const length = Math.max(stockFramePathLength(from, to, centre), tolerance)
   // `Math.max` floors the divisor at the tolerance: a zero-length move would
   // otherwise divide by zero and write `FInfinity`.
-  const length = Math.max(Math.hypot(linear, radius * sweep), tolerance)
   return feed / length
 }
 
@@ -725,23 +791,29 @@ export function planStepFeeds(args: {
   return directives
 }
 
-/** Whether the operation's moves leave the borrowed motor's project axis alone. */
-function withinBorrowedAxisTravel(
-  moves: readonly ToolpathMove[],
+/**
+ * The range of the borrowed motor's project coordinate a toolpath touches: its
+ * moves and — because canned-cycle positioning writes that letter as a linear
+ * coordinate — its drill holes too (issue #393, rule 3).
+ */
+function borrowedAxisRange(
+  toolpath: ToolpathResult,
   axis: 'x' | 'y',
-  tolerance: number,
-): boolean {
-  const coordinate = (point: ToolpathPoint): number => axis === 'x' ? point.x : point.y
+): { min: number; max: number } | null {
   let min = Infinity
   let max = -Infinity
-  for (const move of moves) {
-    for (const point of [move.from, move.to]) {
-      const value = coordinate(point)
-      if (value < min) min = value
-      if (value > max) max = value
-    }
+  const consider = (value: number) => {
+    if (value < min) min = value
+    if (value > max) max = value
   }
-  return min === Infinity || max - min <= tolerance
+  for (const move of toolpath.moves) {
+    consider(axis === 'x' ? move.from.x : move.from.y)
+    consider(axis === 'x' ? move.to.x : move.to.y)
+  }
+  for (const cycle of toolpath.drillCycles ?? []) {
+    consider(axis === 'x' ? cycle.x : cycle.y)
+  }
+  return min === Infinity ? null : { min, max }
 }
 
 /** Drop the borrowed motor's coordinate: that letter carries the angle instead. */
@@ -772,65 +844,226 @@ export function suppressBorrowedAxisInSteps(
     })
 }
 
+/** A definition line is a comment when it starts with the comment prefix. */
+function isCommentLine(line: string, commentPrefix: string): boolean {
+  return commentPrefix.length > 0 && line.trimStart().startsWith(commentPrefix)
+}
+
 /**
- * Why an operation cannot run on this machine's rotary axis, or null when it
- * can (issue #393, rule 5). Every reason is a refusal rather than an
- * approximation: a program that guesses at the angle cuts the part wrong.
+ * True when a rendered definition line carries `letter` as an axis word
+ * (issue #393, rule 3c). A word is a letter followed by a value — `Y0`,
+ * `Y-5.0`, `Y#1` — so `G53 G0 Y0`, `G92 Y0` and the compact `X0Y0` all
+ * match, while prose does not. Comments are not scanned.
  */
-function rotaryRefusal(args: {
-  definition: MachineDefinition
-  project: Project
-  toolpath: ToolpathResult
-}): ToolpathWarning['code'] | null {
-  const { definition, project, toolpath } = args
-  // Rule 3 applies to every operation on a borrowed-motor machine, turning or
-  // not: the borrowed project axis has no linear travel at all, so an operation
-  // that moves along it cannot run here. Checked before the angle gate so a
-  // flat operation is refused too.
-  const borrowed = rotaryBorrowedAxis(definition)
-  if (borrowed !== null
-    && !withinBorrowedAxisTravel(toolpath.moves, borrowed, exportGeometryTolerance(project.meta.units))) {
-    return 'postRotaryBorrowedAxisTravel'
+function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
+  if (isCommentLine(line, commentPrefix)) return false
+  // Parenthesised comments (Mach3-style) and the line-comment marker are prose.
+  let code = line.replace(/\([^)]*\)/g, ' ')
+  if (commentPrefix.length > 0 && commentPrefix !== '(') {
+    const at = code.indexOf(commentPrefix)
+    if (at >= 0) code = code.slice(0, at)
   }
-  const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
-  if (!hasAngle) return null
-  const rotary = definition.rotary
-  if (!rotary || rotaryWord(definition) === null) return 'postRotaryNoAxis'
-  if (rotary.inverseTimeFeed === null
-    && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
-    return 'postRotaryNoInverseTime'
+  for (const match of code.matchAll(/([A-Za-z])[-+]?(?=[0-9.#[])/g)) {
+    if (match[1].toUpperCase() === letter) return true
   }
-  if (!isRoundStock(project.stock)) return 'postRotaryNeedsRoundStock'
+  return false
+}
+
+/**
+ * Every definition-supplied line the emitters write outside motion: the
+ * program templates, the tool-change commands, the program end, the units and
+ * work-coordinate commands, coolant and spindle switches.
+ */
+function definitionTemplateLines(definition: MachineDefinition): string[] {
+  const { program, toolChange, stop, units, workCoordinates, coolant, feedSpeed } = definition
+  return [
+    ...program.header,
+    ...program.footer,
+    ...program.operationHeader,
+    ...toolChange.commands,
+    toolChange.pauseCommand,
+    stop.programEndCommand,
+    units.mmCommand ?? '',
+    units.inchCommand ?? '',
+    workCoordinates.selectCommand ?? '',
+    ...(coolant ? [coolant.floodOnCommand, coolant.mistOnCommand, coolant.coolantOffCommand] : []),
+    feedSpeed.spindleOnCW,
+    feedSpeed.spindleOnCCW,
+    feedSpeed.spindleOff,
+  ]
+}
+
+/**
+ * The borrowed motor's letter when one of the machine's own template lines
+ * would drive that motor as a linear axis, or null when none does (issue #393,
+ * rule 3c). A header of `G0 X0 Y0`, `G53 G0 Y0` or `G92 Y0` on a machine that
+ * borrows `Y` turns or re-zeros the bar before the first cut.
+ */
+function borrowedLetterInTemplates(definition: MachineDefinition): string | null {
+  if (rotaryBorrowedAxis(definition) === null) return null
+  const letter = rotaryWord(definition)
+  if (letter === null) return null
+  const prefix = definition.program.commentPrefix
+  for (const line of definitionTemplateLines(definition)) {
+    if (lineCarriesAxisWord(line, letter, prefix)) return letter
+  }
   return null
 }
 
 /**
+ * The angle the program is at after an operation, in the program's own
+ * direction, or `established: false` when a feed move starts before the
+ * controller has been turned to that move's angle (issue #393, rule 2).
+ *
+ * A rapid establishes the angle; a feed move or arc may only begin at the
+ * angle the controller is already at, and unknown at program start counts as
+ * not established. A move with no angle anywhere leaves the bar where it is.
+ */
+function trackOperationAngle(
+  moves: readonly ToolpathMove[],
+  direction: 1 | -1,
+  tracked: number | null,
+): { established: boolean; trackedAngle: number | null } {
+  let current = tracked
+  for (const move of moves) {
+    const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
+    if (!carriesAngle) continue
+    const start = move.from.a === undefined ? undefined : move.from.a * direction
+    const end = move.to.a === undefined ? undefined : move.to.a * direction
+    if (move.kind === 'rapid') {
+      if (end !== undefined) current = end
+      continue
+    }
+    if (current === null || start !== current) {
+      return { established: false, trackedAngle: current }
+    }
+    if (end !== undefined) current = end
+  }
+  return { established: true, trackedAngle: current }
+}
+
+function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): ToolpathWarning {
+  return {
+    code: 'postRotaryBorrowedAxisTravel',
+    params: { operation: operationName, axis: axis.toUpperCase() },
+  }
+}
+
+/**
+ * Why an operation cannot run on this machine's rotary axis (issue #393), or
+ * the angle and borrowed coordinate the program is at once it has run. Every
+ * reason is a refusal rather than an approximation: a program that guesses at
+ * the angle cuts the part wrong.
+ */
+function inspectRotaryOperation(args: {
+  definition: MachineDefinition
+  project: Project
+  toolpath: ToolpathResult
+  operationName: string
+  trackedAngle: number | null
+  borrowedCoordinate: number | null
+}): { refused: ToolpathWarning } | {
+  refused: null
+  trackedAngle: number | null
+  borrowedCoordinate: number | null
+} {
+  const { definition, project, toolpath, operationName, trackedAngle, borrowedCoordinate } = args
+  const tolerance = exportGeometryTolerance(project.meta.units)
+  // Rule 3 applies to every operation on a borrowed-motor machine, turning or
+  // not: the borrowed project axis has no linear travel at all, so an operation
+  // that moves along it — or whose drill holes sit at another value of it —
+  // cannot run here. Checked before the angle gate so a flat operation is
+  // refused too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  let nextBorrowed = borrowedCoordinate
+  if (borrowed !== null) {
+    const range = borrowedAxisRange(toolpath, borrowed)
+    if (range !== null) {
+      if (range.max - range.min > tolerance) {
+        return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+      }
+      // The borrowed coordinate is one value for the whole program: the first
+      // exported operation fixes it (rule 3a).
+      if (borrowedCoordinate !== null
+        && (range.min < borrowedCoordinate - tolerance || range.max > borrowedCoordinate + tolerance)) {
+        return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+      }
+      if (nextBorrowed === null) nextBorrowed = range.min
+    }
+    // Canned cycles are never written on a borrowed-motor machine (rule 3b),
+    // so an operation that has drill holes but no expanded moves would be
+    // silently dropped.
+    if (toolpath.moves.length === 0 && (toolpath.drillCycles?.length ?? 0) > 0) {
+      return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+    }
+  }
+  const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
+  if (!hasAngle) {
+    return { refused: null, trackedAngle, borrowedCoordinate: nextBorrowed }
+  }
+  const rotary = definition.rotary
+  if (!rotary || rotaryWord(definition) === null) {
+    return { refused: { code: 'postRotaryNoAxis', params: { operation: operationName } } }
+  }
+  if (rotary.inverseTimeFeed === null
+    && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
+    return { refused: { code: 'postRotaryNoInverseTime', params: { operation: operationName } } }
+  }
+  if (!isRoundStock(project.stock)) {
+    return { refused: { code: 'postRotaryNeedsRoundStock', params: { operation: operationName } } }
+  }
+  // Rule 2: cut only at an angle the program has actually turned to. The
+  // tracked angle spans the whole program and is unknown at its start.
+  const tracked = trackOperationAngle(toolpath.moves, rotaryDirection(definition), trackedAngle)
+  if (!tracked.established) {
+    return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
+  }
+  return { refused: null, trackedAngle: tracked.trackedAngle, borrowedCoordinate: nextBorrowed }
+}
+
+/**
  * The operations a rotary program cannot contain, each with the warning that
- * says why (issue #393, rule 5). An operation with no angle anywhere in it is
- * never refused for a rotary reason, so a machine with a rotary axis exports a
+ * says why (issue #393). An operation with no angle anywhere in it is never
+ * refused for a rotary reason, so a machine with a rotary axis exports a
  * program that does not use it byte-identically.
+ *
+ * A borrowed-motor machine whose own templates write the borrowed letter as a
+ * linear axis refuses every operation at once (rule 3c): the turn or re-zero
+ * happens before the program reaches any of them.
  */
 export function planRotaryRefusals(
   input: Pick<PostProcessorInput, 'project' | 'definition' | 'operations'>,
 ): { operations: PostProcessorInput['operations']; warnings: ToolpathWarning[] } {
   const { project, definition, operations } = input
   const warnings: ToolpathWarning[] = []
+  const borrowedLetter = borrowedLetterInTemplates(definition)
+  if (borrowedLetter !== null) {
+    return {
+      operations: [],
+      warnings: [{ code: 'postRotaryTemplateUsesBorrowedAxis', params: { axis: borrowedLetter } }],
+    }
+  }
   const kept: PostProcessorInput['operations'] = []
+  // Rule 2 and rule 3a both span the program: the angle the controller is at
+  // and the borrowed coordinate carry from one operation to the next.
+  let trackedAngle: number | null = null
+  let borrowedCoordinate: number | null = null
   for (const entry of operations) {
-    const code = rotaryRefusal({ definition, project, toolpath: entry.toolpath })
-    if (code === null) {
-      kept.push(entry)
+    const verdict = inspectRotaryOperation({
+      definition,
+      project,
+      toolpath: entry.toolpath,
+      operationName: entry.operation.name,
+      trackedAngle,
+      borrowedCoordinate,
+    })
+    if (verdict.refused !== null) {
+      warnings.push(verdict.refused)
       continue
     }
-    warnings.push({
-      code,
-      params: {
-        operation: entry.operation.name,
-        ...(code === 'postRotaryBorrowedAxisTravel'
-          ? { axis: (rotaryBorrowedAxis(definition) ?? '').toUpperCase() }
-          : null),
-      },
-    })
+    trackedAngle = verdict.trackedAngle
+    borrowedCoordinate = verdict.borrowedCoordinate
+    kept.push(entry)
   }
   return { operations: kept, warnings }
 }

@@ -203,13 +203,18 @@ function liftRapidMove(move: ToolpathMove, requiredZ: number): ToolpathMove[] {
   let current = clonePoint(move.from)
 
   if (current.z !== traverseZ) {
-    const lifted = { x: current.x, y: current.y, z: traverseZ }
+    // Lift at the start angle (issue #393): the point keeps `a` only when the
+    // move it came from has one, so an angle-free rapid gains no key.
+    const lifted: ToolpathPoint = { x: current.x, y: current.y, z: traverseZ }
+    if (move.from.a !== undefined) lifted.a = move.from.a
     liftedMoves.push({ kind: 'rapid', from: current, to: lifted })
     current = lifted
   }
 
   if (current.x !== move.to.x || current.y !== move.to.y) {
-    const traverse = { x: move.to.x, y: move.to.y, z: traverseZ }
+    // The stock has turned to the target angle by the time the traverse ends.
+    const traverse: ToolpathPoint = { x: move.to.x, y: move.to.y, z: traverseZ }
+    if (move.to.a !== undefined) traverse.a = move.to.a
     liftedMoves.push({ kind: 'rapid', from: current, to: traverse })
     current = traverse
   }

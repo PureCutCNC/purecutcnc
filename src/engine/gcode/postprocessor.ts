@@ -20,7 +20,7 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveMachineKind, resolveOutputDialect, rotaryDirection, rotaryWord } from './types'
+import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -62,8 +62,10 @@ interface ModalState {
    *  letter), or null when the machine has no rotary axis. */
   rotaryWord: 'A' | 'X' | 'Y' | null
   /** True while the controller is in inverse-time feed mode (issue #393,
-   *  rule 4): every turning feed move carries its own F, and the mode is left
-   *  before a non-turning move, a tool change or the program end. */
+   *  rule 4): every turning feed move carries its own F on the motion block,
+   *  and the mode is left before every block that is not one — a rapid, a
+   *  constant-angle feed, an operation header, a tool change, a dwell, a
+   *  canned cycle or the program end. */
   inverseTime: boolean
   currentPosition: ToolpathPoint | null
   lineNumber: number
@@ -240,14 +242,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     motionCmd: string,
     axes: Partial<ToolpathPoint>,
     feed?: number,
+    inverseTime = false,
   ) => {
     const lineSegments: string[] = []
     const isRapid = motionCmd === definition.motion.rapidCommand
     const angle = axes.a
-    // An ordinary move leaves inverse-time mode first: the program never
-    // changes tool, runs a canned cycle or ends inside it, and a move at a
-    // constant angle is not a turning move (rule 4).
-    if (!isRapid && angle === undefined) leaveInverseTime()
+    // Inverse-time mode belongs to turning feed moves alone (issue #393, rule
+    // 4): every other block — a rapid, a constant-angle feed, a canned cycle,
+    // a dwell or a positioning template — leaves the mode first, so a G94 is
+    // never left owed behind a move whose F already means something else.
+    if (!inverseTime) leaveInverseTime()
 
     if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
       lineSegments.push(motionCmd)
@@ -267,9 +271,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
     if (feed !== undefined && !isRapid) {
       const feedChanged = state.feedRate !== feed
-      if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
+      // An inverse-time move carries its own F on the motion block whatever the
+      // definition's ordinary feed formatting says (rule 4): LinuxCNC requires
+      // the word on every G1 block in G93, so a non-inline definition may not
+      // put it on a line of its own.
+      if (inverseTime || !definition.feedSpeed.modalFeedSpeed || feedChanged) {
         const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
-        if (definition.feedSpeed.inlineWithMotion) {
+        if (inverseTime || definition.feedSpeed.inlineWithMotion) {
           lineSegments.push(fWord)
         } else if (feedChanged) {
           emitLine(fWord)
@@ -318,19 +326,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         z: point.z,
         ...(point.a !== undefined ? { a: point.a } : null),
       }
-      const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(directive.feed, definition, outputUnits)}`
-      if (definition.feedSpeed.inlineWithMotion) {
-        // Every inverse-time move carries its own F, whatever `modalFeedSpeed`
-        // says (rule 4): clear the tracked feed so the word is always written.
-        state.feedRate = null
-        emitMotionLine(definition.motion.linearCommand, axes, directive.feed)
-      } else {
-        emitLine(fWord)
-        // Track the feed as written so the following ordinary move restates it
-        // rather than assuming the controller kept the pre-G93 value.
-        state.feedRate = directive.feed
-        emitMotionLine(definition.motion.linearCommand, axes)
-      }
+      // Every inverse-time move carries its own F on the motion block, whatever
+      // `modalFeedSpeed` and `inlineWithMotion` say (rule 4): LinuxCNC requires
+      // the word on every G1 block in G93. Clearing the tracked feed keeps the
+      // word present even when it repeats the previous turning move's.
+      state.feedRate = null
+      emitMotionLine(definition.motion.linearCommand, axes, directive.feed, true)
       return
     }
     // A feed move that does not turn leaves inverse-time mode and restates the
@@ -594,6 +595,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           plasmaZeroOnSheet = true
           emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
           emitLine(block.torchOnCommand)
+          // A dwell is not a turning move: never written inside inverse time.
+          leaveInverseTime()
           emitLine(dwell)
           emitMotionLine(definition.motion.linearCommand, { z: heights.cutHeight }, step.plungeFeed)
           for (const move of item.moves) {
@@ -653,6 +656,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
     const descriptionLines = safeCommentLines(operation.description ?? '')
 
+    // An operation header is a template: it may carry a dwell or a positioning
+    // move, neither of which may run in inverse-time mode (issue #393, rule 4).
+    leaveInverseTime()
     if (definition.program.operationHeader.length > 0) {
       emitTemplateLines(definition.program.operationHeader, operationContext, descriptionLines)
     } else {
@@ -700,11 +706,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
     let emittedCanned = false
 
+    // Canned cycles write the borrowed motor's letter as a linear coordinate,
+    // and a cycle's positioning is not a turning feed move (issue #393, rule
+    // 3b). They are written only on a machine that borrows no motor and for a
+    // toolpath that carries no angle anywhere; otherwise the expanded moves are
+    // used, exactly as on a machine with canned cycles off.
+    const toolpathCarriesAngle = toolpath.moves.some(
+      (move) => move.from.a !== undefined || move.to.a !== undefined,
+    )
+
     if (
       operation.kind === 'drilling'
       && toolpath.drillCycles
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
+      && rotaryBorrowedAxis(definition) === null
+      && !toolpathCarriesAngle
     ) {
       // A canned cycle is not a turning move and must not run in inverse-time
       // mode (rule 4).

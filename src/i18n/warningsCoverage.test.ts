@@ -93,6 +93,7 @@ const ALL_CODES = [
   'postSetupNoRegistration',
   'postPlasmaOperationSkipped', 'postPlasmaCutSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postPlasmaSafeHeightMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',
+  'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',

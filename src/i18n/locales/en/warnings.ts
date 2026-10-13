@@ -259,6 +259,8 @@ export const warningsEn = {
   'warnings.postRotaryNoInverseTime': 'Operation "{operation}" was not exported: this machine\'s controller has no inverse-time feed, which a turning cut needs.',
   'warnings.postRotaryBorrowedAxisTravel': 'Operation "{operation}" was not exported: it moves along {axis}, but that motor drives the rotary on this machine.',
   'warnings.postRotaryNeedsRoundStock': 'Operation "{operation}" was not exported: a turning cut needs round bar stock.',
+  'warnings.postRotaryAngleNotEstablished': 'Operation "{operation}" was not exported: it starts cutting before the bar has been turned to its angle.',
+  'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis} as an axis word, but that motor drives the rotary on this machine. Remove it from the machine's templates before exporting.",
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',

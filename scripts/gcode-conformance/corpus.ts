@@ -492,11 +492,11 @@ function generatedPlasma(
  * rotation: `moves` never change project Y, so the operation is allowed, and
  * the angle is written under `Y` while no linear Y word is ever emitted.
  *
- * Only the borrowed-motor case is in the corpus. An own-axis program writes
- * `A`, which plain Grbl rejects, and `CorpusCase` has no per-validator
- * restriction to keep it away from `grbl-gvalidate` (which claims the
- * `linuxcnc`/`generic` ids as well); the corpus carries only what every
- * validator that can read it accepts. The unit tests cover `A` directly.
+ * The borrowed-motor case runs on every validator that claims its grbl
+ * definition. The own-axis case below writes `A`, which plain Grbl rejects, so
+ * it carries a `validators` list naming the LinuxCNC validator it runs on; a
+ * case with no list runs wherever its machine is claimed. See the README's
+ * case table.
  */
 function generatedRotaryBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const project = newProject('Conformance rotary borrowed Y', 'mm')

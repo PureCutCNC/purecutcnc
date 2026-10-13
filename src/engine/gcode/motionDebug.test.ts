@@ -261,6 +261,18 @@ function testRotaryProgramReadback(): void {
     assert(inverse.length === 1, `${drive}: exactly the turning move runs in inverse time, got ${inverse.length}`)
     assert(inverse[0].to.a === 90, `${drive}: the turning move is the one that turns`)
 
+    // The word read back is the number the exporter wrote, not merely "some"
+    // inverse-time feed: the program emits G93 directly before the turning move.
+    const gcodeLines = gcode.split(/\r?\n/).map((line) => line.trim())
+    const g93Index = gcodeLines.findIndex((line) => line.startsWith('G93'))
+    assert(g93Index >= 0, `${drive}: the program switches to inverse time`)
+    const exportedF = gcodeLines[g93Index + 1].match(/F(-?[0-9.]+)/)
+    assert(exportedF !== null, `${drive}: the turning move states its own F word`)
+    assert(
+      inverse[0].inverseTimeFeed === Number(exportedF![1]),
+      `${drive}: the parsed inverse-time F is the exported one, got ${inverse[0].inverseTimeFeed} vs ${exportedF![1]}`,
+    )
+
     // The angles come back as planned: A0 on the plunge, A90 on both cuts.
     const angles = feedMoves.map((m) => m.to.a)
     assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)

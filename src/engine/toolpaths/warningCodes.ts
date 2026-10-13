@@ -375,6 +375,15 @@ export type ToolpathWarningCode =
   /** A turning cut measures its feed from the bar's centreline, and the stock
    *  is not a round bar. */
   | 'postRotaryNeedsRoundStock'
+  /** The operation starts cutting at an angle the program has not turned the
+   *  bar to: the controller is at another angle, or at an unknown one because
+   *  no rapid has established it yet (issue #393, rule 2). */
+  | 'postRotaryAngleNotEstablished'
+  /** One of the machine's own template lines (a header, tool-change or other
+   *  command) writes the borrowed motor's letter as a linear axis word, so it
+   *  would turn or re-zero the bar. Every operation is refused (issue #393,
+   *  rule 3c). */
+  | 'postRotaryTemplateUsesBorrowedAxis'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -421,11 +430,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postPlasmaSafeHeightMissing` — a G-code pierce operation's cuts are left
  *   out because no safe height could be read for them, so the saved file
  *   would quietly lack that operation's cuts (issue #983).
- * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`
- *   and `postRotaryNeedsRoundStock` — a rotary operation the machine cannot
- *   run is left out of the program (issue #393). The file would otherwise be
- *   saved without that pass, and approximating any of the four would cut the
- *   stock at the wrong angle or the wrong feed.
+ * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
+ *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished` and
+ *   `postRotaryTemplateUsesBorrowedAxis` — a rotary operation the machine
+ *   cannot run is left out of the program (issue #393). The file would
+ *   otherwise be saved without that pass, and approximating any of them would
+ *   cut the stock at the wrong angle or the wrong feed.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
@@ -439,6 +449,8 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryNoInverseTime',
   'postRotaryBorrowedAxisTravel',
   'postRotaryNeedsRoundStock',
+  'postRotaryAngleNotEstablished',
+  'postRotaryTemplateUsesBorrowedAxis',
 ])
 
 /**
