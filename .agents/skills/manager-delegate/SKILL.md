@@ -65,7 +65,13 @@ to implementing the slice yourself or abandoning the delegation.
   and reports its hash. Failed and no-change DSH runs are never auto-committed;
   inspect the worktree and dispatch report before deciding what to do next.
 
-- **Codex:** run from the worktree/repo root with `sandbox=workspace-write`,
+- `codex` runs `codex exec` with its own login and configured model. It never
+  reads or forwards `.env.agent`. Review uses `-s read-only`; implementation
+  uses `-s workspace-write -C <task worktree>`. Workers leave edits uncommitted
+  and report `COMMIT: none`; dispatch makes one manager commit only after a
+  zero exit with changes. Failed and no-change runs are never committed.
+
+- **Codex manager session:** run from the worktree/repo root with `sandbox=workspace-write`,
   `sandbox_workspace_write.network_access=true`, and `approval-policy=on-request`.
 - **Claude Code:** approve the `dispatch-task.sh` Bash invocation when prompted.
 
@@ -87,6 +93,12 @@ under `~/.dsh`; rendered manager-log payloads are normalized and bounded.
 Tool-result snippets default to 320 characters; read the raw artifact when the
 full output matters.
 Inspect the worktree and final response before treating a long DSH run as healthy.
+
+Codex writes observed CLI stderr and lifecycle markers into the same per-slice
+progress log, and saves its final message at `SLUG.progress.log.final.md` with
+`-o`. Its `[heartbeat]` indicates process liveness only; inspect the final
+message and worktree diff before accepting the result. With a custom
+`--progress-log FILE`, the final message is at `FILE.final.md`.
 
 - Dispatch in the background with output redirected to a file; do not block a
   foreground shell call (with its own timeout) on the whole slice.
@@ -215,7 +227,7 @@ single — so match the file, not the sibling.
 # stdin holds only a short manager instruction.
 printf '%s\n' 'Implement the assigned slice and report results.' | \
   scripts/dispatch-task.sh --issue NN --task-slug SLUG \
-  [--base BRANCH] [--provider claude-deepseek|dsh] --handoff REPO_PATH
+  [--base BRANCH] [--provider claude-deepseek|dsh|codex] --handoff REPO_PATH
 #   default --base: feat/core-arch-simplification
 #   creates worktree at $PURECUT_WORKTREE_BASE/SLUG on feat/issue-NN-SLUG
 #   runs the worker, then `npm run build` as an independent gate; never merges.
@@ -223,7 +235,7 @@ printf '%s\n' 'Implement the assigned slice and report results.' | \
 # Read-only review of an existing worktree (optional helper).
 printf '%s\n' 'Review the assigned diff and report findings.' | \
   scripts/dispatch-task.sh --mode review --worktree DIR \
-  [--provider claude-deepseek|dsh] --handoff REPO_PATH
+  [--provider claude-deepseek|dsh|codex] --handoff REPO_PATH
 
 # Poll a running dispatch (instant; see "Watching a dispatched worker").
 scripts/worker-status.sh --slug SLUG
@@ -237,7 +249,8 @@ scripts/finish-task.sh --slug SLUG [--base BRANCH]
 The provider leaf launchers own provider-specific credential handling,
 worktree confinement, and permission mapping. `run-claude-deepseek-agent.sh`
 remains the trusted Claude/DeepSeek primitive; `run-dsh-agent.sh` keeps DSH
-within its own read-only/workspace-write modes.
+within its own read-only/workspace-write modes. `run-codex-agent.sh` uses
+Codex's own login and equivalent sandbox modes, leaving commits to the manager.
 
 ## Guardrails (enforced by the scripts — do not re-derive)
 
