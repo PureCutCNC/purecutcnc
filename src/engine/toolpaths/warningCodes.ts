@@ -385,10 +385,16 @@ export type ToolpathWarningCode =
    *  no rapid has established it yet (issue #393, rule 2). */
   | 'postRotaryAngleNotEstablished'
   /** One of the machine's own template lines (a header, tool-change or other
-   *  command) writes the borrowed motor's letter as a linear axis word, so it
-   *  would turn or re-zero the bar. Every operation is refused (issue #393,
-   *  rule 3c). */
+   *  command) writes the machine's rotary word, so it would turn the bar behind
+   *  the planner's back. Every operation is refused on a borrowed motor, and on
+   *  a machine with its own axis the program is refused once any exported
+   *  operation carries an angle (issue #393, rule 3c). */
   | 'postRotaryTemplateUsesBorrowedAxis'
+  /** A drilling operation has drill holes but no expanded moves. Canned cycles
+   *  are never written on a machine whose rotary borrows a motor, so the holes
+   *  would be silently dropped; the operation is refused instead (issue #393,
+   *  rule 3b). */
+  | 'postRotaryDrillNotExpanded'
   /** The toolpath carries an angle about the bar's own axis, but the machine
    *  turns the stock about the other horizontal axis: the angle means a
    *  different motion on this machine, so the operation is not exported
@@ -442,11 +448,11 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   would quietly lack that operation's cuts (issue #983).
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
- *   `postRotaryTemplateUsesBorrowedAxis` and `postRotaryAxisMismatch` — a
- *   rotary operation the machine
- *   cannot run is left out of the program (issue #393). The file would
- *   otherwise be saved without that pass, and approximating any of them would
- *   cut the stock at the wrong angle or the wrong feed.
+ *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded` and
+ *   `postRotaryAxisMismatch` — a rotary operation the machine cannot run is
+ *   left out of the program (issue #393). The file would otherwise be saved
+ *   without that pass, and approximating any of them would cut the stock at
+ *   the wrong angle or the wrong feed.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
@@ -462,6 +468,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryNeedsRoundStock',
   'postRotaryAngleNotEstablished',
   'postRotaryTemplateUsesBorrowedAxis',
+  'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
 ])
 

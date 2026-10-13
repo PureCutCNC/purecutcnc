@@ -55,7 +55,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the program into inverse-time feed (`G93`) around a turning feed move, every
   such move carrying its own `F` on the motion block and the mode restored
   (`G94`) before any block that is not one: a rapid, an operation header or its
-  dwell/positioning template, a tool change, a canned cycle or the program end.
+  dwell/positioning template, a tool change, a canned cycle, the spindle stop or
+  the program end. It refuses a program whose own templates write the machine's
+  rotary word, judged on the rendered lines the program actually writes
+  (`postRotaryTemplateUsesBorrowedAxis`).
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5), written at the height the last operation
   retracted to and before the footer; never between operations, and none for a
@@ -86,13 +89,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, where `length` is the true length of the path the tip draws in
-  the stock's own frame, by Gauss-Legendre quadrature over the move's linear
-  angle change — and the reasons an
+  the stock's own frame, in closed form over the move's linear angle change, so
+  a move whose tip speed touches zero inside it is exact rather than off by a
+  corner — and the reasons an
   operation cannot run on this machine's rotary axis: no axis, no inverse-time
   feed, travel on the borrowed motor's axis beyond the one value the program
   may use across all its operations, a non-round bar, canned-cycle drill holes
-  with no expanded moves, a machine template that writes the borrowed letter as
-  a linear axis word, a feed move that starts before the program has turned
+  with no expanded moves, a feed move or arc that carries an angle on one end
+  only, a feed move that starts before the program has turned
   the bar to its angle, and the bar lying along the other horizontal axis than
   the machine's rotary (`postRotaryAxisMismatch`, #395); `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes

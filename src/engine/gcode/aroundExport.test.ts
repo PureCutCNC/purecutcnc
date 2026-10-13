@@ -811,7 +811,12 @@ console.log('Testing the single unwind rapid...')
   const unwindAt = lines.findIndex((programLine) => /^G0\s+A-?0(\.0+)?$/.test(programLine))
   assert.ok(unwindAt > 0, 'the truncated program still unwinds the bar')
   assert.ok(lines.slice(0, unwindAt).includes('G93'), 'the last motion really was a turning cut')
-  assert.equal(lines[unwindAt - 1], 'G94', 'inverse-time mode is left before the unwind')
+  // After the last turning cut: G94, then the spindle stop (#393), then the
+  // unwind. Nothing between the cut and the unwind runs in inverse-time mode.
+  const restoredAt = lines.lastIndexOf('G94', unwindAt)
+  const lastInverseAt = lines.lastIndexOf('G93', unwindAt)
+  assert.ok(restoredAt > lastInverseAt, 'inverse-time mode is left before the unwind')
+  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5'], 'only the spindle stop sits between G94 and the unwind')
 }
 
 // ── 6. the bar and the machine must agree (rule 3) ────────────

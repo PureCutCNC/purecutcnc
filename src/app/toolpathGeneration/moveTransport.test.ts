@@ -149,6 +149,46 @@ check(
 )
 
 check(
+  'the transfer check rejects non-increasing, out-of-range and non-finite angle slots',
+  (() => {
+    const packed = structuredClone(packMoves([
+      { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 1, y: 0, z: 0, a: 90 } },
+    ]))
+    if (!isPackedMoves(packed)) return false
+    const malformed = [
+      // The same slot twice: the second angle overwrites or drops the first.
+      { ...packed, angleIndices: new Uint32Array([0, 0]) },
+      // Slots that go backwards.
+      { ...packed, angleIndices: new Uint32Array([1, 0]) },
+      // A slot past the payload (`count * 2` is 2 here).
+      { ...packed, angleIndices: new Uint32Array([0, 2]) },
+      // Non-finite values: a rotation that is not a number is not a rotation.
+      { ...packed, angleValues: new Float64Array([0, Number.NaN]) },
+      { ...packed, angleValues: new Float64Array([Number.POSITIVE_INFINITY, 90]) },
+    ]
+    return malformed.every((candidate) => !isPackedMoves(candidate))
+  })(),
+  'a malformed angle payload (repeat, order, range or finiteness) passed its own shape check',
+)
+
+check(
+  'packing more angled moves than a Uint32 slot can address is refused',
+  (() => {
+    // A sparse array: only the first move is present, so the scan for an angle
+    // finishes at once, but `length` is past the slot limit.
+    const huge: ToolpathMove[] = new Array(2 ** 31)
+    huge[0] = { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 1, y: 0, z: 0 } }
+    try {
+      packMoves(huge)
+      return false
+    } catch (error) {
+      return /rotary angle/.test((error as Error).message)
+    }
+  })(),
+  'an over-long angled payload was packed, or failed with the wrong error',
+)
+
+check(
   'the transfer check accepts a valid angle payload',
   isPackedMoves(structuredClone(packMoves([
     { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0, a: 0 } },

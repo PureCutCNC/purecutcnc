@@ -89,6 +89,14 @@ function angleSlot(moveIndex: number, end: 'from' | 'to'): number {
   return moveIndex * 2 + (end === 'to' ? 1 : 0)
 }
 
+/**
+ * The most moves whose angle slots fit a `Uint32`: the last slot of the last
+ * move is `2·count - 1`, so `count` may not exceed `2^31`. The bound is stated
+ * as `2^31 - 1` so the refusal is a whole-move margin rather than a one-slot
+ * edge, and it is only reached by a payload that actually carries an angle.
+ */
+const MAX_ANGLED_MOVE_COUNT = 2 ** 31 - 1
+
 export interface PackedMoves {
   count: number
   /** Index into `TRANSPORT_MOVE_KINDS`, one per move. */
@@ -117,6 +125,16 @@ export interface TransportedResult extends Omit<ToolpathResult, 'moves'> {
 
 export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
   const count = moves.length
+  // A slot is `moveIndex * 2 + end`, so a payload of more than `2^31 - 1` moves
+  // carrying an angle would no longer fit a `Uint32` and the index would wrap.
+  // Refuse loudly rather than pack an angle onto the wrong move.
+  if (count > MAX_ANGLED_MOVE_COUNT
+    && moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) {
+    throw new Error(
+      `packMoves: ${count} moves with a rotary angle exceed the `
+      + `${MAX_ANGLED_MOVE_COUNT}-move limit of the angle index`,
+    )
+  }
   const kinds = new Uint8Array(count)
   const coords = new Float64Array(count * COORDS_PER_MOVE)
 
@@ -260,18 +278,40 @@ export function transferablesOf(transported: TransportedResult): ArrayBuffer[] {
   return buffers
 }
 
+/**
+ * True when a sparse angle pair is well formed for a payload of `count` moves
+ * (issue #393): the slots strictly increase, each names a real `from`/`to` slot
+ * (`0 … count·2 - 1`), and every value is finite. A slot that repeats, goes
+ * backwards or points past the payload would otherwise leave `unpackMoves`
+ * silently dropping angles.
+ */
+function angleSlotsAreValid(indices: Uint32Array, values: Float64Array, count: number): boolean {
+  const limit = count * 2
+  let previous = -1
+  for (let index = 0; index < indices.length; index += 1) {
+    const slot = indices[index]
+    if (slot <= previous || slot >= limit) return false
+    if (!Number.isFinite(values[index])) return false
+    previous = slot
+  }
+  return true
+}
+
 /** Shape check for a packed payload arriving over the wire. */
 export function isPackedMoves(value: unknown): value is PackedMoves {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as Partial<PackedMoves>
-  if (typeof candidate.count !== 'number') return false
-  // The angle pair is optional, but it is all-or-nothing and its slots must be
-  // parallel — a lone or mismatched buffer would silently drop a rotation.
+  if (!Number.isInteger(candidate.count) || (candidate.count as number) < 0) return false
+  const count = candidate.count as number
+  // The angle pair is optional, but it is all-or-nothing, its slots must be
+  // parallel, strictly increasing, in range and finite — a lone, mismatched,
+  // repeated or out-of-range entry would silently drop or misplace a rotation.
   const anglesValid = (candidate.angleIndices === undefined && candidate.angleValues === undefined)
     || (candidate.angleIndices instanceof Uint32Array
       && candidate.angleValues instanceof Float64Array
       && candidate.angleIndices.length === candidate.angleValues.length
-      && candidate.angleIndices.length <= candidate.count * 2)
+      && candidate.angleIndices.length <= count * 2
+      && angleSlotsAreValid(candidate.angleIndices, candidate.angleValues, count))
   return candidate.kinds instanceof Uint8Array
     && candidate.coords instanceof Float64Array
     && candidate.feedScaleIndices instanceof Uint32Array
@@ -279,6 +319,6 @@ export function isPackedMoves(value: unknown): value is PackedMoves {
     && candidate.sourceIndices instanceof Uint32Array
     && Array.isArray(candidate.sourceValues)
     && anglesValid
-    && candidate.coords.length === candidate.count * COORDS_PER_MOVE
-    && candidate.kinds.length === candidate.count
+    && candidate.coords.length === count * COORDS_PER_MOVE
+    && candidate.kinds.length === count
 }

@@ -603,11 +603,9 @@ function alongBar(point: ToolpathPoint, centre: RotaryCentreline): number {
 }
 
 /**
- * The positive half of the 32-point Gauss-Legendre rule on [-1, 1], with the
- * matching weights; the rule is symmetric, so each node is used at both signs.
- * The integrand below is the square root of a quadratic, which this evaluates
- * to machine precision — unlike the closed form, which loses precision through
- * cancellation when the speed is nearly constant.
+ * The 16 positive nodes and weights of a 32-point Gauss-Legendre rule on
+ * `[−1, 1]`, used by {@link stockFramePathLength} when the closed form would
+ * cancel. Symmetric, so the negative nodes are the positives negated.
  */
 const GAUSS_LEGENDRE_NODES: readonly number[] = [
   0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
@@ -642,6 +640,24 @@ const GAUSS_LEGENDRE_WEIGHTS: readonly number[] = [
  * The mean of the two end radii is *not* this length: a move that plunges while
  * it turns traces a longer spiral than either end's arc suggests, and a move
  * at a constant radius reduces to the ordinary `sqrt(along'² + (R·ω)²)`.
+ *
+ * The quadratic is a sum of squares, so completing it gives an exact closed
+ * form rather than a quadrature. With `t* = −beta / (2·alpha)` (where it is
+ * smallest) and `m = gamma − beta² / (4·alpha)` — never negative, up to
+ * floating-point noise — the integrand is `sqrt(alpha·u² + m)` in `u = t − t*`,
+ * whose antiderivative is
+ *
+ *   `F(u) = (u/2)·sqrt(alpha·u² + m) + (m / (2·sqrt(alpha)))·asinh(u·sqrt(alpha / m))`,
+ *
+ * and the length is `F(1 − t*) − F(−t*)`. That closed form is exact while the
+ * quadratic's minimum sits on or near the move, where it also carries the
+ * corner a tip speed touching zero puts in the integrand (a 32-point rule
+ * alone is off by ~8e-4 there, a 90° turn at a bar centreline crossing). When
+ * the minimum lies far outside `[−1, 2]` the two antiderivative values are
+ * large and nearly equal, and subtracting them loses most of the significant
+ * digits: a move with 1e-14 across/up deltas planned 18.000 mm for a true
+ * 18.6870947749. There the integrand is smooth on `[0, 1]`, so a fixed 32-point
+ * Gauss-Legendre rule is accurate to machine precision instead.
  */
 function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: RotaryCentreline): number {
   const start = centrelineFrame(from, centre)
@@ -657,9 +673,36 @@ function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: Ro
   const gamma = c1 * c1 + c2 * c2 + dAlong * dAlong
   // A move at a constant radius — a pure turn, a turn travelling along the bar,
   // or an ordinary straight move — has a constant tip speed. Returning it
-  // directly keeps the exact word those moves write today; the quadrature below
-  // would agree only to a few ulps.
+  // directly keeps the exact word those moves write today; the closed form
+  // below needs a division by `alpha` and would agree only to a few ulps.
   if (alpha === 0 && beta === 0) return Math.sqrt(Math.max(gamma, 0))
+  const tStar = -beta / (2 * alpha)
+  // The minimum of the quadratic lies on or near the move: the closed form is
+  // exact there, and it is the only branch that resolves the corner a tip
+  // speed touching zero puts in the integrand.
+  if (tStar >= -1 && tStar <= 2) {
+    const root = Math.sqrt(alpha)
+    // The quadratic is a sum of squares, so this is zero at worst: a negative
+    // value is floating-point noise at a move whose tip speed really does touch
+    // zero.
+    const m = Math.max(gamma - (beta * beta) / (4 * alpha), 0)
+    const antiderivative = (u: number): number => {
+      // `m → 0`: the square root is `sqrt(alpha)·|u|` and its integral is
+      // `sqrt(alpha)·u·|u| / 2`. The `asinh` form is indeterminate there, and
+      // overflows for a denormal `m`, so take the limit whenever the argument is
+      // not finite — `m` is negligible against `alpha·u²` by then.
+      const asinhArgument = m === 0 ? Infinity : u * Math.sqrt(alpha / m)
+      if (!Number.isFinite(asinhArgument)) return 0.5 * root * u * Math.abs(u)
+      return 0.5 * u * Math.sqrt(alpha * u * u + m)
+        + (m / (2 * root)) * Math.asinh(asinhArgument)
+    }
+    return antiderivative(1 - tStar) - antiderivative(-tStar)
+  }
+  // The minimum is far outside the move, so the antiderivative terms above are
+  // large and nearly equal and subtracting them loses the length. The integrand
+  // is smooth on [0, 1] here; the 32-point rule is accurate to machine
+  // precision. It needs no division by `alpha`, so it also covers the
+  // degenerate `alpha === 0, beta ≠ 0` that a rounding could in principle make.
   let total = 0
   for (let index = 0; index < GAUSS_LEGENDRE_NODES.length; index++) {
     const node = GAUSS_LEGENDRE_NODES[index]
@@ -673,6 +716,22 @@ function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: Ro
 }
 
 /**
+ * True when a move's two ends disagree on carrying an angle at all. A rapid may
+ * do that — a rapid to a point with an angle is how the program first turns the
+ * bar. A **feed move or arc must carry `a` on both ends or on neither**
+ * (issue #393, rule 2); `feedAngleIsSplit` is that rule, and the single place
+ * tracking, "does this move turn" and the path length all judge it.
+ */
+function oneEndAngled(from: ToolpathPoint, to: ToolpathPoint): boolean {
+  return (from.a === undefined) !== (to.a === undefined)
+}
+
+/** The rule above for a whole move: only a feed move or arc can break it. */
+function feedAngleIsSplit(move: ToolpathMove): boolean {
+  return move.kind !== 'rapid' && oneEndAngled(move.from, move.to)
+}
+
+/**
  * The inverse-time feed word for one turning feed move: `feed / length` in
  * 1/min, where `length` is the true path length at the cutter tip in the
  * stock's own frame ({@link stockFramePathLength}).
@@ -680,6 +739,11 @@ function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: Ro
  * Exported alone so the arithmetic can be tested without an export. The length
  * is never taken below `tolerance`, so a move that neither travels nor turns
  * yields a finite word rather than an infinity.
+ *
+ * Refuses a move that carries an angle on one end only: `stockFramePathLength`
+ * would read the absent angle as zero and plan a turn the emitter never writes.
+ * The operation is refused before export; this keeps the arithmetic from ever
+ * being handed such a move.
  */
 export function inverseTimeFeedValue(
   from: ToolpathPoint,
@@ -688,6 +752,9 @@ export function inverseTimeFeedValue(
   centre: RotaryCentreline,
   tolerance: number,
 ): number {
+  if (oneEndAngled(from, to)) {
+    throw new Error('inverseTimeFeedValue: a feed move must carry its rotary angle on both ends or on neither')
+  }
   const length = Math.max(stockFramePathLength(from, to, centre), tolerance)
   // `Math.max` floors the divisor at the tolerance: a zero-length move would
   // otherwise divide by zero and write `FInfinity`.
@@ -699,9 +766,10 @@ function sameAngle(a: number | undefined, b: number | undefined): boolean {
   return a === b
 }
 
-/** True when a move changes the stock's angle over its span (rule 2). */
+/** True when a move changes the stock's angle over its span (rule 2). A move
+ *  that breaks the two-ends rule is not a turn: it is refused before planning. */
 function turns(move: ToolpathMove): boolean {
-  return !sameAngle(move.from.a, move.to.a)
+  return !feedAngleIsSplit(move) && !sameAngle(move.from.a, move.to.a)
 }
 
 /**
@@ -844,72 +912,6 @@ export function suppressBorrowedAxisInSteps(
     })
 }
 
-/** A definition line is a comment when it starts with the comment prefix. */
-function isCommentLine(line: string, commentPrefix: string): boolean {
-  return commentPrefix.length > 0 && line.trimStart().startsWith(commentPrefix)
-}
-
-/**
- * True when a rendered definition line carries `letter` as an axis word
- * (issue #393, rule 3c). A word is a letter followed by a value — `Y0`,
- * `Y-5.0`, `Y#1` — so `G53 G0 Y0`, `G92 Y0` and the compact `X0Y0` all
- * match, while prose does not. Comments are not scanned.
- */
-function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
-  if (isCommentLine(line, commentPrefix)) return false
-  // Parenthesised comments (Mach3-style) and the line-comment marker are prose.
-  let code = line.replace(/\([^)]*\)/g, ' ')
-  if (commentPrefix.length > 0 && commentPrefix !== '(') {
-    const at = code.indexOf(commentPrefix)
-    if (at >= 0) code = code.slice(0, at)
-  }
-  for (const match of code.matchAll(/([A-Za-z])[-+]?(?=[0-9.#[])/g)) {
-    if (match[1].toUpperCase() === letter) return true
-  }
-  return false
-}
-
-/**
- * Every definition-supplied line the emitters write outside motion: the
- * program templates, the tool-change commands, the program end, the units and
- * work-coordinate commands, coolant and spindle switches.
- */
-function definitionTemplateLines(definition: MachineDefinition): string[] {
-  const { program, toolChange, stop, units, workCoordinates, coolant, feedSpeed } = definition
-  return [
-    ...program.header,
-    ...program.footer,
-    ...program.operationHeader,
-    ...toolChange.commands,
-    toolChange.pauseCommand,
-    stop.programEndCommand,
-    units.mmCommand ?? '',
-    units.inchCommand ?? '',
-    workCoordinates.selectCommand ?? '',
-    ...(coolant ? [coolant.floodOnCommand, coolant.mistOnCommand, coolant.coolantOffCommand] : []),
-    feedSpeed.spindleOnCW,
-    feedSpeed.spindleOnCCW,
-    feedSpeed.spindleOff,
-  ]
-}
-
-/**
- * The borrowed motor's letter when one of the machine's own template lines
- * would drive that motor as a linear axis, or null when none does (issue #393,
- * rule 3c). A header of `G0 X0 Y0`, `G53 G0 Y0` or `G92 Y0` on a machine that
- * borrows `Y` turns or re-zeros the bar before the first cut.
- */
-function borrowedLetterInTemplates(definition: MachineDefinition): string | null {
-  if (rotaryBorrowedAxis(definition) === null) return null
-  const letter = rotaryWord(definition)
-  if (letter === null) return null
-  const prefix = definition.program.commentPrefix
-  for (const line of definitionTemplateLines(definition)) {
-    if (lineCarriesAxisWord(line, letter, prefix)) return letter
-  }
-  return null
-}
-
 /**
  * The angle the program is at after an operation, in the program's own
  * direction, or `established: false` when a feed move starts before the
@@ -928,6 +930,9 @@ function trackOperationAngle(
   for (const move of moves) {
     const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
     if (!carriesAngle) continue
+    // A feed move with an angle on one end only is broken, not trackable: say
+    // the angle is not established so the operation is refused.
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current }
     const start = move.from.a === undefined ? undefined : move.from.a * direction
     const end = move.to.a === undefined ? undefined : move.to.a * direction
     if (move.kind === 'rapid') {
@@ -1013,7 +1018,7 @@ function inspectRotaryOperation(args: {
     // so an operation that has drill holes but no expanded moves would be
     // silently dropped.
     if (toolpath.moves.length === 0 && (toolpath.drillCycles?.length ?? 0) > 0) {
-      return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+      return { refused: { code: 'postRotaryDrillNotExpanded', params: { operation: operationName } } }
     }
   }
   if (!hasAngle) {
@@ -1022,6 +1027,13 @@ function inspectRotaryOperation(args: {
   const rotary = definition.rotary
   if (!rotary || rotaryWord(definition) === null) {
     return { refused: { code: 'postRotaryNoAxis', params: { operation: operationName } } }
+  }
+  // Rule 2: a feed move or arc must carry `a` on both ends or on neither. With
+  // it on one end only, feed planning would read the absent angle as zero and
+  // the emitter would write no angle word: the bar stays where it is and the
+  // cut runs at the wrong speed. Refused before any feed is planned.
+  if (toolpath.moves.some(feedAngleIsSplit)) {
+    return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
   }
   if (rotary.inverseTimeFeed === null
     && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
@@ -1045,22 +1057,15 @@ function inspectRotaryOperation(args: {
  * refused for a rotary reason, so a machine with a rotary axis exports a
  * program that does not use it byte-identically.
  *
- * A borrowed-motor machine whose own templates write the borrowed letter as a
- * linear axis refuses every operation at once (rule 3c): the turn or re-zero
- * happens before the program reaches any of them.
+ * A machine whose own templates write the rotary word is refused by the
+ * emitter (rule 3c), which is the only place that knows which lines the
+ * program actually writes; see `lineCarriesAxisWord` in `postprocessor.ts`.
  */
 export function planRotaryRefusals(
   input: Pick<PostProcessorInput, 'project' | 'definition' | 'operations'>,
 ): { operations: PostProcessorInput['operations']; warnings: ToolpathWarning[] } {
   const { project, definition, operations } = input
   const warnings: ToolpathWarning[] = []
-  const borrowedLetter = borrowedLetterInTemplates(definition)
-  if (borrowedLetter !== null) {
-    return {
-      operations: [],
-      warnings: [{ code: 'postRotaryTemplateUsesBorrowedAxis', params: { axis: borrowedLetter } }],
-    }
-  }
   const kept: PostProcessorInput['operations'] = []
   // Rule 2 and rule 3a both span the program: the angle the controller is at
   // and the borrowed coordinate carry from one operation to the next.
