@@ -25,6 +25,9 @@ export interface ToolpathPoint {
   x: number
   y: number
   z: number
+  /** Degrees the stock is turned to, about the bar's axis, when the tool is at
+   *  this point. Absent = no rotary component (issue #393). */
+  a?: number
 }
 
 export interface ToolpathMove {

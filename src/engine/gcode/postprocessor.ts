@@ -20,12 +20,11 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveMachineKind, resolveOutputDialect } from './types'
+import { resolveMachineKind, resolveOutputDialect, rotaryWord } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
-import type { FedMoveKind } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
 import { resolveEmittedArc } from './arcFitting'
 import type { ArcMoveDescriptor } from './arcFitting'
@@ -38,11 +37,12 @@ import {
   planPlasmaPath,
   planProgramSequence,
   planProgramSetup,
+  planRotaryRefusals,
   plasmaSafeZ,
   plasmaSheetZ,
   splitRapid,
 } from './motionPipeline'
-import type { OperationSequence } from './motionPipeline'
+import type { FeedDirective, OperationSequence } from './motionPipeline'
 import { emitOpenSbpProgram } from './opensbpEmitter'
 
 // What the emitter has written so far. Which tool is held and whether the
@@ -51,6 +51,17 @@ import { emitOpenSbpProgram } from './opensbpEmitter'
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
   feedRate: number | null
+  /** The last angle written, in the program's own direction, or null when the
+   *  program has not turned yet. The rotary word is modal like X/Y/Z: it is
+   *  written only when the angle changes from this (issue #393, rule 1). */
+  rotaryAngle: number | null
+  /** The machine letter the angle is written under (`A`, or a borrowed motor's
+   *  letter), or null when the machine has no rotary axis. */
+  rotaryWord: 'A' | 'X' | 'Y' | null
+  /** True while the controller is in inverse-time feed mode (issue #393,
+   *  rule 4): every turning feed move carries its own F, and the mode is left
+   *  before a non-turning move, a tool change or the program end. */
+  inverseTime: boolean
   currentPosition: ToolpathPoint | null
   lineNumber: number
 }
@@ -85,6 +96,13 @@ function safeCommentLines(text: string): string[] {
  * dialect and no dialect is special-cased inside another's emitter.
  */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  // A rotary operation this machine cannot run is dropped before any emitter
+  // sees it (issue #393, rule 5), exactly as a plasma cut is on a non-plasma
+  // machine. An operation with no angle anywhere is untouched.
+  const rotary = planRotaryRefusals(input)
+  const filtered: PostProcessorInput = rotary.warnings.length === 0
+    ? input
+    : { ...input, operations: rotary.operations }
   // A plasma cut belongs to a plasma table. On any other machine the ordinary
   // emitters would run it as a spindle path above the stock, so it never
   // reaches them: the program is the one its remaining operations ask for
@@ -92,21 +110,25 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   // decided in `planPlasmaSequence`.
   const skipped = resolveMachineKind(input.definition) === 'plasma'
     ? []
-    : input.operations.filter((entry) => entry.operation.kind === 'plasma_profile')
-  if (skipped.length === 0) {
-    return emitProgramForDialect(input)
+    : filtered.operations.filter((entry) => entry.operation.kind === 'plasma_profile')
+  const skippedWarnings = skipped.map(({ operation }) => ({
+    code: 'postPlasmaCutSkipped' as const,
+    params: { operation: operation.name },
+  }))
+  if (skippedWarnings.length === 0) {
+    return rotary.warnings.length === 0
+      ? emitProgramForDialect(input)
+      : withWarnings(emitProgramForDialect(filtered), rotary.warnings)
   }
-  const result = emitProgramForDialect({
-    ...input,
-    operations: input.operations.filter((entry) => entry.operation.kind !== 'plasma_profile'),
-  })
-  return {
-    ...result,
-    warnings: [
-      ...skipped.map(({ operation }) => ({ code: 'postPlasmaCutSkipped' as const, params: { operation: operation.name } })),
-      ...result.warnings,
-    ],
-  }
+  return withWarnings(emitProgramForDialect({
+    ...filtered,
+    operations: filtered.operations.filter((entry) => entry.operation.kind !== 'plasma_profile'),
+  }), [...rotary.warnings, ...skippedWarnings])
+}
+
+/** Put warnings the planner raised ahead of whatever the emitter raised. */
+function withWarnings(result: PostProcessorResult, warnings: ToolpathWarning[]): PostProcessorResult {
+  return { ...result, warnings: [...warnings, ...result.warnings] }
 }
 
 function emitProgramForDialect(input: PostProcessorInput): PostProcessorResult {
@@ -127,6 +149,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const state: ModalState = {
     motionCommand: null,
     feedRate: null,
+    rotaryAngle: null,
+    // `rotaryWord` reads the definition and is constant for the program; an
+    // `opensbp` definition can carry no rotary block (slice A validates that),
+    // so this path is G-code only.
+    rotaryWord: rotaryWord(definition),
+    inverseTime: false,
     currentPosition: null,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
@@ -179,12 +207,44 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
   }
 
+  /**
+   * Write the angle word for `angle` when it differs from the last one written
+   * (issue #393, rule 1). The value reaches the program multiplied by
+   * `rotaryDirection` — it is already the program's angle, done in the
+   * transform — and is never reduced to 0–360, so a move from 350 to 370 writes
+   * 370. A machine with no rotary axis writes nothing.
+   */
+  const emitRotaryAxisWord = (segments: string[], angle: number | undefined) => {
+    if (angle === undefined || state.rotaryWord === null) return
+    if (state.rotaryAngle === angle) return
+    segments.push(`${state.rotaryWord}${formatGCodeNumber(angle, definition, outputUnits)}`)
+    state.rotaryAngle = angle
+  }
+
+  /** Turn inverse-time feed off, if it is on (issue #393, rule 4). */
+  const leaveInverseTime = () => {
+    if (!state.inverseTime) return
+    const off = definition.rotary?.inverseTimeFeed?.off
+    if (off) emitLine(off)
+    state.inverseTime = false
+    // The controller's modal F is no longer the feed the emitter tracks (it is
+    // a 1/min value, or a command the controller replaced), so the next normal
+    // feed move must restate it.
+    state.feedRate = null
+  }
+
   const emitMotionLine = (
     motionCmd: string,
     axes: Partial<ToolpathPoint>,
     feed?: number,
   ) => {
     const lineSegments: string[] = []
+    const isRapid = motionCmd === definition.motion.rapidCommand
+    const angle = axes.a
+    // An ordinary move leaves inverse-time mode first: the program never
+    // changes tool, runs a canned cycle or ends inside it, and a move at a
+    // constant angle is not a turning move (rule 4).
+    if (!isRapid && angle === undefined) leaveInverseTime()
 
     if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
       lineSegments.push(motionCmd)
@@ -200,8 +260,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     if (axes.z !== undefined) {
       lineSegments.push(`Z${formatGCodeNumber(axes.z, definition, outputUnits)}`)
     }
+    emitRotaryAxisWord(lineSegments, angle)
 
-    if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
+    if (feed !== undefined && !isRapid) {
       const feedChanged = state.feedRate !== feed
       if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
         const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
@@ -223,12 +284,55 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       x: axes.x ?? state.currentPosition?.x ?? 0,
       y: axes.y ?? state.currentPosition?.y ?? 0,
       z: axes.z ?? state.currentPosition?.z ?? 0,
+      ...(axes.a !== undefined
+        ? { a: axes.a }
+        : state.currentPosition?.a !== undefined ? { a: state.currentPosition.a } : null),
     }
 
     emittedPosition = {
       x: axes.x !== undefined ? formatValue(axes.x) : emittedPosition?.x ?? 0,
       y: axes.y !== undefined ? formatValue(axes.y) : emittedPosition?.y ?? 0,
     }
+  }
+
+  /**
+   * Emit a straight move from a planned step, applying its own feed directive
+   * (issue #393, rule 4): a turning feed move enters inverse-time mode first —
+   * once, since it is modal — and then carries its own `F` in 1/min whatever
+   * `modalFeedSpeed` says. A move at a constant angle follows the ordinary
+   * modal-feed rules exactly as before.
+   */
+  const emitPlannedMove = (point: ToolpathPoint, directive: FeedDirective) => {
+    if (directive.mode === 'inverse') {
+      if (!state.inverseTime) {
+        const on = definition.rotary?.inverseTimeFeed?.on
+        if (on) emitLine(on)
+        state.inverseTime = true
+      }
+      const axes: Partial<ToolpathPoint> = {
+        x: point.x,
+        y: point.y,
+        z: point.z,
+        ...(point.a !== undefined ? { a: point.a } : null),
+      }
+      const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(directive.feed, definition, outputUnits)}`
+      if (definition.feedSpeed.inlineWithMotion) {
+        emitMotionLine(definition.motion.linearCommand, axes, directive.feed)
+      } else {
+        emitLine(fWord)
+        // Track the feed as written so the following ordinary move restates it
+        // rather than assuming the controller kept the pre-G93 value.
+        state.feedRate = directive.feed
+        emitMotionLine(definition.motion.linearCommand, axes)
+      }
+      return
+    }
+    emitMotionLine(definition.motion.linearCommand, {
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      ...(point.a !== undefined ? { a: point.a } : null),
+    }, directive.mode === 'normal' ? directive.feed : undefined)
   }
 
   const unitsCommand = project.meta.units === 'mm' ? (definition.units.mmCommand ?? '') : (definition.units.inchCommand ?? '')
@@ -352,6 +456,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       x: arc.endPoint.x,
       y: arc.endPoint.y,
       z: state.currentPosition?.z ?? 0,
+      ...(arc.endPoint.a !== undefined ? { a: arc.endPoint.a } : null),
     }
 
     emittedPosition = {
@@ -405,6 +510,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       operation,
       toolpath,
       arcEmitOptions,
+      cutFeed: step.cutFeed,
+      plungeFeed: step.plungeFeed,
       startPosition: emittedPosition,
       captureTrace,
     })
@@ -552,6 +659,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
     // Tool change
     if (step.changeTool) {
+      // Inverse-time mode is left before the program pauses (rule 4): a tool
+      // change is not a turning move, and the controller must not resume in a
+      // feed mode whose F means something else.
+      leaveInverseTime()
       if (definition.toolChange.stopSpindleFirst && step.spindleRunningAtToolChange) {
         emitLine(definition.feedSpeed.spindleOff)
       }
@@ -588,6 +699,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
     ) {
+      // A canned cycle is not a turning move and must not run in inverse-time
+      // mode (rule 4).
+      leaveInverseTime()
       const cycles = planDrillCycles(project, definition, toolpath.drillCycles, operation)
       const cannedDef = definition.cannedCycles
 
@@ -709,10 +823,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     if (!emittedCanned) {
-      // ── Effective feed ──
-      const feedForMove = (moveKind: FedMoveKind, feedScale?: number): number =>
-        effectiveFeed(moveKind, feedScale, step.cutFeed, step.plungeFeed)
-
       // Emit a single rapid (G0) with per-axis splitting.
       const emitRapid = (pt: ToolpathPoint) => {
         for (const axes of splitRapid(state.currentPosition, pt)) {
@@ -721,32 +831,39 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
 
       // ── Motion plan (shared by every dialect) ──
-      // Machine-coordinate transform, arc fitting and the emitted-arc
-      // fallback; this emitter only spells the result as G-code words.
+      // Machine-coordinate transform, arc fitting, the emitted-arc fallback and
+      // the feed each move is written with; this emitter only spells the result
+      // as G-code words.
       const plan = planOperationMotion({
         project,
         definition,
         operation,
         toolpath,
         arcEmitOptions,
+        cutFeed: step.cutFeed,
+        plungeFeed: step.plungeFeed,
         startPosition: emittedPosition,
         captureTrace,
       })
       warnings.push(...plan.warnings)
 
-      for (const d of plan.steps) {
-        if (d.kind === 'linear') {
-          if (d.moveKind === 'rapid') {
-            emitRapid(d.point)
-            continue
-          }
-          const feed = feedForMove(d.moveKind, d.feedScale)
-          emitMotionLine(definition.motion.linearCommand, d.point, feed)
-        } else {
-          const feed = feedForMove('cut', d.feedScale)
+      plan.steps.forEach((d, index) => {
+        const directive = plan.feeds[index] ?? { mode: 'none' as const }
+        if (d.kind === 'arc') {
+          // A fitted arc is at a constant angle by construction (rule 2 keeps
+          // turning moves out of arc runs), so it leaves inverse-time mode and
+          // carries no angle word of its own.
+          leaveInverseTime()
+          const feed = directive.mode === 'normal'
+            ? directive.feed
+            : effectiveFeed('cut', d.feedScale, step.cutFeed, step.plungeFeed)
           emitArcLine(d, feed)
+        } else if (d.moveKind === 'rapid') {
+          emitRapid(d.point)
+        } else {
+          emitPlannedMove(d.point, directive)
         }
-      }
+      })
 
       // Debug-only (issue #356): the machine-coordinate motion trace for the
       // exported-motion debug view.
@@ -761,6 +878,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
        emitLine(definition.feedSpeed.spindleOff)
     }
   })
+
+  // The program never ends in inverse-time mode (rule 4).
+  leaveInverseTime()
 
   // 5. Footer
   definition.program.footer.forEach(line => {

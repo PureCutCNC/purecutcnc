@@ -253,6 +253,10 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postCannedCycleUnsupported': 'Operation „{operation}": {drillType}-Festzyklus wird von Maschine „{machine}" nicht unterstützt; erweiterte Bewegungen werden ausgegeben.',
   'warnings.postArcNoCapability': 'Operation „{operation}" enthält lineare Bewegungen, die als Bögen ausgegeben werden könnten, aber die ausgewählte Maschine unterstützt keine Kreisinterpolation (G2/G3). Stattdessen werden lineare Bewegungen ausgegeben.',
   'warnings.postArcFallbackLinear': 'Bei Operation „{operation}" hätte die ausgewählte Steuerung {count} angepasste Bogenabschnitt(e) nach der Zahlenrundung abgelehnt. Diese Abschnitte wurden stattdessen als lineare Bewegungen ausgegeben.',
+  'warnings.postRotaryNoAxis': 'Operation „{operation}" wurde nicht exportiert: Diese Maschine hat keine Drehachse.',
+  'warnings.postRotaryNoInverseTime': 'Operation „{operation}" wurde nicht exportiert: Die Steuerung dieser Maschine kennt keinen Vorschub in umgekehrter Zeit, den ein Drehschnitt benötigt.',
+  'warnings.postRotaryBorrowedAxisTravel': 'Operation „{operation}" wurde nicht exportiert: Sie fährt entlang {axis}, aber dieser Motor treibt an dieser Maschine die Drehachse.',
+  'warnings.postRotaryNeedsRoundStock': 'Operation „{operation}" wurde nicht exportiert: Ein Drehschnitt benötigt Rundmaterial.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

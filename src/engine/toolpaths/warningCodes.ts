@@ -357,6 +357,20 @@ export type ToolpathWarningCode =
    *  guards a toolpath that reached the emitter in another shape (issue
    *  #983). */
   | 'postPlasmaSafeHeightMissing'
+  /** Rotary refusals (issue #393). Each skips the operation and names it: a
+   *  program that guessed at the stock's angle, or at a feed that is not the
+   *  one the cut needs, cuts the part wrong. */
+  /** The toolpath turns the stock, but this machine has no rotary axis. */
+  | 'postRotaryNoAxis'
+  /** The toolpath has a turning feed move and the controller has no
+   *  inverse-time feed, so no correct feed word can be written for it. */
+  | 'postRotaryNoInverseTime'
+  /** The operation moves along the project axis whose motor drives the rotary,
+   *  so that travel does not exist on this machine. */
+  | 'postRotaryBorrowedAxisTravel'
+  /** A turning cut measures its feed from the bar's centreline, and the stock
+   *  is not a round bar. */
+  | 'postRotaryNeedsRoundStock'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -403,6 +417,11 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postPlasmaSafeHeightMissing` — a G-code pierce operation's cuts are left
  *   out because no safe height could be read for them, so the saved file
  *   would quietly lack that operation's cuts (issue #983).
+ * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`
+ *   and `postRotaryNeedsRoundStock` — a rotary operation the machine cannot
+ *   run is left out of the program (issue #393). The file would otherwise be
+ *   saved without that pass, and approximating any of the four would cut the
+ *   stock at the wrong angle or the wrong feed.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
@@ -412,6 +431,10 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postPlasmaCutFeedMissing',
   'postPlasmaPlungeFeedMissing',
   'postPlasmaSafeHeightMissing',
+  'postRotaryNoAxis',
+  'postRotaryNoInverseTime',
+  'postRotaryBorrowedAxisTravel',
+  'postRotaryNeedsRoundStock',
 ])
 
 /**

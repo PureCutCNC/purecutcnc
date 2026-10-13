@@ -253,6 +253,10 @@ export const warningsEn = {
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
   'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
   'warnings.postArcFallbackLinear': 'Operation "{operation}" had {count} fitted arc run(s) that the selected controller would reject after number rounding. Those spans were emitted as linear moves instead.',
+  'warnings.postRotaryNoAxis': 'Operation "{operation}" was not exported: this machine has no rotary axis.',
+  'warnings.postRotaryNoInverseTime': 'Operation "{operation}" was not exported: this machine\'s controller has no inverse-time feed, which a turning cut needs.',
+  'warnings.postRotaryBorrowedAxisTravel': 'Operation "{operation}" was not exported: it moves along {axis}, but that motor drives the rotary on this machine.',
+  'warnings.postRotaryNeedsRoundStock': 'Operation "{operation}" was not exported: a turning cut needs round bar stock.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',

@@ -286,6 +286,8 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       operation,
       toolpath,
       arcEmitOptions,
+      cutFeed,
+      plungeFeed,
       startPosition: emittedPosition,
       captureTrace,
     })

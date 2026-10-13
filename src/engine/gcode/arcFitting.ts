@@ -104,14 +104,33 @@ function isFittableKind(kind: ToolpathMove['kind']): boolean {
  * over to are tangent-continuous and would otherwise fit as one arc, which
  * would relabel the lead and lose the distinction the preview and the booklet
  * read.
+ *
+ * A move that turns the stock is never part of an arc run (issue #393, rule 2):
+ * an arc is a single interpolated circular motion in the plane, and a rotary
+ * axis moving through it is a different motion the controller cannot produce
+ * from I/J. Such a move is emitted as a straight feed or rapid, whatever the
+ * operation's arc-fitting setting; moves at a constant angle fit exactly as
+ * before.
  */
 function sameRun(prev: ToolpathMove, next: ToolpathMove): boolean {
   if (!isFittableKind(next.kind) || next.kind !== prev.kind) return false
+  if (turns(next)) return false
+  if (!sameAngle(prev.to.a, next.to.a)) return false
   if (!pointsEq(prev.to, next.from)) return false
   if (!sameZ(prev.to, next.to)) return false
   if (prev.source !== next.source) return false
   if (prev.feedScale !== next.feedScale) return false
   return true
+}
+
+/** True when a move changes the stock's angle over its span. */
+function turns(move: ToolpathMove): boolean {
+  return !sameAngle(move.from.a, move.to.a)
+}
+
+/** Absent means no rotary component, so it matches only another absent one. */
+function sameAngle(a: number | undefined, b: number | undefined): boolean {
+  return a === b
 }
 
 function sameZ(a: ToolpathPoint, b: ToolpathPoint, epsilon = 1e-9): boolean {
@@ -142,6 +161,7 @@ function pointsEq(a: ToolpathPoint, b: ToolpathPoint, eps = 1e-9): boolean {
   return Math.abs(a.x - b.x) <= eps
     && Math.abs(a.y - b.y) <= eps
     && Math.abs(a.z - b.z) <= eps
+    && sameAngle(a.a, b.a)
 }
 
 /**
@@ -204,11 +224,14 @@ function splitArc(
     // floating-point precision; using `end` verbatim removes the last path
     // by which an emitted run could drift off its source geometry.
     const ep: ToolpathPoint = s === segments
-      ? { x: end.x, y: end.y, z: start.z }
+      ? { x: end.x, y: end.y, z: start.z, ...(start.a !== undefined ? { a: start.a } : null) }
       : {
         x: center.x + Math.cos(angle) * radius,
         y: center.y + Math.sin(angle) * radius,
         z: start.z,
+        // A fitted run is at a constant angle (rule 2 keeps turning moves out
+        // of it), so the synthesised sub-arc endpoints carry the run's own.
+        ...(start.a !== undefined ? { a: start.a } : null),
       }
     segments_out.push({
       endPt: ep,

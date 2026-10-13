@@ -9,7 +9,8 @@ exports native part files (`.sbp`). Design reference:
 ## How export is split
 
 `runPostProcessor` picks the dialect — dropping a plasma cut on a machine that
-is not a plasma table before the emitter sees it (#960) — and does nothing else.
+is not a plasma table before the emitter sees it (#960), and an operation this
+machine's rotary axis cannot run (#393) — and does nothing else.
 What the machine is asked to do is decided once, for every dialect, in
 `motionPipeline.ts`; a dialect's emitter only spells the result. New behaviour
 goes in the pipeline. New syntax goes in an emitter. A dialect is never
@@ -85,7 +86,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   accurate when the emitter changes.
 - `arcFitting.ts` — export-stage arc fitting: Kasa circle fit, direction
   detection, ≤ 90° splitting, and `resolveEmittedArc` / `applyEmittedArcFallback`,
-  which judge an arc by the numbers actually written.
+  which judge an arc by the numbers actually written. A move that turns the
+  stock is never part of a run (#393): an arc is one planar circular motion, and
+  a rotary axis moving through it is not.
 - `gcodeMotionParser.ts` — read-only parser for the emitted G-code (issue
   #356); reconstructs planar motion analytically.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what

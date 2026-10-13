@@ -15,6 +15,7 @@
  */
 
 import type { MachineDefinition } from './types'
+import { rotaryDirection } from './types'
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { canonicalToSetupPoint, setupFlipsArcDirection, setupToCanonicalPoint } from '../setupOrientation'
@@ -30,6 +31,11 @@ import type { SetupFrame } from '../setupOrientation'
  * point is turned into the setup-local frame first, and the origin — one
  * placement shared by every setup — is then applied in that frame. Top passes
  * no frame and takes exactly the path it always did.
+ *
+ * A rotary angle (issue #393) is carried through as the *program* angle: it is
+ * multiplied by `rotaryDirection`, never reduced modulo 360, and it is emitted
+ * under `rotaryWord` by the caller. A point with no `a` comes back with exactly
+ * the three keys it always had — no `a: undefined`.
  */
 export function projectToMachinePoint(
   point: ToolpathPoint,
@@ -57,11 +63,17 @@ export function projectToMachinePoint(
     }
   }
 
-  return {
+  const machinePoint: ToolpathPoint = {
     x: mapAxis(definition.coordinateSystem.xAxis),
     y: mapAxis(definition.coordinateSystem.yAxis),
     z: mapAxis(definition.coordinateSystem.zAxis),
   }
+  // A setup turn is about the bar's own axis when the project is consistent, so
+  // it leaves the angle alone; the direction multiplies it on the way out.
+  if (point.a !== undefined) {
+    machinePoint.a = point.a * rotaryDirection(definition)
+  }
+  return machinePoint
 }
 
 /**
