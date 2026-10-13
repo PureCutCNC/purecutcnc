@@ -654,6 +654,29 @@ const NINETY = Math.PI / 2
       `${name}: quadrature and the polyline agree (relative error ${relativeError.toExponential(2)})`)
   }
 
+  // A move that starts off the centreline and changes its across coordinate
+  // *and* its height while the angle changes, with travel along the bar as
+  // well: every term of the squared speed contributes, on both bar axes and
+  // for both signs of sweep. The start is off the centreline on both counts,
+  // and each case carries its own numbers, so a sign flip in `c1`, `c2` or
+  // `beta`, a dropped `Δacross²` in `alpha`, or reading across/up from the
+  // wrong axis on a bar along Y all change the length.
+  const offCentreline: Array<[string, ToolpathPoint, ToolpathPoint, RoundStock]> = [
+    ['a bar along X, positive sweep', at(0, 13, 21, 15), at(7, 6, 14, 140), stock],
+    ['a bar along X, negative sweep', at(2, 5, 18, 20), at(12, 14, 13, -110), stock],
+    ['a bar along Y, positive sweep', at(14, 2, 22, 15), at(5, 12, 16, 140), roundStock(20, 100, 'y')],
+    ['a bar along Y, negative sweep', at(7, 1, 19, 20), at(15, 10, 12, -110), roundStock(20, 100, 'y')],
+  ]
+  for (const [name, from, to, caseStock] of offCentreline) {
+    const caseCentre = rotaryCentreline(caseStock)
+    assert.ok(caseCentre, `${name}: a round bar has a centreline`)
+    const expectedLength = bruteForceStockPathLength(from, to, caseStock)
+    const value = inverseTimeFeedValue(from, to, 600, caseCentre, tolerance)
+    const relativeError = Math.abs(600 / value - expectedLength) / expectedLength
+    assert.ok(relativeError < 1e-9,
+      `${name}: quadrature and the polyline agree (relative error ${relativeError.toExponential(2)})`)
+  }
+
   // A constant-radius move keeps exactly the word it had before: a pure turn is
   // `r × Δθ`, and a turn that travels along the bar over the centreline is
   // `|Δalong|`.
