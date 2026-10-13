@@ -96,8 +96,6 @@ interface ParseState {
   motionMode: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | null
   /** True while the definition's inverse-time command is in force (issue #393). */
   inverseTime: boolean
-  /** The last F word read under inverse time, in 1/min, or null. */
-  inverseFeed: number | null
 }
 
 interface Word {
@@ -301,7 +299,6 @@ export function parseGcodeMotion(
     pos: { x: 0, y: 0, z: 0 },
     motionMode: null,
     inverseTime: false,
-    inverseFeed: null,
   }
 
   const lines = gcode.split(/\r?\n/)
@@ -358,18 +355,18 @@ export function parseGcodeMotion(
       }
     }
 
-    // Feed mode (issue #393): G93/G94 are modal. The F word of a block in
-    // inverse-time mode is 1/min and is kept as such; a feed read in ordinary
-    // mode never becomes inverse time.
+    // Feed mode (issue #393): G93/G94 are modal, but the inverse-time F is not.
+    // It belongs to the block that writes it — a controller in inverse-time mode
+    // needs an F on every feed block, so carrying the previous one forward would
+    // report a program the machine stops on.
     if (inverseSwitch === true) {
       state.inverseTime = true
-      state.inverseFeed = null
     } else if (inverseSwitch === false) {
       state.inverseTime = false
-      state.inverseFeed = null
     }
-    if (feedWord !== undefined && state.inverseTime) state.inverseFeed = feedWord
-    const inverseTimeFeed = state.inverseTime && state.inverseFeed !== null ? state.inverseFeed : undefined
+    const inverseTimeFeed = state.inverseTime && feedWord !== undefined && feedWord > 0
+      ? feedWord
+      : undefined
 
     if (explicitMode === 'unsupported') {
       if (status === 'verified') status = 'unsupported'
@@ -406,6 +403,15 @@ export function parseGcodeMotion(
       warnings.push(`line ${lineIndex + 1}: motion coordinates with no established motion mode`)
       mode = 'linear'
       state.motionMode = 'linear'
+    }
+
+    // A feed move in inverse-time mode must carry its own positive F (issue
+    // #393). "Verified" means the trace matches what a controller would run, and
+    // a controller rejects this block — so it is reported the same way as any
+    // other construct the parser cannot reconstruct, not as verified.
+    if (state.inverseTime && mode !== 'rapid' && inverseTimeFeed === undefined) {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(`line ${lineIndex + 1}: feed move in inverse-time mode without its own F word`)
     }
 
     const from = { ...state.pos }

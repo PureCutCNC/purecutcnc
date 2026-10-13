@@ -109,8 +109,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   #356); reconstructs planar motion analytically. Given the definition's rotary
   word and inverse-time commands (issue #393) it reads the angle modally — the
   borrowed motor's letter is the angle, never a linear coordinate — and keeps a
-  `G93` F word as inverse time (`inverseTimeFeed`, 1/min) rather than a speed. A
-  program with no rotary word and no `G93` parses exactly as before.
+  `G93` F word as inverse time (`inverseTimeFeed`, 1/min) rather than a speed.
+  The feed **mode** is modal but that F is not: a feed move (`G1`/`G2`/`G3`) in
+  inverse-time mode without a positive F on its own block is what a controller
+  rejects, so it takes the parser's existing downgrade path and reports
+  `unsupported` rather than verified with a borrowed F; an F on a line of its
+  own does not count. A program with no rotary word and no `G93` parses exactly
+  as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
   `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
 - `motionDebug.ts` — exported-motion debug helpers (issue #356):
