@@ -59,10 +59,16 @@ export function FaceBanner({ withSwitch = false }: FaceBannerProps) {
           </span>
         </div>
       )}
+      {bothFaces && face === 'around' && (
+        <div className="face-banner__note" role="status">
+          <Icon id="face-around" size={16} />
+          <span>{t('canvas.face.aroundTurnsBar')}</span>
+        </div>
+      )}
       {bothFaces && (
         <div className="face-banner__hint">
-          <Icon id={face === 'top' ? 'face-top' : 'face-bottom'} size={16} />
-          <span>{t(face === 'top' ? 'canvas.face.drawingOnTop' : 'canvas.face.drawingOnBottom')}</span>
+          <Icon id={face === 'top' ? 'face-top' : face === 'bottom' ? 'face-bottom' : 'face-around'} size={16} />
+          <span>{t(face === 'top' ? 'canvas.face.drawingOnTop' : face === 'bottom' ? 'canvas.face.drawingOnBottom' : 'canvas.face.drawingOnAround')}</span>
         </div>
       )}
     </div>

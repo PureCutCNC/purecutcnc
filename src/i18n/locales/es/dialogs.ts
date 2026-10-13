@@ -99,6 +99,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.error.selectFolder': 'Seleccione al menos una carpeta para importar o marque "Importar material desde el origen".',
   'dialogs.importGeometry.error.noFeaturesImported': 'No se importaron elementos de las carpetas seleccionadas.',
   'dialogs.importGeometry.error.noGeometryFound': 'No se encontró geometría importable en el archivo seleccionado.',
+  'dialogs.importGeometry.error.modelOnAround': 'Un modelo 3D no se puede colocar en la cara alrededor. Cambia a Superior para importarlo.',
   'dialogs.importGeometry.error.importFailed': 'Error al importar el archivo de geometría.',
   'dialogs.importGeometry.error.stepTolerance': 'La tolerancia de superficie debe ser un número positivo.',
   'dialogs.importGeometry.error.stepFileTooLarge': 'No se pueden importar archivos STEP de más de {limit} MB.',

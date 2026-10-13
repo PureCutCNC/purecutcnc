@@ -64,15 +64,15 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   }
   return <div className="setup-operation-controls">
     <div className="properties-field"><span>{t('cam.setup.setup')}</span><div className="face-row__value"><span className={`face-chip face-chip--${face}`}>{setup.name}</span><button className="feat-btn" type="button" onClick={() => { setMoving(true); setConfirmSnapshot(project); setDestination(sections.find((section) => section.setup.id !== setup.id)?.setup.id ?? '') }}>{t('cam.setup.move')}</button></div></div>
-    {operation.target.source === 'features' ? <CrossFaceTargetPicker project={project} face={face} selectedIds={ids} kind={operation.kind} onChange={(featureIds) => updateOperation(operation.id, { target: { source: 'features', featureIds } })} /> : null}
+    {operation.target.source === 'features' && face !== 'around' ? <CrossFaceTargetPicker project={project} face={face} selectedIds={ids} kind={operation.kind} onChange={(featureIds) => updateOperation(operation.id, { target: { source: 'features', featureIds } })} /> : null}
     {reaches.length > 0 ? <div className="cam-setup-reach">
       <button className="feat-btn" type="button" disabled={checking} onClick={() => void checkReach()}>{t(checking ? 'cam.setup.checkingReach' : 'cam.setup.checkReach')}</button>
       {reaches.map((entry) => <div key={entry.featureId} className="cam-setup-reach__target">
         <strong>{entry.featureName}</strong> {entry.verdict.status === 'cross-face' ? <span className="face-chip face-chip--thru">{t('cam.setup.crossFace')}</span> : null}
         {entry.verdict.status === 'rejected' ? <p className="cam-field-message">{t('cam.setup.unreachable')}</p> : null}
-        {entry.verdict.depth ? <p>{t(face === 'top' ? 'cam.setup.depthTop' : 'cam.setup.depthBottom', { start: formatLength(entry.verdict.depth.start,project.meta.units), end: formatLength(entry.verdict.depth.end,project.meta.units), units: project.meta.units })}</p> : null}
+        {entry.verdict.depth ? <p>{t(face === 'top' ? 'cam.setup.depthTop' : face === 'bottom' ? 'cam.setup.depthBottom' : 'cam.setup.depthAround', { start: formatLength(entry.verdict.depth.start,project.meta.units), end: formatLength(entry.verdict.depth.end,project.meta.units), units: project.meta.units })}</p> : null}
         <p>{entry.range ? t('cam.setup.stockReach', { min: formatLength(entry.range.min,project.meta.units), max: formatLength(entry.range.max,project.meta.units), units: project.meta.units }) : t('cam.setup.unverified')}</p>
-        {entry.coverage ? <p className={`cam-setup-coverage cam-setup-coverage--${entry.coverage.status}`}>
+        {entry.coverage && face !== 'around' ? <p className={`cam-setup-coverage cam-setup-coverage--${entry.coverage.status}`}>
           {entry.coverage.status === 'meets' ? t('cam.setup.meets', { value: formatLength(entry.coverage.overlap ?? 0,project.meta.units), units: project.meta.units })
             : entry.coverage.status === 'singleSide' ? t('cam.setup.singleSide')
             : entry.coverage.status === 'gap' ? t('cam.setup.gap', { value: formatLength(entry.coverage.gap ?? 0,project.meta.units), units: project.meta.units }) : t('cam.setup.unverified')}

@@ -150,7 +150,25 @@ assert.deepEqual(syncProjectSetups(blockStock).features, current.features)
 assert.deepEqual(syncProjectSetups(blockStock).operations, current.operations)
 const wrongAxis = { ...current, stock: roundStock(40, 180, 'y') }
 assert.equal(setupGenerationBlock(wrongAxis, current.operations[0])?.reason, 'aroundStockMismatch')
-assert.equal(syncProjectSetups(wrongAxis).setups.find((row) => row.kind === 'around')!.orientation.axis, 'y')
+assert.equal(syncProjectSetups(wrongAxis).setups.find((row) => row.kind === 'around')!.orientation.axis, 'x', 'content pins the Around axis; the bar no longer moves it')
+assert.equal(operationCutRange(blockStock, current.operations[0], paths[0], 'around'), null, 'a block bar reports no reach instead of throwing')
+assert.equal(operationCutRange(wrongAxis, current.operations[0], paths[0], 'around'), null, 'a transposed bar reports no reach instead of throwing')
+// Follow the bar only while the Around setup is empty.
+const aroundSetupId = current.setups.find((row) => row.kind === 'around')!.id
+const emptyAround: Project = {
+  ...fixture('y'),
+  setups: [{ id: aroundSetupId, kind: 'around', name: 'Around', orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: [] }],
+  activeSetupId: aroundSetupId,
+  features: [],
+  operations: [],
+}
+assert.equal(syncProjectSetups(emptyAround).setups[0].orientation.axis, 'y', 'an empty Around setup follows the bar')
+const pinned = projectWithFeatures(emptyAround, [{ ...feature('pinned'), authoringFace: 'around' }])
+assert.equal(
+  syncProjectSetups(pinned).setups[0].orientation.axis,
+  'x',
+  'an Around feature pins the axis',
+)
 for (const [project, reason] of [
   [ { ...fixture(), stock: newProject().stock }, 'needsRoundBar' ],
   [ { ...fixture(), meta: { ...fixture().meta, machineDefinitions: [], selectedMachineId: null } }, 'needsRotaryMachine' ],

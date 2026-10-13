@@ -316,6 +316,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // project is valid with no warning. The store enforces this, but a loaded file
   // could be malformed.
   const machiningFeatures = features.filter(isMachinable)
+  // Around's layer appears when the project has Around content or the
+  // workspace is on it. A flat-only project keeps exactly the two layers it
+  // has today (issue #395).
+  const faceLayers: readonly SetupFace[] = workspaceFace === 'around' || machiningFeatures.some((feature) => feature.authoringFace === 'around')
+    ? ['top', 'bottom', 'around']
+    : ['top', 'bottom']
   const solidFeatures = features.filter(isSolid)
   const regionFeatures = features.filter(isRegion)
   const constructionFeatures = features.filter(isConstruction)
@@ -378,7 +384,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           kind="feature"
           depth={depth}
           ghost
-          title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : 'featureTree.face.ghostRowTop')}
+          title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -666,7 +672,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               </div>
             )}
             {bothFaces
-              ? (['top', 'bottom'] as const).map((face) => {
+              ? faceLayers.map((face) => {
                   const count = machiningFeatures.filter((feature) => feature.authoringFace === face).length
                   const active = face === workspaceFace
                   return (
@@ -676,9 +682,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                         data-face-layer={face}
                         data-face-state={active ? 'active' : 'ghost'}
                       >
-                        <Icon id={face === 'top' ? 'face-top' : 'face-bottom'} size={16} />
+                        <Icon id={face === 'top' ? 'face-top' : face === 'bottom' ? 'face-bottom' : 'face-around'} size={16} />
                         <span className="tree-face-layer__label">
-                          {t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')}
+                          {t(face === 'top' ? 'featureTree.face.topFace' : face === 'bottom' ? 'featureTree.face.bottomFace' : 'featureTree.face.aroundLayer')}
                         </span>
                         <span className="tree-face-layer__count">{count}</span>
                         <span className="tree-face-layer__spacer" />
@@ -892,6 +898,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddTab={() => startAddTabPlacement()}
+          addTabDisabled={workspaceFace === 'around'}
           onShowAll={() => setAllTabsVisible(true)}
           onHideAll={() => setAllTabsVisible(false)}
           onSelectAll={() => selectAllTabs()}
@@ -1017,6 +1024,8 @@ interface TreeRowProps {
   onToggleOperation?: (operation: FeatureOperation) => void
   onAddFolder?: () => void
   onAddTab?: () => void
+  /** Around has no tabs: the Add tab button stays visible but disabled. */
+  addTabDisabled?: boolean
   onAddClamp?: () => void
   onShowAll?: () => void
   onHideAll?: () => void
@@ -1063,6 +1072,7 @@ function TreeRow({
   onToggleOperation,
   onAddFolder,
   onAddTab,
+  addTabDisabled = false,
   onAddClamp,
   onShowAll,
   onHideAll,
@@ -1311,12 +1321,13 @@ function TreeRow({
           <button
             type="button"
             className="tree-action-btn"
+            disabled={addTabDisabled}
             onClick={(event) => {
               event.stopPropagation()
               onAddTab()
             }}
-            title={t('featureTree.treeRow.addEntry.tab')}
-            aria-label={t('featureTree.treeRow.addEntry.tab')}
+            title={t(addTabDisabled ? 'featureTree.treeRow.addEntry.tabAround' : 'featureTree.treeRow.addEntry.tab')}
+            aria-label={t(addTabDisabled ? 'featureTree.treeRow.addEntry.tabAround' : 'featureTree.treeRow.addEntry.tab')}
           >
             +
           </button>

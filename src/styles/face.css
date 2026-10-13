@@ -97,6 +97,14 @@
   box-shadow: inset 0 -2px 0 var(--face-bottom);
 }
 
+/* Around (issue #395): the bar's unrolled surface. It reuses the region
+ * violet rather than adding a theme token. */
+.face-switch__segment--around.face-switch__segment--active {
+  background: color-mix(in srgb, var(--role-region) 18%, transparent);
+  color: var(--role-region-text);
+  box-shadow: inset 0 -2px 0 var(--role-region);
+}
+
 .face-switch__ghost {
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -222,6 +230,13 @@
   color: var(--face-bottom-text);
 }
 
+.face-banner--around .face-banner__note,
+.face-banner--around .face-banner__hint {
+  border-color: color-mix(in srgb, var(--role-region) 60%, transparent);
+  background: color-mix(in srgb, var(--role-region) 9%, transparent);
+  color: var(--role-region-text);
+}
+
 .face-banner svg {
   flex-shrink: 0;
 }
@@ -252,6 +267,12 @@
   border-color: color-mix(in srgb, var(--face-bottom) 60%, transparent);
   background: color-mix(in srgb, var(--face-bottom) 14%, transparent);
   color: var(--face-bottom-text);
+}
+
+.face-chip--around {
+  border-color: color-mix(in srgb, var(--role-region) 60%, transparent);
+  background: color-mix(in srgb, var(--role-region) 14%, transparent);
+  color: var(--role-region-text);
 }
 
 .face-chip--thru {
@@ -305,12 +326,20 @@
   color: var(--face-bottom-text);
 }
 
+.tree-face-layer--around {
+  color: var(--role-region-text);
+}
+
 .tree-face-layer--top.tree-face-layer--active {
   background: var(--accent-soft);
 }
 
 .tree-face-layer--bottom.tree-face-layer--active {
   background: color-mix(in srgb, var(--face-bottom) 14%, transparent);
+}
+
+.tree-face-layer--around.tree-face-layer--active {
+  background: color-mix(in srgb, var(--role-region) 14%, transparent);
 }
 
 .tree-face-layer:not(.tree-face-layer--active) {
@@ -449,11 +478,14 @@
 .cam-setup-group { min-width: 0; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
 .cam-setup-group--active { border-color: var(--accent); }
 .cam-setup-group--bottom.cam-setup-group--active { border-color: var(--face-bottom); }
+.cam-setup-group--around.cam-setup-group--active { border-color: var(--role-region); }
 .cam-setup-group__header { display: flex; align-items: center; gap: 4px; padding: 4px; }
 .cam-setup-group__toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--accent-strong); text-align: left; font-size: 12px; }
 .cam-setup-group--bottom .cam-setup-group__toggle { color: var(--face-bottom-text); }
+.cam-setup-group--around .cam-setup-group__toggle { color: var(--role-region-text); }
 .cam-setup-group--active .cam-setup-group__header { background: var(--accent-soft); }
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
+.cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
 .cam-setup-group__status { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; font-size: 11px; padding: 4px; }
 .cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }

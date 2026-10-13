@@ -27,7 +27,7 @@ import { FaceChip } from './FaceChip'
 
 const LISTED_FEATURES = 6
 
-function oppositeFace(face: SetupFace): SetupFace {
+function oppositeFace(face: FlatFace): FlatFace {
   return face === 'top' ? 'bottom' : 'top'
 }
 
@@ -35,7 +35,7 @@ function oppositeFace(face: SetupFace): SetupFace {
  * A feature's Z range as its face shows it, top → bottom like the canvas
  * label: the stored span on Top, the stock flipped on Bottom.
  */
-function formatZRange(project: Project, feature: FeatureInstance, face: SetupFace): string {
+function formatZRange(project: Project, feature: FeatureInstance, face: FlatFace): string {
   const span = resolveStockSpan(project, feature)
   if (!span) return '—'
   const range = face === 'bottom' ? flippedZRange(span, project.stock) : { top: span.z_top, bottom: span.z_bottom }
@@ -66,14 +66,18 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
   const close = useFaceViewStore((state) => state.clearFaceChangeRequest)
 
   const requested = project.features.filter((feature) => featureIds.includes(feature.id))
-  const fromFace = (requested[0]?.authoringFace ?? 'top') as FlatFace
+  const requestedFace: SetupFace = requested[0]?.authoringFace ?? 'top'
+  // The confirmation is only ever opened for a flat feature (the store refuses
+  // an Around request). An Around feature presented anyway gets no dialog
+  // rather than being treated as Top.
+  const fromFace: FlatFace = requestedFace === 'around' ? 'top' : requestedFace
   const toFace = oppositeFace(fromFace)
   // One direction per confirmation: the features on the first one's face.
   const movable = requested.filter((feature) => feature.authoringFace === fromFace && !feature.locked)
   const lockedCount = requested.filter((feature) => feature.locked).length
   // Linked copies that stay behind keep sharing the shape across the faces.
   const linkedStaying = linkedCopiesOffFace(project, movable.map((feature) => feature.id), toFace)
-  const faceName = (face: SetupFace) => t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')
+  const faceName = (face: FlatFace) => t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -82,6 +86,8 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [close])
+
+  if (requestedFace === 'around') return null
 
   function confirm() {
     setFeatureAuthoringFace(movable.map((feature) => feature.id), toFace)

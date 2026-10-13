@@ -25,6 +25,10 @@ function GlobalActions({
   onImport,
   onExportModel,
   onPrintDesign,
+  exportModelEnabled,
+  exportModelLabel,
+  printDesignEnabled,
+  printDesignLabel,
   onSave,
   onUndo,
   onRedo,
@@ -40,6 +44,10 @@ function GlobalActions({
   onImport: () => void
   onExportModel: () => void
   onPrintDesign: () => void
+  exportModelEnabled: boolean
+  exportModelLabel: string
+  printDesignEnabled: boolean
+  printDesignLabel: string
   onSave: () => void
   onUndo: () => void
   onRedo: () => void
@@ -55,8 +63,8 @@ function GlobalActions({
         <ToolbarActionButton icon="new" label={t('file.newProject')} onClick={onNew} />
         <ToolbarActionButton icon="open" label={t('file.openProject')} onClick={onOpen} />
         <ToolbarActionButton icon="import" label={t('file.importGeometry')} onClick={onImport} />
-        <ToolbarActionButton icon="export" label={t('file.exportModel')} onClick={onExportModel} />
-        <ToolbarActionButton icon="print" label={t('file.printDesign')} onClick={onPrintDesign} />
+        <ToolbarActionButton icon="export" label={exportModelLabel} disabled={!exportModelEnabled} onClick={onExportModel} />
+        <ToolbarActionButton icon="print" label={printDesignLabel} disabled={!printDesignEnabled} onClick={onPrintDesign} />
         <ToolbarActionButton
           icon="save"
           label={projectDirty ? t('file.saveProjectDirty') : t('file.saveProject')}

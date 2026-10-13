@@ -29,6 +29,7 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'file.importGeometry': '导入图形',
   'file.exportModel': '导出模型',
   'file.printDesign': '打印设计',
+  'file.flatFacesOnly': '打印显示平面。请切换到顶面或底面进行打印。',
   'file.saveProject': '保存项目',
   'file.saveProjectDirty': '保存项目（有未保存的更改）',
   'file.undo': '撤销',

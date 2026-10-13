@@ -23,6 +23,7 @@ export const shellEs: Record<keyof typeof shellEn, string> = {
   'file.importGeometry': 'Importar geometría',
   'file.exportModel': 'Exportar modelo',
   'file.printDesign': 'Imprimir diseño',
+  'file.flatFacesOnly': 'La impresión muestra las caras planas. Cambia a Superior o Inferior para imprimir.',
   'file.saveProject': 'Guardar proyecto',
   'file.saveProjectDirty': 'Guardar proyecto con cambios no guardados',
   'file.undo': 'Deshacer',

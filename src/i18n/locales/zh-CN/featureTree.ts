@@ -102,6 +102,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
 
   // ── TreeRow: add entry (tab / clamp) ──
   'featureTree.treeRow.addEntry.tab': '添加桥接',
+  'featureTree.treeRow.addEntry.tabAround': '环绕面不使用凸耳',
   'featureTree.treeRow.addEntry.clamp': '添加夹具',
 
   // ── TreeRow: operation button tooltips ──
@@ -406,16 +407,20 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   // ── Stock faces: tree layers, face-local depth, changing a face (issue #945) ──
   'featureTree.face.topFace': '顶面',
   'featureTree.face.bottomFace': '底面',
+  'featureTree.face.aroundLayer': '环绕',
   'featureTree.face.stateActive': '当前',
   'featureTree.face.stateGhost': '虚影',
   'featureTree.face.chipTop': '顶面',
   'featureTree.face.chipBottom': '底面',
+  'featureTree.face.chipAround': '环绕',
   'featureTree.face.chipThrough': '贯穿',
   'featureTree.face.throughTooltip': '贯穿两个面，任一面都可以加工',
   'featureTree.face.ghostRowTop': '位于顶面。切换到顶面后可编辑。',
   'featureTree.face.ghostRowBottom': '位于底面。切换到底面后可编辑。',
+  'featureTree.face.ghostRowAround': '位于环绕面。切换到该面后可编辑。',
   'featureTree.face.switchToTopToEdit': '切换到顶面以编辑',
   'featureTree.face.switchToBottomToEdit': '切换到底面以编辑',
+  'featureTree.face.switchToAroundToEdit': '切换到环绕面以编辑',
   'featureTree.face.changeAuthoringFace': '更改绘制面…',
   'featureTree.face.authoringFace': '绘制面',
   'featureTree.face.change': '更改…',
@@ -440,6 +445,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.linkedOtherFace.top.other': '此形状与顶面上的 {count} 个关联副本共享。编辑形状也会更改这些副本。',
   'featureTree.face.linkedOtherFace.bottom.one': '此形状与底面上的 {count} 个关联副本共享。编辑形状也会更改该副本。',
   'featureTree.face.linkedOtherFace.bottom.other': '此形状与底面上的 {count} 个关联副本共享。编辑形状也会更改这些副本。',
+  'featureTree.face.linkedOtherFace.around.one': '此形状与另一个面上的 {count} 个关联副本共享。编辑形状也会更改该副本。',
+  'featureTree.face.linkedOtherFace.around.other': '此形状与另一个面上的 {count} 个关联副本共享。编辑形状也会更改这些副本。',
   'featureTree.face.dialog.linkedStay.top.one': '{count} 个关联副本留在顶面。它仍共享此形状，因此在任一面编辑形状都会同时更改两者。',
   'featureTree.face.dialog.linkedStay.top.other': '{count} 个关联副本留在顶面。它们仍共享此形状，因此在任一面编辑形状都会更改全部副本。',
   'featureTree.face.dialog.linkedStay.bottom.one': '{count} 个关联副本留在底面。它仍共享此形状，因此在任一面编辑形状都会同时更改两者。',

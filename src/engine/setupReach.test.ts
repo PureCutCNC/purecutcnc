@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../types/project'
+import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile, roundStock } from '../types/project'
 import type { Operation, Project, SketchFeature } from '../types/project'
 import { projectWithFeatures, withBottomSetup } from '../test/projectFixtures'
 import { convertProjectUnits } from '../utils/units'
@@ -180,3 +180,9 @@ const onlyAround = fixture()
 onlyAround.operations = [onlyAround.operations[0]]
 onlyAround.setups = [{ ...onlyAround.setups[0], kind: 'around' }]
 equal(throughFeatureCoverage(onlyAround, 'tiny', new Map()), null, 'Around operations take no part in planar coverage')
+
+// Rendering an Around operation whose bar is gone must report no reach rather
+// than throw out of the frame constructor (issue #395, slice D1).
+equal(operationCutRange(onlyAround, onlyAround.operations[0], { moves: [] }, 'tiny'), null, 'a block bar under an Around setup reports no reach, not a throw')
+const transposedAround: Project = { ...onlyAround, stock: roundStock(40, 180, 'y') }
+equal(operationCutRange(transposedAround, transposedAround.operations[0], { moves: [] }, 'tiny'), null, 'a transposed bar reports no reach, not a throw')
