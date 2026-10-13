@@ -27,6 +27,7 @@ import { decodeProjectFormat } from './projectFormat'
 import { decodeSetups, findSetupWithTurn, syncProjectSetups } from './setups'
 import { featureReachableFromFace, targetAllowedInSetup, setupGenerationBlock, isThroughFeature } from '../../engine/setupTargets'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
+import { planOperationMove } from '../../engine/setupOperationMove'
 import { operationCutRange, throughFeatureCoverage } from '../../engine/setupReach'
 import { createCamPlan } from '../../engine/operations/camPlan'
 import { materializeCamPlan } from './camPlanApply'
@@ -137,6 +138,11 @@ const tooDeep = { ...current, features: current.features.map((row) => row.id ===
 assert.equal(setupGenerationBlock(tooDeep, current.operations[0])?.reason, 'aroundCentreline')
 assert.deepEqual(computeOperationToolpath(tooDeep, current.operations[0])!.result.moves, [])
 assert.equal(computeOperationToolpath(tooDeep, current.operations[0])!.result.warnings[0].code, 'aroundCentreline')
+// A target on the wrong face is reported as that mismatch, not as the
+// centreline block its low Z would otherwise trigger.
+const flatTarget = { ...current, operations: current.operations.map((row, index) => index === 0
+  ? { ...row, target: { source: 'features' as const, featureIds: ['through'] } } : row) }
+assert.equal(setupGenerationBlock(flatTarget, flatTarget.operations[0])?.reason, 'crossFaceNotThrough', 'a rejected flat target reports the face, not the centreline')
 const blockStock = { ...current, stock: newProject().stock }
 assert.equal(setupGenerationBlock(blockStock, current.operations[0])?.reason, 'aroundStockMismatch')
 assert.equal(computeOperationToolpath(blockStock, current.operations[0])!.result.warnings[0].code, 'aroundStockMismatch')
@@ -189,6 +195,16 @@ const noKind = fixture()
 const normalized = decodeProjectFormat(noKind).project
 assert.equal(JSON.stringify(decodeProjectFormat(JSON.parse(JSON.stringify(normalized))).project), JSON.stringify(normalized), '3.3 no-kind file is byte-stable')
 assert.ok(normalized.setups.every((row) => !('kind' in row)))
+load(noKind)
+const firstSave = JSON.parse(store().saveProject()) as Project
+assert.ok(firstSave.setups.every((row) => !('kind' in row)), 'saving a flat setup writes no kind')
+store().openProjectFromText(JSON.stringify(firstSave), null)
+const secondSave = JSON.parse(store().saveProject()) as Project
+assert.deepEqual(
+  { ...secondSave, meta: { ...secondSave.meta, modified: 'fixed' } },
+  { ...firstSave, meta: { ...firstSave.meta, modified: 'fixed' } },
+  'a 3.3 file with no kind re-encodes identically',
+)
 console.log('All Around model tests passed')
 
 // Bottom exchanges with Around under the same no-mirror, Top-height paste rule.
@@ -213,8 +229,14 @@ assert.equal(store().project.features.find(row => row.id === toBottom)!.z_bottom
 load(current)
 assert.equal(switchWorkspaceFace('top'), true)
 assert.equal(store().addOperation('pocket', 'rough', target), null, 'Top store refuses an Around target')
-const topOperation = store().addOperation('pocket', 'rough', { source: 'stock' })!
-assert.ok(topOperation, 'stock-target move fixture exists')
+// A stock target judges no feature, so without the domain guard the move would
+// look free; the guard refuses it before any target is judged.
+const stockOperation = { ...current.operations[0], id: 'stock-op', setupId: undefined, target: { source: 'stock' as const } }
+const stockMove = planOperationMove({ ...current, operations: [...current.operations, stockOperation] }, 'stock-op', setup.id)
+assert.equal(stockMove.blocked, 'noValidTargets', 'stock-target move between domains is blocked')
+assert.deepEqual(stockMove.kept, [])
+const topOperation = store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['through'] })!
+assert.ok(topOperation, 'Top move fixture exists')
 const beforeMove = store().project
 store().assignOperationToSetup(topOperation, setup.id)
 assert.equal(store().project, beforeMove)

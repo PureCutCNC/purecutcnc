@@ -1052,9 +1052,14 @@ export interface RegistrationReference {
 /**
  * One fixed orientation of the stock on the machine. Top and Bottom are
  * setups; the face is derived from the orientation (`setupFace`), not stored.
+ * An Around setup is marked by `kind`: it wraps an unrolled sheet around a
+ * round bar and carries Top-style feature heights.
  */
 export interface MachiningSetup {
-/** Around uses an unrolled sheet and Top-style heights; absent for flat setups. */
+  /**
+   * `'around'`: the setup cuts the unrolled sheet wrapped around the bar.
+   * Absent on the flat Top and Bottom setups.
+   */
   kind?: 'around'
   id: string
   name: string

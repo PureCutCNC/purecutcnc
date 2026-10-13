@@ -258,7 +258,10 @@ export function setupGenerationBlock(project: Project, operation: Operation): Se
     if (!isRoundStock(project.stock) || setup?.orientation.axis !== project.stock.axis) {
       return { reason: 'aroundStockMismatch', face, features: [] }
     }
+    // A rejected target is reported as the face mismatch it is: it is not a
+    // cut on this face, so its Z is not what blocks the Around operation.
     const centreline = verdicts.filter((verdict) => {
+      if (verdict.status === 'rejected') return false
       const feature = project.features.find((entry) => entry.id === verdict.featureId)
       const span = feature && featureStockSpan(project, feature)
       return span !== null && span !== undefined && span.z_bottom <= project.stock.thickness / 2
