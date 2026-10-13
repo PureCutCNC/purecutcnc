@@ -49,9 +49,10 @@
  */
 
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import { aroundFrame, wrapToolpath } from '../../engine/aroundFrame'
 import { syncProjectSetups } from '../../store/helpers/setups'
 import { BOTTOM_SETUP_ID, withBottomSetup } from '../../test/projectFixtures'
-import { newProject, type Operation, type Project } from '../../types/project'
+import { newProject, roundStock, type MachiningSetup, type Operation, type Project } from '../../types/project'
 import type { GpuToolpathEntry } from './gpuToolpathRenderer'
 import { toolpathStrokeAlpha } from './toolpathStyles'
 import type { ToolpathVisibility } from '../toolpathVisibility'
@@ -273,6 +274,46 @@ for (const axis of ['x', 'y'] as const) {
     JSON.stringify(entries.map((entry) => [entry.toolpath.operationId, entry.muted])) === JSON.stringify([['bottom-op', true], ['top-op', false]]),
     `muted on GPU: the other setup's entry is muted and first (got ${JSON.stringify(entries.map((entry) => [entry.toolpath.operationId, entry.muted]))})`,
   )
+}
+
+// ── An Around operation draws unwrapped on the sheet (#395) ──
+
+{
+  const stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
+  const setup: MachiningSetup = {
+    id: 'setup-around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+  }
+  const base = newProject()
+  const aroundProject: Project = {
+    ...base,
+    stock,
+    setups: [...base.setups, setup],
+    activeSetupId: setup.id,
+    operations: [{ ...newOperation('around-op'), setupId: setup.id }],
+  }
+  const flat = cut('around-op', { x: 20, y: 40 }, { x: 60, y: 40 })
+  flat.moves[0].from.z = 10
+  flat.moves[0].to.z = 10
+  const wrapped = wrapToolpath(flat, aroundFrame(stock))
+  assert(wrapped.moves[0].from.y === aroundFrame(stock).centre, 'the stored path is wrapped onto the centreline')
+
+  const sheet = screenContext(200, 200)
+  renderSketchToolpaths(null, sheet.ctx, aroundProject, [wrapped], null, null, { scale: 1, offsetX: 0, offsetY: 0 }, CUTS_ONLY, false)
+  assert(
+    drawn(sheet.segments, { fromX: 20, fromY: 40, toX: 60, toY: 40 }),
+    `the wrapped path is drawn unwrapped, on the sheet (got ${JSON.stringify(sheet.segments)})`,
+  )
+
+  const onTop = screenContext(200, 200)
+  renderSketchToolpaths(null, onTop.ctx, { ...aroundProject, activeSetupId: base.activeSetupId }, [wrapped], null, null, { scale: 1, offsetX: 0, offsetY: 0 }, CUTS_ONLY, false)
+  assert(onTop.segments.length === 0, 'an Around toolpath is not drawn on a flat face')
 }
 
 console.log('renderSketchToolpaths tests passed')

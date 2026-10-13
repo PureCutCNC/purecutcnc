@@ -16,7 +16,7 @@
 
 import { rectProfile } from '../../types/project'
 import type { SketchFeature } from '../../types/project'
-import { drawLineFeatureBatch, drawToolpath, featureUsesSketchFill } from './previewPrimitives'
+import { drawFeatureInfo, drawLineFeatureBatch, drawToolpath, featureUsesSketchFill } from './previewPrimitives'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ViewTransform } from './viewTransform'
@@ -298,5 +298,47 @@ function testNavigationSkipsArrowWork(): void {
   assert(visibility.directions, 'transient suppression never changes the user setting')
 }
 testNavigationSkipsArrowWork()
+
+// An Around feature's info label reads its stored heights the way Top's does;
+// only a Bottom feature is flipped (issue #395 rule 8).
+function testFeatureInfoHeights(): void {
+  const labels: string[] = []
+  const infoCtx = {
+    fillStyle: '',
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    fillText: (text: string) => { labels.push(text) },
+  } as unknown as CanvasRenderingContext2D
+  const vt = { scale: 1, offsetX: 0, offsetY: 0 }
+  const base: SketchFeature = {
+    id: 'heights',
+    name: 'Heights',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 10, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 10,
+    z_bottom: 2,
+    visible: true,
+    locked: false,
+  }
+
+  drawFeatureInfo(infoCtx, { ...base, authoringFace: 'around' }, vt, 'mm', 20)
+  assert(labels.includes('z 10 → 2'), `an Around feature reads its stored heights: ${labels.join(' | ')}`)
+  labels.length = 0
+  drawFeatureInfo(infoCtx, { ...base, authoringFace: 'top' }, vt, 'mm', 20)
+  assert(labels.includes('z 10 → 2'), `an Around label matches Top's: ${labels.join(' | ')}`)
+  labels.length = 0
+  drawFeatureInfo(infoCtx, { ...base, authoringFace: 'bottom' }, vt, 'mm', 20)
+  assert(labels.includes('z 18 → 10'), `only Bottom flips the label range: ${labels.join(' | ')}`)
+}
+testFeatureInfoHeights()
 
 console.log('previewPrimitives.test.ts passed')

@@ -38,16 +38,21 @@ import { canonicalToSetupPoint, setupFrame } from '../../engine/setupOrientation
 import { DEFAULT_SNAP_SETTINGS } from '../../sketch/snapping'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup } from '../../test/projectFixtures'
-import { DEFAULT_SETUP_ID, newProject, rectProfile } from '../../types/project'
-import type { Point, Project, SetupFace, SketchFeature } from '../../types/project'
+import { DEFAULT_SETUP_ID, newProject, rectProfile, roundStock } from '../../types/project'
+import type { MachiningSetup, Point, Project, RoundStock, SetupFace, SketchFeature } from '../../types/project'
+import { aroundSheet } from './aroundSheet'
+import { drawOtherFace } from './faceOverlay'
 import { findHitFeatureId, segmentHitTest } from './hitTest'
 import { resolveSketchSnap } from './snappingHelpers'
 import {
   canvasToWorld,
   computeFitViewState,
+  computeSketchLocalTransform,
   computeSketchViewTransform,
   computeViewTransform,
+  sketchViewStock,
   viewIsMirrored,
   viewMirrorForOrientation,
   worldArcToCanvas,
@@ -85,6 +90,22 @@ function makeFeature(id: string, face: SetupFace, profile = rectProfile(10, 10, 
 function projectOn(face: SetupFace, axis: 'x' | 'y' = 'x', features: SketchFeature[] = []): Project {
   const base = withBottomSetup(projectWithFeatures(newProject(), features), { axis })
   return { ...base, activeSetupId: face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID }
+}
+
+/** A round bar with an Around setup in view (issue #395). */
+function projectAround(stock: RoundStock, features: SketchFeature[] = []): Project {
+  const base = projectWithFeatures(newProject(), features)
+  const setup: MachiningSetup = {
+    id: 'setup-around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: stock.axis, angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+  }
+  return { ...base, stock, setups: [...base.setups, setup], activeSetupId: setup.id }
 }
 
 // ── The oriented view transform ───────────────────────────────
@@ -236,6 +257,108 @@ for (const face of ['top', 'bottom'] as const) {
       assert(segmentHitTest(segmentPointer, project, vt, { openOnly: false, referenceFeatures: referenceProjectFeatures(project, true) }) === null, 'hidden construction cannot hit')
     }
   }
+}
+
+// ── Around: the unrolled sheet, never mirrored ────────────────
+
+for (const axis of ['x', 'y'] as const) {
+  const stock = axis === 'x' ? roundStock(0.75, 4, 'x', { x: 0, y: 0 }) : roundStock(20, 60, 'y', { x: 5, y: 0 })
+  const project = projectAround(stock)
+
+  const vt = computeSketchViewTransform(project, CANVAS_W, CANVAS_H, VIEW)
+  assert(!viewIsMirrored(vt), `Around/${axis}: the sheet is not a half-turn mirror`)
+  assert(vt.mirrorX === undefined && vt.mirrorY === undefined, `Around/${axis}: the view is never mirrored`)
+  // Unmirrored, so every other face-path helper behaves as on Top.
+  assert(JSON.stringify(vt) === JSON.stringify(computeSketchLocalTransform(project, CANVAS_W, CANVAS_H, VIEW)),
+    `Around/${axis}: the drawn view is the unmirrored setup-local view`)
+
+  const sheet = aroundSheet(project)
+  assert(sheet !== null, `Around/${axis}: a bar on Around has a sheet`)
+  const rect = sheet!.rect
+  const acrossExtent = axis === 'x' ? rect.maxY - rect.minY : rect.maxX - rect.minX
+  assert(near(acrossExtent, Math.PI * stock.thickness), `Around/${axis}: the frame is one circumference across`)
+
+  // Fit-to-view fits the sheet. The bar's own rectangle would centre the bar
+  // and push the far edge of the sheet off the canvas; the sheet fit keeps all
+  // four corners on screen.
+  const fittedView = computeSketchViewTransform(project, CANVAS_W, CANVAS_H, computeFitViewState(project, CANVAS_W, CANVAS_H))
+  const barView = computeViewTransform(project.stock, CANVAS_W, CANVAS_H, { zoom: 1, panX: 0, panY: 0 })
+  const farCorner = { x: rect.maxX, y: rect.maxY }
+  const onScreen = (point: { cx: number; cy: number }): boolean =>
+    point.cx >= -1e-6 && point.cx <= CANVAS_W + 1e-6 && point.cy >= -1e-6 && point.cy <= CANVAS_H + 1e-6
+  for (const corner of [
+    { x: rect.minX, y: rect.minY }, { x: rect.maxX, y: rect.minY },
+    { x: rect.minX, y: rect.maxY }, farCorner,
+  ]) {
+    assert(onScreen(worldToCanvas(corner, fittedView)), `Around/${axis}: the sheet fit shows the whole sheet (${corner.x}, ${corner.y})`)
+  }
+  assert(!onScreen(worldToCanvas(farCorner, barView)), `Around/${axis}: a bar-rect fit could not show the sheet`)
+
+  // The sheet is the frame; on Top the stock is its own.
+  assert(sketchViewStock(project) !== project.stock, `Around/${axis}: the view frames the sheet, not the bar`)
+  const top = { ...project, activeSetupId: DEFAULT_SETUP_ID }
+  assert(sketchViewStock(top) === top.stock, `Around/${axis}: on Top the stock is its own frame`)
+  assert(JSON.stringify(computeSketchViewTransform(top, CANVAS_W, CANVAS_H, VIEW))
+    === JSON.stringify(computeViewTransform(top.stock, CANVAS_W, CANVAS_H, VIEW)),
+    `Around/${axis}: a Top view of the same project is unchanged`)
+}
+
+// ── Around: no ghost of a flat face, and no reference from one ─
+
+{
+  const sheetFeature = makeFeature('sheet-pocket', 'around', rectProfile(0, 0, 1, Math.PI * 0.75))
+  const stock = roundStock(0.75, 4, 'x', { x: 0, y: 0 })
+  const project = projectAround(stock, [sheetFeature])
+  const sheetOnly = referenceProjectFeatures(project, true)
+  assert(sheetOnly.length === 1 && sheetOnly[0].id === sheetFeature.id, 'Around: its own feature is the only reference')
+
+  const flatFeature = makeFeature('top-pocket', 'top', rectProfile(0, 0, 1, 1))
+  const mixed = projectAround(stock, [sheetFeature, flatFeature])
+  const onAround = referenceProjectFeatures(mixed, true)
+  assert(onAround.length === 1 && onAround[0].id === sheetFeature.id, 'Around: a flat feature is not offered as a reference')
+  const onTop = referenceProjectFeatures({ ...mixed, activeSetupId: DEFAULT_SETUP_ID }, true)
+  assert(onTop.length === 1 && onTop[0].id === flatFeature.id, 'Top: a sheet feature is not offered as a reference either')
+}
+
+// ── Around: a flat feature is neither drawn as a ghost nor hit ─
+
+{
+  function countingContext(): { ctx: CanvasRenderingContext2D; strokes: () => number } {
+    let strokes = 0
+    const noop = (): void => undefined
+    const ctx = {
+      save: noop, restore: noop, setLineDash: noop, beginPath: noop, moveTo: noop,
+      lineTo: noop, closePath: noop, arc: noop, fill: noop, fillText: noop,
+      stroke: () => { strokes += 1 },
+      measureText: () => ({ width: 0 }),
+      lineWidth: 0, strokeStyle: '', fillStyle: '', font: '', textAlign: '', textBaseline: '',
+      globalAlpha: 1,
+    } as unknown as CanvasRenderingContext2D
+    return { ctx, strokes: () => strokes }
+  }
+  // A coarse scale keeps the hit test's pixel tolerance from reaching the
+  // neighbouring shape.
+  const vt = { scale: 100, offsetX: 0, offsetY: 0 }
+  const sheetFeature = makeFeature('sheet', 'around', rectProfile(2, 0, 1, 1))
+  const flatFeature = makeFeature('flat', 'top', rectProfile(0, 0, 1, 1))
+  const stock = roundStock(0.75, 4, 'x', { x: 0, y: 0 })
+  const mixed = projectAround(stock, [sheetFeature, flatFeature])
+  const features = resolvedProjectFeatures(mixed)
+
+  const onAround = countingContext()
+  drawOtherFace(onAround.ctx, mixed, features, vt, true, 'THRU', 'Top origin')
+  assert(onAround.strokes() === 0, 'on Around no flat feature is drawn as a ghost, even with other side on')
+
+  const onTop = countingContext()
+  const topProject = { ...mixed, activeSetupId: DEFAULT_SETUP_ID }
+  drawOtherFace(onTop.ctx, topProject, features, vt, true, 'THRU', 'Top origin')
+  assert(onTop.strokes() === 0, 'on Top the sheet feature is not drawn as a ghost either')
+
+  const editable = editableProjectFeatures(mixed)
+  assert(editable.length === 1 && editable[0].id === sheetFeature.id, 'on Around only the sheet feature is editable')
+  assert(findHitFeatureId({ x: 0.5, y: 0.5 }, editable, vt) === null, 'on Around a flat feature is not hit')
+  assert(findHitFeatureId({ x: 2.5, y: 0.5 }, editable, vt) === sheetFeature.id, 'on Around the sheet feature is hit')
+  assert(findHitFeatureId({ x: 2.5, y: 0.5 }, editableProjectFeatures(topProject), vt) === null, 'on Top the sheet feature is not hit')
 }
 
 console.log('faceView tests passed')

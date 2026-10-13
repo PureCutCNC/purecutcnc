@@ -17,8 +17,10 @@
 import { canonicalToSetupPoint, setupFrame } from '../../engine/setupOrientation'
 import { getVisibleSceneBounds2D } from '../../sketch/sceneBounds'
 import { activeSetup } from '../../store/helpers/activeFace'
+import { aroundSheet, aroundSheetForView, aroundSheetStock } from './aroundSheet'
+import type { AroundSheet } from './aroundSheet'
 import { getProfileBounds } from '../../types/project'
-import type { Point, Project, SetupOrientation, Stock } from '../../types/project'
+import type { Bounds2D, Point, Project, SetupOrientation, Stock } from '../../types/project'
 
 // Re-exported for existing callers; the implementation moved to
 // sketch/sceneBounds.ts so the design-print engine can share it.
@@ -157,7 +159,11 @@ export function viewMirrorForOrientation(
 }
 
 export function computeBaseViewTransform(stock: Stock, canvasW: number, canvasH: number): ViewTransform {
-  const bounds = getProfileBounds(stock.profile)
+  return computeBaseViewTransformForBounds(getProfileBounds(stock.profile), canvasW, canvasH)
+}
+
+/** The base view of a world rectangle: it is centred and padded to fit. */
+function computeBaseViewTransformForBounds(bounds: Bounds2D, canvasW: number, canvasH: number): ViewTransform {
   const stockW = Math.max(bounds.maxX - bounds.minX, 1)
   const stockH = Math.max(bounds.maxY - bounds.minY, 1)
 
@@ -179,7 +185,10 @@ export function computeViewTransform(
   canvasH: number,
   viewState: SketchViewState,
 ): ViewTransform {
-  const base = computeBaseViewTransform(stock, canvasW, canvasH)
+  return applyViewState(computeBaseViewTransform(stock, canvasW, canvasH), viewState)
+}
+
+function applyViewState(base: ViewTransform, viewState: SketchViewState): ViewTransform {
   return {
     scale: base.scale * viewState.zoom,
     offsetX: base.offsetX + viewState.panX,
@@ -188,9 +197,45 @@ export function computeViewTransform(
 }
 
 /**
+ * The stock the view frames on Around — the unrolled sheet as a block — or
+ * null when the active face is not Around, so every flat-face path is exactly
+ * what it was.
+ */
+function sketchViewFrameStock(project: Project): Stock | null {
+  const sheet = aroundSheet(project)
+  return sheet ? aroundSheetStock(project.stock, sheet) : null
+}
+
+/**
+ * The stock the sketch view frames: the unrolled sheet on Around, the bar's or
+ * block's own rectangle otherwise. A base transform or fit bounds for the view
+ * is measured against this, not against `project.stock` (issue #395).
+ */
+export function sketchViewStock(project: Project): Stock {
+  return sketchViewFrameStock(project) ?? project.stock
+}
+
+/**
+ * The unmirrored setup-local view: the frame the sketch draws in, before any
+ * Bottom mirror is applied. Pan and zoom are stored in this frame, so the
+ * gesture and hit-test helpers use it directly.
+ */
+export function computeSketchLocalTransform(
+  project: Project,
+  canvasW: number,
+  canvasH: number,
+  viewState: SketchViewState,
+): ViewTransform {
+  const frameStock = sketchViewFrameStock(project)
+  return computeViewTransform(frameStock ?? project.stock, canvasW, canvasH, viewState)
+}
+
+/**
  * The sketch view of a project: the stock as the active setup turns it. Pan
  * and zoom live in the setup-local frame, so switching face keeps the stock
- * where it is on screen.
+ * where it is on screen. On Around the frame is the unrolled sheet — one
+ * circumference across — and, because the sheet is not a half-turn mirror,
+ * the view is never mirrored (issue #395).
  */
 export function computeSketchViewTransform(
   project: Project,
@@ -198,9 +243,36 @@ export function computeSketchViewTransform(
   canvasH: number,
   viewState: SketchViewState,
 ): ViewTransform {
-  const vt = computeViewTransform(project.stock, canvasW, canvasH, viewState)
+  const vt = computeSketchLocalTransform(project, canvasW, canvasH, viewState)
+  if (sketchViewFrameStock(project)) return vt
   const mirror = viewMirrorForOrientation(activeSetup(project).orientation, project.stock)
   return mirror.mirrorX === undefined && mirror.mirrorY === undefined ? vt : { ...vt, ...mirror }
+}
+
+/**
+ * Everything the sketch draw loop needs to frame one frame of a project: the
+ * view, the unrolled sheet it shows (null on a flat face) and the stock the
+ * view frames — the sheet on Around, the bar's or block's own rectangle
+ * otherwise (issue #395).
+ */
+export interface SketchFrame {
+  readonly vt: ViewTransform
+  readonly sheet: AroundSheet | null
+  readonly stock: Stock
+}
+
+export function computeSketchFrame(
+  project: Project,
+  canvasW: number,
+  canvasH: number,
+  viewState: SketchViewState,
+): SketchFrame {
+  const vt = computeSketchViewTransform(project, canvasW, canvasH, viewState)
+  return {
+    vt,
+    sheet: aroundSheetForView(project, canvasToWorld(0, 0, vt), canvasToWorld(canvasW, canvasH, vt)),
+    stock: sketchViewStock(project),
+  }
 }
 
 export function computeFitViewState(
@@ -208,6 +280,9 @@ export function computeFitViewState(
   canvasW: number,
   canvasH: number,
 ): SketchViewState {
+  // Fit-to-view fits the sheet on Around, not the bar's rectangle (issue #395).
+  const frameStock = sketchViewFrameStock(project)
+  if (frameStock) return computeFitViewStateForBounds(frameStock, getProfileBounds(frameStock.profile), canvasW, canvasH)
   const bounds = getVisibleSceneBounds2D(project)
   const { mirrorX, mirrorY } = viewMirrorForOrientation(activeSetup(project).orientation, project.stock)
   // The fit is computed in the setup-local frame the view is drawn in.

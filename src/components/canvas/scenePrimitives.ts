@@ -21,6 +21,7 @@ import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
 import { hexToRgba } from './previewPrimitives'
+import type { AroundSheet } from './aroundSheet'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import { applyViewMirror, worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
@@ -444,6 +445,58 @@ export function drawStockOutline(
       halfH: 9,
     })
   }
+}
+
+/**
+ * A line across the unrolled sheet at every full turn (issue #395). They are
+ * the sheet's own seams: `k = 0`, the top of the bar with the rotary at zero,
+ * is drawn solid so it reads as the start line; the rest are dashed and faint.
+ * The two at k = 0 and k = 1 lie on the sheet's edges.
+ */
+export function drawAroundTurnLines(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'along' | 'turnLines'>,
+  vt: ViewTransform,
+  stockColor: string,
+): void {
+  if (sheet.turnLines.length === 0) return
+  ctx.save()
+  for (const line of sheet.turnLines) {
+    const from = sheet.axis === 'x'
+      ? worldToCanvas({ x: sheet.along.min, y: line.across }, vt)
+      : worldToCanvas({ x: line.across, y: sheet.along.min }, vt)
+    const to = sheet.axis === 'x'
+      ? worldToCanvas({ x: sheet.along.max, y: line.across }, vt)
+      : worldToCanvas({ x: line.across, y: sheet.along.max }, vt)
+    ctx.beginPath()
+    ctx.moveTo(from.cx, from.cy)
+    ctx.lineTo(to.cx, to.cy)
+    ctx.strokeStyle = hexToRgba(stockColor, line.solid ? 0.6 : 0.3)
+    ctx.lineWidth = line.solid ? 1.5 : 1
+    ctx.setLineDash(line.solid ? [] : [5, 4])
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/**
+ * The stock outline the view frames (issue #395): the unrolled sheet on
+ * Around, with its turn lines and without click-to-edit size labels (the
+ * sheet's extents are the bar's diameter and its circumference), and the
+ * stock's own rectangle otherwise.
+ */
+export function drawViewStockOutline(
+  ctx: CanvasRenderingContext2D,
+  stock: Stock,
+  sheet: AroundSheet | null,
+  vt: ViewTransform,
+  units: Units,
+  exceeded: boolean,
+  palette: CanvasThemePalette,
+  stockLabelRects?: StockLabelRect[],
+): void {
+  drawStockOutline(ctx, stock, vt, units, exceeded, palette, sheet ? undefined : stockLabelRects)
+  if (sheet) drawAroundTurnLines(ctx, sheet, vt, stock.color)
 }
 
 /**

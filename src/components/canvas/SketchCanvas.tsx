@@ -90,10 +90,9 @@ import {
 } from './previewPrimitives'
 import {
   canvasToWorld,
-  computeBaseViewTransform,
   computeFitViewState,
+  computeSketchFrame,
   computeSketchViewTransform,
-  computeViewTransform,
   worldToCanvas,
 } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
@@ -128,8 +127,8 @@ import {
   drawOriginMarker,
   drawSketchControls,
   drawSketchEditPreviewPoint,
-  drawStockOutline,
   drawTabFootprint,
+  drawViewStockOutline,
   getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
@@ -980,7 +979,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       : null
 
     const { width, height } = canvas
-    const vt = computeSketchViewTransform(project, width, height, viewState)
+    // Around frames the bar's surface unrolled flat, not the bar's rectangle.
+    const { vt, sheet, stock: frameStock } = computeSketchFrame(project, width, height, viewState)
     const collidingClampIdSet = new Set(collidingClampIdsRef.current)
 
     ctx.clearRect(0, 0, width, height)
@@ -990,7 +990,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // for the primitive helpers before anything is drawn this frame.
     setCanvasPalette(canvasPalette)
 
-    drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
+    drawGrid(ctx, vt, width, height, frameStock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
 
     if (project.backdrop?.visible && backdropImage) {
       drawBackdropImage(
@@ -1009,14 +1009,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const anyFeatureExceedsStock = features.some(
         (feature) => feature.visible
           && feature.kind !== 'text'
-          && profileExceedsStock(feature.sketch.profile, project.stock),
+          && profileExceedsStock(feature.sketch.profile, frameStock),
       )
-      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock, canvasPalette, stockLabelRectsRef.current)
+      drawViewStockOutline(ctx, frameStock, sheet, vt, project.meta.units, anyFeatureExceedsStock, canvasPalette, stockLabelRectsRef.current)
     }
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
-    if (project.origin.visible) drawOriginMarker(ctx, activeOriginInStock(project), vt, canvasPalette)
+    if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
@@ -1062,7 +1062,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const stlDefinition = feature.kind === 'stl'
         ? project.featureDefinitions[feature.definitionId]
         : null
-      if (feature.kind === 'stl' && stlTopViewImage && stlDefinition) {
+      if (!sheet && feature.kind === 'stl' && stlTopViewImage && stlDefinition) {
         drawStlTopViewImage(
           ctx,
           feature,
@@ -1230,18 +1230,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     // Underneath the clamps, so each box reads as the object and not the keep-out.
-    drawClampClearanceOutlines(ctx, project, vt)
+    if (!sheet) drawClampClearanceOutlines(ctx, project, vt)
 
-    for (const clamp of project.clamps) {
+    // On the sheet only the clamps that hold a bar are drawn, as reference bands.
+    for (const clamp of sheet ? sheet.clampBands : project.clamps) {
       if (!clamp.visible) continue
       const selected = selection.selectedClampIds.includes(clamp.id)
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
-      if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
+      if (!sheet && selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)
       }
     }
 
-    for (const tab of project.tabs) {
+    for (const tab of sheet ? [] : project.tabs) {
       if (!tab.visible) continue
       const selected = selection.selectedTabIds.includes(tab.id)
       drawTabFootprint(ctx, tab, vt, selected)
@@ -2092,13 +2093,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     getBaseTransform: () => {
       const canvas = canvasRef.current
       if (!canvas) return { scale: 1, offsetX: 0, offsetY: 0 }
-      const base = computeBaseViewTransform(projectRef.current.stock, canvas.width, canvas.height)
-      return { scale: base.scale, offsetX: base.offsetX, offsetY: base.offsetY }
+      const { vt } = computeSketchFrame(projectRef.current, canvas.width, canvas.height, { zoom: 1, panX: 0, panY: 0 })
+      return { scale: vt.scale, offsetX: vt.offsetX, offsetY: vt.offsetY }
     },
     canvasToWorld: (cx, cy) => {
       const canvas = canvasRef.current
       if (!canvas) return { x: 0, y: 0 }
-      const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+      const { vt } = computeSketchFrame(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
       return canvasToWorld(cx, cy, vt)
     },
     minZoom: MIN_SKETCH_ZOOM,

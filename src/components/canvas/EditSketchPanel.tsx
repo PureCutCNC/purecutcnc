@@ -17,7 +17,9 @@
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import { linkedCopiesOffFace } from '../../store/helpers/activeFace'
+import { getDefinitionId } from '../../store/helpers/featureDefinitions'
 import { useProjectStore } from '../../store/projectStore'
+import type { Project } from '../../types/project'
 import type { SketchEditTool } from '../../store/types'
 import { useSketchCommands } from '../../commands/sketchCommands'
 import { Icon } from '../Icon'
@@ -66,6 +68,29 @@ const TOOL_ORDER: SketchEditTool[] = [
   'trim',
   'extend',
 ]
+
+/**
+ * The face the linked-copy note may name, or null when it may not. The note's
+ * wording exists for Top and Bottom only: a feature edited on the Around sheet,
+ * or one whose linked copy sits on it, cannot be described by those words and
+ * gets no note (issue #395).
+ */
+function linkedFaceNote(project: Project, featureId: string | null): 'top' | 'bottom' | null {
+  if (!featureId) return null
+  const selected = project.features.find((feature) => feature.id === featureId)
+  if (!selected) return null
+  const editedFace = selected.authoringFace ?? 'top'
+  if (editedFace === 'around') return null
+  const other = editedFace === 'top' ? 'bottom' : 'top'
+  const definitionId = getDefinitionId(selected)
+  let copies = 0
+  for (const feature of project.features) {
+    if (feature.id === featureId || getDefinitionId(feature) !== definitionId) continue
+    if ((feature.authoringFace ?? 'top') !== other) return null
+    copies += 1
+  }
+  return copies > 0 ? other : null
+}
 
 interface ToolButtonProps {
   icon: string
@@ -145,6 +170,10 @@ export function EditSketchPanel({
       ? linkedCopiesOffFace(state.project, [state.selection.selectedFeatureId], editedFace)
       : 0
   ))
+  // The note's wording keys name Top or Bottom only. A shape shared with the
+  // Around sheet has no such words, so the note is left out there rather than
+  // calling the sheet "Top" (issue #395).
+  const linkedNoteFace = useProjectStore((state) => linkedFaceNote(state.project, state.selection.selectedFeatureId))
   // Desktop renders the tool row as an icon toolbar with hover tooltips;
   // touch has no hover, so the tablet keeps icon + visible label buttons.
   const isTablet = isTabletMode(useShellMode())
@@ -269,10 +298,10 @@ export function EditSketchPanel({
         </>
       )}
     >
-      {linkedOnOtherFace > 0 ? (
+      {linkedOnOtherFace > 0 && linkedNoteFace ? (
         <p className="canvas-workflow-panel__hint" data-testid="edit-linked-other-face-note">
           {t(
-            `featureTree.face.linkedOtherFace.${editedFace === 'top' ? 'bottom' : 'top'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+            `featureTree.face.linkedOtherFace.${linkedNoteFace}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
             { count: linkedOnOtherFace },
           )}
         </p>

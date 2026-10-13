@@ -25,7 +25,7 @@ import { activeFace, ghostFeatureIds, isThroughFeature } from '../../store/helpe
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { getFeatureGeometryProfiles } from '../../text'
 import { getProfileBounds } from '../../types/project'
-import type { Point, Project, SetupFace, SketchFeature } from '../../types/project'
+import type { FlatFace, Point, Project, SketchFeature } from '../../types/project'
 import { canvasColors, canvasRgba } from './canvasPalette'
 import { traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
@@ -34,7 +34,7 @@ import type { ViewTransform } from './viewTransform'
 const GHOST_DASH = [4, 4]
 const GHOST_LABEL_FONT = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
 
-function ghostColorKey(face: SetupFace): 'ghostTop' | 'ghostBottom' {
+function ghostColorKey(face: FlatFace): 'ghostTop' | 'ghostBottom' {
   return face === 'top' ? 'ghostTop' : 'ghostBottom'
 }
 
@@ -42,12 +42,16 @@ function ghostColorKey(face: SetupFace): 'ghostTop' | 'ghostBottom' {
  * A feature from the other face: a dashed outline in that face's colour and
  * never a fill. `marker` is the short tag shown under a feature that reaches
  * both faces (THRU), so it reads as cuttable from here too.
+ *
+ * Only a flat face can have a ghost: a flat face and the Around sheet share no
+ * plane, so a sheet feature is never drawn as reference on Top or Bottom
+ * (issue #395).
  */
 export function drawGhostFeature(
   ctx: CanvasRenderingContext2D,
   feature: SketchFeature,
   vt: ViewTransform,
-  face: SetupFace,
+  face: FlatFace,
   marker: string | null,
 ): void {
   const colorKey = ghostColorKey(face)
@@ -128,6 +132,10 @@ export function drawTopOriginLanding(
  * Draw everything the sketch shows of the other face and return the ids of
  * its features, which the caller then leaves out of every editable pass.
  * With the ghost hidden only the ids come back.
+ *
+ * Around is nobody's ghost (issue #395): with the sheet in view nothing of the
+ * flat faces is drawn — "other side" included — and on a flat face a sheet
+ * feature is never drawn either, because the two share no plane.
  */
 export function drawOtherFace(
   ctx: CanvasRenderingContext2D,
@@ -139,13 +147,16 @@ export function drawOtherFace(
   topOriginLabel: string,
 ): Set<string> {
   const ghostIds = ghostFeatureIds(project)
-  if (showOtherSide && ghostIds.size > 0) {
+  const face = activeFace(project)
+  if (showOtherSide && face !== 'around' && ghostIds.size > 0) {
     for (const feature of features) {
       if (!feature.visible || !ghostIds.has(feature.id)) continue
-      drawGhostFeature(ctx, feature, vt, feature.authoringFace, isThroughFeature(project, feature) ? throughLabel : null)
+      const ghostFace = feature.authoringFace ?? 'top'
+      if (ghostFace === 'around') continue
+      drawGhostFeature(ctx, feature, vt, ghostFace, isThroughFeature(project, feature) ? throughLabel : null)
     }
   }
-  if (project.origin.visible && activeFace(project) === 'bottom') {
+  if (project.origin.visible && face === 'bottom') {
     drawTopOriginLanding(ctx, project.origin, vt, topOriginLabel)
   }
   return ghostIds
