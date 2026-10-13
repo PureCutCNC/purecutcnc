@@ -2062,6 +2062,16 @@
   font-weight: 500;
 }
 
+/* Checkbox row: box and text on one line, left-aligned with the fields. */
+.machine-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .machine-editor-input {
   background: var(--surface-panel);
   border: 1px solid var(--line-strong);

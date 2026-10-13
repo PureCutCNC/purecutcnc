@@ -299,17 +299,20 @@ export function MachineDefinitionManagerDialog({
                   <dt>{td('dialogs.machineManager.fileExtension')}</dt>
                   <dd>.{previewDef.fileExtension}</dd>
                   {previewDef.rotary ? (
-                    <dd data-testid="machine-manager-rotary">
-                      {previewDef.rotary.drive === 'own'
-                        ? td('dialogs.machineManager.rotarySummaryOwn', {
-                            axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
-                          })
-                        : td('dialogs.machineManager.rotarySummaryBorrowed', {
-                            axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
-                            motor: previewDef.rotary.about === 'x' ? 'Y' : 'X',
-                            word: rotaryWord(previewDef) ?? '',
-                          })}
-                    </dd>
+                    <>
+                      <dt>{td('dialogs.machineEditor.rotary')}</dt>
+                      <dd data-testid="machine-manager-rotary">
+                        {previewDef.rotary.drive === 'own'
+                          ? td('dialogs.machineManager.rotarySummaryOwn', {
+                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
+                            })
+                          : td('dialogs.machineManager.rotarySummaryBorrowed', {
+                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
+                              motor: previewDef.rotary.about === 'x' ? 'Y' : 'X',
+                              word: rotaryWord(previewDef) ?? '',
+                            })}
+                      </dd>
+                    </>
                   ) : null}
                   {previewDef.description ? (
                     <>

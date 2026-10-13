@@ -415,7 +415,7 @@ test('the rotary axis group writes, persists and clears a rotary block (#393)', 
 
   // The manager's preview summarizes the axis.
   await expect(ui.machineManager.rotarySummary(app.page))
-    .toHaveText('Rotary axis: bar along X, on the Y motor (word Y)')
+    .toHaveText('Bar along X, on the Y motor (word Y)')
 
   // Reopening keeps every choice, and the raw JSON carries the block.
   await ui.machineManager.editButton(app.page).click()

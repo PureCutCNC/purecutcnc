@@ -310,14 +310,14 @@ function renderVar(name: string, desc: string, context?: string) {
                     {rotaryError ? (
                       <div className="machine-editor-error" role="alert">{rotaryError}</div>
                     ) : null}
-                    <label className="machine-editor-field">
-                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryReverse')}</span>
+                    <label className="machine-editor-check">
                       <input
                         type="checkbox"
                         data-testid="machine-rotary-reversed"
                         checked={form.rotaryReversed}
                         onChange={(event) => handleFormChange({ rotaryReversed: event.target.checked })}
                       />
+                      <span>{td('dialogs.machineEditor.rotaryReverse')}</span>
                     </label>
                   </>
                 )}
