@@ -19,6 +19,7 @@ import type { RoundStock, Stock } from '../../types/project'
 import { isRoundStock } from '../../types/project'
 import { aroundFrame, unwrapPoint, wrapPoint } from '../../engine/aroundFrame'
 import { stockSpacePoint } from '../../engine/rotaryFrame'
+import { moveMatchesToolpathLevel } from '../toolpathLevels'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 
 /**
@@ -32,6 +33,13 @@ export interface DisplayToolpath {
   readonly bounds: ToolpathBounds | null
   readonly operationId?: string
   readonly toolpath?: { readonly moves: readonly ToolpathMove[] }
+  /**
+   * The generated move each `moves` entry was made from, aligned by index
+   * (issue #395). A wrapped move's drawn Z is the physical height on the bar,
+   * not the machining level or the rapid's own Z direction, so every level and
+   * retract decision reads the generated move through this list.
+   */
+  readonly sources?: readonly ToolpathMove[]
 }
 
 /**
@@ -69,9 +77,18 @@ function computeStockSpaceToolpath<T extends { readonly moves: readonly Toolpath
   stock: Stock,
 ): DisplayToolpath {
   if (!isRoundStock(stock)) return toolpath
-  const moves = stockSpaceMoves(toolpath.moves, stock)
-  if (moves === toolpath.moves) return toolpath
-  return { ...toolpath, moves, bounds: toolpathBoundsOfMoves(moves), toolpath }
+  if (!toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) return toolpath
+  // Mapped one generated move at a time so each drawn piece can name the move
+  // it came from; `stockSpaceMoves` maps a whole list and loses that link.
+  const moves: ToolpathMove[] = []
+  const sources: ToolpathMove[] = []
+  for (const move of toolpath.moves) {
+    for (const piece of stockSpaceMoves([move], stock)) {
+      moves.push(piece)
+      sources.push(move)
+    }
+  }
+  return { ...toolpath, moves, bounds: toolpathBoundsOfMoves(moves), toolpath, sources }
 }
 
 export const DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK = 16384
@@ -210,22 +227,94 @@ export function toolpathLayerBuckets(toolpath: { moves: readonly ToolpathMove[] 
   return buckets
 }
 
+/** The layer keys, in the paint order `buildToolpathOverlayLayers` uses. */
+const TOOLPATH_LAYER_KEYS: readonly ToolpathOverlayLayerKey[] = ['cuts', 'leadIns', 'rapids', 'plunges', 'retractions']
+
+/** The level-filtered buckets for a toolpath drawn from its own moves. */
+function filterLayerBuckets(buckets: ToolpathLayerBuckets, level: number | null): ToolpathLayerBuckets {
+  const atLevel = (moves: ToolpathMove[]): ToolpathMove[] =>
+    level === null ? moves : moves.filter((move) => moveMatchesToolpathLevel(move, level))
+  return {
+    cuts: atLevel(buckets.cuts),
+    leadIns: atLevel(buckets.leadIns),
+    rapids: atLevel(buckets.rapids),
+    plunges: atLevel(buckets.plunges),
+    retractions: atLevel(buckets.retractions),
+  }
+}
+
+/** The level-filtered buckets for a wrapped toolpath, filled with drawn pieces. */
+function stockSpaceLayerBuckets(
+  display: DisplayToolpath,
+  generated: ToolpathLayerBuckets,
+  level: number | null,
+): ToolpathLayerBuckets {
+  const buckets: ToolpathLayerBuckets = { cuts: [], leadIns: [], rapids: [], plunges: [], retractions: [] }
+  const sources = display.sources
+  if (!sources) return filterLayerBuckets(generated, level)
+  const layerOf = new Map<ToolpathMove, ToolpathOverlayLayerKey>()
+  for (const key of TOOLPATH_LAYER_KEYS) {
+    for (const move of generated[key]) layerOf.set(move, key)
+  }
+  for (let index = 0; index < display.moves.length; index += 1) {
+    const source = sources[index]
+    if (level !== null && !moveMatchesToolpathLevel(source, level)) continue
+    const key = layerOf.get(source)
+    if (key) buckets[key].push(display.moves[index])
+  }
+  return buckets
+}
+
+/** The level-filtered buckets per (generated toolpath, stock, level). */
+const displayBucketCache = new WeakMap<
+  object,
+  WeakMap<object, Map<number | null, ToolpathLayerBuckets>>
+>()
+
 /**
  * The layer split the 3D overlay draws for one generated toolpath (issue
  * #395). A wrapped Around toolpath's generated points sit over the bar's
- * centreline, so bucketing the generated moves draws the wrap as the straight
- * line over the bar that it never is; the lines are built from the stock-space
- * display moves, and so must the split be.
+ * centreline, so a move's drawn Z is the physical height on the bar rather than
+ * the machining level or the rapid's own Z direction. Filtering the drawn
+ * pieces therefore hides a cut the level selector asked for, and files a
+ * retract underneath the bar as an ordinary rapid.
  *
- * `stockSpaceToolpath` caches the display object per generated toolpath and
- * stock and `toolpathLayerBuckets` caches the split per object, so a scene
- * rebuild reuses both instead of redoing the subdivision every build.
+ * So the split, the level filter and the retract split all run on the
+ * **generated** moves — whose Z is the machining level — and only the surviving
+ * moves are handed to the caller as stock-space pieces. `stockSpaceToolpath`
+ * caches those pieces per generated toolpath and stock, so a scene rebuild
+ * reuses the subdivision, and this function caches the filtered buckets per
+ * level so it reuses those too.
+ *
+ * An angle-free toolpath is handed back the very buckets
+ * {@link toolpathLayerBuckets} returns (for no selected level) or the same
+ * per-layer filter the overlay used to apply, so its line data is exactly what
+ * it is today.
  */
 export function displayToolpathLayerBuckets(
   toolpath: { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null },
   stock: Stock,
+  level: number | null = null,
 ): ToolpathLayerBuckets {
-  return toolpathLayerBuckets(stockSpaceToolpath(toolpath, stock))
+  const generated = toolpathLayerBuckets(toolpath)
+  const display = stockSpaceToolpath(toolpath, stock)
+  if (display === toolpath && level === null) return generated
+
+  const cachedByStock = displayBucketCache.get(toolpath)
+  const cached = cachedByStock?.get(stock)?.get(level)
+  if (cached !== undefined) return cached
+
+  const buckets = display === toolpath
+    ? filterLayerBuckets(generated, level)
+    : stockSpaceLayerBuckets(display, generated, level)
+  if (cachedByStock) {
+    const byLevel = cachedByStock.get(stock)
+    if (byLevel) byLevel.set(level, buckets)
+    else cachedByStock.set(stock, new Map([[level, buckets]]))
+  } else {
+    displayBucketCache.set(toolpath, new WeakMap([[stock, new Map([[level, buckets]])]]))
+  }
+  return buckets
 }
 
 export interface ToolpathLinePositionChunk {

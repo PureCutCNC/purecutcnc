@@ -373,7 +373,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.hint.construction': 'La géométrie de construction n’est jamais usinée — désélectionnez d’abord les entités de construction',
   'cam.hint.otherFaceFromTop': '{features} est dessiné sur la face inférieure et n’est pas une découpe débouchante : le montage Dessus ne peut pas l’usiner. Passez sur Dessous pour l’usiner.',
   'cam.hint.otherFaceFromBottom': '{features} est dessiné sur la face supérieure et n’est pas une découpe débouchante : le montage Dessous ne peut pas l’usiner. Passez sur Dessus pour l’usiner.',
-  'cam.hint.otherFaceFromAround': '{features} est dessiné sur une face plane et ne traverse pas la matière, il ne peut donc pas être usiné depuis la surface de la barre. Passez à cette face pour l’usiner.',
+  'cam.hint.otherFaceFromAround': '{features} est dessiné sur une face plane. Une opération sur la face autour ne peut usiner que les formes dessinées sur la face autour.',
   'cam.hint.drilling': 'Le perçage exige des entités circulaires ; les régions fermées sont des filtres facultatifs',
   'cam.hint.followLine': 'La gravure exige au moins une entité de chemin ; les régions fermées sont des filtres facultatifs',
   'cam.hint.surfaceCleanNoFeature': 'Le nettoyage de surface exige au moins une entité ajout/modèle ; les régions ne sont que des filtres',

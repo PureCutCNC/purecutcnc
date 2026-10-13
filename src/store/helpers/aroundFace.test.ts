@@ -59,7 +59,7 @@ assert.equal(switchWorkspaceFace('around'), true)
 assert.equal(store().project.setups.length, 1)
 assert.equal(activeSetup(store().project).id, provisionalSetupId('around'))
 assert.equal(activeSetup(store().project).kind, 'around')
-assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 35, z_bottom: 0 }, 'Around new span is Top-style')
+assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 40, z_bottom: 39 }, 'Around new span is a 1 mm cut into the bar surface (issue #395)')
 store().addFeature(feature('around'))
 const aroundProject = store().project
 const setup = activeSetup(aroundProject)
@@ -288,3 +288,12 @@ assert.equal(drawnOnAround.authoringFace, 'around')
 assert.equal(drawnOnAround.operation, 'subtract', 'a shape drawn on Around defaults to subtract')
 assert.equal(isFirstFeatureValid(resolvedProjectFeatures(store().project)), true, 'and leaves no first-feature warning')
 
+// A new Around shape is a shallow cut, never through the bar (issue #395): the
+// Top span's z_bottom = 0 sits at the centreline, which generation refuses.
+// One millimetre deep, or half the bar's radius when that is less.
+load({ ...fixture(), stock: roundStock(1, 180, 'x') })
+assert.equal(switchWorkspaceFace('around'), true)
+assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 1, z_bottom: 0.75 }, 'a 1 mm bar takes half its radius')
+load({ ...fixture(), meta: { ...fixture().meta, units: 'inch' as const }, stock: roundStock(0.5, 8, 'x') })
+assert.equal(switchWorkspaceFace('around'), true)
+assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 0.5, z_bottom: 0.46 }, 'an inch project takes 0.04 in')

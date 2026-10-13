@@ -81,6 +81,37 @@ async function drawRect(page: Page, x1: number, y1: number, x2: number, y2: numb
   await cancelPendingAdd(page)
 }
 
+interface OperationReadout {
+  moveCount: number
+  warningCount: number
+  allHaveAngle: boolean
+}
+
+/**
+ * Compute one operation in the page, the way the 3D spec reads its paths: the
+ * gear reading "up to date" is not proof that the Around operation produced
+ * motion (issue #395 review).
+ */
+async function generatedOperation(page: Page, operationId: string): Promise<OperationReadout> {
+  return page.evaluate(async (id) => {
+    const storeUrl = '/src/store/projectStore.ts'
+    const generateUrl = '/src/engine/toolpaths/generateOperation.ts'
+    const { useProjectStore } = await import(storeUrl) as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import(generateUrl) as typeof import('../src/engine/toolpaths/generateOperation')
+    const project = useProjectStore.getState().project
+    const operation = project.operations.find((candidate) => candidate.id === id)
+    if (!operation) throw new Error(`e2e: the project has no operation ${id}`)
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) throw new Error(`e2e: ${id} did not generate`)
+    const points = envelope.result.moves.flatMap((move) => [move.from, move.to])
+    return {
+      moveCount: envelope.result.moves.length,
+      warningCount: envelope.result.warnings.length,
+      allHaveAngle: points.every((point) => typeof point.a === 'number'),
+    }
+  }, operationId)
+}
+
 test('a block stock shows exactly the switch it always had: no Around segment', async ({ app, ui }) => {
   const { page } = app
   // The default project is a block.
@@ -160,11 +191,22 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   const withOperation = await getProject(page)
   const aroundSetupId = (withOperation.setups as Array<{ id: string; kind?: string }>).find((setup) => setup.kind === 'around')!.id
   expect((withOperation.operations as Array<{ kind: string; setupId?: string }>)[0]).toMatchObject({ kind: 'pocket', setupId: aroundSetupId })
+  // "Up to date" is not proof of motion (issue #395 review): the shape is a cut
+  // into the bar, so the operation really generates wrapped, warned moves.
+  const operationId = (withOperation.operations as Array<{ id: string }>)[0].id
+  const generated = await generatedOperation(page, operationId)
+  expect(generated.moveCount).toBeGreaterThan(0)
+  expect(generated.warningCount).toBe(0)
+  expect(generated.allHaveAngle).toBe(true)
 
   // ── Export: the Around setup is its own group and program card ──
   await ui.operations.headerExportButton(page).click()
   await expect(ui.exportDialog.setupHeading(page, 'around')).toContainText('Around')
   await expect(ui.exportDialog.programCard(page, 'around')).toBeVisible()
+  // The card's program is the wrapped one: a turning cut is a G1 block with the
+  // rotary word (A on this own-axis machine).
+  await ui.exportDialog.programCard(page, 'around').click()
+  await expect(ui.exportPreview.body(page)).toContainText(/^G1\b.*\bA-?\d/m)
   // Escape does not close this dialog; its header button does.
   await ui.exportDialog.root(page).locator('.dialog-header').getByRole('button').last().click()
   await expect(ui.exportDialog.root(page)).toBeHidden()
