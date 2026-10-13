@@ -40,7 +40,7 @@ import type { Units } from '../../utils/units'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { translate } from '../../i18n/store'
 import type { ToolpathResult } from '../toolpaths/types'
-import { PAPER_PRESETS, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
+import { PAPER_PRESETS, flatFaceProject, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
 import { printPalette } from './printPalette'
 import type {
   DesignPrintContent,
@@ -768,23 +768,28 @@ interface WorldContentArgs {
  * draw the same scene.
  */
 function buildWorldContent(project: Project, ctx: WorldContext, args: WorldContentArgs): string[] {
+  // Print and the design SVG export draw the flat faces only: an Around
+  // feature's coordinates are the unrolled sheet's and mean nothing on the
+  // bar's rectangle (issue #395). This is the one place the feature list is
+  // chosen for both outputs.
+  const scene = flatFaceProject(project)
   const world: string[] = []
   if (args.content.grid) {
-    world.push(...buildGrid(project, ctx, args.gridWindow))
+    world.push(...buildGrid(scene, ctx, args.gridWindow))
   }
   if (args.content.backdrop) {
-    world.push(...buildBackdrop(project))
+    world.push(...buildBackdrop(scene))
   }
-  world.push(...buildStock(project, ctx))
-  world.push(...buildFeatures(project, ctx, args.featureGroups === true))
-  world.push(...buildTabsAndClamps(project, ctx, args.content))
+  world.push(...buildStock(scene, ctx))
+  world.push(...buildFeatures(scene, ctx, args.featureGroups === true))
+  world.push(...buildTabsAndClamps(scene, ctx, args.content))
   if (args.content.toolpaths) {
     world.push(...buildToolpaths(ctx, args.extras))
   }
-  world.push(...buildOrigin(project, ctx))
-  world.push(...buildDimensions(project, ctx))
+  world.push(...buildOrigin(scene, ctx))
+  world.push(...buildDimensions(scene, ctx))
   if (args.content.featureLabels) {
-    world.push(...buildFeatureLabels(project, ctx))
+    world.push(...buildFeatureLabels(scene, ctx))
   }
   return world
 }

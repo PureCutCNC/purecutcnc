@@ -265,6 +265,9 @@ export const tree = {
   /** Feature-folder rows only. */
   folderRows: (page: Page) => page.locator('.tree-row.tree-row--folder'),
 
+  /** The "first feature must be Add" warning above the feature list. */
+  warning: (page: Page) => page.locator('.feature-tree-warning'),
+
   /** A specific feature row by its label text. */
   rowByName: (page: Page, name: string) =>
     page.locator('.tree-row--feature').filter({ hasText: name }),

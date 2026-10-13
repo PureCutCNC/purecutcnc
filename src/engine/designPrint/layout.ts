@@ -115,6 +115,18 @@ export function resolvePaperSizeMm(
 }
 
 /**
+ * The project as a flat-face print sees it (issue #395): a feature authored on
+ * the Around face stores the unrolled sheet's coordinates, which mean nothing
+ * on the bar's rectangle, so Print and the design SVG export leave those
+ * features out — of the drawing and of the bounds the page is scaled to.
+ * Returns the input project itself when there is nothing to drop.
+ */
+export function flatFaceProject(project: Project): Project {
+  const features = project.features.filter((feature) => feature.authoringFace !== 'around')
+  return features.length === project.features.length ? project : { ...project, features }
+}
+
+/**
  * Resolve the world bounds to print for the selected area mode. `viewBounds`
  * is the sketch canvas's current pan/zoom window; when unavailable the `view`
  * mode falls back to visible-design extents.
@@ -138,7 +150,7 @@ export function resolvePrintBounds(
     return viewBounds
   }
 
-  const bounds = getVisibleSceneBounds2D(project, {
+  const bounds = getVisibleSceneBounds2D(flatFaceProject(project), {
     includeBackdrop: false,
     includeTabs: content?.tabs ?? true,
     includeClamps: content?.clamps ?? true,

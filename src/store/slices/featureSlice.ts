@@ -479,7 +479,12 @@ export function createFeatureSlice(
         const safeId = s.project.features.some((existing) => existing.id === featureForInsert.id)
           ? nextUniqueGeneratedId(s.project, 'f')
           : featureForInsert.id
-        const isFirstSolidFeature = isSolid(featureForInsert)
+        // A new feature belongs to the face the workspace is on (issue #945);
+        // one that names its face — a copy of derived geometry — keeps it. The
+        // face is known before the base-solid rule runs: an Around feature is
+        // never the base solid, so it must not be forced to Add (#395).
+        const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
+        const isFirstSolidFeature = isSolid({ ...featureForInsert, authoringFace })
           && !resolvedProjectFeatures(s.project).some(isSolid)
         const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
@@ -499,9 +504,6 @@ export function createFeatureSlice(
         if (effectiveFolderSection !== sectionForOperation(featureForInsert.operation)) {
           effectiveFolderId = null
         }
-        // A new feature belongs to the face the workspace is on (issue #945);
-        // one that names its face — a copy of derived geometry — keeps it.
-        const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
         if ((activeFace(s.project) === 'around' || authoringFace === 'around')
           && (featureForInsert.kind === 'stl' || featureForInsert.operation === 'model')) return {}
         const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation

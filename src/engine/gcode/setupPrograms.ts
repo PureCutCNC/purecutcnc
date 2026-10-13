@@ -44,9 +44,9 @@ import type { MachineDefinition } from './types'
  * True when the project's exports are split, named and annotated per setup.
  *
  * An Around setup is one of those even when it is the project's only one
- * (issue #395): an operator stands at the lathe, not the flat bed, so its
- * program must say how the bar is turned and zeroed. The flat single-setup
- * legacy program is untouched by that.
+ * (issue #395): the bar runs on a rotary axis on this router, not on a lathe,
+ * so its program must say how the bar is turned and zeroed. The flat
+ * single-setup legacy program is untouched by that.
  */
 export function projectExportsPerSetup(project: Pick<Project, 'setups'>): boolean {
   const setups = project.setups ?? []

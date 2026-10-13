@@ -787,6 +787,33 @@ console.log('Testing the single unwind rapid...')
   assert.ok(!/G93/.test(noTurn.gcode), 'and no inverse time')
 }
 
+{
+  // A program whose last motion is a turning cut leaves inverse-time mode
+  // before the closing unwind (rule 4 before rule 5): the unwind block would
+  // otherwise turn the bar under G93, where its F means 1/min. The wrapped
+  // path is truncated so no retract follows the final cut — the case a
+  // trailing rapid would otherwise mask by leaving the mode on its own.
+  const line = straight({ x: 60, y: 30 }, { x: 100, y: 30 + 1.5 * MM_CIRCUMFERENCE })
+  const fixture = buildFixture(MM_BAR, 'mm', [
+    { id: 'line', kind: 'polygon', profile: line, operation: 'line', zTop: 40, zBottom: 39 },
+  ], [operation('Engrave', 'follow_line', ['line'], 't1', {
+    pass: 'finish', carveDepth: 1, maxCarveDepth: 1, target: { source: 'features', featureIds: ['line'] },
+  })], [tool('t1', 'mm', 3, 'flat_endmill')], aroundSetup('x'))
+
+  const full = fixture.wrapped.get('Engrave')!
+  const lastCut = full.moves.reduce((last, move, index) => (move.kind === 'cut' ? index : last), -1)
+  assert.ok(lastCut >= 0, 'the fixture has a turning cut to end on')
+  assert.ok(full.moves[lastCut].to.a !== 0, 'and it ends at a non-zero angle, so the program unwinds')
+  fixture.wrapped.set('Engrave', { ...full, moves: full.moves.slice(0, lastCut + 1) })
+
+  const result = exportFixture(fixture, OWN_X, false)
+  const lines = result.gcode.split('\n').map((raw) => raw.split(';')[0].trim())
+  const unwindAt = lines.findIndex((programLine) => /^G0\s+A-?0(\.0+)?$/.test(programLine))
+  assert.ok(unwindAt > 0, 'the truncated program still unwinds the bar')
+  assert.ok(lines.slice(0, unwindAt).includes('G93'), 'the last motion really was a turning cut')
+  assert.equal(lines[unwindAt - 1], 'G94', 'inverse-time mode is left before the unwind')
+}
+
 // ── 6. the bar and the machine must agree (rule 3) ────────────
 
 console.log('Testing the axis mismatch refusal...')

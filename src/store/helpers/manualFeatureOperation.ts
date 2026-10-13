@@ -35,11 +35,16 @@ const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
  * the ones present at the face being drawn on (issue #945): a pocket cut
  * part-way in from the other face is solid material here, so a shape drawn
  * over its outline is not an island in it.
+ *
+ * Around is the exception (issue #395): the bar is already solid, so a shape
+ * drawn on its surface is always a cut into it, never a base solid — whatever
+ * the project holds.
  */
 export function inferManualFeatureOperation(
   project: Project,
   profile: SketchProfile,
 ): FeatureOperation {
+  if (activeFace(project) === 'around') return 'subtract'
   const existingSolids = featuresAtActiveFace(project, resolveFeatureInstances(project))
     .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .map((feature) => ({

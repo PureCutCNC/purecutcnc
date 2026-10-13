@@ -24,6 +24,7 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { activeFace, activeSetup, aroundUnavailableReason, newFeatureSpan, faceArtworkMirror, activeOriginInStock, originPlacementFromStock, faceAngles, faceOffsets, projectUsesBothFaces, featuresAtActiveFace } from './activeFace'
 import { provisionalSetupId } from './provisionalSetup'
 import { decodeProjectFormat } from './projectFormat'
+import { isFirstFeatureValid } from './normalize'
 import { decodeSetups, findSetupWithTurn, syncProjectSetups } from './setups'
 import { featureReachableFromFace, targetAllowedInSetup, setupGenerationBlock, isThroughFeature } from '../../engine/setupTargets'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
@@ -32,7 +33,7 @@ import { operationCutRange, throughFeatureCoverage } from '../../engine/setupRea
 import { createCamPlan } from '../../engine/operations/camPlan'
 import { materializeCamPlan } from './camPlanApply'
 import { selectedVisibleClipboardFeatures, pasteClipboardFeatures } from '../../platform/featureClipboard'
-import { resolveFeatureInstance } from './resolveFeatures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './resolveFeatures'
 import { referenceProjectFeatures } from './referenceFeatures'
 import { inferLineTopZFromEnclosingFeature } from './manualFeatureOperation'
 
@@ -273,3 +274,17 @@ const unavailableProvisional = store().project
 store().addFeature(feature('unavailable-feature'))
 assert.equal(store().project, unavailableProvisional)
 assert.equal(store().project.setups.some(row => row.kind === 'around'), false)
+
+// A shape drawn on the Around face is a cut into the bar, never the base solid
+// (issue #395): with no flat face in the project at all, the base-solid rule
+// must not force the first Around shape to Add.
+const barOnly = fixture()
+load({ ...barOnly, features: [], featureTree: [], operations: [] })
+assert.equal(switchWorkspaceFace('around'), true)
+store().setCreationTarget('feature')
+store().addRectFeature('Around rect', 20, 40, 10, 8, 5)
+const drawnOnAround = resolveFeatureInstance(store().project, store().project.features.at(-1)!.id)!
+assert.equal(drawnOnAround.authoringFace, 'around')
+assert.equal(drawnOnAround.operation, 'subtract', 'a shape drawn on Around defaults to subtract')
+assert.equal(isFirstFeatureValid(resolvedProjectFeatures(store().project)), true, 'and leaves no first-feature warning')
+

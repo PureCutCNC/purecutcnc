@@ -45,6 +45,7 @@ interface SavedFeature {
   id: string
   authoringFace?: string
   definitionId: string
+  operation?: string
 }
 
 /** A mm round bar with (optionally) a rotary machine along its X axis. */
@@ -112,15 +113,23 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(ui.face.banner(page)).toContainText('Drawing on the surface of the bar')
   // A flat face and Around share no plane: the other-side toggle is gone.
   await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
-  await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
 
   // ── A base and a pocket target, both Around ──
   await drawRect(page, 10, 5, 100, 15)
   await drawRect(page, 20, 8, 40, 12)
   const features = (await getProject(page)).features as SavedFeature[]
   expect(features).toHaveLength(2)
-  for (const feature of features) expect(feature.authoringFace).toBe('around')
+  for (const feature of features) {
+    expect(feature.authoringFace).toBe('around')
+    // The bar is already solid, so a shape drawn on it is a cut, never a base.
+    expect(feature.operation).toBe('subtract')
+  }
+  // The tree shows its face layers once the project has a feature; before that
+  // it shows its empty message.
+  await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'around')).toContainText('AROUND')
+  // An Around subtract takes no part in the solid: no "first feature must be Add".
+  await expect(ui.tree.warning(page)).toHaveCount(0)
   await expect(featureRow(page, features[1].id)).toBeVisible()
 
   // ── Properties: ordinary Top-style Z controls, and no Change face row ──
