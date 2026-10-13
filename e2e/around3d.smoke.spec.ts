@@ -356,8 +356,10 @@ test('the Simulation tab lists both setups and plays the unrolled Around job', a
   expect((await viewportStats(page)).setup).toBe(aroundSetup.id)
   await expect(ui.simSetup.playTool(page)).toBeEnabled()
 
-  // Play tool runs the unrolled job: the readout advances. (Playing the whole
-  // job takes minutes at playback speed, so completion is not waited for.)
+  // Play tool runs the unrolled job: the readout leaves zero. (Playing the
+  // whole job takes minutes at playback speed, and a software-rendered CI
+  // runner advances a few percent in the time a laptop does twenty, so neither
+  // completion nor a particular percentage is waited for.)
   await ui.simSetup.playTool(page).click()
   const readout = page.locator('#workspace-panel-simulation .simulation-playback-bar__readout')
   await expect(readout).toBeVisible()
@@ -365,6 +367,6 @@ test('the Simulation tab lists both setups and plays the unrolled Around job', a
   await play.click()
   await expect.poll(async () => Number((await readout.textContent())?.replace('%', '') ?? '0'), {
     timeout: 30_000,
-  }).toBeGreaterThan(5)
+  }).toBeGreaterThan(0)
   await page.screenshot({ path: testInfo.outputPath('around-simulation.png') })
 })
