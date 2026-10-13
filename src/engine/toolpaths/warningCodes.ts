@@ -321,6 +321,11 @@ export type ToolpathWarningCode =
   | 'aroundStockMismatch'
   /** A radial cut must stop above the bar centreline. */
   | 'aroundCentreline'
+  /** The operation's generated cut reaches the bar's centreline although its
+   *  stored target stops short: a depth the operation works out itself, such
+   *  as an Engrave's carve depth or a countersink's derived plunge. No motion
+   *  is generated (issue #395). */
+  | 'aroundCutReachesCentreline'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */

@@ -223,6 +223,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.setupTargetNotThrough': '{features}：绘制在另一面且不是贯穿毛坯的切除特征，因此此装夹无法加工到它。只有同时到达毛坯两面的切除特征或导入的 3D 模型才能从另一面加工。未生成任何刀路。',
   'warnings.aroundStockMismatch': '{operation}：Around 面需要一根沿设置时相同轴向放置的圆棒。',
   'warnings.aroundCentreline': '{operation}：{feature} 到达圆棒中心线；Around 面上的切削必须在中心线之前停止。',
+  'warnings.aroundCutReachesCentreline': '{operation}：切削会到达圆棒中心线。请减小其深度，使其在圆棒中部之前停止。',
   'warnings.postMixedSetups': '程序包含来自多个装夹的加工操作（{setups}）。装夹之间需要手动翻转工件，因此每个装夹单独导出为一个程序。',
   'warnings.postSetupOperationRefused': '加工操作“{operation}”没有刀路，因为其装夹无法加工它。请在导出前修正或删除该操作。',
   'warnings.postSetupNoRegistration': '装夹“{setup}”没有定位基准，因此没有记录翻面后工件如何定位。请在装夹设置中添加定位销、靠山或角点基准。',

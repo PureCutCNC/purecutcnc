@@ -34,11 +34,14 @@
  * engine. The engine itself is unchanged: it only ever sees the top-down
  * frame, which for a Bottom setup is the stock turned over.
  *
- * The original project, map and path objects are never written to. For a Top
- * setup the project and every individual path come back as the same objects,
+ * The original project, map and path objects are never written to. For a
+ * project with no Around feature — and for a Top setup in it — the project and
+ * every individual path come back as the same objects,
  * so a project without a turned setup simulates exactly what it did before
  * setups existed; the returned map is always a new one, scoped to the
- * setup's operations, so another setup's paths cannot leak through it.
+ * setup's operations, so another setup's paths cannot leak through it. A flat
+ * setup drops the project's Around features (`flatFaceProject`): they belong
+ * to the bar's unrolled sheet and have no place on its rectangle.
  */
 
 import type { MachiningSetup, Operation, Project } from '../types/project'
@@ -47,7 +50,7 @@ import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
 import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameProject'
-import { aroundFrameForOperation, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
+import { aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
 import type { AroundFrame } from '../engine/aroundFrame'
 import { activeSetup } from '../store/helpers/activeFace'
 
@@ -136,7 +139,7 @@ export function buildSimulationSetupInput(
   }
 
   return {
-    project: around ? unrolledProject(project, around) : projectInSetupFrame(project, frame),
+    project: around ? unrolledProject(project, around) : projectInSetupFrame(flatFaceProject(project), frame),
     operations,
     toolpaths: localToolpaths,
   }

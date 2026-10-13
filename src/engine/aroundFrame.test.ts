@@ -20,6 +20,7 @@
  * - angle sign / radius not added / sheetStart dropped: testPoints
  * - circumference from radius: testFrames
  * - non-Around features retained / heights not lowered: testUnrolledProject
+ * - a fixture band limited to one circumference: testUnrolledProject
  * - drillCycles retained / split indices not remapped: testToolpaths
  * - generation branch removed: testGenerationParity
  * Run with: npx tsx src/engine/aroundFrame.test.ts
@@ -176,9 +177,15 @@ function testUnrolledProject(): void {
     equal(flat.operations, project.operations, 'operations pass through')
     equal(flat.tabs, [], 'no tabs')
     equal(flat.clamps.map((c) => c.id), ['chuck', 'tail'], 'only rotary fixtures')
+    // A fixture band covers every turn the job can reach: one circumference
+    // below the lowest across coordinate of anything on the sheet (30 on the X
+    // bar, the feature's own 40) and one above the highest (the sheet's far
+    // edge, or the feature's 50 on the short Y bar).
+    const acrossMin = stock.axis === 'x' ? 30 - circumference : 3 - circumference
+    const acrossMax = stock.axis === 'x' ? 30 + 2 * circumference : 50 + circumference
     equal(flat.clamps, project.clamps.slice(0, 2).map((c) => ({ ...c, height: c.height - radius,
-      ...(stock.axis === 'x' ? { y: 30, h: circumference } : { x: 3, w: circumference }),
-    })), 'full-sheet clamp bands and top heights')
+      ...(stock.axis === 'x' ? { y: acrossMin, h: acrossMax - acrossMin } : { x: acrossMin, w: acrossMax - acrossMin }),
+    })), 'multi-turn clamp bands and top heights')
     const checked = expandedClampBounds(flat, 0)
     equal(checked[0].requiredZ, flat.clamps[0].height + flat.meta.clampClearanceZ, 'height is absolute top Z')
     equal(flat.clamps[0].height - flat.stock.thickness, project.clamps[0].height - stock.thickness, 'same height above stock')

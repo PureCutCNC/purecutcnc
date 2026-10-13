@@ -25,10 +25,16 @@
  * a = 360·(across − sheetStart)/C, never reduced to one turn. Per rotaryFrame,
  * a flat height r cuts stock across = centre + r·sin a, z = R + r·cos a;
  * toolSpacePoint of that stock point at a is the wrapped tool point.
+ *
+ * A chuck or tailstock is a band across the *whole* bar, so it covers every
+ * turn the job can reach: `unrolledProject` spreads it from one circumference
+ * below the lowest across coordinate on the sheet to one above the highest.
  */
 
 import { getStockBounds, isAroundSetup, isRoundStock, rectProfile, roundStockCentre } from '../types/project'
 import type { Operation, Project, RoundStock } from '../types/project'
+import { getFeatureGeometryBounds } from '../text'
+import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { setupForOperation } from './setupOrientation'
 import { resolveDimensionRef } from './toolpaths/geometry'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './toolpaths/types'
@@ -66,6 +72,21 @@ export function aroundFrameForOperation(
   return aroundFrame(project.stock)
 }
 
+/**
+ * The project as a flat face reads it (issue #395): a feature authored on the
+ * Around face stores the unrolled sheet's coordinates, which mean nothing on
+ * the bar's own rectangle — a Top or Bottom cut that numerically overlaps one
+ * must never fold it into its own region, and a flat setup's simulation must
+ * not draw it.
+ *
+ * Returns the input project **itself** when it holds no Around feature, so a
+ * project without Around content takes exactly the path it always did.
+ */
+export function flatFaceProject(project: Project): Project {
+  const features = project.features.filter((feature) => feature.authoringFace !== 'around')
+  return features.length === project.features.length ? project : { ...project, features }
+}
+
 /** Flat point → tool point on the bar. Always carries `a`. */
 export function wrapPoint(flat: { x: number; y: number; z: number }, frame: AroundFrame): ToolpathPoint {
   const across = frame.axis === 'x' ? flat.y : flat.x
@@ -84,9 +105,32 @@ export function unwrapPoint(point: ToolpathPoint, frame: AroundFrame): { x: numb
     : { x: across, y: point.y, z: point.z - frame.radius }
 }
 
+/**
+ * The across extent a fixture band must cover: one circumference below the
+ * lowest across coordinate of anything on the sheet and one above the highest
+ * — the sheet itself and every Around feature's transformed bounds. A cutter
+ * clearance or lead move past a feature is therefore inside the band too.
+ */
+function bandAcrossExtent(project: Project, frame: AroundFrame): { min: number; max: number } {
+  let min = frame.sheetStart
+  let max = frame.sheetStart + frame.circumference
+  for (const feature of project.features) {
+    if (feature.authoringFace !== 'around') continue
+    const resolved = resolveFeatureInstance(project, feature.id)
+    if (!resolved) continue
+    const bounds = getFeatureGeometryBounds(resolved)
+    const acrossMin = frame.axis === 'x' ? bounds.minY : bounds.minX
+    const acrossMax = frame.axis === 'x' ? bounds.maxY : bounds.maxX
+    if (Number.isFinite(acrossMin)) min = Math.min(min, acrossMin)
+    if (Number.isFinite(acrossMax)) max = Math.max(max, acrossMax)
+  }
+  return { min: min - frame.circumference, max: max + frame.circumference }
+}
+
 /** The project as a flat block for the generators. Transient; never stored. */
 export function unrolledProject(project: Project, frame: AroundFrame): Project {
   const bounds = getStockBounds(project.stock)
+  const band = bandAcrossExtent(project, frame)
   const { shape: _shape, sourceFeature: _source, ...stock } = project.stock
   void _shape
   void _source
@@ -112,8 +156,8 @@ export function unrolledProject(project: Project, frame: AroundFrame): Project {
     clamps: project.clamps.filter((clamp) => clamp.type === 'chuck' || clamp.type === 'tailstock').map((clamp) => ({
       ...clamp,
       ...(frame.axis === 'x'
-        ? { y: frame.sheetStart, h: frame.circumference }
-        : { x: frame.sheetStart, w: frame.circumference }),
+        ? { y: band.min, h: band.max - band.min }
+        : { x: band.min, w: band.max - band.min }),
       // Clamp.height is its absolute top Z, measured from the stock's bottom.
       height: clamp.height - frame.radius,
     })),

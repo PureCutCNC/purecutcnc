@@ -102,7 +102,7 @@ export function aroundSheet(
     rect,
     along,
     turnLines: aroundTurnLines(frame, range.acrossMin, range.acrossMax),
-    clampBands: project.clamps.filter((clamp) => BAND_CLAMP_TYPES.has(clamp.type)).map((clamp) => aroundClampBand(clamp, frame)),
+    clampBands: project.clamps.filter((clamp) => BAND_CLAMP_TYPES.has(clamp.type)).map((clamp) => aroundClampBand(clamp, frame, range)),
     origin: { ...aroundOrigin(project.origin, frame), name: project.origin.name },
   }
 }
@@ -176,11 +176,22 @@ export function aroundTurnLines(
   return lines
 }
 
-/** A clamp as the sheet holds it: its extent along the bar, the whole sheet across. */
-export function aroundClampBand(clamp: Clamp, frame: Pick<AroundFrame, 'axis' | 'sheetStart' | 'circumference'>): Clamp {
+/**
+ * A clamp as the sheet holds it: its extent along the bar, the whole requested
+ * across range. A chuck or tailstock holds every turn of the bar, so the band
+ * is drawn — and snapped — across the whole visible range like the turn lines;
+ * without one, it is the sheet's own single circumference.
+ */
+export function aroundClampBand(
+  clamp: Clamp,
+  frame: Pick<AroundFrame, 'axis' | 'sheetStart' | 'circumference'>,
+  range?: { readonly acrossMin: number; readonly acrossMax: number },
+): Clamp {
+  const start = range ? Math.min(range.acrossMin, range.acrossMax) : frame.sheetStart
+  const end = range ? Math.max(range.acrossMin, range.acrossMax) : frame.sheetStart + frame.circumference
   return frame.axis === 'x'
-    ? { ...clamp, y: frame.sheetStart, h: frame.circumference }
-    : { ...clamp, x: frame.sheetStart, w: frame.circumference }
+    ? { ...clamp, y: start, h: end - start }
+    : { ...clamp, x: start, w: end - start }
 }
 
 /** The origin marker on the sheet: its along coordinate, on the start line. */

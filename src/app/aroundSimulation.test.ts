@@ -215,6 +215,37 @@ function testAroundSimulatesFlat(): void {
   )
 }
 
+function testFlatSetupDropsAroundFeatures(): void {
+  console.log('Testing a flat setup simulates without the project Around features...')
+  const base = newProject('flat-vs-around', 'mm')
+  base.stock = AROUND_BAR
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Flat endmill', diameter: 3, maxCutDepth: 80 }]
+  const built = projectWithFeatures(base, [
+    pocketFeature('top-pocket', { x: 40, y: 35, w: 20, h: 20 }, 40, 36, 'top'),
+    // An Around shape in the project, with no Around operation and no Around
+    // setup: a flat setup must not draw it on the bar's rectangle (issue #395).
+    pocketFeature('around-cut', { x: 60, y: 45, w: 10, h: 10 }, 40, 36, 'around'),
+  ])
+  const top = built.setups[0]
+  const op = operation({
+    id: 'opTop', name: 'Top pocket', kind: 'pocket',
+    target: { source: 'features', featureIds: ['top-pocket'] }, setupId: top.id, toolRef: 't1',
+  })
+  const project = syncProjectSetups({ ...built, operations: [op], activeSetupId: top.id })
+  const input = simulationInput(project, top, new Map())
+  assertEqual(input.project.features.map((feature) => feature.id), ['top-pocket'], 'only the flat features simulate')
+  assert(input.project !== project, 'and the input project is a copy when an Around feature is present')
+
+  // No Around feature anywhere: the Top setup still passes the project through.
+  const plain = syncProjectSetups({
+    ...projectWithFeatures(base, [pocketFeature('top-pocket', { x: 40, y: 35, w: 20, h: 20 }, 40, 36, 'top')]),
+    operations: [op],
+    activeSetupId: top.id,
+  })
+  assert(simulationInput(plain, plain.setups[0], new Map()).project === plain,
+    'a project with no Around feature simulates exactly the object it always did')
+}
+
 function testPickerAndBrokenAround(): void {
   console.log('Testing the picker lists an Around setup and a broken one yields no simulation...')
   const { project, setup, paths } = makeAroundProject()
@@ -242,5 +273,6 @@ function testPickerAndBrokenAround(): void {
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
 testPickerAndBrokenAround()
+testFlatSetupDropsAroundFeatures()
 
 console.log('Around simulation tests passed')

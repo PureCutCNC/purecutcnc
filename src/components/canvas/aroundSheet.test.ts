@@ -29,6 +29,8 @@
  * - `k = 0` not solid → "the start line is the only solid turn" fails;
  * - clamp bands keeping their own across extent → "a band spans the sheet
  *   across" fails;
+ * - the band not following the visible range → "a band spans the whole visible
+ *   range across" fails;
  * - the origin marker keeping the bar's across coordinate → "the origin lands
  *   on the start line" fails;
  * - null checks removed → the Top/Bottom/block assertions fail.
@@ -173,6 +175,21 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
   near(yBand.x, 3, 'a Y bar band starts on the start line (X)')
   near(yBand.w, 2 * Math.PI, 'a Y bar band spans the sheet across (X)')
   near(yBand.y, 40, 'a Y bar band keeps its extent along the bar (Y)')
+
+  // The band is drawn and snapped across the whole visible range, like the
+  // turn lines: a view spanning three turns gives a band three turns tall.
+  const c = frame.circumference
+  const wide = aroundSheet(project, { acrossMin: frame.sheetStart - c, acrossMax: frame.sheetStart + 2 * c })!
+  const wideChuck = wide.clampBands.find((band) => band.id === 'chuck')!
+  near(wideChuck.y, frame.sheetStart - c, 'a band starts at the visible range start')
+  near(wideChuck.h, 3 * c, 'a band spans the whole visible range across')
+  const yWide = aroundClampBand(
+    clamp('chuck', 'chuck'),
+    { axis: 'y', sheetStart: 3, circumference: 2 * Math.PI },
+    { acrossMin: 3 - 2 * Math.PI, acrossMax: 3 + 4 * Math.PI },
+  )
+  near(yWide.x, 3 - 2 * Math.PI, 'a Y bar band starts at the visible range start (X)')
+  near(yWide.w, 6 * Math.PI, 'a Y bar band spans the whole visible range across (X)')
 }
 
 // ── Origin marker ────────────────────────────────────────────

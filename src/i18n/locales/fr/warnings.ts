@@ -219,6 +219,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.setupTargetNotThrough': '{features} : dessiné sur l’autre face et non débouchant, ce montage ne peut donc pas l’atteindre. Seule une soustraction qui atteint les deux faces du brut, ou un modèle 3D importé, peut être usinée depuis l’autre côté. Rien n’a été généré.',
   'warnings.aroundStockMismatch': '{operation} : la face Around nécessite une barre ronde orientée selon le même axe que lors de sa configuration.',
   'warnings.aroundCentreline': '{operation} : {feature} atteint la ligne centrale de la barre ; une coupe sur la face Around doit s’arrêter avant celle-ci.',
+  'warnings.aroundCutReachesCentreline': '{operation} : la coupe atteindrait la ligne centrale de la barre. Réduisez sa profondeur pour qu’elle s’arrête avant le milieu de la barre.',
   'warnings.postMixedSetups': 'Le programme contient des opérations de plusieurs montages ({setups}). La pièce est retournée à la main entre les montages, chaque montage est donc exporté dans son propre programme.',
   'warnings.postSetupOperationRefused': 'L’opération « {operation} » n’a pas de parcours d’outil, car son montage ne peut pas l’usiner. Corrigez ou supprimez l’opération avant d’exporter.',
   'warnings.postSetupNoRegistration': 'Le montage « {setup} » n’a aucune référence de repositionnement : rien n’indique comment la pièce est positionnée après retournement. Ajoutez une référence de pion, de butée ou de coin dans les réglages du montage.',
