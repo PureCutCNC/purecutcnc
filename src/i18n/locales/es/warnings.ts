@@ -237,6 +237,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNoInverseTime': 'La operación "{operation}" no se exportó: el controlador de esta máquina no tiene avance en tiempo inverso, que un corte giratorio necesita.',
   'warnings.postRotaryBorrowedAxisTravel': 'La operación "{operation}" no se exportó: se desplaza por {axis}, pero ese motor acciona el eje rotativo en esta máquina.',
   'warnings.postRotaryNeedsRoundStock': 'La operación "{operation}" no se exportó: un corte giratorio necesita material redondo.',
+  'warnings.postRotaryAngleNotEstablished': 'La operación "{operation}" no se exportó: empieza a cortar antes de que la barra haya girado a su ángulo.',
+  'warnings.postRotaryTemplateUsesBorrowedAxis': 'Las plantillas de la máquina escriben {axis} como palabra de eje, pero ese motor acciona el eje rotativo en esta máquina. Elimínalo de las plantillas de la máquina antes de exportar.',
   'warnings.replayNoTool': 'No se ha asignado ninguna herramienta a la operación seleccionada.',
   'warnings.bookletNoTool': 'No se ha seleccionado ninguna herramienta para esta operación.',
   'warnings.bookletNoToolpath': 'No se pudo generar la trayectoria de la herramienta para esta operación.',

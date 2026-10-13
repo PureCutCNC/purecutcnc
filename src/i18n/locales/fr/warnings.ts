@@ -237,6 +237,8 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNoInverseTime': "L'opération « {operation} » n'a pas été exportée : le contrôleur de cette machine n'a pas d'avance en temps inverse, nécessaire à une coupe en rotation.",
   'warnings.postRotaryBorrowedAxisTravel': "L'opération « {operation} » n'a pas été exportée : elle se déplace selon {axis}, mais ce moteur entraîne l'axe rotatif sur cette machine.",
   'warnings.postRotaryNeedsRoundStock': "L'opération « {operation} » n'a pas été exportée : une coupe en rotation nécessite un matériau rond.",
+  'warnings.postRotaryAngleNotEstablished': "L'opération « {operation} » n'a pas été exportée : elle commence à couper avant que la barre ait tourné à son angle.",
+  'warnings.postRotaryTemplateUsesBorrowedAxis': "Les modèles de la machine écrivent {axis} comme mot d'axe, mais ce moteur entraîne l'axe rotatif sur cette machine. Retirez-le des modèles de la machine avant d'exporter.",
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',
   'warnings.bookletNoToolpath': 'Le parcours d’outil n’a pas pu être généré pour cette opération.',
