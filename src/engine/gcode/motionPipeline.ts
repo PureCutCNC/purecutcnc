@@ -46,7 +46,6 @@
 import type { Operation, Project } from '../../types/project'
 import { isRoundStock, roundStockCentre } from '../../types/project'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
-import { effectiveFeed } from '../toolpaths/feed'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
@@ -639,59 +638,60 @@ function turns(move: ToolpathMove): boolean {
   return !sameAngle(move.from.a, move.to.a)
 }
 
-/** Where a descriptor ends, in machine coordinates. */
-function descriptorEnd(step: FittedMoveDescriptor): ToolpathPoint {
-  return step.kind === 'linear' ? step.point : step.endPoint
-}
-
 /**
  * Plan the feed word of every move of one operation (issue #393, rule 4).
  *
  * `steps` is the emitted sequence and `projectMoves` the operation's own moves,
- * in the same order: each step's end point is the end of the last source move it
- * covers, so the two are walked together to recover the project-space endpoints
- * the rotary arithmetic needs. `effectiveFeed` reuses the caller's own feed
- * (kind and `feedScale` included), so a turning move is not given a different
- * base feed from the one it would have had.
+ * in the same order, one entry per emitted block: a linear descriptor covers
+ * exactly one source move, and an arc run covers exactly the source moves in its
+ * `runFallback`. The two are therefore consumed together, recovering the
+ * project-space endpoints the rotary arithmetic needs without matching machine
+ * coordinates back to source points (a synthesised sub-arc endpoint matches no
+ * source point, which is what makes matching unreliable).
+ *
+ * `centre` is null for a block of stock: there is no centreline and no turning
+ * move can exist, so every feed is the ordinary one. `effectiveFeed` reuses the
+ * caller's own feed (kind and `feedScale` included), so a turning move is not
+ * given a different base feed from the one it would have had.
  */
-export function planRotaryFeeds(args: {
+export function planStepFeeds(args: {
   projectMoves: readonly ToolpathMove[]
   steps: readonly FittedMoveDescriptor[]
-  centre: RotaryCentreline
+  centre: RotaryCentreline | null
   tolerance: number
   effectiveFeed: (step: FittedMoveDescriptor) => number
 }): FeedDirective[] {
   const { projectMoves, steps, centre, tolerance, effectiveFeed } = args
-  const machinePoints: ToolpathPoint[] = []
-  const alignment: ToolpathPoint[] = []
-  for (const move of projectMoves) {
-    machinePoints.push(move.from, move.to)
-    alignment.push(move.from, move.to)
-  }
-
   const directives: FeedDirective[] = []
-  let cursor = 0
-  for (const step of steps) {
-    const end = descriptorEnd(step)
-    let index = cursor
-    while (index < machinePoints.length && !sameMachinePoint(machinePoints[index], end)) index += 1
-    const projectEnd = index < machinePoints.length ? alignment[index] : null
-    const projectStart = cursor < machinePoints.length ? alignment[cursor] : projectEnd
-    if (index < machinePoints.length) cursor = index
-    const from = projectStart ?? end
-    const to = projectEnd ?? end
+  let moveIndex = 0
+  let arcRunId: number | null = null
 
-    if (step.kind === 'linear' && step.moveKind === 'rapid') {
+  for (const step of steps) {
+    if (step.kind === 'arc') {
+      // Every sub-arc of a run shares `runFallback`; the run's source moves are
+      // consumed once, when its first sub-arc is seen.
+      if (step.runId !== arcRunId) {
+        moveIndex += step.runFallback.length
+        arcRunId = step.runId
+      }
+      directives.push({ mode: 'normal', feed: effectiveFeed(step) })
+      continue
+    }
+
+    const move = projectMoves[moveIndex]
+    moveIndex += 1
+
+    if (step.moveKind === 'rapid') {
       directives.push({ mode: 'none' })
       continue
     }
-    if (sameAngle(from.a, to.a)) {
+    if (centre === null || move === undefined || sameAngle(move.from.a, move.to.a)) {
       directives.push({ mode: 'normal', feed: effectiveFeed(step) })
       continue
     }
     directives.push({
       mode: 'inverse',
-      feed: inverseTimeFeedValue(from, to, effectiveFeed(step), centre, tolerance),
+      feed: inverseTimeFeedValue(move.from, move.to, effectiveFeed(step), centre, tolerance),
     })
   }
   return directives
@@ -755,6 +755,15 @@ function rotaryRefusal(args: {
   toolpath: ToolpathResult
 }): ToolpathWarning['code'] | null {
   const { definition, project, toolpath } = args
+  // Rule 3 applies to every operation on a borrowed-motor machine, turning or
+  // not: the borrowed project axis has no linear travel at all, so an operation
+  // that moves along it cannot run here. Checked before the angle gate so a
+  // flat operation is refused too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  if (borrowed !== null
+    && !withinBorrowedAxisTravel(toolpath.moves, borrowed, exportGeometryTolerance(project.meta.units))) {
+    return 'postRotaryBorrowedAxisTravel'
+  }
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   if (!hasAngle) return null
   const rotary = definition.rotary
@@ -762,11 +771,6 @@ function rotaryRefusal(args: {
   if (rotary.inverseTimeFeed === null
     && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
     return 'postRotaryNoInverseTime'
-  }
-  const borrowed = rotaryBorrowedAxis(definition)
-  if (borrowed !== null
-    && !withinBorrowedAxisTravel(toolpath.moves, borrowed, exportGeometryTolerance(project.meta.units))) {
-    return 'postRotaryBorrowedAxisTravel'
   }
   if (!isRoundStock(project.stock)) return 'postRotaryNeedsRoundStock'
   return null
@@ -849,10 +853,6 @@ export function planDrillCycles(
 export interface OperationMotionPlan {
   /** The moves to emit, in order, in machine coordinates. */
   steps: FittedMoveDescriptor[]
-  /** One entry per step, in the same order: the feed word the emitter writes
-   *  (issue #393, rule 4). An operation with no rotary component gets `normal`
-   *  or `none` for every step and the emitter behaves exactly as before. */
-  feeds: FeedDirective[]
   /** Warnings raised while planning; the caller appends them to its own. */
   warnings: ToolpathWarning[]
   /** Present only when a trace was requested. */
@@ -865,11 +865,6 @@ export interface PlanOperationMotionArgs {
   operation: Operation
   toolpath: ToolpathResult
   arcEmitOptions: EmittedArcOptions
-  /** Cutting feed in project units per minute: the base a turning move's
-   *  inverse-time word is computed from (issue #393, rule 4). */
-  cutFeed: number
-  /** Plunge feed, for a plunge into a turning move. */
-  plungeFeed: number
   /** Where the controller already is when this operation begins — the
    *  emitted position carried over from earlier operations. */
   startPosition: { x: number; y: number } | null
@@ -885,7 +880,7 @@ export interface PlanOperationMotionArgs {
 export function planOperationMotion(args: PlanOperationMotionArgs): OperationMotionPlan {
   const {
     project, definition, operation, toolpath, arcEmitOptions,
-    cutFeed, plungeFeed, startPosition, captureTrace,
+    startPosition, captureTrace,
   } = args
   const warnings: ToolpathWarning[] = []
 
@@ -960,44 +955,23 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
     steps = foldFullCircleArcs(steps)
   }
 
-  // Rotary output (issue #393). The feed of every move is planned first, from
-  // the moves as they arrive here: a borrowed motor's coordinate is dropped
-  // below, and doing it before this walk would hide the move's linear travel
-  // from the path length. The emitter then writes X/Y/Z, the angle word and
-  // the feed word this plan asks for.
-  const centre = rotaryCentreline(project.stock)
-  // A fitted arc is at a constant angle by construction (rule 2 keeps turning
-  // moves out of arc runs), so its feed is the ordinary cutting feed.
-  const feedOf = (step: FittedMoveDescriptor): number => step.kind === 'linear' && step.moveKind === 'plunge'
-    ? effectiveFeed('plunge', step.feedScale, cutFeed, plungeFeed)
-    : effectiveFeed('cut', step.feedScale, cutFeed, plungeFeed)
-  const feeds: FeedDirective[] = centre === null
-    ? steps.map((step): FeedDirective => step.kind === 'linear' && step.moveKind === 'rapid'
-      ? { mode: 'none' }
-      : { mode: 'normal', feed: feedOf(step) })
-    : planRotaryFeeds({
-      projectMoves: toolpath.moves,
-      steps,
-      centre,
-      tolerance,
-      effectiveFeed: feedOf,
-    })
-
-  const borrowed = rotaryBorrowedAxis(definition)
-  if (borrowed !== null) {
-    // The borrowed motor's letter carries the angle on this machine, so its
-    // linear coordinate must never be emitted (rule 3). The refusal planning
-    // has already rejected any operation that moves along it.
-    steps = suppressBorrowedAxisInSteps(steps, borrowed)
+  // Rotary output (issue #393). The borrowed motor's letter carries the angle
+  // on this machine, so its linear coordinate must never be emitted (rule 3).
+  // The refusal planning has already rejected any operation that moves along
+  // it. The emitter plans each move's feed from the operation's *project*
+  // moves, so dropping the coordinate here cannot hide a move's linear travel
+  // from the path length.
+  const borrowedWord = rotaryWord(definition)
+  if (rotaryBorrowedAxis(definition) !== null && (borrowedWord === 'X' || borrowedWord === 'Y')) {
+    steps = suppressBorrowedAxisInSteps(steps, borrowedWord.toLowerCase() as 'x' | 'y')
   }
 
   if (!captureTrace) {
-    return { steps, feeds, warnings }
+    return { steps, warnings }
   }
 
   return {
     steps,
-    feeds,
     warnings,
     trace: {
       operationId: operation.id,
@@ -1014,18 +988,29 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 /**
  * Split one rapid into the blocks that are emitted for it: Z on its own
  * first, then XY. An axis group that does not move is dropped, and a rapid
- * from an unknown position emits both.
+ * from an unknown position emits both. A rotation-only rapid — every linear
+ * coordinate unchanged — emits a single block carrying only the angle, so a
+ * move that turns the stock is never silently dropped (rule 1).
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
 ): Array<Partial<ToolpathPoint>> {
   const blocks: Array<Partial<ToolpathPoint>> = []
+  const angle = target.a
+  const angleOnly = angle !== undefined && (current === null || current.a !== angle)
   if (current === null || current.z !== target.z) {
-    blocks.push({ z: target.z })
+    blocks.push({ z: target.z, ...(angle !== undefined ? { a: angle } : null) })
   }
-  if (current === null || current.x !== target.x || current.y !== target.y) {
-    blocks.push({ x: target.x, y: target.y })
+  // An axis the machine does not have (a borrowed motor's linear coordinate
+  // was dropped) is never a reason to emit a block of its own.
+  if (current === null
+    || (target.x !== undefined && current.x !== target.x)
+    || (target.y !== undefined && current.y !== target.y)) {
+    blocks.push({ x: target.x, y: target.y, ...(angle !== undefined ? { a: angle } : null) })
+  }
+  if (blocks.length === 0 && angleOnly) {
+    blocks.push({ a: angle })
   }
   return blocks
 }

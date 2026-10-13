@@ -38,11 +38,14 @@ import {
   planProgramSequence,
   planProgramSetup,
   planRotaryRefusals,
+  planStepFeeds,
   plasmaSafeZ,
   plasmaSheetZ,
+  rotaryCentreline,
   splitRapid,
 } from './motionPipeline'
 import type { FeedDirective, OperationSequence } from './motionPipeline'
+import { exportGeometryTolerance } from '../../utils/units'
 import { emitOpenSbpProgram } from './opensbpEmitter'
 
 // What the emitter has written so far. Which tool is held and whether the
@@ -317,6 +320,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
       const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(directive.feed, definition, outputUnits)}`
       if (definition.feedSpeed.inlineWithMotion) {
+        // Every inverse-time move carries its own F, whatever `modalFeedSpeed`
+        // says (rule 4): clear the tracked feed so the word is always written.
+        state.feedRate = null
         emitMotionLine(definition.motion.linearCommand, axes, directive.feed)
       } else {
         emitLine(fWord)
@@ -327,6 +333,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
       return
     }
+    // A feed move that does not turn leaves inverse-time mode and restates the
+    // ordinary feed word before it (rule 4).
+    leaveInverseTime()
     emitMotionLine(definition.motion.linearCommand, {
       x: point.x,
       y: point.y,
@@ -510,8 +519,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       operation,
       toolpath,
       arcEmitOptions,
-      cutFeed: step.cutFeed,
-      plungeFeed: step.plungeFeed,
       startPosition: emittedPosition,
       captureTrace,
     })
@@ -840,15 +847,27 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         operation,
         toolpath,
         arcEmitOptions,
-        cutFeed: step.cutFeed,
-        plungeFeed: step.plungeFeed,
         startPosition: emittedPosition,
         captureTrace,
       })
       warnings.push(...plan.warnings)
 
+      // The feed word of every emitted block (issue #393, rule 4). Planned from
+      // the operation's own project moves, so a turning move's path length is
+      // measured before a borrowed motor's coordinate is dropped. A block of
+      // stock has no centreline, so every feed is the ordinary one.
+      const feeds = planStepFeeds({
+        projectMoves: toolpath.moves,
+        steps: plan.steps,
+        centre: rotaryCentreline(project.stock),
+        tolerance: exportGeometryTolerance(project.meta.units),
+        effectiveFeed: (planned) => planned.kind === 'linear' && planned.moveKind === 'plunge'
+          ? effectiveFeed('plunge', planned.feedScale, step.cutFeed, step.plungeFeed)
+          : effectiveFeed('cut', planned.feedScale, step.cutFeed, step.plungeFeed),
+      })
+
       plan.steps.forEach((d, index) => {
-        const directive = plan.feeds[index] ?? { mode: 'none' as const }
+        const directive = feeds[index] ?? { mode: 'none' as const }
         if (d.kind === 'arc') {
           // A fitted arc is at a constant angle by construction (rule 2 keeps
           // turning moves out of arc runs), so it leaves inverse-time mode and

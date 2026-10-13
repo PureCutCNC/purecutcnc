@@ -109,6 +109,7 @@ Icons are **SVG-first**: editable per-icon SVG files are the source of truth and
     - **Machine:** Standard Cartesian CAM system where **positive Y increases upwards**.
     - The `MachineOrigin` and G-code export logic are responsible for this inversion.
 - **Unit Handling:** Use helpers in `src/utils/units.ts`. The project can be in `mm` or `inch`; always check `project.meta.units`.
+- **Rotary export (#393):** an optional `ToolpathPoint.a` is the degrees the stock is turned about the bar's own axis. Export writes it under `rotaryWord(definition)` — never resolved modulo 360 — as a modal word like X/Y/Z, and a move whose angle changes is never merged into an arc. A borrowed motor's letter carries the angle, its project axis is never emitted as a linear coordinate, and any operation that moves along that axis is refused. A turning feed move runs in inverse-time feed (`feed / length`, `length = sqrt(linear² + (r·Δθ)²)` with `r` measured from the bar's centreline) and always carries its own `F`; the mode is left before any non-turning move, tool change, canned cycle or the program end. An operation the machine's rotary axis cannot run is skipped with `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel` or `postRotaryNeedsRoundStock` rather than approximated.
 - **CSG Debouncing:** 3D model generation is expensive. The `Viewport3D` updates are typically debounced (150ms-300ms).
 
 ## 9. Localization (i18n)

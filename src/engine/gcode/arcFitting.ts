@@ -553,8 +553,11 @@ export function fitArcsInMachineMoves(
   while (i < n) {
     const move = machineMoves[i]
 
-    // Rapids and plunges pass through as linear.
-    if (!isFittableKind(move.kind)) {
+    // Rapids and plunges pass through as linear. A move that turns the stock
+    // does too: `sameRun` rejects a turning *candidate*, but the first move of
+    // a run is never a candidate for itself, so a turning move could otherwise
+    // seed a run and be merged into its arc (issue #393, rule 2).
+    if (!isFittableKind(move.kind) || turns(move)) {
       result.push(toLinear(move))
       i++
       continue

@@ -162,8 +162,6 @@ function planSteps(project: Project, definition: MachineDefinition, moves: Toolp
     operation,
     toolpath: toolpathOf(operation, moves),
     arcEmitOptions: createArcEmitOptions(definition, 'mm', 'ij'),
-    cutFeed: operation.feed ?? 600,
-    plungeFeed: operation.plungeFeed ?? 180,
     startPosition: null,
     captureTrace: false,
   }).steps.map((step) => (step.kind === 'linear' ? step.point : step.endPoint))

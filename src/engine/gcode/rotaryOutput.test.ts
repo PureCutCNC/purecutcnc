@@ -35,7 +35,9 @@ import { validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { warningSeverity } from '../toolpaths/warningCodes'
 import {
+  createArcEmitOptions,
   inverseTimeFeedValue,
+  planOperationMotion,
   planRotaryRefusals,
   rotaryCentreline,
 } from './motionPipeline'
@@ -241,22 +243,25 @@ function at(x: number, y: number, z: number, a?: number): ToolpathPoint {
   const lines = motionLines(result.gcode)
   const turning = lines.filter((line) => /A-?[0-9]/.test(line))
 
-  // The first point with an angle emits the word; later moves at the same
-  // angle do not (modal, like X/Y/Z).
-  assert.equal(turning.length, 4, `one A word per angle-bearing block, got:\n${lines.join('\n')}`)
-  assert.match(turning[0], /A0(?:\s|$)/, 'the first turning block writes A0')
-  assert.match(turning[2], /A90(?:\s|$)/, 'the third writes A90')
+  // The first point with an angle emits the word (on the rapid); later moves at
+  // the same angle do not (modal, like X/Y/Z), and each angle change writes its
+  // own value.
+  assert.equal(turning.length, 4, `one A word per angle change, got:\n${lines.join('\n')}`)
+  assert.match(turning[0], /A0\b/, 'the first turning block writes A0')
+  assert.match(turning[1], /A90\b/, 'the next angle change writes A90')
+  assert.match(turning[2], /A350\b/, 'the next writes A350')
   // 350 -> 370 is 20 degrees, not a wrap back to 10.
-  assert.match(turning[4 - 1], /A370(?:\s|$)/, 'the angle is never reduced to 0-360')
-  assert.doesNotMatch(result.gcode, /A10(?:\s|$)/, 'no wrapped angle is written')
+  assert.match(turning[3], /A370\b/, 'the angle is never reduced to 0-360')
+  assert.doesNotMatch(result.gcode, /A10\b/, 'no wrapped angle is written')
 
   // `reversed` flips the sign on the way out.
   const reversed = exportProgram(project, rotaryMachine({ ...OWN_AXIS, reversed: true }), [{ operation: op, moves }])
   const reversedTurning = motionLines(reversed.gcode).filter((line) => /A-?[0-9]/.test(line))
   assert.equal(reversedTurning.length, 4, 'the same blocks carry an angle reversed')
-  assert.match(reversedTurning[0], /A-0(?:\s|$)/, 'reversed writes the negated angle')
-  assert.match(reversedTurning[2], /A-90(?:\s|$)/, 'reversed writes the negated angle')
-  assert.match(reversedTurning[3], /A-370(?:\s|$)/, 'reversed does not wrap either')
+  // Zero negated is still zero, and prints as `0.000`, not `-0.000`.
+  assert.match(reversedTurning[0], /A-?0\b/, 'reversed writes the negated angle')
+  assert.match(reversedTurning[1], /A-90\b/, 'reversed writes the negated angle')
+  assert.match(reversedTurning[3], /A-370\b/, 'reversed does not wrap either')
 }
 
 // ── 3. borrowed motor ─────────────────────────────────────────
@@ -271,8 +276,10 @@ function at(x: number, y: number, z: number, a?: number): ToolpathPoint {
   ]
   const result = exportProgram(project, rotaryMachine(BORROWED_Y), [{ operation: op, moves }])
   const turning = motionLines(result.gcode).filter((line) => /Y-?[0-9]/.test(line))
-  assert.equal(turning.length, 1, `one Y word, got:\n${motionLines(result.gcode).join('\n')}`)
+  assert.equal(turning.length, 1, `one turning block, got:\n${motionLines(result.gcode).join('\n')}`)
   assert.match(turning[0], /Y45\b/, 'the angle is written under the borrowed motor letter')
+  assert.equal((turning[0].match(/Y-?[0-9.]+/g) ?? []).length, 1,
+    'the borrowed letter is written once, as the angle — never twice as a linear value')
 
   // A negative borrowed output reverses the rotation, exactly as `reversed`
   // does on its own axis.
@@ -315,13 +322,34 @@ function circleMoves(
     operation: operation('Turns', { arcFittingEnabled: true }),
     moves: circleMoves(0, 10, 5, 20, 16, (index) => index * 10),
   }]).gcode
-  assert.doesNotMatch(turning, /G2|G3/, 'a turning move is never merged into an arc')
+  // `G[23]\b` and not `G2|G3`: the units command `G21` also starts with `G2`.
+  assert.doesNotMatch(turning, /G[23]\b/, 'a turning move is never merged into an arc')
 
   const constant = exportProgram(project, definition, [{
     operation: operation('Flat', { arcFittingEnabled: true }),
     moves: circleMoves(0, 10, 5, 20, 16, () => 45),
   }]).gcode
-  assert.match(constant, /G2|G3/, 'the same points at a constant angle still fit an arc')
+  assert.match(constant, /G[23]\b/, 'the same points at a constant angle still fit an arc')
+
+  // A turning move must not seed a run either: the first move is never a
+  // candidate for its own run, so it would otherwise join the arc the
+  // constant-angle moves after it fit. It stays a linear step; the constant
+  // run after it can still fit.
+  const seeded = circleMoves(0, 10, 5, 20, 4, () => 10)
+  seeded[0] = { ...seeded[0], from: { ...seeded[0].from, a: 0 } }
+  const plan = planOperationMotion({
+    project,
+    definition,
+    operation: operation('Seeded', { arcFittingEnabled: true }),
+    toolpath: toolpathOf(operation('Seeded'), seeded),
+    arcEmitOptions: createArcEmitOptions(definition, 'mm', 'ij'),
+    startPosition: null,
+    captureTrace: false,
+  })
+  assert.equal(plan.steps[0].kind, 'linear',
+    'a turning move that starts a run is never merged into an arc')
+  assert.ok(plan.steps.some((step) => step.kind === 'arc'),
+    'the constant-angle moves after it still fit an arc')
 }
 
 // ── 5. inverse-time feed ──────────────────────────────────────
@@ -337,8 +365,10 @@ const NINETY = Math.PI / 2
 {
   const project = projectWith(bar())
   const op = operation('Rotate')
+  // The bar's centreline sits at Z = 10 for a 20 mm bar, so Z = 20 puts the tip
+  // exactly 10 mm from it.
   const moves: ToolpathMove[] = [
-    { kind: 'cut', from: at(0, 10, 30, 0), to: at(0, 10, 30, 90) },
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
   ]
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves }])
   const lines = motionLines(result.gcode)
@@ -356,7 +386,7 @@ const NINETY = Math.PI / 2
 // word is twice as large.
 {
   const project = projectWith(bar())
-  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 25, 0), to: at(0, 10, 25, 90) }]
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 15, 0), to: at(0, 10, 15, 90) }]
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('RotateHalf'), moves,
   }])
@@ -367,11 +397,12 @@ const NINETY = Math.PI / 2
 }
 
 // A mixed move: rotation plus a straight-line distance over the linear axes
-// that move. The path length is the hypotenuse of the two.
+// that move. The path length is the hypotenuse of the two. The move runs along
+// the bar (X), so the radius stays 10 mm at both ends.
 {
   const project = projectWith(bar())
-  const from = at(0, 10, 30, 0)
-  const to = at(3, 10, 34, 90)
+  const from = at(0, 10, 20, 0)
+  const to = at(3, 10, 20, 90)
   const moves: ToolpathMove[] = [{ kind: 'cut', from, to }]
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('Mixed'), moves,
@@ -381,6 +412,26 @@ const NINETY = Math.PI / 2
   const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
   const expected = FEED / Math.hypot(linear, 10 * NINETY)
   assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), Number(expected.toFixed(3)), 'the word is feed / sqrt(linear^2 + (r x angle)^2)')
+}
+
+// Two turning moves with the same sweep and radius carry the same inverse-time
+// word. grbl's `modalFeedSpeed` would drop the second F as modal; rule 4 says
+// every inverse-time move writes its own, so it must appear twice.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+    { kind: 'cut', from: at(0, 10, 20, 90), to: at(0, 10, 20, 180) },
+  ]
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('SameFeed'), moves,
+  }])
+  const turning = motionLines(result.gcode).filter((line) => /A(90|180)\b/.test(line))
+  assert.equal(turning.length, 2, `two turning moves:\n${motionLines(result.gcode).join('\n')}`)
+  const expected = (FEED / (10 * NINETY)).toFixed(3)
+  for (const line of turning) {
+    assert.match(line, new RegExp(`F${expected}\\b`), 'every inverse-time move restates its F, even when it is unchanged')
+  }
 }
 
 // Mode discipline: every turning move carries its own F, G94 and the ordinary
@@ -405,23 +456,37 @@ const NINETY = Math.PI / 2
   assert.doesNotMatch(rapid, /F[-0-9]/, 'a rapid turning move has no F word')
 
   // Both turning feed moves carry their own F, even though the second changes
-  // the angle from the first.
+  // the angle from the first. The block spells the motion word, its axis words
+  // and the angle word together.
   const turning = lines.filter((line) => /A(90|180)\b/.test(line))
   assert.equal(turning.length, 2, `two turning feed moves:\n${lines.join('\n')}`)
   for (const line of turning) assert.match(line, /F[-0-9]/, 'every inverse-time move carries its own F')
+  assert.match(lines.find((line) => /^G1 /.test(line)) ?? '', /X\S.*A/, 'a turning feed writes G1 with an axis and the angle')
 
-  // G94 and the ordinary feed come back before the straight move.
-  const straight = lines.find((line) => /^G1 X5\b/.test(line))
+  // G94 and the ordinary feed come back before the straight move. The motion
+  // word stays modal, so the block carries only its axes.
+  const straight = lines.find((line) => /X5\b/.test(line))
   assert.ok(straight, `the straight feed move is emitted:\n${lines.join('\n')}`)
   assert.match(straight, /F600\b/, 'the ordinary feed is restated after inverse time')
   const g94 = lines.indexOf('G94')
   assert.ok(g94 > -1 && g94 < lines.indexOf(straight), 'G94 is written before the straight move')
 
-  // The last G94 closes the program: nothing after it is a motion line.
+  // The straight move left inverse-time mode, so no turning move follows the
+  // final G94 and the program is already out of it.
   const last = lines.lastIndexOf('G94')
-  assert.equal(lines.slice(last + 1).filter((line) => line.startsWith('G1') || line.startsWith('G0')).length, 0,
-    `the program ends in G94:\n${lines.join('\n')}`)
-  assert.match(result.gcode, /G94\nM30/, 'the mode is left before the program end')
+  assert.ok(lines.slice(last + 1).every((line) => !/A-?[0-9]/.test(line)),
+    `no turning move follows the final G94:\n${lines.join('\n')}`)
+}
+
+// A program whose last feed move turns switches inverse time off before the
+// footer (rule 4: the program never ends in inverse-time mode).
+{
+  const project = projectWith(bar())
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('EndsTurning'),
+    moves: [{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }],
+  }])
+  assert.match(result.gcode, /G94\nM30/, 'a program ending while turning switches the mode off first')
 }
 
 // ── 6. inverseTimeFeedValue alone ─────────────────────────────
@@ -440,10 +505,14 @@ const NINETY = Math.PI / 2
   assert.ok(Number.isFinite(degenerate), 'a degenerate move yields a finite word')
   assert.equal(degenerate, 600 / tolerance, 'the tolerance is the floor')
 
-  // The across-axis offset counts, not just the height: a point on the side of
-  // the bar is exactly as far from the centreline as one on top.
+  // The across-axis offset counts, not just the height: the corner (0, 0, 20)
+  // is hypot(10, 10) from the centreline, while a point straight above it at
+  // the same height (0, 10, 20) is exactly 10 mm out.
   const atRadius = inverseTimeFeedValue(at(0, 0, 20), at(0, 0, 20, 90), 600, centre, tolerance)
-  assert.equal(atRadius, 600 / (10 * NINETY), 'the across-axis offset is measured')
+  assert.equal(atRadius, 600 / (Math.hypot(10, 10) * NINETY), 'the across-axis offset is measured')
+  const heightOnly = inverseTimeFeedValue(at(0, 10, 20), at(0, 10, 20, 90), 600, centre, tolerance)
+  assert.equal(heightOnly, 600 / (10 * NINETY), 'a point above the centreline is 10 mm out')
+  assert.notEqual(atRadius, heightOnly, 'ignoring the across-axis offset would give the wrong word')
 }
 
 // ── 7. refusals ───────────────────────────────────────────────

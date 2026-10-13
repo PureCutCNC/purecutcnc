@@ -48,7 +48,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   tracks whether a touch-off has happened in the program: the safe rapid
   before the first one is in the operator's zero, and every Z after it — the
   retract, and a safe rapid before any later cut or operation — is measured
-  from the sheet.
+  from the sheet. A rotary angle (#393) is modal like X/Y/Z: the emitter writes
+  it once per angle change under `rotaryWord`, never reduced to 0–360, and puts
+  the program into inverse-time feed (`G93`) around a turning feed move, every
+  such move carrying its own `F` and the mode left before any non-turning move,
+  tool change, canned cycle or the program end.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
@@ -66,7 +70,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
-  split of a rapid), and the emitted-number helpers arc validation judges
+  split of a rapid, carrying a rotary angle so a rotation-only rapid is never
+  dropped), `planStepFeeds` / `inverseTimeFeedValue` and `planRotaryRefusals`
+  (issue #393: each move's feed word — inverse-time `feed / length` for a
+  turning move, measured from the bar's centreline — and the four reasons an
+  operation cannot run on this machine's rotary axis), and the emitted-number
+  helpers arc validation judges
   with. It is the only caller of `projectToMachinePoint` during export, and
   the only place an operation's machining setup is applied (issue #944): the
   setup's frame is resolved once per operation and passed to the transform,

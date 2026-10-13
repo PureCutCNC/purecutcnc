@@ -51,7 +51,7 @@
  * (`toolpathInStockFrame`), and one case is generated end to end.
  */
 
-import { newProject, defaultTool, getStockBounds, rectProfile } from '../../src/types/project'
+import { newProject, defaultTool, getStockBounds, rectProfile, roundStock } from '../../src/types/project'
 import type { Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
 import { projectWithFeatures, withBottomSetup } from '../../src/test/projectFixtures'
@@ -114,6 +114,11 @@ export interface BottomSetupCase {
 
 function pt(x: number, y: number, z = -1): ToolpathPoint {
   return { x, y, z }
+}
+
+/** A project point carrying the stock's angle (issue #393). */
+function rotaryPt(x: number, y: number, z: number, a: number): ToolpathPoint {
+  return { x, y, z, a }
 }
 
 /** Lead in from safe Z, then cut the given polyline. */
@@ -455,6 +460,37 @@ function generatedPlasma(
   }
 }
 
+/**
+ * A hand-built turning toolpath on a borrowed-Y rotary (issue #393). The bar
+ * lies along project X, so project Y is the axis whose motor drives the
+ * rotation: `moves` never change project Y, so the operation is allowed, and
+ * the angle is written under `Y` while no linear Y word is ever emitted.
+ *
+ * Only the borrowed-motor case is in the corpus. An own-axis program writes
+ * `A`, which plain Grbl rejects, and `CorpusCase` has no per-validator
+ * restriction to keep it away from `grbl-gvalidate` (which claims the
+ * `linuxcnc`/`generic` ids as well); the corpus carries only what every
+ * validator that can read it accepts. The unit tests cover `A` directly.
+ */
+function generatedRotaryBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  const project = newProject('Conformance rotary borrowed Y', 'mm')
+  project.stock = roundStock(20, 100, 'x')
+  // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
+  project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  const { operation } = buildOperation(project)
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: rotaryPt(0, 10, 30, 0), to: rotaryPt(20, 10, 30, 0) },
+    { kind: 'plunge', from: rotaryPt(20, 10, 30, 0), to: rotaryPt(20, 10, 20, 0) },
+    { kind: 'cut', from: rotaryPt(20, 10, 20, 0), to: rotaryPt(40, 10, 20, 90) },
+    { kind: 'cut', from: rotaryPt(40, 10, 20, 90), to: rotaryPt(50, 10, 20, 90) },
+  ]
+  return {
+    project,
+    operation,
+    toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+  }
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -553,6 +589,26 @@ export const CORPUS: CorpusCase[] = [
     machineId: 'grbl',
     moves: leadInAndCut(issue447Points()),
     operationOverrides: { arcFittingEnabled: false },
+  },
+  {
+    name: 'rotary-borrowed-y-inverse-time',
+    covers: 'issue #393 - a turning cut on a borrowed-Y rotary: G93 before it, an '
+      + 'inverse-time F word on the turning move, the angle written under Y and no '
+      + 'linear Y word. An own-axis A program is unit-tested instead; see the '
+      + 'helper note above.',
+    units: 'mm',
+    machineId: 'grbl',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'borrowed',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    moves: [],
+    generated: generatedRotaryBorrowedY,
   },
   {
     name: 'trochoidal-edge-outside',
