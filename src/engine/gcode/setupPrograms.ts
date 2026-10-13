@@ -34,13 +34,23 @@
  * a program's comments; names and notes are the user's and are left as typed.
  */
 
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, isAroundSetup } from '../../types/project'
 import type { MachiningSetup, Project, RegistrationReference, SetupFace } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
+import { rotaryWord } from './types'
+import type { MachineDefinition } from './types'
 
-/** True when the project's exports are split, named and annotated per setup. */
+/**
+ * True when the project's exports are split, named and annotated per setup.
+ *
+ * An Around setup is one of those even when it is the project's only one
+ * (issue #395): an operator stands at the lathe, not the flat bed, so its
+ * program must say how the bar is turned and zeroed. The flat single-setup
+ * legacy program is untouched by that.
+ */
 export function projectExportsPerSetup(project: Pick<Project, 'setups'>): boolean {
-  return (project.setups?.length ?? 0) > 1
+  const setups = project.setups ?? []
+  return setups.length > 1 || setups.some(isAroundSetup)
 }
 
 /** 1-based position of a setup in the project: its program number. */
@@ -155,6 +165,10 @@ function formatLength(value: number, units: Project['meta']['units']): string {
  * the part once it is turned.
  *
  * Project Y runs toward the operator: the stock's largest Y is its front edge.
+ *
+ * An Around setup (issue #395) reads the same placement as Top — the sheet is
+ * never turned, only wrapped — and its Z zero is the top of the bar, which is
+ * `stock.thickness`: the bar's diameter.
  */
 export function describeTouchOff(project: Pick<Project, 'origin' | 'stock' | 'meta'>, face: SetupFace): string {
   const bounds = getStockBounds(project.stock)
@@ -162,7 +176,6 @@ export function describeTouchOff(project: Pick<Project, 'origin' | 'stock' | 'me
   const units = project.meta.units
   const tolerance = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1) * POSITION_TOLERANCE
   const near = (a: number, b: number): boolean => Math.abs(a - b) <= tolerance
-  const faceName = face === 'top' ? 'TOP' : 'BOTTOM'
 
   const column = near(origin.x, bounds.minX) ? 'LEFT'
     : near(origin.x, bounds.maxX) ? 'RIGHT'
@@ -188,6 +201,16 @@ export function describeTouchOff(project: Pick<Project, 'origin' | 'stock' | 'me
   }
 
   const dz = origin.z - project.stock.thickness
+  if (face === 'around') {
+    // The bar's top is its highest surface, so Z0 on it is said of the bar
+    // itself rather than of a "face as mounted".
+    const height = Math.abs(dz) <= tolerance
+      ? 'Z0 ON TOP OF THE BAR'
+      : `Z0 ${formatLength(Math.abs(dz), units)} ${units === 'inch' ? 'IN' : 'MM'} ${dz < 0 ? 'BELOW' : 'ABOVE'} THE BAR SEEN FROM ABOVE`
+    return `${place} OF THE BAR SEEN FROM ABOVE, ${height}`
+  }
+
+  const faceName = face === 'top' ? 'TOP' : 'BOTTOM'
   const height = Math.abs(dz) <= tolerance
     ? 'Z0 ON THAT FACE'
     : `Z0 ${formatLength(Math.abs(dz), units)} ${units === 'inch' ? 'IN' : 'MM'} ${dz < 0 ? 'BELOW' : 'ABOVE'} THAT FACE`
@@ -220,25 +243,43 @@ export function describeRegistration(
     : setup.registration.map((reference) => describeRegistrationReference(project, reference)).join(', ')
 }
 
-/** How the stock is turned for a setup, in words. */
-export function describeSetupTurn(setup: Pick<MachiningSetup, 'orientation'>): string {
+/**
+ * How the stock is turned for a setup, in words. An Around setup (issue #395)
+ * is not turned at all — the bar sits in the chuck and the program wraps
+ * around it — so it never reads as a flip.
+ */
+export function describeSetupTurn(setup: Pick<MachiningSetup, 'orientation' | 'kind'>): string {
+  if (isAroundSetup(setup)) return `AROUND THE BAR, BAR ALONG ${setup.orientation.axis.toUpperCase()}`
   return setupFace(setup) === 'top'
     ? 'TOP FACE UP'
     : `BOTTOM FACE UP - FLIP STOCK ABOUT ${setup.orientation.axis.toUpperCase()}`
 }
 
+/** The line that turns the bar to the program's start line, in place of registration. */
+const ROTARY_ZERO_LINE = 'ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY'
+
 /**
  * The lines written at the top of a setup's program: which setup it is and
  * how the stock is turned, what locates the part, where to touch off, and the
  * operator's own notes. Plain text; a dialect makes comments of them.
+ *
+ * An Around setup (issue #395) is not located by a registration reference —
+ * flip registration means nothing in a chuck — so its line is the rotary
+ * zeroing instruction instead. `definition` is the program's machine: a
+ * borrowed rotary replaces one horizontal motor, which the operator must
+ * compensate for by hand.
  */
-export function setupHeaderLines(project: Project, setup: MachiningSetup): string[] {
+export function setupHeaderLines(project: Project, setup: MachiningSetup, definition: MachineDefinition): string[] {
   const number = formatProgramNumber(setupProgramNumber(project, setup.id))
+  const around = isAroundSetup(setup)
   const lines = [
     `SETUP ${number}: ${setup.name} - ${describeSetupTurn(setup)}`,
-    `REGISTRATION: ${describeRegistration(project, setup)}`,
+    around ? ROTARY_ZERO_LINE : `REGISTRATION: ${describeRegistration(project, setup)}`,
     `TOUCH OFF: ${describeTouchOff(project, setupFace(setup))}`,
   ]
+  if (around && definition.rotary?.drive === 'borrowed') {
+    lines.push(`THE ${rotaryWord(definition)} MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND`)
+  }
   for (const note of setup.notes.split(/\r?\n/)) {
     const text = note.replace(/\s+/g, ' ').trim()
     if (text.length > 0) lines.push(`NOTE: ${text}`)
@@ -248,5 +289,8 @@ export function setupHeaderLines(project: Project, setup: MachiningSetup): strin
 
 /** True when a setup is not the project's first and declares no registration. */
 export function setupLacksRegistration(project: Pick<Project, 'setups'>, setup: MachiningSetup): boolean {
+  // An Around setup has no registration to declare: a chuck locates the bar,
+  // and its header line is the rotary zeroing instruction (issue #395).
+  if (isAroundSetup(setup)) return false
   return setupProgramNumber(project, setup.id) > 1 && setup.registration.length === 0
 }

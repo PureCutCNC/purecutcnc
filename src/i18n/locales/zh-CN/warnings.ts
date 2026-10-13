@@ -245,6 +245,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNeedsRoundStock': '加工操作“{operation}”未导出：车削需要圆棒毛坯。',
   'warnings.postRotaryAngleNotEstablished': '加工操作“{operation}”未导出：它在棒料转到该角度之前就开始切削。',
   'warnings.postRotaryTemplateUsesBorrowedAxis': '机床模板将 {axis} 写为轴字，但该电机在此机床上驱动旋转轴。导出前请将其从机床模板中移除。',
+  'warnings.postRotaryAxisMismatch': '加工操作“{operation}”未导出：机床旋转轴沿 {machineAxis} 方向，而棒料沿 {stockAxis} 方向。',
   'warnings.replayNoTool': '所选加工操作未指定刀具。',
   'warnings.bookletNoTool': '此加工操作未选择刀具。',
   'warnings.bookletNoToolpath': '无法为此加工操作生成刀路。',

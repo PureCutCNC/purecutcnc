@@ -49,10 +49,19 @@
  * floating-point rounding, and GRBL's arc tolerance is the tightest we know.
  * The hand-built Bottom cases take the same path a generated one does
  * (`toolpathInStockFrame`), and one case is generated end to end.
+ *
+ * The Around cases (issue #395) are generated end to end for the same reason:
+ * a wrapped toolpath is not something a hand-built move set can imitate. It is
+ * produced on the unrolled sheet and carried onto the bar by `wrapToolpath`,
+ * so every point carries an angle and the tool sits over the centreline. The
+ * cases check what only a real interpreter can settle for a wrapped program:
+ * the Around header as comments, an angle word per change (under `A` on an own
+ * axis, under the borrowed motor's letter otherwise), `G93`/`G94` around each
+ * turning cut with its own inverse-time `F`, and one closing unwind rapid.
  */
 
 import { newProject, defaultTool, getStockBounds, rectProfile, roundStock } from '../../src/types/project'
-import type { Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
+import type { MachiningSetup, Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
 import { projectWithFeatures, withBottomSetup } from '../../src/test/projectFixtures'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../src/test/plasmaExportFixtures'
@@ -542,6 +551,134 @@ function generatedRotaryOwnAxis(): { project: Project; operation: Operation; too
   }
 }
 
+/** An Around setup on a round bar lying along X, with no registration (a chuck locates it). */
+function aroundSetup(): MachiningSetup {
+  return {
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+  }
+}
+
+/**
+ * Build a real Around project (issue #395) and generate its one operation
+ * through the seam, so the case exports a wrapped toolpath rather than a
+ * hand-built one. `stock` is always a round bar along X, 20 mm across.
+ */
+function generatedAround(
+  feature: SketchFeature,
+  operation: Operation,
+  tool: ReturnType<typeof defaultTool>,
+): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  const base = newProject('Conformance around', 'mm')
+  base.stock = roundStock(20, 100, 'x')
+  // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
+  base.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  base.tools = [tool]
+  const built = projectWithFeatures(base, [feature])
+  const project: Project = {
+    ...built,
+    features: built.features.map((row) => ({ ...row, authoringFace: 'around' as const })),
+    setups: [aroundSetup()],
+    activeSetupId: 'around',
+    operations: [operation],
+  }
+  const generated = project.operations[0]
+  const envelope = computeOperationToolpath(project, generated)
+  if (!envelope || envelope.result.moves.length === 0 || envelope.result.warnings.length > 0) {
+    throw new Error(`around corpus fixture did not generate cleanly: ${JSON.stringify(envelope?.result.warnings)}`)
+  }
+  if (!envelope.result.moves.every((move) => move.from.a !== undefined && move.to.a !== undefined)) {
+    throw new Error('around corpus fixture is not a wrapped toolpath — the case would prove nothing')
+  }
+  return { project, operation: generated, toolpath: envelope.result }
+}
+
+function aroundFeature(id: string, kind: SketchFeature['kind'], profile: SketchFeature['sketch']['profile'], operation: SketchFeature['operation'], zTop: number, zBottom: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind,
+    folderId: null,
+    sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation,
+    z_top: zTop,
+    z_bottom: zBottom,
+    authoringFace: 'around',
+    visible: true,
+    locked: false,
+  }
+}
+
+function aroundOperation(kind: Operation['kind'], featureId: string, overrides: Partial<Operation> = {}): Operation {
+  return {
+    id: 'op1',
+    name: 'Around op',
+    kind,
+    setupId: 'around',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: [featureId] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    entryStrategy: 'plunge',
+    ...overrides,
+  }
+}
+
+/**
+ * A wrapped Engrave on a borrowed-Y rotary (issue #395). The operator's line
+ * is a slanted straight cut, so the program must turn the bar while it travels
+ * along it: `G93`, one inverse-time `F` on the turning block, the angle under
+ * `Y` and never a linear `Y` word, and an unwind rapid at the end.
+ */
+function generatedAroundEngraveBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  const feature = aroundFeature('line', 'polygon', {
+    start: { x: 20, y: 13 },
+    segments: [{ type: 'line', to: { x: 60, y: 21 } }],
+    closed: false,
+  }, 'line', 20, 19)
+  return generatedAround(
+    feature,
+    aroundOperation('follow_line', 'line', { pass: 'finish', carveDepth: 1, maxCarveDepth: 1 }),
+    { ...defaultTool('mm', 1), id: 't1', name: 'Conformance Tool', diameter: 3 },
+  )
+}
+
+/**
+ * A wrapped pocket on an own-axis rotary (issue #395). A rectangle cleared in
+ * rings: every ring turns the bar as it runs around it, so the program is
+ * inverse time throughout, writes `A`, and keeps every across word on the
+ * centreline.
+ */
+function generatedAroundPocketOwnAxis(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  const feature = aroundFeature('pocket', 'rect', rectProfile(40, 5, 20, 12), 'subtract', 20, 16)
+  return generatedAround(
+    feature,
+    aroundOperation('pocket', 'pocket', { stepdown: 2, stepover: 0.4 }),
+    { ...defaultTool('mm', 1), id: 't1', name: 'Conformance Tool', diameter: 3 },
+  )
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -680,6 +817,46 @@ export const CORPUS: CorpusCase[] = [
     validators: ['linuxcnc-rs274'],
     moves: [],
     generated: generatedRotaryOwnAxis,
+  },
+  {
+    name: 'around-engrave-borrowed-y',
+    covers: 'issue #395 - a wrapped Engrave on a borrowed-Y rotary: the Around header, the '
+      + 'angle written under Y once per change and never as a linear word, G93 with an '
+      + 'inverse-time F on the turning cut, and one closing unwind rapid.',
+    units: 'mm',
+    machineId: 'grbl',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'borrowed',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    moves: [],
+    generated: generatedAroundEngraveBorrowedY,
+  },
+  {
+    name: 'around-pocket-own-axis',
+    covers: 'issue #395 - a wrapped pocket on an own-axis rotary: every ring turns the bar, '
+      + 'so the angle is written under A and the turning cuts run in inverse time. Restricted '
+      + 'to the LinuxCNC validator because plain Grbl rejects the A word, a dialect verdict '
+      + 'rather than an arc one.',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'own',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    validators: ['linuxcnc-rs274'],
+    moves: [],
+    generated: generatedAroundPocketOwnAxis,
   },
   {
     name: 'trochoidal-edge-outside',

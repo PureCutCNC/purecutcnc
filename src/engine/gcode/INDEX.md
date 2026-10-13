@@ -56,6 +56,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   such move carrying its own `F` on the motion block and the mode restored
   (`G94`) before any block that is not one: a rapid, an operation header or its
   dwell/positioning template, a tool change, a canned cycle or the program end.
+  A program that turned the bar and ends at a non-zero angle gets one closing
+  unwind rapid to 0 (#395, rule 5), written at the height the last operation
+  retracted to and before the footer; never between operations, and none for a
+  program that ends at 0 or that never carried an angle.
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -88,8 +92,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   feed, travel on the borrowed motor's axis beyond the one value the program
   may use across all its operations, a non-round bar, canned-cycle drill holes
   with no expanded moves, a machine template that writes the borrowed letter as
-  a linear axis word, and a feed move that starts before the program has turned
-  the bar to its angle; `planStepFeeds` throws
+  a linear axis word, a feed move that starts before the program has turned
+  the bar to its angle, and the bar lying along the other horizontal axis than
+  the machine's rotary (`postRotaryAxisMismatch`, #395); `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
   from), and the emitted-number
   helpers arc validation judges
@@ -101,12 +106,18 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   about its setup, for every dialect: the header comment lines, an error when
   a program holds operations of more than one setup or one its setup refused
   to cut, and a warning for a second setup with no registration. It returns
-  nothing for a project with a single setup.
+  nothing for a project with a single setup, except an Around one (#395), which
+  is always annotated.
 - `setupPrograms.ts` — one program per setup (issue #946):
   `planSetupPrograms` splits an export's operations by setup and names each
   file (`<project>_01_top`; a single-setup project keeps exactly today's
   name), and `setupHeaderLines` / `describeTouchOff` / `describeRegistration`
-  build the plain-text header each dialect writes as comments.
+  build the plain-text header each dialect writes as comments. An Around setup
+  (#395) is its own program even when it is the project's only one, and its
+  header says `AROUND THE BAR, BAR ALONG <axis>` with the rotary-zeroing line
+  in place of registration and, on a borrowed-motor machine, the line telling
+  the operator to set the tool over the centreline by hand;
+  `setupLacksRegistration` is false for it (a chuck locates the bar).
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -191,7 +202,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   export is split and named, the touch-off and registration wording, the
   header in G-code, parenthesised and SBP comments, a single-setup program
   byte-identical with no header, and the mixed-setup and refused-operation
-  errors).
+  errors), `aroundExport.test.ts` (exporting an Around setup, #395: the Around
+  header for both bar axes and both rotary drives, every real generated
+  operation — pocket, Engrave, edge route and drilling — exported with no
+  refusal, the across coordinate left on the centreline or the borrowed letter
+  devoted to the angle, the establishing rapid, `G93`/`G94` with a
+  hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
+  angle and the single closing unwind, `postRotaryAxisMismatch`, and the
+  program read back through `parseGcodeMotion` onto the flat toolpath).
 
 ## Adding a dialect
 

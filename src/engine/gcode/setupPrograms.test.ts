@@ -244,17 +244,20 @@ function testHeaderLines(): void {
   console.log('Testing the setup header...')
   const bare = twoSetupProject()
   const [top, bottom] = bare.setups
-  assertEqual(setupHeaderLines(bare, top), [
+  // The machine a program is for; no bundled definition borrows a motor, so
+  // these headers are the same whatever the definition (issue #395).
+  const machine = bundled('grbl')
+  assertEqual(setupHeaderLines(bare, top, machine), [
     'SETUP 01: Top - TOP FACE UP',
     'REGISTRATION: NONE DECLARED',
     'TOUCH OFF: FRONT-LEFT CORNER OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
   ], 'Top')
-  assertEqual(setupHeaderLines(bare, bottom), [
+  assertEqual(setupHeaderLines(bare, bottom, machine), [
     'SETUP 02: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT X',
     'REGISTRATION: NONE DECLARED',
     'TOUCH OFF: FRONT-LEFT CORNER OF THE BOTTOM FACE AS MOUNTED, Z0 ON THAT FACE',
   ], 'Bottom')
-  assertEqual(setupHeaderLines(twoSetupProject({}, 'y'), twoSetupProject({}, 'y').setups[1])[0], 'SETUP 02: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT Y', 'the flip axis is named')
+  assertEqual(setupHeaderLines(twoSetupProject({}, 'y'), twoSetupProject({}, 'y').setups[1], machine)[0], 'SETUP 02: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT Y', 'the flip axis is named')
 
   const full = twoSetupProject({
     name: 'Underside',
@@ -265,7 +268,7 @@ function testHeaderLines(): void {
       { id: 'r3', kind: 'fence', target: { type: 'edge', start: { x: 0, y: 80 }, end: { x: 100, y: 80 } } },
     ],
   })
-  assertEqual(setupHeaderLines(full, full.setups[1]), [
+  assertEqual(setupHeaderLines(full, full.setups[1], machine), [
     'SETUP 02: Underside - BOTTOM FACE UP - FLIP STOCK ABOUT X',
     'REGISTRATION: DOWEL Pin A, CORNER AT X0 Y80, FENCE FROM X0 Y80 TO X100 Y80',
     'TOUCH OFF: FRONT-LEFT CORNER OF THE BOTTOM FACE AS MOUNTED, Z0 ON THAT FACE',
@@ -335,7 +338,7 @@ function testSingleSetupProgramIsUnchanged(): void {
     setups: [{ ...project.setups[0], notes: 'Mind the clamp.', registration: [{ id: 'r', kind: 'corner', target: { type: 'point', point: { x: 0, y: 0 } } }] }],
   }
   assertEqual(post(annotated, ['rough'], GRBL).gcode, post(project, ['rough'], GRBL).gcode, 'a single annotated setup still exports the legacy program')
-  assertEqual(planProgramSetup({ project, operations: [] }), { headerComments: [], warnings: [] }, 'and plans nothing')
+  assertEqual(planProgramSetup({ project, operations: [], definition: GRBL }), { headerComments: [], warnings: [] }, 'and plans nothing')
 }
 
 function testWhatAProgramMayNotBe(): void {

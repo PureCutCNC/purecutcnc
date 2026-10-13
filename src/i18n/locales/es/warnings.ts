@@ -241,6 +241,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNeedsRoundStock': 'La operación "{operation}" no se exportó: un corte giratorio necesita material redondo.',
   'warnings.postRotaryAngleNotEstablished': 'La operación "{operation}" no se exportó: empieza a cortar antes de que la barra haya girado a su ángulo.',
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Las plantillas de la máquina escriben {axis} como palabra de eje, pero ese motor acciona el eje rotativo en esta máquina. Elimínalo de las plantillas de la máquina antes de exportar.',
+  'warnings.postRotaryAxisMismatch': 'La operación "{operation}" no se exportó: el eje rotativo de la máquina va a lo largo de {machineAxis}, pero la barra va a lo largo de {stockAxis}.',
   'warnings.replayNoTool': 'No se ha asignado ninguna herramienta a la operación seleccionada.',
   'warnings.bookletNoTool': 'No se ha seleccionado ninguna herramienta para esta operación.',
   'warnings.bookletNoToolpath': 'No se pudo generar la trayectoria de la herramienta para esta operación.',

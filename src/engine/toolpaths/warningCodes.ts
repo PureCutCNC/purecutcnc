@@ -384,6 +384,11 @@ export type ToolpathWarningCode =
    *  would turn or re-zero the bar. Every operation is refused (issue #393,
    *  rule 3c). */
   | 'postRotaryTemplateUsesBorrowedAxis'
+  /** The toolpath carries an angle about the bar's own axis, but the machine
+   *  turns the stock about the other horizontal axis: the angle means a
+   *  different motion on this machine, so the operation is not exported
+   *  (issue #395). */
+  | 'postRotaryAxisMismatch'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -431,8 +436,9 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   out because no safe height could be read for them, so the saved file
  *   would quietly lack that operation's cuts (issue #983).
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
- *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished` and
- *   `postRotaryTemplateUsesBorrowedAxis` — a rotary operation the machine
+ *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
+ *   `postRotaryTemplateUsesBorrowedAxis` and `postRotaryAxisMismatch` — a
+ *   rotary operation the machine
  *   cannot run is left out of the program (issue #393). The file would
  *   otherwise be saved without that pass, and approximating any of them would
  *   cut the stock at the wrong angle or the wrong feed.
@@ -451,6 +457,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryNeedsRoundStock',
   'postRotaryAngleNotEstablished',
   'postRotaryTemplateUsesBorrowedAxis',
+  'postRotaryAxisMismatch',
 ])
 
 /**
