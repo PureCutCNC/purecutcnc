@@ -53,8 +53,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   a block that also carries Z (a turning rapid turns at the higher of its two Z
   values), and puts
   the program into inverse-time feed (`G93`) around a turning feed move, every
-  such move carrying its own `F` and the mode left before any non-turning move,
-  tool change, canned cycle or the program end.
+  such move carrying its own `F` on the motion block and the mode restored
+  (`G94`) before any block that is not one: a rapid, an operation header or its
+  dwell/positioning template, a tool change, a canned cycle or the program end.
+  Canned drill cycles are written only on a machine that borrows no motor and
+  for a toolpath with no angle anywhere (#393); otherwise the expanded moves
+  are used, as on a machine with canned cycles off.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
@@ -77,9 +81,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   block of its own, never a Z block, in either direction of Z), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
-  turning move, measured from the bar's centreline with the mean of the move's
-  two end radii — and the four reasons an
-  operation cannot run on this machine's rotary axis; `planStepFeeds` throws
+  turning move, where `length` is the true length of the path the tip draws in
+  the stock's own frame, by Gauss-Legendre quadrature over the move's linear
+  angle change — and the reasons an
+  operation cannot run on this machine's rotary axis: no axis, no inverse-time
+  feed, travel on the borrowed motor's axis beyond the one value the program
+  may use across all its operations, a non-round bar, canned-cycle drill holes
+  with no expanded moves, a machine template that writes the borrowed letter as
+  a linear axis word, and a feed move that starts before the program has turned
+  the bar to its angle; `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
   from), and the emitted-number
   helpers arc validation judges

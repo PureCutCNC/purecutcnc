@@ -253,7 +253,9 @@ const embeddedProject = newProject('Rotary snapshot', 'mm')
 embeddedProject.meta.machineDefinitions = [machine]
 embeddedProject.meta.selectedMachineId = machine.id
 const decoded = decodeProjectFormat(JSON.parse(JSON.stringify(embeddedProject)))
-assert.equal(decoded.project.version, embeddedProject.version, 'the project format stays 3.3')
+// Compared with the literal so that a format bump on both sides cannot pass:
+// the decoded project must be exactly the version this build writes.
+assert.equal(decoded.project.version, '3.3', 'the project format stays 3.3')
 assert.deepEqual(
   getActiveMachineDefinition(decoded.project)?.rotary,
   ROTARY_BORROWED_REVERSED,
