@@ -22,9 +22,11 @@ available; do not treat one-off diagnostics as normal quality gates.
 
 ## Optional delegated-agent harness
 
-- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness. `dispatch-task.sh --handoff REPO_PATH` gives either provider a compact bootstrap to read a tracked in-worktree handoff; direct stdin is reserved for a small instruction.
+- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness or `--provider codex` for Codex CLI. `dispatch-task.sh --handoff REPO_PATH` gives each provider a compact bootstrap to read a tracked in-worktree handoff; direct stdin is reserved for a small instruction.
 - [`run-claude-deepseek-agent.sh`](run-claude-deepseek-agent.sh) — credential-backed Claude/DeepSeek leaf launcher.
 - [`run-dsh-agent.sh`](run-dsh-agent.sh) and [`dsh-progress-filter.jq`](dsh-progress-filter.jq) — DeepSeek Harness leaf launcher and incremental live session-event filter. They use DSH's own credential store and sandbox modes, tail newly appended observed assistant/tool/tool-result records into the manager log, and leave the full raw session under `~/.dsh`.
+- [`run-codex-agent.sh`](run-codex-agent.sh) — Codex CLI leaf launcher using its own login and configured model, read-only/workspace-write sandbox modes, observed stderr and lifecycle logs, and a final message saved beside the log. Implementation edits remain uncommitted for the manager.
+- [`test-codex-agent.sh`](test-codex-agent.sh) — mocked Codex leaf coverage for sandbox/cwd, prompt and credential isolation, progress/final artifacts, and failure propagation.
 - [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded provider-neutral worker prompt template (historic filename retained for compatibility).
 - [`test-claude-deepseek-agent.sh`](test-claude-deepseek-agent.sh), [`test-dsh-agent.sh`](test-dsh-agent.sh), [`test-dispatch-task.sh`](test-dispatch-task.sh), and [`worker-progress-filter.jq`](worker-progress-filter.jq) — harness tests and Claude progress filtering.
 
@@ -32,9 +34,9 @@ Use this path only after explicit delegation approval and follow
 [`manager-delegate`](../.agents/skills/manager-delegate/SKILL.md). Direct
 implementation remains the default execution mode.
 
-DSH implementation sessions intentionally leave worktree edits uncommitted:
-its workspace-write sandbox cannot write the linked worktree's shared Git
-metadata in the primary checkout. After a zero-exit DSH session with changes,
+DSH and Codex implementation sessions intentionally leave worktree edits uncommitted:
+the workspace-write sandbox cannot write the linked worktree's shared Git
+metadata in the primary checkout. After a zero-exit DSH or Codex session with changes,
 `dispatch-task.sh` creates exactly one manager-owned commit; failed and
 no-change runs are never auto-committed. Live tool-result snippets are capped
 at 320 characters by default (`DSH_TOOL_RESULT_MAX_CHARS`); inspect DSH's raw

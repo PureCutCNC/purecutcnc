@@ -140,7 +140,7 @@ assert_contains "$oversized_prompt_error" 'use --handoff REPO_PATH'
 if invalid_provider_error="$(printf 'task\n' | "$DISPATCH" --provider invalid --mode review --worktree "$TEMP_DIR/wt" 2>&1)"; then
   fail 'dispatch unexpectedly accepted an invalid provider'
 fi
-assert_contains "$invalid_provider_error" '--provider must be claude-deepseek or dsh'
+assert_contains "$invalid_provider_error" '--provider must be claude-deepseek, dsh, or codex'
 
 # ---- DSH implementation commits are owned by the manager, never the sandboxed worker ----
 implement_repo="$(prepare_implement_fixture)"
