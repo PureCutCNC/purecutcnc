@@ -222,7 +222,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // `pauseAfterChange` off) are all judged by what was actually emitted.
   const templateLines: string[] = []
   const emitTemplateLine = (content: string) => {
-    templateLines.push(content)
+    // A template may hold several physical lines (`"; note\nG0 Y0"`). The
+    // program carries them as one entry, but they are judged one physical line
+    // at a time: the axis-word scan drops everything after a line's comment
+    // marker, so scanning the joined text would lose the code on every line
+    // after the first.
+    templateLines.push(...content.split(/\r?\n/))
     emitLine(content)
   }
 
@@ -546,9 +551,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     if (block.pierceMode === 'controller' && sequence.selectMaterial && sequence.materialNumber !== null) {
       // Select, wait, then take the feed: the interpreter reads ahead, so a
       // feed word ahead of the wait takes the previous material's feed.
-      emitLine(substituteTemplates(block.materialSelectCommand ?? '', { materialNumber: sequence.materialNumber }))
-      emitLine(block.materialWaitCommand ?? '')
-      emitLine(block.materialFeedCommand ?? '')
+      emitTemplateLine(substituteTemplates(block.materialSelectCommand ?? '', { materialNumber: sequence.materialNumber }))
+      emitTemplateLine(block.materialWaitCommand ?? '')
+      emitTemplateLine(block.materialFeedCommand ?? '')
       state.feedRate = null
     }
     const plan = planOperationMotion({
@@ -619,7 +624,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
             emitMotionLine(definition.motion.rapidCommand, { z: safe })
           }
           emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
-          emitLine(probe)
+          emitTemplateLine(probe)
           // G38.2 leaves the controller in its own motion mode: the pierce
           // rapid must spell G0 rather than continue the modal one.
           state.motionCommand = null
@@ -628,10 +633,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // probe feed into it: the drop below must spell its configured plunge
           // F even when that feed equals the probe feed (issue #983).
           state.feedRate = null
-          emitLine(setZero)
+          emitTemplateLine(setZero)
           plasmaZeroOnSheet = true
           emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
-          emitLine(block.torchOnCommand)
+          emitTemplateLine(block.torchOnCommand)
           // A dwell is not a turning move: never written inside inverse time.
           leaveInverseTime()
           emitLine(dwell)
@@ -643,7 +648,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
               emitArcLine(move, step.cutFeed)
             }
           }
-          emitLine(block.torchOffCommand)
+          emitTemplateLine(block.torchOffCommand)
           // Z zero is on the sheet now: the operator-zero safe height would be
           // a different height, below the sheet when their zero sits above it.
           emitMotionLine(definition.motion.rapidCommand, { z: heights.sheetSafeZ })
@@ -656,7 +661,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           continue
         }
         travelTo(item.pierce)
-        emitLine(block.torchOnCommand)
+        emitTemplateLine(block.torchOnCommand)
         for (const move of item.moves) {
           if (move.kind === 'linear') {
             emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y })
@@ -664,7 +669,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
             emitArcLine(move)
           }
         }
-        emitLine(block.torchOffCommand)
+        emitTemplateLine(block.torchOffCommand)
       }
     }
     if (plan.trace) {
@@ -799,7 +804,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
         // Retract mode (G98 / G99), once before the first canned line
         if (cannedDef.retractMode) {
-          emitLine(cannedDef.retractMode)
+          emitTemplateLine(cannedDef.retractMode)
         }
 
         // Emit modal canned-cycle lines
@@ -862,11 +867,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
             feedEmitted = true
           }
 
-          emitLine(segs.join(' '))
+          emitTemplateLine(segs.join(' '))
         }
 
         // Cancel canned cycle
-        emitLine(cannedDef.cancelCommand)
+        emitTemplateLine(cannedDef.cancelCommand)
 
         // Reset state: canned cancel breaks motion modality
         state.motionCommand = null

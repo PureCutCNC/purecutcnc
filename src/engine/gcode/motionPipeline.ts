@@ -603,6 +603,28 @@ function alongBar(point: ToolpathPoint, centre: RotaryCentreline): number {
 }
 
 /**
+ * The 16 positive nodes and weights of a 32-point Gauss-Legendre rule on
+ * `[−1, 1]`, used by {@link stockFramePathLength} when the closed form would
+ * cancel. Symmetric, so the negative nodes are the positives negated.
+ */
+const GAUSS_LEGENDRE_NODES: readonly number[] = [
+  0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
+  0.33186860228212766710, 0.42135127613063533270, 0.50689990893222935942,
+  0.58771575724076230429, 0.66304426693021523143, 0.73218211874028971131,
+  0.79448379596794238555, 0.84936761373256997043, 0.89632115576605209117,
+  0.93490607593773966677, 0.96476225558750638989, 0.98561151154526838170,
+  0.99726386184948156988,
+]
+const GAUSS_LEGENDRE_WEIGHTS: readonly number[] = [
+  0.096540088514727853686, 0.095638720079274847086, 0.093844399080804538626,
+  0.091173878695763904689, 0.087652093004403741627, 0.083311924226946720839,
+  0.078193895787070435976, 0.072345794108848615611, 0.065822222776361946628,
+  0.058684093478535578892, 0.050998059262376153888, 0.042835898022226703841,
+  0.034273862913021410637, 0.025392065309262138589, 0.016274394730905708539,
+  0.0070186100094701362601,
+]
+
+/**
  * The length of the path the cutter tip draws **in the stock's own frame** for
  * one turning move (issue #393, rule 4).
  *
@@ -627,10 +649,15 @@ function alongBar(point: ToolpathPoint, centre: RotaryCentreline): number {
  *
  *   `F(u) = (u/2)·sqrt(alpha·u² + m) + (m / (2·sqrt(alpha)))·asinh(u·sqrt(alpha / m))`,
  *
- * and the length is `F(1 − t*) − F(−t*)`. A fixed Gauss-Legendre rule is *not*
- * enough here: when the tip speed touches zero inside the move the integrand
- * has a corner and a 32-point rule is off by ~8e-4 (a 90° turn at a bar
- * centreline crossing).
+ * and the length is `F(1 − t*) − F(−t*)`. That closed form is exact while the
+ * quadratic's minimum sits on or near the move, where it also carries the
+ * corner a tip speed touching zero puts in the integrand (a 32-point rule
+ * alone is off by ~8e-4 there, a 90° turn at a bar centreline crossing). When
+ * the minimum lies far outside `[−1, 2]` the two antiderivative values are
+ * large and nearly equal, and subtracting them loses most of the significant
+ * digits: a move with 1e-14 across/up deltas planned 18.000 mm for a true
+ * 18.6870947749. There the integrand is smooth on `[0, 1]`, so a fixed 32-point
+ * Gauss-Legendre rule is accurate to machine precision instead.
  */
 function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: RotaryCentreline): number {
   const start = centrelineFrame(from, centre)
@@ -649,23 +676,43 @@ function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: Ro
   // directly keeps the exact word those moves write today; the closed form
   // below needs a division by `alpha` and would agree only to a few ulps.
   if (alpha === 0 && beta === 0) return Math.sqrt(Math.max(gamma, 0))
-  const root = Math.sqrt(alpha)
   const tStar = -beta / (2 * alpha)
-  // The quadratic is a sum of squares, so this is zero at worst: a negative
-  // value is floating-point noise at a move whose tip speed really does touch
-  // zero.
-  const m = Math.max(gamma - (beta * beta) / (4 * alpha), 0)
-  const antiderivative = (u: number): number => {
-    // `m → 0`: the square root is `sqrt(alpha)·|u|` and its integral is
-    // `sqrt(alpha)·u·|u| / 2`. The `asinh` form is indeterminate there, and
-    // overflows for a denormal `m`, so take the limit whenever the argument is
-    // not finite — `m` is negligible against `alpha·u²` by then.
-    const asinhArgument = m === 0 ? Infinity : u * Math.sqrt(alpha / m)
-    if (!Number.isFinite(asinhArgument)) return 0.5 * root * u * Math.abs(u)
-    return 0.5 * u * Math.sqrt(alpha * u * u + m)
-      + (m / (2 * root)) * Math.asinh(asinhArgument)
+  // The minimum of the quadratic lies on or near the move: the closed form is
+  // exact there, and it is the only branch that resolves the corner a tip
+  // speed touching zero puts in the integrand.
+  if (tStar >= -1 && tStar <= 2) {
+    const root = Math.sqrt(alpha)
+    // The quadratic is a sum of squares, so this is zero at worst: a negative
+    // value is floating-point noise at a move whose tip speed really does touch
+    // zero.
+    const m = Math.max(gamma - (beta * beta) / (4 * alpha), 0)
+    const antiderivative = (u: number): number => {
+      // `m → 0`: the square root is `sqrt(alpha)·|u|` and its integral is
+      // `sqrt(alpha)·u·|u| / 2`. The `asinh` form is indeterminate there, and
+      // overflows for a denormal `m`, so take the limit whenever the argument is
+      // not finite — `m` is negligible against `alpha·u²` by then.
+      const asinhArgument = m === 0 ? Infinity : u * Math.sqrt(alpha / m)
+      if (!Number.isFinite(asinhArgument)) return 0.5 * root * u * Math.abs(u)
+      return 0.5 * u * Math.sqrt(alpha * u * u + m)
+        + (m / (2 * root)) * Math.asinh(asinhArgument)
+    }
+    return antiderivative(1 - tStar) - antiderivative(-tStar)
   }
-  return antiderivative(1 - tStar) - antiderivative(-tStar)
+  // The minimum is far outside the move, so the antiderivative terms above are
+  // large and nearly equal and subtracting them loses the length. The integrand
+  // is smooth on [0, 1] here; the 32-point rule is accurate to machine
+  // precision. It needs no division by `alpha`, so it also covers the
+  // degenerate `alpha === 0, beta ≠ 0` that a rounding could in principle make.
+  let total = 0
+  for (let index = 0; index < GAUSS_LEGENDRE_NODES.length; index++) {
+    const node = GAUSS_LEGENDRE_NODES[index]
+    const weight = GAUSS_LEGENDRE_WEIGHTS[index]
+    for (const sign of [1, -1]) {
+      const t = 0.5 + 0.5 * sign * node
+      total += weight * Math.sqrt(Math.max(alpha * t * t + beta * t + gamma, 0))
+    }
+  }
+  return 0.5 * total
 }
 
 /**

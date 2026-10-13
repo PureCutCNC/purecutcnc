@@ -838,6 +838,167 @@ const NINETY = Math.PI / 2
     `the 3600° move agrees with the polyline (relative error ${(Math.abs(600 / longValue - longExpected) / longExpected).toExponential(2)})`)
 }
 
+// The review's cancelling case: the quadratic's minimum sits ~5e14 moves
+// outside, so the closed form's two antiderivative terms swallow the length and
+// it planned 18.000 mm for a true 18.6870947749 (F33.333 instead of F32.108).
+{
+  const centre = rotaryCentreline(bar())
+  assert.ok(centre, 'a round bar has a centreline')
+  const from = at(0, 11, 20, 0)
+  const to = at(10, 11 + 1e-14, 20 + 1e-14, 90)
+  const value = inverseTimeFeedValue(from, to, 600, centre, exportGeometryTolerance('mm'))
+  const length = 600 / value
+  assert.ok(Math.abs(length - 18.6870947749) / 18.6870947749 < 1e-9,
+    `the cancelling move keeps its length (got ${length})`)
+  assert.equal(Number(value.toFixed(3)), 32.108, 'the cancelling move writes F32.108, not the closed form\'s F33.333')
+}
+
+// The closed form cancels when the quadratic's minimum lies far outside the
+// move, so the length switches to a 32-point Gauss-Legendre rule there. One
+// narrow case at a time kept missing the boundary; 3000 seeded moves sweep both
+// branches and both bar axes against an independent reference instead.
+//
+// The reference integrates the same speed written from raw geometry (a sum of
+// squares, so it cannot cancel), by composite 32-point Gauss-Legendre over 64
+// panels, split at the quadratic's vertex when it lies inside. No Math.random:
+// a small deterministic LCG keeps a failure reproducible from the seed.
+{
+  const GL_NODES = [
+    0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
+    0.33186860228212766710, 0.42135127613063533270, 0.50689990893222935942,
+    0.58771575724076230429, 0.66304426693021523143, 0.73218211874028971131,
+    0.79448379596794238555, 0.84936761373256997043, 0.89632115576605209117,
+    0.93490607593773966677, 0.96476225558750638989, 0.98561151154526838170,
+    0.99726386184948156988,
+  ]
+  const GL_WEIGHTS = [
+    0.096540088514727853686, 0.095638720079274847086, 0.093844399080804538626,
+    0.091173878695763904689, 0.087652093004403741627, 0.083311924226946720839,
+    0.078193895787070435976, 0.072345794108848615611, 0.065822222776361946628,
+    0.058684093478535578892, 0.050998059262376153888, 0.042835898022226703841,
+    0.034273862913021410637, 0.025392065309262138589, 0.016274394730905708539,
+    0.0070186100094701362601,
+  ]
+  const panel = (lo: number, hi: number, f: (t: number) => number): number => {
+    const half = (hi - lo) / 2
+    const mid = (lo + hi) / 2
+    let sum = 0
+    for (let index = 0; index < GL_NODES.length; index++) {
+      const weight = GL_WEIGHTS[index]
+      const node = GL_NODES[index]
+      sum += weight * (f(mid + half * node) + f(mid - half * node))
+    }
+    return half * sum
+  }
+  /**
+   * The tip's path length in the stock frame, from the raw across/up/along
+   * geometry — not from the exporter's `alpha`/`beta`/`gamma` arrangement.
+   */
+  const referenceStockPathLength = (
+    from: ToolpathPoint,
+    to: ToolpathPoint,
+    centre: { axis: 'x' | 'y'; point: ToolpathPoint },
+  ): number => {
+    const acrossAt = (point: ToolpathPoint): number =>
+      (centre.axis === 'x' ? point.y : point.x) - (centre.axis === 'x' ? centre.point.y : centre.point.x)
+    const upAt = (point: ToolpathPoint): number => point.z - centre.point.z
+    const alongAt = (point: ToolpathPoint): number => (centre.axis === 'x' ? point.x : point.y)
+    const a0 = acrossAt(from)
+    const u0 = upAt(from)
+    const dAcross = acrossAt(to) - a0
+    const dUp = upAt(to) - u0
+    const dAlong = alongAt(to) - alongAt(from)
+    const omega = (((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180
+    const speed = (t: number): number => {
+      const across = a0 + dAcross * t
+      const up = u0 + dUp * t
+      return Math.sqrt(
+        dAlong * dAlong + (dAcross + omega * up) ** 2 + (dUp - omega * across) ** 2,
+      )
+    }
+    // The vertex of the squared speed, from the raw coefficients, decides where
+    // to split; an exact split is what makes the corner case integrable.
+    const p = dAcross + omega * u0
+    const q = omega * dUp
+    const r = dUp - omega * a0
+    const s = -omega * dAcross
+    const alpha = q * q + s * s
+    const beta = 2 * (p * q + r * s)
+    const vertex = alpha > 0 ? -beta / (2 * alpha) : Number.NaN
+    const breaks = Number.isFinite(vertex) && vertex > 0 && vertex < 1 ? [0, vertex, 1] : [0, 1]
+    const panels = 64
+    let total = 0
+    for (let index = 0; index < breaks.length - 1; index++) {
+      const lo = breaks[index]
+      const hi = breaks[index + 1]
+      const step = (hi - lo) / panels
+      for (let panelIndex = 0; panelIndex < panels; panelIndex++) {
+        total += panel(lo + panelIndex * step, lo + (panelIndex + 1) * step, speed)
+      }
+    }
+    return total
+  }
+
+  // Draw a signed magnitude as `sign * 10^k`, sometimes exactly zero.
+  let seed = 0x2f6e2b1
+  const random = (): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+  const offset = (): number => (random() * 2 - 1) * 20
+  const delta = (): number => {
+    if (random() < 0.08) return 0
+    const sign = random() < 0.5 ? -1 : 1
+    return sign * 10 ** (-15 + random() * 17)
+  }
+  const sweepDegrees = (): number => {
+    if (random() < 0.08) return 0
+    const sign = random() < 0.5 ? -1 : 1
+    return sign * 10 ** (-12 + random() * 16.5)
+  }
+
+  let worstError = 0
+  let worstCase = ''
+  for (let index = 0; index < 3000; index++) {
+    const stock = roundStock(20, 100, random() < 0.5 ? 'x' : 'y')
+    const centre = rotaryCentreline(stock)
+    assert.ok(centre, `${index}: a round bar has a centreline`)
+    const startAcross = offset()
+    const startUp = offset()
+    const dAcross = delta()
+    const dUp = delta()
+    const dAlong = delta()
+    const sweep = sweepDegrees()
+    const from: ToolpathPoint = centre.axis === 'x'
+      ? at(0, centre.point.y + startAcross, centre.point.z + startUp, 0)
+      : at(centre.point.x + startAcross, 0, centre.point.z + startUp, 0)
+    const to: ToolpathPoint = centre.axis === 'x'
+      ? at(dAlong, from.y + dAcross, from.z + dUp, sweep)
+      : at(from.x + dAcross, dAlong, from.z + dUp, sweep)
+    const expected = referenceStockPathLength(from, to, centre)
+    // Tolerance 0 bypasses the emitter's floor, so the length itself is judged
+    // even for the sub-micron moves the random draw produces.
+    const value = inverseTimeFeedValue(from, to, 600, centre, 0)
+    const computed = Number.isFinite(value) ? 600 / value : 0
+    if (expected === 0) {
+      assert.equal(computed, 0, `case ${index}: a zero-length move stays zero`)
+      continue
+    }
+    const absolute = Math.abs(computed - expected)
+    const error = expected < 1e-3 ? absolute : absolute / expected
+    if (error > worstError) {
+      worstError = error
+      worstCase = `#${index} axis ${centre.axis} from ${JSON.stringify(from)} to ${JSON.stringify(to)}`
+    }
+    const bound = expected < 1e-3 ? 1e-12 : 1e-9
+    assert.ok(error < bound,
+      `${worstCase}: the length is the quadrature (error ${error.toExponential(2)})`)
+  }
+  // The reference and the emitter are different code, so the worst case is a
+  // real number to report rather than a pass/fail only.
+  console.log(`   worst path-length error ${worstError.toExponential(2)} (${worstCase})`)
+}
+
 // A rapid that turns: the angle word is never written on a block that also
 // carries Z. Turning the bar while Z moves turns it while the tool is still
 // near the work, so the turn happens at the higher of the rapid's two Z values.
@@ -1300,6 +1461,87 @@ const NINETY = Math.PI / 2
   }), [{ operation: operation('Flat'), moves }])
   assert.deepEqual(angleFree.warnings, [], 'an own-axis template that writes A is harmless while nothing turns')
   assert.match(angleFree.gcode, /G0 A0/, 'and the template is written unchanged')
+}
+
+// Definition-supplied command text that is not a header/tool-change template —
+// the canned-cycle command, the cycle cancel and the retract mode — is judged
+// by the same axis-word check (issue #393, rule 3c). Canned cycles are written
+// only on an own-axis machine, so the refusal needs a turning operation
+// elsewhere in the program to make the `A` word matter.
+{
+  const project = projectWith(bar())
+  const drillOp = operation('Drill', { kind: 'drilling' })
+  const cycles: DrillCycle[] = [
+    { x: 0, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+    { x: 20, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+  ]
+  const flat: ToolpathMove[] = [
+    { kind: 'plunge', from: at(0, 10, 30), to: at(0, 10, 20) },
+    { kind: 'rapid', from: at(0, 10, 20), to: at(0, 10, 30) },
+    { kind: 'rapid', from: at(0, 10, 30), to: at(20, 10, 30) },
+    { kind: 'plunge', from: at(20, 10, 30), to: at(20, 10, 20) },
+    { kind: 'rapid', from: at(20, 10, 20), to: at(20, 10, 30) },
+  ]
+  const turnOp = operation('Turn')
+  const entries = [
+    { operation: drillOp, moves: flat, drillCycles: cycles },
+    {
+      operation: turnOp,
+      moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }]),
+    },
+  ]
+  const withCanned = (patch: Partial<NonNullable<MachineDefinition['cannedCycles']>>): MachineDefinition =>
+    validateMachineDefinition({
+      ...structuredClone(LINUXCNC),
+      rotary: OWN_AXIS,
+      cannedCycles: { ...structuredClone(LINUXCNC.cannedCycles), ...patch },
+    })
+
+  for (const [name, patch] of [
+    ['the cancel command', { cancelCommand: 'G0 A0' }],
+    ['the cycle command', { drillCommand: 'G81 A0' }],
+  ] as const) {
+    const refused = exportProgram(project, withCanned(patch), entries)
+    assert.deepEqual(refused.warnings, [{
+      code: 'postRotaryTemplateUsesBorrowedAxis',
+      params: { axis: 'A' },
+    }], `${name} writing A refuses the turning program`)
+    assert.equal(refused.gcode, '', `${name}: the refused program carries no text`)
+  }
+
+  // The control: the same canned cycle with an ordinary command still exports.
+  const control = exportProgram(project, withCanned({}), entries)
+  assert.deepEqual(control.warnings, [], 'an ordinary canned cycle does not refuse the program')
+  assert.match(control.gcode, /G81\b/, 'and the cycle is written')
+}
+
+// A definition template holding several physical lines is judged line by line
+// (issue #393, rule 3c): the axis-word scan stops at a line's comment marker, so
+// scanning the joined text dropped the code on every later line.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  const withFooter = (footer: string[]): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: BORROWED_Y,
+    program: { ...structuredClone(GRBL.program), footer },
+  })
+
+  const multiLine = exportProgram(project, withFooter(['; note\nG0 Y0']), [
+    { operation: operation('One'), moves },
+  ])
+  assert.deepEqual(multiLine.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'code on the second physical line of a template still counts')
+  assert.equal(multiLine.gcode, '', 'the refused program carries no text')
+
+  // The comment line alone is still prose and drives nothing.
+  const commentOnly = exportProgram(project, withFooter(['; note\n; G0 Y0']), [
+    { operation: operation('One'), moves },
+  ])
+  assert.deepEqual(commentOnly.warnings, [], 'a multi-line comment does not refuse the program')
+  assert.match(commentOnly.gcode, /X20\b/, 'and the operation is exported')
 }
 
 // ── 13. the angle the controller is at is reconciled (2) ──────

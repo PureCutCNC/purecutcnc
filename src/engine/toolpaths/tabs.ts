@@ -559,10 +559,20 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
 
   for (const [moveIndex, move] of result.moves.entries()) {
     const previousTo = adjustedMoves.at(-1)?.to ?? null
-    const actualFrom =
-      previousTo && pointsEqualXY(previousTo, move.from)
-        ? previousTo
-        : move.from
+    // The carried point exists only to keep the raised segments connected: its
+    // XY and Z come from where the previous synthesised move ended. Its angle
+    // belongs to `move`, the source move being processed, so an angle-free
+    // source move produces only angle-free points (issue #393): inheriting the
+    // previous move's angle would put one angled end on an angle-free move,
+    // which export refuses.
+    const actualFrom = previousTo && pointsEqualXY(previousTo, move.from)
+      ? {
+          x: previousTo.x,
+          y: previousTo.y,
+          z: previousTo.z,
+          ...(move.from.a !== undefined ? { a: move.from.a } : null),
+        }
+      : move.from
 
     if (move.kind === 'cut' && Math.abs(move.from.z - move.to.z) <= 1e-9) {
       const splitMoves = smoothPlan
