@@ -31,7 +31,7 @@ import type { BlockStock, MachineOrigin, Operation, Project, RoundStock, Stock }
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { runPostProcessor } from './postprocessor'
-import { validateMachineDefinition } from './types'
+import { rotaryDirection, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { warningSeverity } from '../toolpaths/warningCodes'
 import {
@@ -39,8 +39,10 @@ import {
   inverseTimeFeedValue,
   planOperationMotion,
   planRotaryRefusals,
+  planStepFeeds,
   rotaryCentreline,
 } from './motionPipeline'
+import type { LinearMoveDescriptor } from './arcFitting'
 import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import { exportGeometryTolerance } from '../../utils/units'
 
@@ -414,6 +416,31 @@ const NINETY = Math.PI / 2
   assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), Number(expected.toFixed(3)), 'the word is feed / sqrt(linear^2 + (r x angle)^2)')
 }
 
+// A turning move whose two ends are at different distances from the
+// centreline. It plunges while it turns, so the path length is `sqrt(linear² +
+// (meanRadius × Δθ)²)` — the mean of the two end radii, not either one. The
+// expected word is computed here from first principles, never by calling the
+// implementation. The bar's centreline sits at Z = 10 for a 20 mm bar, so the
+// move runs from 10 mm above it to 5 mm above it.
+{
+  const project = projectWith(bar())
+  const from = at(0, 10, 20, 0)
+  const to = at(0, 10, 15, 90)
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('PlungingTurn'), moves: [{ kind: 'cut', from, to }],
+  }])
+  const line = lineWithWord(result.gcode, /A90\b/)
+  assert.ok(line, `the plunging turning move is emitted:\n${motionLines(result.gcode).join('\n')}`)
+  const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
+  const meanRadius = (10 + 5) / 2
+  const expected = FEED / Math.hypot(linear, meanRadius * NINETY)
+  assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), Number(expected.toFixed(3)),
+    'the emitted F is feed / sqrt(linear^2 + (mean radius x angle)^2)')
+  // Neither end's radius alone would produce this word.
+  assert.notEqual(Number(line.match(/F([-0-9.]+)/)?.[1]), Number((FEED / Math.hypot(linear, 5 * NINETY)).toFixed(3)),
+    'the end radius alone would give a different word')
+}
+
 // Two turning moves with the same sweep and radius carry the same inverse-time
 // word. grbl's `modalFeedSpeed` would drop the second F as modal; rule 4 says
 // every inverse-time move writes its own, so it must appear twice.
@@ -450,8 +477,10 @@ const NINETY = Math.PI / 2
   }])
   const lines = motionLines(result.gcode)
 
-  // The rapid carries the angle but no feed word.
-  const rapid = lines.find((line) => line.startsWith('G0') && /A45\b/.test(line))
+  // The rapid carries the angle but no feed word. The angle rides the block
+  // that is emitted last — the XY block when Z is unchanged — so the word can
+  // be on a modal block with no G0 of its own.
+  const rapid = lines.find((line) => /A45\b/.test(line))
   assert.ok(rapid, `the rapid is a turning move:\n${lines.join('\n')}`)
   assert.doesNotMatch(rapid, /F[-0-9]/, 'a rapid turning move has no F word')
 
@@ -513,6 +542,104 @@ const NINETY = Math.PI / 2
   const heightOnly = inverseTimeFeedValue(at(0, 10, 20), at(0, 10, 20, 90), 600, centre, tolerance)
   assert.equal(heightOnly, 600 / (10 * NINETY), 'a point above the centreline is 10 mm out')
   assert.notEqual(atRadius, heightOnly, 'ignoring the across-axis offset would give the wrong word')
+}
+
+// The mean of the move's two end radii, when they differ: a turning move that
+// also plunges towards the centreline. Neither end's radius alone gives the
+// right path length, so this pins the mean (`turningRadius(from)` and
+// `turningRadius(to)` both fail it).
+{
+  const centre = rotaryCentreline(bar())
+  assert.ok(centre, 'a round bar has a centreline')
+  const tolerance = exportGeometryTolerance('mm')
+
+  // A turning move that plunges: 10 mm above the centreline at the start, 5 mm
+  // at the end, sweeping 90 degrees.
+  const from = at(0, 10, 20, 0)
+  const to = at(0, 10, 15, 90)
+  const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
+  const meanRadius = (10 + 5) / 2
+  const expected = 600 / Math.hypot(linear, meanRadius * NINETY)
+  const plunging = inverseTimeFeedValue(from, to, 600, centre, tolerance)
+  assert.equal(plunging, expected, 'the path length uses the mean of the two end radii')
+  assert.notEqual(plunging, 600 / Math.hypot(linear, 5 * NINETY),
+    'the end radius alone would give a different word')
+  assert.notEqual(plunging, 600 / Math.hypot(linear, 10 * NINETY),
+    'the start radius alone would give a different word')
+
+  // The same in the other direction: a turning move that rises from 5 mm to
+  // 10 mm while also moving along the bar, so a mean is not accidentally the
+  // larger end and the linear travel is not along the bar's own axis.
+  const rising = inverseTimeFeedValue(at(0, 10, 15, 0), at(4, 10, 20, 90), 600, centre, tolerance)
+  const risingLinear = Math.hypot(4, 0, 5)
+  assert.equal(rising, 600 / Math.hypot(risingLinear, meanRadius * NINETY),
+    'the mean is the same whichever end is nearer the centreline, and the linear travel is kept')
+}
+
+// A rapid that turns: the angle word is never written on a block that also
+// carries Z. Turning the bar while Z moves turns it while the tool is still
+// near the work, so the turn happens at the higher of the rapid's two Z values.
+// The bar's centreline is at Z = 10 and the stock top at Z = 20, so the emitted
+// Z values are (project Z - 20).
+{
+  const project = projectWith(bar())
+
+  // Z rises: the Z block comes first, with no angle, and the XY block that
+  // follows carries it.
+  const rising = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('RiseTurn'),
+    moves: [
+      { kind: 'rapid', from: at(0, 10, 20, 0), to: at(0, 10, 30, 20) },
+      { kind: 'cut', from: at(0, 10, 30, 20), to: at(10, 10, 30, 20) },
+    ],
+  }])
+  assert.deepEqual(motionLines(rising.gcode).filter((line) => line.startsWith('G0') || /A20\b/.test(line)),
+    ['G0 Z10.000', 'X0.000 Y0.000 A20.000'],
+    `a rising rapid writes Z first, then the XY block with the angle:\n${motionLines(rising.gcode).join('\n')}`)
+
+  // Z falls: the XY block carrying the angle comes first, then the Z block. A
+  // leading rapid establishes the starting height.
+  const falling = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('FallTurn'),
+    moves: [
+      { kind: 'rapid', from: at(100, 10, 30, 0), to: at(0, 10, 30, 0) },
+      { kind: 'rapid', from: at(0, 10, 30, 0), to: at(10, 10, 20, 30) },
+      { kind: 'cut', from: at(10, 10, 20, 30), to: at(20, 10, 20, 30) },
+    ],
+  }])
+  assert.deepEqual(motionLines(falling.gcode).filter((line) => line.startsWith('G0')
+    || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A30\b/.test(line)),
+    ['G0 Z10.000', 'X0.000 Y0.000 A0.000', 'X10.000 Y0.000 A30.000', 'Z0.000'],
+    `a falling rapid turns across first, then drops:\n${motionLines(falling.gcode).join('\n')}`)
+
+  // Z rises and XY moves in the same rapid: still Z first, angle on the XY
+  // block. The next rapid falls back: XY (with the angle) first, then Z.
+  const both = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('BothWays'),
+    moves: [
+      { kind: 'rapid', from: at(10, 10, 30, 0), to: at(30, 10, 40, 15) },
+      { kind: 'rapid', from: at(30, 10, 40, 15), to: at(10, 10, 30, 0) },
+      { kind: 'cut', from: at(10, 10, 30, 0), to: at(20, 10, 30, 0) },
+    ],
+  }])
+  assert.deepEqual(motionLines(both.gcode).filter((line) => line.startsWith('G0')
+    || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A(15|0)\./.test(line)),
+    ['G0 Z20.000', 'X30.000 Y0.000 A15.000', 'X10.000 Y0.000 A0.000', 'Z10.000'],
+    `a rising rapid puts the angle on the XY block, a falling one turns first:\n${motionLines(both.gcode).join('\n')}`)
+
+  // No Z change at all: one XY block, angle and all; and a rotation-only rapid
+  // (the tool is already there) still writes the angle, on a block of its own.
+  const flatTurn = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('FlatTurn'),
+    moves: [
+      { kind: 'rapid', from: at(0, 10, 30, 0), to: at(10, 10, 30, 25) },
+      { kind: 'rapid', from: at(10, 10, 30, 25), to: at(10, 10, 30, 40) },
+      { kind: 'cut', from: at(10, 10, 30, 40), to: at(20, 10, 30, 40) },
+    ],
+  }])
+  assert.deepEqual(motionLines(flatTurn.gcode).filter((line) => /A(25|40)\./.test(line)),
+    ['X10.000 Y0.000 A25.000', 'A40.000'],
+    `an XY-only rapid carries the angle, and a rotation-only rapid writes it alone:\n${motionLines(flatTurn.gcode).join('\n')}`)
 }
 
 // ── 7. refusals ───────────────────────────────────────────────
@@ -597,6 +724,81 @@ const NINETY = Math.PI / 2
     params: { operation: 'Across', axis: 'Y' },
   }], 'travel on the borrowed axis is refused')
   assert.doesNotMatch(refused.gcode, /X0|Y12/, 'the refused operation emits no motion')
+}
+
+// ── 9. a mispaired move fails loudly, not silently ─────────────
+//
+// `planStepFeeds` pairs the emitted steps with the operation's project moves by
+// position. A drift between the two would otherwise give a turning move the
+// ordinary feed, or measure its path length from another move's endpoints, so a
+// linear step whose angle disagrees with the move it was paired with is an
+// error rather than a wrong program.
+{
+  const project = projectWith(bar())
+  const op = operation('Mispaired')
+  const definition = rotaryMachine(OWN_AXIS)
+  // The step was planned from a turning toolpath move, but the project move it
+  // is paired with has no angle at all — the drift the check exists to catch.
+  const mispaired: ToolpathMove[] = [
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15) },
+  ]
+  const plannedFrom: ToolpathMove[] = [
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) },
+  ]
+  const plan = planOperationMotion({
+    project,
+    definition,
+    operation: op,
+    toolpath: toolpathOf(op, plannedFrom),
+    arcEmitOptions: createArcEmitOptions(definition, 'mm', 'ij'),
+    startPosition: null,
+    captureTrace: false,
+  })
+  assert.throws(
+    () => planStepFeeds({
+      projectMoves: mispaired,
+      steps: plan.steps,
+      centre: rotaryCentreline(bar()),
+      tolerance: exportGeometryTolerance('mm'),
+      operationName: op.name,
+      direction: rotaryDirection(definition),
+      effectiveFeed: () => 600,
+    }),
+    /Mispaired/,
+    'a step whose angle disagrees with its paired move throws, naming the operation',
+  )
+
+  // A step with no paired move at all throws too. The first two steps are
+  // angle-less and match the first two moves; the third has no move left.
+  const flatStep = (): LinearMoveDescriptor => ({
+    kind: 'linear',
+    point: { x: 0, y: 0, z: -5 },
+    moveKind: 'cut',
+  })
+  assert.throws(
+    () => planStepFeeds({
+      projectMoves: [
+        { kind: 'cut', from: at(0, 10, 20), to: at(0, 10, 15) },
+        { kind: 'cut', from: at(0, 10, 15), to: at(0, 10, 10) },
+      ],
+      steps: [flatStep(), flatStep(), flatStep()],
+      centre: rotaryCentreline(bar()),
+      tolerance: exportGeometryTolerance('mm'),
+      operationName: 'Mispaired',
+      direction: rotaryDirection(definition),
+      effectiveFeed: () => 600,
+    }),
+    /Mispaired/,
+    'a step with no paired move throws',
+  )
+
+  // The check is narrowed to the plan a caller actually has: a normal export
+  // goes through the same function and does not throw.
+  const normal = exportProgram(project, definition, [{
+    operation: operation('Normal'),
+    moves: [{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }],
+  }])
+  assert.match(normal.gcode, /A90\b/, 'a well-paired export still emits its angle')
 }
 
 // ── the planner in isolation ──────────────────────────────────

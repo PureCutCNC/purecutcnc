@@ -639,6 +639,16 @@ function turns(move: ToolpathMove): boolean {
 }
 
 /**
+ * The angle a project move ends at in the program's own direction, or
+ * `undefined` when it has none. `projectToMachinePoint` already multiplied the
+ * step's point by `rotaryDirection`, so a step's angle is compared against this
+ * rather than the raw `move.to.a`.
+ */
+function machineEndAngle(move: ToolpathMove, direction: 1 | -1): number | undefined {
+  return move.to.a === undefined ? undefined : move.to.a * direction
+}
+
+/**
  * Plan the feed word of every move of one operation (issue #393, rule 4).
  *
  * `steps` is the emitted sequence and `projectMoves` the operation's own moves,
@@ -653,6 +663,15 @@ function turns(move: ToolpathMove): boolean {
  * move can exist, so every feed is the ordinary one. `effectiveFeed` reuses the
  * caller's own feed (kind and `feedScale` included), so a turning move is not
  * given a different base feed from the one it would have had.
+ *
+ * The pairing is by position, so a drift between the two sequences would
+ * silently give a turning move the ordinary feed, or measure its path from
+ * another move's endpoints. Every linear step is therefore checked against the
+ * move it was paired with before that move's numbers are used (issue #393): a
+ * missing move, or a step whose angle disagrees with the move's end angle, is
+ * an error rather than a wrong program. `operationName` names the operation in
+ * that error. `direction` is `rotaryDirection(definition)`, the factor the
+ * step's point already carries.
  */
 export function planStepFeeds(args: {
   projectMoves: readonly ToolpathMove[]
@@ -660,8 +679,10 @@ export function planStepFeeds(args: {
   centre: RotaryCentreline | null
   tolerance: number
   effectiveFeed: (step: FittedMoveDescriptor) => number
+  operationName: string
+  direction: 1 | -1
 }): FeedDirective[] {
-  const { projectMoves, steps, centre, tolerance, effectiveFeed } = args
+  const { projectMoves, steps, centre, tolerance, effectiveFeed, operationName, direction } = args
   const directives: FeedDirective[] = []
   let moveIndex = 0
   let arcRunId: number | null = null
@@ -681,11 +702,18 @@ export function planStepFeeds(args: {
     const move = projectMoves[moveIndex]
     moveIndex += 1
 
+    if (move === undefined || !sameAngle(step.point.a, machineEndAngle(move, direction))) {
+      throw new Error(
+        `Export plan for "${operationName}" is inconsistent with its toolpath: emitted move ${moveIndex} `
+        + `does not match the toolpath move it was paired with`,
+      )
+    }
+
     if (step.moveKind === 'rapid') {
       directives.push({ mode: 'none' })
       continue
     }
-    if (centre === null || move === undefined || sameAngle(move.from.a, move.to.a)) {
+    if (centre === null || sameAngle(move.from.a, move.to.a)) {
       directives.push({ mode: 'normal', feed: effectiveFeed(step) })
       continue
     }
@@ -986,31 +1014,56 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 }
 
 /**
- * Split one rapid into the blocks that are emitted for it: Z on its own
- * first, then XY. An axis group that does not move is dropped, and a rapid
- * from an unknown position emits both. A rotation-only rapid — every linear
- * coordinate unchanged — emits a single block carrying only the angle, so a
- * move that turns the stock is never silently dropped (rule 1).
+ * Split one rapid into the blocks that are emitted for it.
+ *
+ * A rapid that does not turn keeps the split it has always had: Z first, then
+ * XY, dropping an axis group that does not move, and emitting both from an
+ * unknown position. The angle word is never written on a block that also
+ * carries Z (issue #393): turning the bar while Z moves turns it while the tool
+ * is still near the work, so a turning rapid turns at the *higher* of its two Z
+ * values. When Z rises that is the ordinary order, with the angle on the XY
+ * block; when Z falls or stays, the block carrying the angle is written first
+ * and the Z block after it. A rotation-only rapid — every linear coordinate
+ * unchanged — emits a single block carrying only the angle, so a move that
+ * turns the stock is never silently dropped (rule 1).
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
 ): Array<Partial<ToolpathPoint>> {
-  const blocks: Array<Partial<ToolpathPoint>> = []
   const angle = target.a
-  const angleOnly = angle !== undefined && (current === null || current.a !== angle)
-  if (current === null || current.z !== target.z) {
-    blocks.push({ z: target.z, ...(angle !== undefined ? { a: angle } : null) })
-  }
-  // An axis the machine does not have (a borrowed motor's linear coordinate
-  // was dropped) is never a reason to emit a block of its own.
-  if (current === null
+  // Only a real angle change is written; a rapid that keeps the angle produces
+  // the pre-rotary blocks unchanged.
+  const turning = angle !== undefined && angle !== current?.a
+
+  const zChanges = current === null || current.z !== target.z
+  const xyChanges = current === null
     || (target.x !== undefined && current.x !== target.x)
-    || (target.y !== undefined && current.y !== target.y)) {
-    blocks.push({ x: target.x, y: target.y, ...(angle !== undefined ? { a: angle } : null) })
+    || (target.y !== undefined && current.y !== target.y)
+
+  const blocks: Array<Partial<ToolpathPoint>> = []
+  // A rapid that does not turn keeps the split it has always had: Z first, then
+  // XY. A rapid that turns may not turn the bar while Z moves, so the turn
+  // happens at the higher of its two Z values (issue #393): Z rising is the
+  // ordinary order with the angle on the XY block, and Z falling or unchanged
+  // turns across first and drops afterwards.
+  const zFirst = !turning || current === null || target.z >= current.z
+  if (zFirst) {
+    if (zChanges) blocks.push({ z: target.z })
+    if (xyChanges) blocks.push({ x: target.x, y: target.y })
+    if (turning) {
+      const last = blocks[blocks.length - 1]
+      if (last === undefined) blocks.push({ a: angle })
+      else blocks[blocks.length - 1] = { ...last, a: angle }
+    }
+    return blocks
   }
-  if (blocks.length === 0 && angleOnly) {
-    blocks.push({ a: angle })
-  }
+
+  // Z falls while turning: the angle rides the XY block when it moves, or a
+  // block of its own otherwise, so the Z block is written last and never
+  // carries it.
+  if (xyChanges) blocks.push({ x: target.x, y: target.y, ...(angle !== undefined ? { a: angle } : null) })
+  else blocks.push({ a: angle })
+  if (zChanges) blocks.push({ z: target.z })
   return blocks
 }

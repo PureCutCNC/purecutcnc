@@ -20,7 +20,7 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveMachineKind, resolveOutputDialect, rotaryWord } from './types'
+import { resolveMachineKind, resolveOutputDialect, rotaryDirection, rotaryWord } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -830,7 +830,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     if (!emittedCanned) {
-      // Emit a single rapid (G0) with per-axis splitting.
+      // Emit a single rapid (G0) with per-axis splitting. `splitRapid` decides
+      // which block carries the angle — never a block with Z (issue #393).
       const emitRapid = (pt: ToolpathPoint) => {
         for (const axes of splitRapid(state.currentPosition, pt)) {
           emitMotionLine(definition.motion.rapidCommand, axes)
@@ -861,6 +862,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         steps: plan.steps,
         centre: rotaryCentreline(project.stock),
         tolerance: exportGeometryTolerance(project.meta.units),
+        operationName: operation.name,
+        direction: rotaryDirection(definition),
         effectiveFeed: (planned) => planned.kind === 'linear' && planned.moveKind === 'plunge'
           ? effectiveFeed('plunge', planned.feedScale, step.cutFeed, step.plungeFeed)
           : effectiveFeed('cut', planned.feedScale, step.cutFeed, step.plungeFeed),
