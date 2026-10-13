@@ -61,6 +61,21 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
+/**
+ * The input for a fixture this test expects to simulate. Only an Around setup
+ * on a stock that is no longer a round bar yields null, and no fixture here is
+ * that; anything else must still produce an input.
+ */
+function simulationInput(
+  project: Project,
+  setup: Parameters<typeof buildSimulationSetupInput>[1],
+  paths: ReadonlyMap<string, ToolpathResult>,
+): SimulationSetupInput {
+  const input = buildSimulationSetupInput(project, setup, paths)
+  assert(input, `fixture: ${setup.id} yields a simulation input`)
+  return input
+}
+
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   assert(
     JSON.stringify(actual) === JSON.stringify(expected),
@@ -229,7 +244,7 @@ function testTopIsTheSameObjects(): void {
   console.log('Testing a Top input hands back the caller\'s own objects...')
   const project = makeProject(MM)
   const paths = generatePaths(project)
-  const input = buildSimulationSetupInput(project, topSetupOf(project), paths)
+  const input = simulationInput(project, topSetupOf(project), paths)
 
   assert(input.project === project, 'the project is the same object')
   assert(input.toolpaths.get('opTop') === paths.get('opTop'), 'a Top path is the same object')
@@ -253,14 +268,14 @@ function testDisabledAndHiddenOperationsAreIncluded(): void {
   })
   const withHidden: Project = { ...project, operations: [...project.operations, hidden] }
 
-  const input = buildSimulationSetupInput(withHidden, top, paths)
+  const input = simulationInput(withHidden, top, paths)
   assertEqual(input.operations.map((op) => op.id), ['opTop', 'opHidden'], 'a disabled, hidden operation is still listed')
   assertEqual([...input.toolpaths.keys()], ['opTop'], 'its missing path is not invented')
 
   // Dropping the acquired path for an in-scope operation keeps it missing.
   const withoutBottom = new Map(paths)
   withoutBottom.delete('opBottom')
-  const bottomInput = buildSimulationSetupInput(project, bottomSetupOf(project), withoutBottom)
+  const bottomInput = simulationInput(project, bottomSetupOf(project), withoutBottom)
   assertEqual(bottomInput.operations.map((op) => op.id), ['opBottom'], 'the operation is still listed without its path')
   assert(bottomInput.toolpaths.size === 0, 'and its path is still missing')
 }
@@ -272,7 +287,7 @@ function testLegacyOperationsReadAsTop(): void {
   const legacy = withoutSetupFields(project) as unknown as Project
   assert(legacy.setups === undefined, 'fixture: the legacy project has no setups')
 
-  const input = buildSimulationSetupInput(legacy, activeSetup(legacy), paths)
+  const input = simulationInput(legacy, activeSetup(legacy), paths)
   assert(input.project === legacy, 'the legacy project comes back untouched')
   assertEqual(input.operations.map((op) => op.id), ['opTop', 'opBottom'], 'every operation with no setupId reads as Top')
   assertEqual([...input.toolpaths.keys()], ['opTop', 'opBottom'], 'and its paths are the same objects')
@@ -290,7 +305,7 @@ function testBottomIsScopedAndTurned(): void {
     path: paths.get('opBottom'),
   })
 
-  const input = buildSimulationSetupInput(project, bottom, paths)
+  const input = simulationInput(project, bottom, paths)
   assert(input.project !== project, 'a Bottom project is a turned copy')
   assert(input.project.stock.profile !== project.stock.profile, 'its stock outline is a copy too')
   assertEqual(input.operations.map((op) => op.id), ['opBottom'], 'only the Bottom setup\'s operations')
@@ -332,14 +347,14 @@ function testProvisionalAndEmptyBottom(): void {
   assert(provisional.id === provisionalSetupId('bottom'), 'fixture: the workspace is on a provisional Bottom setup')
   assert(!topOnlyProject.setups.some((entry) => entry.id === provisional.id), 'fixture: it is not one of the project\'s setups')
 
-  const provisionalInput = buildSimulationSetupInput(topOnlyProject, provisional, paths)
+  const provisionalInput = simulationInput(topOnlyProject, provisional, paths)
   assertEqual(provisionalInput.operations, [], 'a provisional Bottom setup has no operations')
   assert(provisionalInput.toolpaths.size === 0, 'and acquires no paths')
   assert(provisionalInput.project !== topOnlyProject, 'it is still simulated in its turned frame')
 
   // A real Bottom setup that simply has no operations yet behaves the same.
   const emptyReal = withBottomSetup(topOnlyProject, { axis: 'x' })
-  const emptyInput = buildSimulationSetupInput(emptyReal, bottomSetupOf(emptyReal), paths)
+  const emptyInput = simulationInput(emptyReal, bottomSetupOf(emptyReal), paths)
   assertEqual(emptyInput.operations, [], 'a materialized but empty Bottom setup has no operations')
   assert(emptyInput.toolpaths.size === 0, 'and no paths')
 }
@@ -371,7 +386,7 @@ function testFreshStockSimulation(spec: FixtureSpec): void {
   const bottomCenter = centerOf(spec.bottomRect)
 
   // Top: the pocket opening at the top face is removed from the top down.
-  const topResult = replaySetup(buildSimulationSetupInput(project, topSetupOf(project), paths))
+  const topResult = replaySetup(simulationInput(project, topSetupOf(project), paths))
   assert(topResult.stats.removedCellCount > 0, 'the Top setup removes material')
   assert(topZAt(topResult.grid, topCenter.x, topCenter.y) < spec.thickness - spec.depth * 0.5, 'the Top pocket is cut at its centre')
   assert(Math.abs(topZAt(topResult.grid, bottomCenter.x, bottomCenter.y) - spec.thickness) < 1e-6, 'the Top pocket does not reach the Bottom pocket')
@@ -383,7 +398,7 @@ function testFreshStockSimulation(spec: FixtureSpec): void {
     const axisProject = makeProject(spec, axis)
     const axisPaths = generatePaths(axisProject)
     const bottom = bottomSetupOf(axisProject)
-    const input = buildSimulationSetupInput(axisProject, bottom, axisPaths)
+    const input = simulationInput(axisProject, bottom, axisPaths)
     const result = replaySetup(input)
 
     const localBottom = mirrorXY(bottomCenter, axis, spec)
@@ -431,7 +446,7 @@ function testExportParity(spec: FixtureSpec): void {
   const project = makeProject(spec, 'x')
   const paths = generatePaths(project)
   const bottom = bottomSetupOf(project)
-  const input = buildSimulationSetupInput(project, bottom, paths)
+  const input = simulationInput(project, bottom, paths)
   const operation = input.operations[0]
   const localPath = input.toolpaths.get(operation.id)
   assert(localPath, 'fixture: the Bottom path is in the input')
@@ -493,7 +508,7 @@ function testDrillAndLevelMetadataPreserved(): void {
   const project = makeProject(MM)
   const paths = generatePaths(project)
   const bottom = bottomSetupOf(project)
-  const input = buildSimulationSetupInput(project, bottom, paths)
+  const input = simulationInput(project, bottom, paths)
 
   const canonicalPocket = paths.get('opBottom') as PocketToolpathResult
   const localPocket = input.toolpaths.get('opBottom') as PocketToolpathResult
@@ -544,7 +559,7 @@ function testDrillAndLevelMetadataPreserved(): void {
   )
   const drillPaths = generatePaths(drillProject)
   const drillBottom = bottomSetupOf(drillProject)
-  const drillInput = buildSimulationSetupInput(drillProject, drillBottom, drillPaths)
+  const drillInput = simulationInput(drillProject, drillBottom, drillPaths)
   const canonical = drillPaths.get('opDrill')
   const local = drillInput.toolpaths.get('opDrill')
   assert(canonical?.drillCycles && local?.drillCycles, 'fixture: both carry drill cycles')
@@ -582,7 +597,7 @@ function testStockProfileTabsAndClampsAreTurned(): void {
   }
   const paths = generatePaths(notched)
   const bottom = bottomSetupOf(notched)
-  const input = buildSimulationSetupInput(notched, bottom, paths)
+  const input = simulationInput(notched, bottom, paths)
 
   const frame = setupFrame(bottom.orientation, notched.stock)
   const turned = projectInSetupFrame(notched, frame)

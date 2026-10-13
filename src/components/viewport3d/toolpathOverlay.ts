@@ -14,8 +14,39 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { ToolpathBounds, ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { RoundStock, Stock } from '../../types/project'
+import { isRoundStock } from '../../types/project'
+import { aroundFrame, unwrapPoint, wrapPoint } from '../../engine/aroundFrame'
+import { stockSpacePoint } from '../../engine/rotaryFrame'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+
+/**
+ * The display view of a toolpath: the original with its drawn moves and
+ * bounds substituted, plus the wrapped path it came from. The wrapped object
+ * is rebuilt per scene build while the generated toolpath is stable between
+ * regenerations, so the layer split caches on `toolpath` when there is one.
+ */
+export interface DisplayToolpath {
+  readonly moves: readonly ToolpathMove[]
+  readonly bounds: ToolpathBounds | null
+  readonly operationId?: string
+  readonly toolpath?: { readonly moves: readonly ToolpathMove[] }
+}
+
+/** The toolpath to draw (issue #395). A wrapped Around toolpath — any point
+ *  carrying `a` — is drawn at `stockSpacePoint`, its turning moves subdivided;
+ *  an angle-free toolpath is handed back unchanged, so its line data is
+ *  exactly what it is today. */
+export function stockSpaceToolpath<T extends { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null }>(
+  toolpath: T,
+  stock: Stock,
+): DisplayToolpath {
+  if (!isRoundStock(stock)) return toolpath
+  const moves = stockSpaceMoves(toolpath.moves, stock)
+  if (moves === toolpath.moves) return toolpath
+  return { ...toolpath, moves, bounds: toolpathBoundsOfMoves(moves), toolpath }
+}
 
 export const DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK = 16384
 
@@ -170,6 +201,82 @@ export function toolpathOverlayOpacity(layerOpacity: number, emphasized: boolean
 
 export function toolpathPointToWorldTuple(point: ToolpathPoint): [number, number, number] {
   return [point.x, point.z, point.y]
+}
+
+/**
+ * Most the bar may turn between the two ends of one drawn piece of a wrapped
+ * Around move (issue #395). A move that turns further is subdivided so the
+ * curve it draws follows the bar rather than chording across it; at 5° a
+ * half turn draws as 36 pieces.
+ */
+export const MAX_WRAPPED_PIECE_TURN_DEGREES = 5
+
+/**
+ * The moves to draw for a wrapped Around toolpath, in stock space (issue
+ * #395). A wrapped point carries `a`; `stockSpacePoint` says which point of
+ * the unturned bar is under the tool tip there, so drawing it puts the pass
+ * on the bar's surface all the way round, underside included.
+ *
+ * A move whose angle changes is a curve on the bar, drawn as pieces of at
+ * most {@link MAX_WRAPPED_PIECE_TURN_DEGREES}. Both ends are unwrapped to the
+ * flat sheet, the piece ends are interpolated there, and each is wrapped
+ * back: the flat across coordinate is linear in the angle, so the pieces turn
+ * by equal steps. A move whose angle does not change stays one segment.
+ *
+ * An angle-free toolpath is returned exactly as it is — the same moves array —
+ * so the line data it draws cannot change.
+ */
+export function stockSpaceMoves(moves: readonly ToolpathMove[], stock: RoundStock): readonly ToolpathMove[] {
+  if (!moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) {
+    return moves
+  }
+  const frame = aroundFrame(stock)
+  const out: ToolpathMove[] = []
+  for (const move of moves) {
+    const fromA = move.from.a
+    const toA = move.to.a
+    // Only a move with a real turn is subdivided. A half-wrapped endpoint
+    // cannot happen on a wrapped path, and is drawn as it stands rather than
+    // guessed at.
+    if (fromA === undefined || toA === undefined || fromA === toA) {
+      out.push({ ...move, from: stockSpacePoint(move.from, stock), to: stockSpacePoint(move.to, stock) })
+      continue
+    }
+    const from = unwrapPoint(move.from, frame)
+    const to = unwrapPoint(move.to, frame)
+    const pieces = Math.max(1, Math.ceil(Math.abs(toA - fromA) / MAX_WRAPPED_PIECE_TURN_DEGREES))
+    let previous = stockSpacePoint(move.from, stock)
+    for (let piece = 1; piece <= pieces; piece++) {
+      const t = piece / pieces
+      const at = piece === pieces
+        ? move.to
+        : wrapPoint({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t, z: from.z + (to.z - from.z) * t }, frame)
+      const next = stockSpacePoint(at, stock)
+      out.push({ ...move, from: previous, to: next })
+      previous = next
+    }
+  }
+  return out
+}
+
+/** Bounds of a move list, in the same shape a generated toolpath carries. */
+export function toolpathBoundsOfMoves(moves: readonly ToolpathMove[]): ToolpathBounds | null {
+  if (moves.length === 0) return null
+  const bounds: ToolpathBounds = {
+    minX: Infinity, minY: Infinity, minZ: Infinity,
+    maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+  }
+  for (const move of moves) {
+    for (const point of [move.from, move.to]) {
+      bounds.minX = Math.min(bounds.minX, point.x)
+      bounds.minY = Math.min(bounds.minY, point.y)
+      bounds.minZ = Math.min(bounds.minZ, point.z)
+      bounds.maxX = Math.max(bounds.maxX, point.x)
+      bounds.maxY = Math.max(bounds.maxY, point.y)
+      bounds.maxZ = Math.max(bounds.maxZ, point.z)
+    }
+  }
+  return bounds
 }
 
 export function buildToolpathLinePositionChunks(
