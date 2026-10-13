@@ -171,7 +171,11 @@ function setupRows(project: Project, operation: Operation): OperationBookletRow[
       label: translate('booklet.label.setupTurn'),
       value: setupFace(setup) === 'top'
         ? translate('booklet.value.setupTop')
-        : translate('booklet.value.setupBottom', { axis: setup.orientation.axis.toUpperCase() }),
+        : setupFace(setup) === 'around'
+          // The bar is not turned for an Around setup — it sits in the chuck
+          // and the program wraps around it — so it is never a flip (#395).
+          ? translate('booklet.value.setupAround', { axis: setup.orientation.axis.toUpperCase() })
+          : translate('booklet.value.setupBottom', { axis: setup.orientation.axis.toUpperCase() }),
     },
     {
       label: translate('booklet.label.registration'),

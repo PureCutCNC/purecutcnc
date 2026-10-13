@@ -131,6 +131,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.label.setupNotes': 'Notes de montage',
   'booklet.value.setupTop': 'Face supérieure en haut',
   'booklet.value.setupBottom': 'Face inférieure en haut, retourné autour de {axis}',
+  'booklet.value.setupAround': 'Autour de la barre, barre selon {axis}',
   'booklet.value.registrationNone': 'Aucune déclarée',
   'booklet.registration.dowel': 'Pion',
   'booklet.registration.fence': 'Butée',

@@ -134,6 +134,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.label.setupNotes': 'Hinweise zur Aufspannung',
   'booklet.value.setupTop': 'Oberseite oben',
   'booklet.value.setupBottom': 'Unterseite oben, um {axis} gewendet',
+  'booklet.value.setupAround': 'Um den Stab, Stab entlang {axis}',
   'booklet.value.registrationNone': 'Keine angegeben',
   'booklet.registration.dowel': 'Passstift',
   'booklet.registration.fence': 'Anschlag',

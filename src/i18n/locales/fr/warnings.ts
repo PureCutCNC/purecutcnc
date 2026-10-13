@@ -241,6 +241,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNeedsRoundStock': "L'opération « {operation} » n'a pas été exportée : une coupe en rotation nécessite un matériau rond.",
   'warnings.postRotaryAngleNotEstablished': "L'opération « {operation} » n'a pas été exportée : elle commence à couper avant que la barre ait tourné à son angle.",
   'warnings.postRotaryTemplateUsesBorrowedAxis': "Les modèles de la machine écrivent {axis} comme mot d'axe, mais ce moteur entraîne l'axe rotatif sur cette machine. Retirez-le des modèles de la machine avant d'exporter.",
+  'warnings.postRotaryAxisMismatch': "L'opération « {operation} » n'a pas été exportée : l'axe rotatif de la machine est selon {machineAxis}, mais la barre est selon {stockAxis}.",
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',
   'warnings.bookletNoToolpath': 'Le parcours d’outil n’a pas pu être généré pour cette opération.',

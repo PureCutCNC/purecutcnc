@@ -54,13 +54,14 @@ assert.equal(caseRunsOnValidator({ machineId: 'grbl', validators: ['linuxcnc-rs2
 //
 // The old filter was `validator.machines.includes(entry.machineId)` and nothing
 // else. An absent `validators` list reproduces exactly that, so every case
-// without one is unchanged; only the own-axis `A` program may carry a list.
+// without one is unchanged; only the own-axis `A` programs may carry a list
+// (the #393 rotary case and the #395 Around pocket, which also writes `A`).
 
 const restrictedCases = CORPUS.filter((entry) => entry.validators !== undefined)
 assert.deepEqual(
   restrictedCases.map((entry) => entry.name),
-  ['rotary-own-axis-inverse-time'],
-  'the own-axis A program is the only case restricted to a validator subset',
+  ['rotary-own-axis-inverse-time', 'around-pocket-own-axis'],
+  'the own-axis A programs are the only cases restricted to a validator subset',
 )
 
 for (const entry of CORPUS) {

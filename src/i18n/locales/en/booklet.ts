@@ -129,6 +129,7 @@ export const bookletEn = {
   'booklet.label.setupNotes': 'Setup notes',
   'booklet.value.setupTop': 'Top face up',
   'booklet.value.setupBottom': 'Bottom face up, flipped about {axis}',
+  'booklet.value.setupAround': 'Around the bar, bar along {axis}',
   'booklet.value.registrationNone': 'None declared',
   'booklet.registration.dowel': 'Dowel',
   'booklet.registration.fence': 'Fence',

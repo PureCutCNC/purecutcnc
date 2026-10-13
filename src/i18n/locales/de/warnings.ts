@@ -261,6 +261,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryNeedsRoundStock': 'Operation „{operation}" wurde nicht exportiert: Ein Drehschnitt benötigt Rundmaterial.',
   'warnings.postRotaryAngleNotEstablished': 'Operation „{operation}" wurde nicht exportiert: Sie beginnt zu schneiden, bevor der Stab auf ihren Winkel gedreht wurde.',
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Die Vorlagen der Maschine schreiben {axis} als Achsenwort, aber dieser Motor treibt an dieser Maschine die Drehachse. Entfernen Sie es vor dem Export aus den Vorlagen der Maschine.',
+  'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

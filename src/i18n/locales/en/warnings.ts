@@ -261,6 +261,7 @@ export const warningsEn = {
   'warnings.postRotaryNeedsRoundStock': 'Operation "{operation}" was not exported: a turning cut needs round bar stock.',
   'warnings.postRotaryAngleNotEstablished': 'Operation "{operation}" was not exported: it starts cutting before the bar has been turned to its angle.',
   'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis} as an axis word, but that motor drives the rotary on this machine. Remove it from the machine's templates before exporting.",
+  'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',
