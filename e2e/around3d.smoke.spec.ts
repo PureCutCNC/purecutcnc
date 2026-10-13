@@ -27,12 +27,12 @@
  * any console error, which is what a bad geometry or NaN transform emits.
  */
 
+import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject, seedProject } from './helpers'
 import { roundStock, type MachineDefinition, type Project, type RoundStock } from '../src/types/project'
-import { BUNDLED_DEFINITIONS } from '../src/engine/gcode/definitions'
 
 const BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
 /** Flat coordinates of the Around pocket: on the sheet, x along, y across. */
@@ -44,8 +44,11 @@ const POCKET = { x: 50, y: BAR.profile.start.y + 12, w: 60, h: 10 }
  * machine shape, not a partial object.
  */
 function rotaryMachine(): MachineDefinition {
-  const grbl = BUNDLED_DEFINITIONS.find((definition) => definition.id === 'grbl')
-  if (!grbl) throw new Error('fixture: the bundled GRBL definition is missing')
+  // Read as a file: importing the definitions module would pull JSON imports
+  // into the Playwright runner, which Node refuses without an attribute.
+  const grbl = JSON.parse(
+    readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
+  ) as MachineDefinition
   return {
     ...structuredClone(grbl),
     id: 'e2e-rotary',

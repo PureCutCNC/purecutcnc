@@ -28,9 +28,9 @@
  * not been executed locally.
  */
 
+import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { bundledMachines } from '../src/machine/registry'
 import { defaultTool, newProject, roundStock, type Project } from '../src/types/project'
 import {
   cancelPendingAdd,
@@ -50,7 +50,12 @@ interface SavedFeature {
 /** A mm round bar with (optionally) a rotary machine along its X axis. */
 function aroundProject(options: { rotary: boolean }): Project {
   const base = newProject('Around smoke', 'mm')
-  const machine = { ...bundledMachines()[0], id: 'around-machine' }
+  // Read as a file: importing the machine registry would pull JSON imports
+  // into the Playwright runner, which Node refuses without an attribute.
+  const grbl = JSON.parse(
+    readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
+  ) as Project['meta']['machineDefinitions'][number]
+  const machine = { ...grbl, id: 'around-machine', builtin: false }
   base.stock = roundStock(25, 120, 'x')
   base.meta = {
     ...base.meta,
