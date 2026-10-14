@@ -205,13 +205,19 @@ function testAroundIsUnrolledFlat(): void {
   assert(input.project !== project, 'the flat project is a copy')
   assert(project.stock.shape === 'round', 'and the round project is untouched')
 
-  // The path is unwrapped: no point carries an angle and the across
+  // The path is unwrapped and folded onto the sheet's first circumference:
+  // every point carries the program's own angle (issue #395) while its across
   // coordinate spreads over the sheet rather than sitting on the centreline.
   const local = input.toolpaths.get('opAround')
   assert(local, 'the Around path is in the input')
   for (const move of local.moves) {
     for (const point of [move.from, move.to]) {
-      assert(!('a' in point), 'an unwrapped point has no angle key')
+      assert(typeof point.a === 'number', 'a folded point carries its program angle')
+      const foldedAngle = 360 * (point.y - frame.sheetStart) / frame.circumference
+      assert(
+        Math.abs((((point.a ?? 0) % 360) + 360) % 360 - foldedAngle) < 1e-9,
+        `the angle names the folded across coordinate, got a = ${point.a} at y = ${point.y}`,
+      )
       assert(
         point.y >= frame.sheetStart - 1e-9 && point.y <= frame.sheetStart + frame.circumference + 1e-9,
         `an unwrapped point stays on the sheet, got y = ${point.y}`,

@@ -400,6 +400,15 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
   await expect.poll(async () => Number((await ui.simSetup.progress(page).textContent())?.replace('%', '') ?? '0'), {
     timeout: 30_000,
   }).toBeGreaterThan(0)
+
+  // The bar view is an A-axis job, so the readout has a fourth cell and its
+  // angle leaves zero as the pocket turns away from the sheet's start line
+  // (issue #395).
+  const coordA = ui.simSetup.coordA(page)
+  await expect(coordA).toHaveCount(1)
+  await expect.poll(async () => Math.abs(Number((await coordA.textContent())?.replace('°', '') ?? '0')), {
+    timeout: 30_000,
+  }).toBeGreaterThan(0)
   await ui.simSetup.playPause(page).click()
 
   // An Around setup is the bar, and only the bar (issue #395 G3): the local
@@ -410,4 +419,16 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
   await ui.simSetup.picker(page).selectOption(topSetup.id)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
   await expect(unrolledToggle).toHaveCount(0)
+
+  // A flat setup has no A axis: give it a visible playback bar and prove the
+  // readout is still X, Y, Z only (issue #395).
+  // The inactive setup's section starts collapsed.
+  await ui.setupCam.section(page, 'top').getByRole('button', { name: /Top operations/ }).click()
+  await ui.operations.rowByName(page, 'Top pocket').click()
+  await expect(ui.simSetup.playTool(page)).toBeEnabled()
+  // Play tool is a toggle and may still be on from the Around run above.
+  if (!(await ui.simSetup.progress(page).isVisible())) await ui.simSetup.playTool(page).click()
+  await expect(ui.simSetup.progress(page)).toBeVisible()
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
+  await expect(ui.simSetup.coordA(page)).toHaveCount(0)
 })
