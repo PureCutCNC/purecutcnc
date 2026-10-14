@@ -491,9 +491,10 @@ const MODEL_BAND_LABEL_PAD = 5
  * circumference across, is what tells the user where it is. The band is
  * reference only — never hit-tested, snapped to, or given a context menu.
  *
- * `label` names a model for the note drawn at the band's top-left. The note is
- * left out when it does not fit the band on screen, so a short model does not
- * get a label wider than the thing it labels.
+ * `label` names a model for the note drawn at the top-left of the part of the
+ * band that is on screen. The note is left out when it does not fit that
+ * visible part, so a short model does not get a label wider than the thing it
+ * labels, and an off-screen band gets none at all.
  */
 export function drawAroundModelBands(
   ctx: CanvasRenderingContext2D,
@@ -527,14 +528,24 @@ export function drawAroundModelBands(
     ctx.setLineDash([])
     const text = label(band.name)
     const textWidth = ctx.measureText(text).width
-    // Readable only where the band can hold it: a short model along the bar (or
-    // a very thin one, on a Y bar) has no room for the note at the default zoom,
-    // so it is left out rather than spilling past the band it describes.
-    if (width < textWidth + MODEL_BAND_LABEL_PAD * 2 || height < MODEL_BAND_LABEL_LINE) continue
+    // The note sits at the top-left of the band's *visible* part, not of the
+    // band itself: zoomed in far enough that the band's own corner is off
+    // screen, a label pinned to that corner is drawn off screen and vanishes
+    // (the manager saw this). The canvas is measured in CSS pixels, as the
+    // other canvas draw helpers here measure it (`ctx.canvas.width/height`).
+    const visibleX = Math.max(x, 0)
+    const visibleY = Math.max(y, 0)
+    const visibleWidth = Math.min(x + width, ctx.canvas.width) - visibleX
+    const visibleHeight = Math.min(y + height, ctx.canvas.height) - visibleY
+    // Readable only where the visible part can hold it: a short model along the
+    // bar (or a very thin one, on a Y bar) has no room for the note at the
+    // default zoom, so it is left out rather than spilling past what it
+    // describes. An off-screen band has nothing visible to hold it either.
+    if (visibleWidth < textWidth + MODEL_BAND_LABEL_PAD * 2 || visibleHeight < MODEL_BAND_LABEL_LINE) continue
     ctx.fillStyle = palette.labelBackground
-    ctx.fillRect(x, y, textWidth + MODEL_BAND_LABEL_PAD * 2, MODEL_BAND_LABEL_LINE)
+    ctx.fillRect(visibleX, visibleY, textWidth + MODEL_BAND_LABEL_PAD * 2, MODEL_BAND_LABEL_LINE)
     ctx.fillStyle = palette.labelText
-    ctx.fillText(text, x + MODEL_BAND_LABEL_PAD, y + 1)
+    ctx.fillText(text, visibleX + MODEL_BAND_LABEL_PAD, visibleY + 1)
   }
   ctx.restore()
 }

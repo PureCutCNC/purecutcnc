@@ -131,7 +131,9 @@ export function aroundSheet(
  * The visible imported models as bands along the bar (issue #1015 slice K). The
  * model's footprint is its silhouette profile — the mesh itself is never loaded
  * — placed by its instance transform; `along` is clipped to the sheet, so a
- * model running past the bar still reads.
+ * model running past the bar still reads. A model lying wholly outside the bar
+ * (or with no extent at all) clips to `min >= max`: it has no band to draw and
+ * is left out.
  */
 export function aroundModelBands(
   project: Pick<Project, 'features' | 'featureDefinitions'>,
@@ -144,12 +146,13 @@ export function aroundModelBands(
     const definition = project.featureDefinitions[feature.definitionId]
     if (!definition) continue
     const bounds = getProfileBounds(resolveSketch(definition, feature.transform).profile)
-    const min = axis === 'x' ? bounds.minX : bounds.minY
-    const max = axis === 'x' ? bounds.maxX : bounds.maxY
+    const min = Math.max(axis === 'x' ? bounds.minX : bounds.minY, sheetAlong.min)
+    const max = Math.min(axis === 'x' ? bounds.maxX : bounds.maxY, sheetAlong.max)
+    if (min >= max) continue
     bands.push({
       featureId: feature.id,
       name: feature.name,
-      along: { min: Math.max(min, sheetAlong.min), max: Math.min(max, sheetAlong.max) },
+      along: { min, max },
     })
   }
   return bands

@@ -269,6 +269,8 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
 //   clipped" fails;
 // - a hidden feature, or a non-model feature, included → the visible-models
 //   assertion fails;
+// - a model wholly outside the bar still banded → "a model wholly outside the
+//   bar is no band" fails;
 // - the bands dropped or reordered → the band-by-id assertions fail.
 
 /** A visible imported model with a footprint at `profile`, as the tree holds it. */
@@ -336,6 +338,21 @@ function modelFeature(id: string, profile: SketchProfile, overrides: Partial<Ske
   assert(
     JSON.stringify(frame.modelBands[0].along) === JSON.stringify({ min: 10, max: 210 }),
     `a model running past the bar is clipped to the sheet: ${JSON.stringify(frame.modelBands[0].along)}`,
+  )
+}
+
+{
+  // A model wholly past one end of the bar clips to an inside-out extent
+  // (`min > max`): there is no width to draw, so it is left out rather than
+  // banded with no extent.
+  const project = projectWithFeatures(aroundProject(X_BAR), [
+    modelFeature('before', rectProfile(-60, 40, 20, 5)),
+    modelFeature('after', rectProfile(230, 40, 20, 5)),
+  ])
+  const frame = aroundSheet(project)!
+  assert(
+    frame.modelBands.length === 0,
+    `a model wholly outside the bar is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
   )
 }
 
