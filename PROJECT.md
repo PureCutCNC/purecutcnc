@@ -3,8 +3,8 @@
 ## Purpose
 
 PureCutCNC is a browser-first, Tauri-wrapped CAD/CAM workspace for CNC hobbyists,
-makers, and small shops — primarily 3-axis routers, with indexed 4th-axis (3+1)
-machining and experimental plasma cutting. It combines sketching, machining intent,
+makers, and small shops — primarily 3-axis routers, with rotary 4th-axis
+machining (wrapped around a bar, and indexed 3+1) and experimental plasma cutting. It combines sketching, machining intent,
 toolpath planning, preview, simulation, and export in one project rather than
 forcing users to move between separate CAD and CAM applications.
 
@@ -64,9 +64,11 @@ implemented behavior.
 PureCutCNC is not currently:
 
 - a general-purpose solid or direct 3D modeler;
-- a lathe, simultaneous multi-axis, or production-shop scheduling system.
-  Indexed 4th axis (rotate, lock, then cut with 3-axis moves) is in scope;
-  continuous and wrapped rotary motion is not;
+- a lathe, simultaneous 5-axis, or production-shop scheduling system.
+  A rotary 4th axis is in scope: wrapped machining (features drawn on the
+  unrolled surface of a bar, and imported models machined inside it, with the
+  bar turning during the cut) and indexed 3+1 (rotate, lock, then cut with
+  3-axis moves). Turning and lathe work are not;
 - a cloud collaboration or project-sync service;
 - an automatic source of safe feeds, speeds, tooling, or machine setup;
 - an in-product AI/MCP agent surface. AI agents are development tools today.
@@ -84,7 +86,8 @@ schedule.
 G-code for a 3-axis router without leaving the application — on desktop and
 tablet, in their own language — and trust the output enough to run it.
 
-Plasma cutting and indexed 3+1 ship before 1.0 as additions; they do not change
+Plasma cutting and rotary 4th-axis machining (wrapped and indexed 3+1) ship
+before 1.0 as additions; they do not change
 what 1.0 requires.
 
 **Required for 1.0:**
@@ -97,7 +100,7 @@ what 1.0 requires.
 **Explicitly post-1.0.** These are deferrals, not rejections, and each one is a
 legitimate future direction:
 
-- wrapped and continuous rotary machining; turning and lathe work;
+- turning and lathe work;
 - parametrics, variables, and part variants;
 - joinery and fabrication generator packs;
 - cloud sync or collaboration;
