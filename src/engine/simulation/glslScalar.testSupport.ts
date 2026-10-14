@@ -36,6 +36,8 @@ type ScalarFunction = (...args: Array<number | boolean>) => number | boolean
 
 const BUILTINS = {
   abs: Math.abs,
+  sin: Math.sin,
+  cos: Math.cos,
   min: Math.min,
   max: Math.max,
   mix: (a: number, b: number, t: number): number => a * (1 - t) + b * t,

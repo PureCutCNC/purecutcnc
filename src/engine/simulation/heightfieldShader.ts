@@ -15,6 +15,8 @@
  */
 
 import * as THREE from 'three'
+import type { AroundFrame } from '../aroundFrame'
+import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundShader, aroundUniforms } from './aroundWrap'
 import type { SimulationGrid } from './types'
 
 // theme-exempt: scene lighting reference — matches SimulationViewport light rig
@@ -319,6 +321,10 @@ const vertexShader = /* glsl */ `
   uniform vec2 uOrigin;
   uniform float uCellSize;
 
+  ${AROUND_FRAME_GLSL}
+#ifdef AROUND_WRAP
+  out float vAcross;
+#endif
   flat out ivec2 vCell;
   // Position inside the cell, 0..1 on both axes.
   out vec2 vLocal;
@@ -336,6 +342,11 @@ const vertexShader = /* glsl */ `
       uOrigin.y + (float(gl_InstanceID) + position.z) * uCellSize
     );
 
+#ifdef AROUND_WRAP
+    displaced = aroundClampSheet(displaced);
+    vAcross = uAroundX ? displaced.z : displaced.x;
+    displaced = aroundPosition(displaced);
+#endif
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
 `
@@ -347,6 +358,12 @@ const fragmentShader = /* glsl */ `
   uniform float uStockTopZ;
   uniform float uCellSize;
 
+  ${AROUND_FRAME_GLSL}
+#ifdef AROUND_WRAP
+  in float vAcross;
+  uniform mat4 modelMatrix;
+#endif
+  ${AROUND_CELL_GLSL}
   flat in ivec2 vCell;
   in vec2 vLocal;
   in float vHeight;
@@ -371,6 +388,9 @@ const fragmentShader = /* glsl */ `
     // normal is what painted a dark band along every tab.
     float wide = gradientWidening(vec3(vLocal, 0.0));
     vec3 lighting = calcLighting(surfaceNormal(vCell, vLocal, wide));
+#ifdef AROUND_WRAP
+    lighting = calcLighting(normalize(mat3(modelMatrix) * aroundSurfaceNormal(surfaceNormal(vCell, vLocal, wide), vAcross)));
+#endif
 
     fragColor = vec4(uColor * lighting * depthDarken(vHeight, uStockTopZ), 1.0);
   }
@@ -380,9 +400,12 @@ export function createHeightfieldMaterial(
   heightfieldTexture: THREE.DataTexture,
   grid: SimulationGrid,
   stockColor: THREE.Color,
+  frame?: AroundFrame,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
+    ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
+      ...aroundUniforms(frame),
       uHeightfield: { value: heightfieldTexture },
       uColor: { value: stockColor },
       uStockBottomZ: { value: grid.stockBottomZ },
@@ -390,8 +413,8 @@ export function createHeightfieldMaterial(
       uOrigin: { value: new THREE.Vector2(grid.originX, grid.originY) },
       uCellSize: { value: grid.cellSize },
     },
-    vertexShader,
-    fragmentShader,
+    vertexShader: aroundShader(vertexShader, frame),
+    fragmentShader: aroundShader(fragmentShader, frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })

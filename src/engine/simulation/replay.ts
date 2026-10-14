@@ -41,7 +41,7 @@ export interface ApplyMoveResult {
   dirtyRegion: DirtyRegion | null
 }
 
-export function applyMoveToGrid(
+function applyMoveKernel(
   grid: SimulationGrid,
   move: ToolpathMove,
   toolRadius: number,
@@ -152,6 +152,44 @@ export function applyMoveToGrid(
     changedCount: changed,
     dirtyRegion: changed > 0 ? { colMin: dirtyColMin, colMax: dirtyColMax, rowMin: dirtyRowMin, rowMax: dirtyRowMax } : null,
   }
+}
+
+/** Periodic cutter overlap is dispatched outside the unchanged cell kernel. */
+export function applyMoveToGrid(
+  grid: SimulationGrid,
+  move: ToolpathMove,
+  toolRadius: number,
+  toolType: SimulationReplayItem['toolType'],
+  vBitAngle: number | null,
+): ApplyMoveResult {
+  const result = applyMoveKernel(grid, move, toolRadius, toolType, vBitAngle)
+  if (!grid.wrap) return result
+  const { axis, period } = grid.wrap
+  const low = axis === 'x' ? grid.originX : grid.originY
+  const min = Math.min(move.from[axis], move.to[axis]) - toolRadius
+  const max = Math.max(move.from[axis], move.to[axis]) + toolRadius
+  const shifts: number[] = []
+  if (min < low) shifts.push(period)
+  if (max > low + period) shifts.push(-period)
+  for (const shift of shifts) {
+    const shifted = {
+      ...move,
+      from: { ...move.from, [axis]: move.from[axis] + shift },
+      to: { ...move.to, [axis]: move.to[axis] + shift },
+    }
+    const copy = applyMoveKernel(grid, shifted, toolRadius, toolType, vBitAngle)
+    result.changedCount += copy.changedCount
+    if (copy.dirtyRegion) {
+      const region = result.dirtyRegion
+      result.dirtyRegion = region ? {
+        colMin: Math.min(region.colMin, copy.dirtyRegion.colMin),
+        colMax: Math.max(region.colMax, copy.dirtyRegion.colMax),
+        rowMin: Math.min(region.rowMin, copy.dirtyRegion.rowMin),
+        rowMax: Math.max(region.rowMax, copy.dirtyRegion.rowMax),
+      } : copy.dirtyRegion
+    }
+  }
+  return result
 }
 
 function computeStats(grid: SimulationGrid, processedMoveCount: number): SimulationStats {

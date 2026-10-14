@@ -35,6 +35,7 @@ import {
   setupOperations,
   simulationSetups,
   type SimulationSetupInput,
+  type SimulationBar,
 } from './simulationSetup'
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
@@ -103,6 +104,7 @@ export function useSimulationModel({
    * and tailstock bands as flat boxes rather than cylinders about the bar.
    */
   simulationStock: Stock
+  simulationBar?: SimulationBar
 } {
   /**
    * The simulated setup (issue #947). A pick from the panel holds while the
@@ -237,6 +239,7 @@ export function useSimulationModel({
     const emptySimulationResult = {
       grid: createSimulationGrid(localProject, {
         targetLongAxisCells: simulationDetailCells,
+        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
       }),
       stats: {
         removedCellCount: 0,
@@ -255,6 +258,7 @@ export function useSimulationModel({
 
       return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, {
         targetLongAxisCells: simulationDetailCells,
+        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
       })
     }
 
@@ -287,6 +291,7 @@ export function useSimulationModel({
 
     return simulateReplayItemsHeightfield(localProject, replayItems, {
       targetLongAxisCells: simulationDetailCells,
+      wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
     })
   }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
@@ -365,6 +370,7 @@ export function useSimulationModel({
 
       return simulateReplayItemsHeightfield(localProject, priorItems, {
         targetLongAxisCells: simulationDetailCells,
+        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
       }).grid
     })
 
@@ -432,5 +438,6 @@ export function useSimulationModel({
     simulationSetupPicker,
     simulationClamps,
     simulationStock,
+    simulationBar: setupInput?.bar,
   }
 }

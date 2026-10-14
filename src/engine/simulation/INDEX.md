@@ -6,10 +6,11 @@ result is rendered as a GPU-driven heightfield mesh. Pure logic + Three.js mesh
 builders — no React.
 
 ## Core
+- `aroundWrap.ts` — compile-time Around shader chunks: shared wrap and radial-normal formulas, periodic neighbor lookup and cylinder bounds; flat materials retain their original shaders
 - `types.ts` — `SimulationGrid`, `DirtyRegion`, `SimulationBuildOptions`, `SimulationStats`
 - `grid.ts` — grid spec resolution and `createSimulationGrid` allocation
 - `tools.ts` — `cutterSurfaceZ`: the cutter's lower-surface profile used to lower cells
-- `replay.ts` — applies toolpath moves to the grid (`applyMoveToGrid`, `simulateOperationHeightfield`); a plasma torch cuts a flat one-kerf, full-depth slot along every torch-on move and a kerf-wide hole at each pierce; the cell loop is allocation-free with per-move cutter dispatch (see `replay.test.ts` for the reference-parity contract)
+- `replay.ts` — periodic cutter copies at Around seams wrap outside the unchanged cut kernel; applies toolpath moves to the grid (`applyMoveToGrid`, `simulateOperationHeightfield`); a plasma torch cuts a flat one-kerf, full-depth slot along every torch-on move and a kerf-wide hole at each pierce; the cell loop is allocation-free with per-move cutter dispatch (see `replay.test.ts` for the reference-parity contract)
 - `playback.ts` — playback state: poses, options, grid cloning for stepped playback. Forward seeks advance incrementally (cuts are monotonic); the dirty region accumulates until the caller uploads and clears it
 
 ## Rendering (Three.js)
@@ -22,6 +23,8 @@ builders — no React.
 - `index.ts` — barrel export
 
 ## Tests
+- `aroundReplay.test.ts` — multi-turn folded replay, periodic cutter overlap on both seam sides and axes, dirty-region union, flat-reference parity and playback/scrub parity
+- `aroundWrap.test.ts` — executes the actual scalar GLSL against the frozen rotary transforms on both axes in every quadrant; tests bar-group turn/tool placement, radial normals, cylinder bounds and compile-time material variants
 - `gpuMesh.test.ts` — heightfield texture/mesh construction and per-cell top geometry
 - `tabbedEdgeSimulation.test.ts` — real rectangle/Edge Out/auto-tab toolpath replay at two detail levels, including playback and through-cut neighbors
 - `instancedBoundary.test.ts` — strip template scaling, instance counts, group wiring, and the step predicate and surface normal the surface and walls share

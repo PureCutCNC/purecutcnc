@@ -25,6 +25,7 @@ export interface SimulationGrid {
   rows: number
   stockBottomZ: number
   stockTopZ: number
+  wrap?: { axis: 'x' | 'y'; period: number }
   topZ: Float32Array
 }
 
@@ -36,6 +37,7 @@ export interface DirtyRegion {
 }
 
 export interface SimulationBuildOptions {
+  wrap?: SimulationGrid['wrap']
   targetLongAxisCells?: number
 }
 

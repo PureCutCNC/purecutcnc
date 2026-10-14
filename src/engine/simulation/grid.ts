@@ -90,6 +90,7 @@ export function createSimulationGrid(
 
   return {
     ...spec,
+    ...(options.wrap ? { wrap: options.wrap } : {}),
     topZ,
   }
 }
