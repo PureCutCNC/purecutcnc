@@ -28,7 +28,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { CORPUS, caseRunsOnValidator } from './corpus'
+import { CORPUS, caseRunsOnValidator, renderCase } from './corpus'
 
 const GRBL_MACHINES = ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma']
 const LINUXCNC_MACHINES = ['linuxcnc', 'generic']
@@ -60,7 +60,7 @@ assert.equal(caseRunsOnValidator({ machineId: 'grbl', validators: ['linuxcnc-rs2
 const restrictedCases = CORPUS.filter((entry) => entry.validators !== undefined)
 assert.deepEqual(
   restrictedCases.map((entry) => entry.name),
-  ['rotary-own-axis-inverse-time', 'around-pocket-own-axis'],
+  ['rotary-own-axis-inverse-time', 'around-pocket-own-axis', 'rotary-model-rough-own-axis'],
   'the own-axis A programs are the only cases restricted to a validator subset',
 )
 
@@ -84,5 +84,40 @@ assert.equal(caseRunsOnValidator(ownAxis, 'grbl-gvalidate', GRBL_MACHINES), fals
   'Grbl rejects the A word, so the own-axis program is never fed to it')
 assert.equal(caseRunsOnValidator(ownAxis, 'fabmo-opensbp', ['shopbot']), false,
   'and the machine claim still keeps it away from a validator that cannot read its dialect')
+
+// ── 4. The model-in-a-bar rotary cases (issue #1015 slice E) ──
+//
+// Both are generated from the fixture's own rotary toolpath, so each is
+// rendered here and asserted to carry the rotary program the case describes:
+// the angle word its machine's rotary block defines, and the inverse-time pair
+// around a turning move. A case whose machine lost that block — the mutation
+// the review asked for, changing it to a machine without a rotary axis —
+// exports the bar's motion as ordinary linear G-code: no angle word, no `G93`,
+// and it would then be validated as if it proved something about rotary output.
+
+const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp]> = [
+  ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/],
+  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/],
+]
+
+for (const [name, machineId, angleWord] of ROTARY_MODEL_CASES) {
+  const entry = CORPUS.find((candidate) => candidate.name === name)
+  assert.ok(entry, `${name} is registered in the corpus`)
+  assert.equal(entry.machineId, machineId, `${name} runs on the ${machineId} machine definition`)
+  const { gcode, warnings } = renderCase(entry)
+  assert.deepEqual(warnings, [], `${name} exports without warnings`)
+  assert.match(gcode, angleWord, `${name} writes the angle under its machine's rotary word`)
+  assert.match(gcode, /\bG93\b/, `${name} turns in inverse time, so the rotary block reached the export`)
+  assert.match(gcode, /\bG94\b/, `${name} leaves inverse time again (rule 4)`)
+}
+const rotaryFinishBorrowed = CORPUS.find((entry) => entry.name === 'rotary-model-finish-borrowed-y')
+const rotaryRoughOwnAxis = CORPUS.find((entry) => entry.name === 'rotary-model-rough-own-axis')
+assert.ok(rotaryFinishBorrowed && rotaryRoughOwnAxis)
+assert.equal(caseRunsOnValidator(rotaryFinishBorrowed, 'grbl-gvalidate', GRBL_MACHINES), true,
+  'the borrowed-motor model case runs wherever Grbl is claimed')
+assert.equal(caseRunsOnValidator(rotaryRoughOwnAxis, 'grbl-gvalidate', GRBL_MACHINES), false,
+  'the own-axis model case is never fed to Grbl, which rejects the A word')
+assert.equal(caseRunsOnValidator(rotaryRoughOwnAxis, 'linuxcnc-rs274', LINUXCNC_MACHINES), true,
+  'and it runs on the LinuxCNC validator')
 
 console.log('gcode-conformance corpus selection tests passed')

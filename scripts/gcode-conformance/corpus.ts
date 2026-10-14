@@ -64,6 +64,7 @@ import { newProject, defaultTool, getStockBounds, rectProfile, roundStock } from
 import type { MachiningSetup, Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
 import { projectWithFeatures, withBottomSetup } from '../../src/test/projectFixtures'
+import { rotaryOperationFixture } from '../../src/test/rotaryOperationFixture'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../src/test/plasmaExportFixtures'
 import { syncProjectSetups } from '../../src/store/helpers/setups'
 import { toolpathInStockFrame } from '../../src/engine/setupFrameProject'
@@ -679,6 +680,38 @@ function generatedAroundPocketOwnAxis(): { project: Project; operation: Operatio
   )
 }
 
+/**
+ * A real model-in-a-bar rotary toolpath (issue #1015). The finish and rough
+ * generators' own output on the fixture's short bar, so the case exports the
+ * program a rotary operation actually produces rather than a hand-built
+ * turning path — the same reasoning as the Around cases above. The stepover is
+ * widened so each program stays short enough to keep the corpus fast.
+ */
+function generatedRotaryModel(
+  kind: 'rotary_rough' | 'rotary_finish',
+  caseName: string,
+): () => { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  return () => {
+    const fixture = rotaryOperationFixture('x', kind)
+    const operation: Operation = { ...fixture.operations[0], stepover: 1.5 }
+    // A larger cutter than the fixture's: `sampleSpacing` and the angular pass
+    // count both scale with the tool, so this keeps each program short.
+    const project: Project = {
+      ...fixture,
+      tools: [{ ...fixture.tools[0], diameter: 6 }],
+      operations: [operation],
+    }
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope || envelope.result.moves.length === 0 || envelope.result.warnings.length > 0) {
+      throw new Error(`${caseName} corpus fixture did not generate cleanly: ${JSON.stringify(envelope?.result.warnings)}`)
+    }
+    if (!envelope.result.moves.every((move) => move.from.a !== undefined && move.to.a !== undefined)) {
+      throw new Error(`${caseName} corpus fixture is not a wrapped rotary toolpath — the case would prove nothing`)
+    }
+    return { project, operation, toolpath: envelope.result }
+  }
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -857,6 +890,45 @@ export const CORPUS: CorpusCase[] = [
     validators: ['linuxcnc-rs274'],
     moves: [],
     generated: generatedAroundPocketOwnAxis,
+  },
+  {
+    name: 'rotary-model-finish-borrowed-y',
+    covers: 'issue #1015 - a finish pass over an imported model inside a round bar on a '
+      + 'borrowed-Y rotary: the Around header, the angle carried by the borrowed motor and '
+      + 'never written as a linear Y, and inverse time around each turning link.',
+    units: 'mm',
+    machineId: 'grbl',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'borrowed',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    moves: [],
+    generated: generatedRotaryModel('rotary_finish', 'rotary-model-finish-borrowed-y'),
+  },
+  {
+    name: 'rotary-model-rough-own-axis',
+    covers: 'issue #1015 - a roughing pass over the same model on an own-axis rotary: the '
+      + 'angle written under A over several layers. Restricted to the LinuxCNC validator '
+      + 'because plain Grbl rejects the A word, a dialect verdict rather than a motion one.',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    definitionOverrides: (base) => ({
+      ...base,
+      rotary: {
+        about: 'x',
+        drive: 'own',
+        reversed: false,
+        inverseTimeFeed: { on: 'G93', off: 'G94' },
+      },
+    }),
+    validators: ['linuxcnc-rs274'],
+    moves: [],
+    generated: generatedRotaryModel('rotary_rough', 'rotary-model-rough-own-axis'),
   },
   {
     name: 'trochoidal-edge-outside',

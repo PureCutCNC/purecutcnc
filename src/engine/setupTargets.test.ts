@@ -39,6 +39,7 @@ import { applyOperationMove, planOperationMove } from './setupOperationMove'
 import { operationCutRange, throughFeatureCoverage } from './setupReach'
 import {
   crossFaceTargetIds,
+  featureReachableFromFace,
   isThroughFeature,
   judgeTargetFromFace,
   spanReachesBothFaces,
@@ -523,3 +524,29 @@ const aroundTargetProject = projectWithFeatures(newProject(), [{
 }])
 assert(!isThroughFeature(aroundTargetProject, aroundTargetProject.features[0]), 'Around never earns a through-face exception')
 assertEqual(judgeTargetFromFace(aroundTargetProject, aroundTargetProject.features[0], 'top').status, 'rejected', 'Top cannot target Around even across full thickness')
+
+// ── Rotary reach (issue #1015 slice E) ────────────────────────
+//
+// A rotary operation may target an imported model, and only from Around. The
+// `face === 'around' &&` in `featureReachableFromFace` is the whole rule: drop
+// it and the model reads as reachable from Top and Bottom too. A 2D feature is
+// reachable from none of the three faces for a rotary kind.
+
+const rotaryProject: Project = makeProject([])
+const rectTarget = rotaryProject.features.find((entry) => entry.id === 'tray')!
+const modelTarget = { ...rectTarget, id: 'model', definitionId: 'model' }
+rotaryProject.featureDefinitions = {
+  ...rotaryProject.featureDefinitions,
+  model: { ...rotaryProject.featureDefinitions[rectTarget.definitionId], id: 'model', kind: 'stl', operation: 'model' },
+}
+for (const face of ['top', 'bottom', 'around'] as const) {
+  assertEqual(
+    featureReachableFromFace(rotaryProject, modelTarget, face, 'rotary_finish'),
+    face === 'around',
+    `a rotary kind reaches an imported model only from around, not from ${face}`,
+  )
+  assert(
+    !featureReachableFromFace(rotaryProject, rectTarget, face, 'rotary_rough'),
+    `a rotary kind reaches no 2D feature, from ${face}`,
+  )
+}
