@@ -78,6 +78,53 @@ function testSubdivideLeavesShortMovesUntouched(): void {
   console.log('subdivideMoves short-move passthrough: PASSED')
 }
 
+function testSubdivideInterpolatesAngle(): void {
+  console.log('Testing subdivideMoves interpolates the rotary angle only when both ends carry one...')
+  const rotary: ToolpathMove = {
+    kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 10, y: 0, z: 0, a: 90 },
+  }
+  const out = subdivideMoves([rotary], 2)
+  assert(out.length === 5, `expected 5 sub-segments, got ${out.length}`)
+  assert(approx(out[0].from.a ?? NaN, 0) && approx(out[0].to.a ?? NaN, 18), 'the angle interpolates across the first sub-segment')
+  assert(approx(out[out.length - 1].to.a ?? NaN, 90), 'and reaches the end angle')
+  for (let i = 1; i < out.length; i += 1) {
+    assert(approx(out[i].from.a ?? NaN, out[i - 1].to.a ?? NaN), 'the angle stays continuous across sub-segments')
+  }
+
+  const oneEnded: ToolpathMove = { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 5 }, to: { x: 10, y: 0, z: 0 } }
+  assert(
+    subdivideMoves([oneEnded], 2).every((move) => move.from.a === undefined && move.to.a === undefined),
+    'a move with an angle at one end only is not partly rotary',
+  )
+  console.log('subdivideMoves interpolates the angle: PASSED')
+}
+
+function testPoseCarriesAngle(): void {
+  console.log('Testing getPose carries the program angle, and has no a key without one...')
+  const controller = new PlaybackController(
+    flatGrid(),
+    [{ kind: 'cut', from: { x: 0, y: 0, z: 0, a: 10 }, to: { x: 10, y: 0, z: 0, a: 30 } }],
+    FLAT_TOOL,
+    { maxSegmentLength: 0 },
+  )
+  assert(approx(controller.getPose().a ?? NaN, 10), 'the pose starts at the move start angle')
+  controller.advance(5)
+  assert(approx(controller.getPose().a ?? NaN, 20), 'the pose interpolates the angle halfway along the move')
+  controller.advance(5)
+  assert(controller.isFinished(), 'the move is finished')
+  assert(approx(controller.getPose().a ?? NaN, 30), 'the finished pose holds the end angle')
+
+  const plain = new PlaybackController(
+    flatGrid(),
+    [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 } }],
+    FLAT_TOOL,
+    { maxSegmentLength: 0 },
+  )
+  assert(!('a' in plain.getPose()), 'a move without an angle gives a pose with no a key')
+  assert(!('a' in new PlaybackController(flatGrid(), [], FLAT_TOOL).getPose()), 'an empty path gives a pose with no a key')
+  console.log('getPose carries the program angle: PASSED')
+}
+
 function testReducedFeedMoveAdvancesSlower(): void {
   console.log('Testing feed-scaled advance covers less geometry on reduced-feed cuts...')
   // Two equal-length cuts: the first at full feed, the second at 10% feed.
@@ -212,6 +259,8 @@ function testDirtyRegionAccumulatesUntilCleared(): void {
 try {
   testSubdividePreservesMoveMetadata()
   testSubdivideLeavesShortMovesUntouched()
+  testSubdivideInterpolatesAngle()
+  testPoseCarriesAngle()
   testReducedFeedMoveAdvancesSlower()
   testDisabledReferenceFeedIsConstantSpeed()
   testSeekIsGeometricDespiteFeedScaling()

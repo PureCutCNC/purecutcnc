@@ -826,6 +826,8 @@ export const face = {
 export const simSetup = {
   canvas: (page: Page) => page.locator('#workspace-panel-simulation canvas'),
   progress: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__readout'),
+  /** The A-axis DRO cell; present only in the bar view (issue #395). */
+  coordA: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__coord--a .simulation-playback-bar__coord-value'),
   playPause: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn--primary'),
   viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),
   picker: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('combobox', { name: 'Setup' }),

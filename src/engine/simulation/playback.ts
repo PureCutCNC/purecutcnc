@@ -59,6 +59,9 @@ export interface PlaybackPose {
   /** feedScale of the current move (undefined when the move has none, i.e. 1×).
    *  Lets the readout show the reduced feed on slotting pocket cuts. */
   feedScale: number | undefined
+  /** The program's rotary angle in degrees, present only when the move carries
+   *  one (issue #395). Absent for every flat job. */
+  a?: number
 }
 
 export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
@@ -72,12 +75,18 @@ function moveLength(move: ToolpathMove): number {
   return Math.hypot(dx, dy, dz)
 }
 
-function interpolatePoint(move: ToolpathMove, fraction: number): { x: number; y: number; z: number } {
-  return {
+function interpolatePoint(move: ToolpathMove, fraction: number): { x: number; y: number; z: number; a?: number } {
+  const point: { x: number; y: number; z: number; a?: number } = {
     x: move.from.x + (move.to.x - move.from.x) * fraction,
     y: move.from.y + (move.to.y - move.from.y) * fraction,
     z: move.from.z + (move.to.z - move.from.z) * fraction,
   }
+  // A rotary coordinate interpolates linearly, but only when both ends carry
+  // one — a move with an angle at one end only is not partly rotary.
+  if (move.from.a !== undefined && move.to.a !== undefined) {
+    point.a = move.from.a + (move.to.a - move.from.a) * fraction
+  }
+  return point
 }
 
 function isCuttingMove(move: ToolpathMove): boolean {
@@ -244,12 +253,18 @@ export class PlaybackController {
 
     if (this.finished) {
       const last = this.moves[this.moves.length - 1]
-      return { x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind, feedScale: last.feedScale }
+      return {
+        x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind, feedScale: last.feedScale,
+        ...(last.to.a !== undefined ? { a: last.to.a } : {}),
+      }
     }
 
     const move = this.moves[this.moveIndex]
     const p = interpolatePoint(move, this.moveFraction)
-    return { x: p.x, y: p.y, z: p.z, moveKind: move.kind, feedScale: move.feedScale }
+    return {
+      x: p.x, y: p.y, z: p.z, moveKind: move.kind, feedScale: move.feedScale,
+      ...(p.a !== undefined ? { a: p.a } : {}),
+    }
   }
 
   /**

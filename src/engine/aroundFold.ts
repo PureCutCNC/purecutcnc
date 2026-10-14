@@ -33,6 +33,16 @@ function foldedBounds(moves: readonly ToolpathMove[]): ToolpathBounds | null {
   return bounds
 }
 
+/**
+ * The program's rotary angle at an across coordinate, never reduced to one
+ * turn (issue #395): a line that wraps 1.5 times reads 0..540, not 0..180. The
+ * angle is taken from the coordinate *before* the seam shift, which is what
+ * preserves the turn count, and it keeps both sides of a seam equal.
+ */
+function acrossAngle(across: number, start: number, period: number): number {
+  return 360 * (across - start) / period
+}
+
 /** Fold sheet moves at circumference seams, keeping each swept piece continuous. */
 export function foldToolpath<T extends ToolpathResult>(result: T, frame: AroundFrame): T {
   const axis = frame.axis === 'x' ? 'y' : 'x'
@@ -40,7 +50,12 @@ export function foldToolpath<T extends ToolpathResult>(result: T, frame: AroundF
   const period = frame.circumference
   const end = start + period
   if (result.moves.every((move) => [move.from, move.to].every((point) => point[axis] >= start && point[axis] <= end))) {
-    return { ...result, bounds: foldedBounds(result.moves) }
+    const moves = result.moves.map((move) => ({
+      ...move,
+      from: { ...move.from, a: acrossAngle(move.from[axis], start, period) },
+      to: { ...move.to, a: acrossAngle(move.to[axis], start, period) },
+    }))
+    return { ...result, moves, bounds: foldedBounds(moves) }
   }
   const moves: ToolpathMove[] = []
   const collisions = new Set(result.collidingMoveIndices)
@@ -65,13 +80,15 @@ export function foldToolpath<T extends ToolpathResult>(result: T, frame: AroundF
       const middle = from + (to - from) * (t0 + t1) / 2
       const shift = Math.floor((middle - start) / period) * period
       const at = (t: number): ToolpathPoint => {
+        const across = move.from[axis] + (move.to[axis] - move.from[axis]) * t
         const point = {
           ...move.from,
           x: move.from.x + (move.to.x - move.from.x) * t,
           y: move.from.y + (move.to.y - move.from.y) * t,
           z: move.from.z + (move.to.z - move.from.z) * t,
+          a: acrossAngle(across, start, period),
         }
-        point[axis] -= shift
+        point[axis] = across - shift
         // Keep interpolated seam endpoints exact despite floating point roundoff.
         if (Math.abs(point[axis] - start) < period * 1e-12) point[axis] = start
         if (Math.abs(point[axis] - end) < period * 1e-12) point[axis] = end

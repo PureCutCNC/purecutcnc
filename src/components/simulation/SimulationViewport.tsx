@@ -22,7 +22,7 @@ import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldSh
 import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
-import { createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
+import { barReadout, createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -959,6 +959,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     feedScale: pose.feedScale,
   }), [origin.x, origin.y, origin.z])
 
+  // The readout pose. A flat setup shows the origin-relative tool position it
+  // always did. The bar view shows the tool as the program has it — the wrapped
+  // point in the real project origin, plus the program's own angle — so Y reads
+  // the bar's centreline and Z the real height (issue #395).
+  const toReadoutPose = useCallback((pose: PlaybackPose): PlaybackPose => {
+    const currentBar = barRef.current
+    const frame = wrappedFrameRef.current
+    if (currentBar && frame) {
+      return { ...barReadout(pose, frame, currentBar.origin), moveKind: pose.moveKind, feedScale: pose.feedScale }
+    }
+    return toOriginRelative(pose)
+  }, [toOriginRelative])
+
   // Throttled state update: pose + progress are written to refs every RAF frame,
   // flushed to React state at ~10 Hz so the UI readout stays responsive without
   // triggering a React re-render on every animation frame. Coupling setState to
@@ -969,15 +982,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     // Immediately reflect the initial pose (handles seek while paused).
-    setDisplayPose(toOriginRelative(latestPoseRef.current))
+    setDisplayPose(toReadoutPose(latestPoseRef.current))
 
     const interval = setInterval(() => {
-      setDisplayPose(toOriginRelative(latestPoseRef.current))
+      setDisplayPose(toReadoutPose(latestPoseRef.current))
       setPlaybackProgress(latestProgressRef.current)
     }, 100)
 
     return () => clearInterval(interval)
-  }, [playbackEnabled, toOriginRelative])
+  }, [playbackEnabled, toReadoutPose])
 
   useEffect(() => {
     if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
@@ -1440,6 +1453,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               <span className="simulation-playback-bar__coord-label">Z</span>
               <span className="simulation-playback-bar__coord-value">{formatCoord(displayPose.z, playbackUnits)}</span>
             </div>
+            {bar && (
+              // The bar view's A axis (issue #395). The program's angle in
+              // degrees, never reduced to one turn, so a 1.5-turn pass reads up
+              // to 540°. A flat setup has no A axis and shows no cell.
+              <div className="simulation-playback-bar__coord simulation-playback-bar__coord--a">
+                <span className="simulation-playback-bar__coord-label">A</span>
+                <span className="simulation-playback-bar__coord-value">
+                  {displayPose.a !== undefined ? `${displayPose.a.toFixed(3)}°` : '—'}
+                </span>
+              </div>
+            )}
           </div>
           <div
             className="simulation-playback-bar__feed"
