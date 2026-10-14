@@ -23,7 +23,7 @@ const length = (move: ToolpathMove): number => Math.hypot(move.to.x - move.from.
 const path = (moves: ToolpathMove[], collidingMoveIndices?: number[]): ToolpathResult => ({ operationId: 'fold', moves, bounds: null, warnings: [], collidingMoveIndices })
 
 for (const axis of ['x', 'y'] as const) {
-  const frame: AroundFrame = { axis, centre: 17, radius: 10, sheetStart: -7, circumference: 40 }
+  const frame: AroundFrame = { axis, centre: 17, radius: 10, zero: 13, sheetStart: -7, circumference: 40 }
   const across = axis === 'x' ? 'y' : 'x'
   const point = (along: number, offset: number, z = 6): { x: number; y: number; z: number } => axis === 'x'
     ? { x: along, y: frame.sheetStart + offset, z }
@@ -56,8 +56,8 @@ for (const axis of ['x', 'y'] as const) {
   const ending: ToolpathMove = { kind: 'cut', from: point(5, 10), to: point(10, 40) }
   const foldedEnding = foldToolpath(path([ending]), frame)
   assert.equal(foldedEnding.moves.length, 1, 'ending exactly at first seam is not split')
-  assert.deepEqual(foldedEnding.moves[0].from, { ...ending.from, a: 90 }, 'a first-turn start carries its program angle')
-  assert.deepEqual(foldedEnding.moves[0].to, { ...ending.to, a: 360 }, 'the first seam reads a full 360, not zero')
+  assert.deepEqual(foldedEnding.moves[0].from, { ...ending.from, a: -90 }, 'a first-turn start carries its program angle from the zero line')
+  assert.deepEqual(foldedEnding.moves[0].to, { ...ending.to, a: 180 }, 'the first seam reads half a turn from the zero line, not zero')
   const outsideEnding = { ...ending, from: point(5, 50), to: point(10, 80) }
   assert.equal(foldToolpath(path([outsideEnding]), frame).moves.length, 1, 'later seam endpoint is not split')
   const starting = foldToolpath(path([{ ...ending, from: point(5, 40), to: point(10, 55) }]), frame)
@@ -69,8 +69,8 @@ for (const axis of ['x', 'y'] as const) {
   ])
   assert.deepEqual(geometry(foldedInside.moves), geometry(inside.moves), 'first-turn toolpath geometry is unchanged')
   assert(
-    foldedInside.moves.every((move) => [move.from, move.to].every((p) => typeof p.a === 'number' && p.a >= 0 && p.a <= 360)),
-    'and every first-turn point still carries its program angle',
+    foldedInside.moves.every((move) => [move.from, move.to].every((p) => typeof p.a === 'number' && p.a >= -180 && p.a <= 360)),
+    'and every first-turn point still carries its program angle from the zero line',
   )
   const vertical = foldToolpath(path([{ kind: 'plunge', from: point(5, 90, 9), to: point(5, 90, 2) }]), frame)
   assert.equal(vertical.moves[0].from[across], frame.sheetStart + 10)
@@ -85,7 +85,7 @@ for (const axis of ['x', 'y'] as const) {
 // The folded angle is the program's own, unreduced (issue #395): a 1.5-turn
 // line reads 0..540, and a seam reads the same angle on both of its sides.
 for (const axis of ['x', 'y'] as const) {
-  const frame: AroundFrame = { axis, centre: 17, radius: 10, sheetStart: -7, circumference: 40 }
+  const frame: AroundFrame = { axis, centre: 17, radius: 10, zero: 13, sheetStart: -7, circumference: 40 }
   const point = (along: number, offset: number, z = 6): { x: number; y: number; z: number } => axis === 'x'
     ? { x: along, y: frame.sheetStart + offset, z }
     : { x: frame.sheetStart + offset, y: along, z }
@@ -94,8 +94,8 @@ for (const axis of ['x', 'y'] as const) {
     const folded = foldToolpath(path([line]), frame)
     const angles = folded.moves.flatMap((piece) => [piece.from.a ?? NaN, piece.to.a ?? NaN])
     assert(angles.every((a) => Number.isFinite(a)), `${axis}/${sign}: every folded point carries an angle`)
-    assert.equal(Math.min(...angles), sign > 0 ? 0 : -540, `${axis}/${sign}: 1.5 turns reaches its start angle`)
-    assert.equal(Math.max(...angles), sign > 0 ? 540 : 0, `${axis}/${sign}: 1.5 turns reads 540, not one turn`)
+    assert.equal(Math.min(...angles), sign > 0 ? -180 : -720, `${axis}/${sign}: 1.5 turns reaches its start angle from the zero line`)
+    assert.equal(Math.max(...angles), sign > 0 ? 360 : -180, `${axis}/${sign}: 1.5 turns spans one and a half turns, unreduced`)
     for (const [i, piece] of folded.moves.entries()) {
       if (i) assert.equal(folded.moves[i - 1].to.a, piece.from.a, `${axis}/${sign}: both sides of a seam read the same angle`)
     }

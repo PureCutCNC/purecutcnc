@@ -63,6 +63,11 @@ for (const axis of ['x', 'y'] as const) {
     assert.equal(material.defines.AROUND_WRAP, 1, 'surface, walls and floor have the compile-time variant')
     assert(material.vertexShader.includes(AROUND_WRAP_GLSL), 'every bar vertex stage uses the tested formula')
     assert(material.vertexShader.includes('aroundClampSheet'), 'partial final cell is clipped at the seam')
+    // The wire-up, not just the formula: the angle comes from the zero-line
+    // uniform (issue #1026) and only the clamp uses the sheet's own start.
+    assert(material.vertexShader.includes('aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundZero'), 'the wrap reads the zero line uniform')
+    assert(material.vertexShader.includes('aroundNormal(n.x, n.y, n.z, across, uAroundZero'), 'the normals read the zero line uniform')
+    assert(material.vertexShader.includes('aroundClampAcross(sheet.z, uAroundStart'), 'the clamp still reads the sheet start')
   }
   assert(barMaterial.fragmentShader.includes('aroundSurfaceNormal(surfaceNormal('), 'surface lighting follows the radial normal')
   assert((barBoundary.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>).material.vertexShader.includes('aroundSurfaceNormal(direction * edgePerp'), 'wall normals turn with the circumference')
@@ -76,11 +81,11 @@ for (const axis of ['x', 'y'] as const) {
   const turn = createBarTurnGroup(frame)
   for (const angle of [-405, -90, 0, 30, 90, 135, 180, 225, 270, 315, 360, 765]) {
     for (const height of [0, 3.5, frame.radius]) {
-      const across = frame.sheetStart + angle * frame.circumference / 360
+      const across = frame.zero + angle * frame.circumference / 360
       const pose = axis === 'x' ? { x: 37, y: across, z: height } : { x: across, y: 23, z: height }
       const wrapped = wrapPoint(pose, frame)
       const expected = world(stockSpacePoint(wrapped, stock))
-      const components = [0, 1, 2].map((component) => shader.aroundWrap(pose.x, height, pose.y, frame.centre, frame.radius, frame.sheetStart, frame.circumference, axis === 'x', component) as number)
+      const components = [0, 1, 2].map((component) => shader.aroundWrap(pose.x, height, pose.y, frame.centre, frame.radius, frame.zero, frame.circumference, axis === 'x', component) as number)
       components.forEach((component, i) => close(component, expected.getComponent(i), `${axis}/${angle}: shader stock point component ${i}`))
       const point = new THREE.Vector3(...components as [number, number, number])
       close(Math.hypot((axis === 'x' ? point.z : point.x) - frame.centre, point.y - frame.radius), height, 'remaining material radius is the heightfield value')
@@ -97,11 +102,11 @@ for (const axis of ['x', 'y'] as const) {
       close(tool.y, frame.radius + height, 'vertical tool tip height')
       close(tool.z, wrapped.y, 'vertical tool across centreline')
       close(turned.distanceTo(tool), 0, 'cell at playback angle is at the top directly under the tool')
-      const normal = [0, 1, 2].map((component) => shader.aroundNormal(0, 1, 0, across, frame.sheetStart, frame.circumference, axis === 'x', component) as number)
+      const normal = [0, 1, 2].map((component) => shader.aroundNormal(0, 1, 0, across, frame.zero, frame.circumference, axis === 'x', component) as number)
       close(normal[1], Math.cos(angle * Math.PI / 180), 'radial lighting up')
       close(normal[axis === 'x' ? 2 : 0], Math.sin(angle * Math.PI / 180), 'radial lighting across')
       for (const n of [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1)]) {
-        const mapped = new THREE.Vector3(...[0, 1, 2].map((component) => shader.aroundNormal(n.x, n.y, n.z, across, frame.sheetStart, frame.circumference, axis === 'x', component) as number) as [number, number, number])
+        const mapped = new THREE.Vector3(...[0, 1, 2].map((component) => shader.aroundNormal(n.x, n.y, n.z, across, frame.zero, frame.circumference, axis === 'x', component) as number) as [number, number, number])
         close(mapped.length(), 1, 'wall normals retain unit length')
         close(mapped.dot(new THREE.Vector3(...normal as [number, number, number])), 0, 'wall normals are perpendicular to the radius')
       }
@@ -165,12 +170,14 @@ for (const axis of ['x', 'y'] as const) {
   assert(!sameAroundFrame(frame, aroundFrame(roundStock(20, 85, axis === 'x' ? 'y' : 'x', { x: 13, y: -17 }))), `${axis}: a different bar axis is a different frame`)
   assert(!sameAroundFrame(frame, aroundFrame(roundStock(20, 85, axis, { x: 113, y: -117 }))), `${axis}: a moved bar is a different frame`)
 }
-// Every field counts, including one a round bar's own frame derives from the
-// others (`sheetStart = centre - radius`). Moving the bar changes both, so only
-// a frame that differs in the sheet start alone shows the field is compared.
+// Every field counts, including ones a round bar's own frame derives from the
+// others (`zero = centre`, `sheetStart = zero - C/2`). Moving the bar changes
+// them together, so only a frame that differs in one alone shows the field is
+// compared.
 {
   const frame = aroundFrame(roundStock(20, 85, 'x', { x: 13, y: -17 }))
   assert(!sameAroundFrame(frame, { ...frame, sheetStart: frame.sheetStart + 1 }), 'the sheet start is part of the comparison')
+  assert(!sameAroundFrame(frame, { ...frame, zero: frame.zero + 1 }), 'the zero line is part of the comparison')
 }
 assert(sameAroundFrame(undefined, undefined), 'two flat setups compare equal')
 assert(!sameAroundFrame(undefined, aroundFrame(roundStock(20, 85, 'x', { x: 13, y: -17 }))), 'a flat setup is not a bar frame')

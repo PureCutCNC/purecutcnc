@@ -39,10 +39,10 @@ function approx(a: number, b: number, epsilon = 1e-9): boolean {
 }
 
 for (const axis of ['x', 'y'] as const) {
-  const frame: AroundFrame = { axis, centre: 17, radius: 10, sheetStart: -7, circumference: 40 }
+  const frame: AroundFrame = { axis, centre: 17, radius: 10, zero: 13, sheetStart: -7, circumference: 40 }
   const origin = { x: 5, y: 6, z: 7 }
-  // A folded pose on the first circumference: across offset 3 is 27°, and the
-  // program's unreduced angle is that plus a full turn.
+  // A folded pose on the first circumference: across offset 3 is −153° from the
+  // zero line at 13, and the program's unreduced angle is that plus a full turn.
   const pose = axis === 'x'
     ? { x: 23, y: frame.sheetStart + 3, z: 4, a: 387 }
     : { x: frame.sheetStart + 3, y: 23, z: 4, a: 387 }
@@ -68,7 +68,7 @@ for (const axis of ['x', 'y'] as const) {
   // The bar turns to the program's angle when present; the across coordinate
   // is only the fallback, and names the same angle modulo one turn.
   assert.equal(simulationBarAngle(pose, frame), pose.a, `${axis}: the bar turns to the program angle`)
-  assert(approx(simulationBarAngle({ x: pose.x, y: pose.y }, frame), 27), `${axis}: a pose with no angle falls back to the across coordinate`)
+  assert(approx(simulationBarAngle({ x: pose.x, y: pose.y }, frame), -153), `${axis}: a pose with no angle falls back to the across coordinate`)
 
   // No angle on the pose means no A key on the readout.
   assert(!('a' in barReadout({ x: pose.x, y: pose.y, z: pose.z }, frame, origin)), `${axis}: no angle gives a readout with no a key`)
@@ -77,7 +77,7 @@ for (const axis of ['x', 'y'] as const) {
 // An X bar's Y is the centreline, constant no matter where the tool is along
 // or across the bar.
 {
-  const frame: AroundFrame = { axis: 'x', centre: 17, radius: 10, sheetStart: -7, circumference: 40 }
+  const frame: AroundFrame = { axis: 'x', centre: 17, radius: 10, zero: 13, sheetStart: -7, circumference: 40 }
   const origin = { x: 5, y: 6, z: 7 }
   assert.equal(barReadout({ x: 10, y: -7, z: 2, a: 0 }, frame, origin).y, origin.y - frame.centre, 'Y reads the centreline')
   assert.equal(barReadout({ x: 40, y: 33, z: 9, a: 360 }, frame, origin).y, origin.y - frame.centre, 'Y stays on the centreline while the bar turns')

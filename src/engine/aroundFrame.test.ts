@@ -17,7 +17,8 @@
 /**
  * Around in numbers (issue #395), including parity with an independent sheet.
  * Mutations checked one at a time against these assertions:
- * - angle sign / radius not added / sheetStart dropped: testPoints
+ * - angle sign / radius not added / `zero` dropped: testPoints
+ * - the zero line taken from the sheet's first edge: the ±90° sign checks
  * - circumference from radius: testFrames
  * - non-Around features retained / heights not lowered: testUnrolledProject
  * - a fixture band limited to one circumference: testUnrolledProject
@@ -92,8 +93,8 @@ function operation(kind: Operation['kind'], featureId = 'target'): Operation {
 
 function testFrames(): void {
   console.log('Testing frame numbers...')
-  equal(aroundFrame(X_BAR), { axis: 'x', centre: 50, radius: 20, sheetStart: 30, circumference: 40 * Math.PI }, 'X/mm frame')
-  equal(aroundFrame(Y_BAR), { axis: 'y', centre: 4, radius: 1, sheetStart: 3, circumference: 2 * Math.PI }, 'Y/inch frame')
+  equal(aroundFrame(X_BAR), { axis: 'x', centre: 50, radius: 20, zero: 50, sheetStart: 50 - 20 * Math.PI, circumference: 40 * Math.PI }, 'X/mm frame')
+  equal(aroundFrame(Y_BAR), { axis: 'y', centre: 4, radius: 1, zero: 4, sheetStart: 4 - Math.PI, circumference: 2 * Math.PI }, 'Y/inch frame')
 }
 
 function flatPoint(frame: AroundFrame, along: number, across: number, z: number): ToolpathPoint {
@@ -101,11 +102,18 @@ function flatPoint(frame: AroundFrame, along: number, across: number, z: number)
 }
 
 function testPoints(): void {
-  console.log('Testing point offsets, unbounded angles and rotary agreement...')
+  console.log('Testing the zero line, point offsets, unbounded angles and rotary agreement...')
   for (const stock of [X_BAR, Y_BAR]) {
     const frame = aroundFrame(stock)
+    // The zero line is the bar's centreline (issue #1026): a point on it wraps
+    // to a = 0, and one a quarter circumference to either side to ±90°. The
+    // signs are the frozen rotaryFrame convention — positive across the bar.
+    const onZero = flatPoint(frame, 17, frame.zero, frame.radius / 2)
+    near(wrapPoint(onZero, frame).a!, 0, 'the zero line wraps to a = 0')
+    near(wrapPoint(flatPoint(frame, 17, frame.zero + frame.circumference / 4, frame.radius / 2), frame).a!, 90, 'a quarter turn to the +across side is +90')
+    near(wrapPoint(flatPoint(frame, 17, frame.zero - frame.circumference / 4, frame.radius / 2), frame).a!, -90, 'a quarter turn to the other side is -90')
     for (const [turns, expectedAngle] of [[0, 0], [0.25, 90], [2.5, 900], [-0.25, -90]]) {
-      const flat = flatPoint(frame, 17, frame.sheetStart + frame.circumference * turns, frame.radius / 2)
+      const flat = flatPoint(frame, 17, frame.zero + frame.circumference * turns, frame.radius / 2)
       const wrapped = wrapPoint(flat, frame)
       near(wrapped.a!, expectedAngle, 'angle sign and turns')
       equal(frame.axis === 'x' ? wrapped.y : wrapped.x, frame.centre, 'exact centreline')
@@ -114,12 +122,12 @@ function testPoints(): void {
       assert(!('a' in unwrapPoint(wrapped, frame)), 'inverse has no a key')
     }
     // Integer sheet offset gives a bit-exact round trip, including its zero line.
-    const exact = flatPoint(frame, 17, frame.sheetStart, frame.radius / 2)
+    const exact = flatPoint(frame, 17, frame.zero, frame.radius / 2)
     equal(unwrapPoint(wrapPoint(exact, frame), frame), exact, 'exact round trip')
     throws(() => unwrapPoint(exact, frame), 'missing angle fails closed')
     for (const r of [0, frame.radius / 2, frame.radius, frame.radius + 3]) {
       for (const angle of [-90, 0, 30, 90, 180, 270, 900]) {
-        const flat = flatPoint(frame, 17, frame.sheetStart + frame.circumference * angle / 360, r)
+        const flat = flatPoint(frame, 17, frame.zero + frame.circumference * angle / 360, r)
         const wrapped = wrapPoint(flat, frame)
         const across = frame.centre + r * Math.sin(angle * Math.PI / 180)
         const expected = flatPoint(frame, 17, across, frame.radius + r * Math.cos(angle * Math.PI / 180))
@@ -159,12 +167,13 @@ function testUnrolledProject(): void {
   for (const stock of [X_BAR, Y_BAR]) {
     const project = makeProject(stock)
     const before = structuredClone(project)
-    const flat = unrolledProject(project, aroundFrame(stock))
+    const frame = aroundFrame(stock)
+    const flat = unrolledProject(project, frame)
     const radius = stock.axis === 'x' ? 20 : 1
     const circumference = stock.axis === 'x' ? 40 * Math.PI : 2 * Math.PI
     equal(getStockBounds(flat.stock), stock.axis === 'x'
-      ? { minX: 10, minY: 30, maxX: 210, maxY: 30 + 40 * Math.PI }
-      : { minX: 3, minY: 5, maxX: 3 + 2 * Math.PI, maxY: 13 }, 'stock box length and circumference')
+      ? { minX: 10, minY: frame.sheetStart, maxX: 210, maxY: frame.sheetStart + circumference }
+      : { minX: frame.sheetStart, minY: 5, maxX: frame.sheetStart + circumference, maxY: 13 }, 'stock box length and circumference')
     equal(flat.stock.thickness, radius, 'flat thickness')
     equal(flat.meta.maxTravelZ, Math.max(0, project.meta.maxTravelZ - radius), 'travel ceiling lowered by radius')
     equal(unrolledProject({ ...project, meta: { ...project.meta, maxTravelZ: radius / 2 } }, aroundFrame(stock)).meta.maxTravelZ, 0, 'travel ceiling floored at zero')
@@ -178,11 +187,11 @@ function testUnrolledProject(): void {
     equal(flat.tabs, [], 'no tabs')
     equal(flat.clamps.map((c) => c.id), ['chuck', 'tail'], 'only rotary fixtures')
     // A fixture band covers every turn the job can reach: one circumference
-    // below the lowest across coordinate of anything on the sheet (30 on the X
-    // bar, the feature's own 40) and one above the highest (the sheet's far
-    // edge, or the feature's 50 on the short Y bar).
-    const acrossMin = stock.axis === 'x' ? 30 - circumference : 3 - circumference
-    const acrossMax = stock.axis === 'x' ? 30 + 2 * circumference : 50 + circumference
+    // below the lowest across coordinate of anything on the sheet and one above
+    // the highest (the sheet's own edges, or the feature's bounds on the short
+    // Y bar).
+    const acrossMin = frame.sheetStart - circumference
+    const acrossMax = stock.axis === 'x' ? frame.sheetStart + 2 * circumference : 50 + circumference
     equal(flat.clamps, project.clamps.slice(0, 2).map((c) => ({ ...c, height: c.height - radius,
       ...(stock.axis === 'x' ? { y: acrossMin, h: acrossMax - acrossMin } : { x: acrossMin, w: acrossMax - acrossMin }),
     })), 'multi-turn clamp bands and top heights')
@@ -202,7 +211,10 @@ function testToolpaths(): void {
   console.log('Testing path splitting, metadata, collisions and inverse...')
   for (const stock of [X_BAR, Y_BAR]) {
     const frame = aroundFrame(stock)
-    const point = (along: number, across: number, z: number) => flatPoint(frame, along, frame.sheetStart + across, z)
+    // The sheet is framed one circumference with the zero line in the middle
+    // (issue #1026), and the inverse names the same window, so a path is
+    // measured from the zero line here.
+    const point = (along: number, across: number, z: number) => flatPoint(frame, along, frame.zero + across, z)
     const turn: ToolpathMove = { kind: 'cut', from: point(10, 0, 20), to: point(15, 10, 20), source: 'turn' }
     const ramp: ToolpathMove = { kind: 'lead_in', from: point(15, 10, 20), to: point(25, 30, 10), source: 'ramp', feedScale: 0.5 }
     const plunge: ToolpathMove = { kind: 'plunge', from: point(25, 30, 10), to: point(25, 30, 5) }
@@ -240,8 +252,8 @@ function testToolpaths(): void {
       nearPoint(unwrapped.moves[i].from, point(14 + i, 8 + 2 * i, 21 - i), 'inverse split from')
       nearPoint(unwrapped.moves[i].to, point(15 + i, 10 + 2 * i, 20 - i), 'inverse split to')
     }
-    near(unwrapped.bounds!.minX, stock.axis === 'x' ? 10 : 3, 'inverse minX')
-    near(unwrapped.bounds!.maxY, stock.axis === 'x' ? 60 : 25, 'inverse maxY')
+    near(unwrapped.bounds!.minX, stock.axis === 'x' ? 10 : 4, 'inverse minX')
+    near(unwrapped.bounds!.maxY, stock.axis === 'x' ? 80 : 25, 'inverse maxY')
     equal(result, before, 'input result not mutated')
     const nearCentre: ToolpathResult = { operationId: 'op', moves: [{ ...ramp, from: point(0, 0, 0), to: point(0, 1, 1) }], warnings: [], bounds: null }
     equal(wrapToolpath(nearCentre, frame).moves.length, 64, 'epsilon and split cap at centreline')

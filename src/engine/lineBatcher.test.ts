@@ -16,8 +16,9 @@
 
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { getFeatureGeometryProfiles } from '../text'
-import { newProject, rectProfile } from '../types/project'
-import type { Project, SketchFeature } from '../types/project'
+import { newProject, rectProfile, roundStock } from '../types/project'
+import type { Project, SketchFeature, SketchProfile } from '../types/project'
+import { aroundFrame } from './aroundFrame'
 import {
   buildBatchedLines,
   computeLineBatch,
@@ -173,6 +174,34 @@ function test2980ContoursStayOneBatch(): void {
   assert(result.meta.vertexCount === 5960, 'two endpoints per contour')
 }
 
+/**
+ * An Around line is wrapped onto the bar with its angle taken from the frame's
+ * zero line (issue #1026): a line on the zero line is the top of the bar, and
+ * one a quarter circumference to the +across side is on the bar's side at
+ * centreline height. Taking the angle from the sheet's first edge instead put
+ * the first at the bottom of the bar.
+ */
+function testAroundLineWrapsFromTheZeroLine(): void {
+  const frame = aroundFrame(roundStock(20, 100, 'x'))
+  const r = 10
+  const zTop = frame.radius + r
+  const across = (at: number): SketchProfile => ({
+    start: { x: 0, y: at },
+    segments: [{ type: 'line', to: { x: 10, y: at } }],
+    closed: false,
+  })
+  const check = (profile: SketchProfile, up: number, side: number, label: string): void => {
+    const { positions } = computeLineProfileBatch([{ profile, zTop, frame }])
+    assert(positions.length === 6, `${label}: one segment of two endpoints`)
+    for (let index = 0; index < positions.length; index += 3) {
+      assert(Math.abs(positions[index + 1] - up) < 1e-9, `${label}: height ${positions[index + 1]} != ${up}`)
+      assert(Math.abs(positions[index + 2] - side) < 1e-9, `${label}: across ${positions[index + 2]} != ${side}`)
+    }
+  }
+  check(across(frame.zero), frame.radius + r, frame.centre, 'the zero line sits at the top of the bar')
+  check(across(frame.zero + frame.circumference / 4), frame.radius, frame.centre + r, 'a quarter turn to the +across side turns the bar')
+}
+
 function testDisposalOwnsGeometryAndMaterial(): void {
   const result = buildBatchedLines(makeProject(), [
     makeLineFeature('dispose', [{ x: 0, y: 0 }, { x: 1, y: 0 }]),
@@ -192,6 +221,7 @@ const tests = [
   ['closed solid excluded', testClosedSolidExcluded],
   ['multi-profile text uses glyphs', testMultiProfileTextUsesGlyphs],
   ['2,980 contours stay one batch', test2980ContoursStayOneBatch],
+  ['Around line wraps from the zero line', testAroundLineWrapsFromTheZeroLine],
   ['disposal owns geometry and material', testDisposalOwnsGeometryAndMaterial],
 ] as const
 

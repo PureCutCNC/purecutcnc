@@ -763,8 +763,9 @@ console.log('Testing the single unwind rapid...')
   assert.equal(unwinds.length, 1, 'the unwind is written once, not between operations')
 
   // A cut that ends where it began — the bar returns to angle 0 — writes no
-  // unwind, even though the program turned the bar.
-  const backLine = straight({ x: 60, y: 30 + MM_CIRCUMFERENCE }, { x: 100, y: 30 })
+  // unwind, even though the program turned the bar. The end sits on the zero
+  // line (issue #1026), which is the bar's centreline, not the sheet's edge.
+  const backLine = straight({ x: 60, y: 30 + MM_CIRCUMFERENCE }, { x: 100, y: 50 })
   const back = buildFixture(MM_BAR, 'mm', [
     { id: 'line', kind: 'polygon', profile: backLine, operation: 'line', zTop: 40, zBottom: 39 },
   ], [operation('Engrave', 'follow_line', ['line'], 't1', {

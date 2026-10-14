@@ -20,7 +20,7 @@
  * An Around feature stores sheet coordinates: along the bar on its axis, across
  * the unrolled surface on the other. Its profile is swept across the bar's
  * depth and then wound onto the bar with the frozen wrap (see `aroundFrame.ts`):
- * a point at radius `r` and angle `a = 2π·(across − sheetStart)/circumference`
+ * a point at radius `r` and angle `a = 2π·(across − zero)/circumference`
  * lands at `across' = centre + r·sin a`, `z' = R + r·cos a`, along unchanged.
  * `wrapPoint` followed by `stockSpacePoint` gives the same point.
  *
@@ -132,8 +132,8 @@ function sweepOntoBar(
   const acrossMin = Math.min(...contour.map(acrossOf))
   const acrossMax = Math.max(...contour.map(acrossOf))
   const quarter = frame.circumference / 4
-  const firstBand = Math.floor((acrossMin - frame.sheetStart) / quarter)
-  const lastBand = Math.ceil((acrossMax - frame.sheetStart) / quarter) - 1
+  const firstBand = Math.floor((acrossMin - frame.zero) / quarter)
+  const lastBand = Math.ceil((acrossMax - frame.zero) / quarter) - 1
   const refineLength = frame.radius * CHORD_STEP_RADIANS * REFINE_SAFETY
 
   const pieces: ManifoldSolid[] = []
@@ -143,7 +143,7 @@ function sweepOntoBar(
     const flat = module.CrossSection.ofPolygons([contour], 'EvenOdd')
     try {
       for (let band = firstBand; band <= lastBand; band += 1) {
-        const from = frame.sheetStart + band * quarter
+        const from = frame.zero + band * quarter
         // Neighbouring bands overlap by a hair so their warped solids share
         // volume rather than meeting on a pair of exactly-coincident faces with
         // different triangulations, which Manifold's union cannot weld into one
@@ -205,7 +205,7 @@ function alongIndex(frame: AroundFrame): 0 | 1 {
 function warpVertex(vert: [number, number, number], frame: AroundFrame, rBottom: number): void {
   const acrossIndex = frame.axis === 'x' ? 1 : 0
   const radius = vert[2] + rBottom
-  const angle = (vert[acrossIndex] - frame.sheetStart) / frame.radius
+  const angle = (vert[acrossIndex] - frame.zero) / frame.radius
   const across = frame.centre + radius * Math.sin(angle)
   const up = frame.radius + radius * Math.cos(angle)
   vert[acrossIndex] = across

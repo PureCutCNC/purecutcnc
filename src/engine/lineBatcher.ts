@@ -102,7 +102,7 @@ function aroundSegmentPoints(
     const y = start[1] + (end[1] - start[1]) * t
     const across = frame.axis === 'x' ? y : x
     const along = frame.axis === 'x' ? x : y
-    const angle = (across - frame.sheetStart) / frame.radius
+    const angle = (across - frame.zero) / frame.radius
     const acrossOffset = radius * Math.sin(angle)
     const up = frame.radius + radius * Math.cos(angle)
     points.push(frame.axis === 'x'

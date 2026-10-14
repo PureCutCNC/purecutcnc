@@ -256,12 +256,13 @@ const ISLAND_VOLUME = sectorVolume(AROUND_ISLAND)
   )
 
   // The pocket's floor really is there: vertices at its bottom radius, within
-  // its angular span (across 35..50 over the sheet start at 30 on a 40 mm bar).
+  // its angular span (across 35..50, measured from the zero line at across 50
+  // on a 40 mm bar — issue #1026).
   const vertices = modelVertices(withAround.modelMesh, BAR)
   const floor = vertices.filter((vertex) => Math.abs(vertex.radius - R_BOTTOM) < 0.05)
   assert(floor.length > 0, 'the Around pocket leaves vertices on its floor')
-  const lowest = 180 * ((35 - BAR_FRAME.sheetStart) / BAR_FRAME.radius) / Math.PI
-  const highest = 180 * ((50 - BAR_FRAME.sheetStart) / BAR_FRAME.radius) / Math.PI
+  const lowest = 180 * ((35 - BAR_FRAME.zero) / BAR_FRAME.radius) / Math.PI
+  const highest = 180 * ((50 - BAR_FRAME.zero) / BAR_FRAME.radius) / Math.PI
   assert(
     floor.some((vertex) => vertex.angleDegrees >= lowest - 1 && vertex.angleDegrees <= highest + 1),
     'the pocket floor vertices are at the pocket angle',

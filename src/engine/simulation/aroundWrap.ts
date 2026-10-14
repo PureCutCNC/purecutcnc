@@ -24,9 +24,9 @@ export const AROUND_WRAP_GLSL = /* glsl */ `
     return clamp(across, sheetStart, sheetStart + circumference);
   }
 
-  float aroundWrap(float x, float h, float z, float centre, float radius, float sheetStart, float circumference, bool xAxis, int component) {
+  float aroundWrap(float x, float h, float z, float centre, float radius, float aroundZero, float circumference, bool xAxis, int component) {
     float across = xAxis ? z : x;
-    float angle = 6.283185307179586 * (across - sheetStart) / circumference;
+    float angle = 6.283185307179586 * (across - aroundZero) / circumference;
     float side = centre + h * sin(angle);
     float up = radius + h * cos(angle);
     if (component == 1) return up;
@@ -34,8 +34,8 @@ export const AROUND_WRAP_GLSL = /* glsl */ `
     return xAxis ? side : z;
   }
 
-  float aroundNormal(float nx, float ny, float nz, float across, float sheetStart, float circumference, bool xAxis, int component) {
-    float angle = 6.283185307179586 * (across - sheetStart) / circumference;
+  float aroundNormal(float nx, float ny, float nz, float across, float aroundZero, float circumference, bool xAxis, int component) {
+    float angle = 6.283185307179586 * (across - aroundZero) / circumference;
     float tangent = xAxis ? nz : nx;
     float side = ny * sin(angle) + tangent * cos(angle);
     float up = ny * cos(angle) - tangent * sin(angle);
@@ -50,6 +50,7 @@ export const AROUND_FRAME_GLSL = /* glsl */ `#ifdef AROUND_WRAP
   uniform float uAroundCentre;
   uniform float uAroundRadius;
   uniform float uAroundStart;
+  uniform float uAroundZero;
   uniform float uAroundPeriod;
   uniform bool uAroundX;
   ${AROUND_WRAP_GLSL}
@@ -62,17 +63,17 @@ export const AROUND_FRAME_GLSL = /* glsl */ `#ifdef AROUND_WRAP
 
   vec3 aroundPosition(vec3 sheet) {
     return vec3(
-      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundStart, uAroundPeriod, uAroundX, 0),
-      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundStart, uAroundPeriod, uAroundX, 1),
-      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundStart, uAroundPeriod, uAroundX, 2)
+      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundZero, uAroundPeriod, uAroundX, 0),
+      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundZero, uAroundPeriod, uAroundX, 1),
+      aroundWrap(sheet.x, sheet.y, sheet.z, uAroundCentre, uAroundRadius, uAroundZero, uAroundPeriod, uAroundX, 2)
     );
   }
 
   vec3 aroundSurfaceNormal(vec3 n, float across) {
     return vec3(
-      aroundNormal(n.x, n.y, n.z, across, uAroundStart, uAroundPeriod, uAroundX, 0),
-      aroundNormal(n.x, n.y, n.z, across, uAroundStart, uAroundPeriod, uAroundX, 1),
-      aroundNormal(n.x, n.y, n.z, across, uAroundStart, uAroundPeriod, uAroundX, 2)
+      aroundNormal(n.x, n.y, n.z, across, uAroundZero, uAroundPeriod, uAroundX, 0),
+      aroundNormal(n.x, n.y, n.z, across, uAroundZero, uAroundPeriod, uAroundX, 1),
+      aroundNormal(n.x, n.y, n.z, across, uAroundZero, uAroundPeriod, uAroundX, 2)
     );
   }
 #endif`
@@ -101,6 +102,7 @@ export function aroundUniforms(frame?: AroundFrame): Record<string, THREE.IUnifo
     uAroundCentre: { value: frame.centre },
     uAroundRadius: { value: frame.radius },
     uAroundStart: { value: frame.sheetStart },
+    uAroundZero: { value: frame.zero },
     uAroundPeriod: { value: frame.circumference },
     uAroundX: { value: frame.axis === 'x' },
   } : {}

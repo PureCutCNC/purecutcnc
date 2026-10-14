@@ -26,7 +26,7 @@ import { wrapPoint, type AroundFrame } from '../../engine/aroundFrame'
  */
 export function aroundFrameKey(frame: AroundFrame | undefined): string {
   if (!frame) return ''
-  return `${frame.axis}:${frame.centre}:${frame.radius}:${frame.sheetStart}:${frame.circumference}`
+  return `${frame.axis}:${frame.centre}:${frame.radius}:${frame.zero}:${frame.sheetStart}:${frame.circumference}`
 }
 
 /** Two frames are the same setup when every value the viewport draws with matches. */
@@ -62,7 +62,7 @@ export function simulationBarAngle(pose: { x: number; y: number; a?: number }, f
   // leaves the picture unchanged (issue #395). The across coordinate is the
   // fallback for a pose with no rotary component.
   if (pose.a !== undefined) return pose.a
-  return 360 * ((frame.axis === 'x' ? pose.y : pose.x) - frame.sheetStart) / frame.circumference
+  return 360 * ((frame.axis === 'x' ? pose.y : pose.x) - frame.zero) / frame.circumference
 }
 
 /** The bar view's readout (issue #395): the tool as the program has it. */

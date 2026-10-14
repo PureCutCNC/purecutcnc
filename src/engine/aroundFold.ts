@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/**
+ * Folding onto the Around sheet (issue #395). The sheet runs from
+ * `sheetStart = zero − C/2` to `sheetStart + C` (issue #1026), so the seams
+ * it folds at are the sheet's own two edges — the bottom of the bar, a = ±180°.
+ */
+
 import type { AroundFrame } from './aroundFrame'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './toolpaths/types'
 
@@ -36,24 +42,26 @@ function foldedBounds(moves: readonly ToolpathMove[]): ToolpathBounds | null {
 /**
  * The program's rotary angle at an across coordinate, never reduced to one
  * turn (issue #395): a line that wraps 1.5 times reads 0..540, not 0..180. The
- * angle is taken from the coordinate *before* the seam shift, which is what
- * preserves the turn count, and it keeps both sides of a seam equal.
+ * angle is taken from the coordinate *before* the seam shift, against the
+ * frame's zero line (issue #1026), which is what preserves the turn count and
+ * keeps both sides of a seam equal.
  */
-function acrossAngle(across: number, start: number, period: number): number {
-  return 360 * (across - start) / period
+function acrossAngle(across: number, zero: number, period: number): number {
+  return 360 * (across - zero) / period
 }
 
 /** Fold sheet moves at circumference seams, keeping each swept piece continuous. */
 export function foldToolpath<T extends ToolpathResult>(result: T, frame: AroundFrame): T {
   const axis = frame.axis === 'x' ? 'y' : 'x'
   const start = frame.sheetStart
+  const zero = frame.zero
   const period = frame.circumference
   const end = start + period
   if (result.moves.every((move) => [move.from, move.to].every((point) => point[axis] >= start && point[axis] <= end))) {
     const moves = result.moves.map((move) => ({
       ...move,
-      from: { ...move.from, a: acrossAngle(move.from[axis], start, period) },
-      to: { ...move.to, a: acrossAngle(move.to[axis], start, period) },
+      from: { ...move.from, a: acrossAngle(move.from[axis], zero, period) },
+      to: { ...move.to, a: acrossAngle(move.to[axis], zero, period) },
     }))
     return { ...result, moves, bounds: foldedBounds(moves) }
   }
@@ -86,7 +94,7 @@ export function foldToolpath<T extends ToolpathResult>(result: T, frame: AroundF
           x: move.from.x + (move.to.x - move.from.x) * t,
           y: move.from.y + (move.to.y - move.from.y) * t,
           z: move.from.z + (move.to.z - move.from.z) * t,
-          a: acrossAngle(across, start, period),
+          a: acrossAngle(across, zero, period),
         }
         point[axis] = across - shift
         // Keep interpolated seam endpoints exact despite floating point roundoff.

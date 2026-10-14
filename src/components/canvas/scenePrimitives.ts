@@ -448,10 +448,11 @@ export function drawStockOutline(
 }
 
 /**
- * A line across the unrolled sheet at every full turn (issue #395). They are
- * the sheet's own seams: `k = 0`, the top of the bar with the rotary at zero,
- * is drawn solid so it reads as the start line; the rest are dashed and faint.
- * The two at k = 0 and k = 1 lie on the sheet's edges.
+ * A line across the unrolled sheet at every full turn (issue #395). `k = 0` is
+ * the zero line — the top of the bar with the rotary at zero — and runs through
+ * the middle of the sheet; it is drawn solid so it reads as the datum, and the
+ * rest are dashed and faint. The two at k = ±1 lie on the sheet's edges, which
+ * are the seam (the bottom of the bar, a = ±180°) since issue #1026.
  */
 export function drawAroundTurnLines(
   ctx: CanvasRenderingContext2D,

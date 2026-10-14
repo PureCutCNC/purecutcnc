@@ -40,7 +40,7 @@ import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup } from '../../test/projectFixtures'
-import { DEFAULT_SETUP_ID, newProject, rectProfile, roundStock } from '../../types/project'
+import { DEFAULT_SETUP_ID, getProfileBounds, getStockBounds, newProject, rectProfile, roundStock } from '../../types/project'
 import type { MachiningSetup, Point, Project, RoundStock, SetupFace, SketchFeature } from '../../types/project'
 import { aroundSheet } from './aroundSheet'
 import { drawOtherFace } from './faceOverlay'
@@ -278,11 +278,11 @@ for (const axis of ['x', 'y'] as const) {
   const acrossExtent = axis === 'x' ? rect.maxY - rect.minY : rect.maxX - rect.minX
   assert(near(acrossExtent, Math.PI * stock.thickness), `Around/${axis}: the frame is one circumference across`)
 
-  // Fit-to-view fits the sheet. The bar's own rectangle would centre the bar
-  // and push the far edge of the sheet off the canvas; the sheet fit keeps all
-  // four corners on screen.
+  // Fit-to-view fits the sheet. The bar's own rectangle is a different
+  // rectangle (the sheet is inscribed in the bar's centreline, so its across
+  // extent is the circumference), and the sheet fit keeps all four corners on
+  // screen.
   const fittedView = computeSketchViewTransform(project, CANVAS_W, CANVAS_H, computeFitViewState(project, CANVAS_W, CANVAS_H))
-  const barView = computeViewTransform(project.stock, CANVAS_W, CANVAS_H, { zoom: 1, panX: 0, panY: 0 })
   const farCorner = { x: rect.maxX, y: rect.maxY }
   const onScreen = (point: { cx: number; cy: number }): boolean =>
     point.cx >= -1e-6 && point.cx <= CANVAS_W + 1e-6 && point.cy >= -1e-6 && point.cy <= CANVAS_H + 1e-6
@@ -292,7 +292,32 @@ for (const axis of ['x', 'y'] as const) {
   ]) {
     assert(onScreen(worldToCanvas(corner, fittedView)), `Around/${axis}: the sheet fit shows the whole sheet (${corner.x}, ${corner.y})`)
   }
-  assert(!onScreen(worldToCanvas(farCorner, barView)), `Around/${axis}: a bar-rect fit could not show the sheet`)
+  const sheetCorners = [
+    { x: rect.minX, y: rect.minY }, { x: rect.maxX, y: rect.minY },
+    { x: rect.minX, y: rect.maxY }, farCorner,
+  ]
+  // A fit that framed the bar's own rectangle instead would frame a different
+  // rectangle: the fit frames the sheet, never the bar (issue #1026).
+  const barBounds = getStockBounds(project.stock)
+  const sheetBounds = getProfileBounds(sketchViewStock(project).profile)
+  assert(
+    JSON.stringify(sheetBounds) === JSON.stringify({
+      minX: rect.minX, maxX: rect.maxX, minY: rect.minY, maxY: rect.maxY,
+    }),
+    `Around/${axis}: the fit frames the sheet's own rectangle`,
+  )
+  assert(
+    JSON.stringify(sheetBounds) !== JSON.stringify(barBounds),
+    `Around/${axis}: the bar rectangle is not the sheet rectangle`,
+  )
+  // The sheet's across extent exceeds the bar's own thickness, so the bar's
+  // rectangle cannot cover the sheet: at least one of its four corners is
+  // outside the bar profile's bounds.
+  assert(
+    sheetCorners.some((corner) => corner.x < barBounds.minX || corner.x > barBounds.maxX
+      || corner.y < barBounds.minY || corner.y > barBounds.maxY),
+    `Around/${axis}: the bar rectangle cannot cover the sheet`,
+  )
 
   // The sheet is the frame; on Top the stock is its own.
   assert(sketchViewStock(project) !== project.stock, `Around/${axis}: the view frames the sheet, not the bar`)

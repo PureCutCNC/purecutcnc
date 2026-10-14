@@ -43,9 +43,9 @@ export type AroundSheetProject = Pick<
 
 /** One line across the sheet at a full turn. */
 export interface AroundTurnLine {
-  /** The across coordinate the line sits at: `sheetStart + k · circumference`. */
+  /** The across coordinate the line sits at: `zero + k · circumference`. */
   readonly across: number
-  /** `k = 0` is the start line — the top of the bar with the rotary at zero. */
+  /** `k = 0` is the zero line — the top of the bar with the rotary at zero. */
   readonly solid: boolean
 }
 
@@ -73,7 +73,16 @@ export interface AroundModelBand {
 
 export interface AroundSheet {
   readonly axis: 'x' | 'y'
-  /** Across coordinate of the sheet's zero line: the top of the bar at a = 0. */
+  /**
+   * Across coordinate of the zero line — the top of the bar at a = 0
+   * (issue #1026). It is the bar's centreline, so it runs through the middle
+   * of the sheet; the origin marker and the solid turn line sit on it.
+   */
+  readonly zero: number
+  /**
+   * Across coordinate of the sheet's first edge: `zero − C/2` (issue #1026).
+   * The sheet runs one circumference from here; its two edges are the seam.
+   */
   readonly sheetStart: number
   readonly circumference: number
   readonly radius: number
@@ -88,7 +97,7 @@ export interface AroundSheet {
   readonly clampBands: readonly Clamp[]
   /** The visible imported models as bands: the extent along the bar, the whole sheet across. */
   readonly modelBands: readonly AroundModelBand[]
-  /** The origin marker: the origin's along coordinate on the start line. */
+  /** The origin marker: the origin's along coordinate on the zero line. */
   readonly origin: Point & { readonly name: string }
 }
 
@@ -114,6 +123,7 @@ export function aroundSheet(
   const range = view ?? { acrossMin: frame.sheetStart, acrossMax: frame.sheetStart + frame.circumference }
   return {
     axis: frame.axis,
+    zero: frame.zero,
     sheetStart: frame.sheetStart,
     circumference: frame.circumference,
     radius: frame.radius,
@@ -204,25 +214,27 @@ function setupOfOperation(
 
 /**
  * A line across the sheet at every full turn in `[acrossMin, acrossMax]`,
- * including turns past the sheet. `k = 0` is the start line.
+ * including turns past the sheet. `k = 0` is the zero line (issue #1026), so
+ * the turn lines are counted from the bar's centreline rather than the sheet's
+ * first edge.
  */
 export function aroundTurnLines(
-  frame: Pick<AroundFrame, 'sheetStart' | 'circumference'>,
+  frame: Pick<AroundFrame, 'zero' | 'circumference'>,
   acrossMin: number,
   acrossMax: number,
 ): AroundTurnLine[] {
-  const { sheetStart, circumference } = frame
+  const { zero, circumference } = frame
   if (!(circumference > 0) || !Number.isFinite(acrossMin) || !Number.isFinite(acrossMax)) return []
   const min = Math.min(acrossMin, acrossMax)
   const max = Math.max(acrossMin, acrossMax)
   // The epsilon keeps a range endpoint that sits exactly on a turn (the sheet's
   // own edges) from losing that turn to rounding.
-  const first = Math.ceil((min - sheetStart) / circumference - 1e-9)
-  const last = Math.floor((max - sheetStart) / circumference + 1e-9)
+  const first = Math.ceil((min - zero) / circumference - 1e-9)
+  const last = Math.floor((max - zero) / circumference + 1e-9)
   if (last < first || last - first + 1 > MAX_TURN_LINES) return []
   const lines: AroundTurnLine[] = []
   for (let k = first; k <= last; k += 1) {
-    lines.push({ across: sheetStart + k * circumference, solid: k === 0 })
+    lines.push({ across: zero + k * circumference, solid: k === 0 })
   }
   return lines
 }
@@ -245,11 +257,11 @@ export function aroundClampBand(
     : { ...clamp, x: start, w: end - start }
 }
 
-/** The origin marker on the sheet: its along coordinate, on the start line. */
-export function aroundOrigin(origin: Point, frame: Pick<AroundFrame, 'axis' | 'sheetStart'>): Point {
+/** The origin marker on the sheet: its along coordinate, on the zero line. */
+export function aroundOrigin(origin: Point, frame: Pick<AroundFrame, 'axis' | 'zero'>): Point {
   return frame.axis === 'x'
-    ? { x: origin.x, y: frame.sheetStart }
-    : { x: frame.sheetStart, y: origin.y }
+    ? { x: origin.x, y: frame.zero }
+    : { x: frame.zero, y: origin.y }
 }
 
 /**

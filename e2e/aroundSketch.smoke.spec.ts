@@ -57,6 +57,7 @@ interface SavedFeature {
 
 interface SheetInfo {
   axis: 'x' | 'y'
+  zero: number
   sheetStart: number
   circumference: number
   rect: { minX: number; minY: number; maxX: number; maxY: number }
@@ -64,6 +65,9 @@ interface SheetInfo {
 
 interface RoundBar {
   diameter: number
+  /** The zero line: the bar's centreline across (issue #1026). */
+  zero: number
+  /** The sheet's first edge: `zero − π·diameter` (issue #1026). */
   sheetStart: number
 }
 
@@ -82,7 +86,9 @@ async function prepareRoundBarWithRotary(page: Page): Promise<RoundBar> {
     stock: bar,
     meta: { ...meta, machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
   }))
-  return { diameter, sheetStart: getProfileBounds(bar.profile).minY }
+  const barBounds = getProfileBounds(bar.profile)
+  const zero = barBounds.minY + diameter / 2
+  return { diameter, zero, sheetStart: zero - (Math.PI * diameter) / 2 }
 }
 
 /** Put the workspace on Around, the way the face switch control will. */
@@ -109,7 +115,7 @@ async function sheetInfo(page: Page): Promise<SheetInfo | null> {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     const { aroundSheet } = await import('/src/components/canvas/aroundSheet.ts') as typeof import('../src/components/canvas/aroundSheet')
     const sheet = aroundSheet(useProjectStore.getState().project)
-    return sheet ? { axis: sheet.axis, sheetStart: sheet.sheetStart, circumference: sheet.circumference, rect: sheet.rect } : null
+    return sheet ? { axis: sheet.axis, zero: sheet.zero, sheetStart: sheet.sheetStart, circumference: sheet.circumference, rect: sheet.rect } : null
   })
 }
 
@@ -194,7 +200,12 @@ test('the Around canvas frames the unrolled sheet, one circumference across', as
   expect(sheet, 'the workspace is on the unrolled sheet').not.toBeNull()
   expect(sheet!.axis).toBe('x')
   expect(sheet!.circumference).toBeCloseTo(Math.PI * bar.diameter, 6)
+  // The zero line is the bar's centreline and runs through the middle of the
+  // sheet; the sheet's own first edge is half a circumference below it
+  // (issue #1026).
+  expect(sheet!.zero).toBeCloseTo(bar.zero, 6)
   expect(sheet!.sheetStart).toBeCloseTo(bar.sheetStart, 6)
+  expect(sheet!.rect.minY + sheet!.circumference / 2).toBeCloseTo(sheet!.zero, 6)
 
   // Fit-to-view shows the whole sheet. A bar-rectangle fit would have stopped
   // at the diameter and left the far edge of the sheet off the canvas.
