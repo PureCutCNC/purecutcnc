@@ -59,7 +59,7 @@ assert.equal(switchWorkspaceFace('around'), true)
 assert.equal(store().project.setups.length, 1)
 assert.equal(activeSetup(store().project).id, provisionalSetupId('around'))
 assert.equal(activeSetup(store().project).kind, 'around')
-assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 40, z_bottom: 39 }, 'Around new span is a 1 mm cut into the bar surface (issue #395)')
+assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 40, z_bottom: 37.5 }, 'Around new span is a 40/16 = 2.5 mm cut into the bar surface (issue #395)')
 store().addFeature(feature('around'))
 const aroundProject = store().project
 const setup = activeSetup(aroundProject)
@@ -290,10 +290,19 @@ assert.equal(isFirstFeatureValid(resolvedProjectFeatures(store().project)), true
 
 // A new Around shape is a shallow cut, never through the bar (issue #395): the
 // Top span's z_bottom = 0 sits at the centreline, which generation refuses.
-// One millimetre deep, or half the bar's radius when that is less.
-load({ ...fixture(), stock: roundStock(1, 180, 'x') })
-assert.equal(switchWorkspaceFace('around'), true)
-assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 1, z_bottom: 0.75 }, 'a 1 mm bar takes half its radius')
-load({ ...fixture(), meta: { ...fixture().meta, units: 'inch' as const }, stock: roundStock(0.5, 8, 'x') })
-assert.equal(switchWorkspaceFace('around'), true)
-assert.deepEqual(newFeatureSpan(store().project, 35), { z_top: 0.5, z_bottom: 0.46 }, 'an inch project takes 0.04 in')
+// The depth scales with the bar: a sixteenth of the diameter, rounded to the
+// unit's tidy step, at least one step and never over a quarter of the diameter
+// (the quarter wins on a very thin bar). Every value below is an exact binary
+// fraction, so it is asserted exactly.
+function newAroundSpan(diameter: number, units: 'mm' | 'inch'): { z_top: number; z_bottom: number } {
+  load({ ...fixture(), meta: { ...fixture().meta, units }, stock: roundStock(diameter, units === 'inch' ? 8 : 180, 'x') })
+  assert.equal(switchWorkspaceFace('around'), true)
+  return newFeatureSpan(store().project, 35)
+}
+assert.deepEqual(newAroundSpan(40, 'mm'), { z_top: 40, z_bottom: 37.5 }, '40 mm bar: 2.5 mm, already on the step')
+assert.deepEqual(newAroundSpan(30, 'mm'), { z_top: 30, z_bottom: 28 }, '30 mm bar: 1.875 rounds to 2 mm')
+assert.deepEqual(newAroundSpan(1, 'mm'), { z_top: 1, z_bottom: 0.75 }, '1 mm bar: the quarter-diameter guard beats the step')
+assert.deepEqual(newAroundSpan(1, 'inch'), { z_top: 1, z_bottom: 0.9375 }, '1 in bar: 0.0625 in')
+assert.deepEqual(newAroundSpan(2, 'inch'), { z_top: 2, z_bottom: 1.875 }, '2 in bar: 0.125 in')
+assert.deepEqual(newAroundSpan(0.5, 'inch'), { z_top: 0.5, z_bottom: 0.46875 }, '0.5 in bar: 0.03125 in')
+assert.deepEqual(newAroundSpan(0.125, 'inch'), { z_top: 0.125, z_bottom: 0.109375 }, '0.125 in bar: half a step rounds up to one step')
