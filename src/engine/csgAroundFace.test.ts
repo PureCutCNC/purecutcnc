@@ -32,6 +32,7 @@
  * Run with: npx tsx src/engine/csgAroundFace.test.ts
  */
 
+import type { Manifold as ManifoldSolid, Vec3 } from 'manifold-3d'
 import * as THREE from 'three'
 import {
   newProject,
@@ -504,6 +505,49 @@ for (const bar of [BAR, Y_BAR]) {
       nearest <= tolerance,
       `axis ${bar.axis}: a solid rim vertex is ${nearest} from the stock mesh's vertices (tolerance ${tolerance})`,
     )
+  }
+}
+
+// ── 9. The bar solid releases its intermediates (issue #395 G4) ──────────────
+
+// `roundBarSolid` builds a cylinder and a rotated copy and returns a third,
+// translated solid. The first two are WASM-backed and the caller never sees
+// them, so they must be released or every Around rebuild leaks two solids.
+// Wrapping `cylinder` and its own `rotate` catches both; `isDeleted` is
+// embind's live check, present on every handle but not in the types.
+
+/** Whether embind has released this handle's WASM object. */
+function wasDeleted(solid: ManifoldSolid): boolean {
+  return (solid as unknown as { isDeleted(): boolean }).isDeleted()
+}
+
+for (const bar of [BAR, Y_BAR]) {
+  const cylinders: ManifoldSolid[] = []
+  const rotations: ManifoldSolid[] = []
+  const originalCylinder = module.Manifold.cylinder
+  module.Manifold.cylinder = ((...args: Parameters<typeof originalCylinder>) => {
+    const cylinder = originalCylinder(...args)
+    cylinders.push(cylinder)
+    const rotate = cylinder.rotate.bind(cylinder)
+    cylinder.rotate = ((...rotateArgs: [Readonly<Vec3>]) => {
+      const rotated = rotate(...rotateArgs)
+      rotations.push(rotated)
+      return rotated
+    }) as typeof cylinder.rotate
+    return cylinder
+  }) as typeof originalCylinder
+
+  let returned: ManifoldSolid | null = null
+  try {
+    returned = roundBarSolid(module, bar)
+    assert(cylinders.length === 1, `axis ${bar.axis}: roundBarSolid builds one cylinder`)
+    assert(rotations.length === 1, `axis ${bar.axis}: roundBarSolid rotates it once`)
+    assert(wasDeleted(cylinders[0]), `axis ${bar.axis}: the cylinder is released`)
+    assert(wasDeleted(rotations[0]), `axis ${bar.axis}: the rotated solid is released`)
+    assert(!wasDeleted(returned), `axis ${bar.axis}: the returned solid belongs to the caller`)
+  } finally {
+    module.Manifold.cylinder = originalCylinder
+    returned?.delete()
   }
 }
 

@@ -972,9 +972,20 @@ export function roundBarSolid(module: ManifoldToplevel, stock: RoundStock): Mani
     ROUND_BAR_SEGMENTS,
     true,
   )
-  return stock.axis === 'x'
-    ? cylinder.rotate([0, 90, 0]).translate([(bounds.minX + bounds.maxX) / 2, centre, radius])
-    : cylinder.rotate([-90, 0, 0]).translate([centre, (bounds.minY + bounds.maxY) / 2, radius])
+  let rotated: ManifoldSolid | null = null
+  try {
+    if (stock.axis === 'x') {
+      rotated = cylinder.rotate([0, 90, 0])
+      return rotated.translate([(bounds.minX + bounds.maxX) / 2, centre, radius])
+    }
+    rotated = cylinder.rotate([-90, 0, 0])
+    return rotated.translate([centre, (bounds.minY + bounds.maxY) / 2, radius])
+  } finally {
+    // The caller owns the translated solid; the cylinder and its rotation are
+    // WASM-backed and would otherwise leak on every Around model rebuild.
+    rotated?.delete()
+    cylinder.delete()
+  }
 }
 
 /**
