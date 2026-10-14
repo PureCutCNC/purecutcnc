@@ -422,9 +422,13 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
 
   // A flat setup has no A axis: give it a visible playback bar and prove the
   // readout is still X, Y, Z only (issue #395).
+  // The inactive setup's section starts collapsed.
+  await ui.setupCam.section(page, 'top').getByRole('button', { name: /Top operations/ }).click()
   await ui.operations.rowByName(page, 'Top pocket').click()
   await expect(ui.simSetup.playTool(page)).toBeEnabled()
-  await ui.simSetup.playTool(page).click()
+  // Play tool is a toggle and may still be on from the Around run above.
+  if (!(await ui.simSetup.progress(page).isVisible())) await ui.simSetup.playTool(page).click()
   await expect(ui.simSetup.progress(page)).toBeVisible()
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
   await expect(ui.simSetup.coordA(page)).toHaveCount(0)
 })
