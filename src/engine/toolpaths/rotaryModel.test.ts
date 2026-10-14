@@ -165,6 +165,47 @@ for (const axis of ['x', 'y'] as const) {
   approx(below.tipRadius[0][0], -5, `negative radius ${axis}`)
 }
 
+{
+  // Issue #1015 slice J: turning is toolSpacePoint inlined (the rotation is
+  // computed once per angle, straight into the output Float32Array), so it must
+  // still agree with the frozen frame function vertex for vertex on arbitrary
+  // geometry, not only on the prisms above. A few thousand random vertices at
+  // random angles on both bar axes; the generator is seeded so a failure is
+  // reproducible. Both sides are compared as the Float32 the output stores, and
+  // the relative tolerance is 1e-9.
+  let state = 0x9e3779b9
+  const random = (): number => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const RANDOM_VERTICES = 4096
+  const RANDOM_ANGLES = 8
+  for (const axis of ['x', 'y'] as const) {
+    const stock = roundStock(40, 80, axis, axis === 'x' ? { x: -3, y: 7 } : { x: 7, y: -3 })
+    const positions = new Float32Array(RANDOM_VERTICES * 3)
+    for (let i = 0; i < positions.length; i++) positions[i] = (random() - 0.5) * 60
+    for (let a = 0; a < RANDOM_ANGLES; a++) {
+      const angle = (random() - 0.5) * 1440
+      const turned = turnedModelPositions(positions, stock, angle)
+      const expected = new Float32Array(positions.length)
+      for (let i = 0; i < positions.length; i += 3) {
+        const point = toolSpacePoint({ x: positions[i], y: positions[i + 1], z: positions[i + 2] }, angle, stock)
+        expected[i] = point.x
+        expected[i + 1] = point.y
+        expected[i + 2] = point.z
+      }
+      for (let i = 0; i < turned.length; i++) {
+        const relative = Math.abs(turned[i] - expected[i]) / Math.max(1, Math.abs(expected[i]))
+        assert.ok(relative <= 1e-9,
+          `random turning ${axis} angle ${angle} vertex ${i / 3} component ${i % 3}: got ${turned[i]}, toolSpacePoint ${expected[i]}`)
+      }
+    }
+  }
+}
+
 const STOCK = roundStock(40, 150)
 const MESH = prism(STOCK, SQUARE)
 {

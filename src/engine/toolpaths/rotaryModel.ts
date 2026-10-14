@@ -18,8 +18,7 @@ import { getStockBounds, roundStockCentre } from '../../types/project'
 import type { Clamp, RoundStock } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
-import { toolSpacePoint } from '../rotaryFrame'
-import { chooseHeightMapCellSize, computeXYBounds, getCachedHeightMap, safeToolTipZAt } from './finishSurfaceParallel'
+import { chooseHeightMapCellSize, getCachedHeightMap, safeToolTipZAt } from './finishSurfaceParallel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -56,15 +55,93 @@ export interface RotarySampling {
   readonly stopped: boolean
 }
 
+/** The turned X/Y bounds of a mesh, accumulated by `turnModelInto`. */
+interface TurnedBounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+/**
+ * Write `positions` turned to `angleDeg` into `out`, and return the turned
+ * points' X/Y bounds.
+ *
+ * This is `toolSpacePoint` inlined so the cos/sin, centre and half-height are
+ * computed once per angle and no point object is built per vertex (issue #1015
+ * slice J): on the 1.47 M-vertex bust bench, turning fell from about 860 ms an
+ * angle through `toolSpacePoint` to about 29 ms inlined. The arithmetic is
+ * deliberately identical to `rotaryFrame.toolSpacePoint` --
+ * `centre + across * cos - up * sin` and `height + across * sin + up * cos` --
+ * so a vertex here is bit-identical to the frame function's result stored in a
+ * Float32. The test asserts that on the fixtures and on random vertices at
+ * random angles on both bar axes; keep the two in step.
+ *
+ * `out` is a plain buffer the caller may reuse across angles; nothing here
+ * retains it. The bounds are folded into the same pass (a second full scan per
+ * angle `computeXYBounds` used to pay). They are accumulated on the exact
+ * turned values and rounded to Float32 before they are returned: rounding is
+ * monotone, so `Math.fround(min)` is the minimum of the rounded values, and the
+ * result is exactly `computeXYBounds(out)`. Returning the unrounded value would
+ * move the height map's origin by a fraction of a Float32 ulp and change which
+ * cells a boundary triangle hits.
+ */
+function turnModelInto(
+  out: Float32Array,
+  positions: Float32Array,
+  stock: RoundStock,
+  angleDeg: number,
+): TurnedBounds {
+  const centre = roundStockCentre(stock)
+  const height = stock.thickness / 2
+  const t = (angleDeg * Math.PI) / 180
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  if (stock.axis === 'x') {
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i]
+      const across = positions[i + 1] - centre
+      const up = positions[i + 2] - height
+      const y = centre + across * cos - up * sin
+      out[i] = x
+      out[i + 1] = y
+      out[i + 2] = height + across * sin + up * cos
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  } else {
+    for (let i = 0; i < positions.length; i += 3) {
+      const across = positions[i] - centre
+      const up = positions[i + 2] - height
+      const x = centre + across * cos - up * sin
+      const y = positions[i + 1]
+      out[i] = x
+      out[i + 1] = y
+      out[i + 2] = height + across * sin + up * cos
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  return {
+    minX: Math.fround(minX),
+    maxX: Math.fround(maxX),
+    minY: Math.fround(minY),
+    maxY: Math.fround(maxY),
+  }
+}
+
 /** The model's vertices as they sit when the stock is turned to `angleDeg`. */
 export function turnedModelPositions(positions: Float32Array, stock: RoundStock, angleDeg: number): Float32Array {
   const turned = new Float32Array(positions.length)
-  for (let i = 0; i < positions.length; i += 3) {
-    const point = toolSpacePoint({ x: positions[i], y: positions[i + 1], z: positions[i + 2] }, angleDeg, stock)
-    turned[i] = point.x
-    turned[i + 1] = point.y
-    turned[i + 2] = point.z
-  }
+  turnModelInto(turned, positions, stock, angleDeg)
   return turned
 }
 
@@ -80,14 +157,17 @@ export function sampleRotaryModel(
   const tipRadius: Float32Array[] = []
   const centre = roundStockCentre(stock)
   const radius = stock.thickness / 2
+  // One turned buffer for the whole operation: the mesh is the same size at
+  // every angle, and neither the height map nor the sampling retains it, so a
+  // fresh 3 V Float32 per angle is allocation the run does not need.
+  const turned = new Float32Array(mesh.positions.length)
   let stopped = false
   for (const angle of options.anglesDeg) {
     if (options.shouldStop?.()) {
       stopped = true
       break
     }
-    const positions = turnedModelPositions(mesh.positions, stock, angle)
-    const bbox = computeXYBounds(positions)
+    const bbox = turnModelInto(turned, mesh.positions, stock, angle)
     const angleWarnings: ToolpathWarning[] = []
     const cellSize = chooseHeightMapCellSize(bbox, options.requestedCellSize, angleWarnings)
     for (const warning of angleWarnings) {
@@ -95,7 +175,7 @@ export function sampleRotaryModel(
     }
     // The cache key contains bounds and cell size, not orientation or mesh.
     // An angle owns its host, even when another angle has exactly these bounds.
-    const heightMap = getCachedHeightMap({}, positions, mesh.index, bbox, cellSize)
+    const heightMap = getCachedHeightMap({}, turned, mesh.index, bbox, cellSize)
     const row = new Float32Array(along.length)
     for (let i = 0; i < along.length; i++) {
       const x = stock.axis === 'x' ? along[i] : centre
