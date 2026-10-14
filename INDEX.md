@@ -16,6 +16,7 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 - [scripts/](scripts/INDEX.md) — quality gates, build/codegen tools, optional agent-dispatch harness, and one-off diagnostics
 - [tools/resume-work/](tools/resume-work/INDEX.md) — transcript-backed `/resume-work` handoff reader for agents taking over a worktree
 - [tools/manual-impact/](tools/manual-impact/INDEX.md) — parser for the PR description's Manual impact section; the `manual-impact` workflow checks it on every PR and turns it into a user-manual issue on merge (#818)
+- [tools/download-manifest-gate/](tools/download-manifest-gate/INDEX.md) — version gate the desktop deploy workflows run before they replace the public download manifest, so a tester build from a feature branch leaves the downloads page and update channel alone (#1000)
 - [public/](public/) — static assets served as-is (incl. generated `icons.svg`)
 - [.github/](.github/) — workflows and PR templates
 - [.agents/skills/](.agents/skills/) — reusable agent skills: `github-issues` (issue/board/Priority wiring), `manager-delegate` (delegated slices), `frontend-design`, `resume-work`, `brainstorm`, `manual-impact` (the PR description's Manual impact section)

@@ -35,6 +35,7 @@ import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 import { expandedClampBounds, worstCaseClampCheckToolRadius, type ExpandedClampBounds } from './toolpaths/clamps'
 import { buildBatchedLines, type BatchLineMeta } from './lineBatcher'
 import type { ThreeThemePalette } from '../theme/palette'
+import { convertLength, type Units } from '../utils/units'
 import { profileToPolygon } from './profilePolyline'
 
 export { closeLinePolygonIfNeeded, profileToPolygon } from './profilePolyline'
@@ -80,6 +81,22 @@ export async function getManifoldModule(): Promise<ManifoldToplevel> {
   }
 
   return manifoldModulePromise
+}
+
+/** 0.01 mm, the smallest height the 3D view needs to keep a shape drawable. */
+const MIN_RENDER_HEIGHT_MM = 0.01
+
+/**
+ * The smallest height the 3D view draws for a feature, wall, clamp or imported
+ * model, in the project's own units.
+ *
+ * This exists only so a zero-height shape still produces drawable geometry. It
+ * must never inflate a height the user entered: a bare `0.1` is 0.1 in in an
+ * inch project — thicker than a 0.0625 in feature's stock — which is issue
+ * #1009. 0.01 mm is ~0.0004 in, far below any height a person draws.
+ */
+export function minRenderHeight(units: Units): number {
+  return convertLength(MIN_RENDER_HEIGHT_MM, 'mm', units)
 }
 
 // ── Profile → Three.js Shape ─────────────────────────────────────────────────
@@ -160,7 +177,10 @@ export function buildStockMesh(stock: Stock, threePalette: ThreeThemePalette): T
  */
 function buildWallGeometry(shape: THREE.Shape, depth: number): THREE.BufferGeometry {
   const points = shape.getPoints()
-  if (points.length < 2 || depth < 0.01) return new THREE.BufferGeometry()
+  // The caller floors `depth` at minRenderHeight(units), so a zero-height
+  // region arrives here at the guard height and must still draw. A unit-blind
+  // `0.01` here discarded that guard in an inch project (issue #1009).
+  if (points.length < 2 || depth <= 0) return new THREE.BufferGeometry()
 
   const positions: number[] = []
   const indices: number[] = []
@@ -336,7 +356,7 @@ export function loadSTLTransformedGeometry(
   const transform = importedModelInstanceTransform(feature)
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
-  const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+  const targetHeight = Math.max(minRenderHeight(project.meta.units), Math.abs(zTop - zBottom))
   const zScale = targetHeight / ((meshHeight || 1) * scale)
   const bottomZ = Math.min(zTop, zBottom)
 
@@ -420,7 +440,7 @@ export function buildFeatureMesh(
       ? orientImportedMesh(persistedMesh, orientation, stl?.meshAssetId).bounds
       : asset.bounds
     const meshHeight = (zBounds.maxZ - zBounds.minZ) * userScale
-    const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+    const targetHeight = Math.max(minRenderHeight(project.meta.units), Math.abs(zTop - zBottom))
     const zScaleFactor = targetHeight / (meshHeight || 1)
     const minZAfterScale = zBounds.minZ * userScale
 
@@ -519,9 +539,9 @@ export function buildFeatureMesh(
   const depth = Math.abs(zBottom - zTop)
 
   const geometry = isRegion
-    ? buildWallGeometry(shape, Math.max(depth, 0.1))
+    ? buildWallGeometry(shape, Math.max(depth, minRenderHeight(project.meta.units)))
     : new THREE.ExtrudeGeometry(shape, {
-        depth: Math.max(depth, 0.1),
+        depth: Math.max(depth, minRenderHeight(project.meta.units)),
         bevelEnabled: false,
       })
 
@@ -584,10 +604,10 @@ export function applyTabHighlight(mesh: THREE.Mesh, selected: boolean, threePale
   material.opacity = selected ? 0.72 : 0.56
 }
 
-export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, threePalette?: ThreeThemePalette): THREE.Mesh {
+export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, units: Units, threePalette?: ThreeThemePalette): THREE.Mesh {
   const shape = profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
   const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: Math.max(clamp.height, 0.1),
+    depth: Math.max(clamp.height, minRenderHeight(units)),
     bevelEnabled: false,
   })
   geometry.rotateX(-Math.PI / 2)
@@ -642,10 +662,10 @@ export function buildClampClearanceBox(
   return box
 }
 
-export function buildTabMesh(tab: Tab, selected = false, threePalette?: ThreeThemePalette): THREE.Mesh {
+export function buildTabMesh(tab: Tab, units: Units, selected = false, threePalette?: ThreeThemePalette): THREE.Mesh {
   const shape = profileToShape(rectProfile(tab.x, tab.y, tab.w, tab.h))
   const zStart = Math.min(tab.z_top, tab.z_bottom)
-  const depth = Math.max(Math.abs(tab.z_top - tab.z_bottom), 0.1)
+  const depth = Math.max(Math.abs(tab.z_top - tab.z_bottom), minRenderHeight(units))
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: false,
@@ -788,7 +808,7 @@ export function buildFeatureSolid(
       // Compute vertical scale and translation to match z_bottom/z_top
       const bbox = solid.boundingBox()
       const meshHeight = bbox.max[2] - bbox.min[2]
-      const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+      const targetHeight = Math.max(minRenderHeight(project.meta.units), Math.abs(zTop - zBottom))
       // bbox is computed BEFORE uniform scale, so meshHeight = originalHeight.
       // After .scale([scale, scale, scale]), height = originalHeight * scale.
       // We want final height = targetHeight, so zScale = targetHeight / (originalHeight * scale).
@@ -814,7 +834,7 @@ export function buildFeatureSolid(
       const zTop = resolveDimension(feature.z_top, project)
       const zBottom = resolveDimension(feature.z_bottom, project)
       const yStart = Math.min(zTop, zBottom)
-      const depth = Math.max(Math.abs(zBottom - zTop), 0.1)
+      const depth = Math.max(Math.abs(zBottom - zTop), minRenderHeight(project.meta.units))
 
       const crossSection = module.CrossSection.ofPolygons([contour], 'EvenOdd')
       try {
@@ -837,7 +857,9 @@ export function buildFeatureSolid(
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
   const yStart = Math.min(zTop, zBottom)
-  const depth = Math.max(Math.abs(zBottom - zTop), 0.1)
+  // Floors at the unit-aware guard so a 0.0625 in feature on 0.0625 in stock is
+  // not inflated to the old unit-blind 0.1 in (issue #1009).
+  const depth = Math.max(Math.abs(zBottom - zTop), minRenderHeight(project.meta.units))
 
   const crossSection = module.CrossSection.ofPolygons([contour], 'EvenOdd')
   try {
@@ -1024,11 +1046,11 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   stockWireframe.visible = showStockReference
 
   for (const tab of visibleTabs) {
-    tabMeshes.set(tab.id, buildTabMesh(tab, false, threePalette))
+    tabMeshes.set(tab.id, buildTabMesh(tab, project.meta.units, false, threePalette))
   }
 
   for (const clamp of visibleClamps) {
-    clampMeshes.set(clamp.id, buildClampMesh(clamp, false, false, threePalette))
+    clampMeshes.set(clamp.id, buildClampMesh(clamp, false, false, project.meta.units, threePalette))
   }
 
   for (const bounds of expandedClampBounds(project, worstCaseClampCheckToolRadius(project))) {

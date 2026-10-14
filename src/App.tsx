@@ -454,7 +454,7 @@ function App() {
             clamps={visibleClamps}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
-            origin={project.origin}
+            origin={project.origin} units={project.meta.units}
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}

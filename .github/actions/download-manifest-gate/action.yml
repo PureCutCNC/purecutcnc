@@ -1,0 +1,34 @@
+name: Download manifest gate
+description: >
+  Decide whether a desktop deploy may replace the published download manifest
+  (issue #1000). downloads/{channel}/{platform}.json in the pages repo feeds the
+  public downloads page and the desktop update check. A dispatched version older
+  than the published one — a tester build such as
+  `0.0.0-release-0.6.0-preview.1`, or an old version dispatched by mistake —
+  still builds but leaves the manifest alone; the same or a newer version
+  writes it. The step fails when it cannot judge (no pages checkout, an
+  unreadable manifest). Run it after the pages repo is checked out to
+  `pages-repo` and `npm ci` has run.
+
+inputs:
+  version:
+    description: The version being deployed (the workflow's `version` input)
+    required: true
+  platform:
+    description: Manifest platform key (`macos`, `windows` or `linux`)
+    required: true
+
+outputs:
+  publish:
+    description: "`true` when the manifest should be written, `false` to leave it"
+    value: ${{ steps.gate.outputs.publish }}
+
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_PLATFORM: ${{ inputs.platform }}
+      run: npx tsx tools/download-manifest-gate/cli.ts "$RELEASE_PLATFORM" "$RELEASE_VERSION"

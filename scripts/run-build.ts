@@ -18,25 +18,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { cpus } from 'node:os'
 import { dirname, resolve } from 'node:path'
+import { selectBuildPhases } from './build-phases'
 
-interface BuildPhase {
-  name: string
-  command: 'npm' | 'npx'
-  args: string[]
-}
-
-const phases: BuildPhase[] = [
-  { name: 'docs:check', command: 'npm', args: ['run', 'docs:check'] },
-  { name: 'lint', command: 'npm', args: ['run', 'lint'] },
-  { name: 'check:e2e-lanes', command: 'npm', args: ['run', 'check:e2e-lanes'] },
-  { name: 'check:colors', command: 'npm', args: ['run', 'check:colors'] },
-  { name: 'check:portable-paths', command: 'npm', args: ['run', 'check:portable-paths'] },
-  { name: 'check:i18n', command: 'npm', args: ['run', 'check:i18n'] },
-  { name: 'sync-icons', command: 'npx', args: ['tsx', 'scripts/build-icon-sprite.ts'] },
-  { name: 'typecheck', command: 'npx', args: ['tsc', '-b'] },
-  { name: 'test', command: 'npm', args: ['test'] },
-  { name: 'vite build', command: 'npx', args: ['vite', 'build'] },
-]
+const phases = selectBuildPhases(process.argv.slice(2))
 
 const startedAt = new Date().toISOString()
 const startedNs = process.hrtime.bigint()

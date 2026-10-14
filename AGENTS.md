@@ -225,6 +225,7 @@ decay in 74 days without anyone lifting a finger.
 ```bash
 npm run docs:check     # Active-doc links, planning metadata, and agent entrypoints.
 npm run build          # Full build (docs + lint + icons + tsc + tests + vite). Run this before committing.
+npm run build:gates    # The same phases minus `test` (`npm run build -- --skip-tests`), ~1.5 min instead of ~8.5
 npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
 npm run test:e2e       # Playwright browser smoke (PR CI gate; starts its own Vite dev server)
 npm run dev            # Vite dev server (do NOT start this unless asked — the user runs it themselves)
@@ -233,7 +234,9 @@ npm run lint:scripts   # Optional: lint the one-off diagnostic scripts in script
 npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons/*.svg
 ```
 
-Always run `npm run build` from the project root to verify changes compile before committing. `npm run lint` and `npm test` run automatically as part of the build, so a lint failure or failing structural test will fail the build. Do not start the dev/preview server unless asked; `npm run test:e2e` owns its temporary dev server when you intentionally run the browser smoke.
+Always run `npm run build` from the project root to verify changes compile before committing. `npm run lint` and `npm test` run automatically as part of the build, so a lint failure or failing structural test will fail the build.
+
+**Pre-PR routine (#985).** The unit-test phase is most of the build's ~8.5 minutes, so a full build can run on GitHub's runners instead of your machine: run `npm run build:gates` plus the changed test files directly (`npx tsx path/to/file.test.ts`), push the branch, dispatch the PR workflow on it with `gh workflow run pr-check.yml --ref <branch>` and `gh run watch` (cloud sessions without `gh`: GitHub MCP `actions_run_trigger` with `run_workflow`, then `actions_get`), and open the PR once that run is green. A local `npm run build` remains a valid alternative; PR CI is unchanged and is still the merge gate. Do not start the dev/preview server unless asked; `npm run test:e2e` owns its temporary dev server when you intentionally run the browser smoke.
 
 `npm run test:e2e` is a separate PR CI gate, not part of `npm run build`. User-facing UI or workflow changes should add or extend an `e2e/*.smoke.spec.ts` test when the behavior depends on rendered DOM, menu wiring, dialogs, or browser-only boot paths. If lower-level structural tests are sufficient, say so in the PR description so the lack of e2e coverage is deliberate.
 

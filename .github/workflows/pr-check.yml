@@ -3,9 +3,13 @@ name: PR Build Check
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Run the same build + e2e jobs on a pushed branch before its PR exists (#985):
+  # gh workflow run pr-check.yml --ref <branch>
+  workflow_dispatch:
 
 concurrency:
-  group: pr-build-${{ github.event.pull_request.number }}
+  # A dispatch has no PR number; key it by the branch ref so it is never empty.
+  group: pr-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

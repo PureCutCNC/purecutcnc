@@ -12,7 +12,7 @@ available; do not treat one-off diagnostics as normal quality gates.
 - [`check-portable-paths.ts`](check-portable-paths.ts) — build gate (#655): scans `src/`, `tools/`, `scripts/` for POSIX-only path patterns that break on Windows — hardcoded absolute roots (`'/tmp/...'`), slicing the result of a `path` API (`resolve(cwd).slice(1)`), and `/`-only separator replacement on a path line. The Windows desktop build is the only Windows CI and is manually dispatched, so these used to surface at release time (#649, #651); running inside `npm run build` catches them on every local and CI build. Deliberately POSIX-only code is marked `portable-exempt: <reason>` (mirrors `theme-exempt`). Run via `npm run check:portable-paths`.
 - [`check-fast-lane.sh`](check-fast-lane.sh) — decide fast-lane eligibility mechanically (size budget + protected paths) per the workflow section of [`AGENTS.md`](../AGENTS.md); run via `npm run check:fast-lane`, and by the `fast-lane-guard` CI job in `--ci` mode. Dependency-free bash, deliberately outside `npm run build` because it needs a fetched base ref.
 - [`check-worker-production.ts`](check-worker-production.ts) — production worker startup from the built artifact (issue #675); run via `npm run check:worker-production` after `vite build`. The e2e suite runs against the **dev** server because the `__pcTest` seam is DEV-only, which leaves workers unverified exactly where they are most fragile — bundling, chunk naming, and whether `new URL(..., import.meta.url)` still resolves from a hashed asset directory under a non-root path. So this serves `dist/` under a deliberately nested path and constructs the built worker chunk directly, asserting it completes its protocol handshake. `version.json` is excluded by name: the deploy workflow writes it, not the build.
-- [`run-build.ts`](run-build.ts) — run the existing build phases once, in order, with wall timings and an optional `BUILD_PHASE_REPORT` JSON artifact.
+- [`run-build.ts`](run-build.ts) — run the build phases from [`build-phases.ts`](build-phases.ts) once, in order, with wall timings and an optional `BUILD_PHASE_REPORT` JSON artifact; `--skip-tests` (`npm run build:gates`) drops only the `test` phase, covered by [`build-phases.test.ts`](build-phases.test.ts), which `npm test` runs.
 - [`run-tests.ts`](run-tests.ts) — discover and run structural `src/**/*.test.ts` and `tools/**/*.test.ts` files in isolated processes; logs per-file timings and writes a machine-readable report when `RUN_TESTS_REPORT` is set.
 - [`build-summary.sh`](build-summary.sh) — run `npm run build` once and print a compact failing-stage + extracted-errors summary (full output saved to a log whose path is printed); `--from-log FILE` summarizes an existing build log instead of re-running. Agents should use this instead of re-running the build to grep for failures.
 - [`edit-lines.ts`](edit-lines.ts) — deterministic line-range file editor for agents (`show`/`replace`/`insert-after`/`delete`, `--expect` stale-line guard, prints a diff of exactly what changed, atomic writes, `--self-test`). The sanctioned fallback when an exact-match edit fails; replaces `sed -i` surgery.
@@ -21,9 +21,11 @@ available; do not treat one-off diagnostics as normal quality gates.
 
 ## Optional delegated-agent harness
 
-- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness. `dispatch-task.sh --handoff REPO_PATH` gives either provider a compact bootstrap to read a tracked in-worktree handoff; direct stdin is reserved for a small instruction.
+- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness or `--provider codex` for Codex CLI. `dispatch-task.sh --handoff REPO_PATH` gives each provider a compact bootstrap to read a tracked in-worktree handoff; direct stdin is reserved for a small instruction.
 - [`run-claude-deepseek-agent.sh`](run-claude-deepseek-agent.sh) — credential-backed Claude/DeepSeek leaf launcher.
 - [`run-dsh-agent.sh`](run-dsh-agent.sh) and [`dsh-progress-filter.jq`](dsh-progress-filter.jq) — DeepSeek Harness leaf launcher and incremental live session-event filter. They use DSH's own credential store and sandbox modes, tail newly appended observed assistant/tool/tool-result records into the manager log, and leave the full raw session under `~/.dsh`.
+- [`run-codex-agent.sh`](run-codex-agent.sh) — Codex CLI leaf launcher using its own login and configured model, read-only/workspace-write sandbox modes, observed stderr and lifecycle logs, and a final message saved beside the log. Implementation edits remain uncommitted for the manager.
+- [`test-codex-agent.sh`](test-codex-agent.sh) — mocked Codex leaf coverage for sandbox/cwd, prompt and credential isolation, progress/final artifacts, and failure propagation.
 - [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded provider-neutral worker prompt template (historic filename retained for compatibility).
 - [`test-claude-deepseek-agent.sh`](test-claude-deepseek-agent.sh), [`test-dsh-agent.sh`](test-dsh-agent.sh), [`test-dispatch-task.sh`](test-dispatch-task.sh), and [`worker-progress-filter.jq`](worker-progress-filter.jq) — harness tests and Claude progress filtering.
 
@@ -31,9 +33,9 @@ Use this path only after explicit delegation approval and follow
 [`manager-delegate`](../.agents/skills/manager-delegate/SKILL.md). Direct
 implementation remains the default execution mode.
 
-DSH implementation sessions intentionally leave worktree edits uncommitted:
-its workspace-write sandbox cannot write the linked worktree's shared Git
-metadata in the primary checkout. After a zero-exit DSH session with changes,
+DSH and Codex implementation sessions intentionally leave worktree edits uncommitted:
+the workspace-write sandbox cannot write the linked worktree's shared Git
+metadata in the primary checkout. After a zero-exit DSH or Codex session with changes,
 `dispatch-task.sh` creates exactly one manager-owned commit; failed and
 no-change runs are never auto-committed. Live tool-result snippets are capped
 at 320 characters by default (`DSH_TOOL_RESULT_MAX_CHARS`); inspect DSH's raw

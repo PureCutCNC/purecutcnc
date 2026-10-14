@@ -23,12 +23,14 @@ import {
   checkMaxCutDepthWarning,
   flattenProfile,
   getOperationSafeZ,
+  greedyNearestNeighbor,
   normalizeToolForProject,
   resolveDimensionRef,
   resolveFeatureZSpan,
 } from './geometry'
 import { pushRapidAndPlunge, retractToSafe } from './pocket'
 import { guideFragmentsBlockedBy, resolveRegionDomainCurve, splitGuideFragmentsOutside } from './regionDomain'
+import type { ClosedGuideFragment } from './guideFragments'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { appendClampBlockedWarnings, clampKeepOutPaths, clampKeepOuts } from './modelProtection'
 import { helixAngularDirection } from './entry'
@@ -162,6 +164,34 @@ interface PreparedCarvePath {
   z: number
   entryStartZ: number
   closed: boolean
+}
+
+/** One target's direct-mode work: the fragment/level passes to emit. */
+interface PreparedDirectCarve {
+  mode: 'direct'
+  fragments: ClosedGuideFragment[]
+  cutLevels: number[]
+}
+
+/** One target's trochoidal work: every fragment at every level, already prepared. */
+interface PreparedTrochoidalCarve {
+  mode: 'trochoidal'
+  paths: PreparedCarvePath[]
+}
+
+/**
+ * One carve target, prepared but not yet emitted. Targets are ordered by travel
+ * before emission, so `start` and `end` are the block's XY endpoints for that
+ * ordering.
+ */
+interface PreparedCarveTarget {
+  /** Index in the operation's target order — the nearest-neighbour tie-break. */
+  targetIndex: number
+  /** XY where the tool first comes down for this target. */
+  start: Point
+  /** XY where this target's last cut move ends. */
+  end: Point
+  work: PreparedDirectCarve | PreparedTrochoidalCarve
 }
 
 export function generateFollowLineToolpath(project: Project, operation: Operation): ToolpathResult {
@@ -343,6 +373,12 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     angularDirection,
   }
 
+  // Each target is prepared into a block first, ordered by travel, then
+  // emitted. Preparing changes nothing about how a target is cut; only the
+  // sequence of targets — and therefore the rapid that reaches each one —
+  // differs from the operation's target order.
+  const preparedTargets: PreparedCarveTarget[] = []
+
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
     if (flattened.points.length < 2) {
@@ -462,8 +498,48 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
         return { operationId: operation.id, moves: [], warnings, bounds: null }
       }
 
-      // Append phase — per prepared path.
-      for (const path of prepared) {
+      const start = prepared[0].built.points[0]
+      const lastPath = prepared[prepared.length - 1]
+      const lastCutMoves = toProfileCutMoves(lastPath.built.points, lastPath.z, lastPath.closed)
+      const end = lastCutMoves.at(-1)?.to ?? start
+      preparedTargets.push({
+        targetIndex: preparedTargets.length,
+        start: { x: start.x, y: start.y },
+        end: { x: end.x, y: end.y },
+        work: { mode: 'trochoidal', paths: prepared },
+      })
+    } else {
+      // ---- Direct mode (unchanged from pre-trochoidal) ----------------------
+      const start = profileStartPoint(fragments[0].points, cutLevels[0])
+      const lastFragment = fragments[fragments.length - 1]
+      const lastCutMoves = toProfileCutMoves(
+        lastFragment.points,
+        cutLevels[cutLevels.length - 1],
+        lastFragment.closed,
+      )
+      const end = lastCutMoves.at(-1)?.to ?? start
+      preparedTargets.push({
+        targetIndex: preparedTargets.length,
+        start: { x: start.x, y: start.y },
+        end: { x: end.x, y: end.y },
+        work: { mode: 'direct', fragments, cutLevels },
+      })
+    }
+  }
+
+  // Omit `start`, so the first target stays first — the same nearest-block
+  // ordering the other multi-target kinds use.
+  const orderedTargets = greedyNearestNeighbor(preparedTargets, {
+    positionOf: (target) => target.start,
+    exitOf: (target) => target.end,
+    tieBreakOf: (target) => target.targetIndex,
+  })
+
+  // Append phase — one ordered target at a time, threading the shared position
+  // so every transition is the one today's code produces.
+  for (const target of orderedTargets) {
+    if (target.work.mode === 'trochoidal') {
+      for (const path of target.work.paths) {
         const { built, z, entryStartZ, closed } = path
         const entry = built.points[0]
 
@@ -507,9 +583,8 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
     } else {
-      // ---- Direct mode (unchanged from pre-trochoidal) ----------------------
-      for (const fragment of fragments) {
-        for (const levelZ of cutLevels) {
+      for (const fragment of target.work.fragments) {
+        for (const levelZ of target.work.cutLevels) {
           const entryPoint = profileStartPoint(fragment.points, levelZ)
           currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
           const cutMoves = toProfileCutMoves(fragment.points, levelZ, fragment.closed)
