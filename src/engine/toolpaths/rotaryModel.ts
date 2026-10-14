@@ -120,7 +120,13 @@ export interface RotaryFinishParams {
   /** The along range the passes cover; the caller (a later slice) derives it from the model and the end supports. */
   readonly alongStart: number
   readonly alongEnd: number
-  /** Tool-tip radius from the centreline for the operation's first positioning move and its final retract; must be above the bar's surface. Every move between runs -- a retract, a traverse or a turning link -- travels at the smaller of this and the bar's surface plus a clearance. */
+  /**
+   * Tool-tip radius from the centreline for the operation's first positioning
+   * move and its final retract; must be above the bar's surface. Every move
+   * between runs -- a retract, a traverse or a turning link -- travels at the
+   * bar's surface plus a clearance, and the first and last moves go to the
+   * higher of this and that clearance.
+   */
   readonly safeRadius: number
   /** Requested height-map cell size, passed to the sampler. */
   readonly requestedCellSize: number
@@ -260,13 +266,13 @@ interface RotaryRun {
  * Emit one pass's runs, and say where the pass left the tool. A run that starts
  * where the previous pass finished links to it -- a rise to `travelZ`, a turn,
  * and a drop, each its own `cut` move so a merged move can never lose one of the
- * two angles. `travelZ` is the bar's surface plus a clearance (`min(safeRadius,
- * R + clearance)`, a tip height): nothing -- model or standing stock -- is ever
- * above the bar's surface, so the turn is always in air, and it is far shorter
- * than a retract to `safeZ`. The link used to turn at the higher of the two end
- * tips, which is *inside* the model between the two pass angles: on a square
- * prism of half-width 10 in a 40 mm bar the 34.29 -> 51.43 degree link ran at
- * tip radius 13.598 while the corner at 45 degrees needed 14.141.
+ * two angles. `travelZ` is the bar's surface plus a clearance (`2R + clearance`,
+ * a tip height): nothing -- model or standing stock -- is ever above the bar's
+ * surface, so the turn is always in air, and it is far shorter than a retract to
+ * `safeZ`. The link used to turn at the higher of the two end tips, which is
+ * *inside* the model between the two pass angles: on a square prism of half-width
+ * 10 in a 40 mm bar the 34.29 -> 51.43 degree link ran at tip radius 13.598 while
+ * the corner at 45 degrees needed 14.141.
  *
  * Every other run stays at `travelZ` too: the retract off the run just cut, the
  * traverse to the next run's first point and the plunge's start are all at the
@@ -274,8 +280,22 @@ interface RotaryRun {
  * above the layer between runs, but nothing stands above the bar, so the
  * traverse is in air; hopping over the bar beats the full retract to
  * `safeRadius` this used to do on every gap (on a 10-layer rough that was
- * hundreds of full retracts). `safeRadius` is left for the operation's first
+ * hundreds of full retracts). `safeZ` is left for the operation's first
  * positioning move and its final retract.
+ *
+ * Inside a run two neighbouring samples are joined by one straight move. That
+ * move is safe only while the surface between them rises gently: the tool at an
+ * intermediate point is at an interpolated height, and its footprint reaches
+ * terrain that neither sample's own height accounted for. So a step steeper than
+ * 45 degrees (the tips differ by more than the samples are apart) is not one
+ * diagonal move. Rising, the tool goes straight up at the first sample to the
+ * higher tip and then runs along at that height; falling, it runs along at the
+ * first sample's height and then drops at the second. The horizontal leg is safe
+ * at the higher of the two heights because the cutter over the span stays inside
+ * the union of the two samples' footprints, and each of those is safe at that
+ * height or below (exact for a flat end mill; for a ball nose what is left is the
+ * ordinary between-sample error, about `s^2 / (8r)` for sample spacing `s` and
+ * ball radius `r`). Gentler steps keep the single diagonal move.
  */
 function emitRotaryRuns(
   moves: ToolpathMove[],
@@ -310,7 +330,27 @@ function emitRotaryRuns(
       moves.push({ kind: 'plunge', from: { ...first, z: safeZ }, to: first })
     }
     for (let i = 1; i < run.points.length; i++) {
-      moves.push({ kind: 'cut', from: run.points[i - 1], to: run.points[i] })
+      const from = run.points[i - 1]
+      const to = run.points[i]
+      // The along distance between the two samples: the run is over the
+      // centreline, so only one of x and y changes, and this is the spacing.
+      const spacing = Math.hypot(to.x - from.x, to.y - from.y)
+      const rise = to.z - from.z
+      if (Math.abs(rise) > spacing) {
+        if (rise > 0) {
+          // Rising: straight up at the first (lower) sample, then along at the
+          // higher tip.
+          moves.push({ kind: 'cut', from, to: { ...from, z: to.z } })
+          moves.push({ kind: 'cut', from: { ...from, z: to.z }, to })
+        } else {
+          // Falling: along at the first (higher) sample's height, then straight
+          // down at the second sample.
+          moves.push({ kind: 'cut', from, to: { ...to, z: from.z } })
+          moves.push({ kind: 'cut', from: { ...to, z: from.z }, to })
+        }
+      } else {
+        moves.push({ kind: 'cut', from, to })
+      }
     }
     current = run.points[run.points.length - 1]
     endedAtEnd = run.atEnd
@@ -541,7 +581,8 @@ function rotaryTargets(
  * pass is cut as runs of finite samples: between runs, and from one pass to the
  * next when they do not join at the same bar end, the tool rises to the bar's
  * surface plus a clearance, traverses there and plunges; only the operation's
- * first positioning move and its final retract go to `safeRadius`. A pass with
+ * first positioning move and its final retract go to the rapid height, the
+ * higher of `safeRadius` and that clearance. A pass with
  * no finite sample emits nothing. Cutting the centreline instead would be
  * full-width, full-depth slotting with a finishing tool, silently.
  */
@@ -575,13 +616,16 @@ export function generateRotaryFinish(
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
-  const safeZ = radius + params.safeRadius
   // Every move between runs -- a turning link, the retract off a run, or the
   // traverse to the next run -- travels at the bar's surface plus a clearance,
   // so it always clears the model and the standing stock between two pass
-  // angles; it never rises above the retract height. If `safeRadius` is lower
-  // than that clearance, `safeZ` wins and every move travels there instead.
-  const travelZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
+  // angles. `safeRadius` does not cap it: a rapid height only a fifth of a
+  // millimetre above the bar would otherwise replace the clearance, and the
+  // clearance is the whole reason the between-run moves are safe. The
+  // operation's first positioning move and its final retract go to the higher
+  // of `safeRadius` and that travel height.
+  const travelZ = 2 * radius + convertLength(1, 'mm', tool.units)
+  const safeZ = Math.max(radius + params.safeRadius, travelZ)
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
   // mirrored on a return pass. Everything that reads a height must use the same
@@ -708,13 +752,15 @@ export function generateRotaryRough(
   const { angles, along } = sampling
   const radius = stock.thickness / 2
   const centre = roundStockCentre(stock)
-  const safeZ = radius + params.safeRadius
   // Every move between runs at every layer -- a turning link, the retract off a
   // run, or the traverse to the next run -- travels at the bar's surface plus a
   // clearance, for the same reason the finish does: the model between the two
   // pass angles is not otherwise checked, and a full retract to `safeRadius` on
-  // every gap dominates a many-layer rough.
-  const travelZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
+  // every gap dominates a many-layer rough. `safeRadius` is never allowed to cap
+  // it down towards the bar; the first positioning move and the final retract go
+  // to the higher of the two heights.
+  const travelZ = 2 * radius + convertLength(1, 'mm', tool.units)
+  const safeZ = Math.max(radius + params.safeRadius, travelZ)
   let lowest = radius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((radius - lowest) / params.stepdown)

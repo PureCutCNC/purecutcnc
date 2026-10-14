@@ -445,6 +445,15 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(bestDistance < 1e-9, `${axis} emitted along ${p} is a sample position`)
       return best
     }
+    // A steep step (slice I) emits a vertical leg plus a horizontal one instead
+    // of a single diagonal, so an emitted endpoint at a sample can sit at that
+    // sample's own tip or at a neighbour's -- the higher one on a rise, the
+    // first one's on a fall. Either way it must be the *pass's own* row: the
+    // mirrored row a return-pass bug would read is far away on this wave and
+    // matches neither.
+    const nearOwnSample = (pass: number, j: number, z: number): boolean =>
+      [j - 1, j, j + 1].some((n) => n >= 0 && n < waveAlong.length
+        && Math.abs(z - (FINISH_RADIUS + waveSampling.tipRadius[pass][n])) <= TOLERANCE)
     let waveChecks = 0
     for (const move of waveResult.moves) {
       if (move.kind !== 'cut') continue
@@ -464,22 +473,36 @@ for (const axis of ['x', 'y'] as const) {
         continue
       }
       if (along(move.from) === along(move.to)) {
-        // The link's own rise or drop at the shared end: one end is the pass's
-        // own end tip, the other the turn height.
+        // A vertical move is either the link's own rise or drop at the shared
+        // end (one end at the turn height, the other the pass's end tip) or a
+        // steep step's leg between two neighbouring samples (both ends at tips).
         const j = waveIndexAt(along(move.from))
-        const tip = FINISH_RADIUS + waveSampling.tipRadius[0][j]
         const heights = [move.from.z, move.to.z]
-        assert.ok(heights.includes(FINISH_LINK_Z), `${axis} wave link rise/drop reaches the turn height`)
-        assert.ok(heights.some((height) => Math.abs(height - tip) <= TOLERANCE), `${axis} wave link rise/drop starts at the pass tip`)
+        if (heights.some((height) => Math.abs(height - FINISH_LINK_Z) <= 1e-9)) {
+          // The link's rise (or drop) can merge with the steep step's vertical
+          // leg at the same along position, so its lower end is this sample's
+          // tip or a neighbour's.
+          const pass = Math.round(fromAngle / (360 / wavePasses))
+          const lower = heights.find((height) => Math.abs(height - FINISH_LINK_Z) > 1e-9) ?? heights[0]
+          assert.ok(nearOwnSample(pass, j, lower), `${axis} wave link rise/drop starts at a pass tip`)
+        } else {
+          const pass = Math.round(fromAngle / (360 / wavePasses))
+          for (const height of heights) {
+            assert.ok(nearOwnSample(pass, j, height),
+              `${axis} wave split leg at along ${waveAlong[j]} sits at a neighbouring sample of its own pass`)
+          }
+        }
         waveChecks++
         continue
       }
       const pass = Math.round(fromAngle / (360 / wavePasses))
       for (const end of ['from', 'to'] as const) {
         const j = waveIndexAt(along(move[end]))
-        // The forward pass's sample at this along position; the axisymmetric
-        // model makes it the right height on every pass.
-        approx(move[end].z, FINISH_RADIUS + waveSampling.tipRadius[0][j], `${axis} wave pass ${pass} height at along ${waveAlong[j]}`)
+        // The pass's own sample at this along position (or a neighbour's on a
+        // steep step); the axisymmetric model makes it the right height on
+        // every pass.
+        assert.ok(nearOwnSample(pass, j, move[end].z),
+          `${axis} wave pass ${pass} height at along ${waveAlong[j]} is its own row's`)
         approx(waveSampling.tipRadius[pass][j], waveSampling.tipRadius[0][j],
           `${axis} wave pass ${pass} samples along ${waveAlong[j]} like the forward pass`)
         waveChecks++
@@ -884,6 +907,112 @@ for (const axis of ['x', 'y'] as const) {
         }
       }
     }
+  }
+}
+
+{
+  // Slice I item 1: a cut move interpolates between two samples, so a step
+  // steeper than the samples are apart used to cut the corner even though every
+  // sample's own tip was safe. A coaxial stepped lathe (radius 4 inside
+  // 10..20, 7 inside 20..30) sampled every 1 mm makes a 3 mm step at along 20,
+  // three times the spacing. The rule emits a vertical leg at the lower sample
+  // plus a horizontal one at the higher tip, not one diagonal. The cutter is
+  // checked against the exact surface of revolution at every step of every
+  // move: the lathe is axisymmetric, so the surface under a cutter point is the
+  // profile at that point's own along position.
+  for (const axis of ['x', 'y'] as const) {
+    const stock = insetStock(axis)
+    const radius = stock.thickness / 2
+    const profile = (along: number): number => along < 20 ? 4 : 7
+    const mesh = lathe(stock, profile, 10, 30, 400, 64)
+    const mill: NormalizedTool = { ...BALL, id: 'flat-1', name: '1 mm flat end mill', type: 'flat_endmill', diameter: 1, radius: 0.5 }
+    const tolerance = CELL + 0.02
+    const cutter: ReadonlyArray<readonly [number, number, number]> = [
+      [0, 0, 0], [0.5, 0, 0], [-0.5, 0, 0], [0, 0.5, 0], [0, -0.5, 0],
+    ]
+    const alongOf = (p: { x: number; y: number }): number => axis === 'x' ? p.x : p.y
+    for (const generate of [generateRotaryFinish, generateRotaryRough]) {
+      const result = generate('op-step', mesh, stock, mill,
+        { ...FINISH_BASE, stepover: 20, sampleSpacing: 1, stepdown: 4 }, {})
+      let checked = 0
+      for (const move of result.moves) {
+        if (move.kind === 'rapid') continue
+        const dx = move.to.x - move.from.x
+        const dy = move.to.y - move.from.y
+        const dz = move.to.z - move.from.z
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / (0.1 * mill.radius)))
+        for (let s = 0; s <= steps; s++) {
+          const f = s / steps
+          const px = move.from.x + dx * f
+          const py = move.from.y + dy * f
+          const pz = move.from.z + dz * f
+          const along = axis === 'x' ? px : py
+          const across = (axis === 'x' ? py : px) - roundStockCentre(stock)
+          const up = pz - radius
+          for (const [ox, oy, oz] of cutter) {
+            const pointAlong = along + (axis === 'x' ? ox : oy)
+            if (pointAlong < 10 || pointAlong > 30) continue
+            const pointAcross = across + (axis === 'x' ? oy : ox)
+            const radial = Math.hypot(pointAcross, up + oz)
+            assert.ok(radial >= profile(pointAlong) - tolerance,
+              `${axis} ${generate.name} ${move.kind} clears the step (along ${pointAlong.toFixed(3)}: radial ${radial.toFixed(3)} < ${profile(pointAlong)})`)
+            checked++
+          }
+        }
+      }
+      assert.ok(checked > 0, `${axis} ${generate.name} checked cutter points against the step`)
+    }
+    // The rule's own shape: the 19 -> 20 pair is a vertical leg at the lower
+    // sample then an along leg at the higher tip, never one diagonal. Removing
+    // the rule or widening the threshold to ten times the spacing brings the
+    // diagonal back; the cutter check above and these two assertions catch it.
+    const finish = generateRotaryFinish('op-step-shape', mesh, stock, mill, { ...FINISH_BASE, stepover: 20, sampleSpacing: 1 }, {})
+    const rise = finish.moves.filter((move) => move.kind === 'cut' && move.from.a === 0 && move.to.a === 0
+      && alongOf(move.from) === 19 && alongOf(move.to) === 19)
+    assert.equal(rise.length, 1, `${axis} the step rises vertically at the lower sample`)
+    approx(rise[0].from.z, radius + 4, `${axis} the vertical leg starts at the lower sample's tip`, 0.02)
+    approx(rise[0].to.z, radius + 7, `${axis} the vertical leg reaches the higher tip`, 0.02)
+    const highRun = finish.moves.filter((move) => move.kind === 'cut' && move.from.a === 0 && move.to.a === 0
+      && alongOf(move.from) === 19 && alongOf(move.to) > 19)
+    assert.ok(highRun.length >= 1, `${axis} the step runs along at the higher tip`)
+    for (const move of highRun) {
+      approx(move.from.z, radius + 7, `${axis} the along leg starts at the higher tip`, 0.02)
+      approx(move.to.z, radius + 7, `${axis} the along leg ends at the higher tip`, 0.02)
+    }
+  }
+}
+
+{
+  // Slice I item 2: travel is always the bar's surface plus the clearance, and
+  // the operation's first positioning move and final retract go to the higher
+  // of that and `safeRadius`. On this 40 mm bar a rapid height of 40.2 (tip
+  // radius 20.2) used to cap every internal turn and traverse at 40.2 -- a fifth
+  // of a millimetre above the bar instead of the clearance.
+  const stock = insetStock('x')
+  const cylinder = prism(stock, CIRCLE)
+  const safeRadius = 20.2
+  const travelZ = 2 * FINISH_RADIUS + LINK_CLEARANCE
+  const rapidHeight = Math.max(FINISH_RADIUS + safeRadius, travelZ)
+  assert.ok(rapidHeight > FINISH_RADIUS + safeRadius, 'the case really exercises the cap')
+  for (const generate of [generateRotaryFinish, generateRotaryRough]) {
+    const result = generate('op-clearance', cylinder, stock, FINISH_PASS_MM,
+      { ...FINISH_BASE, stepover: 20, stepdown: 4, safeRadius }, {})
+    assert.ok(result.moves.length > 0, `${generate.name} produces moves`)
+    approx(result.moves[0].to.z, rapidHeight, 'first positioning move is at the rapid height', 1e-9)
+    approx(result.moves.at(-1)!.to.z, rapidHeight, 'final retract is at the rapid height', 1e-9)
+    let links = 0
+    for (const move of result.moves) {
+      if (move.kind === 'rapid') {
+        assert.ok(Math.max(move.from.z, move.to.z) >= travelZ - 1e-9, 'every rapid reaches the clearance above the bar')
+        continue
+      }
+      if (move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a) {
+        approx(move.from.z, travelZ, 'a turning link turns at the bar plus the clearance', 1e-9)
+        approx(move.to.z, travelZ, 'a turning link keeps the clearance height', 1e-9)
+        links++
+      }
+    }
+    assert.ok(links > 0, `${generate.name} exercises a turning link`)
   }
 }
 
@@ -1421,14 +1550,369 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   // 1 um away), and again with slice H (the retract and traverse between runs
   // travel at the bar's surface plus the clearance, not at `safeRadius`; the
   // fixture's ends leave `NaN` samples, so its passes split into runs and the
-  // move count happens to stay the same while the heights change). The goal is
-  // unchanged -- any later change to the generator's geometry shows up as a diff
-  // here rather than only in a move count -- but this is the fixed output.
+  // move count happens to stay the same while the heights change), and again
+  // with slice I (the travel height is no longer capped by `safeRadius`, and a
+  // step steeper than the sample spacing in a run -- the fixture's real mesh has
+  // them at its steep walls -- is a vertical leg plus a horizontal one instead of
+  // one diagonal). The goal is unchanged -- any later change to the generator's
+  // geometry shows up as a diff here rather than only in a move count -- but this
+  // is the fixed output.
   const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
   }, {})
-  assert.equal(result.moves.length, 7296, 'finish fixture keeps its move count')
+  assert.equal(result.moves.length, 8844, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    '844e56e4ff24dd3fe3ec9037a37dd9905148f89fef3f9deb308eaa4d52b32b4a', 'finish fixture keeps its exact points')
+    'e9067d81a3ad5bc657224f7f908db815dd16aaa8fefdd48de885211025d706e6', 'finish fixture keeps its exact points')
 }
+
+// ---------------------------------------------------------------------------
+// Slice I: a seeded property test against the exact model geometry.
+//
+// A hand-picked case missed something in every review pass, so this walks 30
+// seeded random cases -- a round bar (each axis, diameter 20-60 mm), one to
+// three disjoint boxes and coaxial / off-axis cylinders inside it (some flush
+// with the bar's ends), random end supports including zero, and a 1-6 mm ball
+// nose or flat end mill. Both generators run with coarse settings. For every
+// cut, plunge and turning-link move the move is walked in steps of at most a
+// tenth of the tool radius; at each step the real cutter (a disc of the tool
+// radius at the tip for a flat end mill, the ball's lower hemisphere for a ball
+// nose) is mapped back into the unturned bar's frame through the frozen rotary
+// rotation and every cutter point is tested against the exact solids, computed
+// directly from the boxes and cylinders -- not the height map.
+//
+// Tolerance: the target the generators compute comes from a height map of cell
+// size `c` sampled at cell centres, from the polygonal facets of the cylinders
+// (sagitta <= the 3D view's minimum render height) and, for a ball, from the
+// between-sample interpolation (`s^2 / (8r)` for spacing `s` and ball radius
+// `r`). Stock to leave is zero in every case, so a cutter point may sit at most
+// `TOLERANCE` inside the model -- or inside the retained bar -- without being a
+// real gouge. The cutter itself is sampled on a coarse ring set, which is
+// reported with the measured worst penetration per check.
+// ---------------------------------------------------------------------------
+
+/** A solid in the unturned bar's own frame: `l` along the bar, `a` across from the centreline, `u` above it. */
+type LocalSolid =
+  | {
+      readonly kind: 'box'
+      readonly l0: number
+      readonly l1: number
+      readonly a0: number
+      readonly a1: number
+      readonly u0: number
+      readonly u1: number
+    }
+  | {
+      readonly kind: 'cylinder'
+      readonly l0: number
+      readonly l1: number
+      readonly a0: number
+      readonly u0: number
+      readonly radius: number
+    }
+
+/**
+ * How far a bar-frame point lies inside the union of `solids`, 0 outside. The
+ * solids are generated disjoint, so the maximum over them is the union's own
+ * depth; a point in a gap is outside all of them.
+ */
+function insideModel(solids: readonly LocalSolid[], l: number, a: number, u: number): number {
+  let worst = 0
+  for (const solid of solids) {
+    if (l < solid.l0 || l > solid.l1) continue
+    let depth: number
+    if (solid.kind === 'box') {
+      if (a < solid.a0 || a > solid.a1 || u < solid.u0 || u > solid.u1) continue
+      depth = Math.min(l - solid.l0, solid.l1 - l, a - solid.a0, solid.a1 - a, u - solid.u0, solid.u1 - u)
+    } else {
+      const d = Math.hypot(a - solid.a0, u - solid.u0)
+      if (d > solid.radius) continue
+      depth = Math.min(l - solid.l0, solid.l1 - l, solid.radius - d)
+    }
+    if (depth > worst) worst = depth
+  }
+  return worst
+}
+
+/** Triangulate one solid into the bar's project frame, appending to `positions` / `index`. */
+function appendSolid(stock: RoundStock, solid: LocalSolid, positions: number[], index: number[]): void {
+  const centre = roundStockCentre(stock)
+  const radius = stock.thickness / 2
+  const vertex = (l: number, a: number, u: number): number => {
+    if (stock.axis === 'x') positions.push(l, centre + a, radius + u)
+    else positions.push(centre + a, l, radius + u)
+    return positions.length / 3 - 1
+  }
+  if (solid.kind === 'box') {
+    const v = [
+      vertex(solid.l0, solid.a0, solid.u0), vertex(solid.l1, solid.a0, solid.u0),
+      vertex(solid.l0, solid.a1, solid.u0), vertex(solid.l1, solid.a1, solid.u0),
+      vertex(solid.l0, solid.a0, solid.u1), vertex(solid.l1, solid.a0, solid.u1),
+      vertex(solid.l0, solid.a1, solid.u1), vertex(solid.l1, solid.a1, solid.u1),
+    ]
+    // Six quads, each two triangles; the winding does not matter to the height map.
+    for (const [x, y, z] of [[0, 1, 3], [0, 3, 2], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4],
+      [2, 3, 7], [2, 7, 6], [0, 2, 6], [0, 6, 4], [1, 3, 7], [1, 7, 5]]) {
+      index.push(v[x], v[y], v[z])
+    }
+    return
+  }
+  const segments = 32
+  const rings: number[] = []
+  for (const l of [solid.l0, solid.l1]) {
+    for (let i = 0; i < segments; i++) {
+      const t = 2 * Math.PI * i / segments
+      rings.push(vertex(l, solid.a0 + solid.radius * Math.cos(t), solid.u0 + solid.radius * Math.sin(t)))
+    }
+  }
+  for (let i = 0; i < segments; i++) {
+    const j = (i + 1) % segments
+    index.push(rings[i], rings[j], rings[segments + j], rings[i], rings[segments + j], rings[segments + i])
+  }
+  for (let i = 1; i < segments - 1; i++) {
+    index.push(rings[0], rings[i + 1], rings[i])
+    index.push(rings[segments], rings[segments + i], rings[segments + i + 1])
+  }
+}
+
+/** The cutter's own sample points, relative to the tool tip in the project frame. */
+function cutterOffsets(tool: NormalizedTool): ReadonlyArray<readonly [number, number, number]> {
+  const r = tool.radius
+  const points: Array<readonly [number, number, number]> = [[0, 0, 0]]
+  const ring = (ringRadius: number, count: number): void => {
+    const dz = tool.type === 'ball_endmill' ? r - Math.sqrt(Math.max(0, r * r - ringRadius * ringRadius)) : 0
+    for (let i = 0; i < count; i++) {
+      const t = 2 * Math.PI * i / count
+      points.push([ringRadius * Math.cos(t), ringRadius * Math.sin(t), dz])
+    }
+  }
+  ring(0.5 * r, 8)
+  ring(r, 12)
+  if (tool.type === 'ball_endmill') ring(0.85 * r, 10)
+  return points
+}
+
+{
+  const prng = (() => {
+    let state = 0x10150001 >>> 0
+    return (): number => {
+      state = (state + 0x6d2b79f5) >>> 0
+      let t = state
+      t = Math.imul(t ^ (t >>> 15), t | 1)
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+  })()
+  const CASES = 30
+  const startedAt = performance.now()
+  const CLEARANCE = 1
+  const FACET_SAG = 0.01
+  let movesWalked = 0
+  let stepsWalked = 0
+  let rapidsWalked = 0
+  let worstModel = 0
+  let worstModelWhere = ''
+  let worstRetained = 0
+  let worstRetainedWhere = ''
+  let worstCentreline = 0
+  let worstCentrelineWhere = ''
+  let worstRapid = 0
+  let worstRapidWhere = ''
+  // The tallest discretization slack any single case can legitimately show.
+  let tolerance = 0
+
+  for (let seedIndex = 0; seedIndex < CASES; seedIndex++) {
+    const axis: 'x' | 'y' = prng() < 0.5 ? 'x' : 'y'
+    const diameter = 20 + prng() * 40
+    const length = 30 + prng() * 40
+    const stock = roundStock(diameter, length, axis)
+    const R = stock.thickness / 2
+    const centre = roundStockCentre(stock)
+    let modelMin = prng() * length * 0.3
+    let modelMax = length - prng() * length * 0.3
+    if (prng() < 0.35) modelMin = 0
+    if (prng() < 0.35) modelMax = length
+    if (modelMax - modelMin < 8) modelMax = Math.min(length, modelMin + 8)
+
+    // One to three solids in a row, disjoint (a small along gap between them so
+    // a cutter point is inside at most one and the union depth is exact).
+    const pieceCount = 1 + Math.floor(prng() * 3)
+    const partSpan = (modelMax - modelMin) / pieceCount
+    const gap = Math.min(1, partSpan * 0.15)
+    const solids: LocalSolid[] = []
+    for (let piece = 0; piece < pieceCount; piece++) {
+      const l0 = modelMin + piece * partSpan + (piece > 0 ? gap / 2 : 0)
+      const l1 = modelMin + (piece + 1) * partSpan - (piece < pieceCount - 1 ? gap / 2 : 0)
+      if (l1 - l0 < 0.5) continue
+      if (prng() < 0.45) {
+        const halfAcross = 0.06 * R + prng() * 0.3 * R
+        const halfUp = 0.05 * R + prng() * 0.2 * R
+        const maxCentreUp = Math.sqrt(Math.max(0, (0.88 * R) ** 2 - halfAcross * halfAcross)) - halfUp
+        const centreUp = halfUp + 0.05 * R + prng() * Math.max(0, maxCentreUp - halfUp - 0.05 * R)
+        const maxCentreAcross = Math.sqrt(Math.max(0, (0.88 * R) ** 2 - (centreUp + halfUp) ** 2)) - halfAcross
+        const centreAcross = (prng() * 2 - 1) * Math.max(0, maxCentreAcross)
+        solids.push({
+          kind: 'box', l0, l1,
+          a0: centreAcross - halfAcross, a1: centreAcross + halfAcross,
+          u0: centreUp - halfUp, u1: centreUp + halfUp,
+        })
+      } else if (prng() < 0.5) {
+        // Coaxial: it straddles the axis, but the cutter only ever meets its top.
+        solids.push({ kind: 'cylinder', l0, l1, a0: 0, u0: 0, radius: 0.1 * R + prng() * 0.6 * R })
+      } else {
+        const cylinderRadius = 0.05 * R + prng() * 0.22 * R
+        const maxDistance = 0.88 * R - cylinderRadius
+        const centreUp = 0.15 * R + prng() * Math.max(0, maxDistance - 0.15 * R)
+        const maxCentreAcross = Math.sqrt(Math.max(0, maxDistance * maxDistance - centreUp * centreUp))
+        const centreAcross = (prng() * 2 - 1) * maxCentreAcross * 0.85
+        solids.push({ kind: 'cylinder', l0, l1, a0: centreAcross, u0: centreUp, radius: cylinderRadius })
+      }
+    }
+    if (solids.length === 0) solids.push({ kind: 'cylinder', l0: modelMin, l1: modelMax, a0: 0, u0: 0, radius: 0.5 * R })
+
+    const toolRadius = 0.5 + prng() * 2.5
+    const tool: NormalizedTool = {
+      ...BALL,
+      id: `property-${seedIndex}`,
+      name: `${toolRadius * 2} mm property tool`,
+      type: prng() < 0.5 ? 'ball_endmill' : 'flat_endmill',
+      diameter: toolRadius * 2,
+      radius: toolRadius,
+    }
+    const sampleSpacing = Math.max(0.5, tool.radius * 0.5)
+    const requestedCellSize = Math.min(0.15, tool.radius / 3)
+    // The height map's cell and the sample spacing set how far a correct target
+    // can sit from the exact surface (plus the cylinder facets).
+    const interpolation = tool.type === 'ball_endmill' ? sampleSpacing * sampleSpacing / (8 * tool.radius) : 0
+    tolerance = Math.max(tolerance, requestedCellSize + FACET_SAG + interpolation)
+
+    let supports = {
+      chuckEnd: prng() < 0.4 ? 0 : prng() * R * 0.4,
+      tailEnd: prng() < 0.4 ? 0 : prng() * R * 0.4,
+    }
+    let range = rotaryAlongRange(stock, [], { min: modelMin, max: modelMax }, tool, supports)
+    if (!range) {
+      supports = { chuckEnd: 0, tailEnd: 0 }
+      range = rotaryAlongRange(stock, [], { min: modelMin, max: modelMax }, tool, supports)
+    }
+    assert.ok(range, `property ${seedIndex} leaves a cut range`)
+
+    const positions: number[] = []
+    const index: number[] = []
+    for (const solid of solids) appendSolid(stock, solid, positions, index)
+    const mesh: RotaryModelMesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
+    const params = {
+      stepover: R * (0.5 + prng() * 0.5),
+      sampleSpacing,
+      stepdown: R * (0.5 + prng() * 0.5),
+      stockToLeave: 0,
+      alongStart: range.start,
+      alongEnd: range.end,
+      safeRadius: R + 5,
+      requestedCellSize,
+    }
+    const offsets = cutterOffsets(tool)
+    const travelZ = 2 * R + CLEARANCE
+    const safeZ = Math.max(R + params.safeRadius, travelZ)
+
+    const walk = (moves: readonly ToolpathMove[], label: string): void => {
+      if (moves.length === 0) return
+      // The operation's first positioning move and its final retract are at the
+      // rapid height; every rapid in between reaches at least the travel height.
+      assert.equal(moves[0].kind, 'rapid', `property ${seedIndex} ${label} opens with a rapid`)
+      assert.equal(moves[0].from.z, moves[0].to.z, `property ${seedIndex} ${label} positions before cutting`)
+      approx(moves[0].to.z, safeZ, `property ${seedIndex} ${label} entry at the rapid height`, 1e-9)
+      const last = moves[moves.length - 1]
+      assert.equal(last.kind, 'rapid', `property ${seedIndex} ${label} ends with a rapid`)
+      approx(last.to.z, safeZ, `property ${seedIndex} ${label} retract to the rapid height`, 1e-9)
+      for (const move of moves) {
+        const where = `seed ${seedIndex} ${label} ${move.kind} `
+          + `(${move.from.x.toFixed(3)}, ${move.from.y.toFixed(3)}, ${move.from.z.toFixed(3)}) -> `
+          + `(${move.to.x.toFixed(3)}, ${move.to.y.toFixed(3)}, ${move.to.z.toFixed(3)})`
+        if (move.kind === 'rapid') {
+          rapidsWalked++
+          const high = Math.max(move.from.z, move.to.z)
+          if (travelZ - high > worstRapid) {
+            worstRapid = travelZ - high
+            worstRapidWhere = where
+          }
+          if (move.from.x !== move.to.x || move.from.y !== move.to.y) {
+            const low = Math.min(move.from.z, move.to.z)
+            if (travelZ - low > worstRapid) {
+              worstRapid = travelZ - low
+              worstRapidWhere = where
+            }
+          }
+          continue
+        }
+        movesWalked++
+        const a0 = move.from.a ?? 0
+        const a1 = move.to.a ?? a0
+        const dx = move.to.x - move.from.x
+        const dy = move.to.y - move.from.y
+        const dz = move.to.z - move.from.z
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / (0.1 * tool.radius)))
+        for (let s = 0; s <= steps; s++) {
+          const f = s / steps
+          stepsWalked++
+          const px = move.from.x + dx * f
+          const py = move.from.y + dy * f
+          const pz = move.from.z + dz * f
+          if (R - pz > worstCentreline) {
+            worstCentreline = R - pz
+            worstCentrelineWhere = where
+          }
+          const t = (a0 + (a1 - a0) * f) * Math.PI / 180
+          const cos = Math.cos(t)
+          const sin = Math.sin(t)
+          for (const offset of offsets) {
+            const wx = px + offset[0]
+            const wy = py + offset[1]
+            const wz = pz + offset[2]
+            const across = (axis === 'x' ? wy : wx) - centre
+            const up = wz - R
+            const l = axis === 'x' ? wx : wy
+            const la = across * cos + up * sin
+            const lu = -across * sin + up * cos
+            const depth = insideModel(solids, l, la, lu)
+            if (depth > worstModel) {
+              worstModel = depth
+              worstModelWhere = `${where} a=${(a0 + (a1 - a0) * f).toFixed(2)} local(${l.toFixed(3)}, ${la.toFixed(3)}, ${lu.toFixed(3)}) cutter +(${offset[0].toFixed(3)}, ${offset[1].toFixed(3)}, ${offset[2].toFixed(3)})`
+            }
+            // The retained bar is the full-radius bar outside the cut range:
+            // entering it costs the least of the distance past its end face and
+            // the depth below its curved surface.
+            const radial = Math.hypot(la, lu)
+            const retained = radial >= R ? 0
+              : l < range.start ? Math.max(0, Math.min(range.start - l, l, R - radial))
+                : l > range.end ? Math.max(0, Math.min(l - range.end, length - l, R - radial))
+                  : 0
+            if (retained > worstRetained) {
+              worstRetained = retained
+              worstRetainedWhere = `${where} a=${(a0 + (a1 - a0) * f).toFixed(2)} local(${l.toFixed(3)}, ${la.toFixed(3)}, ${lu.toFixed(3)}) cutter +(${offset[0].toFixed(3)}, ${offset[1].toFixed(3)}, ${offset[2].toFixed(3)})`
+            }
+          }
+        }
+      }
+    }
+
+    walk(generateRotaryFinish(`property-finish-${seedIndex}`, mesh, stock, tool, params, {}).moves, 'finish')
+    walk(generateRotaryRough(`property-rough-${seedIndex}`, mesh, stock, tool, params, {}).moves, 'rough')
+  }
+
+  console.log(`rotary property: ${CASES} cases, ${movesWalked} cut/plunge/link moves in ${stepsWalked} steps, `
+    + `${rapidsWalked} rapids`)
+  assert.ok(movesWalked > 0, 'the property cases cut real moves')
+  assert.ok(worstModel <= tolerance, `no case cuts into the model by more than the tolerance `
+    + `(${worstModel.toFixed(4)} <= ${tolerance.toFixed(4)}): ${worstModelWhere}`)
+  assert.ok(worstRetained <= tolerance, `no case cuts into the retained bar by more than the tolerance `
+    + `(${worstRetained.toFixed(4)} <= ${tolerance.toFixed(4)}): ${worstRetainedWhere}`)
+  assert.ok(worstCentreline <= 1e-6, `no cut, plunge or link goes below the centreline `
+    + `(${worstCentreline.toExponential(2)}): ${worstCentrelineWhere}`)
+  assert.ok(worstRapid <= 1e-6, `every rapid reaches the travel height `
+    + `(${worstRapid.toExponential(2)}): ${worstRapidWhere}`)
+  console.log(`rotary property worst: model ${worstModel.toFixed(4)} mm, retained bar ${worstRetained.toFixed(4)} mm, `
+    + `below centreline ${worstCentreline.toExponential(2)} mm, rapid ${worstRapid.toExponential(2)} mm, `
+    + `tolerance ${tolerance.toFixed(4)} mm, ${((performance.now() - startedAt) / 1000).toFixed(1)} s`)
+}
+console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')
