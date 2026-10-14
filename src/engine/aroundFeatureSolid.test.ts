@@ -24,7 +24,9 @@
  * against a recorded result:
  * - the vertex radii, the mean angle at a quarter turn and the bar's axis sides
  * - the volume against the annular sector it stands for
- * - no mesh edge spans more than 5° of turn
+ * - no edge on the slab's curved faces — its outer and inner surfaces at a
+ *   constant radius — spans more than 5° of turn, on either bar axis; a long
+ *   edge across a flat end or side wall is harmless and does not count
  * - a shape across the seam is one connected solid at the mid-sheet volume
  * - a whole turn further along is the same solid; 1.5 turns is one full ring
  * - an open profile, a line and an STL give no slab
@@ -34,6 +36,8 @@
  * - the sign of the angle flipped: testQuarterTurn (mean angle)
  * - the quarter-turn banding removed: testNoEdgeOverFiveDegrees / testMultiTurnRing
  * - the refine step removed: testNoEdgeOverFiveDegrees
+ * - the curved-face filter relaxed to every edge: testNoEdgeOverFiveDegrees
+ *   (the 1.5-turn ring's 7.37° end-wall edge)
  * - the Y-bar branch using the X-bar axes: testYAxisBar
  *
  * Run with: npx tsx src/engine/aroundFeatureSolid.test.ts
@@ -159,31 +163,63 @@ function testQuarterTurn(bar: RoundStock): void {
   }
 }
 
+/** The review's off-origin 1.5-turn ring and its Y-bar twin (issue #395 G4). */
+function multiTurnProfile(bar: RoundStock): SketchProfile {
+  const frame = aroundFrame(bar)
+  return bar.axis === 'x'
+    ? rectProfile(50, frame.sheetStart + 3, SIDE_LENGTH, 1.5 * frame.circumference)
+    : rectProfile(frame.sheetStart + 3, 50, 1.5 * frame.circumference, SIDE_LENGTH)
+}
+
+/**
+ * Only the slab's curved faces count: an edge whose two endpoints both sit at
+ * the same radius and on the outer or inner surface. The flat end walls (a
+ * constant along coordinate) and radial side walls (a constant turn) are
+ * planes, where a long edge is no chord through the bar — the 1.5-turn ring
+ * leaves a 7.37° edge in an end wall that the curved-face rule does not cover
+ * (issue #395 G4).
+ */
 function testNoEdgeOverFiveDegrees(): void {
-  const project = barProject(X_BAR)
-  const solid = slabOf(project, aroundFeature(squareAt(QUARTER_ACROSS), 'subtract'))
-  try {
-    const mesh = solid.getMesh()
-    const readouts = vertices(solid, X_BAR)
-    // Wrapped difference: a seam-crossing edge's endpoints are near ±180°.
-    const wrappedDifference = (a: number, b: number): number => {
-      const difference = ((a - b) * Math.PI) / 180
-      return Math.abs(Math.atan2(Math.sin(difference), Math.cos(difference)))
-    }
-    let longest = 0
-    for (let triangle = 0; triangle < mesh.triVerts.length; triangle += 3) {
-      for (const [from, to] of [[0, 1], [1, 2], [2, 0]] as const) {
-        const span = wrappedDifference(
-          readouts[mesh.triVerts[triangle + from]].angleDegrees,
-          readouts[mesh.triVerts[triangle + to]].angleDegrees,
-        )
-        longest = Math.max(longest, span)
+  const cases: { bar: RoundStock; profile: SketchProfile; label: string }[] = [
+    { bar: X_BAR, profile: squareAt(QUARTER_ACROSS), label: 'X bar quarter-turn square' },
+    { bar: X_BAR, profile: multiTurnProfile(X_BAR), label: 'X bar 1.5-turn ring' },
+    { bar: Y_BAR, profile: multiTurnProfile(Y_BAR), label: 'Y bar 1.5-turn ring' },
+  ]
+  const relativeTolerance = 1e-6
+  const fiveDegrees = (5 * Math.PI) / 180
+  for (const { bar, profile, label } of cases) {
+    const solid = slabOf(barProject(bar), aroundFeature(profile, 'subtract'))
+    try {
+      const mesh = solid.getMesh()
+      const readouts = vertices(solid, bar)
+      const frame = aroundFrame(bar)
+      const outerRadius = frame.radius * 1.02
+      const innerRadius = R_BOTTOM
+      // Wrapped difference: a seam-crossing edge's endpoints are near ±180°.
+      const wrappedDifference = (a: number, b: number): number => {
+        const difference = ((a - b) * Math.PI) / 180
+        return Math.abs(Math.atan2(Math.sin(difference), Math.cos(difference)))
       }
+      let longest = 0
+      for (let triangle = 0; triangle < mesh.triVerts.length; triangle += 3) {
+        for (const [from, to] of [[0, 1], [1, 2], [2, 0]] as const) {
+          const a = readouts[mesh.triVerts[triangle + from]]
+          const b = readouts[mesh.triVerts[triangle + to]]
+          const sameRadius = Math.abs(a.radius - b.radius) <= relativeTolerance * Math.max(a.radius, b.radius)
+          const onCurvedFace =
+            Math.abs(a.radius - outerRadius) <= relativeTolerance * outerRadius ||
+            Math.abs(a.radius - innerRadius) <= relativeTolerance * innerRadius
+          if (!sameRadius || !onCurvedFace) continue
+          longest = Math.max(longest, wrappedDifference(a.angleDegrees, b.angleDegrees))
+        }
+      }
+      assert(
+        longest <= fiveDegrees + 1e-3,
+        `${label}: no curved-face edge spans more than 5° of turn; longest is ${(longest * 180) / Math.PI}°`,
+      )
+    } finally {
+      solid.delete()
     }
-    const fiveDegrees = (5 * Math.PI) / 180
-    assert(longest <= fiveDegrees + 1e-3, `no edge spans more than 5° of turn; longest is ${(longest * 180) / Math.PI}°`)
-  } finally {
-    solid.delete()
   }
 }
 
