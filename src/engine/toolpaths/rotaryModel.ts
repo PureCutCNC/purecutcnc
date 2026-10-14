@@ -16,7 +16,7 @@
 
 import { getStockBounds, roundStockCentre } from '../../types/project'
 import type { Clamp, RoundStock } from '../../types/project'
-import { convertLength } from '../../utils/units'
+import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { toolSpacePoint } from '../rotaryFrame'
 import { chooseHeightMapCellSize, computeXYBounds, getCachedHeightMap, safeToolTipZAt } from './finishSurfaceParallel'
@@ -120,7 +120,7 @@ export interface RotaryFinishParams {
   /** The along range the passes cover; the caller (a later slice) derives it from the model and the end supports. */
   readonly alongStart: number
   readonly alongEnd: number
-  /** Tool-tip radius from the centreline for rapids and links in air; must be above the bar's surface. */
+  /** Tool-tip radius from the centreline for rapids and links in air; must be above the bar's surface. A turning link rises to the smaller of this and the bar's surface plus a clearance. */
   readonly safeRadius: number
   /** Requested height-map cell size, passed to the sampler. */
   readonly requestedCellSize: number
@@ -178,17 +178,53 @@ function mergeCollinearCuts(moves: readonly ToolpathMove[], tolerance: number): 
     ) end++
     const points: ToolpathPoint[] = [moves[index].from]
     for (let i = index; i <= end; i++) points.push(moves[i].to)
-    const kept: ToolpathPoint[] = [points[0]]
-    for (let i = 1; i < points.length - 1; i++) {
-      if (distanceFromLine(points[i], kept[kept.length - 1], points[i + 1]) > tolerance) kept.push(points[i])
-    }
-    kept.push(points[points.length - 1])
+    const kept = simplifyRun(points, tolerance)
     for (let i = 0; i + 1 < kept.length; i++) {
       merged.push({ kind: 'cut', from: kept[i], to: kept[i + 1] })
     }
     index = end + 1
   }
   return { moves: merged, dropped: moves.length - merged.length }
+}
+
+/**
+ * Douglas--Peucker: a straight segment replaces the points it spans only when
+ * **every** one of them is within `tolerance` of it, so the merged path can
+ * never drift further from a dropped point than the tolerance. The check this
+ * replaced tested each point against the *next original* point only, so on a
+ * gently curved profile (`r(x) = 6 - 0.001 (x - 20)^2`, 0.05 mm samples) every
+ * step looked straight and the whole run collapsed into one chord 0.0995 mm
+ * below the surface -- 100 times the 0.001 mm the merge promises.
+ *
+ * Cost on the slice-B fixture (the merge over every pass at once): Douglas--
+ * Peucker took 15 ms from 78,624 pre-merge moves to 7,296 on the finish, and
+ * 2.8 ms from 36,282 to 2,136 on the rough, against the old neighbour scan's
+ * single pass. The farthest-point split makes it near `n log n` per run rather
+ * than `n`, which the fixture's 252 passes and 751 samples do not notice.
+ */
+function simplifyRun(points: readonly ToolpathPoint[], tolerance: number): ToolpathPoint[] {
+  const keep = new Uint8Array(points.length)
+  keep[0] = 1
+  keep[points.length - 1] = 1
+  const stack: Array<[number, number]> = [[0, points.length - 1]]
+  while (stack.length > 0) {
+    const [first, last] = stack.pop() as [number, number]
+    let split = -1
+    let farthest = tolerance
+    for (let i = first + 1; i < last; i++) {
+      const distance = distanceFromLine(points[i], points[first], points[last])
+      if (distance > farthest) {
+        farthest = distance
+        split = i
+      }
+    }
+    if (split < 0) continue
+    keep[split] = 1
+    stack.push([first, split], [split, last])
+  }
+  const kept: ToolpathPoint[] = []
+  for (let i = 0; i < points.length; i++) if (keep[i]) kept.push(points[i])
+  return kept
 }
 
 function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
@@ -222,18 +258,25 @@ interface RotaryRun {
 
 /**
  * Emit one pass's runs, and say where the pass left the tool. A run that starts
- * where the previous pass finished links to it -- a rise to the higher of the
- * two points, a turn, and a drop, each its own `cut` move so a merged move can
- * never lose one of the two angles. Every other run (and every later run of the
- * same pass, where material may still stand above the next one) retracts to
- * `safeZ`, moves over the run's first point and plunges, so the tool never
- * traverses inside material.
+ * where the previous pass finished links to it -- a rise to `linkZ`, a turn, and
+ * a drop, each its own `cut` move so a merged move can never lose one of the two
+ * angles. `linkZ` is the bar's surface plus a clearance (`min(safeRadius, R +
+ * clearance)`, a tip height): nothing -- model or standing stock -- is ever
+ * above the bar's surface, so the turn is always in air, and it is far shorter
+ * than a retract to `safeZ`. The link used to turn at the higher of the two end
+ * tips, which is *inside* the model between the two pass angles: on a square
+ * prism of half-width 10 in a 40 mm bar the 34.29 -> 51.43 degree link ran at
+ * tip radius 13.598 while the corner at 45 degrees needed 14.141. Every other
+ * run (and every later run of the same pass, where material may still stand
+ * above the next one) retracts to `safeZ`, moves over the run's first point and
+ * plunges, so the tool never traverses inside material.
  */
 function emitRotaryRuns(
   moves: ToolpathMove[],
   here: ToolpathPoint | undefined,
   runs: readonly RotaryRun[],
   safeZ: number,
+  linkZ: number,
   previousEndedAtEnd: boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
@@ -243,7 +286,7 @@ function emitRotaryRuns(
     const canLink = current !== undefined && previousEndedAtEnd && run.atStart
       && current.x === first.x && current.y === first.y
     if (canLink && current) {
-      const high = Math.max(current.z, first.z)
+      const high = linkZ
       if (high > current.z) moves.push({ kind: 'cut', from: current, to: { ...current, z: high } })
       moves.push({ kind: 'cut', from: { ...current, z: high }, to: { ...first, z: high } })
       if (high > first.z) moves.push({ kind: 'cut', from: { ...first, z: high }, to: first })
@@ -304,6 +347,92 @@ function modelOutsideBar(mesh: RotaryModelMesh, stock: RoundStock, tolerance: nu
   return false
 }
 
+/**
+ * A closed solid cylinder of the bar's own radius, coaxial with it, spanning
+ * `alongFrom` to `alongTo`. `segments` is the smallest count whose facet
+ * sagitta `R (1 - cos(pi / segments))` stays within `minRenderHeight` of the
+ * true surface, so the height map never reads the stub below the bar by more
+ * than the 3D view's own minimum height (100 segments for a 40 mm bar at
+ * 0.01 mm). Returns `null` for an empty span.
+ */
+function retainedBarStub(stock: RoundStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
+  const radius = stock.thickness / 2
+  if (!(alongTo - alongFrom > 0) || !(radius > 0)) return null
+  const centre = roundStockCentre(stock)
+  const sagitta = minRenderHeight(units)
+  const segments = Math.max(3, Math.ceil(Math.PI / Math.acos(Math.max(-1, 1 - sagitta / radius))))
+  const positions: number[] = []
+  const index: number[] = []
+  for (const along of [alongFrom, alongTo]) {
+    for (let i = 0; i < segments; i++) {
+      const t = 2 * Math.PI * i / segments
+      const across = centre + radius * Math.cos(t)
+      const up = radius + radius * Math.sin(t)
+      if (stock.axis === 'x') positions.push(along, across, up)
+      else positions.push(across, along, up)
+    }
+  }
+  for (let i = 0; i < segments; i++) {
+    const j = (i + 1) % segments
+    index.push(i, j, segments + j, i, segments + j, segments + i)
+  }
+  // Close both ends. The caps matter to any other consumer of the mesh; the
+  // height map skips their vertical faces (`buildHeightMap`'s zero-denominator
+  // test), which is why the side alone already covers it.
+  for (let i = 1; i < segments - 1; i++) {
+    index.push(0, i + 1, i)
+    index.push(segments, segments + i, segments + i + 1)
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * Add the bar beyond the cut range to the mesh that is sampled. It is stock to
+ * keep: it holds the part to the end supports, and the tool's side must never
+ * enter it. `rotaryAlongRange` keeps the tool *centre* inside the model's
+ * extent, so at the model's end the cutter's side reaches a tool radius past it
+ * -- on an off-axis prism (across 8..12, up 8..12, along 10..30) the rough
+ * plunges to the centreline at along 10 and the cutter takes the bar at 9.5.
+ *
+ * With the two stubs in the mesh the existing tool-shape sampling does the work
+ * by itself: a query within a tool radius of the retained bar is lifted to the
+ * bar's surface, so the cutter's side cannot enter it. The stubs run from each
+ * bar end to the cut range, which is the model's own end when the end supports
+ * do not bind and the support keep-out when they do. The outside-bar check
+ * (`modelOutsideBar`) still looks at the model alone, not at these.
+ */
+function withRetainedBar(
+  mesh: RotaryModelMesh,
+  stock: RoundStock,
+  units: Units,
+  alongStart: number,
+  alongEnd: number,
+): RotaryModelMesh {
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const stubs = [
+    retainedBarStub(stock, units, lower, alongStart),
+    retainedBarStub(stock, units, alongEnd, upper),
+  ].filter((stub): stub is RotaryModelMesh => stub !== null)
+  if (stubs.length === 0) return mesh
+  const positions = new Float32Array(mesh.positions.length + stubs.reduce((total, stub) => total + stub.positions.length, 0))
+  positions.set(mesh.positions)
+  const index = new Uint32Array(mesh.index.length + stubs.reduce((total, stub) => total + stub.index.length, 0))
+  index.set(mesh.index)
+  let positionOffset = mesh.positions.length
+  let indexOffset = mesh.index.length
+  let vertexOffset = mesh.positions.length / 3
+  for (const stub of stubs) {
+    positions.set(stub.positions, positionOffset)
+    for (let i = 0; i < stub.index.length; i++) index[indexOffset + i] = stub.index[i] + vertexOffset
+    positionOffset += stub.positions.length
+    indexOffset += stub.index.length
+    vertexOffset += stub.positions.length / 3
+  }
+  return { positions, index }
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -318,7 +447,8 @@ function rotaryTargets(
   const stockToLeave = params.stockToLeave
   // One warning per operation, however many vertices stick out: the user can
   // only move the model or pick a bigger bar, and the sampler's answer is the
-  // same either way.
+  // same either way. This judges the model alone -- the retained-bar stubs
+  // below sit on the bar's surface by construction and must not trip it.
   if (modelOutsideBar(mesh, stock, minRenderHeight(tool.units))) {
     warnings.push({ code: 'rotaryModelOutsideBar', params: { operation: operationId } })
   }
@@ -337,12 +467,18 @@ function rotaryTargets(
   const span = Math.abs(params.alongEnd - params.alongStart)
   const intervals = span <= 0 ? 1 : Math.max(1, Math.ceil(span / Math.max(params.sampleSpacing, 1e-9)))
   const along = Array.from({ length: intervals + 1 }, (_, i) => params.alongStart + (params.alongEnd - params.alongStart) * i / intervals)
-  const sampling = sampleRotaryModel(mesh, stock, samplingTool, {
-    anglesDeg: angles,
-    along,
-    requestedCellSize: params.requestedCellSize,
-    ...hooks,
-  }, warnings)
+  const sampling = sampleRotaryModel(
+    withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd),
+    stock,
+    samplingTool,
+    {
+      anglesDeg: angles,
+      along,
+      requestedCellSize: params.requestedCellSize,
+      ...hooks,
+    },
+    warnings,
+  )
   if (sampling.stopped) return { angles, along, tips: [], stopped: true }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
@@ -429,6 +565,10 @@ export function generateRotaryFinish(
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
   const safeZ = radius + params.safeRadius
+  // A turning link rises to the bar's surface plus a clearance, so it always
+  // clears the model between the two pass angles; it never rises above the
+  // retract height.
+  const linkZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
   // mirrored on a return pass. Everything that reads a height must use the same
@@ -461,7 +601,7 @@ export function generateRotaryFinish(
       runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
       i++
     }
-    const emitted = emitRotaryRuns(moves, here, runs, safeZ, previousEndedAtEnd)
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, linkZ, previousEndedAtEnd)
     here = emitted.here
     previousEndedAtEnd = emitted.endedAtEnd
   }
@@ -556,6 +696,10 @@ export function generateRotaryRough(
   const radius = stock.thickness / 2
   const centre = roundStockCentre(stock)
   const safeZ = radius + params.safeRadius
+  // Turning links rise to the bar's surface plus a clearance at every layer,
+  // for the same reason the finish does: the model between the two pass angles
+  // is not otherwise checked.
+  const linkZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
   let lowest = radius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((radius - lowest) / params.stepdown)
@@ -589,7 +733,7 @@ export function generateRotaryRough(
         runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, previousEndedAtEnd)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, linkZ, previousEndedAtEnd)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd
     }
