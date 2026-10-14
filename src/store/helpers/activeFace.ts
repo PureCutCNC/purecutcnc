@@ -235,8 +235,11 @@ export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_
  *
  * On Around a new shape is a shallow cut into the bar's surface (issue #395):
  * the Top span would run through the whole bar, to `z_bottom = 0`, which is at
- * the centreline every radial operation refuses. The depth is one millimetre
- * (0.04 in), or half the bar's radius when that is less.
+ * the centreline every radial operation refuses. The depth scales with the bar:
+ * a sixteenth of its diameter (`project.stock.thickness`), rounded to the
+ * units' tidy step (0.5 mm, 1/64 in) so the field shows exactly what is used.
+ * It is never under one step, nor over a quarter of the diameter — the latter
+ * wins on a very thin bar, so the cut never reaches the centreline.
  */
 export function newFeatureSpan(
   project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'meta'>,
@@ -244,9 +247,10 @@ export function newFeatureSpan(
 ): { z_top: number; z_bottom: number } {
   const face = activeFace(project)
   if (face === 'around') {
-    const defaultDepth = project.meta.units === 'inch' ? 0.04 : 1
-    const depth = Math.min(defaultDepth, project.stock.thickness / 4)
-    return { z_top: project.stock.thickness, z_bottom: project.stock.thickness - depth }
+    const step = project.meta.units === 'inch' ? 1 / 64 : 0.5
+    const diameter = project.stock.thickness
+    const depth = Math.min(Math.max(Math.round(diameter / 16 / step) * step, step), diameter / 4)
+    return { z_top: diameter, z_bottom: diameter - depth }
   }
   return face !== 'bottom'
     ? { z_top: faceLocalTopZ, z_bottom: 0 }
