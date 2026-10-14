@@ -18,10 +18,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { roundStock, roundStockCentre } from '../../types/project'
 import type { RoundStock } from '../../types/project'
+import { aroundFrame, unwrapToolpath, wrapPoint } from '../aroundFrame'
 import { deserializeImportedMesh } from '../importedMesh'
 import { toolSpacePoint } from '../rotaryFrame'
 import { computeXYBounds } from './finishSurfaceParallel'
-import { sampleRotaryModel, turnedModelPositions } from './rotaryModel'
+import { generateRotaryFinish, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -73,6 +74,49 @@ const CIRCLE = Array.from({ length: SEGMENTS }, (_, i): readonly [number, number
   const t = 2 * Math.PI * i / SEGMENTS
   return [RC * Math.cos(t), RC * Math.sin(t)]
 })
+
+/**
+ * A coaxial surface of revolution around the bar's axis: one closed ring of
+ * `segments` points at each of `steps` positions along the bar, with the ring's
+ * radius given by `radiusAt(along)`. Unlike `prism`'s constant cross-section,
+ * the radius varies along the bar, so the sampled height at an along position
+ * changes when a pass reads the wrong (mirrored) row.
+ */
+function lathe(
+  stock: RoundStock,
+  radiusAt: (along: number) => number,
+  alongStart: number,
+  alongEnd: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  const centre = roundStockCentre(stock)
+  const radius = stock.thickness / 2
+  const positions: number[] = []
+  const index: number[] = []
+  for (let s = 0; s <= steps; s++) {
+    const along = alongStart + (alongEnd - alongStart) * s / steps
+    const r = radiusAt(along)
+    for (let j = 0; j < segments; j++) {
+      const t = 2 * Math.PI * j / segments
+      const across = centre + r * Math.cos(t)
+      const up = radius + r * Math.sin(t)
+      if (stock.axis === 'x') positions.push(along, across, up)
+      else positions.push(across, along, up)
+    }
+  }
+  for (let s = 0; s < steps; s++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = s * segments + j
+      const b = s * segments + j2
+      const c = (s + 1) * segments + j2
+      const d = (s + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
 
 for (const axis of ['x', 'y'] as const) {
   // Deliberately translated across-axis stock: catches using R as the centre.
@@ -217,4 +261,524 @@ const fixtureCell = Math.min(BALL.radius / 3, 0.1)
   assert.ok(result.tipRadius.some((row) => row.some(Number.isFinite)), 'fixture timing sampled model')
   console.log(`rotaryModel fixture: ${(elapsed / 36).toFixed(3)} ms/angle (${elapsed.toFixed(1)} ms, 36 angles, 3 mm ball, cell ${fixtureCell} mm)`)
 }
+
+// ---------------------------------------------------------------------------
+// Slice B: generateRotaryFinish.
+// ---------------------------------------------------------------------------
+
+const FINISH_RADIUS = 20
+const FINISH_SAFE = 30
+const FINISH_PASS_MM: NormalizedTool = { ...BALL, id: 'ball-2', name: '2 mm ball nose', diameter: 4, radius: 2 }
+const FLAT_2: NormalizedTool = { ...BALL, id: 'flat-2', name: '4 mm flat end mill', type: 'flat_endmill', diameter: 4, radius: 2 }
+const VBIT: NormalizedTool = { ...BALL, id: 'v-60', name: '60 degree V-bit', type: 'v_bit', vBitAngle: 60 }
+const FINISH_BASE = { sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30, safeRadius: FINISH_SAFE, requestedCellSize: CELL }
+/** Rule 1: `ceil(2 pi R / stepover)` passes, evenly round the bar. */
+function finishPasses(stepover: number): number {
+  return Math.ceil((2 * Math.PI * FINISH_RADIUS) / stepover)
+}
+
+function finishStock(axis: 'x' | 'y'): RoundStock {
+  // Across-axis translation catches code that assumes the centre equals R.
+  return roundStock(40, 60, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
+}
+
+for (const axis of ['x', 'y'] as const) {
+  const stock = finishStock(axis)
+  const centre = roundStockCentre(stock)
+  const cylinder = prism(stock, CIRCLE)
+  const along = (p: { x: number; y: number; z: number }): number => axis === 'x' ? p.x : p.y
+  const across = (p: { x: number; y: number; z: number }): number => axis === 'x' ? p.y : p.x
+  const stepover = 2
+  const passes = finishPasses(stepover)
+  const result = generateRotaryFinish('op', cylinder, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
+  assert.equal(result.operationId, 'op')
+  assert.deepEqual(result.warnings, [], `${axis} cylinder has no warning`)
+  // The raw sampler's tips at the same sample positions, for the end-tip
+  // checks below. One pass's sample count follows rule 2.
+  const alongCount = Math.max(1, Math.ceil(Math.abs(FINISH_BASE.alongEnd - FINISH_BASE.alongStart) / FINISH_BASE.sampleSpacing)) + 1
+  // The generator's own angle arithmetic: k * (360 / passes), not k * 360 / passes.
+  const exactAngles = Array.from({ length: passes }, (_, k) => k * (360 / passes))
+  const sampling = sampleRotaryModel(cylinder, stock, FINISH_PASS_MM, {
+    anglesDeg: exactAngles,
+    along: Array.from({ length: alongCount }, (_, i) => FINISH_BASE.alongStart + (FINISH_BASE.alongEnd - FINISH_BASE.alongStart) * i / (alongCount - 1)),
+    requestedCellSize: FINISH_BASE.requestedCellSize,
+  }, [])
+  assert.equal(sampling.tipRadius.length, passes, `${axis} raw sampling covers every pass`)
+
+  // Entry and exit (rule 7).
+  assert.equal(result.moves[0].kind, 'rapid', `${axis} first move is a rapid`)
+  // The opening move only positions the tool at safeRadius over the first
+  // sample: from and to are the same point, the way `pushRapidAndPlunge` opens
+  // when no previous position exists. It used to start at the cutting tip, which
+  // read as if the tool began buried, then rapid up to safe height.
+  assert.deepEqual(result.moves[0].from, result.moves[0].to, `${axis} entry rapid only positions the tool`)
+  approx(result.moves[0].from.z, FINISH_RADIUS + FINISH_SAFE, `${axis} entry rapid is at safeRadius`)
+  approx(along(result.moves[0].from), FINISH_BASE.alongStart, `${axis} entry rapid is over the first sample`)
+  assert.equal(result.moves[1].kind, 'plunge', `${axis} entry plunges`)
+  approx(result.moves[1].from.z, FINISH_RADIUS + FINISH_SAFE, `${axis} plunge starts at safeRadius`)
+  assert.ok(result.moves[1].to.z < result.moves[1].from.z, `${axis} plunge descends`)
+  assert.equal(result.moves.at(-1)!.kind, 'rapid', `${axis} last move is a rapid`)
+  approx(result.moves.at(-1)!.to.z, FINISH_RADIUS + FINISH_SAFE, `${axis} retract to safeRadius`)
+  assert.ok(result.moves.at(-1)!.from.z < FINISH_RADIUS + FINISH_SAFE, `${axis} retract starts at the last tip`)
+  // Rule 7: the whole path is connected, and only the entry and the final
+  // retract are not cuts.
+  for (let i = 1; i < result.moves.length; i++) {
+    assert.deepEqual(result.moves[i].from, result.moves[i - 1].to, `${axis} move ${i} is connected`)
+  }
+  assert.ok(result.moves.slice(2, -1).every((move) => move.kind === 'cut'), `${axis} interior moves are cuts`)
+
+  // Every cutting point is the tool over the centreline at z = R + rc: the
+  // cylinder has the same surface at every angle (rule 5).
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) {
+      approx(across(p), centre, `${axis} ${move.kind} over the centreline`)
+      assert.ok(p.a !== undefined, `${axis} ${move.kind} point carries a`)
+      assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z), `${axis} ${move.kind} point is finite`)
+      assert.ok(p.z >= FINISH_RADIUS - 1e-9, `${axis} ${move.kind} never below the centreline`)
+    }
+    if (move.kind === 'cut') {
+      approx(move.from.z, FINISH_RADIUS + RC, `${axis} cut from z = R + rc`)
+      approx(move.to.z, FINISH_RADIUS + RC, `${axis} cut to z = R + rc`)
+    }
+  }
+
+  // Rule 1: n evenly spaced passes at k * 360 / n. A link move carries a
+  // changing angle, so every cut move's `from` angle names a pass; the distinct
+  // set is the whole angle list.
+  const passAngles = [...new Set(result.moves.filter((move) => move.kind === 'cut' && move.from.a !== undefined).map((move) => move.from.a as number))]
+  assert.equal(passAngles.length, passes, `${axis} pass count ceil(2 pi R / stepover)`)
+  const targetAngles = Array.from({ length: passes }, (_, k) => k * 360 / passes)
+  for (const target of targetAngles) {
+    assert.ok(passAngles.some((angle) => Math.abs(angle - target) < 1e-9), `${axis} pass angle ${target}`)
+  }
+
+  // Rule 6: between passes the link turns at the same along position -- never
+  // moving along the bar -- one link per pass boundary, always to the next pass
+  // angle, and its two ends are the pass end tips. The upstream sampler gives
+  // the tip at each pass end, so the link height must equal the higher of the
+  // two and each endpoint is the pass's own end tip (the link joins them).
+  const linkMoves = result.moves.filter((move) =>
+    move.kind === 'cut' && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a)
+  assert.equal(linkMoves.length, passes - 1, `${axis} one link per pass boundary`)
+  for (const move of linkMoves) {
+    const endAlong = along(move.from)
+    approx(along(move.to), endAlong, `${axis} link never moves along the bar`)
+    approx(move.to.z, move.from.z, `${axis} link keeps the height it reached`)
+    const pass = Math.round((move.from.a as number) / (360 / passes))
+    const next = Math.round((move.to.a as number) / (360 / passes))
+    assert.equal(next, pass + 1, `${axis} link only turns to the next pass`)
+    const endIndex = alongCount - 1
+    const previousTip = sampling.tipRadius[pass][endIndex]
+    const nextTip = sampling.tipRadius[next][endIndex]
+    approx(move.from.z, FINISH_RADIUS + Math.max(previousTip, nextTip), `${axis} link at the higher end tip`)
+    assert.ok(move.from.z >= FINISH_RADIUS + Math.min(previousTip, nextTip) - 1e-9, `${axis} link is not below the lower tip`)
+    // Every pass's own end tip survives the merge: a move at that pass angle
+    // starts or ends exactly on it.
+    const endTip = FINISH_RADIUS + sampling.tipRadius[pass][endIndex]
+    assert.ok(
+      result.moves.some((other) => other.kind === 'cut' && other.from.a === move.from.a && along(other.from) === endAlong && other.from.z === endTip),
+      `${axis} pass ${pass} keeps its end tip as a point`,
+    )
+  }
+
+  // Rule 6: passes alternate direction -- even ones run from alongStart to
+  // alongEnd, odd ones back. Every cut move stays within its own pass's lane,
+  // so the direction is judged from the move's own endpoints.
+  result.moves.forEach((move, index) => {
+    if (move.kind !== 'cut' || move.from.a !== move.to.a || move.from.a === undefined) return
+    const delta = along(move.to) - along(move.from)
+    if (Math.abs(delta) < 1e-9) return
+    const pass = Math.round(move.from.a / (360 / passes))
+    assert.ok(pass % 2 === 0 ? delta > 0 : delta < 0, `${axis} move ${index} of pass ${pass} runs ${pass % 2 === 0 ? 'forward' : 'backward'}`)
+  })
+
+  // Rule 5 + 6 (review): a coaxial model whose radius varies along the bar, and
+  // varies asymmetrically about the middle, so a return pass that read
+  // `tipRadius[k][i]` at position `along[n-1-i]` would put every point at its
+  // mirror's height. The profile is axisymmetric, so the right height at an
+  // along position is the forward pass's own sample there; the wrong one is the
+  // same row read at the mirrored index. This is the case every symmetric test
+  // model could not see.
+  {
+    const waveStepover = 6
+    const wavePasses = finishPasses(waveStepover)
+    const waveAlong = Array.from({ length: 21 }, (_, i) => FINISH_BASE.alongStart + i)
+    const wave = lathe(stock, (x) => 4 + 3 * Math.sin(2 * Math.PI * (x - 10) / 13), FINISH_BASE.alongStart, FINISH_BASE.alongEnd, 200, 64)
+    const waveResult = generateRotaryFinish('op-wave', wave, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: waveStepover, sampleSpacing: 1 }, {})
+    const waveSampling = sampleRotaryModel(wave, stock, FINISH_PASS_MM, {
+      anglesDeg: Array.from({ length: wavePasses }, (_, k) => k * (360 / wavePasses)),
+      along: waveAlong,
+      requestedCellSize: FINISH_BASE.requestedCellSize,
+    }, [])
+    const waveIndexAt = (p: number): number => {
+      let best = -1
+      let bestDistance = Infinity
+      waveAlong.forEach((value, j) => {
+        const distance = Math.abs(value - p)
+        if (distance < bestDistance) { bestDistance = distance; best = j }
+      })
+      assert.ok(bestDistance < 1e-9, `${axis} emitted along ${p} is a sample position`)
+      return best
+    }
+    let waveChecks = 0
+    for (const move of waveResult.moves) {
+      if (move.kind !== 'cut') continue
+      const fromAngle = move.from.a as number
+      const toAngle = move.to.a as number
+      if (fromAngle !== toAngle) {
+        // The turn between two passes, at the shared end position: its height is
+        // the higher of the two passes' tips there, so a return pass reading its
+        // mirror height would move it.
+        const j = waveIndexAt(along(move.from))
+        const next = Math.round(toAngle / (360 / wavePasses))
+        approx(along(move.to), along(move.from), `${axis} wave link stays at its along position`)
+        approx(move.to.z, move.from.z, `${axis} wave link keeps the height it reached`)
+        approx(move.to.z, FINISH_RADIUS + Math.max(waveSampling.tipRadius[next - 1][j], waveSampling.tipRadius[next][j]),
+          `${axis} wave link takes the higher tip at the shared end`)
+        waveChecks++
+        continue
+      }
+      const pass = Math.round(fromAngle / (360 / wavePasses))
+      for (const end of ['from', 'to'] as const) {
+        const j = waveIndexAt(along(move[end]))
+        // The forward pass's sample at this along position; the axisymmetric
+        // model makes it the right height on every pass.
+        approx(move[end].z, FINISH_RADIUS + waveSampling.tipRadius[0][j], `${axis} wave pass ${pass} height at along ${waveAlong[j]}`)
+        approx(waveSampling.tipRadius[pass][j], waveSampling.tipRadius[0][j],
+          `${axis} wave pass ${pass} samples along ${waveAlong[j]} like the forward pass`)
+        waveChecks++
+      }
+    }
+    assert.ok(waveChecks > 20, `${axis} the asymmetric wave checked real points (${waveChecks})`)
+  }
+
+  // Rule 5: the same path on the sheet, and wrapPoint of it exactly (this is
+  // what makes export, the 3D view and the simulation read it unchanged).
+  const frame = aroundFrame(stock)
+  const sheet = unwrapToolpath(result, frame)
+  for (const move of sheet.moves) {
+    for (const p of [move.from, move.to]) assert.ok(!('a' in p), `${axis} unwrapped point drops a`)
+  }
+  result.moves.forEach((move, index) => {
+    for (const key of ['from', 'to'] as const) {
+      const wrapped = move[key]
+      const flat = sheet.moves[index][key]
+      assert.ok(wrapped.a !== undefined, `${axis} move ${index} ${key} has a`)
+      const acrossSheet = axis === 'x' ? flat.y : flat.x
+      approx(acrossSheet, frame.sheetStart + wrapped.a * frame.circumference / 360, `${axis} move ${index} ${key} sheet across`)
+      approx(flat.z, wrapped.z - FINISH_RADIUS, `${axis} move ${index} ${key} sheet height is the tip radius`)
+      // The wrap of the sheet point is the emitted point. The angle is compared
+      // with a tolerance because unwrapping subtracts sheetStart (a stock
+      // bound) and re-wrapping adds it back, so float rounding can move the
+      // angle by one ulp while every coordinate stays exact.
+      const rewrapped = wrapPoint(flat, frame)
+      assert.deepEqual({ x: rewrapped.x, y: rewrapped.y, z: rewrapped.z }, { x: wrapped.x, y: wrapped.y, z: wrapped.z },
+        `${axis} move ${index} ${key} is wrapPoint of its sheet point`)
+      approx(rewrapped.a as number, wrapped.a, `${axis} move ${index} ${key} rewrapped angle`, 1e-9)
+    }
+  })
+
+  // Rule 4 + 6 + 7: nothing cut or linked outside the requested along range,
+  // and every non-boundary move is a cut.
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) {
+      assert.ok(along(p) >= FINISH_BASE.alongStart - 1e-9 && along(p) <= FINISH_BASE.alongEnd + 1e-9, `${axis} point inside the along range`)
+    }
+  }
+
+  // Rule 4: stock to leave, normal to the surface for a ball.
+  const s = 0.3
+  const stock2 = generateRotaryFinish('op', cylinder, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover, stockToLeave: s }, {})
+  for (const move of stock2.moves) {
+    if (move.kind !== 'cut') continue
+    approx(move.from.z, FINISH_RADIUS + RC + s, `${axis} cylinder stock to leave tip`, 0.02)
+    approx(move.to.z, FINISH_RADIUS + RC + s, `${axis} cylinder stock to leave tip`, 0.02)
+  }
+  const flatTop = generateRotaryFinish('op', prism(stock, SQUARE), stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover, stockToLeave: s }, {})
+  const atZero = flatTop.moves.filter((move) => move.kind === 'cut' && move.from.a === 0 && move.to.a === 0)
+  assert.ok(atZero.length >= 1, `${axis} square prism has a 0 degree pass`)
+  for (const move of atZero) {
+    approx(move.from.z, FINISH_RADIUS + W + s, `${axis} flat top stock to leave tip`)
+    approx(move.to.z, FINISH_RADIUS + W + s, `${axis} flat top stock to leave tip`)
+  }
+  // Zero stock leaves the sampler's own value: the straight pass is z = R + w.
+  const noStock = generateRotaryFinish('op', prism(stock, SQUARE), stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
+  for (const move of noStock.moves) {
+    if (move.kind !== 'cut' || move.from.a !== 0 || move.to.a !== 0) continue
+    approx(move.from.z, FINISH_RADIUS + W, `${axis} flat top zero stock tip`)
+    approx(move.to.z, FINISH_RADIUS + W, `${axis} flat top zero stock tip`)
+  }
+
+  // Rule 8: a V-bit is refused outright.
+  const refused = generateRotaryFinish('op', cylinder, stock, VBIT, { ...FINISH_BASE, stepover }, {})
+  assert.deepEqual(refused.moves, [], `${axis} V-bit has no moves`)
+  assert.deepEqual(refused.warnings.map((warning) => warning.code), ['rotaryToolUnsupported'], `${axis} V-bit warning`)
+  assert.equal(refused.bounds, null, `${axis} V-bit has no bounds`)
+
+  // A flat end mill on the coaxial cylinder: z = R + rc, no stock.
+  const flat = generateRotaryFinish('op', cylinder, stock, FLAT_2, { ...FINISH_BASE, stepover }, {})
+  for (const move of flat.moves) {
+    if (move.kind !== 'cut') continue
+    for (const p of [move.from, move.to]) approx(p.z, FINISH_RADIUS + RC, `${axis} flat end mill z = R + rc`)
+  }
+}
+
+{
+  // Rule 4: a model that dips below the axis is clamped to the floor and named
+  // once, at the first place it happens. The plate sits wholly below the
+  // centreline at 0 degrees: its own top face is at radius -3, well under the
+  // tool's, so the tool would have to reach below zero there.
+  const stock = finishStock('x')
+  const plate = prism(stock, [[-2, -9], [2, -9], [2, -3], [-2, -3]])
+  const stepover = 20
+  const result = generateRotaryFinish('op-7', plate, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
+  assert.ok(result.moves.length > 0, 'below centreline still generates moves')
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) assert.ok(p.z >= FINISH_RADIUS - 1e-9, 'no point below the centreline')
+  }
+  const below = result.warnings.filter((warning) => warning.code === 'rotaryBelowCentreline')
+  assert.equal(below.length, 1, 'exactly one below-centreline warning')
+  assert.equal(below[0].params?.operation, 'op-7')
+  const along = below[0].params?.along as number
+  const angle = below[0].params?.angle as number
+  assert.equal(along, FINISH_BASE.alongStart, 'the first below-centreline place is at alongStart')
+  assert.equal(angle, 0, 'the first below-centreline place is at 0 degrees')
+  // The 0 degree pass clamps to the centreline floor.
+  assert.ok(result.moves.some((move) => move.kind === 'cut' && move.from.a === 0 && move.from.z === FINISH_RADIUS), 'the 0 degree pass is on the centreline')
+}
+
+{
+  // Rule 4 (review): the warning is about the value *before* clamping, so the
+  // stock offset is in the value that decides it -- `raw + stockToLeave < 0`.
+  // Leaving stock must not hide a model that still needs a cut below the
+  // centreline, which is exactly what gating on `stockToLeave === 0` did.
+  const stock = finishStock('x')
+  const plate = prism(stock, [[-2, -9], [2, -9], [2, -3], [-2, -3]])
+  const result = generateRotaryFinish('op-7s', plate, stock, FINISH_PASS_MM,
+    { ...FINISH_BASE, stepover: 20, stockToLeave: 0.5 }, {})
+  assert.ok(result.moves.length > 0, 'below centreline with stock still generates moves')
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) assert.ok(p.z >= FINISH_RADIUS - 1e-9, 'no point below the centreline with stock')
+  }
+  const below = result.warnings.filter((warning) => warning.code === 'rotaryBelowCentreline')
+  assert.equal(below.length, 1, 'exactly one below-centreline warning with stock to leave')
+  assert.equal(below[0].params?.operation, 'op-7s')
+  assert.equal(below[0].params?.along, FINISH_BASE.alongStart, 'the place with stock is at alongStart')
+  assert.equal(below[0].params?.angle, 0, 'the place with stock is at 0 degrees')
+}
+
+{
+  // Rule 4 (review): the warning names the along position of the offending
+  // *sample*, so it must not be mirrored with the pass either. Two passes put
+  // the first offense on the odd (180 degree) pass, where the old code reported
+  // `alongAt(1, i)` -- the mirror position -- rather than along[i]. The block
+  // sits above the axis at 0 degrees (nothing below zero, so pass 0 is clean)
+  // and only near alongStart; at 180 degrees it turns below the axis, and the
+  // warning must name along = 10, not the mirrored 30.
+  const stock = finishStock('x')
+  const block = prism(stock, [[-2, 4], [2, 4], [2, 6], [-2, 6]], [10, 14])
+  const result = generateRotaryFinish('op-7o', block, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: 100 }, {})
+  const below = result.warnings.filter((warning) => warning.code === 'rotaryBelowCentreline')
+  assert.equal(below.length, 1, 'exactly one below-centreline warning on the odd pass')
+  assert.equal(below[0].params?.angle, 180, 'the offending pass is the 180 degree one')
+  assert.equal(below[0].params?.along, FINISH_BASE.alongStart, 'the warning names the sample position, not its mirror')
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) assert.ok(p.z >= FINISH_RADIUS - 1e-9, 'no point below the centreline on the odd pass')
+  }
+}
+
+{
+  // Rule 3 (review): in a valley the stock offset is normal to the surface, not
+  // vertical, and that is where enlarging the tool changes the answer. The
+  // model is a coaxial block whose top face carries a V-valley, walls at 45
+  // degrees, apex 3 mm above the axis. A ball in a 45-degree V rests with its
+  // centre r*sqrt(2) above the apex, so its tip is `apex + r*(sqrt(2) - 1)`.
+  // Plain r = 2 gives 3 + 0.828 = 3.828 mm; enlarged r = 2.5 gives
+  // 3 + 1.036 = 4.036 mm. The generator must sample with the enlarged ball and
+  // add s, giving 4.536 mm -- while "add s to the plain tip" would give
+  // 4.328 mm. The hand-computed difference is s*(sqrt(2) - 1) = 0.2071 mm.
+  const stock = finishStock('x')
+  const apexAlong = 20
+  const halfWidth = 3
+  const topUp = 6
+  const apexUp = topUp - halfWidth
+  const acrossHalf = 8
+  const sheet = (() => {
+    const centre = roundStockCentre(stock)
+    const radius = stock.thickness / 2
+    const up = (along: number): number => {
+      const d = Math.abs(along - apexAlong)
+      return d >= halfWidth ? topUp : apexUp + d
+    }
+    const xs: number[] = []
+    for (let x = 10; x <= 30 + 1e-9; x += CELL) xs.push(x)
+    const ys: number[] = []
+    for (let y = -acrossHalf; y <= acrossHalf + 1e-9; y += 1) ys.push(y)
+    const positions: number[] = []
+    const index: number[] = []
+    for (const x of xs) for (const y of ys) {
+      const z = radius + up(x)
+      if (stock.axis === 'x') positions.push(x, centre + y, z)
+      else positions.push(centre + y, x, z)
+    }
+    const cols = ys.length
+    for (let i = 0; i < xs.length - 1; i++) {
+      for (let j = 0; j < ys.length - 1; j++) {
+        const a = i * cols + j
+        const b = (i + 1) * cols + j
+        const c = (i + 1) * cols + j + 1
+        const d = i * cols + j + 1
+        index.push(a, b, c, a, c, d)
+      }
+    }
+    return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  })()
+  const s = 0.5
+  const enlarged: NormalizedTool = { ...FINISH_PASS_MM, radius: FINISH_PASS_MM.radius + s, diameter: FINISH_PASS_MM.diameter + 2 * s }
+  const plainTip = sampleRotaryModel(sheet, stock, FINISH_PASS_MM, { anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL }, []).tipRadius[0][0]
+  const enlargedTip = sampleRotaryModel(sheet, stock, enlarged, { anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL }, []).tipRadius[0][0]
+  assert.ok(plainTip < enlargedTip, `the enlarged ball rests higher in the valley (${plainTip.toFixed(4)} < ${enlargedTip.toFixed(4)})`)
+  const result = generateRotaryFinish('op-valley', sheet, stock, FINISH_PASS_MM,
+    { ...FINISH_BASE, stepover: 20, sampleSpacing: 1, stockToLeave: s }, {})
+  const apexAlongAxis = (p: { x: number; y: number; z: number }): number => stock.axis === 'x' ? p.x : p.y
+  const atApex = result.moves
+    .filter((move) => move.kind === 'cut' && move.from.a === 0 && move.to.a === 0)
+    .flatMap((move) => [move.from, move.to])
+    .filter((p) => Math.abs(apexAlongAxis(p) - apexAlong) < 1e-9)
+  assert.ok(atApex.length > 0, 'the 0 degree pass reaches the valley apex')
+  const generatedTip = atApex[0].z - FINISH_RADIUS
+  // What the code says it does: the enlarged ball's tip plus s.
+  approx(generatedTip, enlargedTip + s, 'valley result equals the enlarged tool plus s', 1e-6)
+  // What "stock without enlarging the tool" would give, and the hand-computed gap.
+  const handDifference = s * (Math.SQRT2 - 1)
+  assert.ok(generatedTip > plainTip + s, `valley result is above plain + s (${generatedTip.toFixed(4)} > ${(plainTip + s).toFixed(4)})`)
+  approx(generatedTip - (plainTip + s), handDifference, 'valley gap from plain + s is s*(sqrt(2)-1)', 0.005)
+}
+
+{
+  // Rule 4: a model poking above the bar's surface is air, so the tip is
+  // clamped at R rather than followed into the air. A tall narrow spike makes
+  // the clamp the only thing keeping every point at or below the bar's top.
+  const stock = finishStock('x')
+  const spike = prism(stock, [[-2, -2], [2, -2], [0, 26]])
+  const stepover = 20
+  const result = generateRotaryFinish('op-8', spike, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
+  const cutPoints = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
+  assert.ok(cutPoints.length > 0, 'the spike generates cuts')
+  assert.ok(cutPoints.some((p) => p.z === FINISH_RADIUS + FINISH_RADIUS), 'a tip over the spike is clamped to the bar surface')
+  for (const p of cutPoints) assert.ok(p.z <= FINISH_RADIUS + FINISH_RADIUS + 1e-9, 'no tip above the bar surface')
+}
+
+{
+  // Rule 10: progress and stopping pass straight through to the sampler.
+  const stock = finishStock('x')
+  const mesh = prism(stock, CIRCLE)
+  const progress: number[][] = []
+  const complete = generateRotaryFinish('op', mesh, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: 10 }, {
+    onAngle: (done, total) => { progress.push([done, total]) },
+  })
+  const passes = finishPasses(10)
+  assert.deepEqual(progress, Array.from({ length: passes }, (_, i) => [i + 1, passes]), 'progress once per angle')
+  const stopped = generateRotaryFinish('op', mesh, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: 10 }, { shouldStop: () => true })
+  assert.deepEqual(stopped.moves, [], 'stopped returns no moves')
+  assert.deepEqual(stopped.warnings, [], 'stopped returns no warning')
+  assert.equal(stopped.bounds, null, 'stopped has no bounds')
+  assert.ok(complete.moves.length > 0, 'the complete run is not vacuous')
+}
+
+{
+  // Rule 9: a pass over a flat stretch keeps its first and last point and drops
+  // the middle; a curved stretch keeps its points. The bar is sampled every
+  // 1 mm so the count of moves on one pass says exactly how many points lived.
+  const stock = finishStock('x')
+  const stepover = 20
+  const spacing = 1
+  // A pass's moves are the cut moves whose two ends carry the same angle; the
+  // link's turn is the one that changes angle, so it never lands in this list.
+  const passMoves = (moves: typeof flat.moves, pass: number): typeof flat.moves =>
+    moves.filter((move) => move.kind === 'cut' && move.from.a === move.to.a && move.from.a === pass * (360 / finishPasses(stepover)))
+  const alongStart = FINISH_BASE.alongStart
+  const alongEnd = FINISH_BASE.alongEnd
+  // 21 samples 1 mm apart. A move endpoint strictly inside (alongStart,
+  // alongEnd) can only be a sample the merge chose to keep.
+  const interiorKept = (moves: typeof flat.moves): number[] => {
+    const points: number[] = []
+    for (const move of moves) for (const p of [move.from, move.to]) {
+      if (p.x > alongStart + 1e-9 && p.x < alongEnd - 1e-9) points.push(p.x)
+    }
+    return [...new Set(points)].sort((a, b) => a - b)
+  }
+  const flat = generateRotaryFinish('op', prism(stock, SQUARE), stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover, sampleSpacing: spacing }, {})
+  const zero = passMoves(flat.moves, 0)
+  assert.ok(zero.length >= 1, 'the flat 0 degree pass is present')
+  assert.deepEqual(interiorKept(zero), [], 'a flat pass drops every interior sample, keeping both ends')
+  // The pass still spans the whole range, so nothing was trimmed with the
+  // dropped points.
+  const zeroEnds = zero.flatMap((move) => [move.from.x, move.to.x])
+  assert.equal(Math.min(...zeroEnds), alongStart, 'merged flat pass keeps its first point')
+  assert.equal(Math.max(...zeroEnds), alongEnd, 'merged flat pass keeps its last point')
+  // A ball sits on the bar's centreline at x = 20 and sticks 8 mm over it, so a
+  // pass runs up and back down: the tip is not collinear, and its points
+  // survive the merge. A closed fan-and-cap mesh is enough for the height map.
+  const ball = (() => {
+    const centre = roundStockCentre(stock)
+    const radius = stock.thickness / 2
+    const cx = 20, cy = centre, cz = radius + 8, r = 6
+    const rings = 16, slices = 32
+    const positions: number[] = []
+    const index: number[] = []
+    const vertex = (ri: number, si: number): number => {
+      const phi = Math.PI * ri / rings
+      const theta = 2 * Math.PI * si / slices
+      positions.push(cx + r * Math.sin(phi) * Math.cos(theta), cy + r * Math.sin(phi) * Math.sin(theta), cz + r * Math.cos(phi))
+      return positions.length / 3 - 1
+    }
+    const first: number[][] = []
+    for (let ri = 0; ri <= rings; ri++) first.push(Array.from({ length: slices }, (_, si) => vertex(ri, si)))
+    for (let ri = 0; ri < rings; ri++) for (let si = 0; si < slices; si++) {
+      const sj = (si + 1) % slices
+      index.push(first[ri][si], first[ri + 1][si], first[ri + 1][sj], first[ri][si], first[ri + 1][sj], first[ri][sj])
+    }
+    return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  })()
+  const curved = generateRotaryFinish('op', ball, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover, sampleSpacing: spacing }, {})
+  const curvedZero = passMoves(curved.moves, 0)
+  const curvedKept = interiorKept(curvedZero)
+  assert.ok(curvedKept.length >= 3, `a curved 0 degree pass keeps its points (${curvedKept.length} interior)`)
+  assert.ok(curvedKept.length < 19, `the curved pass still merged some points (${curvedKept.length} interior)`)
+  const peak = curvedZero.reduce((best, move) => Math.max(best, move.from.z, move.to.z), 0)
+  const ends = Math.max(curvedZero[0].from.z, curvedZero.at(-1)!.to.z)
+  assert.ok(peak > ends + 0.1, `the curved pass really rises: peak ${peak.toFixed(3)} over ends ${ends.toFixed(3)}`)
+}
+
+{
+  // Fixture (report): slice A's real mesh in a 40 mm bar, 3 mm ball, stepover
+  // 0.5 mm, sample spacing 0.2 mm. Only "it runs and produces moves" is asserted.
+  const start = performance.now()
+  const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
+    stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
+    safeRadius: 20 + 1.6, requestedCellSize: fixtureCell,
+  }, {})
+  const elapsed = performance.now() - start
+  const passes = finishPasses(0.5)
+  const angles = new Set<number>()
+  for (const move of result.moves) {
+    if (move.kind !== 'cut' || move.from.a === undefined) continue
+    angles.add(move.from.a)
+  }
+  const cuts = result.moves.filter((move) => move.kind === 'cut')
+  const tip = Math.max(...cuts.flatMap((move) => [move.from.z, move.to.z])) - 20
+  assert.ok(result.moves.length > 0, 'fixture produces moves')
+  assert.ok(angles.size === passes, `fixture covers every pass angle (${angles.size} of ${passes})`)
+  assert.ok(tip <= 20 + 1e-6, `fixture stays within the bar (${tip.toFixed(3)})`)
+  // Rule 9's before/after counts. Before the merge the path is one move per
+  // sample interval on each pass, three moves per link (rise/turn/drop), and
+  // the entry rapid plus plunge and the final retract. Reported, not asserted.
+  const samplesPerPass = Math.max(1, Math.ceil(Math.abs(150 - 0) / 0.2)) + 1
+  const before = passes * (samplesPerPass - 1) + 3 * (passes - 1) + 3
+  console.log(`rotaryFinish fixture: ${elapsed.toFixed(1)} ms, ${angles.size} angles, `
+    + `${before} moves before merging -> ${result.moves.length} after (${cuts.length} cut), `
+    + `tip max ${tip.toFixed(3)} mm, warnings ${result.warnings.map((warning) => warning.code).join(',') || 'none'}`)
+}
+
 console.log('engine/toolpaths/rotaryModel.test.ts: all assertions passed')
