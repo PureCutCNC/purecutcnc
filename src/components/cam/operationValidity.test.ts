@@ -34,6 +34,8 @@ import {
   quickOperationGroup,
   quickOperationLabel,
   rotaryAddKindsForFace,
+  rotaryTargetModels,
+  rotaryTargetToggle,
   selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
 } from './operationValidity'
@@ -825,6 +827,79 @@ function testRotaryAddRowsAreOfferedOnlyOnAround(): void {
   )
 }
 
+// ── rotary target picker (issue #1015 slice K) ────────────────────
+//
+// The rotary operation's properties replace "Use current selection" with a
+// checklist of the project's imported models. This helper is the whole rule;
+// mutations checked one at a time against these assertions:
+// - the result written in click order instead of project order → "the write is
+//   in project order, not click order" fails;
+// - the last ticked model removable → "the last ticked model cannot be
+//   removed" fails;
+// - a stale id carried into the write → "an id that names no model is
+//   dropped" fails.
+
+/** The fixture plus a clone of its model, so one-of-two and both are distinguishable. */
+function pickerProject(): Project {
+  return withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+}
+
+function testRotaryTargetModelsListTheProject(): void {
+  const project = pickerProject()
+  assert(
+    JSON.stringify(rotaryTargetModels(project))
+      === JSON.stringify([{ id: 'model', name: 'Model' }, { id: 'model-2', name: 'Model 2' }]),
+    `the picker lists the models in project order: ${JSON.stringify(rotaryTargetModels(project))}`,
+  )
+}
+
+function testRotaryTargetToggleKeepsProjectOrder(): void {
+  const project = pickerProject()
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model'] }, 'model-2'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'model-2'] }),
+    'ticking a second model adds it',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model-2'] }, 'model'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'model-2'] }),
+    'the write is in project order, not click order',
+  )
+}
+
+function testRotaryTargetToggleOffAndLastBox(): void {
+  const project = pickerProject()
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'model-2'] }, 'model-2'))
+      === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+    'unticking a model removes it',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model'] }, 'model'))
+      === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+    'the last ticked model cannot be removed',
+  )
+}
+
+function testRotaryTargetToggleDropsStaleIds(): void {
+  const project = pickerProject()
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'gone'] }, 'model-2'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'model-2'] }),
+    'an id that names no model is dropped from the next write',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'gone'] }, 'model'))
+      === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+    'a stale id is not a ticked model: the last real one still cannot be removed',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'stock' }, 'model'))
+      === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+    'ticking a model from a stock target writes a feature target',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -861,5 +936,9 @@ testRouterAndMachineLessProjectsKeepTheMillingMenu()
 testRotaryAddRowsTargetModelsWithoutASelection()
 testRotaryAddRowsNeedAnImportedModel()
 testRotaryAddRowsAreOfferedOnlyOnAround()
+testRotaryTargetModelsListTheProject()
+testRotaryTargetToggleKeepsProjectOrder()
+testRotaryTargetToggleOffAndLastBox()
+testRotaryTargetToggleDropsStaleIds()
 
 console.log('operationValidity tests passed')

@@ -208,6 +208,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.carveDepth': '雕刻深度',
   'cam.operation.target': '目标',
   'cam.operation.targetSource': '目标来源',
+  'cam.operation.rotaryTargets': '要加工的模型',
+  'cam.operation.rotaryTargetsHelp': '旋转粗加工和旋转精加工会加工此处勾选的模型。',
   'cam.operation.useCurrentSelection': '使用当前选择',
   'cam.operation.targetUpdated': '✓ 目标已更新',
   'cam.operation.restMachining': '残料加工',

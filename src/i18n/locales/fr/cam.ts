@@ -182,6 +182,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.operation.carveDepth': 'Profondeur de gravure',
   'cam.operation.target': 'Cible',
   'cam.operation.targetSource': 'Source cible',
+  'cam.operation.rotaryTargets': 'Modèles à usiner',
+  'cam.operation.rotaryTargetsHelp': 'Ébauche rotative et Finition rotative usinent les modèles cochés ici.',
   'cam.operation.useCurrentSelection': 'Utiliser la sélection actuelle',
   'cam.operation.targetUpdated': '✓ Cible mise à jour',
   'cam.operation.restMachining': 'Usinage de reprise',

@@ -490,4 +490,5 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.face.drawingOnBottom': 'Dessin sur la face inférieure',
   'canvas.face.aroundTurnsBar': 'La barre tourne dans le rotatif. Cette vue est sa surface déroulée : le long de la barre et autour d’elle.',
   'canvas.face.drawingOnAround': 'Dessin sur la surface de la barre',
+  'canvas.around.modelBand': '{name} — à l’intérieur de la barre, usiné par Ébauche rotative et Finition rotative',
 }

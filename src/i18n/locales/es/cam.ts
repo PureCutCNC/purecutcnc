@@ -182,6 +182,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.operation.carveDepth': 'Profundidad de tallado',
   'cam.operation.target': 'Objetivo',
   'cam.operation.targetSource': 'Origen del objetivo',
+  'cam.operation.rotaryTargets': 'Modelos a mecanizar',
+  'cam.operation.rotaryTargetsHelp': 'Desbaste rotativo y Acabado rotativo mecanizan los modelos marcados aquí.',
   'cam.operation.useCurrentSelection': 'Usar selección actual',
   'cam.operation.targetUpdated': '✓ Objetivo actualizado',
   'cam.operation.restMachining': 'Mecanizado de restos',

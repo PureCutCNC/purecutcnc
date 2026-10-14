@@ -204,6 +204,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.carveDepth': 'Gravurtiefe',
   'cam.operation.target': 'Ziel',
   'cam.operation.targetSource': 'Zielquelle',
+  'cam.operation.rotaryTargets': 'Zu bearbeitende Modelle',
+  'cam.operation.rotaryTargetsHelp': 'Rotationsschruppen und Rotationsschlichten bearbeiten die hier markierten Modelle.',
   'cam.operation.useCurrentSelection': 'Aktuelle Auswahl verwenden',
   'cam.operation.targetUpdated': '✓ Ziel aktualisiert',
   'cam.operation.restMachining': 'Restbearbeitung',

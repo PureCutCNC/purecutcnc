@@ -541,4 +541,5 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.face.drawingOnBottom': 'Zeichnen auf der Unterseite',
   'canvas.face.aroundTurnsBar': 'Die Stange dreht sich in der Drehachse. Diese Ansicht ist ihre abgewickelte Oberfläche: entlang der Stange und um sie herum.',
   'canvas.face.drawingOnAround': 'Zeichnen auf der Oberfläche der Stange',
+  'canvas.around.modelBand': '{name} — in der Stange, bearbeitet von Rotationsschruppen und Rotationsschlichten',
 }

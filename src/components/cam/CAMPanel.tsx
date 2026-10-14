@@ -24,6 +24,7 @@ import { CamSetupSectionView } from './CamSetupSectionView'
 import { SetupPropertiesDialog } from './SetupPropertiesDialog'
 import { SetupOperationControls } from './SetupOperationControls'
 import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
+import { RotaryTargetPicker } from './RotaryTargetPicker'
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -1174,7 +1175,16 @@ export function CAMPanel({
           ) : null}
         </>
       ),
-      targetSource: () => (
+      targetSource: () => isRotaryOperationKind(operation.kind) ? (
+        // A rotary operation machines the imported model inside the bar, which
+        // is not selectable on the Around sheet: pick it from the list instead
+        // of from the selection (issue #1015 slice K).
+        <RotaryTargetPicker
+          project={project}
+          target={operation.target}
+          onChange={(target) => updateOperation(operation.id, { target })}
+        />
+      ) : (
         <div className="properties-field">
           <span>{camT('cam.operation.targetSource')}</span>
           <button

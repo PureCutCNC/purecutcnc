@@ -325,6 +325,9 @@ const SENTENCE_CASE_TERMS = new Set([
   // ("cuts it as Rectangular" means the Rectangular setting, not the adjective).
   'Smooth', 'Rectangular', 'Climb', 'Conventional', 'Helix', 'Plunge', 'Direct',
   'Trochoidal', 'Contour', 'Ramp', 'Spiral', 'Parallel', 'Waterline',
+  // The rotary operation family named in prose: "machined by Rotary rough and
+  // Rotary finish" names the two operations, not a style choice (issue #1015).
+  'Rotary',
 ])
 
 /** Locale whose values carry the sentence-case rule. */

@@ -134,14 +134,46 @@ function rotaryTargetHint(project: Project, operation: Operation): string | null
 }
 
 /**
- * The imported models a rotary operation can machine. The model lives in the
- * bar and only rotary operations target it, so the whole project is the
- * candidate set regardless of what is selected (issue #1015).
+ * The imported models a rotary operation can machine, in project order. The
+ * model lives in the bar and only rotary operations target it, so the whole
+ * project is the candidate set regardless of what is selected (issue #1015).
  */
-function importedModelFeatureIds(project: Project): string[] {
+function importedModelFeatures(project: Project): ResolvedSketchFeature[] {
   return resolveFeatureInstances(project)
     .filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
-    .map((feature) => feature.id)
+}
+
+function importedModelFeatureIds(project: Project): string[] {
+  return importedModelFeatures(project).map((feature) => feature.id)
+}
+
+/** An imported model a rotary operation can machine, as the target picker lists it. */
+export interface RotaryTargetModel {
+  id: string
+  name: string
+}
+
+/** The models the rotary target picker offers, in the project's own order. */
+export function rotaryTargetModels(project: Project): RotaryTargetModel[] {
+  return importedModelFeatures(project).map((feature) => ({ id: feature.id, name: feature.name }))
+}
+
+/**
+ * The target a rotary operation's model checklist writes when `featureId` is
+ * ticked or unticked (issue #1015 slice K). The list is the project's imported
+ * models in project order, and an id in the current target that names no model
+ * any more is dropped rather than written back. Unticking the last remaining
+ * model is refused: a rotary operation always names the model it machines.
+ */
+export function rotaryTargetToggle(project: Project, target: OperationTarget, featureId: string): OperationTarget {
+  const models = importedModelFeatureIds(project)
+  const checked = new Set(models.filter((id) => target.source === 'features' && target.featureIds.includes(id)))
+  if (checked.has(featureId)) {
+    if (checked.size > 1) checked.delete(featureId)
+  } else {
+    checked.add(featureId)
+  }
+  return { source: 'features', featureIds: models.filter((id) => checked.has(id)) }
 }
 
 /** The per-kind hint for a rotary add-menu row when the project has no model. */

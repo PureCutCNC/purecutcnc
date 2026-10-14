@@ -207,6 +207,8 @@ export const camEn = {
   'cam.operation.carveDepth': 'Carve depth',
   'cam.operation.target': 'Target',
   'cam.operation.targetSource': 'Target source',
+  'cam.operation.rotaryTargets': 'Models to machine',
+  'cam.operation.rotaryTargetsHelp': 'Rotary rough and Rotary finish machine the models ticked here.',
   'cam.operation.useCurrentSelection': 'Use current selection',
   'cam.operation.targetUpdated': '✓ Target updated',
   'cam.operation.restMachining': 'Rest machining',

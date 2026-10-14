@@ -120,7 +120,7 @@ import {
 import { segmentIntersections, type ResolvedSeg } from '../../store/helpers/segmentIntersection'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
-  drawBackdropImage,
+  drawBackdropImage, drawAroundModelBands,
   drawClampClearanceOutlines,
   drawClampFootprint,
   drawGrid,
@@ -1013,6 +1013,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       )
       drawViewStockOutline(ctx, frameStock, sheet, vt, project.meta.units, anyFeatureExceedsStock, canvasPalette, stockLabelRectsRef.current)
     }
+
+    // The imported models inside the bar, as reference under everything else
+    // on the sheet (issue #1015 slice K). Only the sheet has them.
+    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }))
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))

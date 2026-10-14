@@ -42,7 +42,11 @@
  * - `data-toolpath-segments` on the 3D panel's `.viewport-3d` is the drawn
  *   overlay's segment count, and a left-drag of about −60 px orbits the camera;
  * - the Simulation tab reads `data-simulation-view="bar"` for the Around setup
- *   and `data-simulation-removed-cells` counts what the run removed.
+ *   and `data-simulation-removed-cells` counts what the run removed;
+ * - the rotary operation's properties carry the model checklist instead of "Use
+ *   current selection" (issue #1015 slice K): `[data-rotary-targets]` on the
+ *   fieldset, one `input[type=checkbox]` per imported model, `checked` and
+ *   `disabled` when it is the only one.
  *
  * Run in the `test:e2e:workflow-ui` lane.
  */
@@ -154,6 +158,38 @@ async function rotaryPath(page: Page, operationId: string): Promise<RotaryPathRe
     }
   }, operationId)
 }
+
+test('the rotary operation shows the model it machines, checked and locked', async ({ app, ui }) => {
+  const { page } = app
+  test.setTimeout(60_000)
+  await seedRotaryModelProject(page)
+
+  // The Around setup is active from the seed; add the finish operation, which
+  // Add selects (so its properties are already on screen).
+  await ui.face.segment(page, 'Around').click()
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  await ui.setupCam.addMenu(page).locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Rotary finish', exact: true }) })
+    .getByRole('button', { name: 'Add', exact: true }).click()
+
+  // Its target field is the model checklist, not "Use current selection": the
+  // model is not selectable on the Around sheet, so the selection could never
+  // express it (issue #1015 slice K).
+  const properties = page.locator('.cam-operation-properties')
+  await expect(properties).toBeVisible()
+  const picker = properties.locator('[data-rotary-targets]')
+  await expect(picker).toBeVisible()
+  await expect(picker.locator('legend')).toHaveText('Models to machine')
+  // One model in the fixture: its single box is ticked, and locked so the
+  // target can never be emptied.
+  const box = picker.locator('input[type="checkbox"]')
+  await expect(box).toHaveCount(1)
+  await expect(box).toBeChecked()
+  await expect(box).toBeDisabled()
+  await expect(picker.locator('.properties-check span')).toHaveText('Model')
+  await expect(properties.getByRole('button', { name: 'Use current selection', exact: true })).toHaveCount(0)
+})
 
 test('the rotary operations machine the model inside the bar', async ({ app, ui }, testInfo) => {
   const { page } = app

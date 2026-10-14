@@ -29,12 +29,17 @@
 
 import { aroundFrame } from '../../engine/aroundFrame'
 import type { AroundFrame } from '../../engine/aroundFrame'
+import { isImportedModel } from '../../engine/setupTargets'
 import { activeFace } from '../../store/helpers/activeFace'
-import { getStockBounds, isAroundSetup, isRoundStock, rectProfile } from '../../types/project'
+import { resolveSketch } from '../../store/helpers/resolveFeatures'
+import { getProfileBounds, getStockBounds, isAroundSetup, isRoundStock, rectProfile } from '../../types/project'
 import type { Bounds2D, Clamp, ClampType, MachiningSetup, Operation, Point, Project, SetupFace, Stock } from '../../types/project'
 
 /** The project fields the sheet is read from. */
-export type AroundSheetProject = Pick<Project, 'stock' | 'setups' | 'activeSetupId' | 'clamps' | 'origin'>
+export type AroundSheetProject = Pick<
+  Project,
+  'stock' | 'setups' | 'activeSetupId' | 'clamps' | 'origin' | 'features' | 'featureDefinitions'
+>
 
 /** One line across the sheet at a full turn. */
 export interface AroundTurnLine {
@@ -54,6 +59,18 @@ const BAND_CLAMP_TYPES: ReadonlySet<ClampType> = new Set<ClampType>(['chuck', 't
  */
 const MAX_TURN_LINES = 2000
 
+/**
+ * An imported model as the Around sheet shows it (issue #1015 slice K): the
+ * model lives inside the bar, so the sheet cannot draw its geometry — a band
+ * at the model's extent along the bar is what tells the user where it is.
+ */
+export interface AroundModelBand {
+  readonly featureId: string
+  readonly name: string
+  /** The model's extent along the bar, clipped to the sheet's own extent. */
+  readonly along: { readonly min: number; readonly max: number }
+}
+
 export interface AroundSheet {
   readonly axis: 'x' | 'y'
   /** Across coordinate of the sheet's zero line: the top of the bar at a = 0. */
@@ -69,6 +86,8 @@ export interface AroundSheet {
   readonly turnLines: readonly AroundTurnLine[]
   /** Chuck and tailstock as bands: the extent along the bar, the whole sheet across. */
   readonly clampBands: readonly Clamp[]
+  /** The visible imported models as bands: the extent along the bar, the whole sheet across. */
+  readonly modelBands: readonly AroundModelBand[]
   /** The origin marker: the origin's along coordinate on the start line. */
   readonly origin: Point & { readonly name: string }
 }
@@ -103,8 +122,37 @@ export function aroundSheet(
     along,
     turnLines: aroundTurnLines(frame, range.acrossMin, range.acrossMax),
     clampBands: project.clamps.filter((clamp) => BAND_CLAMP_TYPES.has(clamp.type)).map((clamp) => aroundClampBand(clamp, frame, range)),
+    modelBands: aroundModelBands(project, frame.axis, along),
     origin: { ...aroundOrigin(project.origin, frame), name: project.origin.name },
   }
+}
+
+/**
+ * The visible imported models as bands along the bar (issue #1015 slice K). The
+ * model's footprint is its silhouette profile — the mesh itself is never loaded
+ * — placed by its instance transform; `along` is clipped to the sheet, so a
+ * model running past the bar still reads.
+ */
+export function aroundModelBands(
+  project: Pick<Project, 'features' | 'featureDefinitions'>,
+  axis: 'x' | 'y',
+  sheetAlong: { readonly min: number; readonly max: number },
+): AroundModelBand[] {
+  const bands: AroundModelBand[] = []
+  for (const feature of project.features) {
+    if (!feature.visible || !isImportedModel(project, feature)) continue
+    const definition = project.featureDefinitions[feature.definitionId]
+    if (!definition) continue
+    const bounds = getProfileBounds(resolveSketch(definition, feature.transform).profile)
+    const min = axis === 'x' ? bounds.minX : bounds.minY
+    const max = axis === 'x' ? bounds.maxX : bounds.maxY
+    bands.push({
+      featureId: feature.id,
+      name: feature.name,
+      along: { min: Math.max(min, sheetAlong.min), max: Math.min(max, sheetAlong.max) },
+    })
+  }
+  return bands
 }
 
 /**
