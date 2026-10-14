@@ -17,12 +17,12 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { roundStock, roundStockCentre } from '../../types/project'
+import { roundStock, roundStockCentre, roundStockLength } from '../../types/project'
 import type { Clamp, RoundStock } from '../../types/project'
 import { aroundFrame, unwrapToolpath, wrapPoint } from '../aroundFrame'
 import { deserializeImportedMesh } from '../importedMesh'
 import { toolSpacePoint } from '../rotaryFrame'
-import { computeXYBounds } from './finishSurfaceParallel'
+import { buildHeightMap, chooseHeightMapCellSize, computeXYBounds, safeToolTipZAt } from './finishSurfaceParallel'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
@@ -1955,5 +1955,184 @@ function cutterOffsets(tool: NormalizedTool): ReadonlyArray<readonly [number, nu
   console.log(`rotary property worst: model ${worstModel.toFixed(4)} mm, retained bar ${worstRetained.toFixed(4)} mm, `
     + `below centreline ${worstCentreline.toExponential(2)} mm, rapid ${worstRapid.toExponential(2)} mm, `
     + `tolerance ${tolerance.toFixed(4)} mm, ${((performance.now() - startedAt) / 1000).toFixed(1)} s`)
+}
+// ---------------------------------------------------------------------------
+// Slice L: the strip-culled sampler against the full-map reference.
+//
+// `sampleRotaryModel` now rasterises only the rows (X bar) or columns (Y bar)
+// the samples read, and only the triangles whose cross-section arc can reach
+// them. The reference below is the sampler this replaced -- turn every vertex,
+// build the whole height map, read the same tool tip -- and the two must agree
+// bit for bit rather than within a tolerance: keeping the grid and the
+// per-cell arithmetic identical is the whole point, so a moved bound or a
+// dropped triangle shows up as a different Float32, not a slightly different
+// number. The meshes are deliberately asymmetric and loaded with the cull's
+// hard cases: triangles crossing the axis, long thin triangles spanning nearly
+// half a turn, and a fine radial rake whose triangles sit just inside and just
+// outside the strip at many directions.
+// ---------------------------------------------------------------------------
+
+/** The sampler slice L replaced: full turn, full height map, same tip read. */
+function referenceSample(
+  mesh: RotaryModelMesh,
+  stock: RoundStock,
+  tool: NormalizedTool,
+  anglesDeg: readonly number[],
+  along: readonly number[],
+  requestedCellSize: number,
+): Float32Array[] {
+  const radius = stock.thickness / 2
+  const centre = roundStockCentre(stock)
+  const rows: Float32Array[] = []
+  for (const angle of anglesDeg) {
+    const turned = turnedModelPositions(mesh.positions, stock, angle)
+    const bbox = computeXYBounds(turned)
+    const cellSize = chooseHeightMapCellSize(bbox, requestedCellSize, [])
+    const heightMap = buildHeightMap(turned, mesh.index, bbox, cellSize)
+    const row = new Float32Array(along.length)
+    for (let i = 0; i < along.length; i++) {
+      const x = stock.axis === 'x' ? along[i] : centre
+      const y = stock.axis === 'x' ? centre : along[i]
+      const z = safeToolTipZAt(x, y, heightMap, tool)
+      row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - radius
+    }
+    rows.push(row)
+  }
+  return rows
+}
+
+/** Bit-for-bit tip comparison, where two `NaN`s are equal. */
+function sameTip(actual: Float32Array, expected: Float32Array, label: string): void {
+  assert.equal(actual.length, expected.length, `${label}: row length`)
+  for (let i = 0; i < actual.length; i++) {
+    if (Number.isNaN(actual[i]) || Number.isNaN(expected[i])) {
+      assert.ok(Number.isNaN(actual[i]) && Number.isNaN(expected[i]),
+        `${label}[${i}]: NaN mismatch (${actual[i]} vs ${expected[i]})`)
+      continue
+    }
+    assert.ok(Object.is(actual[i], expected[i]), `${label}[${i}]: ${actual[i]} vs ${expected[i]}`)
+  }
+}
+
+/**
+ * Asymmetric seeded triangles for the strip test. Random vertices anywhere in a
+ * disc wider than the bar make triangles that cross the axis and land at every
+ * distance from it; the deliberate cases add a long thin triangle through the
+ * axis at many directions, thin triangles whose vertices span nearly half a
+ * turn, and a fine radial rake so triangles sit just inside and just outside
+ * the strip at sixteen directions.
+ */
+function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
+  const centre = roundStockCentre(stock)
+  const radius = stock.thickness / 2
+  const length = roundStockLength(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  const vertex = (along: number, across: number, up: number): number => {
+    if (stock.axis === 'x') positions.push(along, centre + across, radius + up)
+    else positions.push(centre + across, along, radius + up)
+    return positions.length / 3 - 1
+  }
+  const triangle = (
+    a: readonly [number, number, number],
+    b: readonly [number, number, number],
+    c: readonly [number, number, number],
+  ): void => {
+    index.push(vertex(a[0], a[1], a[2]), vertex(b[0], b[1], b[2]), vertex(c[0], c[1], c[2]))
+  }
+  let state = seed >>> 0
+  const random = (): number => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const alongMin = 4
+  const alongMax = length - 4
+  const along = (): number => alongMin + random() * (alongMax - alongMin)
+  // Every triangle is compact along the bar: the height map's cost is the area
+  // of a triangle's cell bounding box, and a triangle whose vertices span the
+  // whole bar would cost more to rasterise than the whole rest of the fixture.
+  const near = (l: number): number => l + (random() - 0.5) * 0.6
+
+  for (let t = 0; t < 900; t++) {
+    const l = along()
+    const tri: Array<[number, number, number]> = []
+    for (let v = 0; v < 3; v++) {
+      const r = radius * 1.2 * Math.sqrt(random())
+      const a = random() * 2 * Math.PI
+      tri.push([near(l), r * Math.cos(a), r * Math.sin(a)])
+    }
+    triangle(tri[0], tri[1], tri[2])
+  }
+  // Long thin triangles through the axis, at many directions.
+  for (let k = 0; k < 24; k++) {
+    const a = ((k * 15 + 7) * Math.PI) / 180
+    const l = along()
+    triangle(
+      [l, -radius * 1.05 * Math.cos(a), -radius * 1.05 * Math.sin(a)],
+      [l, radius * 1.05 * Math.cos(a), radius * 1.05 * Math.sin(a)],
+      [l, 0.4 * Math.cos(a + Math.PI / 2), 0.4 * Math.sin(a + Math.PI / 2)],
+    )
+  }
+  // Thin triangles whose directions span nearly half a turn.
+  for (let k = 0; k < 12; k++) {
+    const a = ((k * 29 + 3) * Math.PI) / 180
+    const l = along()
+    triangle(
+      [l, 0.3 * Math.cos(a), 0.3 * Math.sin(a)],
+      [l, 0.3 * Math.cos(a + 2.6), 0.3 * Math.sin(a + 2.6)],
+      [l, radius * 0.9 * Math.cos(a + 1.3), radius * 0.9 * Math.sin(a + 1.3)],
+    )
+  }
+  // Radial rake through the strip's half-width, sixteen directions.
+  for (let k = 0; k < 16; k++) {
+    const a = ((k * 22.5 + 5) * Math.PI) / 180
+    const l = along()
+    for (let i = 0; i < 120; i++) {
+      const r = 0.01 + i * 0.03
+      triangle(
+        [l, (r - 0.02) * Math.cos(a), (r - 0.02) * Math.sin(a)],
+        [l, (r + 0.02) * Math.cos(a + 0.004), (r + 0.02) * Math.sin(a + 0.004)],
+        [l, r * Math.cos(a - 0.004), r * Math.sin(a - 0.004)],
+      )
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+{
+  const CELLS = [0.05, 0.2]
+  const TOOLS: NormalizedTool[] = [
+    BALL,
+    { ...BALL, id: 'flat-strip', name: '3 mm flat', type: 'flat_endmill' },
+    { ...BALL, id: 'ball-strip-6', name: '6 mm ball', diameter: 6, radius: 3 },
+  ]
+  // Dense enough that many angles put a rake triangle exactly at the strip edge,
+  // and offset so no angle lines up with the rake's own directions.
+  const angles = Array.from({ length: 160 }, (_, k) => -90 + k * 1.5 + 0.31)
+  let compared = 0
+  for (const axis of ['x', 'y'] as const) {
+    for (const [diameter, length] of [[40, 60], [14, 36]] as const) {
+      const stock = roundStock(diameter, length, axis, axis === 'x' ? { x: -3, y: 5 } : { x: 5, y: -3 })
+      const mesh = stripTestMesh(stock, 0x5eed + (axis === 'x' ? 1 : 2) * 977 + diameter)
+      const along = [6, length / 2, length - 6, length / 2 + 0.013]
+      for (const cell of CELLS) {
+        for (const tool of TOOLS) {
+          const label = `${axis} D${diameter} ${tool.id} cell ${cell}`
+          const reference = referenceSample(mesh, stock, tool, angles, along, cell)
+          const sampled = sampleRotaryModel(mesh, stock, tool, { anglesDeg: angles, along, requestedCellSize: cell }, [])
+          assert.deepEqual(sampled.anglesDeg, angles, `${label}: angles`)
+          for (let k = 0; k < angles.length; k++) {
+            sameTip(sampled.tipRadius[k], reference[k], `${label} angle ${angles[k].toFixed(2)}`)
+            compared += along.length
+          }
+        }
+      }
+    }
+  }
+  assert.ok(compared > 0, 'the strip test compared real samples')
+  console.log(`rotary strip: ${compared} tips bit-identical to the full-map reference`)
 }
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')
