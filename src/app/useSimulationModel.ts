@@ -28,7 +28,7 @@ import {
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { setupFace } from '../engine/setupOrientation'
-import type { Clamp, Operation, Project } from '../types/project'
+import type { Clamp, Operation, Project, Stock } from '../types/project'
 import {
   buildSimulationSetupInput,
   resolveSimulationSetup,
@@ -97,6 +97,12 @@ export function useSimulationModel({
   simulationSetupPicker: SimulationSetupPicker
   /** Visible clamps, placed where they sit in the simulated setup's frame. */
   simulationClamps: Clamp[]
+  /**
+   * The stock the simulated setup draws. For Around this is the unrolled
+   * sheet's block — not the real round bar — so the viewport draws its chuck
+   * and tailstock bands as flat boxes rather than cylinders about the bar.
+   */
+  simulationStock: Stock
 } {
   /**
    * The simulated setup (issue #947). A pick from the panel holds while the
@@ -413,6 +419,10 @@ export function useSimulationModel({
     () => (setupInput?.project ?? project).clamps.filter((clamp) => clamp.visible),
     [project, setupInput],
   )
+  const simulationStock = useMemo(
+    () => (setupInput?.project ?? project).stock,
+    [project, setupInput],
+  )
 
   return {
     simulationResult,
@@ -421,5 +431,6 @@ export function useSimulationModel({
     simulationInputPending,
     simulationSetupPicker,
     simulationClamps,
+    simulationStock,
   }
 }

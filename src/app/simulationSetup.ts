@@ -44,7 +44,7 @@
  * to the bar's unrolled sheet and have no place on its rectangle.
  */
 
-import type { MachiningSetup, Operation, Project } from '../types/project'
+import type { Clamp, MachiningSetup, Operation, Project } from '../types/project'
 import { isAroundSetup, isRoundStock } from '../types/project'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
@@ -94,6 +94,28 @@ function aroundSimulationFrame(project: Project, operations: readonly Operation[
 }
 
 /**
+ * The unrolled project as the Around simulation draws it (issue #395).
+ * `unrolledProject` spreads a chuck or tailstock across every turn the job can
+ * reach, because that is the keep-out volume the generators must respect. The
+ * simulation draws the sheet, where the fixture is what it is there: a flat
+ * band. Its footprint along the bar is the fixture's own extent; across, it is
+ * clipped to the one circumference being simulated; and its height is already
+ * the fixture's height above the bar's surface, carried down by the radius.
+ *
+ * Only the across extent is rewritten here — the keep-out rectangle
+ * `unrolledProject` hands the generators is untouched. The sheet's stock is a
+ * block, so `buildClampMesh` draws the band with the ordinary clamp box rather
+ * than the round bar's cylinder.
+ */
+function unrolledSimulationProject(project: Project, frame: AroundFrame): Project {
+  const unrolled = unrolledProject(project, frame)
+  const clamps: Clamp[] = unrolled.clamps.map((clamp) => frame.axis === 'x'
+    ? { ...clamp, y: frame.sheetStart, h: frame.circumference }
+    : { ...clamp, x: frame.sheetStart, w: frame.circumference })
+  return { ...unrolled, clamps }
+}
+
+/**
  * Prepare one setup's simulation input.
  *
  * `toolpaths` holds every generated operation's result in canonical stock
@@ -110,12 +132,14 @@ function aroundSimulationFrame(project: Project, operations: readonly Operation[
  * setup is an error, not a silent Top operation.
  *
  * An Around setup (issue #395) has no rotation frame: its job is the unrolled
- * sheet, so its project is `unrolledProject` — a block one circumference
- * across and one radius thick, its Around features lowered onto it — and each
- * of its paths is `unwrapToolpath`ed back onto that sheet. Everything
- * downstream then cuts a flat job unchanged. An Around setup whose bar is no
- * longer a round bar on its axis yields `null` — no simulation for that setup
- * — rather than throwing.
+ * sheet, so its project is the unrolled block one circumference across and one
+ * radius thick, its Around features lowered onto it — and each of its paths is
+ * `unwrapToolpath`ed back onto that sheet. Its chuck and tailstock bands are
+ * clipped to that one circumference (`unrolledSimulationProject`): the sheet is
+ * what is drawn, not the whole multi-turn keep-out the generators use.
+ * Everything downstream then cuts a flat job unchanged. An Around setup whose
+ * bar is no longer a round bar on its axis yields `null` — no simulation for
+ * that setup — rather than throwing.
  */
 export function buildSimulationSetupInput(
   project: Project,
@@ -139,7 +163,9 @@ export function buildSimulationSetupInput(
   }
 
   return {
-    project: around ? unrolledProject(project, around) : projectInSetupFrame(flatFaceProject(project), frame),
+    project: around
+      ? unrolledSimulationProject(project, around)
+      : projectInSetupFrame(flatFaceProject(project), frame),
     operations,
     toolpaths: localToolpaths,
   }

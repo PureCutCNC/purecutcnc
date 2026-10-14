@@ -106,7 +106,11 @@ interface SimulationViewportProps {
    *  Deliberately not derived from `playbackInput`, which is absent until an
    *  operation is simulated and would fall back to mm for an inch project. */
   units: Units
-  /** The project's stock: a round bar draws its chuck and tailstock round too. */
+  /**
+   * The stock the simulated setup draws. A round bar draws its chuck and
+   * tailstock round too; the unrolled block an Around setup simulates on draws
+   * those same bands as flat boxes (issue #395).
+   */
   stock: Stock
   stockColor?: string
   stockHasProfile?: boolean

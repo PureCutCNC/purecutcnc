@@ -32,11 +32,14 @@
 
 import {
   defaultTool, getStockBounds, newProject, rectProfile, roundStock,
-  type MachiningSetup, type Operation, type Project, type SetupFace, type SketchFeature,
+  type Clamp, type MachiningSetup, type Operation, type Project, type SetupFace, type SketchFeature,
 } from '../types/project'
+import * as THREE from 'three'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { syncProjectSetups } from '../store/helpers/setups'
 import { aroundFrame } from '../engine/aroundFrame'
+import { buildClampMesh } from '../engine/csg'
+import { THEME_PALETTES } from '../theme/palette'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { PocketToolpathResult, ToolpathResult } from '../engine/toolpaths/types'
@@ -55,7 +58,37 @@ function assertEqual<T>(actual: T, expected: T, label: string): void {
   )
 }
 
+const UNITS = 'mm' as const
+const THREE_PALETTE = THEME_PALETTES.dark.three
+
+function positionsOf(mesh: THREE.Mesh): number[] {
+  const attribute = mesh.geometry.getAttribute('position')
+  return Array.from(attribute.array as ArrayLike<number>)
+}
+
+function assertPositionsEqual(actual: number[], expected: number[], label: string): void {
+  assert(actual.length === expected.length, `${label}: ${actual.length} positions, expected ${expected.length}`)
+  for (let i = 0; i < actual.length; i++) {
+    assert(actual[i] === expected[i], `${label}: position ${i} is ${actual[i]}, expected ${expected[i]}`)
+  }
+}
+
+function sceneBox(mesh: THREE.Mesh): THREE.Box3 {
+  mesh.updateMatrixWorld(true)
+  return new THREE.Box3().setFromObject(mesh)
+}
+
 const AROUND_BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
+
+/**
+ * A round bar's workholding, sized the way `roundWorkholding.ts` keeps it:
+ * centred on the bar's centreline (y 50, radius 20), `height` = bar radius +
+ * its own radius. Its along extent is the fixture's own.
+ */
+const WORKHOLDING: Clamp[] = [
+  { id: 'chuck', name: 'Chuck', type: 'chuck', x: -40, y: 10, w: 55, h: 80, height: 60, visible: true },
+  { id: 'tail', name: 'Tailstock', type: 'tailstock', x: 200, y: 8, w: 40, h: 84, height: 62, visible: true },
+]
 
 function operation(overrides: Partial<Operation> & Pick<Operation, 'kind' | 'target'>): Operation {
   return {
@@ -270,9 +303,99 @@ function testPickerAndBrokenAround(): void {
   }
 }
 
+function testAroundClampBandsAreFlatBoxes(): void {
+  console.log('Testing an Around input clips its chuck and tailstock to the sheet, as boxes...')
+  const { project, setup, paths } = makeAroundProject()
+  const withClamps: Project = { ...project, clamps: WORKHOLDING }
+  const input = simulationInput(withClamps, setup, paths)
+  const frame = aroundFrame(AROUND_BAR)
+
+  // The simulation draws the sheet's block, not the real round bar — which is
+  // what makes the mesh builder take the ordinary clamp box for these two
+  // types instead of the cylinder about the bar's axis.
+  assert(!('shape' in input.project.stock), 'the Around input draws the unrolled block')
+
+  for (const original of WORKHOLDING) {
+    const band = input.project.clamps.find((clamp) => clamp.id === original.id)
+    assert(band, `the ${original.type} band is in the Around input`)
+    assertEqual(
+      { x: band.x, w: band.w, y: band.y, h: band.h },
+      { x: original.x, w: original.w, y: frame.sheetStart, h: frame.circumference },
+      `the ${original.type} keeps the fixture's extent along the bar and one turn across`,
+    )
+    assert(
+      band.y >= frame.sheetStart && band.y + band.h <= frame.sheetStart + frame.circumference,
+      `the ${original.type} band is inside the sheet across`,
+    )
+    assert(
+      Math.abs(band.height - (original.height - frame.radius)) < 1e-9,
+      `the ${original.type} height is measured from the sheet's bottom`,
+    )
+
+    const mesh = buildClampMesh(band, false, false, UNITS, THREE_PALETTE, input.project.stock)
+    const box = sceneBox(mesh)
+    // Scene X is project x, scene Z is project y, scene Y is project z.
+    assert(
+      Math.abs(box.min.x - original.x) < 1e-6 && Math.abs(box.max.x - (original.x + original.w)) < 1e-6,
+      `the ${original.type} box keeps the fixture's extent along the bar`,
+    )
+    assert(
+      Math.abs(box.min.z - frame.sheetStart) < 1e-4
+      && Math.abs(box.max.z - (frame.sheetStart + frame.circumference)) < 1e-4,
+      `the ${original.type} box spans the sheet across`,
+    )
+    // Above the sheet's surface it stands exactly the height the fixture held
+    // above the real bar's surface.
+    assert(
+      Math.abs((box.max.y - frame.radius) - (original.height - AROUND_BAR.thickness)) < 1e-6,
+      `the ${original.type} box stands ${original.height - AROUND_BAR.thickness} above the sheet`,
+    )
+
+    // It really is the ordinary box: the same clamp with no stock to round it
+    // on, position for position. Handed the real bar, that same clamp is the
+    // cylinder whose huge disc this fix removes.
+    assertPositionsEqual(
+      positionsOf(mesh),
+      positionsOf(buildClampMesh(band, false, false, UNITS, THREE_PALETTE)),
+      `the ${original.type} band draws as the ordinary clamp box`,
+    )
+    assert(
+      positionsOf(buildClampMesh(band, false, false, UNITS, THREE_PALETTE, AROUND_BAR)).length !== positionsOf(mesh).length,
+      `the ${original.type} on the real bar is the round mesh, not this box`,
+    )
+  }
+}
+
+function testFlatSetupKeepsItsClampsAndBar(): void {
+  console.log('Testing a flat setup\'s input is unchanged: the project\'s own clamps and round bar...')
+  const base = newProject('flat-vs-around', 'mm')
+  base.stock = AROUND_BAR
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Flat endmill', diameter: 3, maxCutDepth: 80 }]
+  const built = projectWithFeatures(base, [
+    pocketFeature('top-pocket', { x: 40, y: 35, w: 20, h: 20 }, 40, 36, 'top'),
+    pocketFeature('around-cut', { x: 60, y: 45, w: 10, h: 10 }, 40, 36, 'around'),
+  ])
+  const top = built.setups[0]
+  const op = operation({
+    id: 'opTop', name: 'Top pocket', kind: 'pocket',
+    target: { source: 'features', featureIds: ['top-pocket'] }, setupId: top.id, toolRef: 't1',
+  })
+  const project = syncProjectSetups({ ...built, operations: [op], setups: [top], activeSetupId: top.id, clamps: WORKHOLDING })
+  const input = simulationInput(project, top, new Map())
+
+  // A flat setup takes `projectInSetupFrame(flatFaceProject(project))`, which
+  // this change never touches: the clamps are the caller's own array and the
+  // stock is still the real bar, so the round chuck keeps drawing round.
+  assert(input.project.clamps === project.clamps, 'a flat setup hands back the project\'s own clamps, unchanged')
+  assertEqual(input.project.clamps, project.clamps, 'deep-equal to the clamps it had before the Around fix')
+  assert(input.project.stock === project.stock, 'and the real round bar, so its chuck stays round')
+}
+
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
 testPickerAndBrokenAround()
 testFlatSetupDropsAroundFeatures()
+testAroundClampBandsAreFlatBoxes()
+testFlatSetupKeepsItsClampsAndBar()
 
 console.log('Around simulation tests passed')

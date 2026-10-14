@@ -244,7 +244,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps, simulationStock } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -450,7 +450,7 @@ function App() {
             setupPicker={simulationSetupPicker}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
-            origin={project.origin} units={project.meta.units} stock={project.stock}
+            origin={project.origin} units={project.meta.units} stock={simulationStock}
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
