@@ -154,23 +154,44 @@ export function operationCutsUnderProjectType(type: ProjectType, kind: Operation
 }
 
 /**
+ * Whether the project type hides an operation because of its setup's face
+ * (issue #1028). Only an **Around** setup in a project that is not rotary: the
+ * face does not exist for the type, so the operation is kept in the project but
+ * is not part of the job (rule (a), keep and hide).
+ *
+ * Deliberately narrower than {@link operationCutsInProject}: it says nothing
+ * about the operation's *kind*. An operation of the other family — a milling
+ * cut in a plasma project, a plasma cut in a milling one — is **not** hidden
+ * here; it stays listed and the postprocessor skips it with its warning
+ * (issue #960). The export checklist and the export use this one, while the
+ * wider predicate stays for callers that must count every operation the type
+ * does not cut.
+ */
+export function operationHiddenByProjectType(
+  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
+  operation: Pick<Operation, 'setupId'>,
+): boolean {
+  if (aroundFeaturesActive(project)) return false
+  const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
+  return setup !== null && setupFace(setup) === 'around'
+}
+
+/**
  * Whether an operation is cut in the project as it stands (issue #1028).
  *
- * The kind rule ({@link operationCutsUnderProjectType}) plus the setup's face:
- * in a project that is not rotary, an operation in an **Around** setup is kept
- * in the project but is not cut — the setup's face does not exist for the type
- * (rule (a), keep and hide). This is the one predicate behind "leave it out of
- * the export checklist and the programs" and the CAM panel's note, so the
- * checklist and the export cannot disagree.
+ * The kind rule ({@link operationCutsUnderProjectType}) plus the setup's face
+ * ({@link operationHiddenByProjectType}). The wider of the two: it answers for
+ * "does this operation contribute to the job", so it counts the other family's
+ * kind. The export checklist and the export deliberately do **not** use it —
+ * they use the narrower hidden-by-type predicate so the other family's
+ * operations stay listed and keep their postprocessor warning (issue #960).
  */
 export function operationCutsInProject(
   project: Pick<Project, 'meta' | 'stock' | 'setups'>,
   operation: Pick<Operation, 'kind' | 'setupId'>,
 ): boolean {
   if (!operationCutsUnderProjectType(projectType(project), operation.kind)) return false
-  if (aroundFeaturesActive(project)) return true
-  const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
-  return setup === null || setupFace(setup) !== 'around'
+  return !operationHiddenByProjectType(project, operation)
 }
 
 /** What changing the type would do, for the confirm dialog (slice B). Nothing is deleted. */

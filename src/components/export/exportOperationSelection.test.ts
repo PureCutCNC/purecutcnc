@@ -132,23 +132,33 @@ function testOptionsPreserveExecutionOrder(): void {
   )
 }
 
-function testOtherFamilyOperationIsLeftOffTheChecklist(): void {
+function testOtherFamilyOperationStaysOnTheChecklist(): void {
   const pocket = makeOperation('pocket-op')
   const plasma = makeOperation('plasma-op', { kind: 'plasma_profile' })
 
+  // The other family's kind is not the project type's business here (issue
+  // #1028 correction): it stays listed, the postprocessor skips it and the
+  // dialog shows its warning (issue #960).
   const millingProject = projectWith([pocket, plasma])
   assert(
-    listExportOperationOptions(millingProject).map((option) => option.operation.id).join(',') === 'pocket-op',
-    'a plasma cut is not exported in a milling project (issue #1028, rule (a))',
+    listExportOperationOptions(millingProject).map((option) => option.operation.id).join(',') === 'pocket-op,plasma-op',
+    'a plasma cut stays in the export options of a milling project',
   )
 
+  // A milling operation in a plasma project stays in the export options too,
+  // with no tool of its own needed: the warning, not the checklist, reports it.
   const plasmaProject: Project = {
     ...projectWith([pocket, plasma]),
     meta: { ...newProject('plasma', 'mm').meta, projectType: 'plasma' },
   }
+  const plasmaOptions = listExportOperationOptions(plasmaProject)
   assert(
-    listExportOperationOptions(plasmaProject).map((option) => option.operation.id).join(',') === 'plasma-op',
-    'and a milling operation is not exported in a plasma project',
+    plasmaOptions.map((option) => option.operation.id).join(',') === 'pocket-op,plasma-op',
+    'a milling operation in a plasma project stays in the export options',
+  )
+  assert(
+    plasmaOptions.every((option) => option.exportable),
+    'and every listed option is exportable (the postprocessor is what skips it)',
   )
 }
 
@@ -241,7 +251,7 @@ const tests = [
   testDisabledOperationIsNotExportable,
   testMissingToolIsNotExportable,
   testOptionsPreserveExecutionOrder,
-  testOtherFamilyOperationIsLeftOffTheChecklist,
+  testOtherFamilyOperationStaysOnTheChecklist,
   testFileNameUsesProjectNameForMultipleOperations,
   testFileNameAppendsSingleOperationName,
   testExportPathIsReusedOnlyForTheSameKindOfFile,

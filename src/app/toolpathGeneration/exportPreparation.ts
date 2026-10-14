@@ -55,7 +55,7 @@ import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
-import { projectMachineMismatch, operationCutsInProject } from '../../store/helpers/projectType'
+import { projectMachineMismatch, operationHiddenByProjectType } from '../../store/helpers/projectType'
 import type { Operation, Project, SetupFace } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
@@ -206,16 +206,17 @@ export async function prepareExport(
     return { status: 'blocked', token, reason: { kind: 'no-machine' } }
   }
 
-  // An operation the project type does not cut — an Around setup in a project
-  // that is not rotary, or the other family's kind — is kept in the project but
-  // is not exported (issue #1028, rule (a)): it is not requested, not posted,
-  // and in no program's operation list. `planSetupPrograms` sees the same
-  // filtered set, so the "every prepared operation is in a program" check still
-  // balances. An id that names no operation is left in, so the existing
+  // Only an operation in an Around setup of a non-rotary project is left out:
+  // that setup's face does not exist for the type (issue #1028, rule (a)), so
+  // it is not requested, not posted, and in no program's operation list. An
+  // operation of the other family stays in, so the postprocessor skips it and
+  // the dialog shows its warning (issue #960). `planSetupPrograms` sees the
+  // same filtered set, so the "every prepared operation is in a program" check
+  // still balances. An id that names no operation is left in, so the existing
   // missing-operation block still reports it.
   const cutOperationIds = token.operationIds.filter((operationId) => {
     const operation = token.project.operations.find((candidate) => candidate.id === operationId)
-    return operation === undefined || operationCutsInProject(token.project, operation)
+    return operation === undefined || !operationHiddenByProjectType(token.project, operation)
   })
 
   if (cutOperationIds.length === 0) {

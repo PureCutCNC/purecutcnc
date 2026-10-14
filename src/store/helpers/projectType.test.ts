@@ -51,6 +51,8 @@ import { decodeProjectFormat } from './projectFormat'
 import {
   inferProjectType,
   machineMatchesProjectType,
+  operationCutsInProject,
+  operationHiddenByProjectType,
   projectMachineMismatch,
   projectType,
   projectTypeChangeSummary,
@@ -716,6 +718,118 @@ async function main(): Promise<void> {
       (await prepareExport(only.service, only.context(), onlyToken, PLAIN_ROUTER, OPTIONS)).status,
       'blocked',
       'a project with only Around operations has nothing to export',
+    )
+  })
+
+  await test('the export keeps the other family\'s operation and the postprocessor skips it', async () => {
+    const OPTIONS: ExportPostOptions = { emitToolChanges: false, emitCoolant: false, programName: 'other-family', captureMotionTrace: false }
+    const tool: Tool = { ...defaultTool('mm', 1), id: 't1' }
+    // A plasma project that still holds a milling operation: the plasma cut is
+    // programmed and the milling one is listed, requested and skipped with its
+    // warning (issues #1028 correction, #960).
+    const project: Project = {
+      ...projectWith([]),
+      tools: [tool],
+      meta: {
+        ...projectWith([]).meta,
+        projectType: 'plasma',
+        machineDefinitions: [QTPLASMAC],
+        selectedMachineId: QTPLASMAC.id,
+      },
+      operations: [
+        { ...makeOperation('torch-op'), kind: 'plasma_profile' },
+        makeOperation('mill-op'),
+      ],
+    }
+
+    const h = makeCountingService({ project, documentKey: 1 })
+    const token = createExportToken(1, h.context(), ['torch-op', 'mill-op'], QTPLASMAC, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, QTPLASMAC, OPTIONS)
+    assertEqual(prepared.status, 'ready', 'the program prepares with the milling operation listed')
+    if (prepared.status !== 'ready') throw new Error('unreachable')
+    assertEqual(
+      prepared.programs.flatMap((program) => program.operations.map((row) => row.operation.id)),
+      ['torch-op', 'mill-op'],
+      'the milling operation is carried into the program, not filtered out',
+    )
+    assertEqual(
+      h.order,
+      ['torch-op', 'mill-op'],
+      'and it is generated like any other operation',
+    )
+    assertEqual(
+      prepared.programs.flatMap((program) => program.result.warnings)
+        .filter((warning) => warning.code === 'postPlasmaOperationSkipped')
+        .map((warning) => warning.params),
+      [{ operation: 'mill-op' }],
+      'the postprocessor skips it and says so (issue #960)',
+    )
+    assertEqual(
+      prepared.programs.flatMap((program) => program.result.warnings)
+        .some((warning) => warning.code === 'exportMachineTypeMismatch'),
+      false,
+      'the machine suits the plasma project, so nothing is refused',
+    )
+  })
+
+  await test('operationHiddenByProjectType hides only an Around setup outside rotary', () => {
+    const base = newProject('narrow', 'mm')
+    const top = base.setups[0]
+    const around: MachiningSetup = {
+      id: 'su-around', kind: 'around', name: 'Around',
+      orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: [],
+    }
+    const setups = [top, around]
+    const inProject = (type: ProjectType) => ({
+      project: { ...base, setups, meta: { ...base.meta, projectType: type } },
+    })
+    const milling = inProject('milling')
+    const plasma = inProject('plasma')
+    const rotary = inProject('rotary')
+
+    assertEqual(
+      operationHiddenByProjectType(milling.project, { setupId: around.id }),
+      true,
+      'an Around setup operation is hidden in a milling project',
+    )
+    assertEqual(
+      operationCutsInProject(milling.project, { kind: 'pocket', setupId: around.id }),
+      false,
+      'and the wider predicate agrees it is not cut',
+    )
+
+    // The correction (issue #1028): the other family's *kind* is not hidden.
+    assertEqual(
+      operationHiddenByProjectType(milling.project, { setupId: top.id }),
+      false,
+      'a plasma cut in a milling project is not hidden',
+    )
+    assertEqual(
+      operationCutsInProject(milling.project, { kind: 'plasma_profile', setupId: top.id }),
+      false,
+      'but it is not cut — the wider predicate is where that lives',
+    )
+    assertEqual(
+      operationHiddenByProjectType(plasma.project, { setupId: top.id }),
+      false,
+      'a milling cut in a plasma project is not hidden',
+    )
+    assertEqual(
+      operationCutsInProject(plasma.project, { kind: 'pocket', setupId: top.id }),
+      false,
+      'but it is not cut',
+    )
+
+    // An Around setup cuts in a rotary project, and a Top operation always.
+    assertEqual(
+      operationHiddenByProjectType(rotary.project, { setupId: around.id }),
+      false,
+      'a rotary project hides nothing',
+    )
+    assertEqual(
+      operationHiddenByProjectType(milling.project, { setupId: top.id }),
+      false,
+      'a Top operation is never hidden',
     )
   })
 
