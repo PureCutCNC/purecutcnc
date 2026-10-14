@@ -15,9 +15,10 @@
  */
 
 /**
- * Issue #960 slice A: `addTool` follows the selected machine's kind. A plasma
- * project gets the example torch, a router project (and a project with no
- * machine) gets exactly the previous default tool.
+ * Issue #960 slice A: `addTool` follows the project's mode. Since issue #1028
+ * the mode follows the **project type**, so a plasma project gets the example
+ * torch and a milling or rotary project (and one with no machine) gets exactly
+ * the previous default tool. The selected machine no longer decides.
  *
  * Run with: npx tsx src/store/addToolMachineMode.test.ts
  */
@@ -43,10 +44,18 @@ function withMachine(base: Project, definition: MachineDefinition | null): Proje
     ...base,
     meta: {
       ...base.meta,
+      // A coherent fixture: the type suits the machine it selects, as
+      // `inferProjectType` would give it on load (issue #1028).
+      projectType: definition?.machineKind === 'plasma' ? 'plasma' : 'milling',
       machineDefinitions: definition ? [definition] : [],
       selectedMachineId: definition?.id ?? null,
     },
   }
+}
+
+/** The project with its type forced, whatever machine it holds. */
+function withType(project: Project, type: ProjectMeta['projectType']): Project {
+  return { ...project, meta: { ...project.meta, projectType: type } }
 }
 
 function seed(project: Project): void {
@@ -108,10 +117,35 @@ function testNoMachineUnchanged(): void {
   assert.deepEqual(created, { ...defaultTool('mm', 1), id })
 }
 
+/** The type decides, not the machine: a torch machine on a milling project keeps milling tools. */
+function testMachineKindDoesNotChooseTheToolFamily(): void {
+  const base = newProject('t', 'mm')
+  seed(withType(withMachine(base, QTPLASMAC), 'milling'))
+
+  const id = useProjectStore.getState().addTool()
+  const created = onlyTool()
+
+  assert(created.type !== 'plasma', 'a milling project adds a milling tool even with a plasma machine selected')
+  assert.deepEqual(created, { ...defaultTool('mm', 1), id })
+}
+
+/** A rotary project is router mode: it adds the same milling tool. */
+function testRotaryAddsAMillingTool(): void {
+  const base = newProject('t', 'mm')
+  seed(withType(withMachine(base, ROUTER), 'rotary'))
+
+  const id = useProjectStore.getState().addTool()
+  const created = onlyTool()
+
+  assert.deepEqual(created, { ...defaultTool('mm', 1), id })
+}
+
 testPlasmaCreatesExampleTorch('mm')
 testPlasmaCreatesExampleTorch('inch')
 testSecondTorchGetsUniqueName()
 testRouterUnchanged()
 testNoMachineUnchanged()
+testMachineKindDoesNotChooseTheToolFamily()
+testRotaryAddsAMillingTool()
 
 console.log('addToolMachineMode tests passed')

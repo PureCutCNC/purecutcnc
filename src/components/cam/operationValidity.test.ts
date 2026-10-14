@@ -646,6 +646,9 @@ function projectWithMachine(definition: MachineDefinition | null, features: Sket
     ...project,
     meta: {
       ...project.meta,
+      // A coherent fixture: the project type suits the machine it selects, as
+      // `inferProjectType` would give it on load (issue #1028).
+      projectType: definition?.machineKind === 'plasma' ? 'plasma' : 'milling',
       machineDefinitions: definition ? [definition] : [],
       selectedMachineId: definition?.id ?? null,
     },
@@ -810,20 +813,31 @@ function testRotaryAddRowsNeedAnImportedModel(): void {
   }
 }
 
-/** The rows belong to Around alone: Top and Bottom never offer them. */
+/** The rows belong to Around alone, and to a rotary project alone (issue #1028). */
 function testRotaryAddRowsAreOfferedOnlyOnAround(): void {
+  const project = rotaryOperationFixture('x', 'rotary_rough')
   assert(
-    JSON.stringify(rotaryAddKindsForFace('around')) === JSON.stringify(['rotary_rough', 'rotary_finish']),
+    JSON.stringify(rotaryAddKindsForFace(project, 'around')) === JSON.stringify(['rotary_rough', 'rotary_finish']),
     'Around should offer both rotary rows',
   )
-  assert(JSON.stringify(rotaryAddKindsForFace('top')) === '[]', 'Top should offer no rotary row')
-  assert(JSON.stringify(rotaryAddKindsForFace('bottom')) === '[]', 'Bottom should offer no rotary row')
+  assert(JSON.stringify(rotaryAddKindsForFace(project, 'top')) === '[]', 'Top should offer no rotary row')
+  assert(JSON.stringify(rotaryAddKindsForFace(project, 'bottom')) === '[]', 'Bottom should offer no rotary row')
 
-  const project = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
-  const onTop = { ...project, activeSetupId: project.setups[0].id }
+  const milling = { ...project, meta: { ...project.meta, projectType: 'milling' as const } }
   assert(
-    getOperationAddHint(onTop, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
+    JSON.stringify(rotaryAddKindsForFace(milling, 'around')) === '[]',
+    'a project that is not rotary should offer no rotary row even on Around',
+  )
+
+  const onTop = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+  const topSetup = { ...onTop, activeSetupId: onTop.setups[0].id }
+  assert(
+    getOperationAddHint(topSetup, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
     'a Top setup should refuse the rotary rows',
+  )
+  assert(
+    getOperationAddHint(milling, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
+    'a non-rotary project should refuse the rotary rows',
   )
 }
 

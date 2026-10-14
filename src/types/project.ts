@@ -1108,11 +1108,31 @@ export function defaultTopSetup(operationIds: string[] = []): MachiningSetup {
 // Project — top-level .camj document
 // ============================================================
 
+/**
+ * What kind of job the project is (issue #1028). The user chooses it and the
+ * rest follows: which machine suits it, which stock shapes it offers, whether
+ * the Around face and the rotary operations exist, and whether plasma or
+ * milling operations are cut.
+ *
+ * `projectType` is the stored field; read it through
+ * `src/store/helpers/projectType.ts` (`projectType`), never directly, so a
+ * hand-built project without it still reads correctly.
+ */
+export type ProjectType = 'milling' | 'plasma' | 'rotary'
+
 export interface ProjectMeta {
   name: string
   created: string    // ISO 8601
   modified: string
   units: 'mm' | 'inch'
+  /**
+   * The project's type (issue #1028). Absent in every file saved before the
+   * field existed, and in hand-built projects; `normalizeProject` infers one
+   * from the machine and the stock on load (`inferProjectType`). Saving always
+   * writes it. The format number stays 3.3 — the migration keys on the field
+   * being missing, not on a version bump.
+   */
+  projectType: ProjectType
   showFeatureInfo: boolean
   showDimensions: boolean
   /** Default copy mode for Duplicate gesture and Copy/Paste. */
@@ -1965,6 +1985,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
       created: now,
       modified: now,
       units,
+      projectType: 'milling' as const,
       showFeatureInfo: true,
       showDimensions: true,
       copyMode: 'reference' as const,

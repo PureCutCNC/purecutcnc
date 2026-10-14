@@ -43,6 +43,8 @@ function feature(id: string, bottom = 35): SketchFeature {
 }
 function fixture(axis: 'x' | 'y' = 'x'): Project {
   const base = newProject('Around model', 'mm')
+  // The Around face exists only in a rotary project (issue #1028).
+  base.meta.projectType = 'rotary'
   base.stock = roundStock(40, 180, axis)
   const machine = { ...structuredClone(bundledMachines()[0]), id: 'around-machine', rotary: { about: axis, drive: 'own' as const, reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } } }
   base.meta.machineDefinitions = [machine]
@@ -171,6 +173,7 @@ assert.equal(
   'an Around feature pins the axis',
 )
 for (const [project, reason] of [
+  [ { ...fixture(), meta: { ...fixture().meta, projectType: 'milling' as const } }, 'needsRotaryProject' ],
   [ { ...fixture(), stock: newProject().stock }, 'needsRoundBar' ],
   [ { ...fixture(), meta: { ...fixture().meta, machineDefinitions: [], selectedMachineId: null } }, 'needsRotaryMachine' ],
   [ { ...fixture(), stock: roundStock(40, 180, 'y') }, 'machineAxisMismatch' ],

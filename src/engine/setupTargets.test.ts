@@ -533,6 +533,8 @@ assertEqual(judgeTargetFromFace(aroundTargetProject, aroundTargetProject.feature
 // reachable from none of the three faces for a rotary kind.
 
 const rotaryProject: Project = makeProject([])
+// Rotary reach exists only in a rotary project (issue #1028).
+rotaryProject.meta.projectType = 'rotary'
 const rectTarget = rotaryProject.features.find((entry) => entry.id === 'tray')!
 const modelTarget = { ...rectTarget, id: 'model', definitionId: 'model' }
 rotaryProject.featureDefinitions = {

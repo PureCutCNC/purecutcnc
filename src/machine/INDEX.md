@@ -16,7 +16,7 @@ is always an explicit user action. See
 - `registry.ts` — bundled/custom split and reserved bundled IDs, custom-machine
   schema validation (`builtin` forced to `false`), functional-field
   fingerprinting and comparison, collision-safe ID allocation, duplication,
-  combined library assembly, project-snapshot status
+  combined library assembly, the picker's candidate list (`machineCandidates`: the library plus a project's embedded snapshot when the library no longer has it, issue #1028), project-snapshot status
   (`in-sync` / `update-available` / `not-in-library`), and JSON import/export.
 - `storage.ts` — versioned local-storage codec for My Machines. Invalid,
   duplicate, and bundled-ID-claiming records are dropped individually so one

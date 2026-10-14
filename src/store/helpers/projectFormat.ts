@@ -39,6 +39,8 @@ import type {
   Operation,
   PersistedImportedMesh,
   Project,
+  ProjectMeta,
+  ProjectType,
   SketchFeature,
   Stock,
 } from '../../types/project'
@@ -65,6 +67,7 @@ import { transformProfileAffine, transformStlFeatureData } from './transform'
 import { assertOperationSetupsExist, decodeSetups, isSetupFace, syncProjectSetups } from './setups'
 import { syncRoundWorkholding } from './roundWorkholding'
 import { normalizeBackdrop } from '../slices/backdropSlice'
+import { inferProjectTypeFrom } from './projectType'
 
 export type LegacyFeatureRow = SketchFeature & {
   definitionId?: string
@@ -72,11 +75,19 @@ export type LegacyFeatureRow = SketchFeature & {
 }
 
 /**
+ * A project's metadata as a file carries it. `projectType` is optional here
+ * because every file saved before the field existed lacks it (issue #1028);
+ * {@link normalizeProject} infers one.
+ */
+export type ProjectMetaFormatInput = Omit<ProjectMeta, 'projectType'> & { projectType?: ProjectType }
+
+/**
  * A project as a file or snapshot carries it. `setups` and `activeSetupId`
  * are optional here because every file saved before setups existed lacks
  * them (issue #944); {@link normalizeProject} supplies them.
  */
-export type ProjectFormatInput = Omit<Project, 'features' | 'setups' | 'activeSetupId'> & {
+export type ProjectFormatInput = Omit<Project, 'features' | 'setups' | 'activeSetupId' | 'meta'> & {
+  meta: ProjectMetaFormatInput
   features: Array<FeatureInstance | LegacyFeatureRow>
   setups?: MachiningSetup[]
   activeSetupId?: string
@@ -682,6 +693,10 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   const authoritativeProject: Project = {
     ...input,
     version: LATEST_PROJECT_VERSION,
+    // A placeholder only: the type the project actually gets is resolved just
+    // below from the normalized machine snapshot, and nothing between the two
+    // points reads `meta.projectType` (issue #1028).
+    meta: { ...input.meta, projectType: input.meta.projectType ?? 'milling' },
     setups,
     activeSetupId: typeof rawSetups.activeSetupId === 'string' ? rawSetups.activeSetupId : setups[0].id,
     modelAssets,
@@ -701,8 +716,18 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   if (nests.length > 0) authoritativeProject.nests = nests
   else delete authoritativeProject.nests
   const machines = normalizeMachineDefinitions(authoritativeProject)
-  const meta = {
+  const meta: ProjectMeta = {
     ...authoritativeProject.meta,
+    // A stored type is kept exactly; a file without one gets what today's
+    // machine and stock imply, read off the normalized snapshot so a cleared
+    // selection cannot leave a plasma type behind (issue #1028).
+    projectType: input.meta.projectType ?? inferProjectTypeFrom(
+      {
+        machineDefinitions: machines.machineDefinitions,
+        selectedMachineId: machines.selectedMachineId,
+      },
+      authoritativeProject.stock,
+    ),
     showFeatureInfo: authoritativeProject.meta.showFeatureInfo ?? true,
     showDimensions: authoritativeProject.meta.showDimensions ?? true,
     copyMode: authoritativeProject.meta.copyMode ?? 'reference',

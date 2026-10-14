@@ -247,6 +247,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',
   'warnings.postSetupOperationRefused': 'Operation „{operation}" hat keine Werkzeugbahn, weil ihre Aufspannung sie nicht schneiden kann. Korrigieren oder entfernen Sie die Operation vor dem Export.',
   'warnings.postSetupNoRegistration': 'Aufspannung „{setup}" hat keine Ausrichtreferenz, daher ist nicht festgehalten, wie das Teil nach dem Wenden positioniert wird. Fügen Sie in den Aufspannungseinstellungen eine Passstift-, Anschlag- oder Eckreferenz hinzu.',
+  'warnings.exportMachineTypeMismatch': 'Die gewählte Maschine „{machine}" passt nicht zu diesem Projekt vom Typ {expected}. Wählen Sie eine passende Maschine oder ändern Sie den Projekttyp, bevor Sie exportieren.',
   'warnings.postWcsNullSelect': 'Maschinendefinition fordert {wcsCommand} in der Kopfzeile an, aber selectCommand ist null.',
   'warnings.postToolChangesDisabled': 'Operation „{operation}" benötigt das Werkzeug „{tool}", aber Werkzeugwechsel sind deaktiviert: Das Programm schneidet weiter mit dem vorherigen Werkzeug. Aktivieren Sie die Werkzeugwechsel, oder exportieren Sie jeweils nur eine Operation.',
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',

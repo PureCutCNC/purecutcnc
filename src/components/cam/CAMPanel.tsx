@@ -683,8 +683,9 @@ export function CAMPanel({
         button('plasma_profile'),
         // The model lives in the bar: the rotary rows are offered on Around
         // whether or not one exists, and are refused with their own hint when
-        // it does not (issue #1015).
-        ...rotaryAddKindsForFace(currentSetupFace).map((kind) => button(kind)),
+        // it does not (issue #1015). Only a rotary project offers them at all
+        // (issue #1028).
+        ...rotaryAddKindsForFace(project, currentSetupFace).map((kind) => button(kind)),
       ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
     [project, addSelection, machine, currentSetupFace]

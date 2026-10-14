@@ -69,7 +69,11 @@ export function FaceSwitch() {
   if (!showsFaceSwitch(machine, bothFaces)) return null
 
   const aroundReason = aroundUnavailableReason(project)
-  const entries = aroundReason === 'needsRoundBar' ? FLAT_ENTRIES : [...FLAT_ENTRIES, AROUND_ENTRY]
+  // A non-rotary project has no Around face at all (issue #1028), so its
+  // segment is hidden exactly as it is without a round bar.
+  const entries = aroundReason === 'needsRoundBar' || aroundReason === 'needsRotaryProject'
+    ? FLAT_ENTRIES
+    : [...FLAT_ENTRIES, AROUND_ENTRY]
   const aroundTitle = aroundReason === 'needsRotaryMachine'
     ? t('appShell.face.aroundNeedsRotaryMachine')
     : aroundReason === 'machineAxisMismatch'

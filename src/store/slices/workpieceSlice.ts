@@ -23,9 +23,16 @@ import {
   rectProfile,
   stockFromFeature,
   type FeatureInstance,
+  type Project,
 } from '../../types/project'
 import { originPlacementFromStock } from '../helpers/activeFace'
 import { projectWithStockShape, toBlockStock } from '../helpers/stockShape'
+import {
+  machineMatchesProjectType,
+  projectMachineMismatch,
+  stockShapesForProjectType,
+} from '../helpers/projectType'
+import { machineSnapshot, projectWithMachine } from './machineDefsSlice'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
@@ -38,6 +45,7 @@ export type WorkpieceSlice = Pick<
   | 'setStock'
   | 'setStockAndOrigin'
   | 'setStockShape'
+  | 'setProjectType'
   | 'setStockSourceFeature'
   | 'enterStockSketchEdit'
   | 'setRectStockDimension'
@@ -192,6 +200,48 @@ export function createWorkpieceSlice(
           ...edited,
           meta: { ...edited.meta, modified: new Date().toISOString() },
         }
+        const removedClamp = s.project.clamps.some((clamp) => !nextProject.clamps.includes(clamp))
+        const selection = removedClamp ? sanitizeSelection(nextProject, s.selection) : s.selection
+        if (s.history.transactionStart) {
+          return { project: nextProject, selection }
+        }
+        return {
+          project: nextProject,
+          selection,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    /**
+     * Choose the project type (issue #1028): one undo step that sets
+     * `meta.projectType`, gives the stock a shape the new type offers (through
+     * the same `setStockShape` path, so the origin follows and a block loses
+     * its chuck and tailstock), and selects the first matching machine in
+     * `candidates` when the one selected no longer suits the type.
+     *
+     * Nothing is deleted: Around features and the operations the new type does
+     * not cut stay in the project and the tree, inert.
+     */
+    setProjectType: (type, candidates) =>
+      set((s) => {
+        const shape = stockShapesForProjectType(type)[0]
+        const shaped = projectWithStockShape(s.project, shape)
+        // The stored-field check is deliberate: a hand-built project without the
+        // field takes the write, so saving always carries the type (issue #1028).
+        if (s.project.meta.projectType === type && shaped === s.project && projectMachineMismatch(s.project) === null) {
+          return {}
+        }
+        const typed: Project = { ...shaped, meta: { ...shaped.meta, projectType: type } }
+        const replacement = projectMachineMismatch(typed) === null
+          ? null
+          : candidates.find((definition) => machineMatchesProjectType(definition, type)) ?? null
+        const nextProject = replacement
+          ? projectWithMachine(typed, machineSnapshot(replacement))
+          : { ...typed, meta: { ...typed.meta, modified: new Date().toISOString() } }
         const removedClamp = s.project.clamps.some((clamp) => !nextProject.clamps.includes(clamp))
         const selection = removedClamp ? sanitizeSelection(nextProject, s.selection) : s.selection
         if (s.history.transactionStart) {

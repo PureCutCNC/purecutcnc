@@ -55,6 +55,7 @@ import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
+import { projectMachineMismatch } from '../../store/helpers/projectType'
 import type { Operation, Project, SetupFace } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
@@ -250,6 +251,16 @@ export async function prepareExport(
     })
   }
 
+  // A project whose type and machine disagree cannot be exported (issue
+  // #1028). Every program of it carries the refusal as an **error** warning, so
+  // the dialog names the machine and disables Save through the same
+  // `exportHasError` path any other refusing code takes — the postprocessor
+  // and the emitters stay untouched.
+  const mismatch = projectMachineMismatch(token.project)
+  const mismatchWarning: ToolpathWarning | null = mismatch
+    ? { code: 'exportMachineTypeMismatch', params: { machine: mismatch.machineName, expected: mismatch.expected } }
+    : null
+
   // One program per setup. The postprocessor sees the captured project, not
   // the live one: origin, units, names, tools and setups have to come from the
   // same revision as the paths.
@@ -259,6 +270,17 @@ export async function prepareExport(
       const row = preparedById.get(operationId)
       return row ? [row] : []
     })
+    const result = runPostProcessor({
+      project: token.project,
+      operations,
+      definition,
+      options: {
+        emitToolChanges: options.emitToolChanges,
+        emitCoolant: options.emitCoolant,
+        programName: options.programName,
+        captureMotionTrace: options.captureMotionTrace,
+      },
+    })
     return {
       setupId: program.setup?.id ?? null,
       setupName: program.setup?.name ?? null,
@@ -266,17 +288,9 @@ export async function prepareExport(
       face: program.face,
       fileStem: program.fileStem,
       operations,
-      result: runPostProcessor({
-        project: token.project,
-        operations,
-        definition,
-        options: {
-          emitToolChanges: options.emitToolChanges,
-          emitCoolant: options.emitCoolant,
-          programName: options.programName,
-          captureMotionTrace: options.captureMotionTrace,
-        },
-      }),
+      result: mismatchWarning
+        ? { ...result, warnings: [...result.warnings, mismatchWarning] }
+        : result,
     }
   })
 

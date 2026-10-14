@@ -20,6 +20,7 @@ import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStock
 import type { Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
+import { aroundFeaturesActive } from '../store/helpers/projectType'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh, orientImportedMesh } from './importedMesh'
 import {
@@ -1319,8 +1320,11 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // feature is untouched.
   const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
   const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
-  // The same model filter for the Around half, and only a round bar can wrap.
-  const aroundFeatures = isRoundStock(project.stock)
+  // The same model filter for the Around half. Only a round bar can wrap, and
+  // only a rotary project works the Around face at all (issue #1028): in any
+  // other type the features stay in the project and the tree but are not
+  // modelled.
+  const aroundFeatures = isRoundStock(project.stock) && aroundFeaturesActive(project)
     ? modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
       .filter((feature) => feature.visible)
     : []

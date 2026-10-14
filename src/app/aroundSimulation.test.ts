@@ -126,6 +126,9 @@ function pocketFeature(
  */
 function makeAroundProject(stock = AROUND_BAR): { project: Project; setup: MachiningSetup; paths: Map<string, ToolpathResult> } {
   const base = newProject('sim-setup-around', 'mm')
+  // The Around face, its setup and its operations exist only in a rotary
+  // project (issue #1028).
+  base.meta.projectType = 'rotary'
   base.stock = stock
   base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Flat endmill', diameter: 3, maxCutDepth: 80 }]
   const withFeature = projectWithFeatures(base, [

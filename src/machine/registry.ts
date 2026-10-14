@@ -194,6 +194,23 @@ export function findMachine(
 }
 
 /**
+ * The candidate list a machine picker offers (issue #1028): the application
+ * library, plus the project's embedded snapshot when the library no longer
+ * carries that machine — an older project keeps offering what it holds until
+ * the user re-picks.
+ *
+ * `setProjectType` receives the same list, so the machine a type change
+ * selects is one the picker can actually show.
+ */
+export function machineCandidates(
+  library: readonly MachineDefinition[],
+  embedded: MachineDefinition | null,
+): MachineDefinition[] {
+  if (!embedded || library.some((definition) => definition.id === embedded.id)) return [...library]
+  return [...library, embedded]
+}
+
+/**
  * How a project's embedded snapshot relates to the current application
  * library. `update-available` is advisory only — replacing the snapshot is
  * always an explicit user action.

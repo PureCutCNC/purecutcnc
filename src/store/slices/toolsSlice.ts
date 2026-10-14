@@ -15,7 +15,7 @@
  */
 
 import { defaultPlasmaTool, isToolCompatibleWithOperation } from '../../toolPolicy'
-import { projectMachineKind } from '../../engine/gcode/definitions'
+import { projectType } from '../helpers/projectType'
 import type { StateCreator } from 'zustand'
 import type { Tool } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -69,7 +69,8 @@ export function createToolsSlice(
     addTool: () => {
       const state = get()
       const nextId = nextUniqueGeneratedId(state.project, 't')
-      const tool: Tool = projectMachineKind(state.project) === 'plasma'
+      // The project type decides which family a new tool belongs to (issue #1028).
+      const tool: Tool = projectType(state.project) === 'plasma'
         ? {
             ...defaultPlasmaTool(state.project.meta.units),
             id: nextId,

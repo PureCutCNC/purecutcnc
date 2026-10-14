@@ -34,6 +34,7 @@ import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { featureReachableFromFace, judgeTargetsFromFace } from '../../engine/setupTargets'
+import { aroundFeaturesActive } from '../../store/helpers/projectType'
 import { camT } from './camI18n'
 import { machineMode, operationOffer } from './machineMode'
 
@@ -184,6 +185,9 @@ function rotaryNoModelHint(kind: OperationKind): string {
 /** Saved-operation refusals shown above the rotary operation's controls. */
 export function rotaryOperationHint(project: Project, operation: Operation): string | null {
   if (!isRotaryOperationKind(operation.kind)) return null
+  // A rotary operation belongs to a rotary project (issue #1028); outside one
+  // it is kept, shown as what it is, and refused like a missing Around face.
+  if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
   if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
   if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
   const targetHint = rotaryTargetHint(project, operation)
@@ -199,6 +203,7 @@ export function getOperationAddHint(
   kind: OperationKind,
 ): string | null {
   if (isRotaryOperationKind(kind)) {
+    if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
     if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
     if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
     // The model lives in the bar and only rotary operations touch it, so these
@@ -612,10 +617,12 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
  * The rotary kinds "Add to <face>" offers for the setup face in view, before
  * the machine filter and before validity. A model lives in the bar and only
  * rotary operations target it, so they are offered on Around alone — never on
- * Top or Bottom (issue #1015). Every other kind is offered on every face.
+ * Top or Bottom (issue #1015) — and only in a rotary project (issue #1028),
+ * which is the only type with an Around face to offer them on. Every other
+ * kind is offered on every face.
  */
-export function rotaryAddKindsForFace(face: SetupFace): OperationKind[] {
-  return face === 'around' ? ['rotary_rough', 'rotary_finish'] : []
+export function rotaryAddKindsForFace(project: Project, face: SetupFace): OperationKind[] {
+  return aroundFeaturesActive(project) && face === 'around' ? ['rotary_rough', 'rotary_finish'] : []
 }
 
 function compatibleFeatureIdsForOperationWithMap(

@@ -39,7 +39,7 @@ import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { machineSnapshotStatus } from '../../machine/registry'
+import { machineCandidates, machineSnapshotStatus } from '../../machine/registry'
 import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
@@ -203,12 +203,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // application library, plus the embedded machine when it is not in it.
   const selectedMachine = getActiveMachineDefinition(project)
   const machineStatus = machineSnapshotStatus(selectedMachine, machineLibrary)
+  // One candidate list, shared with `setProjectType` (issue #1028).
+  const machineOptionCandidates = machineCandidates(machineLibrary, selectedMachine)
   const machineOptions = [
     { value: '', label: t('featureTree.properties.machine.none') },
-    ...machineLibrary.map((definition) => ({ value: definition.id, label: definition.name })),
-    ...(selectedMachine && !machineLibrary.some((definition) => definition.id === selectedMachine.id)
-      ? [{ value: selectedMachine.id, label: selectedMachine.name }]
-      : []),
+    ...machineOptionCandidates.map((definition) => ({ value: definition.id, label: definition.name })),
   ]
 
   function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -369,7 +368,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 }
                 // Re-picking a machine that is only in the project keeps the
                 // embedded snapshot rather than clearing the selection.
-                const picked = machineLibrary.find((definition) => definition.id === value)
+                const picked = machineOptionCandidates.find((definition) => definition.id === value)
                   ?? (selectedMachine?.id === value ? selectedMachine : null)
                 setProjectMachine(picked)
               }}

@@ -354,6 +354,11 @@ export type ToolpathWarningCode =
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */
   | 'postSetupNoRegistration'
+  /** The project's type and the machine it has selected disagree (issue
+   *  #1028): the program would be cut on a machine the job is not set up for,
+   *  so the export is refused rather than written. Params: the machine's name
+   *  and the project type it does not suit. */
+  | 'exportMachineTypeMismatch'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'
@@ -446,6 +451,10 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * that works for someone today, so each promotion is its own decision (issue
  * #755).
  *
+ * - `exportMachineTypeMismatch` — the machine selected for the project cannot
+ *   run the job it holds: a plasma machine on a milling project, or a machine
+ *   with no rotary on a rotary one. Publishing the program would invite a cut
+ *   on the wrong machine (issue #1028).
  * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
  *   with the first operation's tool. Nothing in the program pauses the machine
  *   for a change, so the part is machined with the wrong cutter.
@@ -473,6 +482,7 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   the wrong angle or the wrong feed.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
+  'exportMachineTypeMismatch',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',

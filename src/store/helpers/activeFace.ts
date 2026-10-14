@@ -44,6 +44,7 @@ import type {
   Stock,
 } from '../../types/project'
 import { getDefinitionId } from './featureDefinitions'
+import { projectType } from './projectType'
 import { defaultSetupForFace, provisionalSetupFor } from './provisionalSetup'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
@@ -558,8 +559,17 @@ export function dropGhostSelection(
   }
 }
 
-/** Why the Around face cannot be created or selected on this project. */
-export function aroundUnavailableReason(project: Pick<Project, 'stock' | 'meta'>): null | 'needsRoundBar' | 'needsRotaryMachine' | 'machineAxisMismatch' {
+/**
+ * Why the Around face cannot be created or selected on this project. The
+ * project type comes first (issue #1028): only a rotary project has an Around
+ * face at all, and the stock and machine checks below it are the ones that
+ * existed before. Callers only ever ask whether this is non-null, so the new
+ * first reason needs no UI text of its own beyond hiding the face.
+ */
+export function aroundUnavailableReason(
+  project: Pick<Project, 'stock' | 'meta'>,
+): null | 'needsRotaryProject' | 'needsRoundBar' | 'needsRotaryMachine' | 'machineAxisMismatch' {
+  if (projectType(project) !== 'rotary') return 'needsRotaryProject'
   if (!isRoundStock(project.stock)) return 'needsRoundBar'
   const rotary = project.meta.machineDefinitions?.[0]?.rotary
   if (!rotary) return 'needsRotaryMachine'

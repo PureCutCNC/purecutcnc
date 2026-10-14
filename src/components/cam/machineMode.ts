@@ -17,18 +17,21 @@
 /**
  * Machine mode for the CAM panel (issue #960).
  *
- * Plasma mode is derived, never stored: a project is in plasma mode when the
- * machine definition it has selected has `machineKind: 'plasma'`, and in router
- * mode otherwise. A project with no machine selected is a router project.
+ * Plasma mode follows the **project type** (issue #1028): a plasma project is
+ * in plasma mode and every other type — milling and rotary — is in router
+ * mode. It used to be derived from the selected machine; the type now decides,
+ * and the machine is only a consequence of it.
  *
  * The mode decides what the CAM panel offers to *add*: plasma mode offers only
  * plasma operations and torch tools, router mode offers only the milling
- * family. It must restrict what can be added, never hide what the project
- * already has — an operation or tool of the other family stays listed,
- * selectable and editable as exactly what it already is.
+ * family (a rotary project adds its rotary operations through
+ * `rotaryAddKindsForFace`, gated on the type, not on the mode). It must
+ * restrict what can be added, never hide what the project already has — an
+ * operation or tool of the other family stays listed, selectable and editable
+ * as exactly what it already is.
  */
 
-import { projectMachineKind } from '../../engine/gcode/definitions'
+import { projectType } from '../../store/helpers/projectType'
 import type { Operation, OperationKind, Project, ToolType } from '../../types/project'
 
 export type MachineMode = 'router' | 'plasma'
@@ -42,9 +45,9 @@ const CANONICAL_TOOL_TYPES: readonly ToolType[] = ['flat_endmill', 'ball_endmill
 /** The milling family: every tool type a router CAM panel authors. */
 const MILLING_TOOL_TYPES: readonly ToolType[] = ['flat_endmill', 'ball_endmill', 'v_bit', 'drill']
 
-/** The project's mode, derived from its selected machine definition. */
+/** The project's mode, from its type (issue #1028): plasma, or router for milling and rotary. */
 export function machineMode(project: Project): MachineMode {
-  return projectMachineKind(project)
+  return projectType(project) === 'plasma' ? 'plasma' : 'router'
 }
 
 /**

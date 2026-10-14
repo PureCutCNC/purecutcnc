@@ -15,7 +15,10 @@
  */
 
 /**
- * Issue #960 slice A: the derived machine mode and the CAM offers that follow it.
+ * Issue #960 slice A: the derived machine mode and the CAM offers that follow
+ * it. Since issue #1028 the mode follows the **project type** — a plasma
+ * project is plasma mode and every other type is router mode — not the
+ * selected machine.
  *
  * Run with: npx tsx src/components/cam/machineMode.test.ts
  */
@@ -34,7 +37,7 @@ import {
 } from './machineMode'
 import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
 import type { MachineDefinition } from '../../engine/gcode/types'
-import { newProject, type Operation, type Project, type ToolType } from '../../types/project'
+import { newProject, type Operation, type Project, type ProjectType, type ToolType } from '../../types/project'
 
 function bundled(id: string): MachineDefinition {
   const definition = BUNDLED_DEFINITIONS.find((candidate) => candidate.id === id)
@@ -58,16 +61,32 @@ const ROUTER = bundled('generic')
 const QTPLASMAC = bundled('qtplasmac')
 const GRBL_PLASMA = bundled('grbl-plasma')
 
-function testMachineModeDerived(): void {
-  assert(machineMode(projectWithMachine(null)) === 'router', 'no machine selected is a router project')
-  assert(machineMode(projectWithMachine(ROUTER)) === 'router', 'a definition without machineKind is a router')
-  assert(machineMode(projectWithMachine({ ...ROUTER, machineKind: 'router' })) === 'router', 'an explicit router is a router')
-  assert(machineMode(projectWithMachine(QTPLASMAC)) === 'plasma', 'qtplasmac is a plasma machine')
-  assert(machineMode(projectWithMachine(GRBL_PLASMA)) === 'plasma', 'grbl-plasma is a plasma machine')
+function projectOfType(type: ProjectType): Project {
+  const project = newProject('mode', 'mm')
+  return { ...project, meta: { ...project.meta, projectType: type } }
+}
+
+function testMachineModeFollowsProjectType(): void {
+  assert(machineMode(projectOfType('milling')) === 'router', 'a milling project is router mode')
+  assert(machineMode(projectOfType('rotary')) === 'router', 'a rotary project is router mode')
+  assert(machineMode(projectOfType('plasma')) === 'plasma', 'a plasma project is plasma mode')
+
+  // The machine no longer chooses the mode: a plasma machine on a milling
+  // project stays router mode (the mismatch is refused at export, #1028).
+  assert(machineMode(projectWithMachine(QTPLASMAC)) === 'router', 'the machine no longer picks the mode')
+  assert(machineMode(projectWithMachine(ROUTER)) === 'router', 'a router machine on a milling project is router mode')
   assert(
     machineMode(projectWithMachine(ROUTER, 'no-such-machine')) === 'router',
-    'a selectedMachineId matching no embedded definition is a router',
+    'a selectedMachineId matching no embedded definition is a router project',
   )
+
+  // A hand-built project without the field reads what its machine implies —
+  // the load-time rule `inferProjectType` implements.
+  for (const [machine, expected] of [[QTPLASMAC, 'plasma'], [GRBL_PLASMA, 'plasma'], [ROUTER, 'router']] as const) {
+    const legacy = structuredClone(projectWithMachine(machine))
+    delete (legacy.meta as unknown as Record<string, unknown>).projectType
+    assert(machineMode(legacy) === expected, `a project without the field infers from ${machine.id}`)
+  }
 }
 
 function testOperationOffer(): void {
@@ -151,7 +170,7 @@ function testModesAreExhaustive(): void {
   assert.deepEqual(modes, ['router', 'plasma'], 'both modes are covered above')
 }
 
-testMachineModeDerived()
+testMachineModeFollowsProjectType()
 testOperationOffer()
 testOperationCutOnMachine()
 testUncutOperationCount()

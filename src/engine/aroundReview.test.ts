@@ -120,6 +120,8 @@ function buildProject(input: {
 }): Project {
   const base = newProject('review', 'mm')
   base.stock = input.stock
+  // This review is of Around work, which exists only in a rotary project (issue #1028).
+  base.meta.projectType = 'rotary'
   base.tools = input.tools
   const built = projectWithFeatures(base, input.drafts.map(draftFeature))
   const setups = input.setups ?? built.setups

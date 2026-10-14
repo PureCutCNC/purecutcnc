@@ -227,6 +227,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postMixedSetups': 'El programa contiene operaciones de más de una sujeción ({setups}). La pieza se voltea a mano entre sujeciones, por lo que cada sujeción se exporta como su propio programa.',
   'warnings.postSetupOperationRefused': 'La operación "{operation}" no tiene trayectoria porque su sujeción no puede cortarla. Corrija o elimine la operación antes de exportar.',
   'warnings.postSetupNoRegistration': 'La sujeción "{setup}" no tiene referencia de registro, así que nada indica cómo se ubica la pieza después de voltearla. Añada una referencia de pasador, tope o esquina en los ajustes de la sujeción.',
+  'warnings.exportMachineTypeMismatch': 'La máquina seleccionada "{machine}" no corresponde a este proyecto de tipo {expected}. Elija una máquina compatible o cambie el tipo de proyecto antes de exportar.',
   'warnings.postWcsNullSelect': 'La definición de máquina solicita {wcsCommand} en el encabezado, pero selectCommand es nulo.',
   'warnings.postToolChangesDisabled': 'La operación "{operation}" necesita la herramienta "{tool}", pero los cambios de herramienta están deshabilitados: el programa sigue cortando con la herramienta anterior. Active los cambios de herramienta o exporte una operación a la vez.',
   'warnings.postNoCoolantCommands': 'Se solicitó la emisión de refrigerante, pero la definición de la máquina no tiene comandos de refrigerante.',

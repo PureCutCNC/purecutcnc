@@ -231,6 +231,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postMixedSetups': '程序包含来自多个装夹的加工操作（{setups}）。装夹之间需要手动翻转工件，因此每个装夹单独导出为一个程序。',
   'warnings.postSetupOperationRefused': '加工操作“{operation}”没有刀路，因为其装夹无法加工它。请在导出前修正或删除该操作。',
   'warnings.postSetupNoRegistration': '装夹“{setup}”没有定位基准，因此没有记录翻面后工件如何定位。请在装夹设置中添加定位销、靠山或角点基准。',
+  'warnings.exportMachineTypeMismatch': '所选机床“{machine}”与此{expected}项目不匹配。请在导出前选择匹配的机床，或更改项目类型。',
   'warnings.postWcsNullSelect': '机床定义在程序头中请求 {wcsCommand}，但 selectCommand 为 null。',
   'warnings.postToolChangesDisabled': '加工操作“{operation}”需要刀具“{tool}”，但换刀已禁用：程序会继续使用上一把刀具切削。请启用换刀，或每次只导出一个加工操作。',
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',

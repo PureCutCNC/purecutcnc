@@ -28,9 +28,37 @@
 import type { StateCreator } from 'zustand'
 import type { ProjectStore } from '../types'
 import { validateMachineDefinition } from '../../engine/gcode/types'
+import type { MachineDefinition } from '../../engine/gcode/types'
+import type { Project } from '../../types/project'
 import { cloneProject } from '../helpers/normalize'
 
 export type MachineDefsSlice = Pick<ProjectStore, 'setProjectMachine'>
+
+/**
+ * The snapshot a definition becomes in a project: validated and copied by
+ * value, so a later library edit cannot reach back into the project and the
+ * embedded copy stays authoritative for export.
+ */
+export function machineSnapshot(definition: MachineDefinition | null): MachineDefinition | null {
+  return definition ? validateMachineDefinition(structuredClone(definition)) : null
+}
+
+/**
+ * The project with `snapshot` embedded as its machine (or cleared), without
+ * touching undo history. Shared with `setProjectType`, which selects a machine
+ * in the same undo step as the type change (issue #1028).
+ */
+export function projectWithMachine(project: Project, snapshot: MachineDefinition | null): Project {
+  return {
+    ...project,
+    meta: {
+      ...project.meta,
+      machineDefinitions: snapshot ? [snapshot] : [],
+      selectedMachineId: snapshot?.id ?? null,
+      modified: new Date().toISOString(),
+    },
+  }
+}
 
 export function createMachineDefsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
@@ -41,9 +69,7 @@ export function createMachineDefsSlice(
       set((s) => {
         // Snapshot by value: later library edits cannot reach back into the
         // project, and the embedded copy stays authoritative for export.
-        const snapshot = definition
-          ? validateMachineDefinition(structuredClone(definition))
-          : null
+        const snapshot = machineSnapshot(definition)
         const current = s.project.meta.machineDefinitions[0] ?? null
         const unchanged = (snapshot?.id ?? null) === (s.project.meta.selectedMachineId ?? null)
           && JSON.stringify(current) === JSON.stringify(snapshot)
@@ -51,15 +77,7 @@ export function createMachineDefsSlice(
           return {}
         }
 
-        const nextProject = {
-          ...s.project,
-          meta: {
-            ...s.project.meta,
-            machineDefinitions: snapshot ? [snapshot] : [],
-            selectedMachineId: snapshot?.id ?? null,
-            modified: new Date().toISOString(),
-          },
-        }
+        const nextProject = projectWithMachine(s.project, snapshot)
         return {
           project: nextProject,
           history: {
