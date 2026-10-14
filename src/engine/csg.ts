@@ -158,8 +158,13 @@ const ROUND_BAR_SEGMENTS = 64
  * A round bar's cylinder in project coordinates: `diameter` across, lying along
  * `axis` on the centreline, centred at Z = diameter / 2. The bar occupies Z from
  * 0 to the diameter, so that is the centreline (#392).
+ *
+ * Exported so `csgAroundFace.test.ts` can assert the boolean model's bar solid
+ * (`roundBarSolid`) samples its circle at these very vertices (issue #395 G3).
+ * Its positions are compared exactly by `csgRoundStock.test.ts`, so its own
+ * output must not change.
  */
-function roundBarGeometry(stock: RoundStock): THREE.CylinderGeometry {
+export function roundBarGeometry(stock: RoundStock): THREE.CylinderGeometry {
   const diameter = roundStockDiameter(stock)
   const bounds = getStockBounds(stock)
   const centre = roundStockCentre(stock)

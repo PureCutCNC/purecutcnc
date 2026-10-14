@@ -37,6 +37,8 @@ import {
   newProject,
   rectProfile,
   roundStock,
+  roundStockCentre,
+  roundStockDiameter,
   type MachiningSetup,
   type Project,
   type RoundStock,
@@ -46,7 +48,7 @@ import {
 import { projectWithFeatures } from '../test/projectFixtures'
 import { THEME_PALETTES } from '../theme/palette'
 import { aroundFrame } from './aroundFrame'
-import { buildScene, getManifoldModule, roundBarSolid, type SceneObjects } from './csg'
+import { buildScene, getManifoldModule, roundBarGeometry, roundBarSolid, type SceneObjects } from './csg'
 
 const threePalette = THEME_PALETTES.dark.three
 
@@ -64,6 +66,47 @@ function assertClose(actual: number, expected: number, tolerance: number, label:
 function positionsOf(object: THREE.Object3D): number[] {
   const attribute = (object as THREE.Mesh).geometry.getAttribute('position')
   return Array.from(attribute.array as ArrayLike<number>)
+}
+
+/** A mesh's vertices with its own transform applied (scene coordinates). */
+function worldVertices(mesh: THREE.Mesh): THREE.Vector3[] {
+  mesh.updateMatrixWorld(true)
+  const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute
+  const vertex = new THREE.Vector3()
+  const out: THREE.Vector3[] = []
+  for (let index = 0; index < position.count; index += 1) {
+    out.push(vertex.fromBufferAttribute(position, index).applyMatrix4(mesh.matrixWorld).clone())
+  }
+  return out
+}
+
+/** One vertex of a cylinder's rim, in project coordinates. */
+interface RimVertex {
+  along: number
+  across: number
+  up: number
+}
+
+/** Every vertex on a cylinder's rim, from either a manifold mesh or a THREE geometry. */
+function rimVertices(positions: ArrayLike<number>, stride: number, bar: RoundStock): RimVertex[] {
+  const radius = roundStockDiameter(bar) / 2
+  const centre = roundStockCentre(bar)
+  const out: RimVertex[] = []
+  for (let index = 0; index + 2 < positions.length; index += stride) {
+    const x = positions[index]
+    const y = positions[index + 1]
+    const z = positions[index + 2]
+    const across = (bar.axis === 'x' ? y : x) - centre
+    const up = z - radius
+    if (Math.abs(Math.hypot(across, up) - radius) > 1e-4) continue
+    out.push({ along: bar.axis === 'x' ? x : y, across, up })
+  }
+  return out
+}
+
+/** How many distinct positions around the circle a rim's vertices occupy. */
+function distinctRimVertices(vertices: RimVertex[]): number {
+  return new Set(vertices.map((vertex) => `${vertex.across.toFixed(3)},${vertex.up.toFixed(3)}`)).size
 }
 
 /** The scene bounding box of an object with its own transform applied. */
@@ -221,6 +264,37 @@ const ISLAND_VOLUME = sectorVolume(AROUND_ISLAND)
   assert(
     floor.some((vertex) => vertex.angleDegrees >= lowest - 1 && vertex.angleDegrees <= highest + 1),
     'the pocket floor vertices are at the pocket angle',
+  )
+
+  // The flat pad really stays in the union (issue #395 G3): dropping it and
+  // keeping the Around solid alone left every assertion above green, because
+  // the pocket floor is part of the Around solid too. The pad spans its full
+  // height at across 40..70, where the 40 mm bar's circle is narrower, so its
+  // corners stand outside the bar and can only come from the flat solid. Scene
+  // coordinates are X = project x, Y = project z (height), Z = project y.
+  const modelWorld = worldVertices(withAround.modelMesh)
+  const hasVertexAt = (corner: THREE.Vector3): boolean =>
+    modelWorld.some((vertex) => vertex.distanceTo(corner) <= 1e-4)
+  for (const across of [40, 70]) {
+    for (const along of [20, 80]) {
+      const outside = Math.hypot(across - BAR_FRAME.centre, 0 - BAR_FRAME.radius) > BAR_FRAME.radius
+      assert(outside, 'fixture: the pad corner is outside the bar cylinder')
+      assert(hasVertexAt(new THREE.Vector3(along, 0, across)), `the model keeps the pad's corner at x=${along}, y=${across}`)
+      assert(hasVertexAt(new THREE.Vector3(along, BAR.thickness, across)), `the model keeps the pad's top corner at x=${along}, y=${across}`)
+    }
+  }
+  const modelBox = sceneBox(withAround.modelMesh)
+  const covers = (outer: THREE.Box3, inner: THREE.Box3, label: string): void => {
+    for (const key of ['x', 'y', 'z'] as const) {
+      assert(outer.min[key] <= inner.min[key] + 1e-3, `${label}: reaches ${key} min`)
+      assert(outer.max[key] >= inner.max[key] - 1e-3, `${label}: reaches ${key} max`)
+    }
+  }
+  covers(modelBox, sceneBox(withAround.stockMesh), 'the model covers the whole bar')
+  covers(
+    modelBox,
+    new THREE.Box3(new THREE.Vector3(20, 0, 40), new THREE.Vector3(80, BAR.thickness, 70)),
+    'the model covers the whole flat pad',
   )
 }
 
@@ -392,6 +466,45 @@ for (const bar of [BAR, Y_BAR]) {
     : 0
   assert(scene.modelMesh && triangles > 0, 'a full-sheet Around subtract builds a model')
   console.log(`full-sheet subtract on a 40 × 200 mm bar: ${elapsedMs} ms, ${triangles} model triangles`)
+}
+
+// ── 8. The bar solid's facets sit on the stock mesh's (issue #395 G3) ────────
+
+// The uncut bar's stripes come from the translucent stock mesh and the model's
+// bar solid disagreeing about where the circle's vertices are. Both use
+// `ROUND_BAR_SEGMENTS`, and the solid's vertices must land on the stock
+// geometry's: same count around the rim, every solid vertex within 1e-6 of the
+// radius of a stock vertex. `roundBarGeometry`'s own positions are pinned
+// exactly by `csgRoundStock.test.ts`, so this test must not move them.
+for (const bar of [BAR, Y_BAR]) {
+  const solid = roundBarSolid(module, bar)
+  const mesh = solid.getMesh()
+  const solidRims = rimVertices(mesh.vertProperties, mesh.numProp, bar)
+  const geometry = roundBarGeometry(bar)
+  const geometryRims = rimVertices(
+    (geometry.getAttribute('position') as THREE.BufferAttribute).array,
+    3,
+    bar,
+  )
+  solid.delete()
+  geometry.dispose()
+
+  assert(solidRims.length > 0, `axis ${bar.axis}: the bar solid has rim vertices`)
+  assert(distinctRimVertices(geometryRims) > 0, `axis ${bar.axis}: the stock mesh has rim vertices`)
+  assert(
+    distinctRimVertices(solidRims) === distinctRimVertices(geometryRims),
+    `axis ${bar.axis}: the two circles have the same number of distinct rim vertices`,
+  )
+  const tolerance = (roundStockDiameter(bar) / 2) * 1e-6
+  for (const vertex of solidRims) {
+    const nearest = Math.min(...geometryRims.map((other) =>
+      Math.hypot(vertex.along - other.along, vertex.across - other.across, vertex.up - other.up),
+    ))
+    assert(
+      nearest <= tolerance,
+      `axis ${bar.axis}: a solid rim vertex is ${nearest} from the stock mesh's vertices (tolerance ${tolerance})`,
+    )
+  }
 }
 
 console.log('csgAroundFace.test.ts passed')

@@ -414,7 +414,6 @@ function testSecondTurnPocketAndBarData(): void {
   assert(bar.origin === project.origin, 'bar keeps the real origin')
   assertEqual(bar.frame, frame, 'Around frame passes through')
   assertEqual(bar.clamps, WORKHOLDING, 'only visible real fixtures, with no band rewrite')
-  assert(bar.unrolledOrigin.z === project.origin.z - frame.radius, 'sheet origin is lowered exactly once')
   assertEqual(input.bar?.stock, secondTurn.stock, 'setup input carries bar display data to the model')
   assert(simulationInput({ ...project, operations: [] }, setup, new Map()).bar, 'an empty Around setup still draws the bar')
   const top = { ...setup, kind: undefined, orientation: { axis: 'x' as const, angleDeg: 0 } }

@@ -77,14 +77,23 @@ export const AROUND_FRAME_GLSL = /* glsl */ `#ifdef AROUND_WRAP
   }
 #endif`
 
-/** Periodic neighbor lookup, only for bar materials; along edges stay open. */
-export const AROUND_CELL_GLSL = /* glsl */ `#ifdef AROUND_WRAP
+/**
+ * Periodic neighbor lookup, only for bar materials; along edges stay open.
+ * Preprocessor-free so `glslScalar.testSupport.ts` can run the very integer
+ * code the GPU compiles (issue #395 G3); the `#ifdef` wrapper is added by
+ * `AROUND_CELL_GLSL` below.
+ */
+export const AROUND_CELL_INDEX_GLSL = /* glsl */ `
   ivec2 aroundCell(ivec2 cell) {
     int count = int(ceil(uAroundPeriod / uCellSize));
     if (uAroundX) cell.y = ((cell.y % count) + count) % count;
     else cell.x = ((cell.x % count) + count) % count;
     return cell;
   }
+`
+
+export const AROUND_CELL_GLSL = /* glsl */ `#ifdef AROUND_WRAP
+${AROUND_CELL_INDEX_GLSL}
 #endif`
 
 export function aroundUniforms(frame?: AroundFrame): Record<string, THREE.IUniform> {

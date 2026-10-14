@@ -47,8 +47,6 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.playToolDisabledMode': 'Zum Modus „Ausgewählt" wechseln, um die Werkzeug-Wiedergabe zu nutzen',
   'viewport.sim.playToolDisabledNoOp': 'Operation mit gültigem Werkzeugweg zum Abspielen auswählen',
   'viewport.sim.playToolToggle': 'Werkzeug-Wiedergabe umschalten',
-  'viewport.sim.unrolled': 'Abgewickelt',
-  'viewport.sim.unrolledTitle': 'Die gesamte Oberfläche des Rundmaterials flach abgewickelt anzeigen',
   'viewport.sim.webglUnavailableTitle': '3D-Simulation ist nicht verfügbar',
   'viewport.sim.webglUnavailableBody': 'Diese Ansicht benötigt WebGL2, das Ihr Browser oder Grafiktreiber nicht bereitgestellt hat. Aktualisieren Sie Ihren Browser oder aktivieren Sie die Hardwarebeschleunigung in dessen Einstellungen.',
   'viewport.sim.webglLostTitle': '3D-Grafikkontext verloren',

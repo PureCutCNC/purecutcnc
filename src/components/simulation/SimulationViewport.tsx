@@ -22,7 +22,7 @@ import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldSh
 import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
-import { createBarTurnGroup, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
+import { createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -110,9 +110,9 @@ interface SimulationViewportProps {
    *  operation is simulated and would fall back to mm for an inch project. */
   units: Units
   /**
-   * The stock the simulated setup draws. A round bar draws its chuck and
-   * tailstock round too; the unrolled block an Around setup simulates on draws
-   * those same bands as flat boxes (issue #395).
+   * The stock a flat setup draws. A round bar draws its chuck and tailstock
+   * round too; a block draws those same bands as flat boxes. An Around setup
+   * draws the real bar instead, through `bar.stock` (issue #395).
    */
   stock: Stock
   bar?: SimulationBar
@@ -292,10 +292,21 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const { t } = useI18n()
   const threePalette = palette.three
   const initialThreePaletteRef = useRef(threePalette)
-  const [unrolled, setUnrolled] = useState(false)
-  const wrappedFrame = bar && !unrolled ? bar.frame : undefined
-  const simulationView = bar ? unrolled ? 'unrolled' : 'bar' : 'flat'
-  const viewOrigin = bar ? unrolled ? bar.unrolledOrigin : bar.origin : origin
+  // An Around setup draws the bar, and only the bar (issue #395 G3): there is
+  // no second flat view, so `bar` being present always means the bar view.
+  const wrappedFrame = bar?.frame
+  // The frame's values, not its identity, key the viewport's Around effects.
+  // `bar` and its `frame` are new objects on every recompute of the setup
+  // input (selecting another operation, any project edit), which must not
+  // tear the turn group down or re-frame the camera.
+  const frameKey = aroundFrameKey(wrappedFrame)
+  const simulationView = bar ? 'bar' : 'flat'
+  const viewOrigin = bar ? bar.origin : origin
+  // Latest values for callbacks and effects that must not re-run on identity.
+  const wrappedFrameRef = useRef<AroundFrame | undefined>(undefined)
+  wrappedFrameRef.current = wrappedFrame
+  const barRef = useRef<SimulationBar | undefined>(undefined)
+  barRef.current = bar
   const barTurnRef = useRef<ReturnType<typeof createBarTurnGroup> | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
@@ -356,12 +367,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Throttled state for the UI readout — updated at ~10 Hz to avoid re-render churn.
   const [displayPose, setDisplayPose] = useState<PlaybackPose>(EMPTY_PLAYBACK_POSE)
   const playbackControllerRef = useRef<PlaybackController | null>(null)
-  const playbackViewRef = useRef<{
-    input: SimulationPlaybackInput
-    view: string
-    controller: PlaybackController
-    playing: boolean
-  } | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
@@ -464,12 +469,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   const zoomToModel = useCallback(() => {
     const controls = controlsRef.current
-    const object = objectRef.current ?? (bar ? playbackMaterialMeshRef.current : null)
+    const isBar = barRef.current !== undefined
+    const object = objectRef.current ?? (isBar ? playbackMaterialMeshRef.current : null)
     if (!controls || !object) {
       return
     }
 
-    if (bar) object.updateWorldMatrix(true, false)
+    if (isBar) object.updateWorldMatrix(true, false)
     const bounds = new THREE.Box3().setFromObject(object)
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
@@ -485,7 +491,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     controls.fitToBounds(bounds)
-  }, [bar, origin.visible])
+  }, [origin.visible])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -601,17 +607,21 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   useEffect(() => {
     const scene = sceneRef.current
+    const frame = wrappedFrameRef.current
     if (!scene) return
-    hasAutoFramedRef.current = false
-    if (!wrappedFrame) return
-    const turn = createBarTurnGroup(wrappedFrame)
+    // `frameKey` is the whole dependency: a rebuilt `frame` with the same
+    // values must not tear the group down and rebuild it. Nothing here resets
+    // `hasAutoFramedRef` — only a `projectKey` change does, exactly as for a
+    // flat setup, so an unrelated edit cannot re-frame the camera.
+    if (!frame) return
+    const turn = createBarTurnGroup(frame)
     barTurnRef.current = turn
     scene.add(turn.pivot)
     return () => {
       turn.pivot.removeFromParent()
       barTurnRef.current = null
     }
-  }, [wrappedFrame])
+  }, [frameKey])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -650,8 +660,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const grid = simulation.grid
     const heightfieldTexture = createHeightfieldTexture(grid)
     const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-    const material = createHeightfieldMaterial(heightfieldTexture, grid, color, wrappedFrame)
-    const surface = buildHeightfieldSurfaceObject(grid, material, wrappedFrame)
+    const frame = wrappedFrameRef.current
+    const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
+    const surface = buildHeightfieldSurfaceObject(grid, material, frame)
     const parent = barTurnRef.current?.content ?? scene
     parent.add(surface)
     objectRef.current = surface
@@ -659,7 +670,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Walls at every height step + underside, all shader-driven: nothing to
     // rebuild on the CPU when the simulation result changes, and interior
     // pocket walls render as true verticals instead of one-cell-wide slants.
-    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, wrappedFrame)
+    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
     parent.add(boundary)
     boundaryMeshRef.current = boundary
     needsRenderRef.current = true
@@ -673,8 +684,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     }
     return () => heightfieldTexture.dispose()
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, wrappedFrame])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` stands in for the frame object (read through its ref) so a rebuilt identical frame does not rebuild the mesh.
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
@@ -711,18 +722,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
     const pose = controller.getPose()
+    const frame = wrappedFrameRef.current
     // Store latest pose for UI readout — read by throttled state updater
     latestPoseRef.current = pose
     // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
-    if (wrappedFrame) tool.position.copy(simulationToolPoint(pose, wrappedFrame))
+    if (frame) tool.position.copy(simulationToolPoint(pose, frame))
     else tool.position.set(pose.x, pose.z, pose.y)
-    if (wrappedFrame && barTurnRef.current) {
-      const angle = simulationBarAngle(pose, wrappedFrame)
-      turnSimulationBar(barTurnRef.current.pivot, angle, wrappedFrame)
+    if (frame && barTurnRef.current) {
+      const angle = simulationBarAngle(pose, frame)
+      turnSimulationBar(barTurnRef.current.pivot, angle, frame)
       viewportRef.current?.setAttribute('data-simulation-bar-angle', angle.toFixed(3))
     }
     needsRenderRef.current = true
-  }, [wrappedFrame])
+  }, [])
 
   const resetPlaybackRuntime = useCallback((building: boolean) => {
     cancelAnimationFrame(playbackFrameRef.current)
@@ -737,11 +749,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     setIsPlaybackBuilding(building)
     latestProgressRef.current = 0
     latestPoseRef.current = EMPTY_PLAYBACK_POSE
-    if (barTurnRef.current && wrappedFrame) turnSimulationBar(barTurnRef.current.pivot, 0, wrappedFrame)
+    const frame = wrappedFrameRef.current
+    if (barTurnRef.current && frame) turnSimulationBar(barTurnRef.current.pivot, 0, frame)
     viewportRef.current?.setAttribute('data-simulation-bar-angle', '0.000')
     setPlaybackProgress(0)
     setDisplayPose(EMPTY_PLAYBACK_POSE)
-  }, [wrappedFrame])
+  }, [])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -750,7 +763,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     if (!playbackEnabled || !playbackInput) {
-      playbackViewRef.current = null
       if (playbackMaterialMeshRef.current) {
         playbackMaterialMeshRef.current.removeFromParent()
         disposeSceneObject(playbackMaterialMeshRef.current)
@@ -776,9 +788,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    const previousView = playbackViewRef.current
-    const resume = previousView?.input === playbackInput && previousView.view !== simulationView ? previousView : null
-    playbackViewRef.current = null
     playbackControllerRef.current = null
     resetPlaybackRuntime(true)
 
@@ -789,7 +798,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const buildHandle = requestAnimationFrame(() => {
       if (cancelled) return
 
-      const controller = resume?.controller ?? new PlaybackController(
+      const controller = new PlaybackController(
         playbackInput.getBaseGrid(),
         playbackInput.moves,
         {
@@ -812,15 +821,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const heightfieldTexture = createHeightfieldTexture(grid)
       playbackHeightfieldTextureRef.current = heightfieldTexture
       const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-      const material = createHeightfieldMaterial(heightfieldTexture, grid, color, wrappedFrame)
-      const surface = buildHeightfieldSurfaceObject(grid, material, wrappedFrame)
+      const frame = wrappedFrameRef.current
+      const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
+      const surface = buildHeightfieldSurfaceObject(grid, material, frame)
       const parent = barTurnRef.current?.content ?? scene
       parent.add(surface)
       playbackMaterialMeshRef.current = surface
 
       // Instanced walls: no per-cell attributes, so any detail level builds
       // instantly and stays within memory — no cell cap needed.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, wrappedFrame)
+      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
       parent.add(boundary)
       playbackBoundaryMeshRef.current = boundary
 
@@ -838,13 +848,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       latestProgressRef.current = controller.totalPathLength > 0 ? controller.getDistanceTraveled() / controller.totalPathLength : 0
       setPlaybackProgress(latestProgressRef.current)
       updateToolMeshPose()
-      if (bar && !hasAutoFramedRef.current) {
+      if (barRef.current && !hasAutoFramedRef.current) {
         surface.updateWorldMatrix(true, false)
         const bounds = new THREE.Box3().setFromObject(surface)
         controlsRef.current?.fitToBounds(bounds, true)
         hasAutoFramedRef.current = true
       }
-      if (resume?.playing) setIsPlaying(true)
       setIsPlaybackReady(true)
       setIsPlaybackBuilding(false)
     })
@@ -852,12 +861,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       cancelled = true
       cancelAnimationFrame(buildHandle)
-      if (playbackControllerRef.current) playbackViewRef.current = {
-        input: playbackInput,
-        view: simulationView,
-        controller: playbackControllerRef.current,
-        playing: isPlayingRef.current,
-      }
       if (playbackMaterialMeshRef.current) {
         playbackMaterialMeshRef.current.removeFromParent()
         disposeSceneObject(playbackMaterialMeshRef.current)
@@ -880,8 +883,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, wrappedFrame, simulationView, bar])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time.
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -1056,14 +1059,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     disposeClampMeshes()
 
-    const visibleClamps = wrappedFrame && bar ? bar.clamps : clamps
+    // `wrappedFrame` present means the bar view (issue #395 G3), so the bar's
+    // own visible fixtures and real round stock are what is drawn; otherwise
+    // the flat setup's clamp list and stock are.
+    const frame = wrappedFrameRef.current
+    const currentBar = barRef.current
+    const visibleClamps = frame && currentBar ? currentBar.clamps : clamps
     if (visibleClamps.length === 0) {
       return
     }
 
     const collidingClampIdSet = new Set(collidingClampIds)
     const nextClampMeshes = visibleClamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, wrappedFrame && bar ? bar.stock : stock),
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, frame && currentBar ? currentBar.stock : stock),
     )
     const parent = barTurnRef.current?.content ?? scene
     for (const mesh of nextClampMeshes) {
@@ -1075,8 +1083,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       disposeClampMeshes()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock, bar, wrappedFrame])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref) so a rebuilt identical frame does not rebuild the fixtures.
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock, frameKey])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1285,17 +1293,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           >
             {t('viewport.sim.playTool')}
           </button>
-          {bar && (
-            <button
-              className={`simulation-mode-toggle__btn simulation-playback-toggle ${unrolled ? 'simulation-mode-toggle__btn--active' : ''}`}
-              type="button"
-              aria-pressed={unrolled}
-              onClick={() => setUnrolled((current) => !current)}
-              title={t('viewport.sim.unrolledTitle')}
-            >
-              {t('viewport.sim.unrolled')}
-            </button>
-          )}
         </div>
         <div className="viewport-presets__group viewport-presets__group--views">
           <ViewPresetMenu

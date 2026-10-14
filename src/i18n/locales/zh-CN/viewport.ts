@@ -53,8 +53,6 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.playToolDisabledMode': '切换到"已选中"模式以使用刀具播放',
   'viewport.sim.playToolDisabledNoOp': '选择一个有有效刀路的操作来播放',
   'viewport.sim.playToolToggle': '切换刀具播放',
-  'viewport.sim.unrolled': '展开',
-  'viewport.sim.unrolledTitle': '将圆棒的整个表面一次性平铺展开显示',
   'viewport.sim.webglUnavailableTitle': '3D 仿真不可用',
   'viewport.sim.webglUnavailableBody': '此视图需要 WebGL2，但您的浏览器或显卡驱动未提供。请尝试更新浏览器或在设置中启用硬件加速。',
   'viewport.sim.webglLostTitle': '3D 图形上下文丢失',
