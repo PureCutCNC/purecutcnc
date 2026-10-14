@@ -19,12 +19,17 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { getFeatureGeometryProfiles } from '../text'
+import { isRoundStock } from '../types/project'
 import type { Project, SketchFeature, SketchProfile } from '../types/project'
 import { closeLinePolygonIfNeeded, profileToPolygon } from './profilePolyline'
+import { aroundFrame, type AroundFrame } from './aroundFrame'
 import type { ThreeThemePalette } from '../theme/palette'
 
 export const LINE_DEFAULT_COLOR = 0x33aa66 // theme-exempt: legacy constant, prefer palette.lineDefault
 export const LINE_SUBTRACT_COLOR = 0x3366cc // theme-exempt: legacy constant, prefer palette.lineSubtract
+
+/** The most turn one drawn piece may span: 5°. */
+const CHORD_STEP_RADIANS = (5 * Math.PI) / 180
 
 export interface BatchLineMeta {
   objectCount: number
@@ -41,6 +46,11 @@ export interface BatchLineResult {
 export interface LineProfileEntry {
   profile: SketchProfile
   zTop: number
+  /**
+   * Present for an Around feature (issue #395): its profile is in sheet
+   * coordinates and its drawn points are wrapped onto the bar.
+   */
+  frame?: AroundFrame
 }
 
 function featureZTop(feature: SketchFeature, project: Project): number {
@@ -56,15 +66,50 @@ function collectLineProfiles(
   features: SketchFeature[],
 ): LineProfileEntry[] {
   const entries: LineProfileEntry[] = []
+  const around = isRoundStock(project.stock) ? aroundFrame(project.stock) : undefined
   for (const feature of features) {
     const zTop = featureZTop(feature, project)
+    const frame = feature.authoringFace === 'around' ? around : undefined
     for (const profile of getFeatureGeometryProfiles(feature)) {
       if (feature.operation === 'line' || !profile.closed) {
-        entries.push({ profile, zTop })
+        entries.push({ profile, zTop, frame })
       }
     }
   }
   return entries
+}
+
+/**
+ * One wrapped line segment as a run of scene-space points (x, project z,
+ * project y — the layout `computeLineProfileBatch` uses for flat entries): the
+ * sheet point is wrapped onto the bar at `radius`, subdivided so no piece spans
+ * more than 5° of turn. An Around line that runs 1.5 turns is drawn as 1.5
+ * turns round the bar, because `a` is never reduced to one turn.
+ */
+function aroundSegmentPoints(
+  start: [number, number],
+  end: [number, number],
+  frame: AroundFrame,
+  radius: number,
+): [number, number, number][] {
+  const acrossFrom = frame.axis === 'x' ? start[1] : start[0]
+  const acrossTo = frame.axis === 'x' ? end[1] : end[0]
+  const divisions = Math.max(1, Math.ceil(Math.abs(acrossTo - acrossFrom) / (frame.radius * CHORD_STEP_RADIANS)))
+  const points: [number, number, number][] = []
+  for (let index = 0; index <= divisions; index += 1) {
+    const t = index / divisions
+    const x = start[0] + (end[0] - start[0]) * t
+    const y = start[1] + (end[1] - start[1]) * t
+    const across = frame.axis === 'x' ? y : x
+    const along = frame.axis === 'x' ? x : y
+    const angle = (across - frame.sheetStart) / frame.radius
+    const acrossOffset = radius * Math.sin(angle)
+    const up = frame.radius + radius * Math.cos(angle)
+    points.push(frame.axis === 'x'
+      ? [along, up, frame.centre + acrossOffset]
+      : [frame.centre + acrossOffset, up, along])
+  }
+  return points
 }
 
 /**
@@ -77,7 +122,7 @@ export function computeLineProfileBatch(
   const positions: number[] = []
   let segmentCount = 0
 
-  for (const { profile, zTop } of entries) {
+  for (const { profile, zTop, frame } of entries) {
     const polygon = closeLinePolygonIfNeeded(
       profileToPolygon(profile),
       profile.closed,
@@ -85,8 +130,18 @@ export function computeLineProfileBatch(
     for (let index = 0; index < polygon.length - 1; index += 1) {
       const start = polygon[index]
       const end = polygon[index + 1]
-      positions.push(start[0], zTop, start[1], end[0], zTop, end[1])
-      segmentCount += 1
+      if (!frame) {
+        positions.push(start[0], zTop, start[1], end[0], zTop, end[1])
+        segmentCount += 1
+        continue
+      }
+      const points = aroundSegmentPoints(start, end, frame, zTop - frame.radius)
+      for (let piece = 0; piece < points.length - 1; piece += 1) {
+        const from = points[piece]
+        const to = points[piece + 1]
+        positions.push(from[0], from[1], from[2], to[0], to[1], to[2])
+        segmentCount += 1
+      }
     }
   }
 

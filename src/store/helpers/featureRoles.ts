@@ -66,10 +66,10 @@ export function isMachinable(entity: HasOperation): boolean {
  * machinable path geometry that renders as flat 3D line overlays and never
  * contributes to the solid model.
  *
- * Around features are unrolled onto the bar's surface and never enter the
- * solid (issue #395; `csg.ts` `buildScene` excludes them), so they are not
- * solid here even as a subtract — the "first 2.5D feature must be Add" rule
- * looks only at flat-face features.
+ * Around features are wrapped onto the bar as their own solid (issue #395),
+ * but they take no part in flat base-solid ordering: the "first 2.5D feature
+ * must be Add" rule looks only at flat-face features, and an Around subtract
+ * never serves as a flat model's base.
  */
 export function isSolid(entity: HasOperation): boolean {
   if (entity.authoringFace === 'around') return false
