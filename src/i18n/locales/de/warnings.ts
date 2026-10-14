@@ -240,6 +240,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.aroundStockMismatch': '{operation}: Die Around-Seite benötigt eine Rundstange entlang derselben Achse wie bei der Einrichtung.',
   'warnings.aroundCentreline': '{operation}: {feature} erreicht die Mittellinie der Stange; ein Schnitt auf der Around-Seite muss davor enden.',
   'warnings.aroundCutReachesCentreline': '{operation}: Der Schnitt würde die Mittellinie der Stange erreichen. Reduziere die Tiefe, damit er vor der Mitte der Stange endet.',
+  'warnings.rotaryNoRoom': '{operation}: Zwischen den Endstützen, dem Spannfutter und dem Reitstock ist kein Platz zum Fräsen. Kürzen Sie die Stützen oder verschieben Sie das Modell.',
   'warnings.rotaryToolUnsupported': '{operation}: Rotationsschlichten benötigt einen Kugel- oder Schaftfräser.',
   'warnings.rotaryBelowCentreline': '{operation}: Das Modell reicht nahe {along} entlang der Stange, bei {angle}°, unter die Mittellinie der Stange. Diese Stellen bleiben ungeschnitten.',
   'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',

@@ -240,6 +240,7 @@ export const warningsEn = {
   'warnings.aroundStockMismatch': '{operation}: the around face needs a round bar lying along the same axis as when it was set up.',
   'warnings.aroundCentreline': "{operation}: {feature} reaches the bar's centreline; a cut on the around face must stop short of it.",
   'warnings.aroundCutReachesCentreline': "{operation}: the cut would reach the bar's centreline. Reduce its depth so it stops short of the middle of the bar.",
+  'warnings.rotaryNoRoom': '{operation}: no room to cut between the end supports and the chuck and tailstock. Shorten the supports or move the model.',
   'warnings.rotaryToolUnsupported': '{operation}: Rotary finishing needs a ball nose or flat end mill.',
   'warnings.rotaryBelowCentreline': "{operation}: the model reaches below the bar's centreline near {along} along the bar, at {angle}°. Those places are left uncut.",
   'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',

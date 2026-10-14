@@ -89,7 +89,7 @@ const ALL_CODES = [
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'pocketFinishIslandWallTooTight',
   'aroundStockMismatch', 'aroundCentreline', 'aroundCutReachesCentreline',
-  'rotaryToolUnsupported', 'rotaryBelowCentreline',
+  'rotaryToolUnsupported', 'rotaryBelowCentreline', 'rotaryNoRoom',
   'setupTargetNotThrough', 'postMixedSetups', 'postSetupOperationRefused',
   'postSetupNoRegistration',
   'postPlasmaOperationSkipped', 'postPlasmaCutSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postPlasmaSafeHeightMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
