@@ -99,10 +99,12 @@ assert.equal(caseRunsOnValidator(ownAxis, 'fabmo-opensbp', ['shopbot']), false,
 // The rough case no longer turns while feeding (issue #1015 slice G). Its along
 // range starts and ends inside the bar, so the retained-bar stubs hold the first
 // and last sample of every pass at the bar's surface: no layer cuts them, each
-// pass's runs stop short of the pass ends, and the tool retracts to the rapid
-// height and turns there instead of linking. The wrapped form still reaches the
-// export as the A word on every move. The finish cuts the model's own ends (a
-// `NaN` sample is simply not cut), so it keeps its turning links.
+// pass's runs stop short of the pass ends, and the tool retracts and turns there
+// instead of linking. The retract is to the bar's surface plus a clearance, not
+// to `safeRadius` (slice H) -- still a rapid, so still no `G93`. The wrapped form
+// still reaches the export as the A word on every move. The finish cuts the
+// model's own ends (a `NaN` sample is simply not cut), so it keeps its turning
+// links.
 
 const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp, turnsInFeed: boolean]> = [
   ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/, true],

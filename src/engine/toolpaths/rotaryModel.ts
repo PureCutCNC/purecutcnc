@@ -120,7 +120,7 @@ export interface RotaryFinishParams {
   /** The along range the passes cover; the caller (a later slice) derives it from the model and the end supports. */
   readonly alongStart: number
   readonly alongEnd: number
-  /** Tool-tip radius from the centreline for rapids and links in air; must be above the bar's surface. A turning link rises to the smaller of this and the bar's surface plus a clearance. */
+  /** Tool-tip radius from the centreline for the operation's first positioning move and its final retract; must be above the bar's surface. Every move between runs -- a retract, a traverse or a turning link -- travels at the smaller of this and the bar's surface plus a clearance. */
   readonly safeRadius: number
   /** Requested height-map cell size, passed to the sampler. */
   readonly requestedCellSize: number
@@ -258,25 +258,31 @@ interface RotaryRun {
 
 /**
  * Emit one pass's runs, and say where the pass left the tool. A run that starts
- * where the previous pass finished links to it -- a rise to `linkZ`, a turn, and
- * a drop, each its own `cut` move so a merged move can never lose one of the two
- * angles. `linkZ` is the bar's surface plus a clearance (`min(safeRadius, R +
- * clearance)`, a tip height): nothing -- model or standing stock -- is ever
+ * where the previous pass finished links to it -- a rise to `travelZ`, a turn,
+ * and a drop, each its own `cut` move so a merged move can never lose one of the
+ * two angles. `travelZ` is the bar's surface plus a clearance (`min(safeRadius,
+ * R + clearance)`, a tip height): nothing -- model or standing stock -- is ever
  * above the bar's surface, so the turn is always in air, and it is far shorter
  * than a retract to `safeZ`. The link used to turn at the higher of the two end
  * tips, which is *inside* the model between the two pass angles: on a square
  * prism of half-width 10 in a 40 mm bar the 34.29 -> 51.43 degree link ran at
- * tip radius 13.598 while the corner at 45 degrees needed 14.141. Every other
- * run (and every later run of the same pass, where material may still stand
- * above the next one) retracts to `safeZ`, moves over the run's first point and
- * plunges, so the tool never traverses inside material.
+ * tip radius 13.598 while the corner at 45 degrees needed 14.141.
+ *
+ * Every other run stays at `travelZ` too: the retract off the run just cut, the
+ * traverse to the next run's first point and the plunge's start are all at the
+ * bar's surface plus the clearance, never at `safeZ`. Material may still stand
+ * above the layer between runs, but nothing stands above the bar, so the
+ * traverse is in air; hopping over the bar beats the full retract to
+ * `safeRadius` this used to do on every gap (on a 10-layer rough that was
+ * hundreds of full retracts). `safeRadius` is left for the operation's first
+ * positioning move and its final retract.
  */
 function emitRotaryRuns(
   moves: ToolpathMove[],
   here: ToolpathPoint | undefined,
   runs: readonly RotaryRun[],
   safeZ: number,
-  linkZ: number,
+  travelZ: number,
   previousEndedAtEnd: boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
@@ -286,17 +292,21 @@ function emitRotaryRuns(
     const canLink = current !== undefined && previousEndedAtEnd && run.atStart
       && current.x === first.x && current.y === first.y
     if (canLink && current) {
-      const high = linkZ
+      const high = travelZ
       if (high > current.z) moves.push({ kind: 'cut', from: current, to: { ...current, z: high } })
       moves.push({ kind: 'cut', from: { ...current, z: high }, to: { ...first, z: high } })
       if (high > first.z) moves.push({ kind: 'cut', from: { ...first, z: high }, to: first })
+    } else if (current) {
+      moves.push({ kind: 'rapid', from: current, to: { ...current, z: travelZ } })
+      moves.push({ kind: 'rapid', from: { ...current, z: travelZ }, to: { ...first, z: travelZ } })
+      moves.push({ kind: 'plunge', from: { ...first, z: travelZ }, to: first })
     } else {
-      if (current) moves.push({ kind: 'rapid', from: current, to: { ...current, z: safeZ } })
-      // With no previous point the opening rapid goes from and to the same
-      // point, the way `pushRapidAndPlunge` opens: the tool is placed at safe
-      // height rather than ever read as starting buried at the cutting tip.
-      const entry = current ?? first
-      moves.push({ kind: 'rapid', from: { ...entry, z: safeZ }, to: { ...first, z: safeZ } })
+      // The operation's first positioning move: from and to the same point at
+      // `safeZ`, the way `pushRapidAndPlunge` opens -- the tool is placed at
+      // safe height rather than ever read as starting buried at the cutting tip
+      // -- and only then plunges to the first cut. Every later gap is at
+      // `travelZ` above.
+      moves.push({ kind: 'rapid', from: { ...first, z: safeZ }, to: { ...first, z: safeZ } })
       moves.push({ kind: 'plunge', from: { ...first, z: safeZ }, to: first })
     }
     for (let i = 1; i < run.points.length; i++) {
@@ -529,10 +539,11 @@ function rotaryTargets(
  * A `NaN` sample -- no model under the tool -- is not cut. The finish follows
  * the model, and taking waste off an off-axis part is the rough's job, so each
  * pass is cut as runs of finite samples: between runs, and from one pass to the
- * next when they do not join at the same bar end, the tool retracts to
- * `safeRadius`, moves there and plunges. A pass with no finite sample emits
- * nothing. Cutting the centreline instead would be full-width, full-depth
- * slotting with a finishing tool, silently.
+ * next when they do not join at the same bar end, the tool rises to the bar's
+ * surface plus a clearance, traverses there and plunges; only the operation's
+ * first positioning move and its final retract go to `safeRadius`. A pass with
+ * no finite sample emits nothing. Cutting the centreline instead would be
+ * full-width, full-depth slotting with a finishing tool, silently.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -565,10 +576,12 @@ export function generateRotaryFinish(
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
   const safeZ = radius + params.safeRadius
-  // A turning link rises to the bar's surface plus a clearance, so it always
-  // clears the model between the two pass angles; it never rises above the
-  // retract height.
-  const linkZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
+  // Every move between runs -- a turning link, the retract off a run, or the
+  // traverse to the next run -- travels at the bar's surface plus a clearance,
+  // so it always clears the model and the standing stock between two pass
+  // angles; it never rises above the retract height. If `safeRadius` is lower
+  // than that clearance, `safeZ` wins and every move travels there instead.
+  const travelZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
   // mirrored on a return pass. Everything that reads a height must use the same
@@ -601,7 +614,7 @@ export function generateRotaryFinish(
       runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
       i++
     }
-    const emitted = emitRotaryRuns(moves, here, runs, safeZ, linkZ, previousEndedAtEnd)
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
     here = emitted.here
     previousEndedAtEnd = emitted.endedAtEnd
   }
@@ -696,10 +709,12 @@ export function generateRotaryRough(
   const radius = stock.thickness / 2
   const centre = roundStockCentre(stock)
   const safeZ = radius + params.safeRadius
-  // Turning links rise to the bar's surface plus a clearance at every layer,
-  // for the same reason the finish does: the model between the two pass angles
-  // is not otherwise checked.
-  const linkZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
+  // Every move between runs at every layer -- a turning link, the retract off a
+  // run, or the traverse to the next run -- travels at the bar's surface plus a
+  // clearance, for the same reason the finish does: the model between the two
+  // pass angles is not otherwise checked, and a full retract to `safeRadius` on
+  // every gap dominates a many-layer rough.
+  const travelZ = Math.min(safeZ, 2 * radius + convertLength(1, 'mm', tool.units))
   let lowest = radius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((radius - lowest) / params.stepdown)
@@ -733,7 +748,7 @@ export function generateRotaryRough(
         runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, linkZ, previousEndedAtEnd)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd
     }
