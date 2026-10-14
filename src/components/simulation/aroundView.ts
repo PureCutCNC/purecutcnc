@@ -56,6 +56,42 @@ export function simulationToolPoint(pose: { x: number; y: number; z: number }, f
   return new THREE.Vector3(point.x, point.z, point.y)
 }
 
-export function simulationBarAngle(pose: { x: number; y: number }, frame: AroundFrame): number {
+export function simulationBarAngle(pose: { x: number; y: number; a?: number }, frame: AroundFrame): number {
+  // The program's own angle is the truth when the pose carries it — a folded
+  // point's across coordinate names the same angle mod one turn, so using it
+  // leaves the picture unchanged (issue #395). The across coordinate is the
+  // fallback for a pose with no rotary component.
+  if (pose.a !== undefined) return pose.a
   return 360 * ((frame.axis === 'x' ? pose.y : pose.x) - frame.sheetStart) / frame.circumference
+}
+
+/** The bar view's readout (issue #395): the tool as the program has it. */
+export interface BarReadout {
+  x: number
+  y: number
+  z: number
+  /** The program's angle in degrees; absent when the move carries none. */
+  a?: number
+}
+
+/**
+ * The bar view's X, Y, Z and A. X, Y and Z are the wrapped tool point relative
+ * to the real project origin with the same sign rule the flat readout uses —
+ * Y inverted because project space increases downward — so Y reads the bar's
+ * centreline, constant while the bar turns, and Z is the real height. A is the
+ * program's angle, never reduced to one turn, and is absent (no key) when the
+ * pose has no rotary component.
+ */
+export function barReadout(
+  pose: { x: number; y: number; z: number; a?: number },
+  frame: AroundFrame,
+  origin: { x: number; y: number; z: number },
+): BarReadout {
+  const wrapped = wrapPoint(pose, frame)
+  return {
+    x: wrapped.x - origin.x,
+    y: origin.y - wrapped.y,
+    z: wrapped.z - origin.z,
+    ...(pose.a !== undefined ? { a: pose.a } : {}),
+  }
 }
