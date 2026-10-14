@@ -220,6 +220,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.aroundStockMismatch': '{operation}: la cara Around necesita una barra redonda situada sobre el mismo eje que cuando se configuró.',
   'warnings.aroundCentreline': '{operation}: {feature} alcanza la línea central de la barra; un corte en la cara Around debe detenerse antes de ella.',
   'warnings.aroundCutReachesCentreline': '{operation}: el corte alcanzaría la línea central de la barra. Reduce su profundidad para que se detenga antes del centro de la barra.',
+  'warnings.rotaryNoRoom': '{operation}: no hay espacio para cortar entre los soportes de los extremos, el mandril y el contrapunto. Acorte los soportes o mueva el modelo.',
   'warnings.rotaryToolUnsupported': '{operation}: el acabado rotativo necesita una fresa esférica o una fresa plana.',
   'warnings.rotaryBelowCentreline': '{operation}: el modelo baja por debajo de la línea central de la barra cerca de {along} a lo largo de la barra, a {angle}°. Esos lugares quedan sin mecanizar.',
   'warnings.postMixedSetups': 'El programa contiene operaciones de más de una sujeción ({setups}). La pieza se voltea a mano entre sujeciones, por lo que cada sujeción se exporta como su propio programa.',

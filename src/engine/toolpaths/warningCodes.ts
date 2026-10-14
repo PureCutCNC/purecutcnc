@@ -337,6 +337,8 @@ export type ToolpathWarningCode =
    *  up into it, so a clamped point leaves that place uncut; the first such
    *  place is named (issue #1015). */
   | 'rotaryBelowCentreline'
+  /** End supports and workholding leave no model extent to machine. */
+  | 'rotaryNoRoom'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */

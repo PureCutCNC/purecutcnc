@@ -220,6 +220,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.aroundStockMismatch': '{operation} : la face Around nécessite une barre ronde orientée selon le même axe que lors de sa configuration.',
   'warnings.aroundCentreline': '{operation} : {feature} atteint la ligne centrale de la barre ; une coupe sur la face Around doit s’arrêter avant celle-ci.',
   'warnings.aroundCutReachesCentreline': '{operation} : la coupe atteindrait la ligne centrale de la barre. Réduisez sa profondeur pour qu’elle s’arrête avant le milieu de la barre.',
+  'warnings.rotaryNoRoom': '{operation} : aucun espace à usiner entre les supports aux extrémités, le mandrin et la contre-pointe. Raccourcissez les supports ou déplacez le modèle.',
   'warnings.rotaryToolUnsupported': '{operation} : le finissage rotatif nécessite une fraise boule ou une fraise à rainurer.',
   'warnings.rotaryBelowCentreline': '{operation} : le modèle descend sous la ligne centrale de la barre près de {along} le long de la barre, à {angle}°. Ces endroits restent non usinés.',
   'warnings.postMixedSetups': 'Le programme contient des opérations de plusieurs montages ({setups}). La pièce est retournée à la main entre les montages, chaque montage est donc exporté dans son propre programme.',

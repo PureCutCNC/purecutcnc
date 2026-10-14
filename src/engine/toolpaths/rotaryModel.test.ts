@@ -15,14 +15,15 @@
  */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { roundStock, roundStockCentre } from '../../types/project'
-import type { RoundStock } from '../../types/project'
+import type { Clamp, RoundStock } from '../../types/project'
 import { aroundFrame, unwrapToolpath, wrapPoint } from '../aroundFrame'
 import { deserializeImportedMesh } from '../importedMesh'
 import { toolSpacePoint } from '../rotaryFrame'
 import { computeXYBounds } from './finishSurfaceParallel'
-import { generateRotaryFinish, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
+import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -782,3 +783,200 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 console.log('engine/toolpaths/rotaryModel.test.ts: all assertions passed')
+
+// Slice C: asymmetric models in both frames expose mirrored return-pass heights.
+for (const axis of ['x', 'y'] as const) {
+  const stock = roundStock(40, 150, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
+  const cone = lathe(stock, (x) => 3 + x / 10, 5, 145, 70, 64)
+  const modelAlong = { min: 5, max: 145 }
+  const supports = { chuckEnd: 10, tailEnd: 15 }
+  const clamp = (type: 'chuck' | 'tailstock', min: number, length: number): Clamp => ({
+    id: type, name: type, type, visible: true, height: 60,
+    ...(axis === 'x' ? { x: min, y: -20, w: length, h: 80 } : { x: -20, y: min, w: 80, h: length }),
+  })
+  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, supports), { start: 10, end: 135 }, `${axis} range without chuck`)
+  assert.deepEqual(rotaryAlongRange(stock, [clamp('chuck', 149, 40)], modelAlong, BALL, supports),
+    { start: 15, end: 140 }, `${axis} upper chuck swaps support ends`)
+  assert.deepEqual(rotaryAlongRange(stock, [clamp('tailstock', 132, 40)], modelAlong, BALL, supports),
+    { start: 10, end: 130.5 }, `${axis} tailstock inner edge includes tool radius`)
+  assert.deepEqual(rotaryAlongRange(stock, [clamp('chuck', -40, 58)], modelAlong, BALL, supports),
+    { start: 19.5, end: 135 }, `${axis} lower chuck inner edge includes tool radius`)
+  assert.deepEqual(rotaryAlongRange(stock, [], { min: 20, max: 100 }, BALL, supports),
+    { start: 20, end: 100 }, `${axis} range intersects model to keep attachments`)
+  assert.equal(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 80, tailEnd: 80 }), null, `${axis} overlapping supports have no room`)
+  assert.equal(rotaryAlongRange(stock, [], { min: 140, max: 145 }, BALL, supports), null, `${axis} model outside support range has no room`)
+  assert.equal(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 75, tailEnd: 75 }), null, `${axis} touching supports have no room`)
+  for (const generate of [generateRotaryFinish, generateRotaryRough]) {
+    const result = generate('empty', cone, stock, BALL, { ...FINISH_BASE, stepover: 20, stepdown: 2, alongStart: 80, alongEnd: 70 }, {})
+    assert.deepEqual(result.moves, [], `${axis} empty range generates no moves`)
+    assert.deepEqual(result.warnings, [{ code: 'rotaryNoRoom', params: { operation: 'empty' } }], `${axis} empty range warns exactly once`)
+    assert.equal(result.bounds, null)
+  }
+}
+
+for (const axis of ['x', 'y'] as const) {
+  const stock = finishStock(axis)
+  const position = (p: { x: number; y: number }): number => axis === 'x' ? p.x : p.y
+  const cone = lathe(stock, (x) => 2 + (x - 10) * 0.55, 10, 30, 80, 64)
+  const params = { ...FINISH_BASE, stepover: 22, sampleSpacing: 1, stepdown: 4, stockToLeave: 0.3 }
+  const passes = finishPasses(params.stepover)
+  const along = Array.from({ length: 21 }, (_, i) => 10 + i)
+  const angles = Array.from({ length: passes }, (_, k) => k * (360 / passes))
+  for (const tool of [BALL, FLAT_2]) {
+    const enlarged = { ...tool, radius: tool.radius + params.stockToLeave, diameter: tool.diameter + 2 * params.stockToLeave }
+    const sampled = sampleRotaryModel(cone, stock, enlarged, { anglesDeg: angles, along, requestedCellSize: CELL }, [])
+    const targets = sampled.tipRadius.map((row) => Array.from(row, (r) => Math.min(20, Math.max(0, r + params.stockToLeave))))
+    const lowest = Math.min(...targets.flat())
+    const layers = Math.ceil((20 - lowest) / params.stepdown)
+    const progress: number[][] = []
+    const result = generateRotaryRough('cone', cone, stock, tool, params, { onAngle: (done, total) => { progress.push([done, total]) } })
+    assert.deepEqual(progress, angles.map((_, k) => [k + 1, passes]), `${axis} rough samples once per angle for all layers`)
+    assert.equal(result.warnings.length, 0, `${axis} rough cone has no warnings`)
+    assert.ok(result.moves.length > 0)
+    assert.equal(Math.max(...result.moves.map((m) => Math.floor(m.to.a! / 360))) + 1, layers, `${axis} exact layer count`)
+    const depths = targets.map((row) => row.map(() => Infinity))
+    let checked = 0
+    let skipped = 0
+    let links = 0
+    for (let m = 0; m < result.moves.length; m++) {
+      const move = result.moves[m]
+      if (m) assert.deepEqual(move.from, result.moves[m - 1].to, `${axis} rough moves connected`)
+      assert.ok(move.to.a! >= move.from.a!, `${axis} rough angles never reset across layers`)
+      if (move.kind === 'rapid') {
+        assert.equal(move.to.z, 20 + params.safeRadius, `${axis} every rapid reaches safe radius`)
+        if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
+          assert.equal(move.from.z, 20 + params.safeRadius, `${axis} traverse starts at safe radius`)
+        }
+        continue
+      }
+      if (move.kind === 'plunge') assert.equal(move.from.z, 20 + params.safeRadius, `${axis} run plunge starts safe`)
+      if (move.from.a !== move.to.a) {
+        assert.equal(position(move.from), position(move.to), `${axis} finish-style link stays at shared end`)
+        assert.ok([10, 30].includes(position(move.to)), `${axis} only bar-end links at depth`)
+        assert.equal(move.from.z, move.to.z, `${axis} end link turns at higher height`)
+        const layer = Math.floor(move.to.a! / 360)
+        const pass = Math.round((move.to.a! - layer * 360) / (360 / passes))
+        const j = position(move.to) === 10 ? 0 : along.length - 1
+        const level = Math.max(lowest, 20 - (layer + 1) * params.stepdown)
+        approx(move.to.z - 20, Math.max(level, targets[pass - 1][j], targets[pass][j]), `${axis} rough end link uses higher target`, 1e-9)
+        links++
+        continue
+      }
+      const layer = Math.floor(move.to.a! / 360) + 1
+      const pass = Math.round((move.to.a! - (layer - 1) * 360) / (360 / passes))
+      const level = Math.max(lowest, 20 - layer * params.stepdown)
+      const previous = 20 - (layer - 1) * params.stepdown
+      const from = position(move.from), to = position(move.to)
+      if (move.kind === 'cut' && from !== to) {
+        assert.ok(pass % 2 === 0 ? to > from : to < from, `${axis} rough passes alternate direction`)
+      }
+      for (let j = 0; j < along.length; j++) {
+        const x = along[j]
+        if (x < Math.min(from, to) - 1e-9 || x > Math.max(from, to) + 1e-9) continue
+        const tip = from === to ? move.to.z - 20 : move.from.z - 20 + (move.to.z - move.from.z) * (x - from) / (to - from)
+        assert.ok(tip >= targets[pass][j] - 0.0011, `${axis} rough never cuts below target`)
+        // Pure vertical rise/drop links can be above the layer's target.
+        if (from !== to || move.kind === 'plunge') {
+          assert.ok(targets[pass][j] < previous, `${axis} air skipped at later layer`)
+          approx(tip, Math.max(targets[pass][j], level), `${axis} layer target is clamped, last layer exact`, 0.0011)
+          depths[pass][j] = Math.min(depths[pass][j], tip)
+          checked++
+        }
+      }
+    }
+    // A final layer can have a single sample, reached by a plunge or a
+    // finish-style turn/drop without an along segment.
+    for (const move of result.moves) {
+      if (move.kind === 'rapid') continue
+      for (const p of [move.from, move.to]) {
+        const layer = Math.floor(p.a! / 360)
+        const pass = Math.round((p.a! - layer * 360) / (360 / passes))
+        const j = along.findIndex((x) => Math.abs(x - position(p)) < 1e-9)
+        if (j >= 0) depths[pass][j] = Math.min(depths[pass][j], p.z - 20)
+      }
+    }
+    for (let pass = 0; pass < passes; pass++) for (let j = 0; j < along.length; j++) {
+      approx(depths[pass][j], targets[pass][j], `${axis} deepest cone sample equals final target`, 0.0011)
+      for (let layer = 1; layer <= layers; layer++) if (targets[pass][j] >= 20 - (layer - 1) * params.stepdown) skipped++
+    }
+    assert.ok(links > 0, `${axis} cone exercises finish-style links`)
+    assert.ok(checked > 100 && skipped > 0, `${axis} cone checks real cuts and skipped air`)
+    const cutTips = result.moves.filter((m) => m.kind !== 'rapid').map((m) => m.to.z - 20)
+    approx(Math.min(...cutTips), lowest, `${axis} no layer below lowest target`, 1e-9)
+    const stopped = generateRotaryRough('cone-stop', cone, stock, tool, params, { shouldStop: () => true })
+    assert.deepEqual(stopped, { operationId: 'cone-stop', moves: [], warnings: [], bounds: null }, `${axis} rough stop discards all output`)
+    let done = 0
+    const partial = generateRotaryRough('partial', cone, stock, tool, params, {
+      onAngle: (count) => { done = count }, shouldStop: () => done === 2,
+    })
+    assert.equal(done, 2, `${axis} rough partial stop forwards progress`)
+    assert.deepEqual(partial, { operationId: 'partial', moves: [], warnings: [], bounds: null }, `${axis} partial stop discards all output`)
+    const refused = generateRotaryRough('unsupported', cone, stock, VBIT, params, {})
+    assert.deepEqual(refused.warnings.map((w) => w.code), ['rotaryToolUnsupported'], `${axis} rough refuses unsupported tools`)
+    assert.deepEqual(refused.moves, [])
+    for (const stepdown of [0, -1, NaN, Infinity]) {
+      const invalid = generateRotaryRough('invalid', cone, stock, tool, { ...params, stepdown }, {})
+      assert.deepEqual(invalid.warnings.map((w) => w.code), ['stepdownPositive'], `${axis} rough refuses invalid stepdown`)
+      assert.deepEqual(invalid.moves, [])
+    }
+  }
+
+  // Two uneven ridges split a pass into three runs even on the first layer.
+  const ridge = lathe(stock, (x) => 3 + (x - 10) / 10 + 23 * Math.exp(-((x - 15) ** 2)) + 21 * Math.exp(-((x - 24) ** 2)), 10, 30, 200, 64)
+  const tool = { ...FLAT_2, radius: 0.1, diameter: 0.2 }
+  const splitParams = { ...params, stockToLeave: 0, stepdown: 5 }
+  const splitTargets = sampleRotaryModel(ridge, stock, tool, { anglesDeg: angles, along, requestedCellSize: CELL }, []).tipRadius
+  const split = generateRotaryRough('runs', ridge, stock, tool, splitParams, {})
+  assert.ok(split.moves.filter((m) => m.kind === 'plunge' && m.to.a === 0).length >= 3, `${axis} ridge forces separated runs`)
+  let traverses = 0
+  for (let i = 0; i < split.moves.length; i++) {
+    const move = split.moves[i]
+    if (i) assert.deepEqual(move.from, split.moves[i - 1].to, `${axis} split runs stay connected`)
+    if (move.kind === 'rapid') {
+      assert.equal(move.to.z, 20 + params.safeRadius, `${axis} between runs rapid reaches safeRadius`)
+      if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
+        assert.equal(move.from.z, 20 + params.safeRadius, `${axis} no traverse inside standing material`)
+        traverses++
+      }
+    }
+    if (move.kind === 'plunge') assert.equal(move.from.z, 20 + params.safeRadius, `${axis} split run entry plunges from safeRadius`)
+    if (move.kind !== 'cut' || move.from.a !== move.to.a || position(move.from) === position(move.to)) continue
+    const layer = Math.floor(move.to.a! / 360)
+    const pass = Math.round((move.to.a! - layer * 360) / (360 / passes))
+    for (let j = 0; j < along.length; j++) {
+      if (along[j] < Math.min(position(move.from), position(move.to)) || along[j] > Math.max(position(move.from), position(move.to))) continue
+      assert.ok(splitTargets[pass][j] < 20 - layer * splitParams.stepdown, `${axis} no cut links across an air gap between runs`)
+    }
+  }
+  assert.ok(traverses > passes, `${axis} split runs exercise real safe traverses`)
+}
+
+{
+  const tool = { ...FLAT_2, radius: 3, diameter: 6 }
+  const params = { stepover: 2, stepdown: 2, sampleSpacing: 0.5, stockToLeave: 0,
+    alongStart: 0, alongEnd: 150, safeRadius: 23.1, requestedCellSize: 0.1 }
+  const bounds = computeXYBounds(fixture.positions)
+  const range = rotaryAlongRange(STOCK, [], { min: bounds.minX, max: bounds.maxX }, tool, { chuckEnd: 0, tailEnd: 0 })
+  assert.ok(range, 'rough fixture has a model range')
+  params.alongStart = range.start
+  params.alongEnd = range.end
+  const start = performance.now()
+  const result = generateRotaryRough('rough-fixture', fixture, STOCK, tool, params, {})
+  const elapsed = performance.now() - start
+  assert.ok(result.moves.length > 0, 'rough fixture generates moves')
+  const layers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
+  console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${layers.size} layers, ${result.moves.length} moves`)
+}
+console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
+
+{
+  // Captured from slice B before extracting the shared sampler; hashes every
+  // move kind and endpoint, including point order and exact numeric values.
+  const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
+    stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
+    safeRadius: 21.6, requestedCellSize: fixtureCell,
+  }, {})
+  assert.equal(result.moves.length, 7411, 'finish fixture has identical move count after refactor')
+  assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
+    '6f841facbb45b444c54709aa44f5f2b128914a54f67f0fdccb07a86209765178', 'finish fixture has identical points after refactor')
+}
