@@ -45,7 +45,10 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   assert.equal(rotaryOperationHint(project, operation), null)
   assert.equal(rotaryOperationHint({ ...project, stock: { ...project.stock, shape: undefined } }, operation), camT('cam.rotary.roundStockRequired'))
   assert.equal(rotaryOperationHint(project, { ...operation, setupId: project.setups[0].id }), camT('cam.rotary.aroundRequired'))
-  assert.equal(rotaryOperationHint(project, { ...operation, target: { source: 'features', featureIds: [] } }), camT('cam.hint.roughSurfaceNoModel'))
+  assert.equal(
+    rotaryOperationHint(project, { ...operation, target: { source: 'features', featureIds: [] } }),
+    camT(kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel'),
+  )
   assert.equal(rotaryOperationHint(project, { ...operation, target: { source: 'features', featureIds: ['sketch'] } }), camT('cam.rotary.modelOnly'))
   assert.equal(rotaryOperationHint({ ...project, tools: [{ ...project.tools[0], type: 'v_bit' }] }, operation), camT('cam.rotary.toolRequired'))
   assert.equal(rotaryOperationHint(project, { ...operation, toolRef: null }), camT('cam.operation.noTool'))

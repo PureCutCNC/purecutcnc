@@ -671,6 +671,120 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 {
+  // Review item 2: a NaN sample is "no model under the tool", and the finish
+  // must not cut the centreline there -- that was full-width, full-depth
+  // slotting with a finishing tool, silently. Two off-axis prisms (across
+  // 8..12, up 8..12 in a 40 mm bar, so only one pass angle meets them) with a
+  // 5 mm gap split a pass into two runs. The finish cuts where the model is,
+  // retracts to safeRadius across the gap, and emits nothing on a pass the
+  // model never reaches.
+  const stock = finishStock('x')
+  const cross: readonly (readonly [number, number])[] = [[8, 8], [12, 8], [12, 12], [8, 12]]
+  const pieceA = prism(stock, cross, [10, 14])
+  const pieceB = prism(stock, cross, [19, 23])
+  const positions = new Float32Array(pieceA.positions.length + pieceB.positions.length)
+  positions.set(pieceA.positions)
+  positions.set(pieceB.positions, pieceA.positions.length)
+  const index = new Uint32Array(pieceA.index.length + pieceB.index.length)
+  index.set(pieceA.index)
+  index.set(Array.from(pieceB.index, (i) => i + pieceA.positions.length / 3), pieceA.index.length)
+  const offAxis = { positions, index }
+  const stepover = 20
+  const passes = finishPasses(stepover)
+  const angles = Array.from({ length: passes }, (_, k) => k * (360 / passes))
+  const intervals = Math.max(1, Math.ceil(Math.abs(FINISH_BASE.alongEnd - FINISH_BASE.alongStart) / FINISH_BASE.sampleSpacing))
+  const along = Array.from({ length: intervals + 1 }, (_, i) => FINISH_BASE.alongStart + (FINISH_BASE.alongEnd - FINISH_BASE.alongStart) * i / intervals)
+  const sampling = sampleRotaryModel(offAxis, stock, FINISH_PASS_MM, {
+    anglesDeg: angles, along, requestedCellSize: FINISH_BASE.requestedCellSize,
+  }, [])
+  const result = generateRotaryFinish('op-offaxis', offAxis, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
+  const safeZ = FINISH_RADIUS + FINISH_SAFE
+  assert.ok(result.moves.length > 0, 'off-axis prisms still cut where the model is')
+  // The pass that meets the model cuts; the ones that do not emit nothing.
+  const cutAngles = new Set(result.moves
+    .filter((move) => move.kind === 'cut' && move.from.a === move.to.a)
+    .map((move) => move.from.a as number))
+  assert.ok(!cutAngles.has(0), 'the 0 degree pass has no model under the tool and emits nothing')
+  assert.ok(cutAngles.size > 0 && cutAngles.size < passes, `only the passes over the model cut (${cutAngles.size} of ${passes})`)
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    for (const p of [move.from, move.to]) {
+      const k = angles.indexOf(p.a as number)
+      assert.ok(k >= 0, `off-axis cut point angle ${p.a} is a pass angle`)
+      const j = along.findIndex((value) => Math.abs(value - p.x) < 1e-9)
+      assert.ok(j >= 0, `off-axis cut point along ${p.x} is a sample position`)
+      assert.ok(Number.isFinite(sampling.tipRadius[k][j]),
+        `off-axis pass ${k} along ${along[j]} really has the model under the tool`)
+      // No NaN sample became a centreline cut: the model never dips below R.
+      assert.ok(p.z > FINISH_RADIUS + 1e-9, 'no off-axis cut at the centreline')
+    }
+  }
+  // Between runs the tool is at safeRadius (retract + traverse) or plunging.
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') assert.equal(move.to.z, safeZ, 'off-axis rapid reaches safeRadius')
+    if (move.kind === 'plunge') assert.equal(move.from.z, safeZ, 'off-axis plunge starts at safeRadius')
+  }
+  const rapids = result.moves.filter((move) => move.kind === 'rapid')
+  for (const move of rapids) {
+    // A retract may start at the cut, but any rapid that travels is at
+    // safeRadius for its whole length: never across standing material.
+    if (move.from.x !== move.to.x || move.from.y !== move.to.y) {
+      assert.equal(move.from.z, safeZ, 'off-axis traverse starts at safeRadius')
+    }
+  }
+  const traverses = rapids.filter((move) => move.from.z === safeZ && move.from.x !== move.to.x)
+  assert.ok(traverses.length >= 1, 'the gap between the two model pieces forces a safe traverse')
+  for (let i = 1; i < result.moves.length; i++) {
+    assert.deepEqual(result.moves[i].from, result.moves[i - 1].to, `off-axis move ${i} is connected`)
+  }
+}
+
+{
+  // Review item 5: a model poking outside the bar is machined as air. The
+  // operation still generates, and says so once.
+  const stock = finishStock('x')
+  for (const generate of [generateRotaryFinish, generateRotaryRough]) {
+    const params = { ...FINISH_BASE, stepover: 20, stepdown: 4 }
+    const inside = generate('op-inside', prism(stock, SQUARE), stock, FINISH_PASS_MM, params, {})
+    assert.equal(inside.warnings.filter((w) => w.code === 'rotaryModelOutsideBar').length, 0,
+      'a model inside the bar raises no outside-bar warning')
+    const radial = generate('op-poke', prism(stock, [[-2, 18], [2, 18], [2, 22], [-2, 22]]), stock, FINISH_PASS_MM, params, {})
+    assert.equal(radial.warnings.filter((w) => w.code === 'rotaryModelOutsideBar').length, 1,
+      'a vertex farther from the axis than R warns exactly once')
+    const beyond = generate('op-beyond', prism(stock, SQUARE, [50, 70]), stock, FINISH_PASS_MM, params, {})
+    assert.equal(beyond.warnings.filter((w) => w.code === 'rotaryModelOutsideBar').length, 1,
+      'a vertex past the bar end warns exactly once')
+    const flush = generate('op-flush', prism(stock, [[-2, -2], [2, -2], [0, 20]]), stock, FINISH_PASS_MM, params, {})
+    assert.equal(flush.warnings.filter((w) => w.code === 'rotaryModelOutsideBar').length, 0,
+      'a vertex exactly on the bar surface is not outside it')
+  }
+}
+
+{
+  // Review item 6: a zero or non-finite stepover / sample spacing used to be
+  // floored at 1e-9, which asks for about 6e10 samples and hangs the worker; a
+  // bar with no positive radius has no surface to cut. Both generators refuse.
+  const stock = finishStock('x')
+  const cylinder = prism(stock, CIRCLE)
+  for (const generate of [generateRotaryFinish, generateRotaryRough]) {
+    const base = { ...FINISH_BASE, stepover: 20, stepdown: 4 }
+    for (const stepover of [0, -1, NaN, Infinity]) {
+      const result = generate('op-bad-stepover', cylinder, stock, FINISH_PASS_MM, { ...base, stepover }, {})
+      assert.deepEqual(result.moves, [], `stepover ${stepover} emits no moves`)
+      assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'], `stepover ${stepover} warns`)
+    }
+    for (const sampleSpacing of [0, -1, NaN, Infinity]) {
+      const result = generate('op-bad-spacing', cylinder, stock, FINISH_PASS_MM, { ...base, sampleSpacing }, {})
+      assert.deepEqual(result.moves, [], `sample spacing ${sampleSpacing} emits no moves`)
+      assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'], `sample spacing ${sampleSpacing} warns`)
+    }
+    const degenerate = generate('op-degenerate', cylinder, { ...stock, thickness: 0 }, FINISH_PASS_MM, base, {})
+    assert.deepEqual(degenerate.moves, [], 'a bar with no radius emits no moves')
+    assert.deepEqual(degenerate.warnings.map((w) => w.code), ['aroundStockMismatch'], 'a bar with no radius is refused')
+  }
+}
+
+{
   // Rule 10: progress and stopping pass straight through to the sampler.
   const stock = finishStock('x')
   const mesh = prism(stock, CIRCLE)
@@ -794,13 +908,23 @@ for (const axis of ['x', 'y'] as const) {
     id: type, name: type, type, visible: true, height: 60,
     ...(axis === 'x' ? { x: min, y: -20, w: length, h: 80 } : { x: -20, y: min, w: 80, h: length }),
   })
-  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, supports), { start: 10, end: 135 }, `${axis} range without chuck`)
+  // Review item 4: the tool's side must not enter a support, so a support
+  // greater than 0 is kept clear by its own length plus the tool's radius (1.5
+  // for BALL). A support of 0 means no support and adds nothing: the model's
+  // own extent still limits the range.
+  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, supports), { start: 11.5, end: 133.5 }, `${axis} range without chuck`)
+  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 0, tailEnd: 0 }),
+    { start: 5, end: 145 }, `${axis} zero supports add no tool radius`)
+  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 10, tailEnd: 0 }),
+    { start: 11.5, end: 145 }, `${axis} only the chuck end pays the tool radius`)
+  assert.deepEqual(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 0, tailEnd: 15 }),
+    { start: 5, end: 133.5 }, `${axis} only the tail end pays the tool radius`)
   assert.deepEqual(rotaryAlongRange(stock, [clamp('chuck', 149, 40)], modelAlong, BALL, supports),
-    { start: 15, end: 140 }, `${axis} upper chuck swaps support ends`)
+    { start: 16.5, end: 138.5 }, `${axis} upper chuck swaps support ends`)
   assert.deepEqual(rotaryAlongRange(stock, [clamp('tailstock', 132, 40)], modelAlong, BALL, supports),
-    { start: 10, end: 130.5 }, `${axis} tailstock inner edge includes tool radius`)
+    { start: 11.5, end: 130.5 }, `${axis} tailstock inner edge includes tool radius`)
   assert.deepEqual(rotaryAlongRange(stock, [clamp('chuck', -40, 58)], modelAlong, BALL, supports),
-    { start: 19.5, end: 135 }, `${axis} lower chuck inner edge includes tool radius`)
+    { start: 19.5, end: 133.5 }, `${axis} lower chuck inner edge includes tool radius`)
   assert.deepEqual(rotaryAlongRange(stock, [], { min: 20, max: 100 }, BALL, supports),
     { start: 20, end: 100 }, `${axis} range intersects model to keep attachments`)
   assert.equal(rotaryAlongRange(stock, [], modelAlong, BALL, { chuckEnd: 80, tailEnd: 80 }), null, `${axis} overlapping supports have no room`)
@@ -970,13 +1094,18 @@ for (const axis of ['x', 'y'] as const) {
 console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
 
 {
-  // Captured from slice B before extracting the shared sampler; hashes every
-  // move kind and endpoint, including point order and exact numeric values.
+  // Hashes every move kind and endpoint of the fixture, including point order
+  // and exact numeric values. The count and hash moved from slice B's
+  // (7411 / 6f841fac...) with the review fix: the fixture's ends leave the line
+  // over the centreline through `NaN` samples, which the finish must not cut
+  // down to the axis. The goal is unchanged -- any later change to the
+  // generator's geometry shows up as a diff here rather than only in a move
+  // count -- but this is the fixed output, not the old centreline-slotted one.
   const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
   }, {})
-  assert.equal(result.moves.length, 7411, 'finish fixture has identical move count after refactor')
+  assert.equal(result.moves.length, 7159, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    '6f841facbb45b444c54709aa44f5f2b128914a54f67f0fdccb07a86209765178', 'finish fixture has identical points after refactor')
+    'de993c4e2006dd31e4dba690cb2b0b048f1b60a819e615c9948dc29bf51a412b', 'finish fixture keeps its exact points')
 }

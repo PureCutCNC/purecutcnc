@@ -121,8 +121,12 @@ export function activeSetupTargetHint(project: Project, featureIds: readonly str
   )
 }
 
-function rotaryTargetHint(project: Project, target: OperationTarget): string | null {
-  if (target.source !== 'features' || target.featureIds.length === 0) return camT('cam.hint.roughSurfaceNoModel')
+function rotaryTargetHint(project: Project, operation: Operation): string | null {
+  const target = operation.target
+  // A rotary operation's target is the model itself, so "no target" and "no
+  // imported model in the project" are the same refusal: say which rotary kind
+  // needs the model, not the flat 3D-surface message (#1015).
+  if (target.source !== 'features' || target.featureIds.length === 0) return rotaryNoModelHint(operation.kind)
   const features = resolveFeatureInstances(project, target.featureIds)
   if (features.length !== target.featureIds.length) return camT('cam.hint.featuresNotFound')
   return features.every((feature) => feature.kind === 'stl' && feature.operation === 'model')
@@ -150,7 +154,7 @@ export function rotaryOperationHint(project: Project, operation: Operation): str
   if (!isRotaryOperationKind(operation.kind)) return null
   if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
   if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
-  const targetHint = rotaryTargetHint(project, operation.target)
+  const targetHint = rotaryTargetHint(project, operation)
   if (targetHint) return targetHint
   const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
   if (!tool) return camT('cam.operation.noTool')

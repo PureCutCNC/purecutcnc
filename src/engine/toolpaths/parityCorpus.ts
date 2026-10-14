@@ -33,7 +33,6 @@
  *    varies run to run cannot be a parity oracle.
  */
 
-import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { readFileSync, readdirSync } from 'node:fs'
 import {
   circleProfile,
@@ -582,13 +581,18 @@ function syntheticCases(): ParityCase[] {
   return cases
 }
 
-/** The full corpus, in a stable order. */
+/**
+ * The full corpus, in a stable order.
+ *
+ * The rotary kinds (`rotary_rough` / `rotary_finish`, issue #1015) are
+ * deliberately absent. Their dispatch returns `raw: null` and never unrolls the
+ * project, so the seam tests — which demand a traced flat Top result — cannot
+ * replay them; a corpus entry that fails every consumer is worse than none.
+ * `rotaryOperation.test.ts` and the G-code conformance corpus cover them end to
+ * end instead.
+ */
 export function buildParityCorpus(): ParityCase[] {
-  const rotary = (['rotary_rough', 'rotary_finish'] as const).map((kind) => {
-    const project = rotaryOperationFixture('x', kind)
-    return { id: `synthetic/${kind}`, project, operationId: project.operations[0].id }
-  })
-  return [...rotary, ...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
+  return [...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
 }
 
 /**

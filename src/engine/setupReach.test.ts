@@ -17,6 +17,8 @@
 import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile, roundStock } from '../types/project'
 import type { Operation, Project, SketchFeature } from '../types/project'
 import { projectWithFeatures, withBottomSetup } from '../test/projectFixtures'
+import { rotaryOperationFixture } from '../test/rotaryOperationFixture'
+import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
 import { convertProjectUnits } from '../utils/units'
 import { featureReachFootprint, cutMoveZAtFeature } from './setupReachGeometry'
 import { operationCutRange, throughFeatureCoverage } from './setupReach'
@@ -186,3 +188,24 @@ equal(throughFeatureCoverage(onlyAround, 'tiny', new Map()), null, 'Around opera
 equal(operationCutRange(onlyAround, onlyAround.operations[0], { moves: [] }, 'tiny'), null, 'a block bar under an Around setup reports no reach, not a throw')
 const transposedAround: Project = { ...onlyAround, stock: roundStock(40, 180, 'y') }
 equal(operationCutRange(transposedAround, transposedAround.operations[0], { moves: [] }, 'tiny'), null, 'a transposed bar reports no reach, not a throw')
+
+// Review item 3: a rotary operation's points are already wrapped and follow the
+// model round the bar, so a single stock-Z reach would be made up. It reports
+// none; an ordinary Around operation keeps measuring the reach it always did
+// (issue #1015).
+{
+  const project = rotaryOperationFixture('x', 'rotary_finish')
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const operation = rotaryOperationFixture('x', kind).operations[0]
+    const result = computeOperationToolpath(project, operation)?.result
+    assert(result && result.moves.length > 0, `${kind} fixture generates motion`)
+    equal(operationCutRange(project, operation, result, 'model'), null, `${kind} reports no stock-Z reach`)
+  }
+  const pocket = {
+    ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'features', featureIds: ['sketch'] }, 0),
+    setupId: 'around',
+  }
+  const ordinary = computeOperationToolpath(project, pocket)?.result
+  assert(ordinary && ordinary.moves.length > 0, 'the ordinary Around pocket generates motion')
+  equal(operationCutRange(project, pocket, ordinary, 'sketch'), { min: 10, max: 12 }, 'an ordinary Around operation still measures its reach')
+}

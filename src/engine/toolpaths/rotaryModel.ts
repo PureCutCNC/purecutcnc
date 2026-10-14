@@ -17,10 +17,11 @@
 import { getStockBounds, roundStockCentre } from '../../types/project'
 import type { Clamp, RoundStock } from '../../types/project'
 import { convertLength } from '../../utils/units'
+import { minRenderHeight } from '../csg'
 import { toolSpacePoint } from '../rotaryFrame'
 import { chooseHeightMapCellSize, computeXYBounds, getCachedHeightMap, safeToolTipZAt } from './finishSurfaceParallel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import type { ToolpathWarning } from './warningCodes'
+import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
 export interface RotaryModelMesh {
   /** Project coordinates of the model as placed in the unturned bar. */
@@ -206,6 +207,103 @@ function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
   return bounds
 }
 
+/**
+ * One run of a pass: its cut points in traversal order, and whether the run
+ * touches the pass's first / last sample. Both generators cut a pass in runs --
+ * the rough where material is still standing at a layer, the finish where the
+ * model leaves the line over the centreline -- and the shared emitter below is
+ * the unit that links two runs or retracts between them.
+ */
+interface RotaryRun {
+  readonly points: readonly ToolpathPoint[]
+  readonly atStart: boolean
+  readonly atEnd: boolean
+}
+
+/**
+ * Emit one pass's runs, and say where the pass left the tool. A run that starts
+ * where the previous pass finished links to it -- a rise to the higher of the
+ * two points, a turn, and a drop, each its own `cut` move so a merged move can
+ * never lose one of the two angles. Every other run (and every later run of the
+ * same pass, where material may still stand above the next one) retracts to
+ * `safeZ`, moves over the run's first point and plunges, so the tool never
+ * traverses inside material.
+ */
+function emitRotaryRuns(
+  moves: ToolpathMove[],
+  here: ToolpathPoint | undefined,
+  runs: readonly RotaryRun[],
+  safeZ: number,
+  previousEndedAtEnd: boolean,
+): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
+  let current = here
+  let endedAtEnd = false
+  for (const run of runs) {
+    const first = run.points[0]
+    const canLink = current !== undefined && previousEndedAtEnd && run.atStart
+      && current.x === first.x && current.y === first.y
+    if (canLink && current) {
+      const high = Math.max(current.z, first.z)
+      if (high > current.z) moves.push({ kind: 'cut', from: current, to: { ...current, z: high } })
+      moves.push({ kind: 'cut', from: { ...current, z: high }, to: { ...first, z: high } })
+      if (high > first.z) moves.push({ kind: 'cut', from: { ...first, z: high }, to: first })
+    } else {
+      if (current) moves.push({ kind: 'rapid', from: current, to: { ...current, z: safeZ } })
+      // With no previous point the opening rapid goes from and to the same
+      // point, the way `pushRapidAndPlunge` opens: the tool is placed at safe
+      // height rather than ever read as starting buried at the cutting tip.
+      const entry = current ?? first
+      moves.push({ kind: 'rapid', from: { ...entry, z: safeZ }, to: { ...first, z: safeZ } })
+      moves.push({ kind: 'plunge', from: { ...first, z: safeZ }, to: first })
+    }
+    for (let i = 1; i < run.points.length; i++) {
+      moves.push({ kind: 'cut', from: run.points[i - 1], to: run.points[i] })
+    }
+    current = run.points[run.points.length - 1]
+    endedAtEnd = run.atEnd
+  }
+  return { here: current, endedAtEnd }
+}
+
+/**
+ * Refuse a job whose sample count would be unbounded, and a bar with no surface
+ * to cut. `stepover` becomes the angle step (`ceil(2 pi R / stepover)` passes)
+ * and `sampleSpacing` the along interval count (`ceil(span / sampleSpacing)`);
+ * flooring either at 1e-9 rather than refusing it asks for about 6e10 samples
+ * and hangs the worker mid-generation. A bar with no positive radius has no
+ * centreline the wrapped points could be placed on.
+ */
+function rotaryRefusal(stock: RoundStock, params: RotaryFinishParams): ToolpathWarningCode | null {
+  const radius = stock.thickness / 2
+  if (!(radius > 0) || !Number.isFinite(radius)) return 'aroundStockMismatch'
+  if (!(params.stepover > 0) || !Number.isFinite(params.stepover)) return 'operationStepoverRatioRange'
+  if (!(params.sampleSpacing > 0) || !Number.isFinite(params.sampleSpacing)) return 'operationStepoverRatioRange'
+  return null
+}
+
+/**
+ * True when any vertex of the target mesh lies outside the bar: farther from
+ * its axis than the bar's radius, or past one of the bar's ends. The sampler
+ * only sees the bar's own surface there, so those parts are machined as air.
+ * `tolerance` is the 3D view's minimum render height, so a vertex the view
+ * already draws on the surface is on it, not outside it.
+ */
+function modelOutsideBar(mesh: RotaryModelMesh, stock: RoundStock, tolerance: number): boolean {
+  const bounds = getStockBounds(stock)
+  const radius = stock.thickness / 2
+  const centre = roundStockCentre(stock)
+  const minAlong = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const maxAlong = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    const along = stock.axis === 'x' ? mesh.positions[i] : mesh.positions[i + 1]
+    const across = stock.axis === 'x' ? mesh.positions[i + 1] : mesh.positions[i]
+    const up = mesh.positions[i + 2]
+    if (along < minAlong - tolerance || along > maxAlong + tolerance) return true
+    if (Math.hypot(across - centre, up - radius) > radius + tolerance) return true
+  }
+  return false
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -218,6 +316,12 @@ function rotaryTargets(
 ): { angles: number[]; along: number[]; tips: number[][]; stopped: boolean } {
   const radius = stock.thickness / 2
   const stockToLeave = params.stockToLeave
+  // One warning per operation, however many vertices stick out: the user can
+  // only move the model or pick a bigger bar, and the sampler's answer is the
+  // same either way.
+  if (modelOutsideBar(mesh, stock, minRenderHeight(tool.units))) {
+    warnings.push({ code: 'rotaryModelOutsideBar', params: { operation: operationId } })
+  }
   // A ball's centre is where the tool's radius meets the model, so enlarging the
   // radius by the stock is the only way to move the whole contact outward
   // normal to the surface; adding the radius back at the tip is what turns the
@@ -260,8 +364,11 @@ function rotaryTargets(
       }
     }
   }
+  // A `NaN` sample (no model under the tool) stays `NaN`: the finish treats it
+  // as "do not cut" and the rough as "remove down to the centreline". Every
+  // finite value is floored at the centreline and capped at the bar's surface.
   const tips = sampling.tipRadius.map((row) => Array.from(row, (raw) =>
-    Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), radius) : 0))
+    Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), radius) : NaN))
   return { angles, along, tips, stopped: false }
 }
 
@@ -282,6 +389,14 @@ function rotaryTargets(
  * mill has no ball centre to move, so this is the enlargement's approximation
  * for it. A call with zero stock is bit-identical to the sampler's own value,
  * which is the contract every caller of the sampler relies on.
+ *
+ * A `NaN` sample -- no model under the tool -- is not cut. The finish follows
+ * the model, and taking waste off an off-axis part is the rough's job, so each
+ * pass is cut as runs of finite samples: between runs, and from one pass to the
+ * next when they do not join at the same bar end, the tool retracts to
+ * `safeRadius`, moves there and plunges. A pass with no finite sample emits
+ * nothing. Cutting the centreline instead would be full-width, full-depth
+ * slotting with a finishing tool, silently.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -300,6 +415,10 @@ export function generateRotaryFinish(
       bounds: null,
     }
   }
+  const refusal = rotaryRefusal(stock, params)
+  if (refusal) {
+    return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
+  }
   const radius = stock.thickness / 2
   const centre = roundStockCentre(stock)
   if (params.alongEnd <= params.alongStart) {
@@ -308,8 +427,8 @@ export function generateRotaryFinish(
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   const { angles, along } = sampling
-  const passes = angles.length
   const tolerance = convertLength(0.001, 'mm', tool.units)
+  const safeZ = radius + params.safeRadius
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
   // mirrored on a return pass. Everything that reads a height must use the same
@@ -324,56 +443,29 @@ export function generateRotaryFinish(
     : { x: centre, y: alongPosition, z: radius + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
   const moves: ToolpathMove[] = []
-  const firstTip = tipAt(0, 0)
-  const firstAlong = alongAt(0, 0)
-  // Rule 7: position the tool over the first sample at safeRadius, then plunge
-  // to the first tip. The opening positioning move goes from and to the same
-  // point -- the way `pushRapidAndPlunge` opens when there is no previous
-  // position, so the tool is placed at safe height rather than ever read as
-  // starting buried at the cutting tip. The retract at the end is its mirror.
-  moves.push({
-    kind: 'rapid',
-    from: point(firstAlong, params.safeRadius, angles[0]),
-    to: point(firstAlong, params.safeRadius, angles[0]),
-  })
-  moves.push({
-    kind: 'plunge',
-    from: point(firstAlong, params.safeRadius, angles[0]),
-    to: point(firstAlong, firstTip, angles[0]),
-  })
-  for (let k = 0; k < passes; k++) {
-    // Where this pass starts: right after the previous link, or the entry.
-    let here = k === 0 ? firstTip : tipAt(k, 0)
-    if (k > 0) {
-      // The link is emitted before the pass so both passes keep their own
-      // angle: a merged move that turned would lose one of them. Its height is
-      // the higher of the two tips at this end, reached by a rise, a turn, and
-      // a drop -- whichever of the three is non-zero.
-      const previousAngle = angles[k - 1]
-      const angle = angles[k]
-      const previousTip = tipAt(k - 1, along.length - 1)
-      const currentTip = tipAt(k, 0)
-      const endAlong = alongAt(k - 1, along.length - 1)
-      const high = Math.max(previousTip, currentTip)
-      if (high > previousTip) moves.push({ kind: 'cut', from: point(endAlong, previousTip, previousAngle), to: point(endAlong, high, previousAngle) })
-      moves.push({ kind: 'cut', from: point(endAlong, high, previousAngle), to: point(endAlong, high, angle) })
-      if (high > currentTip) moves.push({ kind: 'cut', from: point(endAlong, high, angle), to: point(endAlong, currentTip, angle) })
-      here = currentTip
+  let here: ToolpathPoint | undefined
+  let previousEndedAtEnd = false
+  for (let k = 0; k < angles.length; k++) {
+    // A `NaN` sample has no model under the tool: the finish follows the model,
+    // and removing waste is the rough's job, so it is not cut. Each pass is the
+    // runs of finite samples; a pass with none emits nothing at all.
+    const runs: RotaryRun[] = []
+    let i = 0
+    while (i < along.length) {
+      if (!Number.isFinite(tipAt(k, i))) { i++; continue }
+      const start = i
+      while (i + 1 < along.length && Number.isFinite(tipAt(k, i + 1))) i++
+      const end = i
+      const points: ToolpathPoint[] = []
+      for (let j = start; j <= end; j++) points.push(point(alongAt(k, j), tipAt(k, j), angles[k]))
+      runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
+      i++
     }
-    for (let i = 0; i + 1 < along.length; i++) {
-      const next = tipAt(k, i + 1)
-      moves.push({ kind: 'cut', from: point(alongAt(k, i), here, angles[k]), to: point(alongAt(k, i + 1), next, angles[k]) })
-      here = next
-    }
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, previousEndedAtEnd)
+    here = emitted.here
+    previousEndedAtEnd = emitted.endedAtEnd
   }
-  const lastAngle = angles[passes - 1]
-  const lastAlong = alongAt(passes - 1, along.length - 1)
-  const lastTip = tipAt(passes - 1, along.length - 1)
-  moves.push({
-    kind: 'rapid',
-    from: point(lastAlong, lastTip, lastAngle),
-    to: point(lastAlong, params.safeRadius, lastAngle),
-  })
+  if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
   const merged = mergeCollinearCuts(moves, tolerance)
   return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
 }
@@ -402,8 +494,15 @@ export function rotaryAlongRange(
   const chuck = clamps.find((clamp) => clamp.type === 'chuck')
   const chuckBounds = chuck && clampEnds(chuck)
   const chuckLower = !chuckBounds || (chuckBounds.min + chuckBounds.max) / 2 <= (lower + upper) / 2
-  let start = lower + (chuckLower ? supports.chuckEnd : supports.tailEnd)
-  let end = upper - (chuckLower ? supports.tailEnd : supports.chuckEnd)
+  const supportAtStart = chuckLower ? supports.chuckEnd : supports.tailEnd
+  const supportAtEnd = chuckLower ? supports.tailEnd : supports.chuckEnd
+  // The tool's side must not enter a support either, so a support length is
+  // kept clear by the tool's radius as well as by its own. A support of zero
+  // means "no support": the model's own extent still limits the range, and
+  // nothing here reserves a radius for a support that does not exist.
+  const clearance = (support: number): number => support > 0 ? support + tool.radius : 0
+  let start = lower + clearance(supportAtStart)
+  let end = upper - clearance(supportAtEnd)
   for (const clamp of clamps) {
     if (clamp.type !== 'chuck' && clamp.type !== 'tailstock') continue
     const edge = clampEnds(clamp)
@@ -435,6 +534,10 @@ export function generateRotaryRough(
   if (tool.type !== 'ball_endmill' && tool.type !== 'flat_endmill') {
     return { operationId, moves: [], warnings: [{ code: 'rotaryToolUnsupported', params: { operation: operationId } }], bounds: null }
   }
+  const refusal = rotaryRefusal(stock, params)
+  if (refusal) {
+    return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
+  }
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
@@ -444,9 +547,15 @@ export function generateRotaryRough(
   const warnings: ToolpathWarning[] = []
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
-  const { angles, along, tips } = sampling
+  // A `NaN` sample means "no model under the tool", which for the rough is the
+  // centreline: it removes the layer down to the axis there. The finish does
+  // the opposite -- a `NaN` sample is not cut -- because only the rough exists
+  // to take waste off.
+  const tips = sampling.tips.map((row) => row.map((tip) => Number.isFinite(tip) ? tip : 0))
+  const { angles, along } = sampling
   const radius = stock.thickness / 2
   const centre = roundStockCentre(stock)
+  const safeZ = radius + params.safeRadius
   let lowest = radius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((radius - lowest) / params.stepdown)
@@ -455,14 +564,10 @@ export function generateRotaryRough(
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
     ? { x: position, y: centre, z: radius + tip, a: angle }
     : { x: centre, y: position, z: radius + tip, a: angle }
-  const moveTo = (kind: ToolpathMove['kind'], to: ToolpathPoint): void => {
-    moves.push({ kind, from: here ?? to, to })
-    here = to
-  }
   for (let layer = 1; layer <= layers; layer++) {
     const previousRadius = radius - (layer - 1) * params.stepdown
     const layerRadius = Math.max(lowest, radius - layer * params.stepdown)
-    let previousPass = -2
+    // A new layer never links to the previous one, however its last pass ended.
     let previousEndedAtEnd = false
     for (let pass = 0; pass < angles.length; pass++) {
       const angle = angles[pass] + (layer - 1) * 360
@@ -472,33 +577,24 @@ export function generateRotaryRough(
         const index = indexAt(i)
         return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
       }
+      const runs: RotaryRun[] = []
       let i = 0
       while (i < along.length) {
         if (!needsCut(i)) { i++; continue }
         const start = i
         while (i + 1 < along.length && needsCut(i + 1)) i++
         const end = i
-        const first = at(start)
-        const canLink = here && previousPass === pass - 1 && previousEndedAtEnd && start === 0
-          && here.x === first.x && here.y === first.y
-        if (canLink && here) {
-          const high = Math.max(here.z, first.z)
-          if (high > here.z) moveTo('cut', { ...here, z: high })
-          moveTo('cut', { ...first, z: high })
-          if (high > first.z) moveTo('cut', first)
-        } else {
-          if (here) moveTo('rapid', { ...here, z: radius + params.safeRadius })
-          moveTo('rapid', { ...first, z: radius + params.safeRadius })
-          moveTo('plunge', first)
-        }
-        for (let j = start + 1; j <= end; j++) moveTo('cut', at(j))
-        previousPass = pass
-        previousEndedAtEnd = end === along.length - 1
+        const points: ToolpathPoint[] = []
+        for (let j = start; j <= end; j++) points.push(at(j))
+        runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, previousEndedAtEnd)
+      here = emitted.here
+      previousEndedAtEnd = emitted.endedAtEnd
     }
   }
-  if (here) moveTo('rapid', { ...here, z: radius + params.safeRadius })
+  if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
   const merged = mergeCollinearCuts(moves, convertLength(0.001, 'mm', tool.units))
   return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
 }

@@ -411,8 +411,13 @@ export function defaultOperationForTarget(
 export function fallbackOperationTarget(authoritativeProject: Project, kind: OperationKind): OperationTarget {
   if (kind === 'plasma_profile') return { source: 'features', featureIds: [] }
   if (isRotaryOperationKind(kind)) {
-    return { source: 'features', featureIds: authoritativeProject.features.filter((feature) =>
-      authoritativeProject.featureDefinitions[feature.definitionId]?.kind === 'stl').map((feature) => feature.id) }
+    // The same rule validity, the adapter and the setup target judge enforce: an
+    // imported model marked `operation: 'model'`. A plain `stl` feature (an
+    // imported silhouette used as a 2D shape) is not a rotary target (#1015).
+    return { source: 'features', featureIds: authoritativeProject.features.filter((feature) => {
+      const definition = authoritativeProject.featureDefinitions[feature.definitionId]
+      return definition?.kind === 'stl' && definition.operation === 'model'
+    }).map((feature) => feature.id) }
   }
   const project = resolveProject(authoritativeProject)
   if (kind === 'drilling') {
