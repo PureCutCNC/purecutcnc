@@ -514,6 +514,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   // (issue #395 review): a spec can then assert the wrap is really drawn
   // rather than regenerating the path beside it.
   const [toolpathStats, setToolpathStats] = useState<ToolpathOverlayStats>({ segments: 0, minZ: null, maxZ: null })
+  // The model mesh's own triangle count, published for the Around 3D smoke
+  // (issue #395): `null` when the scene built no model at all.
+  const [modelTriangles, setModelTriangles] = useState<number | null>(null)
   const zoomWindowActiveRef = useRef(zoomWindowActive)
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
@@ -857,6 +860,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         }
 
         clearRenderedObjects(scene)
+        setModelTriangles(
+          nextSceneObjects.modelMesh
+            ? nextSceneObjects.modelMesh.geometry.getAttribute('position').count / 3
+            : null,
+        )
 
         scene.add(nextSceneObjects.stockMesh)
         scene.add(nextSceneObjects.stockWireframe)
@@ -1153,6 +1161,9 @@ useImperativeHandle(ref, () => ({
       data-toolpath-segments={toolpathStats.segments}
       data-toolpath-min-z={toolpathStats.minZ === null ? undefined : toolpathStats.minZ.toFixed(3)}
       data-toolpath-max-z={toolpathStats.maxZ === null ? undefined : toolpathStats.maxZ.toFixed(3)}
+      // The model mesh's triangle count, absent when there is no model (issue
+      // #395 review of the Around model).
+      data-model-triangles={modelTriangles === null ? undefined : modelTriangles}
     >
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <WebglStatusOverlay status={webglStatus} view="view3d" />
