@@ -108,6 +108,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.error.selectFolder': 'Wählen Sie mindestens einen Ordner zum Importieren, oder aktivieren Sie „Rohteil aus Quelle importieren".',
   'dialogs.importGeometry.error.noFeaturesImported': 'Aus den ausgewählten Ordnern wurden keine Features importiert.',
   'dialogs.importGeometry.error.noGeometryFound': 'Keine importierbare Geometrie in der ausgewählten Datei gefunden.',
+  'dialogs.importGeometry.error.modelOnAround': 'Ein 3D-Modell kann nicht auf der Rundum-Fläche platziert werden. Wechseln Sie zu Oben, um es zu importieren.',
   'dialogs.importGeometry.error.importFailed': 'Geometriedatei konnte nicht importiert werden.',
   'dialogs.importGeometry.error.stepTolerance': 'Die Oberflächentoleranz muss eine positive Zahl sein.',
   'dialogs.importGeometry.error.stepFileTooLarge': 'STEP-Dateien über {limit} MB können nicht importiert werden.',

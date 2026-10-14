@@ -131,6 +131,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.label.setupNotes': '装夹备注',
   'booklet.value.setupTop': '顶面朝上',
   'booklet.value.setupBottom': '底面朝上，绕 {axis} 轴翻转',
+  'booklet.value.setupAround': '绕棒料加工，棒料沿 {axis} 方向',
   'booklet.value.registrationNone': '未声明',
   'booklet.registration.dowel': '定位销',
   'booklet.registration.fence': '靠山',

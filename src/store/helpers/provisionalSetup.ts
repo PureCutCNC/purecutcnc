@@ -29,11 +29,13 @@
 
 import { orientationForFace, setupFace } from '../../engine/setupOrientation'
 import { uniqueName } from '../../import/normalize'
-import type { MachiningSetup, Project, SetupFace } from '../../types/project'
+import { isRoundStock } from '../../types/project'
+import type { MachiningSetup, Project, FlatFace, SetupFace } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { syncProjectSetups } from './setups'
+import { aroundUnavailableReason } from './activeFace'
 
-const PROVISIONAL_SETUPS: Readonly<Record<SetupFace, MachiningSetup>> = {
+const PROVISIONAL_SETUPS: Readonly<Record<FlatFace, MachiningSetup>> = {
   top: {
     id: 'provisional-top',
     name: 'Top',
@@ -54,14 +56,30 @@ const PROVISIONAL_SETUPS: Readonly<Record<SetupFace, MachiningSetup>> = {
   },
 }
 
+const aroundDefaults = new Map<'x' | 'y', MachiningSetup>()
+
 /** The setup a face is seen through until the project has one of its own (Bottom: flipped about X). */
-export function defaultSetupForFace(face: SetupFace): MachiningSetup {
-  return PROVISIONAL_SETUPS[face]
+export function defaultSetupForFace(face: FlatFace): MachiningSetup
+export function defaultSetupForFace(face: SetupFace, project: Partial<Pick<Project, 'stock'>>): MachiningSetup
+export function defaultSetupForFace(face: SetupFace, project?: Partial<Pick<Project, 'stock'>>): MachiningSetup {
+  if (face !== 'around') return PROVISIONAL_SETUPS[face]
+  const axis = project?.stock && isRoundStock(project.stock) ? project.stock.axis : 'x'
+  const cached = aroundDefaults.get(axis)
+  if (cached) return cached
+  const setup: MachiningSetup = {
+    ...PROVISIONAL_SETUPS.top,
+    id: provisionalSetupId('around'),
+    name: 'Around',
+    kind: 'around',
+    orientation: orientationForFace('around', axis),
+  }
+  aroundDefaults.set(axis, setup)
+  return setup
 }
 
 /** The id `activeSetupId` holds while the workspace looks at `face` without a setup for it. */
 export function provisionalSetupId(face: SetupFace): string {
-  return PROVISIONAL_SETUPS[face].id
+  return face === 'around' ? 'provisional-around' : PROVISIONAL_SETUPS[face].id
 }
 
 /**
@@ -71,9 +89,10 @@ export function provisionalSetupId(face: SetupFace): string {
  * store selector returning it stays stable.
  */
 export function provisionalSetupFor(
-  project: Pick<Project, 'setups' | 'activeSetupId'>,
+  project: Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock'>>,
 ): MachiningSetup | undefined {
   if (project.setups.some((setup) => setup.id === project.activeSetupId)) return undefined
+  if (project.activeSetupId === provisionalSetupId('around')) return defaultSetupForFace('around', project)
   return Object.values(PROVISIONAL_SETUPS).find((setup) => setup.id === project.activeSetupId)
 }
 
@@ -87,7 +106,8 @@ export function realizeProvisionalSetup(
   id: string = project.activeSetupId,
 ): { project: Project; id: string } {
   const provisional = provisionalSetupFor(project)
-  if (!provisional || provisional.id !== id) return { project, id }
+  if (!provisional || provisional.id !== id
+    || (provisional.kind === 'around' && aroundUnavailableReason(project) !== null)) return { project, id }
   const realId = nextUniqueGeneratedId(project, 'su')
   const setup: MachiningSetup = {
     ...provisional,
@@ -158,6 +178,7 @@ export function syncWorkspaceSetups(previous: Project, next: Project): Project {
   const real = next.setups.find((setup) => setupFace(setup) === face)
   if (real) return syncProjectSetups({ ...next, activeSetupId: real.id })
   if (!restoredSnapshots.has(next) && createsContentFor(previous, next, provisional)) {
+    if (provisional.kind === 'around' && aroundUnavailableReason(next) !== null) return previous
     return syncProjectSetups(realizeProvisionalSetup(next).project)
   }
   const synced = syncProjectSetups(next)

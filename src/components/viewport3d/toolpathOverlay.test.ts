@@ -21,13 +21,18 @@
  */
 
 import type { ToolpathMove } from '../../engine/toolpaths/types'
+import { roundStock, type RoundStock, type Stock } from '../../types/project'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
+  displayToolpathLayerBuckets,
   moveMatchesZFilter,
   movesForToolpathLayer,
   splitMovesIntoLayers,
+  stockSpaceMoves,
+  stockSpaceToolpath,
+  toolpathBoundsOfMoves,
   toolpathLayerBuckets,
   toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
@@ -323,5 +328,250 @@ function testMutedOverlayOpacity(): void {
 }
 
 testMutedOverlayOpacity()
+
+// ── Wrapped Around toolpaths (issue #395) ─────────────────────────────
+//
+// A wrapped point carries `a`, the angle the bar is turned to, and its XYZ is
+// the tool over the bar's centreline. `stockSpacePoint` turns it into the
+// point of the unturned bar under the tool, which is what the 3D view draws;
+// a move whose angle changes is a curve on the bar and is subdivided.
+
+// A 40 mm bar 200 mm long along x, and a 2 in bar 8 in long along y.
+const AROUND_BAR_X = roundStock(40, 200, 'x', { x: 10, y: 30 })
+const AROUND_BAR_Y = roundStock(2, 8, 'y', { x: 3, y: 5 })
+
+/** The bar's centreline in the tool frame. */
+function barCentre(bar: RoundStock): number {
+  return bar.axis === 'x' ? bar.profile.start.y + bar.thickness / 2 : bar.profile.start.x + bar.thickness / 2
+}
+
+/** A wrapped tool point: on the centreline, `radius` from the axis, at `a`. */
+function wrappedToolPoint(bar: RoundStock, along: number, radius: number, a: number) {
+  return bar.axis === 'x'
+    ? { x: along, y: barCentre(bar), z: bar.thickness / 2 + radius, a }
+    : { x: barCentre(bar), y: along, z: bar.thickness / 2 + radius, a }
+}
+
+/** Distance of a stock-space point from the bar's axis. */
+function distanceFromBarAxis(bar: RoundStock, point: { x: number; y: number; z: number }): number {
+  const centre = barCentre(bar)
+  const height = bar.thickness / 2
+  return bar.axis === 'x'
+    ? Math.hypot(point.y - centre, point.z - height)
+    : Math.hypot(point.x - centre, point.z - height)
+}
+
+function testWrappedTurningMoveFollowsTheBar(): void {
+  console.log('Testing a turning Around move is subdivided around the bar...')
+  for (const [name, bar] of [['x', AROUND_BAR_X], ['y', AROUND_BAR_Y]] as const) {
+    // A tool held 4 from the axis from a = 0 to a = 180: straight down the bar
+    // in flat space, a half circle through the underside on the bar.
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: wrappedToolPoint(bar, 60, 4, 0),
+      to: wrappedToolPoint(bar, 60, 4, 180),
+    }
+    const drawn = stockSpaceMoves([move], bar)
+
+    assert(drawn.length >= 36, `${name}: 180° draws as at least 36 pieces of 5°, got ${drawn.length}`)
+    assert(drawn.length === 36, `${name}: 180° draws as exactly 36 pieces, got ${drawn.length}`)
+    for (const piece of drawn) {
+      assert(piece.kind === 'cut', `${name}: a piece keeps its move kind`)
+      assert(
+        Math.abs(distanceFromBarAxis(bar, piece.to) - 4) < 1e-9,
+        `${name}: every drawn end stays at the tool's radius`,
+      )
+    }
+    const last = drawn[drawn.length - 1].to
+    assert(last.z < bar.thickness / 2, `${name}: the last end is below the centreline — on the underside`)
+    for (let index = 1; index < drawn.length; index += 1) {
+      assert(
+        Math.abs(drawn[index].from.x - drawn[index - 1].to.x) < 1e-12
+        && Math.abs(drawn[index].from.y - drawn[index - 1].to.y) < 1e-12
+        && Math.abs(drawn[index].from.z - drawn[index - 1].to.z) < 1e-12,
+        `${name}: piece ${index} starts where the last one ended`,
+      )
+    }
+    assert(!('a' in drawn[0].from), `${name}: the drawn line carries stock points, not tool points`)
+  }
+}
+
+function testConstantAngleAndAngleFreeMoves(): void {
+  console.log('Testing a constant-angle move and an angle-free path draw as they are...')
+  // Plunging along the bar at a fixed angle is a straight line in stock space.
+  const plunge: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(AROUND_BAR_X, 60, 4, 90),
+    to: wrappedToolPoint(AROUND_BAR_X, 60, 2, 90),
+  }
+  const drawnPlunge = stockSpaceMoves([plunge], AROUND_BAR_X)
+  assert(drawnPlunge.length === 1, 'a move that does not turn is not split')
+  assert(Math.abs(distanceFromBarAxis(AROUND_BAR_X, drawnPlunge[0].to) - 2) < 1e-9, 'its end is at its own radius')
+
+  const flatMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 12, y: 44, z: 42 }, to: { x: 20, y: 44, z: 42 } },
+    { kind: 'cut', from: { x: 20, y: 44, z: 37 }, to: { x: 80, y: 44, z: 37 }, feedScale: 0.5 },
+  ]
+  const flatToolpath = { operationId: 'op', moves: flatMoves, warnings: [], bounds: toolpathBoundsOfMoves(flatMoves) }
+  const drawnFlat = stockSpaceToolpath(flatToolpath, AROUND_BAR_X)
+  assert(drawnFlat === flatToolpath, 'an angle-free toolpath keeps its own object')
+  assert(drawnFlat.moves === flatMoves, 'and its own move array, so its line data cannot change')
+  assert(JSON.stringify(buildToolpathLinePositionChunks(drawnFlat.moves)) === JSON.stringify(buildToolpathLinePositionChunks(flatMoves)), 'and the same chunk data')
+
+  const block: Stock = {
+    profile: AROUND_BAR_X.profile, thickness: AROUND_BAR_X.thickness, material: AROUND_BAR_X.material,
+    color: AROUND_BAR_X.color, visible: AROUND_BAR_X.visible, origin: AROUND_BAR_X.origin,
+  }
+  const turning: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(AROUND_BAR_X, 60, 4, 0),
+    to: wrappedToolPoint(AROUND_BAR_X, 60, 4, 90),
+  }
+  const turningToolpath = { operationId: 'op', moves: [turning], warnings: [], bounds: toolpathBoundsOfMoves([turning]) }
+  assert(stockSpaceToolpath(turningToolpath, block) === turningToolpath, 'a block has no bar to wrap onto')
+}
+
+function testWrappedToolpathIsADrawnCopyWithItsOwnBounds(): void {
+  console.log('Testing a wrapped toolpath is a drawn copy with its own bounds...')
+  const move: ToolpathMove = { kind: 'cut', from: wrappedToolPoint(AROUND_BAR_X, 60, 4, 0), to: wrappedToolPoint(AROUND_BAR_X, 60, 4, 90) }
+  const toolpath = { operationId: 'op', moves: [move], warnings: [], bounds: toolpathBoundsOfMoves([move]) }
+  const drawn = stockSpaceToolpath(toolpath, AROUND_BAR_X)
+
+  assert(drawn !== toolpath, 'the drawn path is a copy')
+  assert(drawn.moves !== toolpath.moves, 'with its own move array')
+  assert(drawn.operationId === 'op', 'the operation is carried through')
+  assert(drawn.moves.length === 18, `90° draws as 18 pieces, got ${drawn.moves.length}`)
+  assert(drawn.bounds !== null, 'the drawn copy has bounds')
+  const minZ = Math.min(...drawn.moves.map((piece) => piece.to.z))
+  assert(drawn.bounds!.minZ === minZ, 'its bounds are measured from what is drawn')
+  assert(toolpath.moves.length === 1, 'and the generated toolpath is untouched')
+}
+
+testWrappedTurningMoveFollowsTheBar()
+testConstantAngleAndAngleFreeMoves()
+testWrappedToolpathIsADrawnCopyWithItsOwnBounds()
+
+// ── The 3D overlay's own layer split (issue #395) ─────────────────────
+//
+// The tests above cover `stockSpaceMoves`; the overlay never called it
+// directly — it bucketed `display.toolpath ?? display`, the raw generated
+// path, so a wrapped pass was drawn unwrapped (one straight line over the bar).
+// `displayToolpathLayerBuckets` is the step the overlay now calls, and this is
+// the only test of what the overlay actually draws.
+
+function testDisplayBucketsFollowTheWrappedMoves(): void {
+  console.log('Testing the drawn layer split follows the wrapped display moves...')
+  // A cut one and a half times round the bar (540°) at a constant 4 mm from
+  // its axis: at 5° a piece that is 108 pieces, not the one generated move.
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(AROUND_BAR_X, 60, 4, 0),
+    to: wrappedToolPoint(AROUND_BAR_X, 60, 4, 540),
+  }
+  const toolpath = { operationId: 'wrapped', moves: [move], warnings: [], bounds: toolpathBoundsOfMoves([move]) }
+  const buckets = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  const cuts = buckets.cuts
+
+  assert(cuts.length >= 108, `540° at 5° a piece is at least 108 pieces, got ${cuts.length}`)
+  assert(cuts.every((piece) => piece.kind === 'cut'), 'every piece keeps the move kind')
+  for (const piece of cuts) {
+    assert(
+      Math.abs(distanceFromBarAxis(AROUND_BAR_X, piece.to) - 4) < 1e-9,
+      `every drawn piece end stays at the cut radius from the bar axis, got ${distanceFromBarAxis(AROUND_BAR_X, piece.to)}`,
+    )
+  }
+  const centrelineHeight = AROUND_BAR_X.thickness / 2
+  assert(cuts.some((piece) => piece.to.z < centrelineHeight), 'some piece ends are on the underside of the bar')
+
+  // The generated path holds the tool over the centreline the whole way round,
+  // so its across coordinate for a = 90 is the raw centreline. The drawn piece
+  // that ends at a = 90 — the 18th 5° piece — must sit on the bar's surface
+  // instead. This is the assertion the raw-path buckets cannot satisfy.
+  const rawAcrossAt90 = move.from.y
+  assert(cuts.length > 17, `expected a piece ending at a = 90, got ${cuts.length} pieces`)
+  assert(
+    Math.abs(cuts[17].to.y - rawAcrossAt90) > 1e-9,
+    `the piece ending at a = 90 must leave the raw centre ${rawAcrossAt90}, got ${cuts[17].to.y}`,
+  )
+
+  // Cached on the display object's identity, so a scene rebuild gets the very
+  // same arrays instead of redoing the split.
+  const again = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  assert(again === buckets, 'a repeated call returns the very same buckets object')
+  for (const key of ALL_LAYER_KEYS) {
+    assert(again[key] === buckets[key], `layer ${key}: the cached array must be reused, not rebuilt`)
+  }
+}
+
+function testDisplayBucketsOfAnAngleFreePathAreUnchanged(): void {
+  console.log('Testing an angle-free toolpath splits exactly as it does today...')
+  const moves = mixedMoves()
+  const toolpath = { operationId: 'flat', moves, warnings: [], bounds: toolpathBoundsOfMoves(moves) }
+  const today = toolpathLayerBuckets(toolpath)
+  const drawn = displayToolpathLayerBuckets(toolpath, AROUND_BAR_X)
+  assert(drawn === today, 'an angle-free toolpath keeps the same buckets object')
+  for (const key of ALL_LAYER_KEYS) {
+    assert(drawn[key] === today[key], `layer ${key}: the same array object, so its line data cannot change`)
+  }
+}
+
+/**
+ * The level filter and the retract split decide on the **generated** move, not
+ * the drawn piece (issue #395 review). A wrapped cut at machining level 36
+ * draws at stock Z 36, 20 and 4 around one turn, so filtering the pieces would
+ * keep only a sliver of it; a retract at a = 180 ascends in the tool frame
+ * while its drawn Z falls, so the pieces would file it as an ordinary rapid.
+ *
+ * Mutation killed: filtering after mapping again. `at36.cuts` would then hold
+ * the one piece at Z 36 instead of the whole 72-piece turn, and `rapids` would
+ * hold the retract.
+ */
+function testDisplayBucketsChoosePiecesByGeneratedLevel(): void {
+  console.log('Testing the drawn buckets are chosen by the generated move (issue #395 review)...')
+  const bar = AROUND_BAR_X
+  // A cut 16 mm from the axis is at machining level Z36 on a Ø40 bar, and a
+  // 360° sweep is a full turn of 5° pieces.
+  const cut: ToolpathMove = {
+    kind: 'cut',
+    from: wrappedToolPoint(bar, 60, 16, 0),
+    to: wrappedToolPoint(bar, 60, 16, 360),
+  }
+  // A radial retract at a = 180: the tool rises away from the axis, which is
+  // downwards in stock space because it is under the bar.
+  const retract: ToolpathMove = {
+    kind: 'rapid',
+    from: wrappedToolPoint(bar, 60, 4, 180),
+    to: wrappedToolPoint(bar, 60, 14, 180),
+  }
+  const moves = [cut, retract]
+  const toolpath = { operationId: 'wrapped', moves, warnings: [], bounds: toolpathBoundsOfMoves(moves) }
+
+  const unlevelled = displayToolpathLayerBuckets(toolpath, bar)
+  assert(unlevelled.retractions.length === 1, `a retract under the bar is a retraction, got ${unlevelled.retractions.length}`)
+  assert(unlevelled.rapids.length === 0, `and not an ordinary rapid, got ${unlevelled.rapids.length}`)
+
+  const at36 = displayToolpathLayerBuckets(toolpath, bar, 36)
+  assert(at36.cuts.length >= 72, `a 360° cut at level 36 draws its whole turn (>= 72 pieces), got ${at36.cuts.length}`)
+  for (const piece of at36.cuts) {
+    assert(
+      Math.abs(distanceFromBarAxis(bar, piece.to) - 16) < 1e-9,
+      `every piece stays at the cut radius, got ${distanceFromBarAxis(bar, piece.to)}`,
+    )
+  }
+  // The retract's generated Z runs 24→34, so level 36 is not its level.
+  assert(at36.retractions.length === 0 && at36.rapids.length === 0, 'the retract is not drawn on the cut level')
+
+  const at30 = displayToolpathLayerBuckets(toolpath, bar, 30)
+  assert(at30.cuts.length === 0, `a level the cut never reaches draws no cut, got ${at30.cuts.length}`)
+
+  // Cached per level, so a scene rebuild gets the same buckets, not a refilter.
+  const again = displayToolpathLayerBuckets(toolpath, bar, 36)
+  assert(again === at36, 'the same level returns the very same buckets object')
+  assert(again.cuts === at36.cuts, 'and the very same cut array')
+}
+
+testDisplayBucketsFollowTheWrappedMoves()
+testDisplayBucketsOfAnAngleFreePathAreUnchanged()
+testDisplayBucketsChoosePiecesByGeneratedLevel()
 
 console.log('toolpathOverlay tests passed')

@@ -17,6 +17,8 @@
 import { withCompatibleOperationTool } from '../toolPolicy'
 import {
   defaultOrigin,
+  isAroundSetup,
+  isRoundStock,
   defaultTopSetup,
   type FeatureDefinition,
   type FeatureFolder,
@@ -234,10 +236,27 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       : convertProjectUnits(input.sourceProject, currentProject.meta.units)
 
   // 2. Identify features inside selected folders.
+  //
+  // Around content is imported only onto a bar it can be cut on (issue #395):
+  // its features store the unrolled sheet's coordinates and its operations
+  // keep the setup they were made for, so an imported Around feature on a bar
+  // lying along another axis (or on a block) would have its along-the-bar
+  // travel silently turned into rotation. Never re-axis: leave that content
+  // out, with a warning, and merge the rest of the source as before.
+  const sourceAroundSetup = (sourceProject.setups ?? []).find(isAroundSetup)
+  const aroundImportable = sourceAroundSetup !== undefined
+    && isRoundStock(currentProject.stock)
+    && currentProject.stock.axis === sourceAroundSetup.orientation.axis
+  let aroundLeftOut = 0
+
   const sourceFolderById = new Map(sourceProject.featureFolders.map((f) => [f.id, f]))
   const importedFeatures: FeatureInstance[] = []
   for (const feature of sourceProject.features) {
     if (feature.folderId && selectedFolderIdSet.has(feature.folderId)) {
+      if (feature.authoringFace === 'around' && !aroundImportable) {
+        aroundLeftOut += 1
+        continue
+      }
       importedFeatures.push(feature)
     }
   }
@@ -401,6 +420,11 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     const targetIds = operation.target.featureIds
     if (targetIds.length === 0) continue
     if (!targetIds.every((id) => importedFeatureSourceIds.has(id))) continue
+    // The Around setup is left out with its features when the bars disagree.
+    if (!aroundImportable && sourceAroundSetup !== undefined && operation.setupId === sourceAroundSetup.id) {
+      aroundLeftOut += 1
+      continue
+    }
     // An operation naming a setup its own project does not define has no
     // known orientation, so there is no face to import it onto.
     if (operation.setupId !== undefined && !sourceSetupById.has(operation.setupId)) {
@@ -408,6 +432,14 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       continue
     }
     operationsToImport.push(withCompatibleOperationTool(sourceProject, operation))
+  }
+
+  if (aroundLeftOut > 0 && sourceAroundSetup !== undefined) {
+    warnings.push(
+      `Around content was not imported: the source's "Around" setup is for a bar lying along ${sourceAroundSetup.orientation.axis.toUpperCase()}, `
+      + `and this project has no round bar on that axis. The rest of the source was imported; `
+      + `move this project's bar onto that axis, or re-author the Around work here.`,
+    )
   }
 
   // 8. Decide which tools to import: any tool referenced by an imported
@@ -443,12 +475,18 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   const setupIdFor = (operation: Operation): string => {
     const sourceSetup = operation.setupId === undefined ? undefined : sourceSetupById.get(operation.setupId)
     const template = sourceSetup ?? defaultTopSetup()
-    const existing = findSetupWithTurn(nextSetups, template.orientation)
+    const orientation = template.kind === 'around' && isRoundStock(currentProject.stock)
+      ? { axis: currentProject.stock.axis, angleDeg: 0 } : template.orientation
+    // `findSetupWithTurn` matches an Around setup only on the same axis: an
+    // Around turn is never borrowed across axes, because the imported
+    // features keep their own coordinates (issue #395).
+    const existing = findSetupWithTurn(nextSetups, orientation, template.kind)
     if (existing) return existing.id
     const created: MachiningSetup = {
       id: nextId('su'),
       name: uniqueName(template.name, nextSetups.map((setup) => setup.name)),
-      orientation: { ...template.orientation },
+      ...(template.kind === 'around' ? { kind: 'around' as const } : {}),
+      orientation: { ...orientation },
       indexing: 'manual',
       registration: [],
       notes: '',

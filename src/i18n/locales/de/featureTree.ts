@@ -96,6 +96,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
 
   // ── TreeRow: add entry (tab / clamp) ──
   'featureTree.treeRow.addEntry.tab': 'Haltesteg hinzufügen',
+  'featureTree.treeRow.addEntry.tabAround': 'Tabs werden auf der Rundum-Fläche nicht verwendet',
   'featureTree.treeRow.addEntry.clamp': 'Spannzwinge hinzufügen',
 
   // ── TreeRow: operation button tooltips ──
@@ -400,16 +401,20 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Stock faces: tree layers, face-local depth, changing a face (issue #945) ──
   'featureTree.face.topFace': 'Oberseite',
   'featureTree.face.bottomFace': 'Unterseite',
+  'featureTree.face.aroundLayer': 'Rundum',
   'featureTree.face.stateActive': 'AKTIV',
   'featureTree.face.stateGhost': 'GEIST',
   'featureTree.face.chipTop': 'OBEN',
   'featureTree.face.chipBottom': 'UNTEN',
+  'featureTree.face.chipAround': 'RUNDUM',
   'featureTree.face.chipThrough': 'DURCH',
   'featureTree.face.throughTooltip': 'Reicht bis zu beiden Seiten und kann von jeder Seite bearbeitet werden',
   'featureTree.face.ghostRowTop': 'Auf der Oberseite. Zum Bearbeiten zur Oberseite wechseln.',
   'featureTree.face.ghostRowBottom': 'Auf der Unterseite. Zum Bearbeiten zur Unterseite wechseln.',
+  'featureTree.face.ghostRowAround': 'Auf der Rundum-Fläche. Zum Bearbeiten dorthin wechseln.',
   'featureTree.face.switchToTopToEdit': 'Zum Bearbeiten nach Oben wechseln',
   'featureTree.face.switchToBottomToEdit': 'Zum Bearbeiten nach Unten wechseln',
+  'featureTree.face.switchToAroundToEdit': 'Zum Bearbeiten zur Rundum-Fläche wechseln',
   'featureTree.face.changeAuthoringFace': 'Zeichenseite ändern…',
   'featureTree.face.authoringFace': 'Zeichenseite',
   'featureTree.face.change': 'Ändern…',
@@ -434,6 +439,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.linkedOtherFace.top.other': 'Diese Form wird mit {count} verknüpften Kopien auf der Oberseite geteilt. Eine Änderung der Form ändert auch diese Kopien.',
   'featureTree.face.linkedOtherFace.bottom.one': 'Diese Form wird mit {count} verknüpften Kopie auf der Unterseite geteilt. Eine Änderung der Form ändert auch diese Kopie.',
   'featureTree.face.linkedOtherFace.bottom.other': 'Diese Form wird mit {count} verknüpften Kopien auf der Unterseite geteilt. Eine Änderung der Form ändert auch diese Kopien.',
+  'featureTree.face.linkedOtherFace.around.one': 'Diese Form wird mit {count} verknüpften Kopie auf einer anderen Fläche geteilt. Eine Änderung der Form ändert auch diese Kopie.',
+  'featureTree.face.linkedOtherFace.around.other': 'Diese Form wird mit {count} verknüpften Kopien auf einer anderen Fläche geteilt. Eine Änderung der Form ändert sie ebenfalls.',
   'featureTree.face.dialog.linkedStay.top.one': '{count} verknüpfte Kopie bleibt auf der Oberseite. Sie teilt sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten beide.',
   'featureTree.face.dialog.linkedStay.top.other': '{count} verknüpfte Kopien bleiben auf der Oberseite. Sie teilen sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten alle.',
   'featureTree.face.dialog.linkedStay.bottom.one': '{count} verknüpfte Kopie bleibt auf der Unterseite. Sie teilt sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten beide.',

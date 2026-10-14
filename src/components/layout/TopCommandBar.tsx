@@ -156,10 +156,10 @@ export function TopCommandBar({
             <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.importGeometry.label} onClick={fileCommands.commands.importGeometry.onActivate}>
               <Icon id="import" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.exportModel.label} onClick={fileCommands.commands.exportModel.onActivate}>
+            <button className="top-cmd-btn" data-command="export-model" type="button" aria-label={fileCommands.commands.exportModel.label} disabled={!fileCommands.commands.exportModel.enabled} title={fileCommands.commands.exportModel.enabled ? undefined : fileCommands.commands.exportModel.label} onClick={fileCommands.commands.exportModel.onActivate}>
               <Icon id="export" />
             </button>
-            <button className="top-cmd-btn top-cmd-btn--print" type="button" aria-label={fileCommands.commands.printDesign.label} onClick={fileCommands.commands.printDesign.onActivate}>
+            <button className="top-cmd-btn top-cmd-btn--print" data-command="print-design" type="button" aria-label={fileCommands.commands.printDesign.label} disabled={!fileCommands.commands.printDesign.enabled} title={fileCommands.commands.printDesign.enabled ? undefined : fileCommands.commands.printDesign.label} onClick={fileCommands.commands.printDesign.onActivate}>
               <Icon id="print" />
             </button>
             <button

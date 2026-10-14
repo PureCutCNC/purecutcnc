@@ -99,6 +99,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.error.selectFolder': 'Sélectionnez au moins un dossier à importer, ou cochez « Importer le brut depuis la source ».',
   'dialogs.importGeometry.error.noFeaturesImported': 'Aucune entité n’a été importée depuis les dossiers sélectionnés.',
   'dialogs.importGeometry.error.noGeometryFound': 'Aucune géométrie importable dans le fichier sélectionné.',
+  'dialogs.importGeometry.error.modelOnAround': 'Un modèle 3D ne peut pas être placé sur la face autour. Passez à Dessus pour l’importer.',
   'dialogs.importGeometry.error.importFailed': 'Impossible d’importer le fichier de géométrie.',
   'dialogs.importGeometry.error.stepTolerance': 'La tolérance de surface doit être un nombre positif.',
   'dialogs.importGeometry.error.stepFileTooLarge': 'Les fichiers STEP de plus de {limit} Mo ne peuvent pas être importés.',

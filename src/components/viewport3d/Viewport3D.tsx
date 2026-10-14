@@ -21,8 +21,8 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
-import { moveMatchesToolpathLevel, movesAtToolpathLevel } from '../toolpathLevels'
-import type { ToolpathResult } from '../../engine/toolpaths/types'
+import { moveMatchesToolpathLevel } from '../toolpathLevels'
+import type { ToolpathMove, ToolpathMoveKind, ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -33,10 +33,13 @@ import { getFeatureGeometryProfiles } from '../../text'
 import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
+  displayToolpathLayerBuckets,
   moveMatchesZFilter,
-  toolpathLayerBuckets,
+  stockSpaceToolpath,
   toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
+  type DisplayToolpath,
+  type ToolpathLayerBuckets,
   type ToolpathLayerZFilter,
   type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
@@ -44,6 +47,7 @@ import { useTheme } from '../../theme/themeContext'
 import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
+import type { FlatFace, SetupFace } from '../../types/project'
 import { activeFace } from '../../store/helpers/activeFace'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import type { ViewPreset } from './viewPresets'
@@ -121,18 +125,45 @@ function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): T
   return new THREE.Vector3(...toolpathPointToWorldTuple(point))
 }
 
+/**
+ * The generated move a drawn piece came from (the piece itself when the path
+ * is not wrapped). Level filtering and the rapid split read this, because a
+ * wrapped piece's Z is the physical height on the bar, not the machining level
+ * (issue #395).
+ */
+function generatedMoveAt(toolpath: DisplayToolpath, index: number): ToolpathMove {
+  return toolpath.sources?.[index] ?? toolpath.moves[index]
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: boolean, palette: ThreeThemePalette, selectedLevel: number | null): THREE.Object3D[] {
-  const moves = movesAtToolpathLevel(toolpath.moves, selectedLevel)
-  if (moves.length === 0) {
+/**
+ * True for the workspace faces the camera has a named preset for. Around
+ * (issue #395) is not one: the 3D view keeps showing the physical bar, so
+ * switching to it moves nothing.
+ */
+function isFlatFace(face: SetupFace): face is FlatFace {
+  return face === 'top' || face === 'bottom'
+}
+
+function buildToolpathEndpointMarkers(toolpath: DisplayToolpath, emphasized: boolean, palette: ThreeThemePalette, selectedLevel: number | null): THREE.Object3D[] {
+  // Chosen by the generated move's level, drawn at the stock-space piece that
+  // move produced (issue #395).
+  let first: ToolpathMove | undefined
+  let last: ToolpathMove | undefined
+  for (let index = 0; index < toolpath.moves.length; index += 1) {
+    if (!moveMatchesToolpathLevel(generatedMoveAt(toolpath, index), selectedLevel)) continue
+    if (!first) first = toolpath.moves[index]
+    last = toolpath.moves[index]
+  }
+  if (!first || !last) {
     return []
   }
 
-  const firstPoint = toolpathPointToWorld(moves[0].from)
-  const lastPoint = toolpathPointToWorld(moves[moves.length - 1].to)
+  const firstPoint = toolpathPointToWorld(first.from)
+  const lastPoint = toolpathPointToWorld(last.to)
   const bounds = toolpath.bounds
   const span = bounds
     ? Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
@@ -178,7 +209,7 @@ function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: bool
 }
 
 function buildToolpathDirectionMarkers(
-  toolpath: ToolpathResult,
+  toolpath: DisplayToolpath,
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
@@ -202,8 +233,9 @@ function buildToolpathDirectionMarkers(
   }
   const placements: Record<'cut' | 'rapid', ArrowPlacement[]> = { cut: [], rapid: [] }
 
-  function getHorizontalDirection(move: ToolpathResult['moves'][number] | undefined): THREE.Vector3 | null {
-    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid') || !moveMatchesToolpathLevel(move, selectedLevel)) {
+  function getHorizontalDirection(moveIndex: number): THREE.Vector3 | null {
+    const move = toolpath.moves[moveIndex]
+    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid') || !moveMatchesToolpathLevel(generatedMoveAt(toolpath, moveIndex), selectedLevel)) {
       return null
     }
 
@@ -222,14 +254,18 @@ function buildToolpathDirectionMarkers(
     if (move.kind !== 'cut' && move.kind !== 'rapid') {
       continue
     }
-    if (!moveMatchesToolpathLevel(move, selectedLevel)) continue
+    // The generated move's own Z is the machining level and the rapid's real
+    // direction; the drawn piece's Z is the bar's surface (issue #395).
+    const generated = generatedMoveAt(toolpath, moveIndex)
+    if (!moveMatchesToolpathLevel(generated, selectedLevel)) continue
 
     // Respect visibility toggles
     if (move.kind === 'cut' && !visibility.cuts) continue
     if (move.kind === 'rapid') {
-      // Same split as the line layers, via the same predicate — the arrow code
-      // having its own copy is how the two fell out of step (issue #482).
-      const isRetraction = moveMatchesZFilter(move, 'retract')
+      // Same split as the line layers, via the same predicate on the same
+      // generated move — the arrow code having its own copy is how the two
+      // fell out of step (issue #482).
+      const isRetraction = moveMatchesZFilter(generated, 'retract')
       if (isRetraction && !visibility.retractions) continue
       if (!isRetraction && !visibility.rapids) continue
     }
@@ -250,8 +286,8 @@ function buildToolpathDirectionMarkers(
     const direction = delta.clone().normalize()
     distanceSinceLastArrowByKind[move.kind] += length
 
-    const previousDirection = getHorizontalDirection(toolpath.moves[moveIndex - 1])
-    const nextDirection = getHorizontalDirection(toolpath.moves[moveIndex + 1])
+    const previousDirection = getHorizontalDirection(moveIndex - 1)
+    const nextDirection = getHorizontalDirection(moveIndex + 1)
     const directionTurn =
       previousDirection && nextDirection
         ? Math.min(
@@ -296,8 +332,23 @@ function buildToolpathDirectionMarkers(
 // Only rendered when operation.debugToolpath is enabled.
 // ---------------------------------------------------------------------------
 
+/** What one generated toolpath puts on screen (issue #395 review). */
+export interface ToolpathOverlayStats {
+  /** Line segments drawn for the toolpath's own layers. */
+  segments: number
+  /** Lowest and highest Z of the drawn points, or null when nothing is drawn. */
+  minZ: number | null
+  maxZ: number | null
+}
+
 function buildToolpathOverlay(
   toolpath: ToolpathResult,
+  /** The same path ready to draw: stock-space for a wrapped Around toolpath
+   *  (issue #395), the toolpath itself otherwise. */
+  display: DisplayToolpath,
+  /** The layer split from the generated moves, already level-filtered and
+   *  mapped to stock space (issue #395 review). */
+  buckets: ToolpathLayerBuckets,
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
@@ -307,11 +358,11 @@ function buildToolpathOverlay(
   // Cut in a setup the workspace is not on (issue #947): faint and thin, so
   // the active setup's passes read through the other setup's.
   muted = false,
-): THREE.Object3D[] {
+): { objects: THREE.Object3D[]; stats: ToolpathOverlayStats } {
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
     key: ToolpathOverlayLayerKey
-    kinds: ToolpathResult['moves'][number]['kind'][]
+    kinds: ToolpathMoveKind[]
     color: number
     opacity: number
     linewidth: number
@@ -340,19 +391,28 @@ function buildToolpathOverlay(
   // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
-  // Cached by toolpath identity — see `toolpathLayerBuckets` (issue #664).
-  const buckets = toolpathLayerBuckets(toolpath)
+  // The caller already bucketed the generated moves, filtered each layer by
+  // the generated level and mapped the survivors to stock space (issue #395
+  // review), so the lines are built from exactly those moves.
   const objects: THREE.Object3D[] = []
+  const stats: ToolpathOverlayStats = { segments: 0, minZ: null, maxZ: null }
   for (const layer of layers) {
     if (!layer.visible) continue
 
-    const moves = movesAtToolpathLevel(buckets[layer.key], emphasized ? selectedLevel : null)
+    const moves = buckets[layer.key]
 
     if (moves.length === 0) {
       continue
     }
 
-    const pushLines = (layerMoves: readonly ToolpathResult['moves'][number][], color: number): void => {
+    for (const move of moves) {
+      for (const point of [move.from, move.to]) {
+        stats.minZ = stats.minZ === null ? point.z : Math.min(stats.minZ, point.z)
+        stats.maxZ = stats.maxZ === null ? point.z : Math.max(stats.maxZ, point.z)
+      }
+    }
+
+    const pushLines = (layerMoves: readonly ToolpathMove[], color: number): void => {
       const material = new LineMaterial({
         color,
         linewidth: layer.linewidth,
@@ -365,6 +425,7 @@ function buildToolpathOverlay(
       })
 
       for (const chunk of buildToolpathLinePositionChunks(layerMoves)) {
+        stats.segments += chunk.segmentCount
         const geometry = new LineSegmentsGeometry()
         geometry.setPositions(chunk.positions)
         objects.push(new LineSegments2(geometry, material))
@@ -374,7 +435,7 @@ function buildToolpathOverlay(
     if (layer.key === 'cuts' && feedColoursOn) {
       // One material per emitted feed bucket. Cuts only — lead-ins, rapids,
       // plunges and retractions keep their existing tokens.
-      const byStep = new Map<number, ToolpathResult['moves']>()
+      const byStep = new Map<number, ToolpathMove[]>()
       for (const move of moves) {
         const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
@@ -394,11 +455,11 @@ function buildToolpathOverlay(
   }
 
   if (emphasized && visibility.directions) {
-    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized, visibility, palette, selectedLevel))
-    objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized, palette, selectedLevel))
+    objects.push(...buildToolpathDirectionMarkers(display, emphasized, visibility, palette, selectedLevel))
+    objects.push(...buildToolpathEndpointMarkers(display, emphasized, palette, selectedLevel))
   }
 
-  return objects
+  return { objects, stats }
 }
 
 export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({
@@ -449,6 +510,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const activePresetRef = useRef(activePreset)
   activePresetRef.current = activePreset
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
+  // The overlay's own drawn totals, published on the panel for the 3D smoke
+  // (issue #395 review): a spec can then assert the wrap is really drawn
+  // rather than regenerating the path beside it.
+  const [toolpathStats, setToolpathStats] = useState<ToolpathOverlayStats>({ segments: 0, minZ: null, maxZ: null })
+  // The model mesh's own triangle count, published for the Around 3D smoke
+  // (issue #395): `null` when the scene built no model at all.
+  const [modelTriangles, setModelTriangles] = useState<number | null>(null)
   const zoomWindowActiveRef = useRef(zoomWindowActive)
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
@@ -462,6 +530,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   useEffect(() => {
     if (presetFaceRef.current === workspaceFace) return
     presetFaceRef.current = workspaceFace
+    // Around has no camera preset: the 3D view keeps showing the real bar
+    // (issue #395), so turning the workspace to it leaves the camera alone.
+    if (!isFlatFace(workspaceFace)) return
     const preset = activePresetRef.current
     if ((preset === 'top' || preset === 'bottom') && preset !== workspaceFace) {
       controlsRef.current?.setPreset(workspaceFace)
@@ -637,7 +708,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     let extent = defaultExtent
 
     // Dynamically extend the grid to cover feature geometry on all sides.
-    const featureWorldBounds = getFeaturesWorldBounds(resolvedProjectFeatures(project))
+    // Around features are unrolled onto the bar's surface (issue #395), so
+    // their sheet coordinates must not stretch the grid around the solid.
+    const featureWorldBounds = getFeaturesWorldBounds(
+      resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around'),
+    )
     if (featureWorldBounds) {
       const toLeft = Math.abs(featureWorldBounds.minX - centerX)
       const toRight = Math.abs(featureWorldBounds.maxX - centerX)
@@ -785,6 +860,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         }
 
         clearRenderedObjects(scene)
+        setModelTriangles(
+          nextSceneObjects.modelMesh
+            ? nextSceneObjects.modelMesh.geometry.getAttribute('position').count / 3
+            : null,
+        )
 
         scene.add(nextSceneObjects.stockMesh)
         scene.add(nextSceneObjects.stockWireframe)
@@ -832,8 +912,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const controls = controlsRef.current
         if (controls) {
           // Construction geometry is absent from the 3D scene — keep it out of
-          // the camera-fit bounds as well (issue #199).
-          const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
+          // the camera-fit bounds as well (issue #199), and keep unrolled
+          // Around features out for the same reason (issue #395).
+          const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
+          const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
           const visibleTabs = project.tabs.filter((tab) => tab.visible)
           const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =
@@ -922,14 +1004,34 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       mount?.clientHeight || window.innerHeight,
     )
     // Every setup's passes, in stock space as generated: a Bottom pass comes
-    // from under the stock. Another setup's are muted (issue #947).
+    // from under the stock. Another setup's are muted (issue #947). A wrapped
+    // Around pass is drawn wrapped around the bar (issue #395).
     const muted = mutedToolpathOperationIds(projectRef.current)
+    const stock = projectRef.current.stock
+    // What the overlay really put on screen, published on the panel for the
+    // 3D smoke (issue #395 review): the segment count and the lowest and
+    // highest drawn point, so a missing overlay cannot pass the spec.
+    const stats: ToolpathOverlayStats = { segments: 0, minZ: null, maxZ: null }
+    const mergeStats = (next: ToolpathOverlayStats): void => {
+      stats.segments += next.segments
+      if (next.minZ !== null) stats.minZ = stats.minZ === null ? next.minZ : Math.min(stats.minZ, next.minZ)
+      if (next.maxZ !== null) stats.maxZ = stats.maxZ === null ? next.maxZ : Math.max(stats.maxZ, next.maxZ)
+    }
     const nextObjects = toolpaths.flatMap((toolpath) => {
       if (toolpath.moves.length === 0) {
         return []
       }
       const emphasized = toolpath.operationId === selectedOperationId
       const isMuted = muted.has(toolpath.operationId)
+      // A wrapped Around toolpath is drawn wrapped around the bar (issue
+      // #395); every other toolpath is drawn from its own moves unchanged.
+      const display = stockSpaceToolpath(toolpath, stock)
+      // The split, the level filter and the retract split all run on the
+      // generated moves — whose Z is the machining level — and the surviving
+      // moves are drawn in stock space (issue #395 review). `stockSpaceToolpath`
+      // caches the subdivision, and the buckets are cached per level, so a
+      // rebuild redoes neither.
+      const buckets = displayToolpathLayerBuckets(toolpath, stock, emphasized ? toolpathLevel : null)
       // Colour rungs derive from the toolpath's own operation slot feed so the
       // thresholds match the scales that operation emitted (issue #498 S5).
       const slotFeedPercent = pocketSlotFeedPercent(projectRef.current.operations.find((op) => op.id === toolpath.operationId))
@@ -950,20 +1052,26 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             showLeads: toolpathVisibility.leadIns,
             showPierces: toolpathVisibility.plunges,
           })
-      return [
-        ...kerfObjects,
-        ...buildToolpathOverlay(
-          toolpath,
-          emphasized,
-          toolpathVisibility,
-          threePalette,
-          resolution,
-          slotFeedPercent === null ? 1 : slotFeedPercent / 100,
-          toolpathLevel,
-          isMuted,
-        ),
-      ]
+      const overlay = buildToolpathOverlay(
+        toolpath,
+        display,
+        buckets,
+        emphasized,
+        toolpathVisibility,
+        threePalette,
+        resolution,
+        slotFeedPercent === null ? 1 : slotFeedPercent / 100,
+        toolpathLevel,
+        isMuted,
+      )
+      mergeStats(overlay.stats)
+      return [...kerfObjects, ...overlay.objects]
     })
+    setToolpathStats((current) => (
+      current.segments === stats.segments && current.minZ === stats.minZ && current.maxZ === stats.maxZ
+        ? current
+        : stats
+    ))
     if (nextObjects.length === 0) {
       return
     }
@@ -1045,7 +1153,18 @@ useImperativeHandle(ref, () => ({
     : []
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      className="viewport-3d"
+      style={{ width: '100%', height: '100%', position: 'relative' }}
+      // Read by the Around 3D smoke (issue #395 review): what the overlay drew,
+      // without sampling WebGL pixels. Same naming as `data-simulation-*`.
+      data-toolpath-segments={toolpathStats.segments}
+      data-toolpath-min-z={toolpathStats.minZ === null ? undefined : toolpathStats.minZ.toFixed(3)}
+      data-toolpath-max-z={toolpathStats.maxZ === null ? undefined : toolpathStats.maxZ.toFixed(3)}
+      // The model mesh's triangle count, absent when there is no model (issue
+      // #395 review of the Around model).
+      data-model-triangles={modelTriangles === null ? undefined : modelTriangles}
+    >
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <WebglStatusOverlay status={webglStatus} view="view3d" />
       {zoomWindowActive && (

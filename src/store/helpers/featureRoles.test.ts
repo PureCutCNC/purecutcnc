@@ -87,6 +87,20 @@ for (const operation of ALL_OPERATIONS) {
     `isSolid(${operation})`)
 }
 
+// ── isSolid ignores Around features (#395) ───────────────────────
+//
+// Around features are unrolled onto the bar and take no part in the solid, so
+// the base-solid "first feature must be Add" rule must not see them.
+
+for (const operation of ['add', 'subtract', 'model'] as FeatureOperation[]) {
+  const around = { ...makeFeature(`fa-${operation}`, operation), authoringFace: 'around' as const }
+  assert(!isSolid(around), `isSolid(${operation}) is false on Around`)
+  const flat = { ...makeFeature(`ff-${operation}`, operation), authoringFace: 'top' as const }
+  assert(isSolid(flat), `isSolid(${operation}) stays true on Top`)
+}
+assert(!isSolid({ ...makeFeature('fa-line', 'line'), authoringFace: 'around' }), 'an Around line is not solid')
+assert(!isSolid(makeFeature('ff-line', 'line')), 'a flat line is not solid, Around or not')
+
 // ── modelFeatures excludes construction only ─────────────────────
 
 const mixed = ALL_OPERATIONS.map((operation) => makeFeature(`f-${operation}`, operation))

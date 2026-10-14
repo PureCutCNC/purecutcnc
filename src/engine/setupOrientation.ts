@@ -77,14 +77,15 @@ function assertSupported(orientation: SetupOrientation): void {
 }
 
 /** The stock face a setup turns up. Derived from the orientation, never stored. */
-export function setupFace(setup: Pick<MachiningSetup, 'orientation'>): SetupFace {
+export function setupFace(setup: Pick<MachiningSetup, 'orientation' | 'kind'>): SetupFace {
+  if (setup.kind === 'around') return 'around'
   assertSupported(setup.orientation)
   return setup.orientation.angleDeg === 0 ? 'top' : 'bottom'
 }
 
 /** The orientation that turns `face` up; `axis` is the flip axis for Bottom. */
 export function orientationForFace(face: SetupFace, axis: SetupOrientation['axis'] = 'x'): SetupOrientation {
-  return { axis, angleDeg: face === 'top' ? 0 : 180 }
+  return { axis, angleDeg: face !== 'bottom' ? 0 : 180 }
 }
 
 /**
@@ -92,6 +93,7 @@ export function orientationForFace(face: SetupFace, axis: SetupOrientation['axis
  * toolpath does not re-measure the stock for every point.
  */
 export interface SetupFrame {
+  kind?: MachiningSetup['kind']
   readonly orientation: SetupOrientation
   /** Centre of the stock in XY, at mid-thickness. */
   readonly pivot: SetupPoint
@@ -137,12 +139,14 @@ function halfTurn<T extends SetupPoint & { a?: number }>(point: T, frame: SetupF
  * what it was before setups existed.
  */
 export function canonicalToSetupPoint<T extends SetupPoint & { a?: number }>(point: T, frame: SetupFrame): T {
+  if (frame.kind === 'around') throw new Error('Around cannot use a rotation frame.')
   assertSupported(frame.orientation)
   return frame.orientation.angleDeg === 0 ? point : halfTurn(point, frame)
 }
 
 /** Setup-local point → canonical stock point. The inverse of {@link canonicalToSetupPoint}. */
 export function setupToCanonicalPoint<T extends SetupPoint & { a?: number }>(point: T, frame: SetupFrame): T {
+  if (frame.kind === 'around') throw new Error('Around cannot use a rotation frame.')
   assertSupported(frame.orientation)
   // A half turn undoes itself.
   return frame.orientation.angleDeg === 0 ? point : halfTurn(point, frame)
@@ -196,6 +200,9 @@ export function setupFrameForOperation(
 ): SetupFrame | undefined {
   const setup = setupForOperation(project, operation)
   if (!setup) return undefined
+  // Around is not a rigid turn: its stored toolpath is already wrapped, with
+  // `a` on every point, so export must apply no setup turn.
+  if (setup.kind === 'around') return undefined
   assertSupported(setup.orientation)
   return setup.orientation.angleDeg === 0 ? undefined : setupFrame(setup.orientation, project.stock)
 }
@@ -228,7 +235,7 @@ export interface FaceDepthSpan {
  * caller must write back only a value the user actually changed.
  */
 export function depthFromFace(span: StockZSpan, face: SetupFace, stock: Pick<Stock, 'thickness'>): FaceDepthSpan {
-  return face === 'top'
+  return face !== 'bottom'
     ? { start: stock.thickness - span.z_top, end: stock.thickness - span.z_bottom }
     : { start: span.z_bottom, end: span.z_top }
 }
@@ -244,7 +251,7 @@ export function spanFromFaceDepth(
   stock: Pick<Stock, 'thickness'>,
 ): StockZSpan | null {
   if (!Number.isFinite(depth.start) || !Number.isFinite(depth.end) || depth.end < depth.start) return null
-  return face === 'top'
+  return face !== 'bottom'
     ? { z_top: stock.thickness - depth.start, z_bottom: stock.thickness - depth.end }
     : { z_top: depth.end, z_bottom: depth.start }
 }

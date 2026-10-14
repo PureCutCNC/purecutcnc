@@ -25,6 +25,7 @@ import type {
 } from '../../store/types'
 import type { Project } from '../../types/project'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { aroundSheet } from './aroundSheet'
 import {
   findHitClampId,
   findHitTabId,
@@ -103,7 +104,9 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     const selection = selectionRef.current
     const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
+    // Clamp bands and tabs are not edit targets on the sheet (issue #395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       if (!selection.selectedClampIds.includes(hitClampId)) {
         selectClamp(hitClampId)
@@ -112,7 +115,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
       return
     }
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       if (!selection.selectedTabIds.includes(hitTabId)) {
         selectTab(hitTabId)

@@ -38,6 +38,7 @@ import { buildBatchedLines, type BatchLineMeta } from './lineBatcher'
 import type { ThreeThemePalette } from '../theme/palette'
 import { convertLength, type Units } from '../utils/units'
 import { profileToPolygon } from './profilePolyline'
+import { buildAroundFeatureSolid, type AroundSlabOptions } from './aroundFeatureSolid'
 
 export { closeLinePolygonIfNeeded, profileToPolygon } from './profilePolyline'
 import { DEFAULT_ARC_STEP_RADIANS } from './profilePolyline'
@@ -157,8 +158,13 @@ const ROUND_BAR_SEGMENTS = 64
  * A round bar's cylinder in project coordinates: `diameter` across, lying along
  * `axis` on the centreline, centred at Z = diameter / 2. The bar occupies Z from
  * 0 to the diameter, so that is the centreline (#392).
+ *
+ * Exported so `csgAroundFace.test.ts` can assert the boolean model's bar solid
+ * (`roundBarSolid`) samples its circle at these very vertices (issue #395 G3).
+ * Its positions are compared exactly by `csgRoundStock.test.ts`, so its own
+ * output must not change.
  */
-function roundBarGeometry(stock: RoundStock): THREE.CylinderGeometry {
+export function roundBarGeometry(stock: RoundStock): THREE.CylinderGeometry {
   const diameter = roundStockDiameter(stock)
   const bounds = getStockBounds(stock)
   const centre = roundStockCentre(stock)
@@ -272,7 +278,7 @@ const stlTransformedGeometryCache = new Map<string, STLTransformedCacheEntry>()
  * placement and its Z range.  Keeping that boundary structural lets CAM read
  * a resolved feature instance without falling back to definition-local data.
  */
-type STLTransformFeature = Pick<SketchFeature, 'id' | 'kind' | 'stl' | 'z_top' | 'z_bottom'> & {
+type STLTransformFeature = Pick<SketchFeature, 'id' | 'kind' | 'stl' | 'z_top' | 'z_bottom' | 'authoringFace'> & {
   transform?: Matrix2D
 }
 
@@ -361,6 +367,7 @@ export function loadSTLTransformedGeometry(
   feature: STLTransformFeature,
   project: Project
 ): STLTransformedData | null {
+  if (feature.authoringFace === 'around') return null
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
   if (!asset) return null
 
@@ -946,12 +953,157 @@ export function buildFeatureSolid(
   }
 }
 
-async function buildBooleanModel(
+/**
+ * The bar as a Manifold cylinder in project coordinates (issue #395): the
+ * diameter across, `ROUND_BAR_SEGMENTS` around, lying along its axis on the
+ * centreline at Z = diameter / 2. The same dimensions and faceting as
+ * `roundBarGeometry`, so the model's uncut surface sits on the stock mesh drawn
+ * over it.
+ */
+export function roundBarSolid(module: ManifoldToplevel, stock: RoundStock): ManifoldSolid {
+  const diameter = roundStockDiameter(stock)
+  const radius = diameter / 2
+  const bounds = getStockBounds(stock)
+  const centre = roundStockCentre(stock)
+  const cylinder = module.Manifold.cylinder(
+    roundStockLength(stock),
+    radius,
+    radius,
+    ROUND_BAR_SEGMENTS,
+    true,
+  )
+  let rotated: ManifoldSolid | null = null
+  try {
+    if (stock.axis === 'x') {
+      rotated = cylinder.rotate([0, 90, 0])
+      return rotated.translate([(bounds.minX + bounds.maxX) / 2, centre, radius])
+    }
+    rotated = cylinder.rotate([-90, 0, 0])
+    return rotated.translate([centre, (bounds.minY + bounds.maxY) / 2, radius])
+  } finally {
+    // The caller owns the translated solid; the cylinder and its rotation are
+    // WASM-backed and would otherwise leak on every Around model rebuild.
+    rotated?.delete()
+    cylinder.delete()
+  }
+}
+
+/**
+ * The Around model solid (issue #395): the bar with every visible Around
+ * feature applied in project order. A subtract is a difference; an add is
+ * `union(current, intersection(slab, bar))`, so restored material ends exactly
+ * at the bar's own surface and an island stands inside a surrounding cut.
+ *
+ * `null` unless at least one visible Around subtract yields a slab: an Around
+ * add alone leaves the bar as it already is. The bar itself stays whole for the
+ * adds' intersections and is released at the end.
+ */
+export function buildAroundModelSolid(
+  module: ManifoldToplevel,
+  project: Project,
+  visibleAroundFeatures: SketchFeature[],
+  arcStepRadians: number = DEFAULT_ARC_STEP_RADIANS,
+): ManifoldSolid | null {
+  if (!isRoundStock(project.stock)) return null
+  const options: AroundSlabOptions = { minHeight: minRenderHeight(project.meta.units), arcStepRadians }
+
+  const features: SketchFeature[] = []
+  const slabs: ManifoldSolid[] = []
+  try {
+    for (const feature of visibleAroundFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))) {
+      if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
+      const slab = buildAroundFeatureSolid(module, project, feature, options)
+      if (slab) {
+        features.push(feature)
+        slabs.push(slab)
+      }
+    }
+  } catch (error) {
+    for (const slab of slabs) slab.delete()
+    throw error
+  }
+
+  if (!features.some((feature) => feature.operation === 'subtract')) {
+    for (const slab of slabs) slab.delete()
+    return null
+  }
+
+  const bar = roundBarSolid(module, project.stock)
+  let current: ManifoldSolid | null = null
+  let handedOver = false
+  try {
+    for (let index = 0; index < features.length; index += 1) {
+      const slab = slabs[index]
+      const base: ManifoldSolid = current ?? bar
+      if (features[index].operation === 'subtract') {
+        const next: ManifoldSolid = module.Manifold.difference(base, slab)
+        current?.delete()
+        current = next
+      } else {
+        const island = module.Manifold.intersection(slab, bar)
+        let next: ManifoldSolid | null = null
+        try {
+          next = module.Manifold.union(base, island)
+        } finally {
+          island.delete()
+        }
+        current?.delete()
+        current = next
+      }
+    }
+    handedOver = true
+    return current
+  } finally {
+    for (const slab of slabs) slab.delete()
+    bar.delete()
+    if (!handedOver) current?.delete()
+  }
+}
+
+/**
+ * The wrapped slab of an Around region as a display-only mesh (issue #395):
+ * the same slab the boolean model uses, with the region material the flat
+ * regions draw with.
+ */
+export function buildAroundRegionMesh(
+  module: ManifoldToplevel,
+  project: Project,
+  feature: SketchFeature,
+  threePalette: ThreeThemePalette,
+): THREE.Mesh | null {
+  const solid = buildAroundFeatureSolid(module, project, feature, {
+    minHeight: minRenderHeight(project.meta.units),
+  })
+  if (!solid) return null
+  try {
+    const geometry = manifoldMeshToGeometry(solid.getMesh())
+    const material = new THREE.MeshStandardMaterial({
+      color: threePalette.meshFeatureRegion,
+      roughness: 0.78,
+      metalness: 0.08,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.renderOrder = 1
+    mesh.scale.z = -1
+    return mesh
+  } finally {
+    solid.delete()
+  }
+}
+
+/** The flat (Top/Bottom) model solid, built exactly as it always was. */
+function buildFlatModelSolid(
+  module: ManifoldToplevel,
   project: Project,
   visibleFeatures: SketchFeature[],
-  threePalette: ThreeThemePalette,
-): Promise<THREE.Mesh | null> {
-  const module = await getManifoldModule()
+): ManifoldSolid | null {
   let current: ManifoldSolid | null = null
   const expandedFeatures = visibleFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))
 
@@ -992,25 +1144,73 @@ async function buildBooleanModel(
       }
     }
 
-    if (!current) {
-      return null
+    return current
+  } catch (error) {
+    current?.delete()
+    throw error
+  }
+}
+
+/** A built solid as the viewport's one model mesh. */
+function solidToModelMesh(solid: ManifoldSolid, threePalette: ThreeThemePalette): THREE.Mesh {
+  const manifoldMesh = solid.getMesh()
+  const geometry = manifoldMeshToGeometry(manifoldMesh)
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(threePalette.meshFeatureDefault),
+    roughness: 0.82,
+    metalness: 0.05,
+    flatShading: true,
+    side: THREE.FrontSide,
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.scale.z = -1
+  return mesh
+}
+
+/**
+ * The scene's one model mesh (issue #395): the flat solid exactly as before,
+ * and — when a visible Around subtract yields one — the Around solid beside it,
+ * unioned into that same mesh. A failure in the Around part is caught here so
+ * it cannot take the flat model down. A flat model with no Around content takes
+ * exactly the path it always did.
+ */
+async function buildBooleanModel(
+  project: Project,
+  visibleFeatures: SketchFeature[],
+  aroundFeatures: SketchFeature[],
+  threePalette: ThreeThemePalette,
+): Promise<THREE.Mesh | null> {
+  const module = await getManifoldModule()
+  const flat = buildFlatModelSolid(module, project, visibleFeatures)
+  let around: ManifoldSolid | null = null
+  if (aroundFeatures.length > 0 && isRoundStock(project.stock)) {
+    try {
+      around = buildAroundModelSolid(module, project, aroundFeatures)
+    } catch (error) {
+      console.error('Failed to build the Around 3D model, showing the flat model only.', error)
+    }
+  }
+
+  let combined: ManifoldSolid | null = flat
+  try {
+    if (flat && around) {
+      combined = module.Manifold.union(flat, around)
+      flat.delete()
+      around.delete()
+      around = null
+    } else if (around) {
+      combined = around
+      around = null
     }
 
-    const manifoldMesh = current.getMesh()
-    const geometry = manifoldMeshToGeometry(manifoldMesh)
-    const material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(threePalette.meshFeatureDefault),
-      roughness: 0.82,
-      metalness: 0.05,
-      flatShading: true,
-      side: THREE.FrontSide,
-    })
-
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.scale.z = -1
-    return mesh
+    if (!combined) {
+      return null
+    }
+    return solidToModelMesh(combined, threePalette)
   } finally {
-    current?.delete()
+    combined?.delete()
+    around?.delete()
   }
 }
 
@@ -1113,7 +1313,17 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // Fixtures are built unhighlighted: selection/collision only tint the clamp
   // and tab meshes, which Viewport3D recolors via applyClampHighlight /
   // applyTabHighlight without rebuilding this (expensive) CSG model (issue #261).
-  const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
+  // Around features are wrapped onto the bar (issue #395): a subtract cuts the
+  // round solid, an add is an island standing inside a cut. Top and Bottom
+  // features draw exactly as before, and a project with no visible Around
+  // feature is untouched.
+  const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
+  const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
+  // The same model filter for the Around half, and only a round bar can wrap.
+  const aroundFeatures = isRoundStock(project.stock)
+    ? modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
+      .filter((feature) => feature.visible)
+    : []
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const stockMesh = buildStockMesh(project.stock, threePalette)
@@ -1126,13 +1336,13 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   const clampClearanceBoxes: THREE.Object3D[] = []
   let modelMesh: THREE.Mesh | null = null
 
-  if (visibleFeatures.length > 0) {
+  if (visibleFeatures.length > 0 || aroundFeatures.length > 0) {
     const booleanFeatures = visibleFeatures.filter(
       (feature) => feature.operation === 'add' || feature.operation === 'subtract',
     )
-    if (booleanFeatures.length > 0) {
+    if (booleanFeatures.length > 0 || aroundFeatures.length > 0) {
       try {
-        modelMesh = await buildBooleanModel(project, booleanFeatures, threePalette)
+        modelMesh = await buildBooleanModel(project, booleanFeatures, aroundFeatures, threePalette)
       } catch (error) {
         console.error('Failed to build boolean 3D preview, falling back to feature meshes.', error)
       }
@@ -1158,10 +1368,23 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
       }
     }
 
+    // An Around region gets the same wrapped slab as a display-only mesh. The
+    // manifold module is loaded by the model build above; without it there is
+    // nothing to wrap with.
+    const module = getManifoldModuleSync()
+    if (module) {
+      for (const feature of aroundFeatures) {
+        if (feature.operation !== 'region') continue
+        const mesh = buildAroundRegionMesh(module, project, feature, threePalette)
+        if (mesh) featureMeshes.set(feature.id, mesh)
+      }
+    }
+
     // Build batched line overlays for open profiles and closed Line features.
     // One independent-segment batch per base colour — no per-feature objects
-    // and no connector segments between contours.
-    const lineResult = buildBatchedLines(project, visibleFeatures, threePalette)
+    // and no connector segments between contours. Around lines are wrapped onto
+    // the bar by the batcher (issue #395).
+    const lineResult = buildBatchedLines(project, [...visibleFeatures, ...aroundFeatures], threePalette)
     for (const line of lineResult.lines) {
       batchedLineObjects.push(line)
     }

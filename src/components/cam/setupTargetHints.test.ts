@@ -47,8 +47,9 @@ import { groupExportOperationOptions, listExportOperationOptions } from '../expo
 import type { SelectionState } from '../../store/types'
 import { syncProjectSetups } from '../../store/helpers/setups'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
-import type { Operation, Project, SetupFace, SketchFeature } from '../../types/project'
+import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
+import type { MachiningSetup, Operation, Project, SetupFace, SketchFeature } from '../../types/project'
+import { bundledMachines } from '../../machine/registry'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -120,6 +121,24 @@ function makeProject(activeFace: SetupFace): Project {
   return activeFace === 'top' ? project : { ...project, activeSetupId: BOTTOM_SETUP_ID }
 }
 
+/** The same idea on a round bar: one Around setup holding one flat target. */
+function makeAroundProject(): Project {
+  const base = newProject('around hints', 'mm')
+  base.stock = roundStock(40, 180, 'x')
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1' }]
+  const machine = { ...bundledMachines()[0], id: 'around-machine', rotary: { about: 'x' as const, drive: 'own' as const, reversed: false, inverseTimeFeed: { on: 'G93' as const, off: 'G94' as const } } }
+  base.meta = { ...base.meta, machineDefinitions: [machine], selectedMachineId: machine.id }
+  const withFeatures = projectWithFeatures(base, [
+    feature('around-pocket', 5, 40, 35, 'around'),
+    feature('flat', 20, 20, 14, 'top'),
+  ])
+  const aroundSetup: MachiningSetup = {
+    id: 'su-around', kind: 'around', name: 'Around',
+    orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: [],
+  }
+  return { ...withFeatures, setups: [aroundSetup], activeSetupId: aroundSetup.id }
+}
+
 function selection(ids: string[]): SelectionState {
   return {
     mode: 'feature',
@@ -166,6 +185,15 @@ function testAddHint(): void {
   // A pre-setup project has one face.
   const legacy = withoutSetupFields(onTop) as unknown as Project
   assertEqual(activeSetupTargetHint(legacy, ['tray', 'pin', 'recess']), null, 'a project without setups refuses nothing for its face')
+
+  // Around: a flat feature is refused with Around's own reason, never Bottom's.
+  const onAround = makeAroundProject()
+  assertEqual(
+    activeSetupTargetHint(onAround, ['flat']),
+    camT('cam.hint.otherFaceFromAround', { features: 'flat' }),
+    'Around: a flat feature is refused, naming the around setup',
+  )
+  assertEqual(activeSetupTargetHint(onAround, ['around-pocket']), null, 'Around: its own feature is a valid target')
 }
 
 function testOffers(): void {
@@ -279,6 +307,14 @@ function testSections(): void {
   assertEqual([alone[0].range, alone[0].coverage?.status], [{ min: 0, max: 9 }, 'unverified'], 'the other side unmeasured: unverified, not complete')
   const none = operationTargetReach(both, fromBottom, new Map())
   assertEqual([none[0].range, none[0].coverage?.status], [null, 'unverified'], 'no toolpath of its own: no range')
+
+  console.log('Testing the CAM section an Around-only project gets...')
+  const around = makeAroundProject()
+  const aroundSections = camSetupSections(around)
+  assert(aroundSections.grouped, 'an Around setup is its own section even as the only setup')
+  assertEqual(aroundSections.sections.map((section) => [section.setup.name, section.face, section.active, section.flipAxis]), [
+    ['Around', 'around', true, null],
+  ], 'one Around section, active, with no flip axis')
 }
 
 testAddHint()

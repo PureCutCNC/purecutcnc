@@ -114,6 +114,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.error.selectFolder': '至少选择一个要导入的文件夹，或勾选"从源文件导入毛坯"。',
   'dialogs.importGeometry.error.noFeaturesImported': '未从所选文件夹导入任何特征。',
   'dialogs.importGeometry.error.noGeometryFound': '所选文件中未找到可导入的图形。',
+  'dialogs.importGeometry.error.modelOnAround': '3D 模型不能放置在环绕面上。请切换到顶面以导入。',
   'dialogs.importGeometry.error.importFailed': '导入图形文件失败。',
   'dialogs.importGeometry.error.stepTolerance': '曲面公差必须为正数。',
   'dialogs.importGeometry.error.stepFileTooLarge': '无法导入大于 {limit} MB 的 STEP 文件。',

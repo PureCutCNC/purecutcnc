@@ -517,7 +517,7 @@ export interface ProgramSetupPlan {
  * is left out, rather than a header written for one of them.
  */
 export function planProgramSetup(
-  input: Pick<PostProcessorInput, 'project' | 'operations'>,
+  input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
 ): ProgramSetupPlan {
   const { project, operations } = input
   const warnings: ToolpathWarning[] = []
@@ -546,7 +546,7 @@ export function planProgramSetup(
   if (setupLacksRegistration(project, setup)) {
     warnings.push({ code: 'postSetupNoRegistration', params: { setup: setup.name } })
   }
-  return { headerComments: setupHeaderLines(project, setup), warnings }
+  return { headerComments: setupHeaderLines(project, setup, input.definition), warnings }
 }
 // ── Rotary axis (#393) ────────────────────────────────────────
 
@@ -974,6 +974,25 @@ function inspectRotaryOperation(args: {
 } {
   const { definition, project, toolpath, operationName, trackedAngle, borrowedCoordinate } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
+  const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
+  // The bar and the machine must agree (issue #395, rule 3): a stored angle is
+  // a turn about the bar's own axis, so a machine set up about the other
+  // horizontal axis would turn the stock the wrong way. Checked before the
+  // borrowed-axis arithmetic below, which would otherwise read the bar's own
+  // travel as travel on the borrowed motor — the same axis, on that machine.
+  if (hasAngle && definition.rotary && isRoundStock(project.stock)
+    && project.stock.axis !== definition.rotary.about) {
+    return {
+      refused: {
+        code: 'postRotaryAxisMismatch',
+        params: {
+          operation: operationName,
+          machineAxis: definition.rotary.about.toUpperCase(),
+          stockAxis: project.stock.axis.toUpperCase(),
+        },
+      },
+    }
+  }
   // Rule 3 applies to every operation on a borrowed-motor machine, turning or
   // not: the borrowed project axis has no linear travel at all, so an operation
   // that moves along it — or whose drill holes sit at another value of it —
@@ -1002,7 +1021,6 @@ function inspectRotaryOperation(args: {
       return { refused: { code: 'postRotaryDrillNotExpanded', params: { operation: operationName } } }
     }
   }
-  const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   if (!hasAngle) {
     return { refused: null, trackedAngle, borrowedCoordinate: nextBorrowed }
   }

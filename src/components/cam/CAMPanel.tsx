@@ -36,6 +36,7 @@ import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary
 import { ToolLibraryDialog } from './ToolLibraryDialog'
 import { CAMPlanDialog } from './CAMPlanDialog'
 import { createCamPlan, type CamPlanDraft } from '../../engine/operations/camPlan'
+import { setupFace } from '../../engine/setupOrientation'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
 import { OperationParameterReference } from './OperationParameterReference'
@@ -553,6 +554,9 @@ export function CAMPanel({
   const exportLabels = exportDialectLabels(getActiveMachineDefinition(project))
   const setupSections = camSetupSections(project)
   const currentSetup = activeSetup(project)
+  // The active setup's face decides what the CAM panel offers: Around hides
+  // the cross-face target picker and the automatic plan (issue #395).
+  const currentSetupFace = setupFace(currentSetup)
   const editingSetup = setupSections.sections.find((section) => section.setup.id === editingSetupId)?.setup
   const closeSetupProperties = useCallback(() => setEditingSetupId(null), [])
   const addSelection = useMemo(() => pickedTargetIds === null ? selection : { ...selection, selectedFeatureIds: pickedTargetIds, selectedFeatureId: pickedTargetIds[0] ?? null }, [selection, pickedTargetIds])
@@ -2229,7 +2233,8 @@ export function CAMPanel({
                       ref={camPlanButtonRef}
                       className="cam-header-action cam-header-action--plan"
                       type="button"
-                      disabled={project.features.length === 0}
+                      disabled={project.features.length === 0 || currentSetupFace === 'around'}
+                      title={currentSetupFace === 'around' ? camT('cam.plan.unavailableAround') : undefined}
                       onClick={() => void handleOpenCamPlan()}
                     >
                       {camT('cam.plan.launch')}
@@ -2260,7 +2265,7 @@ export function CAMPanel({
                     {showAddOperationMenu ? (
                       <OperationAddMenu
                         setupName={setupSections.grouped ? currentSetup?.name : undefined}
-                        targetPicker={<CrossFaceTargetPicker project={project} face={currentSetup?.orientation.angleDeg === 180 ? 'bottom' : 'top'} selectedIds={addSelection.selectedFeatureIds} onChange={setPickedTargetIds} />}
+                        targetPicker={currentSetupFace === 'around' ? undefined : <CrossFaceTargetPicker project={project} face={currentSetupFace} selectedIds={addSelection.selectedFeatureIds} onChange={setPickedTargetIds} />}
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
                         selectedNewOperationHint={selectedNewOperationHint}

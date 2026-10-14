@@ -967,6 +967,20 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // The program never ends in inverse-time mode (rule 4).
   leaveInverseTime()
 
+  // Unwind the bar once, at the end (issue #395, rule 5): a program that has
+  // turned the stock and stops at a non-zero angle is returned to 0 so the
+  // operator's next part starts where this one did. Not between operations,
+  // and never written when the program never turned or already ends at 0. The
+  // tool stays at the height the last operation retracted to, so the rotation
+  // happens clear of the work. The block spells the rapid word itself rather
+  // than relying on modal motion: a command that does not move the tool must
+  // not be read as a continuation of whatever mode was left behind.
+  if (state.rotaryAngle !== null && state.rotaryAngle !== 0) {
+    emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
+    state.motionCommand = definition.motion.rapidCommand
+    state.rotaryAngle = 0
+  }
+
   // 5. Footer
   definition.program.footer.forEach(line => {
     emitTemplateLine(substituteTemplates(line, commonContext))

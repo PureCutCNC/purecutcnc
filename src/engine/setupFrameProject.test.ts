@@ -391,6 +391,7 @@ function testModelTurnsOver(): void {
 
   const asDrawn = loadSTLTransformedGeometry(resolvedFeature(project, 'model'), project)
   assert(asDrawn, 'fixture: the model loads')
+  assert(loadSTLTransformedGeometry({ ...resolvedFeature(project, 'model'), authoringFace: 'around' }, project) === null, 'Around model geometry is refused before the planar CSG cache')
   const zs = Array.from(asDrawn.positions).filter((_, i) => i % 3 === 2)
   assert(Math.min(...zs) === 4 && Math.max(...zs) === 17, 'fixture: the model fills its span, stock Z 4 → 17')
 
@@ -454,3 +455,15 @@ testToolpathBackToStockSpace()
 testRotaryAngleRidesThroughToolpath()
 
 console.log('setup frame project tests passed')
+
+// Every public rotation-frame path refuses Around, including zero angle.
+const aroundFrameInput = { ...setupFrame({ axis: 'x', angleDeg: 0 }, newProject().stock), kind: 'around' as const }
+for (const call of [
+  () => projectInSetupFrame(newProject(), aroundFrameInput),
+  () => setupPlanMirror(aroundFrameInput),
+  () => toolpathInStockFrame({ operationId: 'around', moves: [], bounds: null, warnings: [] }, aroundFrameInput),
+]) {
+  let refused = false
+  try { call() } catch { refused = true }
+  assert(refused, 'Around does not enter the planar rotation helpers')
+}

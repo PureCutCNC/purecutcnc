@@ -16,6 +16,7 @@
 
 import { useI18n } from '../i18n/i18nContext'
 import { useFileActions } from '../platform/useFileActions'
+import { activeFace } from '../store/helpers/activeFace'
 import { useProjectStore } from '../store/projectStore'
 
 export type FileCommandId =
@@ -57,7 +58,11 @@ export function useFileCommands({
 } {
   const { t } = useI18n()
   const fileActions = useFileActions()
-  const { dirty, history, undo, redo } = useProjectStore()
+  const { dirty, history, undo, redo, project } = useProjectStore()
+  // Print and the design SVG export show the flat faces only: on Around they
+  // are disabled and each says why in its own words (issue #395) — one shared
+  // sentence spoke about printing on the Export model command.
+  const flatFaceOnly = activeFace(project) === 'around'
 
   async function handleNewProject() {
     const ok = await fileActions.confirmDiscardIfDirty()
@@ -106,16 +111,16 @@ export function useFileCommands({
       exportModel: {
         id: 'exportModel',
         icon: 'export',
-        label: t('file.exportModel'),
-        enabled: true,
+        label: flatFaceOnly ? t('file.exportModelFlatFacesOnly') : t('file.exportModel'),
+        enabled: !flatFaceOnly,
         active: false,
         onActivate: onExportModel,
       },
       printDesign: {
         id: 'printDesign',
         icon: 'print',
-        label: t('file.printDesign'),
-        enabled: true,
+        label: flatFaceOnly ? t('file.flatFacesOnly') : t('file.printDesign'),
+        enabled: !flatFaceOnly,
         active: false,
         onActivate: onPrintDesign,
       },

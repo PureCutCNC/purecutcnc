@@ -41,7 +41,8 @@
  * depth.
  */
 
-import type { Operation, Project, SetupFace } from '../types/project'
+import { aroundFrameForOperation, unwrapPoint } from './aroundFrame'
+import type { Operation, Project, FlatFace, SetupFace } from '../types/project'
 import { resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 import { normalizeToolForProject } from './toolpaths/geometry'
 import type { ToolpathResult } from './toolpaths/types'
@@ -86,16 +87,32 @@ export function operationCutRange(
   const thickness = project.stock.thickness
   const face: SetupFace = operationFace(project, operation)
 
+  // The frame is only needed to unwrap stored motion. When the bar is no
+  // longer a round bar on the setup's axis the frame cannot be built; that is
+  // a generation-time refusal (`aroundStockMismatch`), not a reason for a
+  // property panel that is merely rendering to throw. Report no reach.
+  let around: ReturnType<typeof aroundFrameForOperation>
+  if (face === 'around') {
+    try {
+      around = aroundFrameForOperation(project, operation)
+    } catch {
+      return null
+    }
+  }
   let reached: number | null = null
-  for (const move of toolpath.moves) {
+  for (const stored of toolpath.moves) {
+    const move = around ? { ...stored,
+      from: { ...unwrapPoint(stored.from, around), z: stored.from.z },
+      to: { ...unwrapPoint(stored.to, around), z: stored.to.z },
+    } : stored
     for (const z of cutMoveZAtFeature(footprint, move)) {
       // Above the face that is up the cutter is in air.
-      if (face === 'top' ? z >= thickness : z <= 0) continue
-      reached = reached === null ? z : face === 'top' ? Math.min(reached, z) : Math.max(reached, z)
+      if (face !== 'bottom' ? z >= thickness : z <= 0) continue
+      reached = reached === null ? z : face !== 'bottom' ? Math.min(reached, z) : Math.max(reached, z)
     }
   }
   if (reached === null) return null
-  return face === 'top'
+  return face !== 'bottom'
     ? { min: Math.max(reached, 0), max: thickness }
     : { min: 0, max: Math.min(reached, thickness) }
 }
@@ -151,18 +168,21 @@ export function throughFeatureCoverage(
 
   const operations = project.operations.filter((operation) => (
     operation.enabled
+    && operationFace(project, operation) !== 'around'
     && operation.target.source === 'features'
     && operation.target.featureIds.includes(featureId)
   ))
   if (operations.length === 0) return null
 
   const thickness = project.stock.thickness
-  const sides: Record<SetupFace, { operationIds: string[]; ranges: Array<StockZRange | null>; measured: boolean }> = {
+  const sides: Record<FlatFace, { operationIds: string[]; ranges: Array<StockZRange | null>; measured: boolean }> = {
     top: { operationIds: [], ranges: [], measured: true },
     bottom: { operationIds: [], ranges: [], measured: true },
   }
   for (const operation of operations) {
-    const side = sides[operationFace(project, operation)]
+    const face = operationFace(project, operation)
+    if (face === 'around') continue
+    const side = sides[face]
     side.operationIds.push(operation.id)
     const toolpath = toolpaths.get(operation.id)
     if (!toolpath) {
@@ -172,7 +192,7 @@ export function throughFeatureCoverage(
     side.ranges.push(operationCutRange(project, operation, toolpath, featureId))
   }
 
-  const combined = (face: SetupFace): StockZRange | null => {
+  const combined = (face: FlatFace): StockZRange | null => {
     const ranges = sides[face].ranges.filter((range): range is StockZRange => range !== null)
     if (!sides[face].measured || ranges.length === 0) return null
     return face === 'top'

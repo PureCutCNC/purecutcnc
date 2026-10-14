@@ -28,6 +28,7 @@
 
 import type { MachiningSetup, Operation, OperationTarget, Project, SetupFace } from '../types/project'
 import { isOperationTargetValid } from '../store/helpers/operationDefaults'
+import { operationFace } from './setupTargets'
 import { setupFace } from './setupOrientation'
 import { judgeTargetsFromFace } from './setupTargets'
 import type { TargetFaceVerdict } from './setupTargets'
@@ -76,6 +77,9 @@ export function planOperationMove(project: Project, operationId: string, toSetup
   }
 
   const face = setupFace(toSetup)
+  if ((operationFace(project, operation) === 'around') !== (face === 'around')) {
+    return { ...base, kept: [], removed: [], target: operation.target, blocked: 'noValidTargets' }
+  }
   const verdicts = judgeTargetsFromFace(project, operation.target, face)
   const kept = verdicts.filter((verdict) => verdict.status !== 'rejected')
   const removed = verdicts.filter((verdict) => verdict.status === 'rejected')

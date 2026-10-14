@@ -28,12 +28,13 @@
  * geometry leaks into a model/CAM input.
  */
 
-import type { FeatureOperation, Project, SketchFeature } from '../../types/project'
+import type { FeatureOperation, Project, SetupFace, SketchFeature } from '../../types/project'
 import { resolveFeatureInstances } from './resolveFeatures'
 
 /** Anything carrying an operation — SketchFeature or FeatureDefinition. */
 interface HasOperation {
   operation: FeatureOperation
+  authoringFace?: SetupFace
 }
 
 export type FeatureTreeSection = 'features' | 'regions' | 'construction'
@@ -64,8 +65,14 @@ export function isMachinable(entity: HasOperation): boolean {
  * as overlays and skipped by the boolean pipeline. Line features are
  * machinable path geometry that renders as flat 3D line overlays and never
  * contributes to the solid model.
+ *
+ * Around features are wrapped onto the bar as their own solid (issue #395),
+ * but they take no part in flat base-solid ordering: the "first 2.5D feature
+ * must be Add" rule looks only at flat-face features, and an Around subtract
+ * never serves as a flat model's base.
  */
 export function isSolid(entity: HasOperation): boolean {
+  if (entity.authoringFace === 'around') return false
   return entity.operation === 'add' || entity.operation === 'subtract' || entity.operation === 'model'
 }
 

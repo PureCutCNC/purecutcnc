@@ -42,6 +42,7 @@
  * store's target validator.
  */
 
+import { isRoundStock } from '../types/project'
 import { activeSetup } from '../store/helpers/activeFace'
 import type {
   FeatureInstance,
@@ -92,8 +93,9 @@ export function spanReachesBothFaces(span: StockZSpan, stock: Pick<Project['stoc
  */
 export function isThroughFeature(
   project: Pick<Project, 'dimensions' | 'stock'> & Partial<Pick<Project, 'featureDefinitions'>>,
-  feature: Pick<FeatureInstance, 'z_top' | 'z_bottom'> & (Pick<FeatureInstance, 'definitionId'> | { operation: string }),
+  feature: Pick<FeatureInstance, 'z_top' | 'z_bottom'> & Partial<Pick<FeatureInstance, 'authoringFace'>> & (Pick<FeatureInstance, 'definitionId'> | { operation: string }),
 ): boolean {
+  if (feature.authoringFace === 'around') return false
   const role = 'operation' in feature ? feature.operation : project.featureDefinitions?.[feature.definitionId]?.operation
   const span = featureStockSpan(project, feature)
   return role === 'subtract' && span !== null && spanReachesBothFaces(span, project.stock)
@@ -126,7 +128,9 @@ export function featureReachableFromFace(
   feature: TargetFeature & Pick<FeatureInstance, 'authoringFace'>,
   face: SetupFace,
 ): boolean {
+  if (face === 'around' && isImportedModel(project, feature)) return false
   if ((feature.authoringFace ?? 'top') === face) return true
+  if (face === 'around' || feature.authoringFace === 'around') return false
   const reach = crossFaceReach(project, feature)
   return reach.through || reach.model
 }
@@ -169,7 +173,9 @@ export function judgeTargetFromFace(
   const authoringFace: SetupFace = feature.authoringFace ?? 'top'
   const { through, model } = crossFaceReach(project, feature)
   const span = featureStockSpan(project, feature)
-  const status: TargetFaceStatus = authoringFace === face ? 'same-face' : through || model ? 'cross-face' : 'rejected'
+  const status: TargetFaceStatus = face === 'around' && model ? 'rejected'
+    : authoringFace === face ? 'same-face'
+    : face !== 'around' && authoringFace !== 'around' && (through || model) ? 'cross-face' : 'rejected'
   return {
     featureId: feature.id,
     featureName: feature.name,
@@ -233,7 +239,7 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
 
 /** Why an operation generates nothing in its setup. */
 export interface SetupGenerationBlock {
-  reason: 'crossFaceNotThrough'
+  reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline'
   face: SetupFace
   features: TargetFaceVerdict[]
 }
@@ -246,6 +252,22 @@ export interface SetupGenerationBlock {
  */
 export function setupGenerationBlock(project: Project, operation: Operation): SetupGenerationBlock | null {
   const face = operationFace(project, operation)
-  const rejected = judgeTargetsFromFace(project, operation.target, face).filter((verdict) => verdict.status === 'rejected')
+  const verdicts = judgeTargetsFromFace(project, operation.target, face)
+  if (face === 'around') {
+    const setup = setupForOperation(project, operation)
+    if (!isRoundStock(project.stock) || setup?.orientation.axis !== project.stock.axis) {
+      return { reason: 'aroundStockMismatch', face, features: [] }
+    }
+    // A rejected target is reported as the face mismatch it is: it is not a
+    // cut on this face, so its Z is not what blocks the Around operation.
+    const centreline = verdicts.filter((verdict) => {
+      if (verdict.status === 'rejected') return false
+      const feature = project.features.find((entry) => entry.id === verdict.featureId)
+      const span = feature && featureStockSpan(project, feature)
+      return span !== null && span !== undefined && span.z_bottom <= project.stock.thickness / 2
+    })
+    if (centreline.length > 0) return { reason: 'aroundCentreline', face, features: centreline }
+  }
+  const rejected = verdicts.filter((verdict) => verdict.status === 'rejected')
   return rejected.length > 0 ? { reason: 'crossFaceNotThrough', face, features: rejected } : null
 }

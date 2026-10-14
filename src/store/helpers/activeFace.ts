@@ -30,7 +30,7 @@ import {
   setupOriginInCanonical,
   setupToCanonicalPoint,
 } from '../../engine/setupOrientation'
-import { defaultTopSetup } from '../../types/project'
+import { defaultTopSetup, isRoundStock } from '../../types/project'
 import { isThroughFeature as setupIsThroughFeature } from '../../engine/setupTargets'
 import type {
   DimensionRef,
@@ -49,7 +49,7 @@ import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
 import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
 
-type FaceProject = Pick<Project, 'setups' | 'activeSetupId'>
+type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock'>>
 
 /**
  * The setup the workspace is on. A project always has one — but it is not
@@ -77,15 +77,15 @@ export function findSetupForFace(project: Pick<Project, 'setups'>, face: SetupFa
 }
 
 /**
- * Whether the workspace shows both faces: the project has a Bottom setup or
- * a feature drawn on Bottom, or the Bottom face is being looked at. A
+ * Whether the workspace shows multiple faces: the project has a non-Top setup
+ * or feature, or a non-Top face is being looked at. A
  * Top-only project seen from Top answers false, and the workspace then shows
  * no face layers, ghosts or face chips at all.
  */
 export function projectUsesBothFaces(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'>): boolean {
-  return project.setups.some((setup) => setupFace(setup) === 'bottom')
-    || project.features.some((feature) => feature.authoringFace === 'bottom')
-    || activeFace(project) === 'bottom'
+  return project.setups.some((setup) => setupFace(setup) !== 'top')
+    || project.features.some((feature) => (feature.authoringFace ?? 'top') !== 'top')
+    || activeFace(project) !== 'top'
 }
 
 /**
@@ -219,6 +219,7 @@ export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_
   const epsilon = 1e-9
   const atFace = (feature: T): boolean => {
     if (!isGhost(feature)) return true
+    if (face === 'around' || feature.authoringFace === 'around') return false
     const span = resolveStockSpan(project, feature)
     if (!span) return false
     return face === 'top' ? span.z_top >= project.stock.thickness - epsilon : span.z_bottom <= epsilon
@@ -231,12 +232,27 @@ export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_
  * would start at. Drawing tools reason as if the face in front of them were
  * the top of the stock; this carries that span into stock space, so a new
  * Bottom feature opens at the bottom face instead of the top one.
+ *
+ * On Around a new shape is a shallow cut into the bar's surface (issue #395):
+ * the Top span would run through the whole bar, to `z_bottom = 0`, which is at
+ * the centreline every radial operation refuses. The depth scales with the bar:
+ * a sixteenth of its diameter (`project.stock.thickness`), rounded to the
+ * units' tidy step (0.5 mm, 1/64 in) so the field shows exactly what is used.
+ * It is never under one step, nor over a quarter of the diameter — the latter
+ * wins on a very thin bar, so the cut never reaches the centreline.
  */
 export function newFeatureSpan(
-  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'meta'>,
   faceLocalTopZ: number,
 ): { z_top: number; z_bottom: number } {
-  return activeFace(project) === 'top'
+  const face = activeFace(project)
+  if (face === 'around') {
+    const step = project.meta.units === 'inch' ? 1 / 64 : 0.5
+    const diameter = project.stock.thickness
+    const depth = Math.min(Math.max(Math.round(diameter / 16 / step) * step, step), diameter / 4)
+    return { z_top: diameter, z_bottom: diameter - depth }
+  }
+  return face !== 'bottom'
     ? { z_top: faceLocalTopZ, z_bottom: 0 }
     : { z_top: project.stock.thickness, z_bottom: project.stock.thickness - faceLocalTopZ }
 }
@@ -255,7 +271,7 @@ export function faceArtworkMirror(
   anchor: Point,
 ): ((point: Point) => Point) | null {
   const setup = activeSetup(project)
-  if (setupFace(setup) === 'top') return null
+  if (setupFace(setup) !== 'bottom') return null
   return flipAxisMirror(setup, project.stock, anchor)
 }
 
@@ -268,8 +284,10 @@ export function faceArtworkMirror(
 export function crossFaceArtworkMirror(
   project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
   anchor: Point,
+  sourceFace?: SetupFace,
 ): (point: Point) => Point {
   const active = activeSetup(project)
+  if (setupFace(active) === 'around' || sourceFace === 'around') return (point) => point
   const bottom = setupFace(active) === 'bottom'
     ? active
     : findSetupForFace(project, 'bottom') ?? defaultSetupForFace('bottom')
@@ -298,7 +316,7 @@ export function activeOriginInStock(
   project: Pick<Project, 'origin' | 'setups' | 'activeSetupId' | 'stock'>,
 ): MachineOrigin {
   const setup = activeSetup(project)
-  if (setupFace(setup) === 'top') return project.origin
+  if (setupFace(setup) !== 'bottom') return project.origin
   const point = setupOriginInCanonical(project.origin, setupFrame(setup.orientation, project.stock))
   return { ...project.origin, x: point.x, y: point.y }
 }
@@ -312,7 +330,7 @@ export function originPlacementFromStock(
   point: Point,
 ): Point {
   const setup = activeSetup(project)
-  if (setupFace(setup) === 'top') return point
+  if (setupFace(setup) !== 'bottom') return point
   const local = canonicalToSetupPoint({ x: point.x, y: point.y, z: 0 }, setupFrame(setup.orientation, project.stock))
   return { x: local.x, y: local.y }
 }
@@ -330,8 +348,9 @@ export function faceArtworkTransform(
 export function crossFaceArtworkTransform(
   project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
   anchor: Point,
+  sourceFace?: SetupFace,
 ): Matrix2D {
-  return affineMatrixOf(crossFaceArtworkMirror(project, anchor))
+  return affineMatrixOf(crossFaceArtworkMirror(project, anchor, sourceFace))
 }
 
 /** The matrix of an affine point map, read off where it sends the origin and the unit axes. */
@@ -395,7 +414,7 @@ function reversedStockAxes(
   project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
 ): Record<'x' | 'y' | 'z', boolean> | null {
   const setup = activeSetup(project)
-  if (setupFace(setup) === 'top') return null
+  if (setupFace(setup) !== 'bottom') return null
   const frame = setupFrame(setup.orientation, project.stock)
   const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
   return {
@@ -537,4 +556,12 @@ export function dropGhostSelection(
     activeControl: keepsEdit ? selection.activeControl : null,
     groupFolderId: kept.length > 0 ? selection.groupFolderId : null,
   }
+}
+
+/** Why the Around face cannot be created or selected on this project. */
+export function aroundUnavailableReason(project: Pick<Project, 'stock' | 'meta'>): null | 'needsRoundBar' | 'needsRotaryMachine' | 'machineAxisMismatch' {
+  if (!isRoundStock(project.stock)) return 'needsRoundBar'
+  const rotary = project.meta.machineDefinitions?.[0]?.rotary
+  if (!rotary) return 'needsRotaryMachine'
+  return rotary.about === project.stock.axis ? null : 'machineAxisMismatch'
 }

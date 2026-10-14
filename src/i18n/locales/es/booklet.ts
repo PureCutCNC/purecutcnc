@@ -131,6 +131,7 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   'booklet.label.setupNotes': 'Notas de la sujeción',
   'booklet.value.setupTop': 'Cara superior arriba',
   'booklet.value.setupBottom': 'Cara inferior arriba, volteado sobre {axis}',
+  'booklet.value.setupAround': 'Alrededor de la barra, barra a lo largo de {axis}',
   'booklet.value.registrationNone': 'Ninguno declarado',
   'booklet.registration.dowel': 'Pasador',
   'booklet.registration.fence': 'Tope',

@@ -63,6 +63,7 @@ import type { ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project } from '../../types/project'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
+import { aroundFrameForOperation, flatFaceProject, unrolledProject, wrapToolpath } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
@@ -94,8 +95,20 @@ export interface OperationToolpathEnvelope {
   raw: ToolpathResult | null
 }
 
-function setupBlockWarning(block: SetupGenerationBlock): ToolpathWarning {
+function setupBlockWarning(block: SetupGenerationBlock, operation: Operation): ToolpathWarning {
+  if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
+  if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
   return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
+}
+
+/**
+ * True when a **cutting** move of a flat Around toolpath reaches the bar's
+ * centreline (issue #395). Around flat heights are lowered by the radius, so
+ * the centreline is flat zero; a cut at or below it would pass through the
+ * middle of the bar. Rapids are exempt — they travel above the work.
+ */
+function reachesCentreline(result: ToolpathResult): boolean {
+  return result.moves.some((move) => move.kind !== 'rapid' && Math.min(move.from.z, move.to.z) <= 0)
 }
 
 /**
@@ -107,8 +120,11 @@ function setupBlockWarning(block: SetupGenerationBlock): ToolpathWarning {
  * a normal envelope — infrastructure failures must never be encoded that way.
  *
  * The result is always in stock space, whichever setup the operation is cut
- * in. A Top operation takes the path it always did: the project and the
- * result are passed through untouched, not copied.
+ * in. A Top operation in a project with no Around feature takes the path it
+ * always did: the project and the result are passed through untouched, not
+ * copied. A flat face and Around exchange nothing (issue #395): an operation
+ * that is not in an Around setup is generated without the project's Around
+ * features, which belong to the bar's unrolled sheet.
  */
 export function computeOperationToolpath(
   project: Project,
@@ -118,22 +134,47 @@ export function computeOperationToolpath(
   // Plasma is Top-only: diagnose its original setup before target checks or
   // the Bottom transform, which makes every setup top-down for milling.
   if (operation.kind === 'plasma_profile' && !plasmaSetupIsTop(project, operation)) {
-    return computeTopDownToolpath(project, operation, options)
+    return computeTopDownToolpath(flatFaceProject(project), operation, options)
   }
 
   // An operation its setup may not cut produces no motion, and says why.
   const block = setupGenerationBlock(project, operation)
   if (block) {
     return {
-      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block)], bounds: null },
+      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation)], bounds: null },
       raw: null,
     }
   }
 
-  const frame = setupFrameForOperation(project, operation)
-  if (!frame) return computeTopDownToolpath(project, operation, options)
+  const around = aroundFrameForOperation(project, operation)
+  if (around) {
+    const envelope = computeTopDownToolpath(unrolledProject(project, around), operation, options)
+    if (!envelope) return null
+    // A depth the operation works out itself — an Engrave's carve depth, a
+    // countersink's derived plunge — can reach the centreline although the
+    // target is stored short of it. Refuse rather than cut the bar through.
+    if (reachesCentreline(envelope.result)) {
+      return {
+        result: {
+          operationId: operation.id,
+          moves: [],
+          warnings: [{ code: 'aroundCutReachesCentreline', params: { operation: operation.name } }],
+          bounds: null,
+        },
+        raw: null,
+      }
+    }
+    return {
+      result: wrapToolpath(envelope.result, around),
+      raw: envelope.raw ? wrapToolpath(envelope.raw, around) : null,
+    }
+  }
 
-  const envelope = computeTopDownToolpath(projectInSetupFrame(project, frame), operation, options)
+  const frame = setupFrameForOperation(project, operation)
+  const flat = flatFaceProject(project)
+  if (!frame) return computeTopDownToolpath(flat, operation, options)
+
+  const envelope = computeTopDownToolpath(projectInSetupFrame(flat, frame), operation, options)
   if (!envelope) return null
   return {
     result: toolpathInStockFrame(envelope.result, frame),

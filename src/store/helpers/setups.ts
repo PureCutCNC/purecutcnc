@@ -29,7 +29,7 @@
  * has to know setups exist.
  */
 
-import { defaultTopSetup } from '../../types/project'
+import { defaultTopSetup, isRoundStock } from '../../types/project'
 import type {
   MachiningSetup,
   Operation,
@@ -88,9 +88,9 @@ function decodeRegistration(setupId: string, value: unknown): RegistrationRefere
   })
 }
 
-/** True for the two values a feature's `authoringFace` may hold. */
+/** True for the supported values a feature's `authoringFace` may hold. */
 export function isSetupFace(value: unknown): value is SetupFace {
-  return value === 'top' || value === 'bottom'
+  return value === 'top' || value === 'bottom' || value === 'around'
 }
 
 /**
@@ -104,6 +104,7 @@ export function decodeSetups(value: unknown): MachiningSetup[] | null {
   if (value === undefined || value === null) return null
   if (!Array.isArray(value)) throw new Error('Failed to load project: invalid setups.')
   if (value.length === 0) return null
+  let aroundSeen = false
   const seen = new Set<string>()
   return value.map((raw): MachiningSetup => {
     if (!isRecord(raw) || typeof raw.id !== 'string' || raw.id.length === 0 || typeof raw.name !== 'string') {
@@ -111,8 +112,14 @@ export function decodeSetups(value: unknown): MachiningSetup[] | null {
     }
     if (seen.has(raw.id)) throw new Error(`Project setup ${raw.id} is defined more than once.`)
     seen.add(raw.id)
+    if (raw.kind !== undefined && raw.kind !== 'around') throw new Error(`Project setup ${raw.id} has an unsupported kind.`)
+    if (raw.kind === 'around') {
+      if (aroundSeen) throw new Error('Project has more than one Around setup.')
+      aroundSeen = true
+    }
     const orientation = raw.orientation
-    if (!isRecord(orientation) || !isSupportedSetupOrientation(orientation as unknown as SetupOrientation)) {
+    if (!isRecord(orientation) || !isSupportedSetupOrientation(orientation as unknown as SetupOrientation)
+      || (raw.kind === 'around' && orientation.angleDeg !== 0)) {
       throw new Error(`Project setup ${raw.id} has an orientation this version cannot machine. Only Top (0°) and Bottom (180° about X or Y) are supported.`)
     }
     if (raw.indexing !== 'manual') {
@@ -126,6 +133,7 @@ export function decodeSetups(value: unknown): MachiningSetup[] | null {
       throw new Error(`Project setup ${raw.id} has invalid operation ids.`)
     }
     return {
+      ...(raw.kind === 'around' ? { kind: 'around' as const } : {}),
       id: raw.id,
       name: raw.name,
       orientation: {
@@ -163,11 +171,12 @@ export function assertOperationSetupsExist(operations: readonly Operation[], set
 export function findSetupWithTurn(
   setups: readonly MachiningSetup[],
   orientation: SetupOrientation,
+  kind?: MachiningSetup['kind'],
 ): MachiningSetup | undefined {
   return setups.find((setup) => (
-    setup.orientation.angleDeg === orientation.angleDeg
+    setup.kind === kind && setup.orientation.angleDeg === orientation.angleDeg
     // The axis of a 0° turn says nothing; for any other it is part of the turn.
-    && (orientation.angleDeg === 0 || setup.orientation.axis === orientation.axis)
+    && ((kind !== 'around' && orientation.angleDeg === 0) || setup.orientation.axis === orientation.axis)
   ))
 }
 
@@ -222,17 +231,28 @@ export function syncProjectSetups(project: Project): Project {
     featureIds ??= new Set(project.features.map((feature) => feature.id))
     return featureIds.has(id)
   }
+  // The bar is only followed while the Around setup is empty: once it holds a
+  // feature or an operation, turning the bar from X to Y would silently
+  // re-read every stored drawing on a transposed sheet. The axis then stays
+  // put and `aroundStockMismatch` tells the user at generation time.
+  const aroundSetup = setups.find((setup) => setup.kind === 'around')
+  const aroundEmpty = aroundSetup === undefined || (
+    !project.features.some((feature) => (feature.authoringFace ?? 'top') === 'around')
+    && (members.get(aroundSetup.id)?.length ?? 0) === 0
+  )
   let setupsChanged = setups !== currentSetups
   const nextSetups = setups.map((setup) => {
+    const orientation = setup.kind === 'around' && aroundEmpty && isRoundStock(project.stock) && setup.orientation.axis !== project.stock.axis
+      ? { axis: project.stock.axis, angleDeg: 0 } : setup.orientation
     const operationIds = members.get(setup.id) ?? []
     const registration = setup.registration.filter((reference) => (
       reference.target.type !== 'feature' || featureExists(reference.target.featureId)
     ))
-    if (sameIds(operationIds, setup.operationIds) && registration.length === setup.registration.length) {
+    if (orientation === setup.orientation && sameIds(operationIds, setup.operationIds) && registration.length === setup.registration.length) {
       return setup
     }
     setupsChanged = true
-    return { ...setup, operationIds, registration }
+    return { ...setup, orientation, operationIds, registration }
   })
 
   if (!operationsChanged && !setupsChanged && activeSetupId === project.activeSetupId) return project

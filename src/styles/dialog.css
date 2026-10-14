@@ -1021,6 +1021,9 @@
 /* Per-setup export (issue #946): the checklist is grouped by setup, and each
    setup's program is listed with the file it will be written to. */
 .export-setup-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -1064,6 +1067,9 @@
 }
 
 .export-program-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 600;
 }

@@ -27,6 +27,10 @@ type ToolbarActionButtonProps = {
   emphasized?: boolean
   disabled?: boolean
   tooltipSide?: 'bottom' | 'right'
+  /** Stable `data-command` hook, matching the top command bar's (e.g.
+   *  "export-model"). The accessible name changes with state, so tests and
+   *  command lookups must not key on it. */
+  command?: string
   onClick: () => void
 }
 
@@ -103,12 +107,14 @@ function ToolbarActionButton({
   emphasized = false,
   disabled = false,
   tooltipSide = 'bottom',
+  command,
   onClick,
 }: ToolbarActionButtonProps) {
   return (
     <ToolbarAction label={label} tooltipSide={tooltipSide}>
       <button
         className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''} ${emphasized ? 'toolbar-icon-btn--live' : ''}`}
+        data-command={command}
         onClick={(event) => {
           onClick()
           event.currentTarget.blur()

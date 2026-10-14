@@ -31,6 +31,7 @@ import {
 import { inspectStepFileUnits, type StepUnitInspection } from '../../import/stepUnits'
 import { StepImportError } from '../../import/stepProtocol'
 import { useProjectStore } from '../../store/projectStore'
+import { activeFace } from '../../store/helpers/activeFace'
 import type { ModelAxisOrientation } from '../../engine/importedMesh'
 import type { ImportedModelSourceFormat } from '../../types/project'
 import type { Units } from '../../utils/units'
@@ -332,6 +333,13 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     }
     if (!sourceUnits) {
       setDialogError(td('dialogs.importGeometry.error.sourceUnits'))
+      return
+    }
+
+    // The model refuses a 3D model on the unrolled bar (issue #395). Show
+    // that refusal where the dialog's other errors go, before doing any work.
+    if (isModelSourceType(loadedFile.sourceType) && activeFace(project) === 'around') {
+      setDialogError(td('dialogs.importGeometry.error.modelOnAround'))
       return
     }
 

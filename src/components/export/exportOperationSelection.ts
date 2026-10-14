@@ -80,7 +80,12 @@ export function groupExportOperationOptions(
   options: readonly ExportOperationOption[],
 ): ExportOperationGroup[] {
   if (!projectExportsPerSetup(project)) {
-    return options.length === 0 ? [] : [{ setup: null, programNumber: 1, face: 'top', options: [...options] }]
+    if (options.length === 0) return []
+    const sole = project.setups?.[0]
+    const face = sole ? setupFace(sole) : 'top'
+    // An Around-only project is not the unlabelled legacy group: its one
+    // program is named and wears the Around icon (issue #395).
+    return [{ setup: face === 'around' ? sole ?? null : null, programNumber: 1, face, options: [...options] }]
   }
   return project.setups.flatMap((setup) => {
     const members = options.filter((option) => (setupForOperation(project, option.operation) ?? project.setups[0]) === setup)

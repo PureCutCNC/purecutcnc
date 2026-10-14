@@ -23,6 +23,7 @@
 import { getVisibleSceneBounds2D } from '../../sketch/sceneBounds'
 import { getStockBounds } from '../../types/project'
 import type { Bounds2D, Project } from '../../types/project'
+import { flatFaceProject } from '../aroundFrame'
 import type { Units } from '../../utils/units'
 import type {
   DesignPrintContent,
@@ -115,6 +116,16 @@ export function resolvePaperSizeMm(
 }
 
 /**
+ * The project as a flat-face print sees it (issue #395): a feature authored on
+ * the Around face stores the unrolled sheet's coordinates, which mean nothing
+ * on the bar's rectangle, so Print and the design SVG export leave those
+ * features out — of the drawing and of the bounds the page is scaled to.
+ * `flatFaceProject` is the one helper every flat-face read shares, and it
+ * returns the input itself when there is nothing to drop.
+ */
+export { flatFaceProject }
+
+/**
  * Resolve the world bounds to print for the selected area mode. `viewBounds`
  * is the sketch canvas's current pan/zoom window; when unavailable the `view`
  * mode falls back to visible-design extents.
@@ -138,7 +149,7 @@ export function resolvePrintBounds(
     return viewBounds
   }
 
-  const bounds = getVisibleSceneBounds2D(project, {
+  const bounds = getVisibleSceneBounds2D(flatFaceProject(project), {
     includeBackdrop: false,
     includeTabs: content?.tabs ?? true,
     includeClamps: content?.clamps ?? true,

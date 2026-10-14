@@ -502,7 +502,7 @@ export interface ProjectStore {
 
   // ---- Machining setups (issue #944) ----
   /** Add a setup. Returns its id, or null when the orientation is not one this build can machine. */
-  createSetup: (input: { name?: string; orientation: SetupOrientation }) => string | null
+  createSetup: (input: { name?: string; orientation: SetupOrientation; kind?: 'around' }) => string | null
   renameSetup: (id: string, name: string) => void
   /** Atomic setup property edit; realizes a provisional setup in the same undo step. */
   updateSetup: (id: string, patch: { name?: string; flipAxis?: 'x' | 'y'; registration?: MachiningSetup['registration']; notes?: string }) => boolean

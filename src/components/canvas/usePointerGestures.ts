@@ -35,14 +35,16 @@ import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
 import {
   canvasToWorld,
-  computeBaseViewTransform,
   computeFitViewStateForBounds,
+  computeSketchLocalTransform,
   computeSketchViewTransform,
   computeViewTransform,
+  sketchViewStock,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, projectPointOntoLine } from './draftGeometry'
@@ -455,8 +457,11 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     }
 
     const control = hitEditableControl(point)
-    const hitClampId = findHitClampId(world, project.clamps)
-    const hitTabId = findHitTabId(world, project.tabs)
+    // A bar's clamp bands are reference on the sheet and a tab has no place
+    // there, so neither occupies the pointer (issue #395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
@@ -900,7 +905,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingSketchFilletRef.current = null
     setHoveredEditControl(null)
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = aroundSheet(project) ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       hoverFeature(null)
       return
@@ -986,12 +991,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        // The zoom window is measured in the frame the view draws: the sheet on
+        // Around, the stock's own rectangle otherwise (issue #395).
+        const frameStock = sketchViewStock(project)
+        const vt = computeViewTransform(frameStock, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
         const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
         setViewState(
           computeFitViewStateForBounds(
-            project.stock,
+            frameStock,
             {
               minX: Math.min(startWorld.x, endWorld.x),
               maxX: Math.max(startWorld.x, endWorld.x),
@@ -1130,8 +1138,9 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const point = canvasCoordinates(event)
     const project = projectRef.current
     const currentViewState = viewStateRef.current
-    const base = computeBaseViewTransform(project.stock, canvas.width, canvas.height)
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, currentViewState)
+    // The frame the view draws: the sheet on Around, the stock otherwise.
+    const base = computeSketchLocalTransform(project, canvas.width, canvas.height, { zoom: 1, panX: 0, panY: 0 })
+    const vt = computeSketchLocalTransform(project, canvas.width, canvas.height, currentViewState)
     const worldBefore = canvasToWorld(point.cx, point.cy, vt)
     const zoomFactor = Math.exp(-event.deltaY * 0.0015)
     const nextZoom = Math.max(MIN_SKETCH_ZOOM, currentViewState.zoom * zoomFactor)
@@ -1176,12 +1185,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
 
     const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
+    // A bar's clamps are reference bands on the sheet and a tab is a flat-stock
+    // device with no place there, so neither opens an edit on Around (#395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       enterClampEdit(hitClampId)
       return
     }
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       enterTabEdit(hitTabId)
       return

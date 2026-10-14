@@ -968,7 +968,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => { startAddTabPlacement(); closeExpanded() }}>
+          <button
+            className="feat-btn"
+            type="button"
+            disabled={workspaceFace === 'around'}
+            title={workspaceFace === 'around' ? t('featureTree.treeRow.addEntry.tabAround') : undefined}
+            onClick={() => { startAddTabPlacement(); closeExpanded() }}
+          >
             {t('featureTree.properties.actions.addTab')}
           </button>
         </div>
@@ -1383,9 +1389,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
   const hasLinkedInstances = linkedInstanceCount > 1
-  // Copies of this shape on the other face change with it (issue #945).
+  // Copies of this shape on the other face change with it (issue #945), and
+  // Around participates in no flat face, so it takes the generic "another
+  // face" wording whenever either side is Around (issue #395 review).
   const selectedFace = selectedFeature.authoringFace ?? 'top'
   const linkedOnOtherFace = hasLinkedInstances ? linkedCopiesOffFace(project, [selectedFeature.id], selectedFace) : 0
+  const linkedOnAround = hasLinkedInstances && project.features.some((feature) => (
+    feature.id !== selectedFeature.id
+    && getDefinitionId(feature) === selectedDefId
+    && (feature.authoringFace ?? 'top') === 'around'
+  ))
+  const linkedFaceKey = selectedFace === 'around' || linkedOnAround
+    ? 'around'
+    : selectedFace === 'top' ? 'bottom' : 'top'
 
   return (
     <div className="properties-panel">
@@ -1532,7 +1548,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           {linkedOnOtherFace > 0 ? (
             <p className="properties-linked-face-note" data-testid="linked-other-face-note">
               {t(
-                `featureTree.face.linkedOtherFace.${selectedFace === 'top' ? 'bottom' : 'top'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+                `featureTree.face.linkedOtherFace.${linkedFaceKey}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
                 { count: linkedOnOtherFace },
               )}
             </p>

@@ -226,3 +226,11 @@ testIndependentPasteClonesDefinitions()
 testEditableShortcutTargetGuard()
 
 console.log('featureClipboard tests passed')
+
+// A transfer out of Around gains no Bottom artwork mirror.
+const { crossFaceArtworkTransform: aroundTransferMatrix } = await import('../store/helpers/activeFace')
+const transferProject = newProject()
+transferProject.setups = [{ ...transferProject.setups[0], id: 'bottom-transfer', orientation: { axis: 'x', angleDeg: 180 } }]
+transferProject.activeSetupId = 'bottom-transfer'
+const matrix = aroundTransferMatrix(transferProject, { x: 17, y: 23 }, 'around')
+assert(matrix.a === 1 && matrix.d === 1 && matrix.b === 0 && matrix.c === 0 && matrix.e === 0 && matrix.f === 0, 'Around to Bottom paste artwork mapping is identity')

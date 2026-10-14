@@ -23,6 +23,7 @@
 import {
   IDENTITY_MATRIX,
   type FeatureFolder,
+  type MachiningSetup,
   type Matrix2D,
   type NamedDimension,
   type Operation,
@@ -32,6 +33,7 @@ import {
   type Tool,
   newProject,
   rectProfile,
+  roundStock,
   stockFromFeature,
 } from '../types/project'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
@@ -831,3 +833,77 @@ testMergeStockImportNoOpWhenSourceNotFeatureBased()
 testMergePreservesLinkedInstanceTransform()
 testMergeRemapsIntersectionConstraintReferences()
 console.log('camj import tests passed')
+
+function testMergeAroundKind(): void {
+  // Around content is imported only onto a bar it can be cut on (issue #395):
+  // its features keep the unrolled sheet's coordinates, so re-axing them onto
+  // another bar would silently turn along-the-bar travel into rotation. X into
+  // X imports; anything else leaves the Around content out and says so.
+  const X_BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
+  const Y_BAR = roundStock(40, 200, 'y', { x: 10, y: 30 })
+  const aroundSetup = (id: string, axis: 'x' | 'y'): MachiningSetup => ({
+    id, name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
+    indexing: 'manual', registration: [], notes: '', operationIds: [],
+  })
+  const barTarget = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Target', 'mm')
+    return {
+      ...base,
+      stock: axis === 'x' ? X_BAR : Y_BAR,
+      setups: [...base.setups, aroundSetup('target-around', axis)],
+      activeSetupId: base.setups[0].id,
+    }
+  }
+  const aroundSource = (axis: 'x' | 'y'): Project => {
+    const source = makeSourceProject('mm')
+    source.stock = axis === 'x' ? X_BAR : Y_BAR
+    source.tools = [makeTool('t-src-1', 'Endmill')]
+    const top = source.setups[0]
+    const around = aroundSetup('src-around', axis)
+    source.setups = [top, around]
+    source.features = source.features.map((feature) => (
+      feature.id === 'f-src-2' ? { ...feature, authoringFace: 'around' as const } : feature
+    ))
+    source.operations = [
+      { ...makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'), setupId: top.id },
+      { ...makeOperation('op-around', 'Around pocket', ['f-src-2'], 't-src-1'), setupId: around.id },
+    ]
+    return source
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] })
+
+  // X into X: imported, and the target's own Around setup is reused.
+  const imported = merge(barTarget('x'), aroundSource('x'))
+  const importedAround = imported.project.setups.filter((setup) => setup.kind === 'around')
+  assert(importedAround.length === 1 && importedAround[0].id === 'target-around', 'X into X reuses the target Around setup')
+  const aroundFeature = imported.project.features.find((feature) => feature.name === 'Slot')
+  assert(aroundFeature?.authoringFace === 'around', 'an importable Around feature keeps its authoring face')
+  const aroundOperation = imported.project.operations.find((entry) => entry.name === 'Around pocket')
+  assert(aroundOperation?.setupId === 'target-around', 'its operation joins the reused Around setup')
+  assert(imported.project.operations.some((entry) => entry.name === 'Top pocket'), 'the rest of the source comes too')
+  assert(!imported.warnings.some((warning) => warning.includes('Around content was not imported')), 'X into X warns about nothing Around')
+  const twice = merge(imported.project, aroundSource('x'))
+  assert(twice.project.setups.filter((setup) => setup.kind === 'around').length === 1, 'a second X import still reuses one Around setup')
+
+  // Y into X, X into Y and an Around source into a block: left out, warned,
+  // and nothing else lost.
+  for (const [label, target, source, missingAxis] of [
+    ['Y into X', barTarget('x'), aroundSource('y'), 'Y'],
+    ['X into Y', barTarget('y'), aroundSource('x'), 'X'],
+    ['Around into a block', newProject('Target', 'mm'), aroundSource('x'), 'X'],
+  ] as const) {
+    const result = merge(target, source)
+    assert(!result.project.features.some((feature) => feature.authoringFace === 'around'),
+      `${label}: no Around feature is imported`)
+    assert(!result.project.operations.some((entry) => entry.name === 'Around pocket'),
+      `${label}: no Around operation is imported`)
+    assert(result.project.features.some((feature) => feature.name === 'Outline'), `${label}: the Top features still import`)
+    assert(result.project.operations.some((entry) => entry.name === 'Top pocket'), `${label}: the Top operations still import`)
+    assert(result.project.setups.every((setup) => setup.kind !== 'around' || setup.id === 'target-around'),
+      `${label}: no Around setup is created for the left-out work`)
+    assert(result.warnings.some((warning) => warning.includes('Around content was not imported') && warning.includes(`along ${missingAxis}`)),
+      `${label}: and the import says which bar it needed (${result.warnings.join(' | ')})`)
+  }
+}
+testMergeAroundKind()

@@ -38,6 +38,17 @@ export function useNavigationViewState(
     updateViewState(next)
   }, [navigation])
 
+  // Publish the live pan/zoom on the canvas for the browser specs (issue #395
+  // review): a spec reads the view the canvas is actually using instead of
+  // recomputing the fit beside it. Dev-only, like the other test seams.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!import.meta.env.DEV || !canvas) return
+    canvas.dataset.viewZoom = String(viewState.zoom)
+    canvas.dataset.viewPanX = String(viewState.panX)
+    canvas.dataset.viewPanY = String(viewState.panY)
+  }, [canvasRef, viewState])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return

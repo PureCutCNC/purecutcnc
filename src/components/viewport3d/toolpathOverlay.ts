@@ -14,8 +14,82 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { ToolpathBounds, ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { RoundStock, Stock } from '../../types/project'
+import { isRoundStock } from '../../types/project'
+import { aroundFrame, unwrapPoint, wrapPoint } from '../../engine/aroundFrame'
+import { stockSpacePoint } from '../../engine/rotaryFrame'
+import { moveMatchesToolpathLevel } from '../toolpathLevels'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+
+/**
+ * The display view of a toolpath: the original with its drawn moves and
+ * bounds substituted, plus the wrapped path it came from. A scene rebuild asks
+ * {@link stockSpaceToolpath} for it and gets the same object back, so the layer
+ * split — which caches on object identity — is not redone (issue #395).
+ */
+export interface DisplayToolpath {
+  readonly moves: readonly ToolpathMove[]
+  readonly bounds: ToolpathBounds | null
+  readonly operationId?: string
+  readonly toolpath?: { readonly moves: readonly ToolpathMove[] }
+  /**
+   * The generated move each `moves` entry was made from, aligned by index
+   * (issue #395). A wrapped move's drawn Z is the physical height on the bar,
+   * not the machining level or the rapid's own Z direction, so every level and
+   * retract decision reads the generated move through this list.
+   */
+  readonly sources?: readonly ToolpathMove[]
+}
+
+/**
+ * The display toolpath per generated toolpath, then per stock. Both keys are
+ * the caller's own objects — the generated result comes from the generation
+ * cache and the stock from the project — so a WeakMap holds no object alive
+ * and a regenerated path or an edited stock simply misses.
+ */
+const displayToolpathCache = new WeakMap<object, WeakMap<object, DisplayToolpath>>()
+
+/** The toolpath to draw (issue #395). A wrapped Around toolpath — any point
+ *  carrying `a` — is drawn at `stockSpacePoint`, its turning moves subdivided;
+ *  an angle-free toolpath is handed back unchanged, so its line data is
+ *  exactly what it is today.
+ *
+ *  The result is cached on the pair, so the split and the subdivided move
+ *  array survive a scene rebuild (issue #395) and the layer split below can
+ *  key on the display object's identity. */
+export function stockSpaceToolpath<T extends { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null }>(
+  toolpath: T,
+  stock: Stock,
+): DisplayToolpath {
+  const cachedByStock = displayToolpathCache.get(toolpath)
+  const cached = cachedByStock?.get(stock)
+  if (cached !== undefined) return cached
+
+  const display = computeStockSpaceToolpath(toolpath, stock)
+  if (cachedByStock) cachedByStock.set(stock, display)
+  else displayToolpathCache.set(toolpath, new WeakMap([[stock, display]]))
+  return display
+}
+
+function computeStockSpaceToolpath<T extends { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null }>(
+  toolpath: T,
+  stock: Stock,
+): DisplayToolpath {
+  if (!isRoundStock(stock)) return toolpath
+  if (!toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) return toolpath
+  // Mapped one generated move at a time so each drawn piece can name the move
+  // it came from; `stockSpaceMoves` maps a whole list and loses that link.
+  const moves: ToolpathMove[] = []
+  const sources: ToolpathMove[] = []
+  for (const move of toolpath.moves) {
+    for (const piece of stockSpaceMoves([move], stock)) {
+      moves.push(piece)
+      sources.push(move)
+    }
+  }
+  return { ...toolpath, moves, bounds: toolpathBoundsOfMoves(moves), toolpath, sources }
+}
 
 export const DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK = 16384
 
@@ -153,6 +227,96 @@ export function toolpathLayerBuckets(toolpath: { moves: readonly ToolpathMove[] 
   return buckets
 }
 
+/** The layer keys, in the paint order `buildToolpathOverlayLayers` uses. */
+const TOOLPATH_LAYER_KEYS: readonly ToolpathOverlayLayerKey[] = ['cuts', 'leadIns', 'rapids', 'plunges', 'retractions']
+
+/** The level-filtered buckets for a toolpath drawn from its own moves. */
+function filterLayerBuckets(buckets: ToolpathLayerBuckets, level: number | null): ToolpathLayerBuckets {
+  const atLevel = (moves: ToolpathMove[]): ToolpathMove[] =>
+    level === null ? moves : moves.filter((move) => moveMatchesToolpathLevel(move, level))
+  return {
+    cuts: atLevel(buckets.cuts),
+    leadIns: atLevel(buckets.leadIns),
+    rapids: atLevel(buckets.rapids),
+    plunges: atLevel(buckets.plunges),
+    retractions: atLevel(buckets.retractions),
+  }
+}
+
+/** The level-filtered buckets for a wrapped toolpath, filled with drawn pieces. */
+function stockSpaceLayerBuckets(
+  display: DisplayToolpath,
+  generated: ToolpathLayerBuckets,
+  level: number | null,
+): ToolpathLayerBuckets {
+  const buckets: ToolpathLayerBuckets = { cuts: [], leadIns: [], rapids: [], plunges: [], retractions: [] }
+  const sources = display.sources
+  if (!sources) return filterLayerBuckets(generated, level)
+  const layerOf = new Map<ToolpathMove, ToolpathOverlayLayerKey>()
+  for (const key of TOOLPATH_LAYER_KEYS) {
+    for (const move of generated[key]) layerOf.set(move, key)
+  }
+  for (let index = 0; index < display.moves.length; index += 1) {
+    const source = sources[index]
+    if (level !== null && !moveMatchesToolpathLevel(source, level)) continue
+    const key = layerOf.get(source)
+    if (key) buckets[key].push(display.moves[index])
+  }
+  return buckets
+}
+
+/** The level-filtered buckets per (generated toolpath, stock, level). */
+const displayBucketCache = new WeakMap<
+  object,
+  WeakMap<object, Map<number | null, ToolpathLayerBuckets>>
+>()
+
+/**
+ * The layer split the 3D overlay draws for one generated toolpath (issue
+ * #395). A wrapped Around toolpath's generated points sit over the bar's
+ * centreline, so a move's drawn Z is the physical height on the bar rather than
+ * the machining level or the rapid's own Z direction. Filtering the drawn
+ * pieces therefore hides a cut the level selector asked for, and files a
+ * retract underneath the bar as an ordinary rapid.
+ *
+ * So the split, the level filter and the retract split all run on the
+ * **generated** moves — whose Z is the machining level — and only the surviving
+ * moves are handed to the caller as stock-space pieces. `stockSpaceToolpath`
+ * caches those pieces per generated toolpath and stock, so a scene rebuild
+ * reuses the subdivision, and this function caches the filtered buckets per
+ * level so it reuses those too.
+ *
+ * An angle-free toolpath is handed back the very buckets
+ * {@link toolpathLayerBuckets} returns (for no selected level) or the same
+ * per-layer filter the overlay used to apply, so its line data is exactly what
+ * it is today.
+ */
+export function displayToolpathLayerBuckets(
+  toolpath: { readonly moves: readonly ToolpathMove[]; readonly bounds: ToolpathBounds | null },
+  stock: Stock,
+  level: number | null = null,
+): ToolpathLayerBuckets {
+  const generated = toolpathLayerBuckets(toolpath)
+  const display = stockSpaceToolpath(toolpath, stock)
+  if (display === toolpath && level === null) return generated
+
+  const cachedByStock = displayBucketCache.get(toolpath)
+  const cached = cachedByStock?.get(stock)?.get(level)
+  if (cached !== undefined) return cached
+
+  const buckets = display === toolpath
+    ? filterLayerBuckets(generated, level)
+    : stockSpaceLayerBuckets(display, generated, level)
+  if (cachedByStock) {
+    const byLevel = cachedByStock.get(stock)
+    if (byLevel) byLevel.set(level, buckets)
+    else cachedByStock.set(stock, new Map([[level, buckets]]))
+  } else {
+    displayBucketCache.set(toolpath, new WeakMap([[stock, new Map([[level, buckets]])]]))
+  }
+  return buckets
+}
+
 export interface ToolpathLinePositionChunk {
   positions: Float32Array
   segmentCount: number
@@ -170,6 +334,82 @@ export function toolpathOverlayOpacity(layerOpacity: number, emphasized: boolean
 
 export function toolpathPointToWorldTuple(point: ToolpathPoint): [number, number, number] {
   return [point.x, point.z, point.y]
+}
+
+/**
+ * Most the bar may turn between the two ends of one drawn piece of a wrapped
+ * Around move (issue #395). A move that turns further is subdivided so the
+ * curve it draws follows the bar rather than chording across it; at 5° a
+ * half turn draws as 36 pieces.
+ */
+export const MAX_WRAPPED_PIECE_TURN_DEGREES = 5
+
+/**
+ * The moves to draw for a wrapped Around toolpath, in stock space (issue
+ * #395). A wrapped point carries `a`; `stockSpacePoint` says which point of
+ * the unturned bar is under the tool tip there, so drawing it puts the pass
+ * on the bar's surface all the way round, underside included.
+ *
+ * A move whose angle changes is a curve on the bar, drawn as pieces of at
+ * most {@link MAX_WRAPPED_PIECE_TURN_DEGREES}. Both ends are unwrapped to the
+ * flat sheet, the piece ends are interpolated there, and each is wrapped
+ * back: the flat across coordinate is linear in the angle, so the pieces turn
+ * by equal steps. A move whose angle does not change stays one segment.
+ *
+ * An angle-free toolpath is returned exactly as it is — the same moves array —
+ * so the line data it draws cannot change.
+ */
+export function stockSpaceMoves(moves: readonly ToolpathMove[], stock: RoundStock): readonly ToolpathMove[] {
+  if (!moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) {
+    return moves
+  }
+  const frame = aroundFrame(stock)
+  const out: ToolpathMove[] = []
+  for (const move of moves) {
+    const fromA = move.from.a
+    const toA = move.to.a
+    // Only a move with a real turn is subdivided. A half-wrapped endpoint
+    // cannot happen on a wrapped path, and is drawn as it stands rather than
+    // guessed at.
+    if (fromA === undefined || toA === undefined || fromA === toA) {
+      out.push({ ...move, from: stockSpacePoint(move.from, stock), to: stockSpacePoint(move.to, stock) })
+      continue
+    }
+    const from = unwrapPoint(move.from, frame)
+    const to = unwrapPoint(move.to, frame)
+    const pieces = Math.max(1, Math.ceil(Math.abs(toA - fromA) / MAX_WRAPPED_PIECE_TURN_DEGREES))
+    let previous = stockSpacePoint(move.from, stock)
+    for (let piece = 1; piece <= pieces; piece++) {
+      const t = piece / pieces
+      const at = piece === pieces
+        ? move.to
+        : wrapPoint({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t, z: from.z + (to.z - from.z) * t }, frame)
+      const next = stockSpacePoint(at, stock)
+      out.push({ ...move, from: previous, to: next })
+      previous = next
+    }
+  }
+  return out
+}
+
+/** Bounds of a move list, in the same shape a generated toolpath carries. */
+export function toolpathBoundsOfMoves(moves: readonly ToolpathMove[]): ToolpathBounds | null {
+  if (moves.length === 0) return null
+  const bounds: ToolpathBounds = {
+    minX: Infinity, minY: Infinity, minZ: Infinity,
+    maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+  }
+  for (const move of moves) {
+    for (const point of [move.from, move.to]) {
+      bounds.minX = Math.min(bounds.minX, point.x)
+      bounds.minY = Math.min(bounds.minY, point.y)
+      bounds.minZ = Math.min(bounds.minZ, point.z)
+      bounds.maxX = Math.max(bounds.maxX, point.x)
+      bounds.maxY = Math.max(bounds.maxY, point.y)
+      bounds.maxZ = Math.max(bounds.maxZ, point.z)
+    }
+  }
+  return bounds
 }
 
 export function buildToolpathLinePositionChunks(

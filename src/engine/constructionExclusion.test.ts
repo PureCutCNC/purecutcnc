@@ -236,13 +236,31 @@ assert(
   'csg.ts must import modelFeatures from featureRoles',
 )
 assert(
-  /const visibleFeatures = modelFeatures\(resolvedProjectFeatures\(project\)\)/.test(csgSource),
+  /const sceneFeatures = resolvedProjectFeatures\(project\)\.filter\(\(feature\) => feature\.authoringFace !== 'around'\)/.test(csgSource),
+  'csg.ts buildScene must drop the unrolled Around features before the model filter (issue #395)',
+)
+assert(
+  /const visibleFeatures = modelFeatures\(sceneFeatures\)/.test(csgSource),
   'csg.ts buildScene must filter its feature list through modelFeatures()',
 )
 const viewportSource = readFileSync(resolve(root, 'src/components/viewport3d/Viewport3D.tsx'), 'utf8')
 assert(
-  viewportSource.includes('modelFeatures(resolvedProjectFeatures(project))'),
+  viewportSource.includes('modelFeatures(sceneFeatures)'),
   'Viewport3D camera-fit must exclude construction via modelFeatures()',
+)
+assert(
+  viewportSource.includes("filter((feature) => feature.authoringFace !== 'around')"),
+  'Viewport3D must keep unrolled Around features out of the 3D scene and its bounds (issue #395)',
+)
+// Around is not a camera preset: the view keeps showing the physical bar, so
+// the workspace-face effect must leave the camera alone on Around (#395).
+assert(
+  /if \(!isFlatFace\(workspaceFace\)\) return/.test(viewportSource),
+  'Viewport3D must not apply a camera preset when the workspace face is Around',
+)
+assert(
+  !/setPreset\(workspaceFace as FlatFace\)/.test(viewportSource),
+  'Viewport3D must not cast the Around face to a flat preset name',
 )
 
 // #994 reference eligibility never changes machining, region or model eligibility.

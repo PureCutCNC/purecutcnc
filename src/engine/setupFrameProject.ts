@@ -64,6 +64,7 @@ import type { SetupFrame } from './setupOrientation'
  * gives.
  */
 export function setupPlanMirror(frame: SetupFrame): Matrix2D {
+  if (frame.kind === 'around') throw new Error('Around cannot use a rotation frame.')
   return frame.orientation.axis === 'x'
     ? { a: 1, b: 0, c: 0, d: -1, e: 0, f: 2 * frame.pivot.y }
     : { a: -1, b: 0, c: 0, d: 1, e: 2 * frame.pivot.x, f: 0 }
@@ -125,6 +126,7 @@ function turnModelDefinitions(definitions: Project['featureDefinitions']): Proje
  * transient read model for generation and must never be stored.
  */
 export function projectInSetupFrame(project: Project, frame: SetupFrame | undefined): Project {
+  if (frame?.kind === 'around') throw new Error('Around cannot use a rotation frame.')
   if (!frame || frame.orientation.angleDeg === 0) return project
 
   const mirror = setupPlanMirror(frame)
@@ -181,6 +183,7 @@ function boundsOf(points: readonly ToolpathPoint[]): ToolpathBounds {
  * for a Top setup.
  */
 export function toolpathInStockFrame<T extends ToolpathResult>(result: T, frame: SetupFrame | undefined): T {
+  if (frame?.kind === 'around') throw new Error('Around cannot use a rotation frame.')
   if (!frame || frame.orientation.angleDeg === 0) return result
 
   const turn = (point: ToolpathPoint): ToolpathPoint => setupToCanonicalPoint(point, frame)

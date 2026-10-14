@@ -526,7 +526,8 @@ export interface FeatureInstance {
    * The stock face this feature is drawn and edited on (issue #944). It says
    * where the feature is authored, not what it means: the span above is
    * unchanged by it. Files saved before setups existed have no value and load
-   * as `'top'`.
+   * as `'top'`. Around stores unrolled plan coordinates with the surface at
+   * `thickness` and depths downward, exactly like Top on the same bar.
    */
   authoringFace: SetupFace
   folderId: string | null
@@ -1009,7 +1010,9 @@ export interface BackdropImage {
 // ============================================================
 
 /** A stock face: where a feature is drawn, and which face a setup turns up. */
-export type SetupFace = 'top' | 'bottom'
+export type SetupFace = 'top' | 'bottom' | 'around'
+/** A planar authoring face, with no unrolled rotary coordinates. */
+export type FlatFace = Exclude<SetupFace, 'around'>
 
 /**
  * How the stock is turned for a setup, stored as a rotation rather than a
@@ -1024,7 +1027,7 @@ export interface SetupOrientation {
   angleDeg: number
 }
 
-/** `'manual'`: the operator turns the part and each setup is its own program. */
+/** `'manual'`: the operator mounts the part for each setup; Around wrapping is distinguished by `kind`. */
 export type SetupIndexing = 'manual'
 
 export type RegistrationKind = 'dowel' | 'fence' | 'corner'
@@ -1049,8 +1052,15 @@ export interface RegistrationReference {
 /**
  * One fixed orientation of the stock on the machine. Top and Bottom are
  * setups; the face is derived from the orientation (`setupFace`), not stored.
+ * An Around setup is marked by `kind`: it wraps an unrolled sheet around a
+ * round bar and carries Top-style feature heights.
  */
 export interface MachiningSetup {
+  /**
+   * `'around'`: the setup cuts the unrolled sheet wrapped around the bar.
+   * Absent on the flat Top and Bottom setups.
+   */
+  kind?: 'around'
   id: string
   name: string
   orientation: SetupOrientation
@@ -1063,6 +1073,11 @@ export interface MachiningSetup {
    * `syncProjectSetups` rewrites this list to match both.
    */
   operationIds: string[]
+}
+
+/** Whether a setup wraps its unrolled toolpath around a round bar. */
+export function isAroundSetup(setup: Pick<MachiningSetup, 'kind'>): boolean {
+  return setup.kind === 'around'
 }
 
 /** Id of the Top setup every new and every migrated project starts with. */

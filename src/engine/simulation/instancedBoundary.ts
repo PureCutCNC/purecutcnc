@@ -36,6 +36,8 @@
  */
 
 import * as THREE from 'three'
+import type { AroundFrame } from '../aroundFrame'
+import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundBounds, aroundShader, aroundUniforms } from './aroundWrap'
 import {
   CELL_HEIGHT_GLSL,
   LIGHTING_GLSL,
@@ -69,6 +71,10 @@ const wallVertexShader = /* glsl */ `
   // 1.0 → vertical edges (wall plane ⊥ X), 0.0 → horizontal edges (⊥ Z).
   uniform float uVertical;
 
+  ${AROUND_FRAME_GLSL}
+#ifdef AROUND_WRAP
+  out float vAcross;
+#endif
   out vec3 vNormal;
   out float vWallHeight;
   out float vHeight;
@@ -148,6 +154,20 @@ const wallVertexShader = /* glsl */ `
     vLocal = uVertical > 0.5 ? vec2(0.0, position.y) : vec2(position.y, 0.0);
     vPositionInCells = pos / uCellSize;
 
+#ifdef AROUND_WRAP
+    int aroundCount = int(ceil(uAroundPeriod / uCellSize));
+    bool extraAcrossEdge = uAroundX
+      ? uVertical < 0.5 && edgeRow > aroundCount
+      : uVertical > 0.5 && edgeCol > aroundCount;
+    if (extraAcrossEdge) {
+      vWallHeight = 0.0;
+      vSlope = 0.0;
+    }
+    pos = aroundClampSheet(pos);
+    vAcross = uAroundX ? pos.z : pos.x;
+    vNormal = normalize(mat3(modelMatrix) * aroundSurfaceNormal(direction * edgePerp, vAcross));
+    pos = aroundPosition(pos);
+#endif
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `
@@ -161,6 +181,12 @@ const wallFragmentShader = /* glsl */ `
   uniform float uStockTopZ;
   uniform float uCellSize;
 
+  ${AROUND_FRAME_GLSL}
+#ifdef AROUND_WRAP
+  in float vAcross;
+  uniform mat4 modelMatrix;
+#endif
+  ${AROUND_CELL_GLSL}
   in vec3 vNormal;
   in float vWallHeight;
   in float vHeight;
@@ -184,6 +210,9 @@ const wallFragmentShader = /* glsl */ `
       // A riser inside a slope is a piece of the surface, not a wall.
       float wide = gradientWidening(vPositionInCells);
       vec3 lighting = calcLighting(surfaceNormal(vCell, vLocal, wide));
+#ifdef AROUND_WRAP
+      lighting = calcLighting(normalize(mat3(modelMatrix) * aroundSurfaceNormal(surfaceNormal(vCell, vLocal, wide), vAcross)));
+#endif
       fragColor = vec4(uColor * lighting * depthDarken(vHeight, uStockTopZ), 1.0);
       return;
     }
@@ -197,13 +226,21 @@ const wallFragmentShader = /* glsl */ `
 `
 
 const floorVertexShader = /* glsl */ `
+  ${AROUND_FRAME_GLSL}
   varying vec2 vUv;
   varying vec3 vNormal;
 
   void main() {
     vUv = uv;
     vNormal = normalize(normalMatrix * normal);
+#ifdef AROUND_WRAP
+    vec3 sheet = aroundClampSheet(position);
+    float across = uAroundX ? sheet.z : sheet.x;
+    vNormal = normalize(mat3(modelMatrix) * aroundSurfaceNormal(normal, across));
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(aroundPosition(sheet), 1.0);
+#else
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+#endif
   }
 `
 
@@ -341,14 +378,17 @@ export function createInstancedWallMaterial(
   grid: SimulationGrid,
   stockColor: THREE.Color,
   vertical: boolean,
+  frame?: AroundFrame,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
+    ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
       ...sharedUniforms(heightfieldTexture, grid, stockColor),
+      ...aroundUniforms(frame),
       uVertical: { value: vertical ? 1 : 0 },
     },
-    vertexShader: wallVertexShader,
-    fragmentShader: wallFragmentShader,
+    vertexShader: aroundShader(wallVertexShader, frame),
+    fragmentShader: aroundShader(wallFragmentShader, frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
@@ -358,11 +398,13 @@ export function createFloorMaterial(
   heightfieldTexture: THREE.DataTexture,
   grid: SimulationGrid,
   stockColor: THREE.Color,
+  frame?: AroundFrame,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: sharedUniforms(heightfieldTexture, grid, stockColor),
-    vertexShader: floorVertexShader,
-    fragmentShader: floorFragmentShader,
+    ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
+    uniforms: { ...sharedUniforms(heightfieldTexture, grid, stockColor), ...aroundUniforms(frame) },
+    vertexShader: aroundShader(floorVertexShader, frame),
+    fragmentShader: aroundShader(floorFragmentShader, frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
@@ -378,6 +420,7 @@ export function createInstancedBoundaryGroup(
   heightfieldTexture: THREE.DataTexture,
   grid: SimulationGrid,
   stockColor: THREE.Color,
+  frame?: AroundFrame,
 ): THREE.Group {
   const group = new THREE.Group()
   group.name = 'instancedBoundary'
@@ -385,7 +428,7 @@ export function createInstancedBoundaryGroup(
   // Vertical edges: (cols+1) per row × rows instances.
   const verticalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols + 1, grid.rows),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame),
   )
   verticalWalls.frustumCulled = false
   group.add(verticalWalls)
@@ -393,16 +436,24 @@ export function createInstancedBoundaryGroup(
   // Horizontal edges: cols per row boundary × (rows+1) instances.
   const horizontalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols, grid.rows + 1),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame),
   )
   horizontalWalls.frustumCulled = false
   group.add(horizontalWalls)
 
   const floor = new THREE.Mesh(
     createFloorGeometry(grid),
-    createFloorMaterial(heightfieldTexture, grid, stockColor),
+    createFloorMaterial(heightfieldTexture, grid, stockColor, frame),
   )
   group.add(floor)
 
+  if (frame) {
+    const bounds = aroundBounds(grid, frame)
+    for (const child of group.children) {
+      if (!(child instanceof THREE.Mesh)) continue
+      child.geometry.boundingBox = bounds.clone()
+      child.geometry.boundingSphere = bounds.getBoundingSphere(new THREE.Sphere())
+    }
+  }
   return group
 }
