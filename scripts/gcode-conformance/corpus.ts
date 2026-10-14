@@ -510,6 +510,9 @@ function generatedPlasma(
  */
 function generatedRotaryBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const project = newProject('Conformance rotary borrowed Y', 'mm')
+  // The bar is a rotary project (issue #1028): the type is stored explicitly
+  // now that `newProject` defaults to milling.
+  project.meta.projectType = 'rotary'
   project.stock = roundStock(20, 100, 'x')
   // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
   project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
@@ -535,6 +538,9 @@ function generatedRotaryBorrowedY(): { project: Project; operation: Operation; t
  */
 function generatedRotaryOwnAxis(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const project = newProject('Conformance rotary own axis', 'mm')
+  // The bar is a rotary project (issue #1028): the type is stored explicitly
+  // now that `newProject` defaults to milling.
+  project.meta.projectType = 'rotary'
   project.stock = roundStock(20, 100, 'x')
   // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
   project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
@@ -577,6 +583,11 @@ function generatedAround(
   tool: ReturnType<typeof defaultTool>,
 ): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const base = newProject('Conformance around', 'mm')
+  // A wrapped toolpath is Around work, which exists only in a rotary project
+  // (issue #1028): the type is stored explicitly now that `newProject` defaults
+  // to milling. Without it the generation gate refuses the Around face with
+  // `aroundStockMismatch` and the case proves nothing.
+  base.meta.projectType = 'rotary'
   base.stock = roundStock(20, 100, 'x')
   // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
   base.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
