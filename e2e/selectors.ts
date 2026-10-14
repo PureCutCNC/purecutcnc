@@ -353,6 +353,9 @@ export const machineManager = {
     machineManager.dialog(page).getByRole('button', { name: 'Remove machine' }),
   doneButton: (page: Page) =>
     machineManager.dialog(page).getByRole('button', { name: 'Done' }),
+  /** The preview's rotary-axis summary line, absent when the machine has none. */
+  rotarySummary: (page: Page) =>
+    machineManager.dialog(page).getByTestId('machine-manager-rotary'),
 }
 
 export const machineEditor = {
@@ -367,6 +370,12 @@ export const machineEditor = {
     machineEditor.dialog(page).getByRole('button', { name: 'Save', exact: true }),
   cancelButton: (page: Page) =>
     machineEditor.dialog(page).getByRole('button', { name: 'Cancel', exact: true }),
+  /** Rotary-axis group (#393): axis picker, its drive picker, and the reversal box. */
+  rotaryAxis: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-axis'),
+  rotaryDrive: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-drive'),
+  rotaryReversed: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-reversed'),
+  /** The program-word helper text under the drive picker. */
+  rotaryWord: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-word'),
 }
 
 export const machineUpdateNotice = {

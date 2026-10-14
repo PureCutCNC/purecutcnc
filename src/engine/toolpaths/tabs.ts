@@ -320,11 +320,32 @@ function isSupportedTabOperation(kind: Operation['kind']): boolean {
 }
 
 function pointAt(move: ToolpathMove, t: number, z: number): ToolpathPoint {
-  return {
+  const point: ToolpathPoint = {
     x: move.from.x + (move.to.x - move.from.x) * t,
     y: move.from.y + (move.to.y - move.from.y) * t,
     z,
   }
+  // A cut split at a tab turns with it (issue #393): the angle is interpolated
+  // linearly at the split fraction, never reduced to 0-360, and a move that has
+  // no angle at either end gains no key.
+  const angle = interpolatedAngle(move, t)
+  if (angle !== undefined) point.a = angle
+  return point
+}
+
+/**
+ * The stock's angle at parameter `t` along `move`, or undefined when the move
+ * has none (issue #393). An angle at either end makes the move a turning one;
+ * the end that is absent takes the other's angle rather than implying a turn
+ * to or from an angle that was never written.
+ */
+function interpolatedAngle(move: ToolpathMove, t: number): number | undefined {
+  const start = move.from.a
+  const end = move.to.a
+  if (start === undefined && end === undefined) return undefined
+  if (start === undefined) return end
+  if (end === undefined) return start
+  return start + (end - start) * t
 }
 
 function pointsEqualXY(a: ToolpathPoint, b: ToolpathPoint): boolean {
@@ -413,7 +434,10 @@ function splitCutMoveAcrossTabsFrom(
     const segmentEnd = pointAt(move, endT, segmentZ)
 
     if (!pointsEqualXY(current, segmentStart) || Math.abs(current.z - segmentZ) > 1e-9) {
-      const transitionTo = { x: segmentStart.x, y: segmentStart.y, z: segmentZ }
+      // The vertical move stands on `segmentStart`'s XY, so it keeps that
+      // point's angle (issue #393) — a vertical lift must not leave the angle
+      // behind.
+      const transitionTo = { ...segmentStart }
       result.push({
         kind: segmentZ > current.z ? 'lead_out' : 'lead_in',
         from: current,
@@ -535,10 +559,20 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
 
   for (const [moveIndex, move] of result.moves.entries()) {
     const previousTo = adjustedMoves.at(-1)?.to ?? null
-    const actualFrom =
-      previousTo && pointsEqualXY(previousTo, move.from)
-        ? previousTo
-        : move.from
+    // The carried point exists only to keep the raised segments connected: its
+    // XY and Z come from where the previous synthesised move ended. Its angle
+    // belongs to `move`, the source move being processed, so an angle-free
+    // source move produces only angle-free points (issue #393): inheriting the
+    // previous move's angle would put one angled end on an angle-free move,
+    // which export refuses.
+    const actualFrom = previousTo && pointsEqualXY(previousTo, move.from)
+      ? {
+          x: previousTo.x,
+          y: previousTo.y,
+          z: previousTo.z,
+          ...(move.from.a !== undefined ? { a: move.from.a } : null),
+        }
+      : move.from
 
     if (move.kind === 'cut' && Math.abs(move.from.z - move.to.z) <= 1e-9) {
       const splitMoves = smoothPlan

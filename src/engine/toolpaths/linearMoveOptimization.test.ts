@@ -630,6 +630,66 @@ function testMixedKindsNotMerged() {
   console.log('Mixed kinds not merged: PASSED')
 }
 
+/** A move with the stock turned to an angle at each end (issue #393). */
+function angledMove(
+  kind: ToolpathMove['kind'],
+  fromX: number, fromY: number, fromZ: number, fromA: number,
+  toX: number, toY: number, toZ: number, toA: number,
+): ToolpathMove {
+  return { kind, from: { x: fromX, y: fromY, z: fromZ, a: fromA }, to: { x: toX, y: toY, z: toZ, a: toA } }
+}
+
+function testRotationOnlyMoveIsNotDropped() {
+  console.log('Testing a rotation-only move is not dropped as zero-length (issue #393)...')
+
+  const r = optimizeLinearMoves(
+    result({
+      moves: [
+        angledMove('cut', 0, 0, -1, 0, 10, 0, -1, 0),
+        // The tool does not move; the stock turns. Zero-length in XYZ only.
+        angledMove('cut', 10, 0, -1, 0, 10, 0, -1, 90),
+        angledMove('cut', 10, 0, -1, 90, 20, 0, -1, 90),
+      ],
+    }),
+  )
+
+  assert(r.moves.length === 3, `the rotation-only move is kept, got ${r.moves.length}`)
+  assert(r.moves[1].from.a === 0 && r.moves[1].to.a === 90, 'the turn survives in the middle move')
+
+  console.log('Rotation-only move not dropped: PASSED')
+}
+
+function testAngleChangePreventsMerge() {
+  console.log('Testing collinear moves at different angles do not merge (issue #393)...')
+
+  const r = optimizeLinearMoves(
+    result({
+      moves: [
+        angledMove('cut', 0, 0, -1, 0, 10, 0, -1, 0),
+        angledMove('cut', 10, 0, -1, 20, 20, 0, -1, 20),
+      ],
+    }),
+  )
+
+  assert(r.moves.length === 2, `the middle angle is not lost, got ${r.moves.length} move(s)`)
+  assert(r.moves[0].to.a === 0 && r.moves[1].from.a === 20, 'the junction keeps both angles')
+
+  // The same moves at one common angle still merge, so the check does not
+  // block ordinary collinear merging.
+  const merged = optimizeLinearMoves(
+    result({
+      moves: [
+        angledMove('cut', 0, 0, -1, 45, 10, 0, -1, 45),
+        angledMove('cut', 10, 0, -1, 45, 20, 0, -1, 45),
+      ],
+    }),
+  )
+  assert(merged.moves.length === 1, 'two moves at the same angle still merge')
+  assert(merged.moves[0].from.a === 45 && merged.moves[0].to.a === 45, 'the merged move keeps the angle')
+
+  console.log('Angle change prevents merge: PASSED')
+}
+
 function testLeadInOutPreserved() {
   console.log('Testing lead_in/lead_out boundaries preserved...')
 
@@ -687,6 +747,8 @@ try {
   testSingleMovePassesThrough()
   testMixedKindsNotMerged()
   testLeadInOutPreserved()
+  testRotationOnlyMoveIsNotDropped()
+  testAngleChangePreventsMerge()
   console.log('\nAll linearMoveOptimization tests PASSED.')
 } catch (e) {
   console.error(e)

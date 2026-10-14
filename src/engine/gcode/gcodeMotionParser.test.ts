@@ -21,7 +21,7 @@
  */
 
 import { parseGcodeMotion } from './gcodeMotionParser'
-import type { ParsedArcMove } from './gcodeMotionParser'
+import type { GcodeRotaryParseOptions, ParsedArcMove } from './gcodeMotionParser'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -120,6 +120,101 @@ function testNonMotionSetupCodes(): void {
   assert(approx(r.moves[1].to.x, 10), 'second move to X10')
 }
 
+// ── Rotary programs (issue #393) ──────────────────────────────
+
+const ROTARY_A: GcodeRotaryParseOptions = { word: 'A', inverseTimeFeed: { on: 'G93', off: 'G94' } }
+const ROTARY_BORROWED_Y: GcodeRotaryParseOptions = { word: 'Y', inverseTimeFeed: { on: 'G93', off: 'G94' } }
+
+function testRotaryAngleIsModal(): void {
+  console.log('Testing the rotary word is read as a modal angle...')
+  const r = parseGcodeMotion('G0 X0 Y0 Z0 A0\nG1 X10 Z0 F100 A90\nG1 X20 A370', 'ij', '(', ')', ROTARY_A)
+  assert(r.status === 'verified', `status ${r.status} ${JSON.stringify(r.warnings)}`)
+  assert(r.warnings.length === 0, 'the rotary word is not reported as unsupported')
+  assert(r.moves.length === 3, `move count ${r.moves.length}`)
+  assert(r.moves[0].to.a === 0, 'the first angle is read')
+  assert(r.moves[1].to.a === 90, 'the next angle is read')
+  // A block with no angle word keeps the last one, like X/Y/Z, and the angle is
+  // never reduced to 0-360.
+  assert(r.moves[2].to.a === 370, `the angle is never reduced, got ${r.moves[2].to.a}`)
+  assert(r.moves[2].from.a === 90, 'the previous angle is the next move start')
+  assert(!('a' in r.moves[0].from), 'a program that opens without an angle has no a key')
+}
+
+function testRotaryRotationOnlyBlock(): void {
+  console.log('Testing a rotation-only block is a move...')
+  const r = parseGcodeMotion('G0 X0 Y0 Z0\nA45', 'ij', '(', ')', ROTARY_A)
+  assert(r.status === 'verified', `status ${r.status}`)
+  assert(r.moves.length === 2, `move count ${r.moves.length}`)
+  assert(r.moves[1].to.a === 45 && approx(r.moves[1].to.x, 0) && approx(r.moves[1].to.z, 0),
+    'the angle block moves nothing but the angle')
+}
+
+function testBorrowedLetterIsAnAngle(): void {
+  console.log('Testing a borrowed motor\'s letter carries the angle, not a coordinate...')
+  const borrowed = parseGcodeMotion('G0 X0 Y0 Z0\nG1 X20 Y45 F100', 'ij', '(', ')', ROTARY_BORROWED_Y)
+  assert(borrowed.moves[1].to.a === 45, 'the borrowed letter carries the angle')
+  assert(approx(borrowed.moves[1].to.y, 0), 'the borrowed letter is never read as linear Y')
+
+  // The same program without the definition's rotary options reads Y as an
+  // ordinary linear axis, exactly as before.
+  const plain = parseGcodeMotion('G0 X0 Y0 Z0\nG1 X20 Y45 F100', 'ij', '(', ')')
+  assert(plain.moves[1].to.y === 45, 'a plain parse still reads Y as linear')
+  assert(plain.moves[1].to.a === undefined, 'and gains no angle')
+}
+
+function testInverseTimeFeedMode(): void {
+  console.log('Testing G93/G94 switch the feed mode...')
+  const r = parseGcodeMotion(
+    'G0 X0 Y0 Z0\nG1 X10 F600\nG93\nG1 X10 A90 F0.5\nG94\nG1 X20 F600',
+    'ij', '(', ')', ROTARY_A,
+  )
+  assert(r.status === 'verified', `status ${r.status} ${JSON.stringify(r.warnings)}`)
+  assert(r.moves[1].inverseTimeFeed === undefined, 'an ordinary feed is not inverse time')
+  assert(r.moves[2].inverseTimeFeed === 0.5, `a G93 F is kept as inverse time, got ${r.moves[2].inverseTimeFeed}`)
+  assert(r.moves[3].inverseTimeFeed === undefined, 'G94 leaves inverse-time mode')
+  assert(r.moves[3].to.a === 90, 'the angle stays modal across the mode switch')
+}
+
+function testPlainProgramIsUnchanged(): void {
+  console.log('Testing a program with no rotary word and no G93 parses exactly as today...')
+  const r = parseGcodeMotion('G0 X0 Y0 Z0\nG1 X10 Y5 F100', 'ij', '(', ')')
+  assert(!('a' in r.moves[1].to) && !('a' in r.moves[1].from), 'no angle key is added')
+  assert(!('inverseTimeFeed' in r.moves[1]), 'no inverse-time key is added')
+  // Passing rotary options alone must not change a program that never turns.
+  const withOptions = parseGcodeMotion('G0 X0 Y0 Z0\nG1 X10 Y5 F100', 'ij', '(', ')', ROTARY_A)
+  assert(!('a' in withOptions.moves[1].to) && !('inverseTimeFeed' in withOptions.moves[1]),
+    'rotary options alone do not change a plain program')
+}
+
+function testInverseTimeFeedIsNotModal(): void {
+  console.log('Testing an inverse-time F does not carry to the next feed block...')
+  const r = parseGcodeMotion('G0 A0\nG93\nG1 A90 F2\nG1 A180', 'ij', '(', ')', ROTARY_A)
+  assert(r.moves.length === 3, `move count ${r.moves.length}`)
+  assert(r.moves[1].inverseTimeFeed === 2, `the block that writes F keeps it, got ${r.moves[1].inverseTimeFeed}`)
+  assert(r.moves[2].inverseTimeFeed === undefined, 'the next block does not borrow the previous F')
+  assert(r.status === 'unsupported', `a controller rejects that block, so the parse downgrades, got ${r.status}`)
+  assert(r.warnings.some((warning) => warning.includes('inverse-time')),
+    `the reason is reported, got ${JSON.stringify(r.warnings)}`)
+}
+
+function testStandaloneFeedLineDoesNotFeedTheMove(): void {
+  console.log('Testing an F on its own line does not count for the next move...')
+  const r = parseGcodeMotion('G0 A0\nG93\nF2\nG1 A90', 'ij', '(', ')', ROTARY_A)
+  assert(r.moves.length === 2, `move count ${r.moves.length}`)
+  assert(r.moves[1].inverseTimeFeed === undefined, 'no F is borrowed from the standalone line')
+  assert(r.status === 'unsupported', `the move still needs its own F, got ${r.status}`)
+}
+
+function testCorrectInverseTimeProgramStillVerifies(): void {
+  console.log('Testing a correct inverse-time program still parses as before...')
+  const r = parseGcodeMotion('G0 A0\nG93\nG1 A90 F2\nG1 A180 F1.5\nG94\nG1 A270 F600', 'ij', '(', ')', ROTARY_A)
+  assert(r.status === 'verified', `status ${r.status} ${JSON.stringify(r.warnings)}`)
+  assert(r.warnings.length === 0, `no warnings for a program the controller accepts, got ${JSON.stringify(r.warnings)}`)
+  assert(r.moves[1].inverseTimeFeed === 2, `first turning feed, got ${r.moves[1].inverseTimeFeed}`)
+  assert(r.moves[2].inverseTimeFeed === 1.5, `second turning feed, got ${r.moves[2].inverseTimeFeed}`)
+  assert(r.moves[3].inverseTimeFeed === undefined, 'G94 restores the ordinary feed')
+}
+
 testModalLinear()
 testArcIJ()
 testArcCCWRadius()
@@ -128,5 +223,13 @@ testUnsupportedCannedCycle()
 testArcMissingCenter()
 testCommentsAndLineNumbers()
 testNonMotionSetupCodes()
+testRotaryAngleIsModal()
+testRotaryRotationOnlyBlock()
+testBorrowedLetterIsAnAngle()
+testInverseTimeFeedMode()
+testInverseTimeFeedIsNotModal()
+testStandaloneFeedLineDoesNotFeedTheMove()
+testCorrectInverseTimeProgramStillVerifies()
+testPlainProgramIsUnchanged()
 
 console.log('gcodeMotionParser tests passed')

@@ -23,14 +23,19 @@
  */
 
 import { machineToProjectPoint, projectToMachinePoint, machineToProjectFlipsArcDirection } from './utils'
-import { validateMachineDefinition, type MachineDefinition } from './types'
-import type { MachineOrigin } from '../../types/project'
+import { rotaryDirection, validateMachineDefinition, type MachineDefinition } from './types'
+import type { MachineOrigin, Operation, Project } from '../../types/project'
+import { defaultTool, newProject, roundStock } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import { runPostProcessor } from './postprocessor'
+import { exportGeometryTolerance } from '../../utils/units'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import {
   getExportedMotionEligibility,
   compareMotionTraces,
   buildExportedMotionDebugModel,
+  parseExportedMotion,
 } from './motionDebug'
 import type { OperationMotionTrace } from './types'
 
@@ -80,6 +85,21 @@ function withCoordinateSystem(xAxis: AxisSpec, yAxis: AxisSpec): MachineDefiniti
   return def
 }
 
+/** An own-axis rotary that turns a positive angle the other way. */
+function reversedRotaryDefinition(): MachineDefinition {
+  const def = grblDefinition()
+  def.rotary = { about: 'x', drive: 'own', reversed: true, inverseTimeFeed: { on: 'G93', off: 'G94' } }
+  return def
+}
+
+/** A borrowed rotary on a mirrored output: its direction is negative too. */
+function mirroredBorrowedRotaryDefinition(): MachineDefinition {
+  const def = grblDefinition()
+  def.coordinateSystem = { xAxis: 'X', yAxis: '-Y', zAxis: 'Z' }
+  def.rotary = { about: 'x', drive: 'borrowed', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } }
+  return def
+}
+
 const ORIGIN: MachineOrigin = { name: 'O', x: 10, y: 20, z: 0, visible: true }
 const ZERO_ORIGIN: MachineOrigin = { name: 'O', x: 0, y: 0, z: 0, visible: true }
 
@@ -112,6 +132,159 @@ function testInverseTransform(): void {
       const back = machineToProjectPoint(m, ORIGIN, def)
       assert(approx(back.x, p.x) && approx(back.y, p.y) && approx(back.z, p.z),
         `round-trip ${JSON.stringify(p)} -> ${JSON.stringify(back)} (${def.coordinateSystem.xAxis}/${def.coordinateSystem.yAxis})`)
+    }
+  }
+}
+
+function testRotaryAngleInverse(): void {
+  console.log('Testing machineToProjectPoint carries the rotary angle and un-reverses it...')
+  const probes: ToolpathPoint[] = [
+    { x: 12, y: 18, z: 0, a: 90 },
+    { x: -5, y: 7, z: 2, a: -370 },
+    { x: 3, y: 4, z: 5, a: 0 },
+  ]
+  for (const def of [reversedRotaryDefinition(), mirroredBorrowedRotaryDefinition()]) {
+    // The sign the direction contributes is negative here, so a transform that
+    // forgot to divide it out would come back with the opposite angle.
+    assert(rotaryDirection(def) === -1, 'the fixture makes the direction matter')
+    for (const p of probes) {
+      const m = projectToMachinePoint(p, ORIGIN, def)
+      assert(m.a === p.a! * rotaryDirection(def), 'the program angle is the project angle times the direction')
+      const back = machineToProjectPoint(m, ORIGIN, def)
+      assert(approx(back.x, p.x) && approx(back.y, p.y) && approx(back.z, p.z),
+        `rotary round-trip ${JSON.stringify(p)} -> ${JSON.stringify(back)}`)
+      assert(back.a !== undefined && approx(back.a, p.a!),
+        `the angle round-trips, got ${back.a} for ${p.a}`)
+    }
+  }
+
+  // A point with no angle gains no key on the way back, exactly as before.
+  const plain = machineToProjectPoint(pt(1, 2, 3), ORIGIN, reversedRotaryDefinition())
+  assert(!('a' in plain), 'a point with no angle comes back with no a key')
+}
+
+// ── Reading a rotary program back (issue #393) ────────────────
+
+/** A point carrying the stock's angle. */
+function rpt(x: number, y: number, z: number, a: number): ToolpathPoint {
+  return { x, y, z, a }
+}
+
+/** The grbl fixture plus a rotary block. */
+function rotaryGrbl(drive: 'own' | 'borrowed'): MachineDefinition {
+  const def = grblDefinition()
+  def.rotary = { about: 'x', drive, reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } }
+  return def
+}
+
+/** A 20 mm round bar along project X, origin on its centreline at the top. */
+function rotaryProject(): Project {
+  const project = newProject('Rotary readback', 'mm')
+  project.stock = roundStock(20, 100, 'x')
+  project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  project.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Test End Mill' }]
+  return project
+}
+
+function rotaryOperation(): Operation {
+  return {
+    id: 'op-rotary',
+    name: 'Rotary',
+    description: '',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+  }
+}
+
+/** Export one hand-built turning toolpath and return the program and its trace. */
+function exportRotary(def: MachineDefinition, moves: ToolpathMove[]): { gcode: string; trace: OperationMotionTrace } {
+  const project = rotaryProject()
+  const operation = rotaryOperation()
+  const result = runPostProcessor({
+    project,
+    definition: def,
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: true },
+  })
+  const trace = result.motionTraces?.[0]
+  assert(trace !== undefined, 'the export captured a motion trace')
+  return { gcode: result.gcode, trace: trace! }
+}
+
+/**
+ * Export a turning program on the own-axis and the borrowed-motor machines,
+ * parse it back, and require the planned machine points, angles and feed modes.
+ * The borrowed case also pins that its letter is never read as a coordinate.
+ */
+function testRotaryProgramReadback(): void {
+  console.log('Testing an exported rotary program parses back to the planned motion...')
+  const tolerance = exportGeometryTolerance('mm')
+
+  for (const drive of ['own', 'borrowed'] as const) {
+    const definition = rotaryGrbl(drive)
+    const moves: ToolpathMove[] = [
+      { kind: 'rapid', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 30, 0) },
+      { kind: 'plunge', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 20, 0) },
+      { kind: 'cut', from: rpt(0, 10, 20, 0), to: rpt(10, 10, 20, 90) },
+      { kind: 'cut', from: rpt(10, 10, 20, 90), to: rpt(20, 10, 20, 90) },
+    ]
+    const { gcode, trace } = exportRotary(definition, moves)
+    const parsed = parseExportedMotion(gcode, definition)
+    assert(parsed.status === 'verified', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
+    assert(parsed.warnings.length === 0, `${drive}: the rotary word is not reported as unsupported`)
+
+    const feedMoves = parsed.moves.filter((m) => m.kind !== 'rapid')
+    assert(feedMoves.length === 3, `${drive}: plunge + turning cut + straight cut, got ${feedMoves.length}`)
+    const inverse = parsed.moves.filter((m) => m.inverseTimeFeed !== undefined)
+    assert(inverse.length === 1, `${drive}: exactly the turning move runs in inverse time, got ${inverse.length}`)
+    assert(inverse[0].to.a === 90, `${drive}: the turning move is the one that turns`)
+
+    // The word read back is the number the exporter wrote, not merely "some"
+    // inverse-time feed: the program emits G93 directly before the turning move.
+    const gcodeLines = gcode.split(/\r?\n/).map((line) => line.trim())
+    const g93Index = gcodeLines.findIndex((line) => line.startsWith('G93'))
+    assert(g93Index >= 0, `${drive}: the program switches to inverse time`)
+    const exportedF = gcodeLines[g93Index + 1].match(/F(-?[0-9.]+)/)
+    assert(exportedF !== null, `${drive}: the turning move states its own F word`)
+    assert(
+      inverse[0].inverseTimeFeed === Number(exportedF![1]),
+      `${drive}: the parsed inverse-time F is the exported one, got ${inverse[0].inverseTimeFeed} vs ${exportedF![1]}`,
+    )
+
+    // The angles come back as planned: A0 on the plunge, A90 on both cuts.
+    const angles = feedMoves.map((m) => m.to.a)
+    assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)
+
+    // The view's own comparison accepts it — endpoints, angles and all.
+    const diagnostic = compareMotionTraces(parsed, trace, tolerance)
+    assert(diagnostic.warnings.length === 0, `${drive}: ${JSON.stringify(diagnostic.warnings)}`)
+
+    if (drive === 'borrowed') {
+      for (const m of parsed.moves) {
+        assert(m.to.y === 0, `the borrowed letter is never read as linear Y, got ${m.to.y}`)
+      }
     }
   }
 }
@@ -465,6 +638,8 @@ function testMajorArcTakenTheShortWayStillWarns(): void {
 
 testEligibility()
 testInverseTransform()
+testRotaryAngleInverse()
+testRotaryProgramReadback()
 testArcDirectionFlipParity()
 testMirroredMachineFlipsExportedArc()
 testBuildModelVerified()

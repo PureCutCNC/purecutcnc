@@ -253,6 +253,13 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postCannedCycleUnsupported': 'Operation „{operation}": {drillType}-Festzyklus wird von Maschine „{machine}" nicht unterstützt; erweiterte Bewegungen werden ausgegeben.',
   'warnings.postArcNoCapability': 'Operation „{operation}" enthält lineare Bewegungen, die als Bögen ausgegeben werden könnten, aber die ausgewählte Maschine unterstützt keine Kreisinterpolation (G2/G3). Stattdessen werden lineare Bewegungen ausgegeben.',
   'warnings.postArcFallbackLinear': 'Bei Operation „{operation}" hätte die ausgewählte Steuerung {count} angepasste Bogenabschnitt(e) nach der Zahlenrundung abgelehnt. Diese Abschnitte wurden stattdessen als lineare Bewegungen ausgegeben.',
+  'warnings.postRotaryNoAxis': 'Operation „{operation}" wurde nicht exportiert: Diese Maschine hat keine Drehachse.',
+  'warnings.postRotaryNoInverseTime': 'Operation „{operation}" wurde nicht exportiert: Die Steuerung dieser Maschine kennt keinen Vorschub in umgekehrter Zeit, den ein Drehschnitt benötigt.',
+  'warnings.postRotaryBorrowedAxisTravel': 'Operation „{operation}" wurde nicht exportiert: Sie fährt entlang {axis}, aber dieser Motor treibt an dieser Maschine die Drehachse.',
+  'warnings.postRotaryNeedsRoundStock': 'Operation „{operation}" wurde nicht exportiert: Ein Drehschnitt benötigt Rundmaterial.',
+  'warnings.postRotaryAngleNotEstablished': 'Operation „{operation}" wurde nicht exportiert: Sie beginnt zu schneiden, bevor der Stab auf ihren Winkel gedreht wurde.',
+  'warnings.postRotaryTemplateUsesBorrowedAxis': 'Die Vorlagen der Maschine schreiben {axis}, das Wort, das an dieser Maschine die Drehachse dreht. Entfernen Sie es vor dem Export aus den Vorlagen der Maschine.',
+  'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

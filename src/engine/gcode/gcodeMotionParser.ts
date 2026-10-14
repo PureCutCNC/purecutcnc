@@ -40,6 +40,14 @@ export interface ParsedLinearMove {
   kind: 'rapid' | 'linear'
   from: ToolpathPoint
   to: ToolpathPoint
+  /**
+   * Present when the block ran under inverse-time feed (`G93`, issue #393).
+   * The value is the F word exactly as written — 1/min, not a speed — and it
+   * must never be displayed or compared as one. Absent on a program with no
+   * rotary word and no inverse-time command, so such a parse is exactly what
+   * it always was.
+   */
+  inverseTimeFeed?: number
 }
 
 export interface ParsedArcMove {
@@ -52,6 +60,8 @@ export interface ParsedArcMove {
   clockwise: boolean
   /** True when the directed sweep exceeds 180° (drives the SVG large-arc flag). */
   largeArc: boolean
+  /** See {@link ParsedLinearMove.inverseTimeFeed}. */
+  inverseTimeFeed?: number
 }
 
 export type ParsedGcodeMove = ParsedLinearMove | ParsedArcMove
@@ -64,10 +74,28 @@ export interface ParsedGcodeMotion {
   warnings: string[]
 }
 
+/**
+ * How to read a program that uses a rotary axis (issue #393). Absent means the
+ * program has no rotary word and no inverse-time feed, and parses exactly as
+ * it did before the rotary axis existed.
+ */
+export interface GcodeRotaryParseOptions {
+  /**
+   * The word that carries the angle — `rotaryWord(definition)`. On a borrowed
+   * motor this letter is the angle and is NEVER a linear coordinate, so it is
+   * not read as one even on a program that also writes it as a setting.
+   */
+  word: 'A' | 'X' | 'Y'
+  /** The controller's inverse-time feed commands, or null when it has none. */
+  inverseTimeFeed: { on: string; off: string } | null
+}
+
 interface ParseState {
   pos: ToolpathPoint
   /** Last seen motion mode, or null before the first motion word. */
   motionMode: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | null
+  /** True while the definition's inverse-time command is in force (issue #393). */
+  inverseTime: boolean
 }
 
 interface Word {
@@ -235,6 +263,12 @@ export function arcMoveFromCenter(
   return { kind: 'arc', from, to, center, radius, clockwise, largeArc }
 }
 
+/** The letter and value of a definition command like `G93`, or null when it is not one. */
+function commandWord(command: string): { letter: string; value: number } | null {
+  const match = /^([A-Za-z])\s*(\d+(?:\.\d+)?)$/.exec(command.trim())
+  return match ? { letter: match[1].toUpperCase(), value: Number(match[2]) } : null
+}
+
 /**
  * Parse a literal G-code program into a planar motion sequence.
  *
@@ -243,21 +277,28 @@ export function arcMoveFromCenter(
  *                        only for documentation — both are accepted when present.
  * @param commentPrefix   Definition comment prefix (e.g. '(' or ';').
  * @param commentSuffix   Definition comment suffix (e.g. ')' or '').
+ * @param rotary          How the program spells a rotary axis (issue #393).
+ *                        Absent means it has none and parses as it always did.
  */
 export function parseGcodeMotion(
   gcode: string,
   arcFormat: 'ij' | 'r' = 'ij',
   commentPrefix: string = '(',
   commentSuffix: string = ')',
+  rotary?: GcodeRotaryParseOptions,
 ): ParsedGcodeMotion {
   void arcFormat   // both forms are accepted regardless of the configured format
   const moves: ParsedGcodeMove[] = []
   const warnings: string[] = []
   let status: GcodeParseStatus = 'verified'
 
+  const inverseOn = rotary?.inverseTimeFeed ? commandWord(rotary.inverseTimeFeed.on) : null
+  const inverseOff = rotary?.inverseTimeFeed ? commandWord(rotary.inverseTimeFeed.off) : null
+
   const state: ParseState = {
     pos: { x: 0, y: 0, z: 0 },
     motionMode: null,
+    inverseTime: false,
   }
 
   const lines = gcode.split(/\r?\n/)
@@ -274,8 +315,17 @@ export function parseGcodeMotion(
     let x: number | undefined
     let y: number | undefined
     let z: number | undefined
+    let feedWord: number | undefined
+    let angleWord: number | undefined
+    // The definition's own inverse-time commands, applied after the line's
+    // words are read so G93/G94 and an F on the same block both take effect.
+    let inverseSwitch: boolean | null = null
 
     for (const word of words) {
+      // The definition's own inverse-time commands may be any letter; they are
+      // matched by letter and value, not assumed to be G words.
+      if (inverseOn !== null && word.letter === inverseOn.letter && word.value === inverseOn.value) inverseSwitch = true
+      else if (inverseOff !== null && word.letter === inverseOff.letter && word.value === inverseOff.value) inverseSwitch = false
       switch (word.letter) {
         case 'G':
           explicitMode = motionModeForG(word.value)
@@ -283,14 +333,40 @@ export function parseGcodeMotion(
         case 'I': iWord = word.value; break
         case 'J': jWord = word.value; break
         case 'R': rWord = word.value; break
-        case 'X': x = word.value; break
-        case 'Y': y = word.value; break
+        // The rotary word (issue #393) is the angle. On a borrowed motor it is
+        // the letter of the axis whose motor drives the rotation — that letter
+        // carries the angle and is never a linear coordinate.
+        case 'A':
+          if (rotary?.word === 'A') angleWord = word.value
+          break
+        case 'X':
+          if (rotary?.word === 'X') angleWord = word.value
+          else x = word.value
+          break
+        case 'Y':
+          if (rotary?.word === 'Y') angleWord = word.value
+          else y = word.value
+          break
         case 'Z': z = word.value; break
-        // F (feed), S (spindle), T (tool), M-codes, P/Q (canned-cycle words),
-        // and any other letter are non-positional and ignored for the trace.
+        case 'F': feedWord = word.value; break
+        // S (spindle), T (tool), M-codes, P/Q (canned-cycle words), and any
+        // other letter are non-positional and ignored for the trace.
         default: break
       }
     }
+
+    // Feed mode (issue #393): G93/G94 are modal, but the inverse-time F is not.
+    // It belongs to the block that writes it — a controller in inverse-time mode
+    // needs an F on every feed block, so carrying the previous one forward would
+    // report a program the machine stops on.
+    if (inverseSwitch === true) {
+      state.inverseTime = true
+    } else if (inverseSwitch === false) {
+      state.inverseTime = false
+    }
+    const inverseTimeFeed = state.inverseTime && feedWord !== undefined && feedWord > 0
+      ? feedWord
+      : undefined
 
     if (explicitMode === 'unsupported') {
       if (status === 'verified') status = 'unsupported'
@@ -301,8 +377,8 @@ export function parseGcodeMotion(
       continue
     }
 
-    // No coordinate or arc words and no explicit motion → non-motion line.
-    const hasPosition = x !== undefined || y !== undefined || z !== undefined
+    // No coordinate, arc or angle words and no explicit motion → non-motion line.
+    const hasPosition = x !== undefined || y !== undefined || z !== undefined || angleWord !== undefined
     const hasArcWords = iWord !== undefined || jWord !== undefined || rWord !== undefined
     if (!hasPosition && !hasArcWords) {
       // A bare motion-mode line (e.g. "G0" alone, or a units/WCS line) just
@@ -329,16 +405,30 @@ export function parseGcodeMotion(
       state.motionMode = 'linear'
     }
 
+    // A feed move in inverse-time mode must carry its own positive F (issue
+    // #393). "Verified" means the trace matches what a controller would run, and
+    // a controller rejects this block — so it is reported the same way as any
+    // other construct the parser cannot reconstruct, not as verified.
+    if (state.inverseTime && mode !== 'rapid' && inverseTimeFeed === undefined) {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(`line ${lineIndex + 1}: feed move in inverse-time mode without its own F word`)
+    }
+
     const from = { ...state.pos }
     const to: ToolpathPoint = {
       x: x ?? state.pos.x,
       y: y ?? state.pos.y,
       z: z ?? state.pos.z,
     }
+    // The angle is modal like the other axes: an omitted word keeps the last
+    // one, and a program that never writes one carries no `a` at all.
+    const angle = angleWord ?? state.pos.a
+    if (angle !== undefined) to.a = angle
+    const feedFields = inverseTimeFeed !== undefined ? { inverseTimeFeed } : null
 
     try {
       if (mode === 'rapid' || mode === 'linear') {
-        moves.push({ kind: mode, from, to })
+        moves.push({ kind: mode, from, to, ...feedFields })
       } else {
         const clockwise = mode === 'arc_cw'
         const result = applyArc(state, to, iWord, jWord, rWord, clockwise)
@@ -347,9 +437,9 @@ export function parseGcodeMotion(
           warnings.push(`line ${lineIndex + 1}: ${result.error}`)
           // Fall back to a linear segment so the trace stays continuous, but
           // the status downgrade guarantees the diagnostic is not "verified".
-          moves.push({ kind: 'linear', from, to })
+          moves.push({ kind: 'linear', from, to, ...feedFields })
         } else {
-          moves.push(result)
+          moves.push({ ...result, ...feedFields })
         }
       }
     } catch {

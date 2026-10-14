@@ -9,7 +9,8 @@ exports native part files (`.sbp`). Design reference:
 ## How export is split
 
 `runPostProcessor` picks the dialect — dropping a plasma cut on a machine that
-is not a plasma table before the emitter sees it (#960) — and does nothing else.
+is not a plasma table before the emitter sees it (#960), and an operation this
+machine's rotary axis cannot run (#393) — and does nothing else.
 What the machine is asked to do is decided once, for every dialect, in
 `motionPipeline.ts`; a dialect's emitter only spells the result. New behaviour
 goes in the pipeline. New syntax goes in an emitter. A dialect is never
@@ -31,7 +32,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 
 - `index.ts` — public API.
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
-  `arcFormat`, the optional `outputDialect`, `machineKind` and `plasma` block), `resolveOutputDialect`,
+  `arcFormat`, the optional `outputDialect`, `machineKind`, `plasma` and
+  `rotary` blocks), `resolveOutputDialect`, the rotary helpers `rotaryWord` /
+  `rotaryBorrowedAxis` / `rotaryDirection` (which letter the program uses for
+  rotation, which project axis a borrowed motor costs, and the sign a positive
+  angle is multiplied by),
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
@@ -43,7 +48,20 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   tracks whether a touch-off has happened in the program: the safe rapid
   before the first one is in the operator's zero, and every Z after it — the
   retract, and a safe rapid before any later cut or operation — is measured
-  from the sheet.
+  from the sheet. A rotary angle (#393) is modal like X/Y/Z: the emitter writes
+  it once per angle change under `rotaryWord`, never reduced to 0–360, never on
+  a block that also carries Z (a turning rapid turns at the higher of its two Z
+  values), and puts
+  the program into inverse-time feed (`G93`) around a turning feed move, every
+  such move carrying its own `F` on the motion block and the mode restored
+  (`G94`) before any block that is not one: a rapid, an operation header or its
+  dwell/positioning template, a tool change, a canned cycle, the spindle stop or
+  the program end. It refuses a program whose own templates write the machine's
+  rotary word, judged on the rendered lines the program actually writes
+  (`postRotaryTemplateUsesBorrowedAxis`).
+  Canned drill cycles are written only on a machine that borrows no motor and
+  for a toolpath with no angle anywhere (#393); otherwise the expanded moves
+  are used, as on a machine with canned cycles off.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
@@ -61,7 +79,24 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
-  split of a rapid), and the emitted-number helpers arc validation judges
+  split of a rapid, carrying a rotary angle so a rotation-only rapid is never
+  dropped — the angle rides the XY block when there is one and otherwise a
+  block of its own, never a Z block, in either direction of Z), `planStepFeeds` / `inverseTimeFeedValue` and
+  `planRotaryRefusals`
+  (issue #393: each move's feed word — inverse-time `feed / length` for a
+  turning move, where `length` is the true length of the path the tip draws in
+  the stock's own frame, in closed form over the move's linear angle change, so
+  a move whose tip speed touches zero inside it is exact rather than off by a
+  corner — and the reasons an
+  operation cannot run on this machine's rotary axis: no axis, no inverse-time
+  feed, travel on the borrowed motor's axis beyond the one value the program
+  may use across all its operations, a non-round bar, canned-cycle drill holes
+  with no expanded moves, a feed move or arc that carries an angle on one end
+  only, and a feed move that starts before the program has turned
+  the bar to its angle; `planStepFeeds` throws
+  when an emitted step no longer pairs with the project move its feed comes
+  from), and the emitted-number
+  helpers arc validation judges
   with. It is the only caller of `projectToMachinePoint` during export, and
   the only place an operation's machining setup is applied (issue #944): the
   setup's frame is resolved once per operation and passed to the transform,
@@ -81,18 +116,35 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   accurate when the emitter changes.
 - `arcFitting.ts` — export-stage arc fitting: Kasa circle fit, direction
   detection, ≤ 90° splitting, and `resolveEmittedArc` / `applyEmittedArcFallback`,
-  which judge an arc by the numbers actually written.
+  which judge an arc by the numbers actually written. A move that turns the
+  stock is never part of a run (#393): an arc is one planar circular motion, and
+  a rotary axis moving through it is not.
 - `gcodeMotionParser.ts` — read-only parser for the emitted G-code (issue
-  #356); reconstructs planar motion analytically.
+  #356); reconstructs planar motion analytically. Given the definition's rotary
+  word and inverse-time commands (issue #393) it reads the angle modally — the
+  borrowed motor's letter is the angle, never a linear coordinate — and keeps a
+  `G93` F word as inverse time (`inverseTimeFeed`, 1/min) rather than a speed.
+  The feed **mode** is modal but that F is not: a feed move (`G1`/`G2`/`G3`) in
+  inverse-time mode without a positive F on its own block is what a controller
+  rejects, so it takes the parser's existing downgrade path and reports
+  `unsupported` rather than verified with a borrowed F; an F on a line of its
+  own does not count. A program with no rotary word and no `G93` parses exactly
+  as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
   `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
 - `motionDebug.ts` — exported-motion debug helpers (issue #356):
-  `parseExportedMotion` (parses in the definition's own dialect), eligibility,
-  the exported-vs-source diagnostic, and the three-layer model builder.
+  `parseExportedMotion` (parses in the definition's own dialect, handing the
+  G-code parser the definition's rotary word and inverse-time commands),
+  eligibility, the exported-vs-source diagnostic — which compares the rotary
+  angle at each endpoint as well as X/Y/Z, and does not compare a borrowed
+  axis's coordinate the program cannot carry — and the three-layer model
+  builder.
 - `utils.ts` — number formatting, `projectToMachinePoint` and its inverse
   `machineToProjectPoint`. Both take an optional setup frame
   (`src/engine/setupOrientation.ts`): the point is turned into the setup-local
-  frame before the origin offset, and Top passes none.
+  frame before the origin offset, and Top passes none. The rotary angle
+  (issue #393) goes out multiplied by `rotaryDirection` and comes back divided
+  by it; a point with no `a` gains no key in either direction.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
   non-G-code definition; see the note below. `qtplasmac.json` is the experimental
@@ -132,7 +184,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
-  `trochoidalArcExport.test.ts`, `setupExport.test.ts` (a Bottom operation
+  `trochoidalArcExport.test.ts`, `rotaryDefinition.test.ts` (the optional
+  `rotary` block: bundled definitions gain no key, the block round-trips and
+  its refusals, the `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection`
+  helpers, and the block surviving project save/load and the machine library),
+  `setupExport.test.ts` (a Bottom operation
   exports turned for both dialects, the shared origin on and off the flip
   centreline, arc direction reversal, drill cycles, and Top with setups
   byte-identical to a project without them), `setupPrograms.test.ts` (how an

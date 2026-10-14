@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { resolveMachineKind, type MachineDefinition } from '../../engine/gcode/types'
+import { resolveMachineKind, rotaryWord, type MachineDefinition } from '../../engine/gcode/types'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import {
   duplicateMachineAsCustom,
@@ -298,6 +298,22 @@ export function MachineDefinitionManagerDialog({
                   <dd>{td(resolveMachineKind(previewDef) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')}</dd>
                   <dt>{td('dialogs.machineManager.fileExtension')}</dt>
                   <dd>.{previewDef.fileExtension}</dd>
+                  {previewDef.rotary ? (
+                    <>
+                      <dt>{td('dialogs.machineEditor.rotary')}</dt>
+                      <dd data-testid="machine-manager-rotary">
+                        {previewDef.rotary.drive === 'own'
+                          ? td('dialogs.machineManager.rotarySummaryOwn', {
+                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
+                            })
+                          : td('dialogs.machineManager.rotarySummaryBorrowed', {
+                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
+                              motor: previewDef.rotary.about === 'x' ? 'Y' : 'X',
+                              word: rotaryWord(previewDef) ?? '',
+                            })}
+                      </dd>
+                    </>
+                  ) : null}
                   {previewDef.description ? (
                     <>
                       <dt>{td('dialogs.machineManager.description')}</dt>

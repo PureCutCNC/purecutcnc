@@ -32,6 +32,20 @@ the two half turns a Bottom toolpath takes (into stock space when generated,
 back out when exported), which is exact only up to floating-point rounding.
 One case is a pocket drawn on the bottom face and generated end to end.
 
+The `rotary-*` cases (issue #393) export a turning program on a round bar.
+`rotary-borrowed-y-inverse-time` runs on every validator that claims its grbl
+definition: the angle is written under the borrowed motor's letter and no
+linear word uses it. `rotary-own-axis-inverse-time` writes the angle under `A`
+and puts the turning move in inverse time (`G93`), which plain Grbl rejects
+outright — a dialect verdict, not an arc one — so it names the one validator it
+runs on. Each case may carry a `validators` list; a case without one runs on
+every validator that claims its machine, exactly as before.
+
+| case | machine | validators | what it shows |
+|---|---|---|---|
+| `rotary-borrowed-y-inverse-time` | grbl | all claiming grbl | the angle under the borrowed `Y`, `G93` and an inverse-time `F`, and no linear `Y` |
+| `rotary-own-axis-inverse-time` | linuxcnc | `linuxcnc-rs274` | the angle under `A` and `G93` — a program Grbl cannot read |
+
 ## Validators
 
 | validator | what it is | dialects |
@@ -82,7 +96,9 @@ nothing — which is how `rs274` was first misread here.
 
 Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
 `O` program number and `N` line numbers long before reaching an arc, so a
-syntax error there would say nothing about arc validity. Cases no available
+syntax error there would say nothing about arc validity. A case can narrow this
+further with its own `validators` list (issue #393): the own-axis `A` program
+is a case in point, since Grbl rejects the `A` word itself. Cases no available
 interpreter can parse are reported as **not validated** rather than passed —
 an unchecked case must never read as a verified one.
 

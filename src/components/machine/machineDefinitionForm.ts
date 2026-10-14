@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { MachineDefinition, PlasmaTouchOff } from '../../engine/gcode/types'
-import { resolveMachineKind, validateMachineDefinition } from '../../engine/gcode/types'
+import type { MachineDefinition, PlasmaTouchOff, RotaryDefinition } from '../../engine/gcode/types'
+import { resolveMachineKind, resolveOutputDialect, validateMachineDefinition } from '../../engine/gcode/types'
 
 /**
  * Focused-form representation of a MachineDefinition. Only the fields most
@@ -38,6 +38,10 @@ export interface MachineFormData {
   probeFeed: string
   setZeroCommand: string
   switchOffset: string
+  /** `none` means the definition carries no rotary block at all. */
+  rotaryAbout: 'none' | 'x' | 'y'
+  rotaryDrive: 'own' | 'borrowed'
+  rotaryReversed: boolean
   name: string
   fileExtension: string
   mmCommand: string
@@ -72,6 +76,12 @@ export const DEFAULT_TOUCH_OFF: PlasmaTouchOff = {
   switchOffset: 0,
 }
 
+/**
+ * Inverse-time commands a machine gets when it first gains a rotary axis.
+ * An existing block keeps whatever it carries, including an explicit `null`.
+ */
+export const DEFAULT_INVERSE_TIME_FEED: NonNullable<RotaryDefinition['inverseTimeFeed']> = { on: 'G93', off: 'G94' }
+
 /** Blank or malformed text becomes NaN, which validation then rejects. */
 function parseFormNumber(text: string): number {
   return text.trim() ? Number(text) : Number.NaN
@@ -97,6 +107,9 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     probeFeed: String(touchOff.probeFeed),
     setZeroCommand: touchOff.setZeroCommand,
     switchOffset: touchOff.switchOffset === undefined ? '' : String(touchOff.switchOffset),
+    rotaryAbout: def.rotary?.about ?? 'none',
+    rotaryDrive: def.rotary?.drive ?? 'own',
+    rotaryReversed: def.rotary?.reversed ?? false,
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -119,12 +132,28 @@ export function mergeFormData(
   def: MachineDefinition,
   form: MachineFormData,
 ): MachineDefinition {
-  const { machineKind, plasma: _plasma, ...base } = def
+  const { machineKind, plasma: _plasma, rotary: _rotary, ...base } = def
   // Empty arrays and a single blank line look alike in the form; an
   // unchanged field must preserve its original representation and output.
   const mergeLines = (text: string, original: string[]) => text === joinLines(original) ? original : splitLines(text)
+  // A rotary axis cannot exist on a plasma machine or a ShopBot: switching to
+  // either drops the block, which validation would otherwise refuse. `None`
+  // drops it too, so a definition with no rotary axis carries no key at all.
+  const rotary = form.rotaryAbout !== 'none'
+    && form.machineKind !== 'plasma'
+    && resolveOutputDialect(def) !== 'opensbp'
+    ? {
+        about: form.rotaryAbout,
+        drive: form.rotaryDrive,
+        reversed: form.rotaryReversed,
+        // The three controls never touch inverse time: whatever the block
+        // carries — including an explicit null — is kept.
+        inverseTimeFeed: def.rotary ? def.rotary.inverseTimeFeed : DEFAULT_INVERSE_TIME_FEED,
+      }
+    : null
   return {
     ...base,
+    ...(rotary ? { rotary } : {}),
     // Preserve absence on legacy router definitions; no format migration.
     ...(form.machineKind === 'plasma'
       ? {

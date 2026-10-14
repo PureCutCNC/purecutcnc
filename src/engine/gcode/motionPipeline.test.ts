@@ -355,6 +355,52 @@ function testSplitRapid(): void {
   assertEqual(splitRapid(at, { ...at }), [], 'a rapid to where the tool already is writes nothing')
 }
 
+/**
+ * The rotary side of the split (issue #393): the angle is never written on a
+ * block that also carries Z, so the turn happens at the higher of the rapid's
+ * two Z values. A rapid with no angle change is unaffected above.
+ */
+function testSplitRapidRotary(): void {
+  console.log('Testing a turning rapid turns at the higher of its two Z values...')
+  const at = (x: number, y: number, z: number, a?: number) =>
+    (a === undefined ? { x, y, z } : { x, y, z, a })
+
+  // Z rises: Z block first (no angle), the XY block carries it.
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(10, 0, 30, 45)),
+    [{ z: 30 }, { x: 10, y: 0, a: 45 }], 'Z rises: Z first, angle on the XY block')
+  // Z falls: the XY block carrying the angle first, then the Z block.
+  assertEqual(splitRapid(at(0, 0, 30, 0), at(10, 0, 5, 45)),
+    [{ x: 10, y: 0, a: 45 }, { z: 5 }], 'Z falls: angle on the XY block first, then Z')
+  // Z unchanged, XY unchanged: a block of its own carries the angle.
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 5, 45)), [{ a: 45 }], 'rotation only: the angle is not dropped')
+  // Z unchanged, XY moves: one XY block, angle and all.
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(10, 0, 5, 45)),
+    [{ x: 10, y: 0, a: 45 }], 'XY only: the XY block carries the angle')
+  // No angle change: byte-identical to the pre-rotary blocks, in either
+  // direction of Z.
+  assertEqual(splitRapid(at(0, 0, 5, 45), at(10, 0, 30, 45)),
+    [{ z: 30 }, { x: 10, y: 0 }], 'a rapid that keeps the angle writes the ordinary blocks')
+  assertEqual(splitRapid(at(0, 0, 30, 45), at(10, 0, 5, 45)),
+    [{ z: 5 }, { x: 10, y: 0 }], 'a falling rapid that keeps the angle writes the ordinary blocks')
+  // No angle ever: the pre-rotary split, unchanged.
+  assertEqual(splitRapid(at(0, 0, 30), at(10, 0, 5)), [{ z: 5 }, { x: 10, y: 0 }], 'no angle at all takes the old path')
+  // A falling rapid that turns but does not travel across: the angle gets its
+  // own block before the drop, so the Z block is still written last.
+  assertEqual(splitRapid(at(0, 0, 30, 0), at(0, 0, 5, 45)),
+    [{ a: 45 }, { z: 5 }], 'Z falls with no XY travel: an angle block, then Z')
+  // Z rises while the bar turns and nothing else moves: the angle still gets a
+  // block of its own. Writing it on the last block would put it on the Z block
+  // (issue #393), which the "angle on the XY block" cases above do not catch.
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 30, 45)),
+    [{ z: 30 }, { a: 45 }], 'Z rises with no XY travel: an angle block, then nothing')
+  // From an unknown position the XY block is always written, so the angle
+  // rides it — the one case where Z rising and no XY difference still has an
+  // XY block to carry the angle.
+  assertEqual(splitRapid(null, at(0, 0, 30, 45)),
+    [{ z: 30 }, { x: 0, y: 0, a: 45 }],
+    'an unknown start turns with no XY difference: the angle rides the written XY block')
+}
+
 function testGcodeRapidsUseTheSplit(): void {
   console.log('Testing G-code rapids are written Z first, then XY...')
   // Held here as well as in the ShopBot tests: the safe-Z order of a G-code
@@ -380,6 +426,7 @@ testBothDialectsWriteTheSameSequence()
 testGcodeCoolantStartsOnce()
 testDrillCycleTransform()
 testSplitRapid()
+testSplitRapidRotary()
 testGcodeRapidsUseTheSplit()
 
 console.log('motion pipeline tests passed')

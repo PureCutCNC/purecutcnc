@@ -15,6 +15,7 @@
  */
 
 import type { MachineDefinition } from './types'
+import { rotaryDirection } from './types'
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { canonicalToSetupPoint, setupFlipsArcDirection, setupToCanonicalPoint } from '../setupOrientation'
@@ -30,6 +31,11 @@ import type { SetupFrame } from '../setupOrientation'
  * point is turned into the setup-local frame first, and the origin — one
  * placement shared by every setup — is then applied in that frame. Top passes
  * no frame and takes exactly the path it always did.
+ *
+ * A rotary angle (issue #393) is carried through as the *program* angle: it is
+ * multiplied by `rotaryDirection`, never reduced modulo 360, and it is emitted
+ * under `rotaryWord` by the caller. A point with no `a` comes back with exactly
+ * the three keys it always had — no `a: undefined`.
  */
 export function projectToMachinePoint(
   point: ToolpathPoint,
@@ -57,11 +63,17 @@ export function projectToMachinePoint(
     }
   }
 
-  return {
+  const machinePoint: ToolpathPoint = {
     x: mapAxis(definition.coordinateSystem.xAxis),
     y: mapAxis(definition.coordinateSystem.yAxis),
     z: mapAxis(definition.coordinateSystem.zAxis),
   }
+  // A setup turn is about the bar's own axis when the project is consistent, so
+  // it leaves the angle alone; the direction multiplies it on the way out.
+  if (point.a !== undefined) {
+    machinePoint.a = point.a * rotaryDirection(definition)
+  }
+  return machinePoint
 }
 
 /**
@@ -108,12 +120,18 @@ export function machineToProjectPoint(
   //   dx = x - origin.x   =>   x = dx + origin.x
   //   dy = origin.y - y   =>   y = origin.y - dy
   //   dz = z - origin.z   =>   z = dz + origin.z
-  const local = {
+  const local: ToolpathPoint = {
     x: dx + origin.x,
     y: origin.y - dy,
     z: dz + origin.z,
   }
-  // Undo the setup's turn last, mirroring the forward order.
+  // The rotary angle came in multiplied by `rotaryDirection` (issue #393), so
+  // the way back divides it out. A point with no `a` gains no key, exactly as
+  // before. The setup's turn is undone last, mirroring the forward order; it
+  // leaves the angle alone, which is about the bar's own axis.
+  if (point.a !== undefined) {
+    local.a = point.a / rotaryDirection(definition)
+  }
   return setup ? setupToCanonicalPoint(local, setup) : local
 }
 

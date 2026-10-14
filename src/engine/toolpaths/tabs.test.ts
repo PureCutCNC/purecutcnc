@@ -32,7 +32,7 @@ import { generateEdgeRouteToolpath } from './edge'
 import { buildAutoTabsForFeature } from '../operations/autoTabs'
 import { computeOperationToolpath } from './generateOperation'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings, tabLayoutFreeFraction, toolCentreContours } from './tabs'
-import type { ToolpathResult } from './types'
+import type { ToolpathMove, ToolpathResult } from './types'
 
 // ── Harness ──────────────────────────────────────────────────────────
 
@@ -552,6 +552,51 @@ test('a tab beyond the route leaves its leads and entries unchanged', () => {
       `${entryStrategy}: a tab on the other part moved this route's output`,
     )
   }
+})
+
+// ── Tab-synthesised moves take their angle from their own source move ──
+
+test('an angle-free cut after an angled one gains no angle from the carry', () => {
+  // The raised segments end on an angle, and the next cut starts where they
+  // did. Carrying that point's angle blindly would give the angle-free move one
+  // angled end, which export refuses (issue #393).
+  const project: Project = { ...baseProject(), tabs: [tab('t', 14, -2, 2, 8)] }
+  const operation = edgeOperation('f1')
+  const angled: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0, y: 0, z: 5, a: 0 },
+    to: { x: 30, y: 0, z: 5, a: 90 },
+  }
+  const angleFree: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 30, y: 0, z: 5 },
+    to: { x: 30, y: 20, z: 5 },
+  }
+  const oneEndAngled = (move: ToolpathMove): boolean =>
+    (move.from.a === undefined) !== (move.to.a === undefined)
+
+  const tabbed = applyTabsToEdgeRoute(project, operation, {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [angled, angleFree],
+  })
+  assert(tabbed.moves.length > 1, 'the tab splits the angled cut')
+  assert(!tabbed.moves.some(oneEndAngled),
+    `no synthesised move carries an angle on one end only: ${JSON.stringify(tabbed.moves)}`)
+
+  // An all-angle-free input stays entirely angle-free.
+  const flat = applyTabsToEdgeRoute(project, operation, {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [
+      { kind: 'cut', from: { x: 0, y: 0, z: 5 }, to: { x: 30, y: 0, z: 5 } },
+      angleFree,
+    ],
+  })
+  assert(flat.moves.every((move) => move.from.a === undefined && move.to.a === undefined),
+    'an angle-free input gains no angle')
 })
 
 // ── Summary ──────────────────────────────────────────────────────────

@@ -357,6 +357,35 @@ export type ToolpathWarningCode =
    *  guards a toolpath that reached the emitter in another shape (issue
    *  #983). */
   | 'postPlasmaSafeHeightMissing'
+  /** Rotary refusals (issue #393). Each skips the operation and names it: a
+   *  program that guessed at the stock's angle, or at a feed that is not the
+   *  one the cut needs, cuts the part wrong. */
+  /** The toolpath turns the stock, but this machine has no rotary axis. */
+  | 'postRotaryNoAxis'
+  /** The toolpath has a turning feed move and the controller has no
+   *  inverse-time feed, so no correct feed word can be written for it. */
+  | 'postRotaryNoInverseTime'
+  /** The operation moves along the project axis whose motor drives the rotary,
+   *  so that travel does not exist on this machine. */
+  | 'postRotaryBorrowedAxisTravel'
+  /** A turning cut measures its feed from the bar's centreline, and the stock
+   *  is not a round bar. */
+  | 'postRotaryNeedsRoundStock'
+  /** The operation starts cutting at an angle the program has not turned the
+   *  bar to: the controller is at another angle, or at an unknown one because
+   *  no rapid has established it yet (issue #393, rule 2). */
+  | 'postRotaryAngleNotEstablished'
+  /** One of the machine's own template lines (a header, tool-change or other
+   *  command) writes the machine's rotary word, so it would turn the bar behind
+   *  the planner's back. Every operation is refused on a borrowed motor, and on
+   *  a machine with its own axis the program is refused once any exported
+   *  operation carries an angle (issue #393, rule 3c). */
+  | 'postRotaryTemplateUsesBorrowedAxis'
+  /** A drilling operation has drill holes but no expanded moves. Canned cycles
+   *  are never written on a machine whose rotary borrows a motor, so the holes
+   *  would be silently dropped; the operation is refused instead (issue #393,
+   *  rule 3b). */
+  | 'postRotaryDrillNotExpanded'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -403,6 +432,13 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postPlasmaSafeHeightMissing` — a G-code pierce operation's cuts are left
  *   out because no safe height could be read for them, so the saved file
  *   would quietly lack that operation's cuts (issue #983).
+ * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
+ *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
+ *   `postRotaryTemplateUsesBorrowedAxis` and `postRotaryDrillNotExpanded` — a
+ *   rotary operation the machine cannot run is left out of the program (issue
+ *   #393). The file would otherwise be saved without that pass, and
+ *   approximating any of them would cut the stock at the wrong angle or the
+ *   wrong feed.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
@@ -412,6 +448,13 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postPlasmaCutFeedMissing',
   'postPlasmaPlungeFeedMissing',
   'postPlasmaSafeHeightMissing',
+  'postRotaryNoAxis',
+  'postRotaryNoInverseTime',
+  'postRotaryBorrowedAxisTravel',
+  'postRotaryNeedsRoundStock',
+  'postRotaryAngleNotEstablished',
+  'postRotaryTemplateUsesBorrowedAxis',
+  'postRotaryDrillNotExpanded',
 ])
 
 /**

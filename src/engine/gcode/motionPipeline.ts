@@ -44,12 +44,14 @@
  */
 
 import type { Operation, Project } from '../../types/project'
+import { isRoundStock, roundStockCentre } from '../../types/project'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
+import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
@@ -546,6 +548,530 @@ export function planProgramSetup(
   }
   return { headerComments: setupHeaderLines(project, setup), warnings }
 }
+// ── Rotary axis (#393) ────────────────────────────────────────
+
+/** What the emitter writes for one move's feed (issue #393, rule 4). */
+export type FeedDirective =
+  /** An ordinary feed word, in project units per minute. */
+  | { mode: 'normal'; feed: number }
+  /** Inverse-time feed: the word carries `1/min` and every such move repeats
+   *  it, whatever the definition's `modalFeedSpeed` says. */
+  | { mode: 'inverse'; feed: number }
+  /** A rapid, or no feed at all: no feed word is written. */
+  | { mode: 'none' }
+
+/** The bar's centreline and the project axis it lies along, in project space. */
+export interface RotaryCentreline {
+  /** The PROJECT axis the bar lies along and turns about. */
+  axis: 'x' | 'y'
+  /** A point on the centreline. Only the axes across the bar and its height are
+   *  read, so the coordinate along the bar is irrelevant. */
+  point: ToolpathPoint
+}
+
+/** The centreline of the project's round bar, or null when the stock is a block. */
+export function rotaryCentreline(stock: Project['stock']): RotaryCentreline | null {
+  if (!isRoundStock(stock)) return null
+  return {
+    axis: stock.axis,
+    // The bar's axis sits at Z = thickness / 2 (issue #392); across the bar it
+    // is the stock rectangle's centreline. The along-bar coordinate is unused.
+    point: {
+      x: stock.axis === 'x' ? 0 : roundStockCentre(stock),
+      y: stock.axis === 'x' ? roundStockCentre(stock) : 0,
+      z: stock.thickness / 2,
+    },
+  }
+}
+
+/**
+ * The two coordinates of `point` across and above the bar's centreline, in the
+ * plane the bar turns in (issue #393). `point` and `centre` must be in the same
+ * frame; both quantities are invariant under the project → machine transform —
+ * a signed axis permutation plus translation — so either frame gives the same
+ * number.
+ */
+function centrelineFrame(point: ToolpathPoint, centre: RotaryCentreline): { across: number; up: number } {
+  return centre.axis === 'x'
+    ? { across: point.y - centre.point.y, up: point.z - centre.point.z }
+    : { across: point.x - centre.point.x, up: point.z - centre.point.z }
+}
+
+/** The coordinate of `point` along the bar, which no turn moves. */
+function alongBar(point: ToolpathPoint, centre: RotaryCentreline): number {
+  return centre.axis === 'x' ? point.x : point.y
+}
+
+/**
+ * The 16 positive nodes and weights of a 32-point Gauss-Legendre rule on
+ * `[−1, 1]`, used by {@link stockFramePathLength} when the closed form would
+ * cancel. Symmetric, so the negative nodes are the positives negated.
+ */
+const GAUSS_LEGENDRE_NODES: readonly number[] = [
+  0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
+  0.33186860228212766710, 0.42135127613063533270, 0.50689990893222935942,
+  0.58771575724076230429, 0.66304426693021523143, 0.73218211874028971131,
+  0.79448379596794238555, 0.84936761373256997043, 0.89632115576605209117,
+  0.93490607593773966677, 0.96476225558750638989, 0.98561151154526838170,
+  0.99726386184948156988,
+]
+const GAUSS_LEGENDRE_WEIGHTS: readonly number[] = [
+  0.096540088514727853686, 0.095638720079274847086, 0.093844399080804538626,
+  0.091173878695763904689, 0.087652093004403741627, 0.083311924226946720839,
+  0.078193895787070435976, 0.072345794108848615611, 0.065822222776361946628,
+  0.058684093478535578892, 0.050998059262376153888, 0.042835898022226703841,
+  0.034273862913021410637, 0.025392065309262138589, 0.016274394730905708539,
+  0.0070186100094701362601,
+]
+
+/**
+ * The length of the path the cutter tip draws **in the stock's own frame** for
+ * one turning move (issue #393, rule 4).
+ *
+ * The tool travels in a straight line while the stock turns linearly, so at
+ * parameter `t` the tip is at `lerp(from, to, t)` and the point of the unturned
+ * stock under it is `stockSpacePoint(lerp(from, to, t))` (`rotaryFrame.ts`).
+ * Writing `A` and `U` for the across and up offsets of that lerp and `ω` for
+ * the sweep in radians, the squared speed in stock space is
+ *
+ *   `along'² + (A' + ω·U(t))² + (U' − ω·A(t))²`,
+ *
+ * a quadratic in `t`; the length is its square root integrated over [0, 1].
+ * The mean of the two end radii is *not* this length: a move that plunges while
+ * it turns traces a longer spiral than either end's arc suggests, and a move
+ * at a constant radius reduces to the ordinary `sqrt(along'² + (R·ω)²)`.
+ *
+ * The quadratic is a sum of squares, so completing it gives an exact closed
+ * form rather than a quadrature. With `t* = −beta / (2·alpha)` (where it is
+ * smallest) and `m = gamma − beta² / (4·alpha)` — never negative, up to
+ * floating-point noise — the integrand is `sqrt(alpha·u² + m)` in `u = t − t*`,
+ * whose antiderivative is
+ *
+ *   `F(u) = (u/2)·sqrt(alpha·u² + m) + (m / (2·sqrt(alpha)))·asinh(u·sqrt(alpha / m))`,
+ *
+ * and the length is `F(1 − t*) − F(−t*)`. That closed form is exact while the
+ * quadratic's minimum sits on or near the move, where it also carries the
+ * corner a tip speed touching zero puts in the integrand (a 32-point rule
+ * alone is off by ~8e-4 there, a 90° turn at a bar centreline crossing). When
+ * the minimum lies far outside `[−1, 2]` the two antiderivative values are
+ * large and nearly equal, and subtracting them loses most of the significant
+ * digits: a move with 1e-14 across/up deltas planned 18.000 mm for a true
+ * 18.6870947749. There the integrand is smooth on `[0, 1]`, so a fixed 32-point
+ * Gauss-Legendre rule is accurate to machine precision instead.
+ */
+function stockFramePathLength(from: ToolpathPoint, to: ToolpathPoint, centre: RotaryCentreline): number {
+  const start = centrelineFrame(from, centre)
+  const end = centrelineFrame(to, centre)
+  const dAcross = end.across - start.across
+  const dUp = end.up - start.up
+  const dAlong = alongBar(to, centre) - alongBar(from, centre)
+  const sweep = (((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180
+  const c1 = dAcross + sweep * start.up
+  const c2 = dUp - sweep * start.across
+  const alpha = sweep * sweep * (dUp * dUp + dAcross * dAcross)
+  const beta = 2 * sweep * (c1 * dUp - c2 * dAcross)
+  const gamma = c1 * c1 + c2 * c2 + dAlong * dAlong
+  // A move at a constant radius — a pure turn, a turn travelling along the bar,
+  // or an ordinary straight move — has a constant tip speed. Returning it
+  // directly keeps the exact word those moves write today; the closed form
+  // below needs a division by `alpha` and would agree only to a few ulps.
+  if (alpha === 0 && beta === 0) return Math.sqrt(Math.max(gamma, 0))
+  const tStar = -beta / (2 * alpha)
+  // The minimum of the quadratic lies on or near the move: the closed form is
+  // exact there, and it is the only branch that resolves the corner a tip
+  // speed touching zero puts in the integrand.
+  if (tStar >= -1 && tStar <= 2) {
+    const root = Math.sqrt(alpha)
+    // The quadratic is a sum of squares, so this is zero at worst: a negative
+    // value is floating-point noise at a move whose tip speed really does touch
+    // zero.
+    const m = Math.max(gamma - (beta * beta) / (4 * alpha), 0)
+    const antiderivative = (u: number): number => {
+      // `m → 0`: the square root is `sqrt(alpha)·|u|` and its integral is
+      // `sqrt(alpha)·u·|u| / 2`. The `asinh` form is indeterminate there, and
+      // overflows for a denormal `m`, so take the limit whenever the argument is
+      // not finite — `m` is negligible against `alpha·u²` by then.
+      const asinhArgument = m === 0 ? Infinity : u * Math.sqrt(alpha / m)
+      if (!Number.isFinite(asinhArgument)) return 0.5 * root * u * Math.abs(u)
+      return 0.5 * u * Math.sqrt(alpha * u * u + m)
+        + (m / (2 * root)) * Math.asinh(asinhArgument)
+    }
+    return antiderivative(1 - tStar) - antiderivative(-tStar)
+  }
+  // The minimum is far outside the move, so the antiderivative terms above are
+  // large and nearly equal and subtracting them loses the length. The integrand
+  // is smooth on [0, 1] here; the 32-point rule is accurate to machine
+  // precision. It needs no division by `alpha`, so it also covers the
+  // degenerate `alpha === 0, beta ≠ 0` that a rounding could in principle make.
+  let total = 0
+  for (let index = 0; index < GAUSS_LEGENDRE_NODES.length; index++) {
+    const node = GAUSS_LEGENDRE_NODES[index]
+    const weight = GAUSS_LEGENDRE_WEIGHTS[index]
+    for (const sign of [1, -1]) {
+      const t = 0.5 + 0.5 * sign * node
+      total += weight * Math.sqrt(Math.max(alpha * t * t + beta * t + gamma, 0))
+    }
+  }
+  return 0.5 * total
+}
+
+/**
+ * True when a move's two ends disagree on carrying an angle at all. A rapid may
+ * do that — a rapid to a point with an angle is how the program first turns the
+ * bar. A **feed move or arc must carry `a` on both ends or on neither**
+ * (issue #393, rule 2); `feedAngleIsSplit` is that rule, and the single place
+ * tracking, "does this move turn" and the path length all judge it.
+ */
+function oneEndAngled(from: ToolpathPoint, to: ToolpathPoint): boolean {
+  return (from.a === undefined) !== (to.a === undefined)
+}
+
+/** The rule above for a whole move: only a feed move or arc can break it. */
+function feedAngleIsSplit(move: ToolpathMove): boolean {
+  return move.kind !== 'rapid' && oneEndAngled(move.from, move.to)
+}
+
+/**
+ * The inverse-time feed word for one turning feed move: `feed / length` in
+ * 1/min, where `length` is the true path length at the cutter tip in the
+ * stock's own frame ({@link stockFramePathLength}).
+ *
+ * Exported alone so the arithmetic can be tested without an export. The length
+ * is never taken below `tolerance`, so a move that neither travels nor turns
+ * yields a finite word rather than an infinity.
+ *
+ * Refuses a move that carries an angle on one end only: `stockFramePathLength`
+ * would read the absent angle as zero and plan a turn the emitter never writes.
+ * The operation is refused before export; this keeps the arithmetic from ever
+ * being handed such a move.
+ */
+export function inverseTimeFeedValue(
+  from: ToolpathPoint,
+  to: ToolpathPoint,
+  feed: number,
+  centre: RotaryCentreline,
+  tolerance: number,
+): number {
+  if (oneEndAngled(from, to)) {
+    throw new Error('inverseTimeFeedValue: a feed move must carry its rotary angle on both ends or on neither')
+  }
+  const length = Math.max(stockFramePathLength(from, to, centre), tolerance)
+  // `Math.max` floors the divisor at the tolerance: a zero-length move would
+  // otherwise divide by zero and write `FInfinity`.
+  return feed / length
+}
+
+/** Absent means no rotary component, so it matches only another absent one. */
+function sameAngle(a: number | undefined, b: number | undefined): boolean {
+  return a === b
+}
+
+/** True when a move changes the stock's angle over its span (rule 2). A move
+ *  that breaks the two-ends rule is not a turn: it is refused before planning. */
+function turns(move: ToolpathMove): boolean {
+  return !feedAngleIsSplit(move) && !sameAngle(move.from.a, move.to.a)
+}
+
+/**
+ * The angle a project move ends at in the program's own direction, or
+ * `undefined` when it has none. `projectToMachinePoint` already multiplied the
+ * step's point by `rotaryDirection`, so a step's angle is compared against this
+ * rather than the raw `move.to.a`.
+ */
+function machineEndAngle(move: ToolpathMove, direction: 1 | -1): number | undefined {
+  return move.to.a === undefined ? undefined : move.to.a * direction
+}
+
+/**
+ * Plan the feed word of every move of one operation (issue #393, rule 4).
+ *
+ * `steps` is the emitted sequence and `projectMoves` the operation's own moves,
+ * in the same order, one entry per emitted block: a linear descriptor covers
+ * exactly one source move, and an arc run covers exactly the source moves in its
+ * `runFallback`. The two are therefore consumed together, recovering the
+ * project-space endpoints the rotary arithmetic needs without matching machine
+ * coordinates back to source points (a synthesised sub-arc endpoint matches no
+ * source point, which is what makes matching unreliable).
+ *
+ * `centre` is null for a block of stock: there is no centreline and no turning
+ * move can exist, so every feed is the ordinary one. `effectiveFeed` reuses the
+ * caller's own feed (kind and `feedScale` included), so a turning move is not
+ * given a different base feed from the one it would have had.
+ *
+ * The pairing is by position, so a drift between the two sequences would
+ * silently give a turning move the ordinary feed, or measure its path from
+ * another move's endpoints. Every linear step is therefore checked against the
+ * move it was paired with before that move's numbers are used (issue #393): a
+ * missing move, or a step whose angle disagrees with the move's end angle, is
+ * an error rather than a wrong program. `operationName` names the operation in
+ * that error. `direction` is `rotaryDirection(definition)`, the factor the
+ * step's point already carries.
+ */
+export function planStepFeeds(args: {
+  projectMoves: readonly ToolpathMove[]
+  steps: readonly FittedMoveDescriptor[]
+  centre: RotaryCentreline | null
+  tolerance: number
+  effectiveFeed: (step: FittedMoveDescriptor) => number
+  operationName: string
+  direction: 1 | -1
+}): FeedDirective[] {
+  const { projectMoves, steps, centre, tolerance, effectiveFeed, operationName, direction } = args
+  const directives: FeedDirective[] = []
+  let moveIndex = 0
+  let arcRunId: number | null = null
+
+  for (const step of steps) {
+    if (step.kind === 'arc') {
+      // Every sub-arc of a run shares `runFallback`; the run's source moves are
+      // consumed once, when its first sub-arc is seen.
+      if (step.runId !== arcRunId) {
+        moveIndex += step.runFallback.length
+        arcRunId = step.runId
+      }
+      directives.push({ mode: 'normal', feed: effectiveFeed(step) })
+      continue
+    }
+
+    const move = projectMoves[moveIndex]
+    moveIndex += 1
+
+    if (move === undefined || !sameAngle(step.point.a, machineEndAngle(move, direction))) {
+      throw new Error(
+        `Export plan for "${operationName}" is inconsistent with its toolpath: emitted move ${moveIndex} `
+        + `does not match the toolpath move it was paired with`,
+      )
+    }
+
+    if (step.moveKind === 'rapid') {
+      directives.push({ mode: 'none' })
+      continue
+    }
+    if (centre === null || sameAngle(move.from.a, move.to.a)) {
+      directives.push({ mode: 'normal', feed: effectiveFeed(step) })
+      continue
+    }
+    directives.push({
+      mode: 'inverse',
+      feed: inverseTimeFeedValue(move.from, move.to, effectiveFeed(step), centre, tolerance),
+    })
+  }
+  return directives
+}
+
+/**
+ * The range of the borrowed motor's project coordinate a toolpath touches: its
+ * moves and — because canned-cycle positioning writes that letter as a linear
+ * coordinate — its drill holes too (issue #393, rule 3).
+ */
+function borrowedAxisRange(
+  toolpath: ToolpathResult,
+  axis: 'x' | 'y',
+): { min: number; max: number } | null {
+  let min = Infinity
+  let max = -Infinity
+  const consider = (value: number) => {
+    if (value < min) min = value
+    if (value > max) max = value
+  }
+  for (const move of toolpath.moves) {
+    consider(axis === 'x' ? move.from.x : move.from.y)
+    consider(axis === 'x' ? move.to.x : move.to.y)
+  }
+  for (const cycle of toolpath.drillCycles ?? []) {
+    consider(axis === 'x' ? cycle.x : cycle.y)
+  }
+  return min === Infinity ? null : { min, max }
+}
+
+/** Drop the borrowed motor's coordinate: that letter carries the angle instead. */
+function suppressBorrowedAxis(point: ToolpathPoint, axis: 'x' | 'y'): ToolpathPoint {
+  const { x, y, z, ...rest } = point
+  return { ...rest, x, y, z, [axis]: undefined } as unknown as ToolpathPoint
+}
+
+/**
+ * Remove the borrowed motor's linear coordinate from a planned sequence. The
+ * angle still reaches the program under that same machine letter (`rotaryWord`),
+ * so a linear value there would be read as a second, contradictory angle.
+ */
+export function suppressBorrowedAxisInSteps(
+  steps: readonly FittedMoveDescriptor[],
+  axis: 'x' | 'y',
+): FittedMoveDescriptor[] {
+  return steps.map((step) => step.kind === 'linear'
+    ? { ...step, point: suppressBorrowedAxis(step.point, axis) }
+    : {
+      ...step,
+      startPoint: suppressBorrowedAxis(step.startPoint, axis),
+      endPoint: suppressBorrowedAxis(step.endPoint, axis),
+      runFallback: step.runFallback.map((fallback) => ({
+        ...fallback,
+        point: suppressBorrowedAxis(fallback.point, axis),
+      })),
+    })
+}
+
+/**
+ * The angle the program is at after an operation, in the program's own
+ * direction, or `established: false` when a feed move starts before the
+ * controller has been turned to that move's angle (issue #393, rule 2).
+ *
+ * A rapid establishes the angle; a feed move or arc may only begin at the
+ * angle the controller is already at, and unknown at program start counts as
+ * not established. A move with no angle anywhere leaves the bar where it is.
+ */
+function trackOperationAngle(
+  moves: readonly ToolpathMove[],
+  direction: 1 | -1,
+  tracked: number | null,
+): { established: boolean; trackedAngle: number | null } {
+  let current = tracked
+  for (const move of moves) {
+    const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
+    if (!carriesAngle) continue
+    // A feed move with an angle on one end only is broken, not trackable: say
+    // the angle is not established so the operation is refused.
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current }
+    const start = move.from.a === undefined ? undefined : move.from.a * direction
+    const end = move.to.a === undefined ? undefined : move.to.a * direction
+    if (move.kind === 'rapid') {
+      if (end !== undefined) current = end
+      continue
+    }
+    if (current === null || start !== current) {
+      return { established: false, trackedAngle: current }
+    }
+    if (end !== undefined) current = end
+  }
+  return { established: true, trackedAngle: current }
+}
+
+function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): ToolpathWarning {
+  return {
+    code: 'postRotaryBorrowedAxisTravel',
+    params: { operation: operationName, axis: axis.toUpperCase() },
+  }
+}
+
+/**
+ * Why an operation cannot run on this machine's rotary axis (issue #393), or
+ * the angle and borrowed coordinate the program is at once it has run. Every
+ * reason is a refusal rather than an approximation: a program that guesses at
+ * the angle cuts the part wrong.
+ */
+function inspectRotaryOperation(args: {
+  definition: MachineDefinition
+  project: Project
+  toolpath: ToolpathResult
+  operationName: string
+  trackedAngle: number | null
+  borrowedCoordinate: number | null
+}): { refused: ToolpathWarning } | {
+  refused: null
+  trackedAngle: number | null
+  borrowedCoordinate: number | null
+} {
+  const { definition, project, toolpath, operationName, trackedAngle, borrowedCoordinate } = args
+  const tolerance = exportGeometryTolerance(project.meta.units)
+  // Rule 3 applies to every operation on a borrowed-motor machine, turning or
+  // not: the borrowed project axis has no linear travel at all, so an operation
+  // that moves along it — or whose drill holes sit at another value of it —
+  // cannot run here. Checked before the angle gate so a flat operation is
+  // refused too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  let nextBorrowed = borrowedCoordinate
+  if (borrowed !== null) {
+    const range = borrowedAxisRange(toolpath, borrowed)
+    if (range !== null) {
+      if (range.max - range.min > tolerance) {
+        return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+      }
+      // The borrowed coordinate is one value for the whole program: the first
+      // exported operation fixes it (rule 3a).
+      if (borrowedCoordinate !== null
+        && (range.min < borrowedCoordinate - tolerance || range.max > borrowedCoordinate + tolerance)) {
+        return { refused: borrowedAxisTravelWarning(operationName, borrowed) }
+      }
+      if (nextBorrowed === null) nextBorrowed = range.min
+    }
+    // Canned cycles are never written on a borrowed-motor machine (rule 3b),
+    // so an operation that has drill holes but no expanded moves would be
+    // silently dropped.
+    if (toolpath.moves.length === 0 && (toolpath.drillCycles?.length ?? 0) > 0) {
+      return { refused: { code: 'postRotaryDrillNotExpanded', params: { operation: operationName } } }
+    }
+  }
+  const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
+  if (!hasAngle) {
+    return { refused: null, trackedAngle, borrowedCoordinate: nextBorrowed }
+  }
+  const rotary = definition.rotary
+  if (!rotary || rotaryWord(definition) === null) {
+    return { refused: { code: 'postRotaryNoAxis', params: { operation: operationName } } }
+  }
+  // Rule 2: a feed move or arc must carry `a` on both ends or on neither. With
+  // it on one end only, feed planning would read the absent angle as zero and
+  // the emitter would write no angle word: the bar stays where it is and the
+  // cut runs at the wrong speed. Refused before any feed is planned.
+  if (toolpath.moves.some(feedAngleIsSplit)) {
+    return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
+  }
+  if (rotary.inverseTimeFeed === null
+    && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
+    return { refused: { code: 'postRotaryNoInverseTime', params: { operation: operationName } } }
+  }
+  if (!isRoundStock(project.stock)) {
+    return { refused: { code: 'postRotaryNeedsRoundStock', params: { operation: operationName } } }
+  }
+  // Rule 2: cut only at an angle the program has actually turned to. The
+  // tracked angle spans the whole program and is unknown at its start.
+  const tracked = trackOperationAngle(toolpath.moves, rotaryDirection(definition), trackedAngle)
+  if (!tracked.established) {
+    return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
+  }
+  return { refused: null, trackedAngle: tracked.trackedAngle, borrowedCoordinate: nextBorrowed }
+}
+
+/**
+ * The operations a rotary program cannot contain, each with the warning that
+ * says why (issue #393). An operation with no angle anywhere in it is never
+ * refused for a rotary reason, so a machine with a rotary axis exports a
+ * program that does not use it byte-identically.
+ *
+ * A machine whose own templates write the rotary word is refused by the
+ * emitter (rule 3c), which is the only place that knows which lines the
+ * program actually writes; see `lineCarriesAxisWord` in `postprocessor.ts`.
+ */
+export function planRotaryRefusals(
+  input: Pick<PostProcessorInput, 'project' | 'definition' | 'operations'>,
+): { operations: PostProcessorInput['operations']; warnings: ToolpathWarning[] } {
+  const { project, definition, operations } = input
+  const warnings: ToolpathWarning[] = []
+  const kept: PostProcessorInput['operations'] = []
+  // Rule 2 and rule 3a both span the program: the angle the controller is at
+  // and the borrowed coordinate carry from one operation to the next.
+  let trackedAngle: number | null = null
+  let borrowedCoordinate: number | null = null
+  for (const entry of operations) {
+    const verdict = inspectRotaryOperation({
+      definition,
+      project,
+      toolpath: entry.toolpath,
+      operationName: entry.operation.name,
+      trackedAngle,
+      borrowedCoordinate,
+    })
+    if (verdict.refused !== null) {
+      warnings.push(verdict.refused)
+      continue
+    }
+    trackedAngle = verdict.trackedAngle
+    borrowedCoordinate = verdict.borrowedCoordinate
+    kept.push(entry)
+  }
+  return { operations: kept, warnings }
+}
 
 // ── Drill cycles ──────────────────────────────────────────────
 
@@ -618,7 +1144,10 @@ export interface PlanOperationMotionArgs {
  * can interpolate arcs; otherwise every move stays linear.
  */
 export function planOperationMotion(args: PlanOperationMotionArgs): OperationMotionPlan {
-  const { project, definition, operation, toolpath, arcEmitOptions, startPosition, captureTrace } = args
+  const {
+    project, definition, operation, toolpath, arcEmitOptions,
+    startPosition, captureTrace,
+  } = args
   const warnings: ToolpathWarning[] = []
 
   const arcEnabled = operation.arcFittingEnabled ?? true
@@ -692,6 +1221,17 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
     steps = foldFullCircleArcs(steps)
   }
 
+  // Rotary output (issue #393). The borrowed motor's letter carries the angle
+  // on this machine, so its linear coordinate must never be emitted (rule 3).
+  // The refusal planning has already rejected any operation that moves along
+  // it. The emitter plans each move's feed from the operation's *project*
+  // moves, so dropping the coordinate here cannot hide a move's linear travel
+  // from the path length.
+  const borrowedWord = rotaryWord(definition)
+  if (rotaryBorrowedAxis(definition) !== null && (borrowedWord === 'X' || borrowedWord === 'Y')) {
+    steps = suppressBorrowedAxisInSteps(steps, borrowedWord.toLowerCase() as 'x' | 'y')
+  }
+
   if (!captureTrace) {
     return { steps, warnings }
   }
@@ -712,20 +1252,59 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 }
 
 /**
- * Split one rapid into the blocks that are emitted for it: Z on its own
- * first, then XY. An axis group that does not move is dropped, and a rapid
- * from an unknown position emits both.
+ * Split one rapid into the blocks that are emitted for it.
+ *
+ * A rapid that does not turn keeps the split it has always had: Z first, then
+ * XY, dropping an axis group that does not move, and emitting both from an
+ * unknown position. The angle word is never written on a block that also
+ * carries Z (issue #393): turning the bar while Z moves turns it while the tool
+ * is still near the work, so a turning rapid turns at the *higher* of its two Z
+ * values. When Z rises that is the ordinary order, with the angle on the XY
+ * block; when Z falls or stays, the block carrying the angle is written first
+ * and the Z block after it. A rotation-only rapid — every linear coordinate
+ * unchanged — emits a single block carrying only the angle, so a move that
+ * turns the stock is never silently dropped (rule 1).
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
 ): Array<Partial<ToolpathPoint>> {
+  const angle = target.a
+  // Only a real angle change is written; a rapid that keeps the angle produces
+  // the pre-rotary blocks unchanged.
+  const turning = angle !== undefined && angle !== current?.a
+
+  const zChanges = current === null || current.z !== target.z
+  const xyChanges = current === null
+    || (target.x !== undefined && current.x !== target.x)
+    || (target.y !== undefined && current.y !== target.y)
+
   const blocks: Array<Partial<ToolpathPoint>> = []
-  if (current === null || current.z !== target.z) {
-    blocks.push({ z: target.z })
+  // A rapid that does not turn keeps the split it has always had: Z first, then
+  // XY. A rapid that turns may not turn the bar while Z moves, so the turn
+  // happens at the higher of its two Z values (issue #393): Z rising is the
+  // ordinary order with the angle on the XY block, and Z falling or unchanged
+  // turns across first and drops afterwards.
+  const zFirst = !turning || current === null || target.z >= current.z
+  if (zFirst) {
+    if (zChanges) blocks.push({ z: target.z })
+    // The angle rides the XY block when there is one and otherwise a block of
+    // its own — never the Z block, in either order (issue #393). Attaching it
+    // to the last block written would put it on the Z block whenever Z rose
+    // with no XY change.
+    if (xyChanges) {
+      blocks.push(turning ? { x: target.x, y: target.y, a: angle } : { x: target.x, y: target.y })
+    } else if (turning) {
+      blocks.push({ a: angle })
+    }
+    return blocks
   }
-  if (current === null || current.x !== target.x || current.y !== target.y) {
-    blocks.push({ x: target.x, y: target.y })
-  }
+
+  // Z falls while turning: the angle rides the XY block when it moves, or a
+  // block of its own otherwise, so the Z block is written last and never
+  // carries it.
+  if (xyChanges) blocks.push({ x: target.x, y: target.y, ...(angle !== undefined ? { a: angle } : null) })
+  else blocks.push({ a: angle })
+  if (zChanges) blocks.push({ z: target.z })
   return blocks
 }

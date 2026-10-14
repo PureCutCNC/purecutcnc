@@ -54,7 +54,8 @@ import type {
   Stock,
 } from '../types/project'
 
-/** A point in either frame. Structurally a `ToolpathPoint`. */
+/** A point in either frame. Structurally a `ToolpathPoint`; the transforms are
+ *  generic so a caller that passes one keeps its rotary angle (issue #393). */
 export interface SetupPoint {
   x: number
   y: number
@@ -116,12 +117,18 @@ export function setupFrame(orientation: SetupOrientation, stock: Stock): SetupFr
  * coordinates through it. Written as a reflection rather than with sin/cos so
  * the result is exact, and the coordinate along the axis passes through
  * untouched.
+ *
+ * A rotary angle (issue #393) is about the bar's own axis, which a setup turn
+ * leaves alone, so it is carried through unchanged. It stays absent when the
+ * input had none, so a plain `{x, y, z}` caller still sees exactly the object
+ * it always did.
  */
-function halfTurn(point: SetupPoint, frame: SetupFrame): SetupPoint {
+function halfTurn<T extends SetupPoint & { a?: number }>(point: T, frame: SetupFrame): T {
   const { pivot } = frame
-  return frame.orientation.axis === 'x'
+  const turned = frame.orientation.axis === 'x'
     ? { x: point.x, y: 2 * pivot.y - point.y, z: 2 * pivot.z - point.z }
     : { x: 2 * pivot.x - point.x, y: point.y, z: 2 * pivot.z - point.z }
+  return (point.a === undefined ? turned : { ...turned, a: point.a }) as T
 }
 
 /**
@@ -129,13 +136,13 @@ function halfTurn(point: SetupPoint, frame: SetupFrame): SetupPoint {
  * as-is — the same object, no arithmetic — so Top output cannot differ from
  * what it was before setups existed.
  */
-export function canonicalToSetupPoint(point: SetupPoint, frame: SetupFrame): SetupPoint {
+export function canonicalToSetupPoint<T extends SetupPoint & { a?: number }>(point: T, frame: SetupFrame): T {
   assertSupported(frame.orientation)
   return frame.orientation.angleDeg === 0 ? point : halfTurn(point, frame)
 }
 
 /** Setup-local point → canonical stock point. The inverse of {@link canonicalToSetupPoint}. */
-export function setupToCanonicalPoint(point: SetupPoint, frame: SetupFrame): SetupPoint {
+export function setupToCanonicalPoint<T extends SetupPoint & { a?: number }>(point: T, frame: SetupFrame): T {
   assertSupported(frame.orientation)
   // A half turn undoes itself.
   return frame.orientation.angleDeg === 0 ? point : halfTurn(point, frame)
