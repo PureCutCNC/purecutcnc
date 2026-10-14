@@ -34,6 +34,10 @@
  * answer is "unverified", and only ranges that were measured and found to
  * meet are ever reported as meeting.
  *
+ * A rotary operation reports no reach (issue #1015): its points are already
+ * wrapped, and the tool follows the model round the bar, where a single
+ * stock-Z range would be made up rather than measured.
+ *
  * The range is the travel of the **tool tip**, which is the depth the
  * generators themselves work to. For a flat end mill that is the depth cut
  * across the whole tool; a drill point, ball or V-bit is narrower than the
@@ -42,6 +46,7 @@
  */
 
 import { aroundFrameForOperation, unwrapPoint } from './aroundFrame'
+import { isRotaryOperationKind } from '../types/project'
 import type { Operation, Project, FlatFace, SetupFace } from '../types/project'
 import { resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 import { normalizeToolForProject } from './toolpaths/geometry'
@@ -78,6 +83,12 @@ export function operationCutRange(
   toolpath: Pick<ToolpathResult, 'moves'>,
   featureId: string,
 ): StockZRange | null {
+  // A rotary operation's points are already wrapped -- `a` is the stock's turn
+  // -- so unwrapping them into sheet coordinates and intersecting them with the
+  // model's project-frame footprint measures nothing real: the tool follows the
+  // model round the bar, where a single stock-Z reach has no meaning. Report no
+  // reach rather than a made-up one (issue #1015).
+  if (isRotaryOperationKind(operation.kind)) return null
   const [feature] = resolveFeatureInstances(project, [featureId])
   if (!feature) return null
   const toolRecord = project.tools.find((tool) => tool.id === operation.toolRef)
