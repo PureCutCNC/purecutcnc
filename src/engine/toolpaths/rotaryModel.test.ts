@@ -25,7 +25,7 @@ import { toolSpacePoint } from '../rotaryFrame'
 import { computeXYBounds } from './finishSurfaceParallel'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import type { NormalizedTool, ToolpathPoint } from './types'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
 const BALL: NormalizedTool = {
@@ -760,21 +760,21 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(p.z > FINISH_RADIUS + 1e-9, 'no off-axis cut at the centreline')
     }
   }
-  // Between runs the tool is at safeRadius (retract + traverse) or plunging.
-  for (const move of result.moves) {
-    if (move.kind === 'rapid') assert.equal(move.to.z, safeZ, 'off-axis rapid reaches safeRadius')
-    if (move.kind === 'plunge') assert.equal(move.from.z, safeZ, 'off-axis plunge starts at safeRadius')
-  }
+  // Between runs the tool travels at the bar's surface plus a clearance, the
+  // same height as a turning link (slice H); `safeRadius` is only the entry and
+  // the final retract. The strict rule has its own block below.
+  const travelZ = FINISH_RADIUS + Math.min(FINISH_SAFE, FINISH_RADIUS + LINK_CLEARANCE)
   const rapids = result.moves.filter((move) => move.kind === 'rapid')
   for (const move of rapids) {
-    // A retract may start at the cut, but any rapid that travels is at
-    // safeRadius for its whole length: never across standing material.
+    // A retract may start at the cut, but any rapid that travels is at the
+    // travel height for its whole length: never across standing material.
     if (move.from.x !== move.to.x || move.from.y !== move.to.y) {
-      assert.equal(move.from.z, safeZ, 'off-axis traverse starts at safeRadius')
+      assert.equal(move.from.z, travelZ, 'off-axis traverse starts at the bar plus clearance')
     }
   }
-  const traverses = rapids.filter((move) => move.from.z === safeZ && move.from.x !== move.to.x)
-  assert.ok(traverses.length >= 1, 'the gap between the two model pieces forces a safe traverse')
+  assert.equal(rapids.at(-1)!.to.z, safeZ, 'off-axis last move retracts to safeRadius')
+  const traverses = rapids.filter((move) => move.from.z === travelZ && move.from.x !== move.to.x)
+  assert.ok(traverses.length >= 1, 'the gap between the two model pieces forces a traverse at the bar plus clearance')
   for (let i = 1; i < result.moves.length; i++) {
     assert.deepEqual(result.moves[i].from, result.moves[i - 1].to, `off-axis move ${i} is connected`)
   }
@@ -884,6 +884,65 @@ for (const axis of ['x', 'y'] as const) {
         }
       }
     }
+  }
+}
+
+{
+  // Slice H: inside one operation every move between runs -- the retract off a
+  // run, the traverse to the next run, and the turning link -- travels at the
+  // bar's surface plus a clearance (the same height as the link), never at
+  // `safeRadius`. `safeRadius` is only the operation's first positioning move
+  // and its final retract. Before this, every gap retracted fully to
+  // `safeRadius`, which on a many-layer rough is hundreds of full retracts, and
+  // `safeRadius` is the project's rapid height, often far above the bar.
+  //
+  // Two models, because the two generators split a pass for different reasons:
+  // the finish leaves a `NaN` sample (no model under the tool) uncut, so two
+  // off-axis prisms with an air gap between them split its passes; the rough
+  // removes every sample down to the layer, so a pass splits only where the
+  // material is already low enough, which two ridges do.
+  const safeZ = FINISH_RADIUS + FINISH_SAFE
+  const travelZ = FINISH_RADIUS + Math.min(FINISH_SAFE, FINISH_RADIUS + LINK_CLEARANCE)
+  const checkTravel = (label: string, moves: readonly ToolpathMove[]): void => {
+    const rapids = moves.filter((move) => move.kind === 'rapid')
+    assert.ok(rapids.length >= 3, `${label} has several moves between runs (${rapids.length} rapids)`)
+    approx(rapids[0].to.z, safeZ, `${label} first positioning move is at safeRadius`, 1e-9)
+    approx(rapids.at(-1)!.to.z, safeZ, `${label} final retract is at safeRadius`, 1e-9)
+    for (let i = 0; i < rapids.length; i++) {
+      const move = rapids[i]
+      // A retract may start at the cut, so measure the height the rapid reaches:
+      // no rapid ever travels below the bar plus the clearance.
+      assert.ok(Math.max(move.from.z, move.to.z) >= travelZ - 1e-9,
+        `${label} rapid ${i} never travels below R + clearance`)
+      if (i === 0 || i === rapids.length - 1) continue
+      assert.equal(move.to.z, travelZ, `${label} inter-run rapid ${i} reaches R + clearance`)
+      if (move.from.x !== move.to.x || move.from.y !== move.to.y) {
+        assert.equal(move.from.z, travelZ, `${label} traverse ${i} stays at R + clearance`)
+      }
+    }
+    for (let i = 1; i < moves.length; i++) {
+      assert.deepEqual(moves[i].from, moves[i - 1].to, `${label} move ${i} is connected`)
+    }
+  }
+  for (const axis of ['x', 'y'] as const) {
+    const stock = insetStock(axis)
+    const cross: readonly (readonly [number, number])[] = [[8, 8], [12, 8], [12, 12], [8, 12]]
+    const pieceA = prism(stock, cross, [10, 14])
+    const pieceB = prism(stock, cross, [19, 23])
+    const positions = new Float32Array(pieceA.positions.length + pieceB.positions.length)
+    positions.set(pieceA.positions)
+    positions.set(pieceB.positions, pieceA.positions.length)
+    const index = new Uint32Array(pieceA.index.length + pieceB.index.length)
+    index.set(pieceA.index)
+    index.set(Array.from(pieceB.index, (i) => i + pieceA.positions.length / 3), pieceA.index.length)
+    const finish = generateRotaryFinish('op-travel', { positions, index }, stock, FINISH_PASS_MM,
+      { ...FINISH_BASE, stepover: 20 }, {})
+    checkTravel(`${axis} finish`, finish.moves)
+
+    const ridge = lathe(stock, (x) => 3 + (x - 10) / 10 + 23 * Math.exp(-((x - 15) ** 2)) + 21 * Math.exp(-((x - 24) ** 2)), 10, 30, 200, 64)
+    const rough = generateRotaryRough('op-travel', ridge, stock, { ...FLAT_2, radius: 0.1, diameter: 0.2 },
+      { ...FINISH_BASE, stepover: 22, sampleSpacing: 1, stockToLeave: 0, stepdown: 5 }, {})
+    checkTravel(`${axis} rough`, rough.moves)
   }
 }
 
@@ -1184,6 +1243,7 @@ for (const axis of ['x', 'y'] as const) {
     assert.ok(result.moves.length > 0)
     assert.equal(Math.max(...result.moves.map((m) => Math.floor(m.to.a! / 360))) + 1, layers, `${axis} exact layer count`)
     const depths = targets.map((row) => row.map(() => Infinity))
+    const travelZ = 20 + Math.min(params.safeRadius, 20 + LINK_CLEARANCE)
     let checked = 0
     let skipped = 0
     let links = 0
@@ -1192,13 +1252,25 @@ for (const axis of ['x', 'y'] as const) {
       if (m) assert.deepEqual(move.from, result.moves[m - 1].to, `${axis} rough moves connected`)
       assert.ok(move.to.a! >= move.from.a!, `${axis} rough angles never reset across layers`)
       if (move.kind === 'rapid') {
-        assert.equal(move.to.z, 20 + params.safeRadius, `${axis} every rapid reaches safe radius`)
-        if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
-          assert.equal(move.from.z, 20 + params.safeRadius, `${axis} traverse starts at safe radius`)
+        // Slice H: only the opening positioning move and the closing retract go
+        // to safeRadius; every retract and traverse between runs travels at the
+        // bar's surface plus the clearance.
+        if (m === 0) {
+          assert.deepEqual(move.from, move.to, `${axis} rough opens by positioning at safeRadius`)
+          assert.equal(move.to.z, 20 + params.safeRadius, `${axis} first move is at safeRadius`)
+        } else if (m === result.moves.length - 1) {
+          assert.equal(move.to.z, 20 + params.safeRadius, `${axis} final retract is at safeRadius`)
+        } else {
+          assert.equal(move.to.z, travelZ, `${axis} inter-run rapid reaches the bar plus clearance`)
+          if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
+            assert.equal(move.from.z, travelZ, `${axis} traverse stays at the bar plus clearance`)
+          }
         }
         continue
       }
-      if (move.kind === 'plunge') assert.equal(move.from.z, 20 + params.safeRadius, `${axis} run plunge starts safe`)
+      if (move.kind === 'plunge') {
+        assert.equal(move.from.z, m === 1 ? 20 + params.safeRadius : travelZ, `${axis} run plunge starts at the travel height`)
+      }
       if (move.from.a !== move.to.a) {
         assert.equal(position(move.from), position(move.to), `${axis} finish-style link stays at shared end`)
         assert.ok([10, 30].includes(position(move.to)), `${axis} only bar-end links at depth`)
@@ -1275,18 +1347,29 @@ for (const axis of ['x', 'y'] as const) {
   const splitTargets = sampleRotaryModel(ridge, stock, tool, { anglesDeg: angles, along, requestedCellSize: CELL }, []).tipRadius
   const split = generateRotaryRough('runs', ridge, stock, tool, splitParams, {})
   assert.ok(split.moves.filter((m) => m.kind === 'plunge' && m.to.a === 0).length >= 3, `${axis} ridge forces separated runs`)
+  const splitTravelZ = 20 + Math.min(params.safeRadius, 20 + LINK_CLEARANCE)
   let traverses = 0
   for (let i = 0; i < split.moves.length; i++) {
     const move = split.moves[i]
     if (i) assert.deepEqual(move.from, split.moves[i - 1].to, `${axis} split runs stay connected`)
     if (move.kind === 'rapid') {
-      assert.equal(move.to.z, 20 + params.safeRadius, `${axis} between runs rapid reaches safeRadius`)
-      if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
-        assert.equal(move.from.z, 20 + params.safeRadius, `${axis} no traverse inside standing material`)
-        traverses++
+      // Slice H: only the opening move and the closing retract use safeRadius.
+      if (i === 0) {
+        assert.deepEqual(move.from, move.to, `${axis} split path opens by positioning at safeRadius`)
+        assert.equal(move.to.z, 20 + params.safeRadius, `${axis} split first move is at safeRadius`)
+      } else if (i === split.moves.length - 1) {
+        assert.equal(move.to.z, 20 + params.safeRadius, `${axis} split final retract is at safeRadius`)
+      } else {
+        assert.equal(move.to.z, splitTravelZ, `${axis} between runs rapid reaches the bar plus clearance`)
+        if (position(move.from) !== position(move.to) || move.from.a !== move.to.a) {
+          assert.equal(move.from.z, splitTravelZ, `${axis} no traverse inside standing material`)
+          traverses++
+        }
       }
     }
-    if (move.kind === 'plunge') assert.equal(move.from.z, 20 + params.safeRadius, `${axis} split run entry plunges from safeRadius`)
+    if (move.kind === 'plunge') {
+      assert.equal(move.from.z, i === 1 ? 20 + params.safeRadius : splitTravelZ, `${axis} split run entry plunges from the travel height`)
+    }
     if (move.kind !== 'cut' || move.from.a !== move.to.a || position(move.from) === position(move.to)) continue
     const layer = Math.floor(move.to.a! / 360)
     const pass = Math.round((move.to.a! - layer * 360) / (360 / passes))
@@ -1313,6 +1396,17 @@ for (const axis of ['x', 'y'] as const) {
   assert.ok(result.moves.length > 0, 'rough fixture generates moves')
   const layers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
   console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${layers.size} layers, ${result.moves.length} moves`)
+  {
+    // Slice H: the retract and the traverse between runs now hop over the bar
+    // instead of going out to `safeRadius`, so the rough fixture's retract count
+    // and total rapid travel are the numbers the change is measured by. Reported,
+    // not asserted.
+    const rapids = result.moves.filter((move) => move.kind === 'rapid')
+    const length = (move: typeof rapids[number]): number => Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y, move.to.z - move.from.z)
+    const retracts = rapids.filter((move) => move.from.z !== move.to.z && move.from.x === move.to.x && move.from.y === move.to.y)
+    console.log(`rotaryRough fixture rapids: ${retracts.length} retracts, ${rapids.length} rapids, `
+      + `${rapids.reduce((total, move) => total + length(move), 0).toFixed(1)} mm rapid travel`)
+  }
 }
 console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
 
@@ -1321,17 +1415,20 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   // and exact numeric values. The count and hash moved from slice B's
   // (7411 / 6f841fac...) with the slice-F review fix (the fixture's ends leave
   // the line over the centreline through `NaN` samples, which the finish must
-  // not cut down to the axis), and again with slice G's review fixes: the
-  // turning link now turns at the bar's surface plus a clearance instead of the
-  // higher end tip, and Douglas--Peucker keeps every point a chord would drop
-  // more than 1 um away. The goal is unchanged -- any later change to the
-  // generator's geometry shows up as a diff here rather than only in a move
-  // count -- but this is the fixed output.
+  // not cut down to the axis), again with slice G's review fixes (the turning
+  // link now turns at the bar's surface plus a clearance instead of the higher
+  // end tip, and Douglas--Peucker keeps every point a chord would drop more than
+  // 1 um away), and again with slice H (the retract and traverse between runs
+  // travel at the bar's surface plus the clearance, not at `safeRadius`; the
+  // fixture's ends leave `NaN` samples, so its passes split into runs and the
+  // move count happens to stay the same while the heights change). The goal is
+  // unchanged -- any later change to the generator's geometry shows up as a diff
+  // here rather than only in a move count -- but this is the fixed output.
   const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
   }, {})
   assert.equal(result.moves.length, 7296, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'fa7ee977eb20508b33cb1f222e66385503590dccfa4b12582a41f6c60f767fc1', 'finish fixture keeps its exact points')
+    '844e56e4ff24dd3fe3ec9037a37dd9905148f89fef3f9deb308eaa4d52b32b4a', 'finish fixture keeps its exact points')
 }
