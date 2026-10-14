@@ -101,6 +101,8 @@ async function seedAroundProject(page: Page): Promise<Project> {
   project.meta.units = 'mm'
   project.stock = BAR
   project.origin = { ...project.origin, x: BAR.profile.start.x, y: BAR.profile.start.y, z: BAR.thickness }
+  // A rotary project is the only type with an Around face (issue #1028).
+  project.meta.projectType = 'rotary'
   project.meta.machineDefinitions = project.meta.machineDefinitions ?? []
   project.meta.machineDefinitions = [...project.meta.machineDefinitions, rotaryMachine()]
   project.meta.selectedMachineId = 'e2e-rotary'

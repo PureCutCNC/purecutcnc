@@ -15,10 +15,11 @@
  */
 
 /**
- * Plasma mode follows the machine (#960): the CAM panel offers only the plasma
- * family with a plasma machine selected, the tool types and tool library follow
- * it, the Auto plan button and face switch go away, and anything the project
- * already has from the other family stays listed, badged and counted.
+ * The project type decides the CAM mode (#1028): a plasma project offers only
+ * the plasma family, the tool types and tool library follow the type, the Auto
+ * plan button and face switch go away, and anything the project already has
+ * from the other family stays listed, badged and counted. Selecting a machine
+ * no longer changes the mode (#960 is retired).
  */
 
 import { readFileSync } from 'node:fs'
@@ -29,19 +30,15 @@ import {
   openRowContextMenu,
   rowByName,
   selectFeatures,
+  selectMachine,
+  setProjectType,
 } from './helpers'
 import {
   seedCamQuickOperationProject,
   seedCamQuickOperationProjectWithSmallCarveTarget,
 } from './camOperations.helpers'
 
-/**
- * The bundled definitions are the machines the picker offers, so the fixture's
- * selected machine is read from the same JSON the app ships.
- */
-const QT_PLASMAC = JSON.parse(
-  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
-) as { name: string }
+/** The bundled router machine the picker offers, read from the app's own JSON. */
 const GRBL = JSON.parse(
   readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
 ) as { name: string }
@@ -51,28 +48,17 @@ const PLASMA_HINT = 'Needs a plasma machine. Select one in the machine field of 
 const LEFT_OUT_PLASMA = 'Not plasma cuts, left out of the export on this machine: 1'
 const LEFT_OUT_ROUTER = 'Plasma cuts, left out of the export on this machine: 1'
 
-/** Select a bundled machine the way a user does: Project → Machine in the properties. */
-async function selectMachine(
-  page: Page,
-  ui: typeof import('./selectors'),
-  name: string,
-): Promise<void> {
-  await ui.tree.projectRow(page).click()
-  await ui.properties.machineTrigger(page).click()
-  await ui.properties.machineOption(page, name).click()
-}
-
 /** The properties field whose label is exactly `label`, in the tool editor. */
 function toolField(page: Page, label: string) {
   return page.locator('.cam-tool-properties .properties-field')
     .filter({ has: page.getByText(label, { exact: true }) })
 }
 
-test.describe('plasma mode follows the machine (#960)', () => {
-  test('a machine-less project offers milling and blocks the plasma cut', async ({ app, ui }) => {
+test.describe('the project type decides plasma mode (#1028)', () => {
+  test('a milling project offers milling and blocks the plasma cut', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
     // A closed subtract is a valid target for both families, so the menu below
-    // shows what each machine does with the same selection.
+    // shows what each project type does with the same selection.
     await selectFeatures(app.page, ['f-carve-target'])
 
     await ui.operations.headerAddButton(app.page).click()
@@ -83,7 +69,9 @@ test.describe('plasma mode follows the machine (#960)', () => {
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toContainText(['Pocket', 'Edge in'])
 
-    // The plasma cut is present but blocked, with the reason as its hint.
+    // The plasma cut is present but blocked. The hint string still names the
+    // machine, but the project type is now the root cause: only a plasma
+    // project offers the cut (#1028).
     await ui.operations.addMenuUnavailableToggle(app.page).click()
     const plasmaRow = ui.operations.addMenuUnavailableRows(app.page)
       .filter({ hasText: PLASMA_OP })
@@ -91,13 +79,13 @@ test.describe('plasma mode follows the machine (#960)', () => {
     await expect(plasmaRow.locator('.cam-operation-hint__text')).toHaveText(PLASMA_HINT)
     await expect(plasmaRow.getByRole('button', { name: 'Add', exact: true })).toBeDisabled()
 
-    // No machine is a router project, so the face switch stays.
+    // A milling project keeps the face switch, machine or not.
     await expect(ui.face.switchGroup(app.page)).toBeVisible()
   })
 
-  test('a plasma machine leaves only the plasma cut, torch tools and no face switch', async ({ app, ui }) => {
+  test('a plasma project leaves only the plasma cut, torch tools and no face switch', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
-    await selectMachine(app.page, ui, QT_PLASMAC.name)
+    await setProjectType(app.page, ui, 'Plasma')
     await selectFeatures(app.page, ['f-carve-target'])
 
     await ui.operations.headerAddButton(app.page).click()
@@ -135,20 +123,22 @@ test.describe('plasma mode follows the machine (#960)', () => {
     await app.page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
 
-    // The face switch follows the machine too.
+    // The face switch follows the type too.
     await expect(ui.face.switchGroup(app.page)).toHaveCount(0)
   })
 
-  test('a router machine brings the milling menu back and badges the plasma cut', async ({ app, ui }) => {
+  test('switching a plasma project back to milling brings the milling menu back and badges the plasma cut', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
-    await selectMachine(app.page, ui, QT_PLASMAC.name)
+    await setProjectType(app.page, ui, 'Plasma')
     await selectFeatures(app.page, ['f-carve-target'])
     await ui.operations.headerAddButton(app.page).click()
     await ui.operations.addMenuAvailableRows(app.page)
       .getByRole('button', { name: 'Add', exact: true }).click()
     await expect(ui.operations.rowByName(app.page, PLASMA_OP)).toBeVisible()
 
-    await selectMachine(app.page, ui, GRBL.name)
+    // The type, not the machine, decides the mode (#1028): switching it back to
+    // milling is what restores the milling family and the face switch.
+    await setProjectType(app.page, ui, 'Milling / routing')
     await selectFeatures(app.page, ['f-carve-target'])
 
     // The milling menu is back.
@@ -176,7 +166,7 @@ test.describe('plasma mode follows the machine (#960)', () => {
     const pocket = ui.operations.rowByName(app.page, 'Pocket Rough')
     await expect(pocket).toBeVisible()
 
-    await selectMachine(app.page, ui, QT_PLASMAC.name)
+    await setProjectType(app.page, ui, 'Plasma')
 
     // Still listed, and now flagged as not on the machine, with the count line.
     await expect(pocket).toBeVisible()
@@ -188,7 +178,7 @@ test.describe('plasma mode follows the machine (#960)', () => {
     const toolRow = app.page.locator('.cam-tool-tree .tree-row--feature').first()
     await expect(toolRow).toBeVisible()
     await toolRow.click()
-    // Still a milling tool, not forced into a torch by the machine change.
+    // Still a milling tool, not forced into a torch by the type change.
     await expect(toolField(app.page, 'Type').locator('.ui-select__label'))
       .toHaveText(/^(Flat endmill|Ball endmill|V-bit|Drill)$/)
 
@@ -201,12 +191,12 @@ test.describe('plasma mode follows the machine (#960)', () => {
     ).toHaveText([PLASMA_OP])
   })
 
-  test('the feature context menu offers the plasma cut on a plasma machine', async ({ app, ui }) => {
+  test('the feature context menu offers the plasma cut in a plasma project', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
-    await selectMachine(app.page, ui, QT_PLASMAC.name)
+    await setProjectType(app.page, ui, 'Plasma')
 
     // A closed subtract is a valid target for both families, so the same
-    // feature shows what each machine does with it.
+    // feature shows what each project type does with it.
     const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(menu, 'Create operation').hover()
 

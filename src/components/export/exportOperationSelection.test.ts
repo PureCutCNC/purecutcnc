@@ -132,8 +132,27 @@ function testOptionsPreserveExecutionOrder(): void {
   )
 }
 
-// ── suggestGcodeFileName ──────────────────────────────────────────
+function testOtherFamilyOperationIsLeftOffTheChecklist(): void {
+  const pocket = makeOperation('pocket-op')
+  const plasma = makeOperation('plasma-op', { kind: 'plasma_profile' })
 
+  const millingProject = projectWith([pocket, plasma])
+  assert(
+    listExportOperationOptions(millingProject).map((option) => option.operation.id).join(',') === 'pocket-op',
+    'a plasma cut is not exported in a milling project (issue #1028, rule (a))',
+  )
+
+  const plasmaProject: Project = {
+    ...projectWith([pocket, plasma]),
+    meta: { ...newProject('plasma', 'mm').meta, projectType: 'plasma' },
+  }
+  assert(
+    listExportOperationOptions(plasmaProject).map((option) => option.operation.id).join(',') === 'plasma-op',
+    'and a milling operation is not exported in a plasma project',
+  )
+}
+
+// ── suggestGcodeFileName ──────────────────────────────────────────
 function testFileNameUsesProjectNameForMultipleOperations(): void {
   assert(
     suggestGcodeFileName('My Part', ['Pocket 1', 'Profile 2']) === 'My_Part',
@@ -182,6 +201,7 @@ function testAroundOnlySetupIsItsOwnGroup(): void {
   }
   const withAround: Project = {
     ...project,
+    meta: { ...project.meta, projectType: 'rotary' },
     stock: roundStock(25, 120, 'x'),
     setups: [aroundSetup],
     activeSetupId: aroundSetup.id,
@@ -191,6 +211,19 @@ function testAroundOnlySetupIsItsOwnGroup(): void {
   const groups = groupExportOperationOptions(withAround, listExportOperationOptions(withAround))
   assert(groups.length === 1 && groups[0].setup?.id === aroundSetup.id, 'an Around-only project gets its named group')
   assert(groups[0].face === 'around', 'the group carries the around face')
+
+  // The same Around-only project in a non-rotary type cuts nothing there: the
+  // operation is kept in the project but left off the export checklist and out
+  // of the programs (issue #1028, rule (a)).
+  const aroundInMilling: Project = { ...withAround, meta: { ...withAround.meta, projectType: 'milling' } }
+  assert(
+    listExportOperationOptions(aroundInMilling).length === 0,
+    'an Around operation is not exported in a milling project',
+  )
+  assert(
+    groupExportOperationOptions(aroundInMilling, listExportOperationOptions(aroundInMilling)).length === 0,
+    'and its setup gets no export group',
+  )
 
   // A single flat setup keeps the unlabelled legacy group.
   const flat: Project = {
@@ -208,6 +241,7 @@ const tests = [
   testDisabledOperationIsNotExportable,
   testMissingToolIsNotExportable,
   testOptionsPreserveExecutionOrder,
+  testOtherFamilyOperationIsLeftOffTheChecklist,
   testFileNameUsesProjectNameForMultipleOperations,
   testFileNameAppendsSingleOperationName,
   testExportPathIsReusedOnlyForTheSameKindOfFile,

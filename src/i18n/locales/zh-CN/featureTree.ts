@@ -190,6 +190,12 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.units.mm': '毫米',
   'featureTree.properties.units.inch': '英寸',
 
+  // ── Properties: project type (issue #1028) ──
+  'featureTree.properties.projectType': '项目类型',
+  'featureTree.properties.projectType.milling': '铣削 / 雕刻',
+  'featureTree.properties.projectType.plasma': '等离子',
+  'featureTree.properties.projectType.rotary': '旋转轴',
+
   // ── Properties: machine ──
   'featureTree.properties.machine.none': '无',
   'featureTree.properties.machine.updateAvailable': '有可用更新',
@@ -198,6 +204,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.machine.builtin': '内置',
   'featureTree.properties.machine.custom': '自定义',
   'featureTree.properties.machine.duplicateHint': '复制后编辑',
+  'featureTree.properties.machine.groupOther': '其他机床',
+  'featureTree.properties.machine.mismatch': '这不是 {type} 机床。在选定合适的机床之前，导出已禁用。',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': '放置原点',

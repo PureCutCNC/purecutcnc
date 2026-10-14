@@ -70,6 +70,9 @@ function aroundProject(options: { rotary: boolean }): Project {
   base.stock = BAR
   base.meta = {
     ...base.meta,
+    // The Around face is a rotary project's (issue #1028); the machine below
+    // only decides whether that face is actually usable.
+    projectType: 'rotary',
     machineDefinitions: options.rotary
       ? [{ ...machine, rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } } }]
       : [machine],

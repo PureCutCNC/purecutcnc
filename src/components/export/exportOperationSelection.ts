@@ -24,6 +24,7 @@
 import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
 import { projectExportsPerSetup, setupProgramNumber } from '../../engine/gcode/setupPrograms'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
+import { operationCutsInProject } from '../../store/helpers/projectType'
 
 /**
  * Translation-key references for operation exportability reasons.
@@ -42,7 +43,11 @@ export interface ExportOperationOption {
 }
 
 export function listExportOperationOptions(project: Project): ExportOperationOption[] {
-  return project.operations.map((operation) => {
+  // Operations the project type does not cut — an Around setup in a project
+  // that is not rotary, or the other family's kind — are kept in the project
+  // but not exported (issue #1028, rule (a)). Leaving them off the checklist
+  // also keeps them out of the programs it feeds.
+  return project.operations.filter((operation) => operationCutsInProject(project, operation)).map((operation) => {
     const hasTool = operation.toolRef !== null
       && project.tools.some((tool) => tool.id === operation.toolRef)
     const reasonKey: ExportOperationReasonKey | null = !operation.enabled

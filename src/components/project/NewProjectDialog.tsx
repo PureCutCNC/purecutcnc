@@ -18,12 +18,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { ExampleProjectList } from './ExampleProjectList'
+import { Select } from '../Select'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultStock, getStockBounds, newProject } from '../../types/project'
-import type { Project } from '../../types/project'
+import type { Project, ProjectType } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
+import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
+import { machineCandidates } from '../../machine/registry'
+import { useMachineLibrary } from '../../machine/useMachineLibrary'
+import { PROJECT_TYPES, projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -121,7 +126,9 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const [fileLabel, setFileLabel] = useState<string>(td('dialogs.newProject.templateFileNoFile'))
   const [fileError, setFileError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('Untitled')
+  const [projectTypeChoice, setProjectTypeChoice] = useState<ProjectType>('milling')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { library: machineLibrary } = useMachineLibrary()
 
   const metricTemplate = useMemo(() => newProject('Untitled', 'mm'), [])
   const imperialTemplate = useMemo(() => newProject('Untitled', 'inch'), [])
@@ -156,7 +163,16 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     return { ...template, stock: defaultStock(width, height, thickness) }
   }, [currentProjectTemplate, fileProjectTemplate, imperialTemplate, metricTemplate, stockDraft, templateKind])
 
-  const previewTemplate = activeTemplate ?? (templateKind === 'blank_metric' ? metricTemplate : templateKind === 'blank_imperial' ? imperialTemplate : null)
+  // The chosen type decides the stock shape and, when the template's machine
+  // does not suit it, the first matching machine from the picker's candidate
+  // list (issue #1028) — exactly what `setProjectType` does to an open project.
+  const chosenTemplate = useMemo<Project | null>(() => {
+    if (!activeTemplate) return null
+    const embedded = getActiveMachineDefinition(activeTemplate)
+    return projectWithProjectType(activeTemplate, projectTypeChoice, machineCandidates(machineLibrary, embedded))
+  }, [activeTemplate, machineLibrary, projectTypeChoice])
+
+  const previewTemplate = chosenTemplate ?? (templateKind === 'blank_metric' ? metricTemplate : templateKind === 'blank_imperial' ? imperialTemplate : null)
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -200,11 +216,11 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   }, [languageTag, previewTemplate])
 
   function handleCreate() {
-    if (!activeTemplate) {
+    if (!chosenTemplate) {
       return
     }
 
-    createNewProject(activeTemplate, projectName.trim() || suggestedProjectName(templateKind, project, fileTemplate))
+    createNewProject(chosenTemplate, projectName.trim() || suggestedProjectName(templateKind, project, fileTemplate))
     onClose()
     onCreated?.()
   }
@@ -315,6 +331,17 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
               {fileError ? <div className="cam-field-message">{fileError}</div> : null}
             </div>
 
+            <div className="dialog-section-group">
+              <label className="dialog-section-title">{td('dialogs.newProject.projectType')}</label>
+              <div className="properties-field">
+                <Select
+                  value={projectTypeChoice}
+                  options={PROJECT_TYPES.map((type) => ({ value: type, label: t(projectTypeLabelKey(type)) }))}
+                  onChange={setProjectTypeChoice}
+                />
+              </div>
+            </div>
+
           </div>
 
           <div className="dialog-preview-container">
@@ -372,7 +399,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                       <strong>{templateSummary.stock}</strong>
                     )}
                   </div>
-                  {isBlankTemplate && !activeTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
+                  {isBlankTemplate && !chosenTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
                   <div className="project-template-preview__row">
                     <span>{td('dialogs.newProject.previewFeatures')}</span>
                     <strong>{templateSummary.features}</strong>
@@ -411,7 +438,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
-          <button className="btn-primary" onClick={handleCreate} type="button" disabled={!activeTemplate}>
+          <button className="btn-primary" onClick={handleCreate} type="button" disabled={!chosenTemplate}>
             {td('dialogs.newProject.createProject')}
           </button>
         </div>

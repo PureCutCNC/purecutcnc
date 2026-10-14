@@ -2286,6 +2286,15 @@
   text-overflow: ellipsis;
 }
 
+.ui-select__group {
+  padding: 6px 8px 3px;
+  color: var(--text-dim);
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
 .ui-select--detailed .ui-select__dropdown {
   max-height: min(48vh, 520px);
   overflow-x: hidden;

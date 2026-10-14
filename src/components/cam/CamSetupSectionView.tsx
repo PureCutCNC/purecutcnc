@@ -16,10 +16,12 @@
 
 import { useState, type ReactNode } from 'react'
 import type { CamSetupSection } from './setupSections'
+import { projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
 import { useI18n } from '../../i18n/i18nContext'
+import type { ProjectType } from '../../types/project'
 
-export function CamSetupSectionView({ section, grouped, selectedOperationId, onExport, onProperties, children }: {
-  section: CamSetupSection; grouped: boolean; selectedOperationId: string | null
+export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, onExport, onProperties, children }: {
+  section: CamSetupSection; grouped: boolean; projectType: ProjectType; selectedOperationId: string | null
   onExport: (ids: string[]) => void; onProperties: () => void; children: ReactNode
 }) {
   const { t } = useI18n()
@@ -41,6 +43,13 @@ export function CamSetupSectionView({ section, grouped, selectedOperationId, onE
           <span className={section.registrationMissing ? 'cam-field-message' : 'properties-hint'}>{section.registrationMissing ? t('cam.setup.noRegistration') : t('cam.setup.registrationCount', { count: section.registrationCount })}</span>
         )}
       </div>
+      {section.face === 'around' && projectType !== 'rotary' ? (
+        // Kept in the project, not cut in a project with no rotary face
+        // (issue #1028, rule (a)): said here rather than left as silence.
+        <div className="cam-section-note cam-setup-group__note" role="note" data-testid="around-not-cut">
+          {t('cam.setup.aroundKeptNotCut', { type: t(projectTypeLabelKey(projectType)) })}
+        </div>
+      ) : null}
       {section.operations.length === 0 ? <div className="panel-empty">{t('cam.setup.empty')}</div> : children}
     </div> : null}
   </section>

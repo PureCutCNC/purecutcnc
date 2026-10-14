@@ -30,6 +30,7 @@
 
 import { isRotaryOperationKind, isRoundStock } from '../../types/project'
 import { resolveMachineKind } from '../../engine/gcode/types'
+import { setupFace } from '../../engine/setupOrientation'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { Operation, Project, ProjectMeta, ProjectType, Stock } from '../../types/project'
 
@@ -152,6 +153,26 @@ export function operationCutsUnderProjectType(type: ProjectType, kind: Operation
   return type !== 'plasma'
 }
 
+/**
+ * Whether an operation is cut in the project as it stands (issue #1028).
+ *
+ * The kind rule ({@link operationCutsUnderProjectType}) plus the setup's face:
+ * in a project that is not rotary, an operation in an **Around** setup is kept
+ * in the project but is not cut — the setup's face does not exist for the type
+ * (rule (a), keep and hide). This is the one predicate behind "leave it out of
+ * the export checklist and the programs" and the CAM panel's note, so the
+ * checklist and the export cannot disagree.
+ */
+export function operationCutsInProject(
+  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
+  operation: Pick<Operation, 'kind' | 'setupId'>,
+): boolean {
+  if (!operationCutsUnderProjectType(projectType(project), operation.kind)) return false
+  if (aroundFeaturesActive(project)) return true
+  const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
+  return setup === null || setupFace(setup) !== 'around'
+}
+
 /** What changing the type would do, for the confirm dialog (slice B). Nothing is deleted. */
 export interface ProjectTypeChangeSummary {
   readonly from: ProjectType
@@ -178,11 +199,19 @@ export function projectTypeChangeSummary(
   const replacement = current && !machineMatchesProjectType(current, to)
     ? firstMatchingMachine(candidates, to)
     : null
+  // Counted against the project as it would stand after the change: an
+  // operation in an Around setup stops being cut too when the new type is not
+  // rotary, and the confirm must not understate that.
+  const after: Pick<Project, 'meta' | 'stock' | 'setups'> = {
+    meta: { ...project.meta, projectType: to },
+    stock: project.stock,
+    setups: project.setups,
+  }
   return {
     from,
     to,
     inactiveOperations: project.operations.filter((operation) => (
-      operation.enabled && !operationCutsUnderProjectType(to, operation.kind)
+      operation.enabled && !operationCutsInProject(after, operation)
     )).length,
     // Only leaving rotary hides anything: a project that is already not
     // rotary has its Around features hidden whatever this change does.

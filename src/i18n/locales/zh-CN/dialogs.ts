@@ -34,6 +34,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   // ── New Project dialog ──
   'dialogs.newProject.title': '新建项目',
   'dialogs.newProject.projectName': '项目名称',
+  'dialogs.newProject.projectType': '项目类型',
   'dialogs.newProject.template': '模板',
   'dialogs.newProject.templateBlankMetric': '公制空白',
   'dialogs.newProject.templateBlankMetricMeta': '以毫米为单位的空白项目。',
@@ -67,6 +68,18 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.newProject.templateLabel.fileSetup': '模板文件设置：{name}',
   'dialogs.newProject.templateLabel.fileSetupFallback': '模板文件设置',
   'dialogs.newProject.templateFileMetaSettings': '{name}（仅设置）',
+
+  // ── Project type change confirm (issue #1028) ──
+  'dialogs.projectType.title': '更改项目类型',
+  'dialogs.projectType.intro': '不会删除任何内容。将更改为 {to}：',
+  'dialogs.projectType.inactiveOperations.one': '1 个已启用的工序将不再加工',
+  'dialogs.projectType.inactiveOperations.other': '{count} 个已启用的工序将不再加工',
+  'dialogs.projectType.hiddenAroundFeatures.one': '1 个 Around 特征会保留，但被隐藏且不导出',
+  'dialogs.projectType.hiddenAroundFeatures.other': '{count} 个 Around 特征会保留，但被隐藏且不导出',
+  'dialogs.projectType.toRound': '方块料将变为相同尺寸的圆棒料',
+  'dialogs.projectType.toBlock': '圆棒料将变为相同尺寸的方块料',
+  'dialogs.projectType.machineChange': '机床将更改为 {name}',
+  'dialogs.projectType.confirm': '更改项目类型',
 
   // ── Import Geometry dialog ──
   'dialogs.importGeometry.title': '导入图形',

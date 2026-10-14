@@ -1190,9 +1190,10 @@ for (const pointer of ['mouse', 'touch'] as const) {
       const meta = fixture.meta as Record<string, unknown>; meta.units = 'mm'
       const tools = fixture.tools as Array<Record<string, unknown>>
       fixture.tools = [...tools, { ...tools[0], id: 'torch-e2e', name: 'Plasma torch', type: 'plasma', units: 'mm', diameter: 1.2, pierceHeight: 3, cutHeight: 1.5, pierceDelay: 0.6, defaultFeed: 2200 }]
-      // The plasma cut is only offered with a plasma machine selected (#960).
-      // Seeded rather than picked in the tree: the touch layout keeps the
-      // project row behind a drawer.
+      // The plasma cut is only offered in a plasma project (#1028). Seeded
+      // rather than picked in the tree: the touch layout keeps the project row
+      // behind a drawer.
+      meta.projectType = 'plasma'
       meta.machineDefinitions = [QT_PLASMAC]
       meta.selectedMachineId = QT_PLASMAC.id
       await seedProject(app.page, JSON.stringify(fixture))
@@ -1315,8 +1316,8 @@ for (const pointer of ['mouse', 'touch'] as const) {
       await ui.operations.rowByName(app.page, 'Other plasma').click()
       await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
       await ui.cam.plasmaStart(app.page).click()
-      // A plasma machine hides the workspace face switch on a single-face
-      // project (#960), so the Bottom segment this block used to leave the pick
+      // A plasma project hides the workspace face switch on a single-face
+      // project (#1028), so the Bottom segment this block used to leave the pick
       // through no longer exists and the pick stays open. Leaving the pick
       // through another operation is still covered above.
       await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()

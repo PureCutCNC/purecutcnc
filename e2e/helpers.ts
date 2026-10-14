@@ -59,6 +59,50 @@ export async function selectMachine(
   await ui.properties.machineOption(page, name).click()
 }
 
+/**
+ * Choose a project type in the project properties (issue #1028), without
+ * confirming: Project → Project type.
+ */
+export async function chooseProjectType(
+  page: Page,
+  ui: typeof import('./selectors'),
+  label: 'Milling / routing' | 'Plasma' | 'Rotary',
+): Promise<void> {
+  await ui.tree.projectRow(page).click()
+  await ui.properties.projectTypeTrigger(page).click()
+  await ui.properties.projectTypeOption(page, label).click()
+}
+
+/**
+ * Confirm the type-change dialog when the change has anything to say
+ * (issue #1028). A change with nothing to report applies without one.
+ */
+export async function confirmProjectTypeChange(
+  page: Page,
+  ui: typeof import('./selectors'),
+): Promise<void> {
+  const dialog = ui.projectTypeDialog.root(page)
+  if (await dialog.isVisible()) {
+    await ui.projectTypeDialog.confirmButton(page).click()
+    await expect(dialog).toBeHidden()
+  }
+}
+
+/**
+ * Choose a project type and confirm it if asked. `setProjectType` also gives
+ * the stock the type's shape and selects the first matching machine, so a spec
+ * that set a plasma or rotary *machine* to reach a mode now sets the type
+ * instead.
+ */
+export async function setProjectType(
+  page: Page,
+  ui: typeof import('./selectors'),
+  label: 'Milling / routing' | 'Plasma' | 'Rotary',
+): Promise<void> {
+  await chooseProjectType(page, ui, label)
+  await confirmProjectTypeChange(page, ui)
+}
+
 /** Return the feature currently preview-highlighted by the live store. */
 export async function getHoveredFeatureId(page: Page): Promise<string | null> {
   return page.evaluate(async () => {

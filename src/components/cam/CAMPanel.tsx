@@ -73,6 +73,7 @@ import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
 import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
+import { projectType } from '../../store/helpers/projectType'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
 import { Icon } from '../Icon'
@@ -2336,7 +2337,7 @@ export function CAMPanel({
                     <div className="tree-root-label">{camT('cam.panel.cam')}</div>
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
-                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
+                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
                         {section.operations.map((operation) => (
                         <div
                           key={operation.id}

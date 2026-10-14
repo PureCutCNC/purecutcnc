@@ -421,6 +421,17 @@ export const properties = {
   machineOption: (page: Page, label: string) =>
     page.locator('.properties-panel .properties-field--machine').getByRole('option', { name: label, exact: true }),
 
+  /** Project type custom-select trigger, visible when the project root is selected (issue #1028). */
+  projectTypeTrigger: (page: Page) =>
+    page.locator('.properties-panel .properties-field--project-type .ui-select__trigger'),
+
+  /** An option in the open Project type custom select. */
+  projectTypeOption: (page: Page, label: 'Milling / routing' | 'Plasma' | 'Rotary') =>
+    page.locator('.properties-panel .properties-field--project-type').getByRole('option', { name: label, exact: true }),
+
+  /** The machine/type mismatch note under the machine picker (issue #1028). */
+  machineTypeMismatch: (page: Page) => page.getByTestId('machine-type-mismatch'),
+
   /** The badge row under the machine picker (built-in/custom + status). */
   machineStatus: (page: Page) => page.locator('.properties-panel .properties-machine-status'),
 
@@ -495,6 +506,16 @@ export const unitConversionDialog = {
   directionArrow: (page: Page) => page.locator('.unit-conversion-route__arrow'),
   convertButton: (page: Page) => page.getByRole('button', { name: /Convert values/ }),
   reinterpretButton: (page: Page) => page.getByRole('button', { name: /Keep numeric values/ }),
+  cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
+}
+
+// ── Project type change confirm (issue #1028) ──────────────────────
+
+export const projectTypeDialog = {
+  root: (page: Page) => page.getByRole('dialog', { name: 'Change project type' }),
+  /** The one line per non-zero item the change would do. */
+  lines: (page: Page) => page.getByTestId('project-type-change-lines').locator('li'),
+  confirmButton: (page: Page) => page.getByTestId('project-type-confirm'),
   cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
 }
 

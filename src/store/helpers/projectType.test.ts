@@ -56,7 +56,7 @@ import {
   projectTypeChangeSummary,
   stockShapesForProjectType,
 } from './projectType'
-import { aroundUnavailableReason } from './activeFace'
+import { activeFace, aroundUnavailableReason } from './activeFace'
 import { syncProjectSetups } from './setups'
 import { useProjectStore } from '../projectStore'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -649,6 +649,73 @@ async function main(): Promise<void> {
       useProjectStore.getState().project.meta.projectType,
       'milling',
       'a project without the field gains it',
+    )
+  })
+
+  await test('setProjectType moves the workspace off an Around setup when the new type has no Around', () => {
+    const rotary = richProject()
+
+    // The workspace is on the project's real Around setup.
+    seed({ ...rotary, activeSetupId: AROUND_SETUP_ID })
+    useProjectStore.getState().setProjectType('milling', CANDIDATES)
+    assertEqual(activeFace(useProjectStore.getState().project), 'top', 'leaving rotary moves the workspace to Top')
+    assertEqual(useProjectStore.getState().project.activeSetupId, TOP_SETUP_ID, 'onto the project\'s own Top setup')
+    assertEqual(useProjectStore.getState().history.past.length, 1, 'in the same undo step as the type change')
+    assertEqual(useProjectStore.getState().project.features, rotary.features, 'and nothing is deleted')
+
+    // No Top setup to land on: the workspace still leaves Around.
+    const aroundOnly: Project = { ...rotary, setups: [rotary.setups[1]], activeSetupId: 'provisional-around' }
+    seed(aroundOnly)
+    useProjectStore.getState().setProjectType('plasma', CANDIDATES)
+    assertEqual(activeFace(useProjectStore.getState().project), 'top', 'a plasma project leaves the Around workspace')
+    assertEqual(useProjectStore.getState().project.activeSetupId, 'provisional-top', 'provisionally when the project has no Top setup')
+
+    // A rotary project keeps the Around workspace: the change does not need it.
+    seed({ ...rotary, activeSetupId: AROUND_SETUP_ID })
+    useProjectStore.getState().setProjectType('rotary', CANDIDATES)
+    assertEqual(activeFace(useProjectStore.getState().project), 'around', 'a rotary project keeps the Around workspace')
+  })
+
+  await test('the export leaves an Around setup\'s operation out of the programs when the project is not rotary', async () => {
+    const OPTIONS: ExportPostOptions = { emitToolChanges: false, emitCoolant: false, programName: 'around-left-out', captureMotionTrace: false }
+    const tool: Tool = { ...defaultTool('mm', 1), id: 't1' }
+    const base = projectWith([])
+    const top = base.setups[0]
+    const around: MachiningSetup = {
+      id: 'su-around', kind: 'around', name: 'Around',
+      orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: [],
+    }
+    // A milling project that still holds an Around setup: the top operation is
+    // cut, the one in the Around setup is kept but is not.
+    const project: Project = syncProjectSetups({
+      ...base,
+      tools: [tool],
+      setups: [top, around],
+      meta: { ...base.meta, projectType: 'milling', machineDefinitions: [PLAIN_ROUTER], selectedMachineId: PLAIN_ROUTER.id },
+      operations: [
+        { ...makeOperation('top-op'), toolRef: 't1', setupId: top.id },
+        { ...makeOperation('around-op'), toolRef: 't1', setupId: around.id },
+      ],
+    })
+
+    const h = makeCountingService({ project, documentKey: 1 })
+    const token = createExportToken(1, h.context(), ['top-op', 'around-op'], PLAIN_ROUTER, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, PLAIN_ROUTER, OPTIONS)
+    if (prepared.status !== 'ready') throw new Error('the top operation prepares')
+    assertEqual(
+      prepared.programs.flatMap((program) => program.operations.map((row) => row.operation.id)),
+      ['top-op'],
+      'the Around operation is in no program',
+    )
+    assertEqual(h.order, ['top-op'], 'and is never even requested')
+
+    // Only Around operations left: there is nothing to export.
+    const only = makeCountingService({ project, documentKey: 2 })
+    const onlyToken = createExportToken(1, only.context(), ['around-op'], PLAIN_ROUTER, OPTIONS)
+    assertEqual(
+      (await prepareExport(only.service, only.context(), onlyToken, PLAIN_ROUTER, OPTIONS)).status,
+      'blocked',
+      'a project with only Around operations has nothing to export',
     )
   })
 

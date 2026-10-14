@@ -641,6 +641,7 @@ export const camEn = {
   'cam.setup.export': 'Export setup: {name}',
   'cam.setup.flipped': 'Flipped about {axis}',
   'cam.setup.aroundStatus': 'Bar in the rotary',
+  'cam.setup.aroundKeptNotCut': 'Around operations are kept but not cut in a {type} project',
   'cam.setup.noRegistration': 'No registration references. Check how the stock will be located after the flip.',
   'cam.setup.registrationCount': 'Registration references: {count}',
   'cam.setup.empty': 'No operations in this setup.',

@@ -55,7 +55,7 @@ import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
-import { projectMachineMismatch } from '../../store/helpers/projectType'
+import { projectMachineMismatch, operationCutsInProject } from '../../store/helpers/projectType'
 import type { Operation, Project, SetupFace } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
@@ -205,7 +205,20 @@ export async function prepareExport(
   if (!definition) {
     return { status: 'blocked', token, reason: { kind: 'no-machine' } }
   }
-  if (token.operationIds.length === 0) {
+
+  // An operation the project type does not cut — an Around setup in a project
+  // that is not rotary, or the other family's kind — is kept in the project but
+  // is not exported (issue #1028, rule (a)): it is not requested, not posted,
+  // and in no program's operation list. `planSetupPrograms` sees the same
+  // filtered set, so the "every prepared operation is in a program" check still
+  // balances. An id that names no operation is left in, so the existing
+  // missing-operation block still reports it.
+  const cutOperationIds = token.operationIds.filter((operationId) => {
+    const operation = token.project.operations.find((candidate) => candidate.id === operationId)
+    return operation === undefined || operationCutsInProject(token.project, operation)
+  })
+
+  if (cutOperationIds.length === 0) {
     return { status: 'blocked', token, reason: { kind: 'no-operations' } }
   }
 
@@ -214,7 +227,7 @@ export async function prepareExport(
   // rows below are put back into project order regardless, because the order
   // operations are posted in is the order they will be cut.
   const outcomes = await Promise.all(
-    token.operationIds.map(async (operationId) => ({
+    cutOperationIds.map(async (operationId) => ({
       operationId,
       outcome: await service.request(context, operationId, { purpose: 'export', signal }),
     })),
@@ -265,7 +278,7 @@ export async function prepareExport(
   // the live one: origin, units, names, tools and setups have to come from the
   // same revision as the paths.
   const preparedById = new Map(prepared.map((row) => [row.operation.id, row]))
-  const programs: PreparedProgram[] = planSetupPrograms(token.project, token.operationIds).map((program) => {
+  const programs: PreparedProgram[] = planSetupPrograms(token.project, cutOperationIds).map((program) => {
     const operations = program.operationIds.flatMap((operationId) => {
       const row = preparedById.get(operationId)
       return row ? [row] : []
