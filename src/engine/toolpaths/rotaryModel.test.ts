@@ -75,6 +75,49 @@ const CIRCLE = Array.from({ length: SEGMENTS }, (_, i): readonly [number, number
   return [RC * Math.cos(t), RC * Math.sin(t)]
 })
 
+/**
+ * A coaxial surface of revolution around the bar's axis: one closed ring of
+ * `segments` points at each of `steps` positions along the bar, with the ring's
+ * radius given by `radiusAt(along)`. Unlike `prism`'s constant cross-section,
+ * the radius varies along the bar, so the sampled height at an along position
+ * changes when a pass reads the wrong (mirrored) row.
+ */
+function lathe(
+  stock: RoundStock,
+  radiusAt: (along: number) => number,
+  alongStart: number,
+  alongEnd: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  const centre = roundStockCentre(stock)
+  const radius = stock.thickness / 2
+  const positions: number[] = []
+  const index: number[] = []
+  for (let s = 0; s <= steps; s++) {
+    const along = alongStart + (alongEnd - alongStart) * s / steps
+    const r = radiusAt(along)
+    for (let j = 0; j < segments; j++) {
+      const t = 2 * Math.PI * j / segments
+      const across = centre + r * Math.cos(t)
+      const up = radius + r * Math.sin(t)
+      if (stock.axis === 'x') positions.push(along, across, up)
+      else positions.push(across, along, up)
+    }
+  }
+  for (let s = 0; s < steps; s++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = s * segments + j
+      const b = s * segments + j2
+      const c = (s + 1) * segments + j2
+      const d = (s + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
 for (const axis of ['x', 'y'] as const) {
   // Deliberately translated across-axis stock: catches using R as the centre.
   const stock = roundStock(40, 80, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
@@ -264,7 +307,13 @@ for (const axis of ['x', 'y'] as const) {
 
   // Entry and exit (rule 7).
   assert.equal(result.moves[0].kind, 'rapid', `${axis} first move is a rapid`)
-  approx(result.moves[0].to.z, FINISH_RADIUS + FINISH_SAFE, `${axis} entry rapid reaches safeRadius`)
+  // The opening move only positions the tool at safeRadius over the first
+  // sample: from and to are the same point, the way `pushRapidAndPlunge` opens
+  // when no previous position exists. It used to start at the cutting tip, which
+  // read as if the tool began buried, then rapid up to safe height.
+  assert.deepEqual(result.moves[0].from, result.moves[0].to, `${axis} entry rapid only positions the tool`)
+  approx(result.moves[0].from.z, FINISH_RADIUS + FINISH_SAFE, `${axis} entry rapid is at safeRadius`)
+  approx(along(result.moves[0].from), FINISH_BASE.alongStart, `${axis} entry rapid is over the first sample`)
   assert.equal(result.moves[1].kind, 'plunge', `${axis} entry plunges`)
   approx(result.moves[1].from.z, FINISH_RADIUS + FINISH_SAFE, `${axis} plunge starts at safeRadius`)
   assert.ok(result.moves[1].to.z < result.moves[1].from.z, `${axis} plunge descends`)
@@ -342,6 +391,66 @@ for (const axis of ['x', 'y'] as const) {
     const pass = Math.round(move.from.a / (360 / passes))
     assert.ok(pass % 2 === 0 ? delta > 0 : delta < 0, `${axis} move ${index} of pass ${pass} runs ${pass % 2 === 0 ? 'forward' : 'backward'}`)
   })
+
+  // Rule 5 + 6 (review): a coaxial model whose radius varies along the bar, and
+  // varies asymmetrically about the middle, so a return pass that read
+  // `tipRadius[k][i]` at position `along[n-1-i]` would put every point at its
+  // mirror's height. The profile is axisymmetric, so the right height at an
+  // along position is the forward pass's own sample there; the wrong one is the
+  // same row read at the mirrored index. This is the case every symmetric test
+  // model could not see.
+  {
+    const waveStepover = 6
+    const wavePasses = finishPasses(waveStepover)
+    const waveAlong = Array.from({ length: 21 }, (_, i) => FINISH_BASE.alongStart + i)
+    const wave = lathe(stock, (x) => 4 + 3 * Math.sin(2 * Math.PI * (x - 10) / 13), FINISH_BASE.alongStart, FINISH_BASE.alongEnd, 200, 64)
+    const waveResult = generateRotaryFinish('op-wave', wave, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: waveStepover, sampleSpacing: 1 }, {})
+    const waveSampling = sampleRotaryModel(wave, stock, FINISH_PASS_MM, {
+      anglesDeg: Array.from({ length: wavePasses }, (_, k) => k * (360 / wavePasses)),
+      along: waveAlong,
+      requestedCellSize: FINISH_BASE.requestedCellSize,
+    }, [])
+    const waveIndexAt = (p: number): number => {
+      let best = -1
+      let bestDistance = Infinity
+      waveAlong.forEach((value, j) => {
+        const distance = Math.abs(value - p)
+        if (distance < bestDistance) { bestDistance = distance; best = j }
+      })
+      assert.ok(bestDistance < 1e-9, `${axis} emitted along ${p} is a sample position`)
+      return best
+    }
+    let waveChecks = 0
+    for (const move of waveResult.moves) {
+      if (move.kind !== 'cut') continue
+      const fromAngle = move.from.a as number
+      const toAngle = move.to.a as number
+      if (fromAngle !== toAngle) {
+        // The turn between two passes, at the shared end position: its height is
+        // the higher of the two passes' tips there, so a return pass reading its
+        // mirror height would move it.
+        const j = waveIndexAt(along(move.from))
+        const next = Math.round(toAngle / (360 / wavePasses))
+        approx(along(move.to), along(move.from), `${axis} wave link stays at its along position`)
+        approx(move.to.z, move.from.z, `${axis} wave link keeps the height it reached`)
+        approx(move.to.z, FINISH_RADIUS + Math.max(waveSampling.tipRadius[next - 1][j], waveSampling.tipRadius[next][j]),
+          `${axis} wave link takes the higher tip at the shared end`)
+        waveChecks++
+        continue
+      }
+      const pass = Math.round(fromAngle / (360 / wavePasses))
+      for (const end of ['from', 'to'] as const) {
+        const j = waveIndexAt(along(move[end]))
+        // The forward pass's sample at this along position; the axisymmetric
+        // model makes it the right height on every pass.
+        approx(move[end].z, FINISH_RADIUS + waveSampling.tipRadius[0][j], `${axis} wave pass ${pass} height at along ${waveAlong[j]}`)
+        approx(waveSampling.tipRadius[pass][j], waveSampling.tipRadius[0][j],
+          `${axis} wave pass ${pass} samples along ${waveAlong[j]} like the forward pass`)
+        waveChecks++
+      }
+    }
+    assert.ok(waveChecks > 20, `${axis} the asymmetric wave checked real points (${waveChecks})`)
+  }
 
   // Rule 5: the same path on the sheet, and wrapPoint of it exactly (this is
   // what makes export, the 3D view and the simulation read it unchanged).
@@ -436,6 +545,114 @@ for (const axis of ['x', 'y'] as const) {
   assert.equal(angle, 0, 'the first below-centreline place is at 0 degrees')
   // The 0 degree pass clamps to the centreline floor.
   assert.ok(result.moves.some((move) => move.kind === 'cut' && move.from.a === 0 && move.from.z === FINISH_RADIUS), 'the 0 degree pass is on the centreline')
+}
+
+{
+  // Rule 4 (review): the warning is about the value *before* clamping, so the
+  // stock offset is in the value that decides it -- `raw + stockToLeave < 0`.
+  // Leaving stock must not hide a model that still needs a cut below the
+  // centreline, which is exactly what gating on `stockToLeave === 0` did.
+  const stock = finishStock('x')
+  const plate = prism(stock, [[-2, -9], [2, -9], [2, -3], [-2, -3]])
+  const result = generateRotaryFinish('op-7s', plate, stock, FINISH_PASS_MM,
+    { ...FINISH_BASE, stepover: 20, stockToLeave: 0.5 }, {})
+  assert.ok(result.moves.length > 0, 'below centreline with stock still generates moves')
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) assert.ok(p.z >= FINISH_RADIUS - 1e-9, 'no point below the centreline with stock')
+  }
+  const below = result.warnings.filter((warning) => warning.code === 'rotaryBelowCentreline')
+  assert.equal(below.length, 1, 'exactly one below-centreline warning with stock to leave')
+  assert.equal(below[0].params?.operation, 'op-7s')
+  assert.equal(below[0].params?.along, FINISH_BASE.alongStart, 'the place with stock is at alongStart')
+  assert.equal(below[0].params?.angle, 0, 'the place with stock is at 0 degrees')
+}
+
+{
+  // Rule 4 (review): the warning names the along position of the offending
+  // *sample*, so it must not be mirrored with the pass either. Two passes put
+  // the first offense on the odd (180 degree) pass, where the old code reported
+  // `alongAt(1, i)` -- the mirror position -- rather than along[i]. The block
+  // sits above the axis at 0 degrees (nothing below zero, so pass 0 is clean)
+  // and only near alongStart; at 180 degrees it turns below the axis, and the
+  // warning must name along = 10, not the mirrored 30.
+  const stock = finishStock('x')
+  const block = prism(stock, [[-2, 4], [2, 4], [2, 6], [-2, 6]], [10, 14])
+  const result = generateRotaryFinish('op-7o', block, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover: 100 }, {})
+  const below = result.warnings.filter((warning) => warning.code === 'rotaryBelowCentreline')
+  assert.equal(below.length, 1, 'exactly one below-centreline warning on the odd pass')
+  assert.equal(below[0].params?.angle, 180, 'the offending pass is the 180 degree one')
+  assert.equal(below[0].params?.along, FINISH_BASE.alongStart, 'the warning names the sample position, not its mirror')
+  for (const move of result.moves) {
+    for (const p of [move.from, move.to]) assert.ok(p.z >= FINISH_RADIUS - 1e-9, 'no point below the centreline on the odd pass')
+  }
+}
+
+{
+  // Rule 3 (review): in a valley the stock offset is normal to the surface, not
+  // vertical, and that is where enlarging the tool changes the answer. The
+  // model is a coaxial block whose top face carries a V-valley, walls at 45
+  // degrees, apex 3 mm above the axis. A ball in a 45-degree V rests with its
+  // centre r*sqrt(2) above the apex, so its tip is `apex + r*(sqrt(2) - 1)`.
+  // Plain r = 2 gives 3 + 0.828 = 3.828 mm; enlarged r = 2.5 gives
+  // 3 + 1.036 = 4.036 mm. The generator must sample with the enlarged ball and
+  // add s, giving 4.536 mm -- while "add s to the plain tip" would give
+  // 4.328 mm. The hand-computed difference is s*(sqrt(2) - 1) = 0.2071 mm.
+  const stock = finishStock('x')
+  const apexAlong = 20
+  const halfWidth = 3
+  const topUp = 6
+  const apexUp = topUp - halfWidth
+  const acrossHalf = 8
+  const sheet = (() => {
+    const centre = roundStockCentre(stock)
+    const radius = stock.thickness / 2
+    const up = (along: number): number => {
+      const d = Math.abs(along - apexAlong)
+      return d >= halfWidth ? topUp : apexUp + d
+    }
+    const xs: number[] = []
+    for (let x = 10; x <= 30 + 1e-9; x += CELL) xs.push(x)
+    const ys: number[] = []
+    for (let y = -acrossHalf; y <= acrossHalf + 1e-9; y += 1) ys.push(y)
+    const positions: number[] = []
+    const index: number[] = []
+    for (const x of xs) for (const y of ys) {
+      const z = radius + up(x)
+      if (stock.axis === 'x') positions.push(x, centre + y, z)
+      else positions.push(centre + y, x, z)
+    }
+    const cols = ys.length
+    for (let i = 0; i < xs.length - 1; i++) {
+      for (let j = 0; j < ys.length - 1; j++) {
+        const a = i * cols + j
+        const b = (i + 1) * cols + j
+        const c = (i + 1) * cols + j + 1
+        const d = i * cols + j + 1
+        index.push(a, b, c, a, c, d)
+      }
+    }
+    return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  })()
+  const s = 0.5
+  const enlarged: NormalizedTool = { ...FINISH_PASS_MM, radius: FINISH_PASS_MM.radius + s, diameter: FINISH_PASS_MM.diameter + 2 * s }
+  const plainTip = sampleRotaryModel(sheet, stock, FINISH_PASS_MM, { anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL }, []).tipRadius[0][0]
+  const enlargedTip = sampleRotaryModel(sheet, stock, enlarged, { anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL }, []).tipRadius[0][0]
+  assert.ok(plainTip < enlargedTip, `the enlarged ball rests higher in the valley (${plainTip.toFixed(4)} < ${enlargedTip.toFixed(4)})`)
+  const result = generateRotaryFinish('op-valley', sheet, stock, FINISH_PASS_MM,
+    { ...FINISH_BASE, stepover: 20, sampleSpacing: 1, stockToLeave: s }, {})
+  const apexAlongAxis = (p: { x: number; y: number; z: number }): number => stock.axis === 'x' ? p.x : p.y
+  const atApex = result.moves
+    .filter((move) => move.kind === 'cut' && move.from.a === 0 && move.to.a === 0)
+    .flatMap((move) => [move.from, move.to])
+    .filter((p) => Math.abs(apexAlongAxis(p) - apexAlong) < 1e-9)
+  assert.ok(atApex.length > 0, 'the 0 degree pass reaches the valley apex')
+  const generatedTip = atApex[0].z - FINISH_RADIUS
+  // What the code says it does: the enlarged ball's tip plus s.
+  approx(generatedTip, enlargedTip + s, 'valley result equals the enlarged tool plus s', 1e-6)
+  // What "stock without enlarging the tool" would give, and the hand-computed gap.
+  const handDifference = s * (Math.SQRT2 - 1)
+  assert.ok(generatedTip > plainTip + s, `valley result is above plain + s (${generatedTip.toFixed(4)} > ${(plainTip + s).toFixed(4)})`)
+  approx(generatedTip - (plainTip + s), handDifference, 'valley gap from plain + s is s*(sqrt(2)-1)', 0.005)
 }
 
 {

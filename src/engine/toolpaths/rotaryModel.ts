@@ -211,15 +211,18 @@ function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
  * round it, so a ball nose leaves its best surface along a long part.
  *
  * The height sampler is the only thing that knows the model. Its cells hold the
- * raw model height, so the stock-to-leave offset is applied twice: the tool is
- * enlarged by `s` while sampling, which puts the *centre* of an enlarged ball
- * on the surface and lifts the returned tip by `s`, and `s` is added to the tip
- * again. For a ball nose the centre of the enlarged ball is the real ball's
- * centre moved outward along the surface normal by exactly `s`, so the offset
- * is normal to the surface, not vertical. A flat end mill has no ball centre to
- * move, so this is the enlargement's approximation for it; a call to
- * `sampleRotaryModel` with zero stock is bit-identical to the sampler's own
- * value, which is the contract every caller of the sampler relies on.
+ * raw model height, so stock to leave is applied by sampling with the tool's
+ * radius enlarged by `s` and then adding `s` back at the tip. For a ball nose
+ * that composition is the offset the surface actually gets: the centre of the
+ * enlarged ball is the real ball's centre moved outward along the surface normal
+ * by exactly `s`, so the enlarged ball's tip plus `s` is the real ball's tip
+ * offset by `s` normal to the surface. On a convex contact -- where the ball
+ * touches at a single high point -- that normal is vertical, so the result is
+ * also a plain vertical `s`; in a valley it is not, and the enlarged ball sits
+ * higher on the walls than the plain ball plus a vertical `s` would. A flat end
+ * mill has no ball centre to move, so this is the enlargement's approximation
+ * for it. A call with zero stock is bit-identical to the sampler's own value,
+ * which is the contract every caller of the sampler relies on.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -264,8 +267,16 @@ export function generateRotaryFinish(
   }, warnings)
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   const tolerance = convertLength(0.001, 'mm', tool.units)
-  const tipAt = (angleIndex: number, alongIndex: number): number => {
-    const raw = sampling.tipRadius[angleIndex][alongIndex]
+  // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
+  // alongStart to alongEnd, odd ones back, so the row index of position `i` is
+  // mirrored on a return pass. Everything that reads a height must use the same
+  // index the position uses -- reading `tipRadius[k][i]` on a return pass gives
+  // each position the height of its mirror, which only a model symmetric along
+  // the bar hides.
+  const rowIndexAt = (pass: number, positionIndex: number): number =>
+    pass % 2 === 0 ? positionIndex : along.length - 1 - positionIndex
+  const tipAt = (pass: number, positionIndex: number): number => {
+    const raw = sampling.tipRadius[pass][rowIndexAt(pass, positionIndex)]
     if (!Number.isFinite(raw)) return 0
     const withStock = raw + stockToLeave
     return Math.min(Math.max(withStock, 0), radius)
@@ -273,40 +284,44 @@ export function generateRotaryFinish(
   const point = (alongPosition: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
     ? { x: alongPosition, y: centre, z: radius + tip, a: angle }
     : { x: centre, y: alongPosition, z: radius + tip, a: angle }
-  const alongAt = (k: number, i: number): number => k % 2 === 0 ? along[i] : along[along.length - 1 - i]
+  const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
   // The first sample below the centreline is the only place the warning names
-  // (one warning per operation, however many places need it).
-  if (stockToLeave === 0) {
-    outer: for (let k = 0; k < passes; k++) {
-      for (let i = 0; i < along.length; i++) {
-        if (sampling.tipRadius[k][i] < 0) {
-          warnings.push({
-            code: 'rotaryBelowCentreline',
-            params: {
-              operation: operationId,
-              along: Math.round(alongAt(k, i) * 100) / 100,
-              angle: Math.round(angles[k] * 100) / 100,
-            },
-          })
-          break outer
-        }
+  // (one warning per operation, however many places need it). The value that
+  // decides it carries the stock offset, so leaving stock does not hide a model
+  // that needs a cut below the centreline. `tipRadius[k][i]` is the height at
+  // along[i], whichever direction the pass runs.
+  outer: for (let k = 0; k < passes; k++) {
+    for (let i = 0; i < along.length; i++) {
+      if (sampling.tipRadius[k][i] + stockToLeave < 0) {
+        warnings.push({
+          code: 'rotaryBelowCentreline',
+          params: {
+            operation: operationId,
+            along: Math.round(along[i] * 100) / 100,
+            angle: Math.round(angles[k] * 100) / 100,
+          },
+        })
+        break outer
       }
     }
   }
   const moves: ToolpathMove[] = []
   const firstTip = tipAt(0, 0)
-  // Rule 7: rapid to the safe height over the first sample, plunge to the
-  // first tip. The rapid is the position command itself (a rapid that stayed
-  // put would be dead motion), and the retract at the end is its mirror.
+  const firstAlong = alongAt(0, 0)
+  // Rule 7: position the tool over the first sample at safeRadius, then plunge
+  // to the first tip. The opening positioning move goes from and to the same
+  // point -- the way `pushRapidAndPlunge` opens when there is no previous
+  // position, so the tool is placed at safe height rather than ever read as
+  // starting buried at the cutting tip. The retract at the end is its mirror.
   moves.push({
     kind: 'rapid',
-    from: point(alongAt(0, 0), firstTip, angles[0]),
-    to: point(alongAt(0, 0), params.safeRadius, angles[0]),
+    from: point(firstAlong, params.safeRadius, angles[0]),
+    to: point(firstAlong, params.safeRadius, angles[0]),
   })
   moves.push({
     kind: 'plunge',
-    from: point(alongAt(0, 0), params.safeRadius, angles[0]),
-    to: point(alongAt(0, 0), firstTip, angles[0]),
+    from: point(firstAlong, params.safeRadius, angles[0]),
+    to: point(firstAlong, firstTip, angles[0]),
   })
   for (let k = 0; k < passes; k++) {
     // Where this pass starts: right after the previous link, or the entry.
