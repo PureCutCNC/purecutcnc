@@ -29,11 +29,11 @@
  *
  * What this spec assumes about the page, for the manager to check against the
  * real DOM:
- * - the Around face is active from the seeded `activeSetupId`, and the
- *   Top-authored model is a ghost row there, so it is targeted through the Add
- *   menu's own "Select all" affordance: with nothing selected the two rotary
- *   rows sit in the "not available" disclosure, and hovering the row reveals
- *   `Select all`, which selects the model and makes the row's `Add` usable;
+ * - the Around face is active from the seeded `activeSetupId`; the model is a
+ *   ghost row there, but the two rotary rows do not depend on the selection
+ *   (issue #1015): with nothing selected they are offered directly with `Add`
+ *   enabled, and Add targets every imported model in the project, so clicking
+ *   `Add` with the model unselected targets the model;
  * - "Add to Around" lists `Rotary rough` and `Rotary finish` as
  *   `.cam-operation-item` rows whose single button is `Add` (a rotary kind
  *   takes no rough/finish split), labelled from `operationAddButtonLabel`;
@@ -161,33 +161,34 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   const project = await seedRotaryModelProject(page)
   expect((project.stock as RoundStock).shape).toBe('round')
 
-  // The Around setup is active from the seed; the model is a ghost row there, so
-  // it is targeted through the Add menu's own "Select all".
+  // The Around setup is active from the seed; the model is a ghost row there,
+  // but the rotary rows no longer need it selected.
   await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
 
   // ── "Add to Around" offers both rotary operations ──
   const rotaryRow = (label: 'Rotary rough' | 'Rotary finish') =>
     ui.setupCam.addMenu(page).locator('.cam-operation-item')
       .filter({ has: page.getByRole('button', { name: label, exact: true }) })
+  // Nothing is selected, and nothing needs to be: on a round bar in Around the
+  // two rows are available whatever the selection, and Add targets every
+  // imported model in the project (issue #1015). The seeded project has one.
   const addRotary = async (label: 'Rotary rough' | 'Rotary finish'): Promise<void> => {
     await ui.setupCam.add(page).click()
     await expect(ui.setupCam.addMenu(page)).toBeVisible()
-    // With the model unselected the rows sit in the "not available" disclosure,
-    // which renders its rows only while it is expanded.
-    const unavailable = ui.operations.addMenuUnavailableToggle(page)
-    if (await unavailable.count() > 0) await unavailable.click()
     await expect(rotaryRow(label)).toHaveCount(1)
-    if (await rotaryRow(label).getByRole('button', { name: 'Add', exact: true }).isDisabled()) {
-      // The title-click arms the hover that reveals "Select all".
-      await rotaryRow(label).getByRole('button', { name: label, exact: true }).click()
-      await rotaryRow(label).getByRole('button', { name: 'Select all', exact: true }).click()
-    }
     await rotaryRow(label).getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(ui.operations.rowByName(page, label)).toBeVisible()
   }
   await addRotary('Rotary finish')
-  await expect(ui.operations.rowByName(page, 'Rotary finish')).toBeVisible()
   await addRotary('Rotary rough')
-  await expect(ui.operations.rowByName(page, 'Rotary rough')).toBeVisible()
+
+  // Each new operation targeted the model, read back from the store.
+  const added = await getProject(page) as unknown as Project
+  const modelId = added.features.find((feature) => added.featureDefinitions[feature.definitionId]?.kind === 'stl')!.id
+  for (const kind of ['rotary_finish', 'rotary_rough'] as const) {
+    expect(added.operations.find((operation) => operation.kind === kind)!.target)
+      .toEqual({ source: 'features', featureIds: [modelId] })
+  }
 
   // On Top the two rows are not offered at all (the manager's rule 7).
   await ui.face.segment(page, 'Top').click()

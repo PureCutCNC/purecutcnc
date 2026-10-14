@@ -70,7 +70,7 @@ import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBookletExport, type BookletStage } from './bookletExport'
 import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
-import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
+import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
 import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
@@ -680,8 +680,10 @@ export function CAMPanel({
         button('finish_surface_cleanup'),
         button('finish_surface'),
         button('plasma_profile'),
-        ...(currentSetupFace === 'around' && project.features.some((feature) => project.featureDefinitions[feature.definitionId]?.kind === 'stl')
-          ? [button('rotary_rough'), button('rotary_finish')] : []),
+        // The model lives in the bar: the rotary rows are offered on Around
+        // whether or not one exists, and are refused with their own hint when
+        // it does not (issue #1015).
+        ...rotaryAddKindsForFace(currentSetupFace).map((kind) => button(kind)),
       ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
     [project, addSelection, machine, currentSetupFace]

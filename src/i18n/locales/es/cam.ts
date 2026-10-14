@@ -616,6 +616,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.rotary.modelOnly': 'Las operaciones rotativas solo mecanizan modelos importados.',
   'cam.rotary.roundStockRequired': 'Las operaciones rotativas necesitan una barra redonda.',
   'cam.rotary.aroundRequired': 'Las operaciones rotativas necesitan un montaje Alrededor.',
+  'cam.rotary.roughNoModel': 'El desbaste rotativo necesita un modelo importado dentro de la barra.',
+  'cam.rotary.finishNoModel': 'El acabado rotativo necesita un modelo importado dentro de la barra.',
   'cam.rotary.toolRequired': 'Las operaciones rotativas necesitan una fresa de bola o de extremo plano.',
   'cam.rotary.chuckSupport': 'Soporte del extremo del plato',
   'cam.rotary.chuckSupportTooltip': 'Longitud de barra sin cortar en el extremo del plato. Se mantienen las zonas de seguridad del plato.',

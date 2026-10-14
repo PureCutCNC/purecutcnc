@@ -33,11 +33,14 @@ import {
   operationTargetsRegion,
   quickOperationGroup,
   quickOperationLabel,
+  rotaryAddKindsForFace,
   selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { camT } from './camI18n'
 import { getTextFontOptions } from '../../text'
 import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
 import type { MachineDefinition } from '../../engine/gcode/types'
@@ -732,6 +735,96 @@ function testRouterAndMachineLessProjectsKeepTheMillingMenu(): void {
   }
 }
 
+// ── rotary add-menu rows (issue #1015) ────────────────────────────
+
+/**
+ * The slice-D rotary fixture holds one imported model and one 2D Around
+ * feature. Adding a second model (a clone of the first) makes "one of two
+ * selected" and "target every model" distinguishable.
+ */
+function withSecondModel(project: Project): Project {
+  const model = project.features.find((feature) => feature.id === 'model')
+  const definition = model && project.featureDefinitions[model.definitionId]
+  assert(model !== undefined && definition !== undefined, 'rotary fixture should hold its model')
+  project.featureDefinitions = { ...project.featureDefinitions, 'model-2': { ...definition, id: 'model-2' } }
+  project.features = [...project.features, { ...model, id: 'model-2', definitionId: 'model-2', name: 'Model 2' }]
+  return project
+}
+
+/** The same fixture with its imported models removed: only the 2D feature is left. */
+function withoutModels(project: Project): Project {
+  project.features = project.features.filter(
+    (feature) => project.featureDefinitions[feature.definitionId]?.kind !== 'stl',
+  )
+  return project
+}
+
+/**
+ * The rotary rows do not depend on the selection: on a round bar in Around any
+ * imported model makes them available, the selection only narrows which model
+ * Add targets, and with nothing suitable selected every model is targeted.
+ */
+function testRotaryAddRowsTargetModelsWithoutASelection(): void {
+  const project = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+  const allModels = ['model', 'model-2']
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    assert(
+      getOperationAddHint(project, selectionFor([]), kind) === null,
+      `${kind} should be available with nothing selected`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor([]), kind))
+        === JSON.stringify({ source: 'features', featureIds: allModels }),
+      `${kind} with nothing selected should target every model`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor(['model-2']), kind))
+        === JSON.stringify({ source: 'features', featureIds: ['model-2'] }),
+      `${kind} with one model selected should target that model`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor(['sketch']), kind))
+        === JSON.stringify({ source: 'features', featureIds: allModels }),
+      `${kind} with a non-model selected should still target every model`,
+    )
+  }
+}
+
+/** Without an imported model the rows stay unavailable, with their own tooltip. */
+function testRotaryAddRowsNeedAnImportedModel(): void {
+  const project = withoutModels(rotaryOperationFixture('x', 'rotary_rough'))
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const key = kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel'
+    assert(
+      getOperationAddHint(project, selectionFor([]), kind) === camT(key),
+      `${kind} without a model should show its own hint`,
+    )
+    assert(
+      operationTargetFromSelection(project, selectionFor([]), kind) === null,
+      `${kind} without a model should give no target`,
+    )
+  }
+}
+
+/** The rows belong to Around alone: Top and Bottom never offer them. */
+function testRotaryAddRowsAreOfferedOnlyOnAround(): void {
+  assert(
+    JSON.stringify(rotaryAddKindsForFace('around')) === JSON.stringify(['rotary_rough', 'rotary_finish']),
+    'Around should offer both rotary rows',
+  )
+  assert(JSON.stringify(rotaryAddKindsForFace('top')) === '[]', 'Top should offer no rotary row')
+  assert(JSON.stringify(rotaryAddKindsForFace('bottom')) === '[]', 'Bottom should offer no rotary row')
+
+  const project = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+  const onTop = { ...project, activeSetupId: project.setups[0].id }
+  assert(
+    getOperationAddHint(onTop, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
+    'a Top setup should refuse the rotary rows',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -765,5 +858,8 @@ testTargetFromSelectionRefusesUnknownIds()
 testPlasmaMachineOffersOnlyThePlasmaCut()
 testPlasmaMachineRejectsFeaturesThePlasmaHintRejects()
 testRouterAndMachineLessProjectsKeepTheMillingMenu()
+testRotaryAddRowsTargetModelsWithoutASelection()
+testRotaryAddRowsNeedAnImportedModel()
+testRotaryAddRowsAreOfferedOnlyOnAround()
 
 console.log('operationValidity tests passed')

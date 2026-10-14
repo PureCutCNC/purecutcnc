@@ -704,6 +704,8 @@ export const camEn = {
   'cam.rotary.modelOnly': 'Rotary operations target imported models only.',
   'cam.rotary.roundStockRequired': 'Rotary operations need a round bar.',
   'cam.rotary.aroundRequired': 'Rotary operations need an around setup.',
+  'cam.rotary.roughNoModel': 'Rotary rough needs an imported model inside the bar.',
+  'cam.rotary.finishNoModel': 'Rotary finish needs an imported model inside the bar.',
   'cam.rotary.toolRequired': 'Rotary operations need a ball nose or flat end mill.',
   'cam.rotary.chuckSupport': 'Chuck-end support',
   'cam.rotary.chuckSupportTooltip': 'Length of bar left uncut at the chuck end. Chuck keep-outs still apply.',
