@@ -89,26 +89,41 @@ assert.equal(caseRunsOnValidator(ownAxis, 'fabmo-opensbp', ['shopbot']), false,
 //
 // Both are generated from the fixture's own rotary toolpath, so each is
 // rendered here and asserted to carry the rotary program the case describes:
-// the angle word its machine's rotary block defines, and the inverse-time pair
-// around a turning move. A case whose machine lost that block — the mutation
-// the review asked for, changing it to a machine without a rotary axis —
-// exports the bar's motion as ordinary linear G-code: no angle word, no `G93`,
-// and it would then be validated as if it proved something about rotary output.
+// the angle word its machine's rotary block defines, and — for a case that
+// turns while feeding — the inverse-time pair around that turn. A case whose
+// machine lost that block — the mutation the review asked for, changing it to a
+// machine without a rotary axis — exports the bar's motion as ordinary linear
+// G-code: no angle word, no `G93`, and it would then be validated as if it
+// proved something about rotary output.
+//
+// The rough case no longer turns while feeding (issue #1015 slice G). Its along
+// range starts and ends inside the bar, so the retained-bar stubs hold the first
+// and last sample of every pass at the bar's surface: no layer cuts them, each
+// pass's runs stop short of the pass ends, and the tool retracts to the rapid
+// height and turns there instead of linking. The wrapped form still reaches the
+// export as the A word on every move. The finish cuts the model's own ends (a
+// `NaN` sample is simply not cut), so it keeps its turning links.
 
-const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp]> = [
-  ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/],
-  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/],
+const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp, turnsInFeed: boolean]> = [
+  ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/, true],
+  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/, false],
 ]
 
-for (const [name, machineId, angleWord] of ROTARY_MODEL_CASES) {
+for (const [name, machineId, angleWord, turnsInFeed] of ROTARY_MODEL_CASES) {
   const entry = CORPUS.find((candidate) => candidate.name === name)
   assert.ok(entry, `${name} is registered in the corpus`)
   assert.equal(entry.machineId, machineId, `${name} runs on the ${machineId} machine definition`)
   const { gcode, warnings } = renderCase(entry)
   assert.deepEqual(warnings, [], `${name} exports without warnings`)
   assert.match(gcode, angleWord, `${name} writes the angle under its machine's rotary word`)
-  assert.match(gcode, /\bG93\b/, `${name} turns in inverse time, so the rotary block reached the export`)
-  assert.match(gcode, /\bG94\b/, `${name} leaves inverse time again (rule 4)`)
+  if (turnsInFeed) {
+    assert.match(gcode, /\bG93\b/, `${name} turns in inverse time, so the rotary block reached the export`)
+    assert.match(gcode, /\bG94\b/, `${name} leaves inverse time again (rule 4)`)
+  } else {
+    assert.doesNotMatch(gcode, /\bG93\b/, `${name} never turns while feeding, so it needs no inverse time`)
+    const angles = new Set([...gcode.matchAll(/\bA(-?\d+(?:\.\d+)?)\b/g)].map((match) => match[1]))
+    assert.ok(angles.size >= 5, `${name} turns the bar over several layers (${angles.size} distinct A values)`)
+  }
 }
 const rotaryFinishBorrowed = CORPUS.find((entry) => entry.name === 'rotary-model-finish-borrowed-y')
 const rotaryRoughOwnAxis = CORPUS.find((entry) => entry.name === 'rotary-model-rough-own-axis')

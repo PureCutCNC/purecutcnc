@@ -53,7 +53,13 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(along(point) >= range.start && along(point) <= range.end, 'every endpoint respects the along range')
     }
     // Independent samples at cutting endpoints, including an odd return pass.
-    // Same capped cell size; 0.001 mm covers Float32 values and point merging.
+    // The comparison is against the model-only sample, whose height-map grid is
+    // aligned to the model while the generator's is aligned to the bar (the
+    // retained-bar stubs extend it to both bar ends). A cell centre can move by
+    // one cell, and the fixture's top face rises 1 mm over 24 mm, so 0.02 mm
+    // covers the 0.333 mm cell's shift plus Float32 values and point merging --
+    // far below the gouge this guards against.
+    const CELL_SHIFT = 0.02
     const cuts = envelope.result.moves.filter((move) => move.kind === 'cut' && move.from.a === move.to.a && along(move.from) !== along(move.to))
     for (const move of [cuts[0], cuts[Math.floor(cuts.length / 2)], cuts.at(-1)!]) {
       const point = move.to
@@ -62,7 +68,7 @@ for (const axis of ['x', 'y'] as const) {
         anglesDeg: [point.a!], along: [along(point)], requestedCellSize: Math.min(tool.radius / 3, operation.stepover * tool.diameter * 0.5),
       }, []).tipRadius[0]
       const tip = Number.isFinite(row[0]) ? Math.max(0, Math.min(stock.thickness / 2, row[0] + s)) : 0
-      assert.ok(point.z >= stock.thickness / 2 + tip - 0.001, 'no endpoint cuts below the model plus normal stock')
+      assert.ok(point.z >= stock.thickness / 2 + tip - CELL_SHIFT, 'no endpoint cuts below the model plus normal stock')
     }
     const supported = computeOperationToolpath(project, { ...operation, rotaryChuckSupport: 9, rotaryTailSupport: 6 })!.result
     assert.ok(supported.moves.length > 0)
@@ -72,7 +78,16 @@ for (const axis of ['x', 'y'] as const) {
     assert.deepEqual(computeOperationToolpath(project, bare)!.result.moves, envelope.result.moves, 'missing supports read as zero')
     const noStock = computeOperationToolpath(project, { ...operation, stockToLeaveRadial: 0 })!.result
     assert.notDeepEqual(noStock.moves, envelope.result.moves, 'radial stock changes the output')
-    if (kind === 'rotary_finish') assert.ok(envelope.result.moves[1].to.z > noStock.moves[1].to.z + 0.3, 'normal stock is physically left on the first face')
+    if (kind === 'rotary_finish') {
+      // The first cut sample sits at the bar's surface whatever the stock: the
+      // retained bar holds the cutter above it at the model's own end. The
+      // stock is normal to the surface, so on a vertical wall it barely moves
+      // Z; take the largest per-move offset over the whole path.
+      const stockOffsets = envelope.result.moves.flatMap((move, index) =>
+        move.kind === 'cut' && move.from.a === move.to.a && along(move.from) !== along(move.to)
+          ? [move.to.z - noStock.moves[index].to.z] : [])
+      assert.ok(Math.max(...stockOffsets) > 0.3, 'normal stock is physically left on the cut faces')
+    }
     const noRoom = computeOperationToolpath(project, { ...operation, rotaryChuckSupport: 30 })!.result
     assert.equal(noRoom.moves.length, 0)
     assert.equal(noRoom.warnings[0].code, 'rotaryNoRoom')
