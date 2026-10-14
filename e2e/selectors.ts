@@ -825,7 +825,6 @@ export const face = {
 // Simulation setup picker and its fresh-stock note (#947).
 export const simSetup = {
   canvas: (page: Page) => page.locator('#workspace-panel-simulation canvas'),
-  unrolled: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Unrolled', exact: true }),
   progress: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__readout'),
   playPause: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn--primary'),
   viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),

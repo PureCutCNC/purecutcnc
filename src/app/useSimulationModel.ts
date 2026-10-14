@@ -99,9 +99,9 @@ export function useSimulationModel({
   /** Visible clamps, placed where they sit in the simulated setup's frame. */
   simulationClamps: Clamp[]
   /**
-   * The stock the simulated setup draws. For Around this is the unrolled
-   * sheet's block — not the real round bar — so the viewport draws its chuck
-   * and tailstock bands as flat boxes rather than cylinders about the bar.
+   * The stock a flat setup draws. An Around setup's heightfield still replays
+   * on the unrolled sheet's block, but the viewport draws the real round bar
+   * for it, through `simulationBar` (issue #395).
    */
   simulationStock: Stock
   simulationBar?: SimulationBar

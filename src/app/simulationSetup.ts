@@ -61,7 +61,6 @@ export interface SimulationBar {
   stock: RoundStock
   clamps: Clamp[]
   origin: MachineOrigin
-  unrolledOrigin: MachineOrigin
 }
 
 export function buildSimulationBar(project: Project, frame: AroundFrame): SimulationBar | undefined {
@@ -71,7 +70,6 @@ export function buildSimulationBar(project: Project, frame: AroundFrame): Simula
     stock: project.stock,
     clamps: project.clamps.filter((clamp) => clamp.visible),
     origin: project.origin,
-    unrolledOrigin: { ...project.origin, z: project.origin.z - frame.radius },
   }
 }
 

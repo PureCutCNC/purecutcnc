@@ -21,7 +21,7 @@
  * view draws the real bar with the wrapped passes on its surface (captured from
  * the default view and from a low angle, where the underside of the wrap
  * shows), and the Simulation tab lists both setups and turns the cut bar
- * during playback, with an optional flat Unrolled view.
+ * during playback on the bar itself — an Around setup has no unrolled view.
  *
  * The project is seeded through the page's store, as `setupCam.smoke.spec.ts`
  * and `setupPreview.smoke.spec.ts` do. The fixture already fails the test on
@@ -338,8 +338,10 @@ test('the 3D view draws the wrapped Around pass on the real bar', async ({ app, 
   await expect(canvas).toBeVisible()
 })
 
-test('the Simulation tab turns the cut bar under the tool and can unroll it', async ({ app, ui }, testInfo) => {
+test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, testInfo) => {
   const { page } = app
+  // Two workers on a software-rendered runner pushed this past the default 60 s.
+  test.setTimeout(120_000)
   const project = await seedAroundProject(page)
   const aroundSetup = project.setups.find((setup) => setup.kind === 'around')!
   const topSetup = project.setups.find((setup) => setup.id !== aroundSetup.id)!
@@ -400,15 +402,12 @@ test('the Simulation tab turns the cut bar under the tool and can unroll it', as
   }).toBeGreaterThan(0)
   await ui.simSetup.playPause(page).click()
 
-  await ui.simSetup.unrolled(page).click()
-  await expect(viewport).toHaveAttribute('data-simulation-view', 'unrolled')
-  await expect(viewport).toHaveAttribute('data-simulation-bar-angle', '0.000')
-  await expect(ui.simSetup.unrolled(page)).toHaveAttribute('aria-pressed', 'true')
-  await ui.simSetup.unrolled(page).click()
-  await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
-  await expect(ui.simSetup.unrolled(page)).toHaveAttribute('aria-pressed', 'false')
+  // An Around setup is the bar, and only the bar (issue #395 G3): the local
+  // Unrolled view is gone, so no setup offers the toggle.
+  const unrolledToggle = page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Unrolled', exact: true })
+  await expect(unrolledToggle).toHaveCount(0)
 
   await ui.simSetup.picker(page).selectOption(topSetup.id)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
-  await expect(ui.simSetup.unrolled(page)).toHaveCount(0)
+  await expect(unrolledToggle).toHaveCount(0)
 })

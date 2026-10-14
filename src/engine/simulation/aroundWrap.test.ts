@@ -21,8 +21,8 @@ import { aroundFrame, wrapPoint } from '../aroundFrame'
 import { stockSpacePoint, toolSpacePoint } from '../rotaryFrame'
 import { newProject, roundStock } from '../../types/project'
 import { unrolledProject } from '../aroundFrame'
-import { createBarTurnGroup, simulationBarAngle, simulationToolPoint, turnSimulationBar } from '../../components/simulation/aroundView'
-import { AROUND_WRAP_GLSL, aroundBounds } from './aroundWrap'
+import { createBarTurnGroup, sameAroundFrame, simulationBarAngle, simulationToolPoint, turnSimulationBar, aroundFrameKey } from '../../components/simulation/aroundView'
+import { AROUND_CELL_INDEX_GLSL, AROUND_WRAP_GLSL, aroundBounds } from './aroundWrap'
 import { compileScalarGlsl } from './glslScalar.testSupport'
 import { createHeightfieldMaterial } from './heightfieldShader'
 import { createInstancedBoundaryGroup } from './instancedBoundary'
@@ -118,4 +118,61 @@ for (const axis of ['x', 'y'] as const) {
     mesh.material.dispose()
   }
 }
+
+// ── The seam's neighbour lookup (issue #395 G3) ──────────────────────────────
+
+// The compiled code is the GPU's own integer text. The cell before the first
+// across row must read the last one (simply deleting the wrap left every other
+// test green); the along index must never wrap. `count` is the shader's own
+// `int(ceil(uAroundPeriod / uCellSize))`.
+for (const axis of ['x', 'y'] as const) {
+  const period = 20
+  const cellSize = 0.5
+  const count = Math.ceil(period / cellSize)
+  const aroundCell = compileScalarGlsl(AROUND_CELL_INDEX_GLSL, {
+    uAroundPeriod: period,
+    uCellSize: cellSize,
+    uAroundX: axis === 'x',
+  }).aroundCell
+  const call = (x: number, y: number): { x: number; y: number } => aroundCell({ x, y }) as { x: number; y: number }
+  const wrap = (index: number): number => ((index % count) + count) % count
+  for (const index of [-2, -1, 0, 1, count - 2, count - 1, count, count + 1]) {
+    const cell = axis === 'x' ? call(7, index) : call(index, 7)
+    const across = axis === 'x' ? cell.y : cell.x
+    const along = axis === 'x' ? cell.x : cell.y
+    assert.equal(across, wrap(index), `${axis}: across index ${index} reads ${wrap(index)}`)
+    assert.equal(along, 7, `${axis}: along index stays 7 for across ${index}`)
+  }
+  // Out of range on the along axis too: the wrap must not reach it there.
+  for (const index of [-count - 1, count + 1]) {
+    const cell = axis === 'x' ? call(index, 3) : call(3, index)
+    const along = axis === 'x' ? cell.x : cell.y
+    assert.equal(along, index, `${axis}: along index ${index} is never wrapped`)
+  }
+}
+
+// ── The frame comparison that keys the viewport's effects (issue #395 G3) ────
+
+// A rebuilt frame with the same values must compare equal, so an unrelated
+// project edit does not tear the bar down; a real change must not.
+for (const axis of ['x', 'y'] as const) {
+  const stock = roundStock(20, 85, axis, { x: 13, y: -17 })
+  const frame = aroundFrame(stock)
+  const rebuilt = aroundFrame({ ...stock })
+  assert(sameAroundFrame(frame, rebuilt), `${axis}: frames rebuilt from the same stock are equal`)
+  assert.equal(aroundFrameKey(rebuilt), aroundFrameKey(frame), `${axis}: the key is stable for the same values`)
+  assert(!sameAroundFrame(frame, aroundFrame(roundStock(24, 85, axis, { x: 13, y: -17 }))), `${axis}: a different diameter is a different frame`)
+  assert(!sameAroundFrame(frame, aroundFrame(roundStock(20, 85, axis === 'x' ? 'y' : 'x', { x: 13, y: -17 }))), `${axis}: a different bar axis is a different frame`)
+  assert(!sameAroundFrame(frame, aroundFrame(roundStock(20, 85, axis, { x: 113, y: -117 }))), `${axis}: a moved bar is a different frame`)
+}
+// Every field counts, including one a round bar's own frame derives from the
+// others (`sheetStart = centre - radius`). Moving the bar changes both, so only
+// a frame that differs in the sheet start alone shows the field is compared.
+{
+  const frame = aroundFrame(roundStock(20, 85, 'x', { x: 13, y: -17 }))
+  assert(!sameAroundFrame(frame, { ...frame, sheetStart: frame.sheetStart + 1 }), 'the sheet start is part of the comparison')
+}
+assert(sameAroundFrame(undefined, undefined), 'two flat setups compare equal')
+assert(!sameAroundFrame(undefined, aroundFrame(roundStock(20, 85, 'x', { x: 13, y: -17 }))), 'a flat setup is not a bar frame')
+
 console.log('Around wrap shader and viewport pose tests passed')

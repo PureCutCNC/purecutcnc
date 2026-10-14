@@ -17,6 +17,23 @@
 import * as THREE from 'three'
 import { wrapPoint, type AroundFrame } from '../../engine/aroundFrame'
 
+/**
+ * A stable key of a frame's values (issue #395 G3). `SimulationBar` and its
+ * `frame` are rebuilt whenever the model's setup input is recomputed, so the
+ * viewport keys its Around effects on this string and never on the object's
+ * identity: an unrelated project edit must not tear the turn group down or
+ * re-frame the camera. `undefined` (a flat setup) keys as `''`.
+ */
+export function aroundFrameKey(frame: AroundFrame | undefined): string {
+  if (!frame) return ''
+  return `${frame.axis}:${frame.centre}:${frame.radius}:${frame.sheetStart}:${frame.circumference}`
+}
+
+/** Two frames are the same setup when every value the viewport draws with matches. */
+export function sameAroundFrame(a: AroundFrame | undefined, b: AroundFrame | undefined): boolean {
+  return aroundFrameKey(a) === aroundFrameKey(b)
+}
+
 /** Pivot in viewport (x, z, y) space; children retain their stock coordinates. */
 export function createBarTurnGroup(frame: AroundFrame): { pivot: THREE.Group; content: THREE.Group } {
   const pivot = new THREE.Group()
