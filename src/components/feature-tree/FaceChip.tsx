@@ -15,7 +15,7 @@
  */
 
 import { useI18n } from '../../i18n/i18nContext'
-import { isFaceEditInProgress } from '../../store/helpers/activeFace'
+import { activeFace, isFaceEditInProgress } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import { requestAuthoringFaceChange } from '../../store/workspaceFace'
 import type { SetupFace } from '../../types/project'
@@ -35,17 +35,20 @@ export function FaceChip({ face }: { face: SetupFace }) {
  * opens the confirmation for changing it. The change itself is never made
  * from here. An Around feature is never offered the change (issue #395): the
  * entry is left out rather than shown disabled, because geometry cannot move
- * between a flat face and the unrolled bar.
+ * between a flat face and the unrolled bar. The workspace being on Around
+ * hides it too (issue #1015 slice K): the change is refused there, so a
+ * button that silently does nothing is worse than none.
  */
 export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featureIds: readonly string[] }) {
   const { t } = useI18n()
   const busy = useProjectStore(isFaceEditInProgress)
+  const workspaceFace = useProjectStore((state) => activeFace(state.project))
   return (
     <div className="properties-field face-row">
       <span>{t('featureTree.face.authoringFace')}</span>
       <div className="face-row__value">
         <FaceChip face={face} />
-        {face === 'around' ? null : (
+        {face === 'around' || workspaceFace === 'around' ? null : (
           <button
             className="feat-btn face-row__change"
             type="button"

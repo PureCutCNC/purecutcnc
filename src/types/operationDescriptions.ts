@@ -34,6 +34,8 @@ interface OperationDescription {
  * which holds them in step.
  */
 export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
+  rotary_rough: 'rotaryRough',
+  rotary_finish: 'rotaryFinish',
   plasma_profile: 'plasmaProfile',
   pocket: 'pocket',
   v_carve: 'vCarve',
@@ -49,6 +51,8 @@ export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
 }
 
 export const operationDescriptions: Record<OperationKind, OperationDescription> = {
+  rotary_rough: { title: 'Rotary rough', shortSummary: 'Rough an imported model in radial layers', fullDescription: 'Turn a round bar and rough the imported model in radial layers, keeping stock at both ends for support.', keyPoints: [], exampleImageName: '' },
+  rotary_finish: { title: 'Rotary finish', shortSummary: 'Finish an imported model all around the bar', fullDescription: 'Run passes along the bar and step around it, following the imported model with a ball nose or flat end mill.', keyPoints: [], exampleImageName: '' },
   plasma_profile: { title: 'Plasma through-cut', shortSummary: 'Cut a closed contour through the sheet', fullDescription: 'Experimental plasma profile with scrap-side kerf and leads.', keyPoints: [], exampleImageName: '' },
   pocket: {
     title: 'Pocket',

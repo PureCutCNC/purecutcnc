@@ -90,6 +90,8 @@ const CLEARING_PATTERNS: OperationPatternSupport = {
 }
 
 export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, OperationPatternSupport | null>> = {
+  rotary_rough: null,
+  rotary_finish: null,
   plasma_profile: null,
   pocket: CLEARING_PATTERNS,
   surface_clean: CLEARING_PATTERNS,

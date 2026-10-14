@@ -581,7 +581,16 @@ function syntheticCases(): ParityCase[] {
   return cases
 }
 
-/** The full corpus, in a stable order. */
+/**
+ * The full corpus, in a stable order.
+ *
+ * The rotary kinds (`rotary_rough` / `rotary_finish`, issue #1015) are
+ * deliberately absent. Their dispatch returns `raw: null` and never unrolls the
+ * project, so the seam tests — which demand a traced flat Top result — cannot
+ * replay them; a corpus entry that fails every consumer is worse than none.
+ * `rotaryOperation.test.ts` and the G-code conformance corpus cover them end to
+ * end instead.
+ */
 export function buildParityCorpus(): ParityCase[] {
   return [...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
 }

@@ -64,6 +64,29 @@ function makeTarget(featureIds: string[]): OperationTarget {
   return { source: 'features', featureIds }
 }
 
+/** An imported mesh feature: rotary operations take only the `'model'` ones. */
+function makeModelFeature(id: string, operation: 'model' | 'add'): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'stl',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 10, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    stl: { format: 'stl', meshAssetId: 'mesh', scale: 1, axisSwap: 'none' },
+    operation,
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
 function projectWith(features: SketchFeature[]): Project {
   return projectWithFeatures(newProject(), features)
 }
@@ -201,6 +224,21 @@ function testFallbackPocketRemainsSubtractOnly(): void {
   )
 }
 
+// ── fallbackOperationTarget: rotary takes only a model-operation STL ──
+
+function testFallbackRotaryTakesOnlyModelStl(): void {
+  const project = projectWith([
+    makeModelFeature('plain', 'add'),
+    makeModelFeature('model', 'model'),
+  ])
+  const target = fallbackOperationTarget(project, 'rotary_finish')
+  assert(target.source === 'features', 'rotary fallback should use features source')
+  assert(
+    target.featureIds.length === 1 && target.featureIds[0] === 'model',
+    `rotary fallback must take only an STL whose operation is 'model', got ${target.featureIds.join(', ')}`,
+  )
+}
+
 // ── Run ────────────────────────────────────────────────────────────
 
 testClosedLineValidTargetForVCarve()
@@ -216,5 +254,6 @@ testFallbackVCarvePicksLineWhenNoSubtract()
 testFallbackVCarveSkipsOpenLine()
 testFallbackVCarveStockWhenNoCompatible()
 testFallbackPocketRemainsSubtractOnly()
+testFallbackRotaryTakesOnlyModelStl()
 
 console.log('operationDefaults V-carve Line-target tests passed')

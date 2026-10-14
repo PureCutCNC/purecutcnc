@@ -165,7 +165,7 @@ export function materializeCamPlan(project: Project, plan: CamPlanDraft): CamPla
     if (
       !toolRef
       || !isOperationTargetValid(next, operation.kind, operation.target)
-      || !targetAllowedInSetup(next, operation.target, next.activeSetupId)
+      || !targetAllowedInSetup(next, operation.target, next.activeSetupId, operation.kind)
     ) {
       return { ok: false, reason: 'invalid', message: `${draft.operation.name} no longer has a valid target or tool.` }
     }

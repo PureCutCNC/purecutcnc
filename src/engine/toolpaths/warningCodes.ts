@@ -326,6 +326,24 @@ export type ToolpathWarningCode =
    *  as an Engrave's carve depth or a countersink's derived plunge. No motion
    *  is generated (issue #395). */
   | 'aroundCutReachesCentreline'
+  /** Rotary finishing needs a cutter whose contact the sampler models: a ball
+   *  nose or a flat end mill. A V-bit's height depends on its own profile and a
+   *  drill has no boundary cut, so the sampler's value is not a safe tip
+   *  height for either. The operation emits no motion rather than an
+   *  approximate pass (issue #1015). */
+  | 'rotaryToolUnsupported'
+  /** The model reaches below the bar's centreline where the pass samples. A
+   *  tool tip cannot go below the axis without the bar's far side coming back
+   *  up into it, so a clamped point leaves that place uncut; the first such
+   *  place is named (issue #1015). */
+  | 'rotaryBelowCentreline'
+  /** End supports and workholding leave no model extent to machine. */
+  | 'rotaryNoRoom'
+  /** Part of the target mesh lies outside the bar — farther from its axis than
+   *  the bar's radius, or past one of its ends. The sampler only sees the bar's
+   *  own surface there, so those parts are machined as air; the operation still
+   *  runs and says so (issue #1015). */
+  | 'rotaryModelOutsideBar'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */

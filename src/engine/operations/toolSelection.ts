@@ -66,6 +66,8 @@ function hasAutoToolCeiling(kind: OperationKind): boolean {
     case 'edge_route_outside':
     case 'follow_line':
     case 'rough_surface':
+    case 'rotary_rough':
+    case 'rotary_finish':
     case 'finish_surface':
     case 'finish_surface_cleanup':
       return true
@@ -95,6 +97,8 @@ export function preferredToolTypes(kind: OperationKind): ToolType[] {
       // The engine only warns (not errors) when a non-drill bit is used, and the
       // bundled library ships no drills, so a flat endmill is an acceptable last resort.
       return ['drill', 'flat_endmill']
+    case 'rotary_rough':
+    case 'rotary_finish':
     case 'finish_surface':
     case 'finish_surface_cleanup':
       return ['ball_endmill', 'flat_endmill']

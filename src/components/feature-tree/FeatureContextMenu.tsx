@@ -135,7 +135,9 @@ export function FeatureContextMenu({
         >
           {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : menuFeatureFace === 'around' ? 'featureTree.face.switchToAroundToEdit' : 'featureTree.face.switchToTopToEdit')}
         </button>
-        {menuFeatureFace === 'around' ? null : (
+        {/* From Around the change is refused (`requestAuthoringFaceChange`), so
+            the entry is left out rather than dead (issue #1015 slice K). */}
+        {menuFeatureFace === 'around' || workspaceFace === 'around' ? null : (
           <>
             <div className="feature-context-menu__separator" />
             <button

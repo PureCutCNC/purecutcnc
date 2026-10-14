@@ -307,6 +307,8 @@ function intersectPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): 
  * with no explanation is indistinguishable from an oversight.
  */
 const FOLDS_NON_TARGET_SUBTRACTS: Record<OperationKind, boolean> = {
+  rotary_rough: false,
+  rotary_finish: false,
   plasma_profile: false,
   // Clearing kinds: the fold is the point. A subtract that opens the wall or
   // eats an island leaves void this pass should not machine around.

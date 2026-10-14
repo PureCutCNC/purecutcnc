@@ -685,6 +685,18 @@ export const canvas = {
   any: (page: Page) => page.locator('canvas').first(),
 }
 
+// ── 3D viewport (issue #1015) ──────────────────────────────────────
+
+/**
+ * The 3D preview panel: its canvas, and the `.viewport-3d` element that carries
+ * the scene's published `data-model-*` / `data-toolpath-*` attributes.
+ */
+export const viewport3d = {
+  canvas: (page: Page) => page.locator('#workspace-panel-preview3d canvas'),
+
+  overlay: (page: Page) => page.locator('#workspace-panel-preview3d .viewport-3d'),
+}
+
 // ── Overlap feature picker ─────────────────────────────────────────
 
 export const overlapFeaturePicker = {

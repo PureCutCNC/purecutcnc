@@ -42,7 +42,7 @@
 
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { Operation, OperationKind, Tool } from '../../types/project'
-import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
+import { isRotaryOperationKind, isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import { roughingRingIsTheFinishedWall } from '../../engine/toolpaths/xyLead'
@@ -64,7 +64,8 @@ import type { OperationParamRefKind } from './operationParamRefData'
  *  where the pass cuts full depth in one go (finish edge routes). */
 export function showStepdown(operation: Operation): boolean {
   if (
-    operation.kind === 'plasma_profile'
+    operation.kind === 'rotary_finish'
+    || operation.kind === 'plasma_profile'
     || operation.kind === 'v_carve'
     || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
@@ -224,6 +225,8 @@ export const OPERATION_FIELD_IDS = [
   'finishFloor',
   'stockToLeaveRadial',
   'stockToLeaveAxial',
+  'rotaryChuckSupport',
+  'rotaryTailSupport',
   // Speeds & feeds.
   'feed',
   'plungeFeed',
@@ -355,6 +358,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && (operation.kind !== 'finish_surface' || isWaterlineFinish(operation)),
   },
   { id: 'stockToLeaveAxial', group: 'depth', paramRef: 'stockAxial', appliesTo: leavesStock },
+  { id: 'rotaryChuckSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
+  { id: 'rotaryTailSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
   // ── Speeds & feeds — the numbers that change with the material. Slot feed and
   //   its engagement mode stay adjacent: the mode governs how the reduction
   //   above it is applied, so splitting them reads as two unrelated settings.
@@ -617,6 +622,7 @@ export function operationFieldsForGroup(
 ): OperationFieldSpec[] {
   return OPERATION_FIELDS.filter((field) => {
     const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
+    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport'].includes(field.id)) return false
     if (operation.kind === 'plasma_profile' && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'feed', 'arcFitting'].includes(field.id)) return false
     return fieldGroup === group && field.appliesTo(operation, tool)
   })

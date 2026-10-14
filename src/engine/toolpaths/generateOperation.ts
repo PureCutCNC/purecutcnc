@@ -44,6 +44,8 @@
  * branches on a face.
  */
 
+import { isRotaryOperationKind } from '../../types/project'
+import { generateRotaryOperation } from './rotaryOperation'
 import { generatePlasmaProfileToolpath, plasmaSetupIsTop } from './plasma'
 
 import { applyClampWarnings } from './clamps'
@@ -144,6 +146,10 @@ export function computeOperationToolpath(
       result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation)], bounds: null },
       raw: null,
     }
+  }
+
+  if (isRotaryOperationKind(operation.kind)) {
+    return { result: generateRotaryOperation(project, operation), raw: null }
   }
 
   const around = aroundFrameForOperation(project, operation)

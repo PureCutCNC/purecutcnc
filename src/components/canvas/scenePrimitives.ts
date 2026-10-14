@@ -479,6 +479,77 @@ export function drawAroundTurnLines(
   ctx.restore()
 }
 
+/** The band label's type size, and the inset that keeps it off the band edge. */
+const MODEL_BAND_LABEL_FONT = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+const MODEL_BAND_LABEL_LINE = 13
+const MODEL_BAND_LABEL_PAD = 5
+
+/**
+ * The imported models machined inside the bar, as bands on the Around sheet
+ * (issue #1015 slice K). The model's geometry lives inside the bar, so it can
+ * neither be drawn nor selected there; a band at its extent along the bar, one
+ * circumference across, is what tells the user where it is. The band is
+ * reference only — never hit-tested, snapped to, or given a context menu.
+ *
+ * `label` names a model for the note drawn at the top-left of the part of the
+ * band that is on screen. The note is left out when it does not fit that
+ * visible part, so a short model does not get a label wider than the thing it
+ * labels, and an off-screen band gets none at all.
+ */
+export function drawAroundModelBands(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'modelBands'>,
+  vt: ViewTransform,
+  label: (name: string) => string,
+): void {
+  if (sheet.modelBands.length === 0) return
+  const palette = canvasColors()
+  ctx.save()
+  ctx.font = MODEL_BAND_LABEL_FONT
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  for (const band of sheet.modelBands) {
+    const from = sheet.axis === 'x'
+      ? worldToCanvas({ x: band.along.min, y: sheet.sheetStart }, vt)
+      : worldToCanvas({ x: sheet.sheetStart, y: band.along.min }, vt)
+    const to = sheet.axis === 'x'
+      ? worldToCanvas({ x: band.along.max, y: sheet.sheetStart + sheet.circumference }, vt)
+      : worldToCanvas({ x: sheet.sheetStart + sheet.circumference, y: band.along.max }, vt)
+    const x = Math.min(from.cx, to.cx)
+    const y = Math.min(from.cy, to.cy)
+    const width = Math.abs(to.cx - from.cx)
+    const height = Math.abs(to.cy - from.cy)
+    ctx.fillStyle = hexToRgba(palette.featureModelFill, 0.14)
+    ctx.strokeStyle = hexToRgba(palette.featureModelStroke, 0.6)
+    ctx.lineWidth = 1.4
+    ctx.setLineDash([6, 4])
+    ctx.fillRect(x, y, width, height)
+    ctx.strokeRect(x, y, width, height)
+    ctx.setLineDash([])
+    const text = label(band.name)
+    const textWidth = ctx.measureText(text).width
+    // The note sits at the top-left of the band's *visible* part, not of the
+    // band itself: zoomed in far enough that the band's own corner is off
+    // screen, a label pinned to that corner is drawn off screen and vanishes
+    // (the manager saw this). The canvas is measured in CSS pixels, as the
+    // other canvas draw helpers here measure it (`ctx.canvas.width/height`).
+    const visibleX = Math.max(x, 0)
+    const visibleY = Math.max(y, 0)
+    const visibleWidth = Math.min(x + width, ctx.canvas.width) - visibleX
+    const visibleHeight = Math.min(y + height, ctx.canvas.height) - visibleY
+    // Readable only where the visible part can hold it: a short model along the
+    // bar (or a very thin one, on a Y bar) has no room for the note at the
+    // default zoom, so it is left out rather than spilling past what it
+    // describes. An off-screen band has nothing visible to hold it either.
+    if (visibleWidth < textWidth + MODEL_BAND_LABEL_PAD * 2 || visibleHeight < MODEL_BAND_LABEL_LINE) continue
+    ctx.fillStyle = palette.labelBackground
+    ctx.fillRect(visibleX, visibleY, textWidth + MODEL_BAND_LABEL_PAD * 2, MODEL_BAND_LABEL_LINE)
+    ctx.fillStyle = palette.labelText
+    ctx.fillText(text, visibleX + MODEL_BAND_LABEL_PAD, visibleY + 1)
+  }
+  ctx.restore()
+}
+
 /**
  * The stock outline the view frames (issue #395): the unrolled sheet on
  * Around, with its turn lines and without click-to-edit size labels (the

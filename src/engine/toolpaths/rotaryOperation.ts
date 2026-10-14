@@ -1,0 +1,81 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { Operation, Project } from '../../types/project'
+import { isRoundStock } from '../../types/project'
+import { operationFace } from '../setupTargets'
+import { setupForOperation } from '../setupOrientation'
+import { resolveFinishModelSurface } from './finishModelSurface'
+import { normalizeToolForProject } from './geometry'
+import { splitFeatureTargets } from './regions'
+import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
+import type { ToolpathResult } from './types'
+import type { ToolpathWarningCode } from './warningCodes'
+
+/** Adapt the saved operation to the rotary generators; the mesh stays in stock space. */
+export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
+  const empty = (code: ToolpathWarningCode): ToolpathResult => ({
+    operationId: operation.id, moves: [], bounds: null,
+    warnings: [{ code, params: { operation: operation.name } }],
+  })
+  const stock = project.stock
+  if (!isRoundStock(stock) || operationFace(project, operation) !== 'around'
+    || setupForOperation(project, operation)?.orientation.axis !== stock.axis) return empty('aroundStockMismatch')
+  if (operation.target.source !== 'features' || operation.target.featureIds.length === 0) return empty('finishNeedsModel')
+  const targets = splitFeatureTargets(project, operation.target.featureIds)
+  if (targets.missingFeatureIds.length > 0) return empty('targetsNotFound')
+  const models = targets.machiningFeatures.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+  if (models.length === 0) return empty('finishNotMesh')
+  const record = project.tools.find((tool) => tool.id === operation.toolRef)
+  if (!record) return empty('noToolAssigned')
+  const tool = normalizeToolForProject(record, project)
+  if (tool.type !== 'ball_endmill' && tool.type !== 'flat_endmill') return empty('rotaryToolUnsupported')
+  if (!(tool.diameter > 0) || !Number.isFinite(tool.diameter)) return empty('toolDiameterPositive')
+  if (!(operation.stepover > 0) || !Number.isFinite(operation.stepover)) return empty('operationStepoverRatioRange')
+  if (operation.kind === 'rotary_rough' && (!(operation.stepdown > 0) || !Number.isFinite(operation.stepdown))) return empty('stepdownPositive')
+  const surface = resolveFinishModelSurface(project, models)
+  if (!surface) return empty('surface3dLoadFailed')
+  let min = Infinity
+  let max = -Infinity
+  const axisIndex = stock.axis === 'x' ? 0 : 1
+  for (let i = axisIndex; i < surface.mesh.positions.length; i += 3) {
+    min = Math.min(min, surface.mesh.positions[i])
+    max = Math.max(max, surface.mesh.positions[i])
+  }
+  const range = rotaryAlongRange(stock, project.clamps, { min, max }, tool, {
+    chuckEnd: operation.rotaryChuckSupport ?? 0,
+    tailEnd: operation.rotaryTailSupport ?? 0,
+  })
+  if (!range) return empty('rotaryNoRoom')
+  const radius = stock.thickness / 2
+  const rapidRadius = project.meta.maxTravelZ - radius
+  // A saved rapid height below the bar surface cannot clear it. Use one tool
+  // diameter above the bar when maxTravelZ does not provide that clearance.
+  const safeRadius = rapidRadius > radius ? rapidRadius : radius + tool.diameter
+  const stepover = Math.max((operation.stepover ?? 0.5) * tool.diameter, 1e-3)
+  const params = {
+    stepover, stepdown: operation.stepdown,
+    stockToLeave: operation.stockToLeaveRadial,
+    sampleSpacing: operation.kind === 'rotary_finish' ? tool.radius / 4 : tool.radius / 2,
+    requestedCellSize: Math.min(tool.radius / 3, stepover * 0.5),
+    alongStart: range.start, alongEnd: range.end, safeRadius,
+  }
+  const generator = operation.kind === 'rotary_rough' ? generateRotaryRough : generateRotaryFinish
+  const result = generator(operation.id, surface.mesh, stock, tool, params, {})
+  return { ...result, warnings: result.warnings.map((warning) => ({
+    ...warning, params: { ...warning.params, operation: operation.name },
+  })) }
+}

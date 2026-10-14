@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { isRotaryOperationKind } from '../../types/project'
 import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import { PlasmaOperationFields } from './PlasmaOperationFields'
 
@@ -23,6 +24,7 @@ import { CamSetupSectionView } from './CamSetupSectionView'
 import { SetupPropertiesDialog } from './SetupPropertiesDialog'
 import { SetupOperationControls } from './SetupOperationControls'
 import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
+import { RotaryTargetPicker } from './RotaryTargetPicker'
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -69,7 +71,7 @@ import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBookletExport, type BookletStage } from './bookletExport'
 import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
-import { getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
+import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
 import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
@@ -373,6 +375,10 @@ function operationAddButtonLabel(kind: OperationKind): string {
       return camT('cam.opButton.edgeOut')
     case 'surface_clean':
       return camT('cam.opButton.surface')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.opButton.roughSurface')
     case 'finish_surface':
@@ -387,7 +393,7 @@ function operationAddButtonLabel(kind: OperationKind): string {
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'plasma_profile' && kind !== 'follow_line'
+  return !isRotaryOperationKind(kind) && kind !== 'plasma_profile' && kind !== 'follow_line'
     && kind !== 'v_carve'
     && kind !== 'v_carve_medial'
     && kind !== 'drilling'
@@ -675,9 +681,13 @@ export function CAMPanel({
         button('finish_surface_cleanup'),
         button('finish_surface'),
         button('plasma_profile'),
+        // The model lives in the bar: the rotary rows are offered on Around
+        // whether or not one exists, and are refused with their own hint when
+        // it does not (issue #1015).
+        ...rotaryAddKindsForFace(currentSetupFace).map((kind) => button(kind)),
       ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
-    [project, addSelection, machine]
+    [project, addSelection, machine, currentSetupFace]
   )
 
   const selectedNewOperationHint = selectedNewOperationKind
@@ -1165,7 +1175,16 @@ export function CAMPanel({
           ) : null}
         </>
       ),
-      targetSource: () => (
+      targetSource: () => isRotaryOperationKind(operation.kind) ? (
+        // A rotary operation machines the imported model inside the bar, which
+        // is not selectable on the Around sheet: pick it from the list instead
+        // of from the selection (issue #1015 slice K).
+        <RotaryTargetPicker
+          project={project}
+          target={operation.target}
+          onChange={(target) => updateOperation(operation.id, { target })}
+        />
+      ) : (
         <div className="properties-field">
           <span>{camT('cam.operation.targetSource')}</span>
           <button
@@ -1931,6 +1950,20 @@ export function CAMPanel({
           <OperationParameterReference kind="maxRings" />
         </label>
       ),
+      rotaryChuckSupport: () => (
+        <label className="properties-field" title={camT('cam.rotary.chuckSupportTooltip')}>
+          <span>{camT('cam.rotary.chuckSupport')}</span>
+          <DraftLengthInput value={operation.rotaryChuckSupport ?? 0} units={project.meta.units} min={0}
+            onCommit={(value) => updateOperation(operation.id, { rotaryChuckSupport: value })} />
+        </label>
+      ),
+      rotaryTailSupport: () => (
+        <label className="properties-field" title={camT('cam.rotary.tailSupportTooltip')}>
+          <span>{camT('cam.rotary.tailSupport')}</span>
+          <DraftLengthInput value={operation.rotaryTailSupport ?? 0} units={project.meta.units} min={0}
+            onCommit={(value) => updateOperation(operation.id, { rotaryTailSupport: value })} />
+        </label>
+      ),
       stockToLeaveAxial: () => (
         <label className="properties-field">
           <span>{camT('cam.operation.stockToLeaveAxial')}</span>
@@ -1945,6 +1978,7 @@ export function CAMPanel({
       ),
     }
 
+    const rotaryHint = rotaryOperationHint(project, operation)
     const hasWarnings = Boolean(toolpathWarnings && toolpathWarnings.length > 0)
     const showBookletMessage = bookletExportMessage?.operationId === operation.id
 
@@ -1975,6 +2009,7 @@ export function CAMPanel({
             ) : null}
           </div>
         ) : null}
+        {rotaryHint ? <div className="cam-field-note">{rotaryHint}</div> : null}
         {operation.kind === 'plasma_profile' ? <PlasmaOperationFields operation={operation} project={project} onChange={(patch) => updateOperation(operation.id, patch)} /> : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {

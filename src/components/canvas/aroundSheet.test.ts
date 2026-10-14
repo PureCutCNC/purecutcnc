@@ -38,8 +38,9 @@
  * Run with: npx tsx src/components/canvas/aroundSheet.test.ts
  */
 
-import { DEFAULT_SETUP_ID, newProject, roundStock } from '../../types/project'
-import type { Clamp, MachiningSetup, Project, RoundStock } from '../../types/project'
+import { DEFAULT_SETUP_ID, newProject, rectProfile, roundStock } from '../../types/project'
+import type { Clamp, MachiningSetup, Project, RoundStock, SketchFeature, SketchProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   aroundClampBand,
   aroundOrigin,
@@ -255,6 +256,104 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
   assert(authoredOnFace({ authoringFace: 'around' }, 'around'), 'an Around feature is on the sheet')
   assert(!authoredOnFace({ authoringFace: 'top' }, 'around'), 'a Top feature is not')
   assert(authoredOnFace({}, 'top'), 'a feature naming no face is on Top')
+}
+
+// ── Model bands (issue #1015 slice K) ────────────────────────
+//
+// The imported model lives inside the bar, so the sheet cannot draw it: it
+// reports a band at the model's extent along the bar instead. Mutations
+// checked one at a time against these assertions:
+// - the band read from the across axis instead of the along one → the Y-bar
+//   assertion fails;
+// - `along` not clipped to the sheet → "a model running past the bar is
+//   clipped" fails;
+// - a hidden feature, or a non-model feature, included → the visible-models
+//   assertion fails;
+// - a model wholly outside the bar still banded → "a model wholly outside the
+//   bar is no band" fails;
+// - the bands dropped or reordered → the band-by-id assertions fail.
+
+/** A visible imported model with a footprint at `profile`, as the tree holds it. */
+function modelFeature(id: string, profile: SketchProfile, overrides: Partial<SketchFeature> = {}): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'stl',
+    stl: null,
+    folderId: null,
+    sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'model',
+    authoringFace: 'top',
+    z_top: 10,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+    ...overrides,
+  }
+}
+
+{
+  // An off-centre model on the X bar (10..210): the band is 30..90, nothing
+  // like symmetric, so a band that swapped its ends could not pass.
+  const project = projectWithFeatures(aroundProject(X_BAR), [modelFeature('bust', rectProfile(30, 40, 60, 5))])
+  const frame = aroundSheet(project)!
+  assert(frame.modelBands.length === 1, `one imported model is one band (${frame.modelBands.length})`)
+  const band = frame.modelBands[0]
+  assert(band.featureId === 'bust' && band.name === 'bust', 'the band names the model it stands for')
+  assert(
+    JSON.stringify(band.along) === JSON.stringify({ min: 30, max: 90 }),
+    `the band is the model's extent along the bar: ${JSON.stringify(band.along)}`,
+  )
+}
+
+{
+  // Only visible imported models become bands, in the project's order.
+  const project = projectWithFeatures(aroundProject(X_BAR), [
+    modelFeature('bust', rectProfile(30, 40, 60, 5)),
+    modelFeature('hidden', rectProfile(120, 40, 20, 5), { visible: false }),
+    { ...modelFeature('plate', rectProfile(150, 40, 20, 5)), kind: 'rect', operation: 'add' },
+    modelFeature('vase', rectProfile(170, 40, 10, 5)),
+  ])
+  const frame = aroundSheet(project)!
+  assert(
+    frame.modelBands.map((entry) => entry.featureId).join(',') === 'bust,vase',
+    `a hidden or non-model feature is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
+  )
+}
+
+{
+  // A bar along Y measures the model along Y, not X.
+  const project = projectWithFeatures(aroundProject(Y_BAR), [modelFeature('bust', rectProfile(4, 6, 3, 4))])
+  const frame = aroundSheet(project)!
+  assert(
+    JSON.stringify(frame.modelBands[0].along) === JSON.stringify({ min: 6, max: 10 }),
+    `a Y bar measures the model along Y: ${JSON.stringify(frame.modelBands[0].along)}`,
+  )
+}
+
+{
+  // A model running past both ends of the bar is clipped to the sheet.
+  const project = projectWithFeatures(aroundProject(X_BAR), [modelFeature('long', rectProfile(-50, 40, 320, 5))])
+  const frame = aroundSheet(project)!
+  assert(
+    JSON.stringify(frame.modelBands[0].along) === JSON.stringify({ min: 10, max: 210 }),
+    `a model running past the bar is clipped to the sheet: ${JSON.stringify(frame.modelBands[0].along)}`,
+  )
+}
+
+{
+  // A model wholly past one end of the bar clips to an inside-out extent
+  // (`min > max`): there is no width to draw, so it is left out rather than
+  // banded with no extent.
+  const project = projectWithFeatures(aroundProject(X_BAR), [
+    modelFeature('before', rectProfile(-60, 40, 20, 5)),
+    modelFeature('after', rectProfile(230, 40, 20, 5)),
+  ])
+  const frame = aroundSheet(project)!
+  assert(
+    frame.modelBands.length === 0,
+    `a model wholly outside the bar is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
+  )
 }
 
 console.log('aroundSheet: all assertions passed')

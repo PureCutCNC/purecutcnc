@@ -71,6 +71,8 @@ const ALL_KINDS: OperationKind[] = [
   'edge_route_inside',
   'edge_route_outside',
   'surface_clean',
+  'rotary_rough',
+  'rotary_finish',
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',

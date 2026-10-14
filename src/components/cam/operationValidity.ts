@@ -24,6 +24,8 @@
  * extracted verbatim from `CAMPanel.tsx` so the panel's hints are unchanged.
  */
 
+import { isRoundStock, isRotaryOperationKind } from '../../types/project'
+import { operationFace } from '../../engine/setupTargets'
 import { activeFace } from '../../store/helpers/activeFace'
 import type { SelectionState } from '../../store/types'
 import type { Operation, OperationKind, OperationPass, OperationTarget, Project, SetupFace } from '../../types/project'
@@ -53,6 +55,10 @@ export function operationKindLabel(kind: OperationKind): string {
       return camT('cam.opLabel.edgeRouteOutside')
     case 'surface_clean':
       return camT('cam.opLabel.surfaceClean')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.opLabel.roughSurface')
     case 'finish_surface':
@@ -115,11 +121,91 @@ export function activeSetupTargetHint(project: Project, featureIds: readonly str
   )
 }
 
+function rotaryTargetHint(project: Project, operation: Operation): string | null {
+  const target = operation.target
+  // A rotary operation's target is the model itself, so "no target" and "no
+  // imported model in the project" are the same refusal: say which rotary kind
+  // needs the model, not the flat 3D-surface message (#1015).
+  if (target.source !== 'features' || target.featureIds.length === 0) return rotaryNoModelHint(operation.kind)
+  const features = resolveFeatureInstances(project, target.featureIds)
+  if (features.length !== target.featureIds.length) return camT('cam.hint.featuresNotFound')
+  return features.every((feature) => feature.kind === 'stl' && feature.operation === 'model')
+    ? null : camT('cam.rotary.modelOnly')
+}
+
+/**
+ * The imported models a rotary operation can machine, in project order. The
+ * model lives in the bar and only rotary operations target it, so the whole
+ * project is the candidate set regardless of what is selected (issue #1015).
+ */
+function importedModelFeatures(project: Project): ResolvedSketchFeature[] {
+  return resolveFeatureInstances(project)
+    .filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+}
+
+function importedModelFeatureIds(project: Project): string[] {
+  return importedModelFeatures(project).map((feature) => feature.id)
+}
+
+/** An imported model a rotary operation can machine, as the target picker lists it. */
+export interface RotaryTargetModel {
+  id: string
+  name: string
+}
+
+/** The models the rotary target picker offers, in the project's own order. */
+export function rotaryTargetModels(project: Project): RotaryTargetModel[] {
+  return importedModelFeatures(project).map((feature) => ({ id: feature.id, name: feature.name }))
+}
+
+/**
+ * The target a rotary operation's model checklist writes when `featureId` is
+ * ticked or unticked (issue #1015 slice K). The list is the project's imported
+ * models in project order, and an id in the current target that names no model
+ * any more is dropped rather than written back. Unticking the last remaining
+ * model is refused: a rotary operation always names the model it machines.
+ */
+export function rotaryTargetToggle(project: Project, target: OperationTarget, featureId: string): OperationTarget {
+  const models = importedModelFeatureIds(project)
+  const checked = new Set(models.filter((id) => target.source === 'features' && target.featureIds.includes(id)))
+  if (checked.has(featureId)) {
+    if (checked.size > 1) checked.delete(featureId)
+  } else {
+    checked.add(featureId)
+  }
+  return { source: 'features', featureIds: models.filter((id) => checked.has(id)) }
+}
+
+/** The per-kind hint for a rotary add-menu row when the project has no model. */
+function rotaryNoModelHint(kind: OperationKind): string {
+  return camT(kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel')
+}
+
+/** Saved-operation refusals shown above the rotary operation's controls. */
+export function rotaryOperationHint(project: Project, operation: Operation): string | null {
+  if (!isRotaryOperationKind(operation.kind)) return null
+  if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+  if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
+  const targetHint = rotaryTargetHint(project, operation)
+  if (targetHint) return targetHint
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!tool) return camT('cam.operation.noTool')
+  return tool.type === 'ball_endmill' || tool.type === 'flat_endmill' ? null : camT('cam.rotary.toolRequired')
+}
+
 export function getOperationAddHint(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+    if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
+    // The model lives in the bar and only rotary operations touch it, so these
+    // rows do not depend on the selection (issue #1015): any imported model
+    // makes them available, and the selection only narrows what Add targets.
+    return importedModelFeatureIds(project).length > 0 ? null : rotaryNoModelHint(kind)
+  }
   if (selection.selectedFeatureIds.length === 0) {
     return emptySelectionHint(kind)
   }
@@ -135,6 +221,11 @@ function getOperationAddHintWithMap(
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    const features = selection.selectedFeatureIds.map((id) => featureById.get(id))
+    return features.length > 0 && features.every((feature) => feature?.kind === 'stl' && feature.operation === 'model')
+      ? null : camT('cam.rotary.modelOnly')
+  }
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target, so any selection containing it is rejected up front
   // with one clear message (issue #199).
@@ -323,6 +414,19 @@ export function operationTargetFromSelection(
   selection: SelectionState,
   kind: OperationKind,
 ): OperationTarget | null {
+  if (isRotaryOperationKind(kind)) {
+    // The rotary rows do not depend on the selection (issue #1015): a selected
+    // model narrows the target, otherwise every imported model in the project
+    // is machined as one surface.
+    if (getOperationAddHint(project, selection, kind) !== null) {
+      return null
+    }
+    const models = importedModelFeatureIds(project)
+    const selected = new Set(selection.selectedFeatureIds)
+    const chosen = models.filter((id) => selected.has(id))
+    return { source: 'features', featureIds: chosen.length > 0 ? chosen : models }
+  }
+
   if (selection.selectedFeatureIds.length === 0) {
     return null
   }
@@ -361,6 +465,8 @@ const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
   surface_clean: '2d',
   follow_line: '2d',
   drilling: '2d',
+  rotary_rough: '3d',
+  rotary_finish: '3d',
   rough_surface: '3d',
   finish_surface: '3d',
   finish_surface_cleanup: '3d',
@@ -430,6 +536,10 @@ export function quickOperationLabel(kind: OperationKind): string {
       return camT('cam.quickOp.drilling')
     case 'plasma_profile':
       return camT('cam.quickOp.plasmaProfile')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.quickOp.roughSurface')
     case 'finish_surface':
@@ -498,12 +608,27 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
     }))
 }
 
+/**
+ * The rotary kinds "Add to <face>" offers for the setup face in view, before
+ * the machine filter and before validity. A model lives in the bar and only
+ * rotary operations target it, so they are offered on Around alone — never on
+ * Top or Bottom (issue #1015). Every other kind is offered on every face.
+ */
+export function rotaryAddKindsForFace(face: SetupFace): OperationKind[] {
+  return face === 'around' ? ['rotary_rough', 'rotary_finish'] : []
+}
+
 function compatibleFeatureIdsForOperationWithMap(
   project: Project,
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string[] {
   const face = activeSetupFace(project)
+  if (isRotaryOperationKind(kind)) {
+    // Every imported model is a candidate whatever is selected: the model
+    // lives in the bar, not on a face (issue #1015).
+    return importedModelFeatureIds(project)
+  }
   return project.features
     .filter((feature) => getOperationAddHintWithMap(
       singleFeatureSelection(feature.id),
