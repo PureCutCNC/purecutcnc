@@ -39,10 +39,15 @@ import { getProject, seedProject } from './helpers'
 import { defaultTool, roundStock, roundStockCentre, type MachineDefinition, type Project, type RoundStock, type SketchProfile } from '../src/types/project'
 
 const BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
-const SHEET_START = BAR.profile.start.y
+/**
+ * The frame's zero line, the bar's centreline across (issue #1026). The
+ * sheet's own first edge is half a circumference below it, so a fixture placed
+ * relative to the zero line keeps the angle it was authored at.
+ */
+const ZERO = roundStockCentre(BAR)
 const CIRCUMFERENCE = Math.PI * BAR.thickness
 /** Flat coordinates of the Around pocket: on the sheet, x along, y across. */
-const POCKET = { x: 50, y: SHEET_START + 12, w: 60, h: 10 }
+const POCKET = { x: 50, y: ZERO + 12, w: 60, h: 10 }
 
 /** A 3 mm flat endmill in mm, referenced by its real id (issue #395 slice F). */
 const TOOL = { ...defaultTool('mm', 1), id: 't1', name: '3 mm Flat Endmill', diameter: 3, maxCutDepth: 40 }
@@ -115,8 +120,8 @@ async function seedAroundProject(page: Page): Promise<Project> {
       id: 'around-line',
       operation: 'line',
       profile: {
-        start: { x: 20, y: SHEET_START + 5 },
-        segments: [{ type: 'line', to: { x: 180, y: SHEET_START + 1.5 * CIRCUMFERENCE } }],
+        start: { x: 20, y: ZERO + 5 },
+        segments: [{ type: 'line', to: { x: 180, y: ZERO + 1.5 * CIRCUMFERENCE } }],
         closed: false,
       },
     },
@@ -402,8 +407,8 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
   }).toBeGreaterThan(0)
 
   // The bar view is an A-axis job, so the readout has a fourth cell and its
-  // angle leaves zero as the pocket turns away from the sheet's start line
-  // (issue #395).
+  // angle leaves zero as the pocket turns away from the zero line — the bar's
+  // centreline across (issues #395, #1026).
   const coordA = ui.simSetup.coordA(page)
   await expect(coordA).toHaveCount(1)
   await expect.poll(async () => Math.abs(Number((await coordA.textContent())?.replace('°', '') ?? '0')), {

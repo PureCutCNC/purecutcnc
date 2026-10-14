@@ -24,15 +24,17 @@
  * - the sheet one diameter across instead of one circumference → "the sheet is
  *   one circumference across" fails;
  * - the sheet swapped for a Y bar (X/Y swapped) → the Y-bar assertions fail;
+ * - the turn lines taken from the sheet's first edge instead of the zero line
+ *   (issue #1026) → "the zero line is the only solid turn" fails;
  * - turn lines limited to the sheet → "a range past the sheet keeps its turns"
  *   fails;
- * - `k = 0` not solid → "the start line is the only solid turn" fails;
+ * - `k = 0` not solid → "the zero line is the only solid turn" fails;
  * - clamp bands keeping their own across extent → "a band spans the sheet
  *   across" fails;
  * - the band not following the visible range → "a band spans the whole visible
  *   range across" fails;
  * - the origin marker keeping the bar's across coordinate → "the origin lands
- *   on the start line" fails;
+ *   on the zero line" fails;
  * - null checks removed → the Top/Bottom/block assertions fail.
  *
  * Run with: npx tsx src/components/canvas/aroundSheet.test.ts
@@ -99,24 +101,27 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
   assert(sheet !== null, 'a bar on Around has a sheet')
   const frame = sheet!
   assert(frame.axis === 'x', 'an X bar keeps X as the along axis')
-  near(frame.sheetStart, 30, 'the sheet starts at the bar minimum across')
+  near(frame.zero, 50, 'the zero line is the bar centreline')
+  near(frame.sheetStart, 50 - 20 * Math.PI, "the sheet's first edge is half a circumference below the zero line")
   near(frame.circumference, 40 * Math.PI, 'the circumference is pi times the diameter')
   near(frame.radius, 20, 'the radius is half the diameter')
   near(frame.centre, 50, 'the frame carries the bar centreline')
-  assert(JSON.stringify(frame.rect) === JSON.stringify({ minX: 10, maxX: 210, minY: 30, maxY: 30 + 40 * Math.PI }),
-    `the sheet is one circumference across: ${JSON.stringify(frame.rect)}`)
+  assert(JSON.stringify(frame.rect) === JSON.stringify({
+    minX: 10, maxX: 210, minY: 50 - 20 * Math.PI, maxY: 50 + 20 * Math.PI,
+  }), `the sheet is one circumference across, centred on the zero line: ${JSON.stringify(frame.rect)}`)
   assert(JSON.stringify(frame.along) === JSON.stringify({ min: 10, max: 210 }), 'the sheet keeps the bar extent along')
 }
 
 {
   const frame = aroundSheet(aroundProject(Y_BAR))!
   assert(frame.axis === 'y', 'a Y bar keeps Y as the along axis')
-  near(frame.sheetStart, 3, 'the sheet starts at the bar minimum across (X)')
+  near(frame.zero, 4, 'the zero line is the bar centreline (X)')
+  near(frame.sheetStart, 4 - Math.PI, "the sheet's first edge is half a circumference below the zero line (X)")
   near(frame.circumference, 2 * Math.PI, 'the Y bar circumference')
-  assert(JSON.stringify(frame.rect) === JSON.stringify({ minX: 3, maxX: 3 + 2 * Math.PI, minY: 5, maxY: 13 }),
+  assert(JSON.stringify(frame.rect) === JSON.stringify({ minX: 4 - Math.PI, maxX: 4 + Math.PI, minY: 5, maxY: 13 }),
     `X and Y are never swapped: ${JSON.stringify(frame.rect)}`)
   assert(JSON.stringify(frame.along) === JSON.stringify({ min: 5, max: 13 }), 'the Y bar keeps its length along Y')
-  assert(frame.origin.x === 3 && frame.origin.y === 62, 'the Y origin lands on the start line at its along coordinate')
+  assert(frame.origin.x === 4 && frame.origin.y === 62, 'the Y origin lands on the zero line at its along coordinate')
 }
 
 // ── An across coordinate that is off the origin ──────────────
@@ -124,9 +129,11 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
 {
   const offOrigin = roundStock(40, 200, 'x', { x: -120, y: -35 })
   const frame = aroundSheet(aroundProject(offOrigin))!
-  near(frame.sheetStart, -35, 'the sheet starts at the bar minimum across, wherever that is')
-  assert(JSON.stringify(frame.rect) === JSON.stringify({ minX: -120, maxX: 80, minY: -35, maxY: -35 + 40 * Math.PI }),
-    `an off-origin bar frames the sheet where the bar is: ${JSON.stringify(frame.rect)}`)
+  near(frame.zero, -15, 'the zero line is the bar centreline, wherever that is')
+  near(frame.sheetStart, -15 - 20 * Math.PI, "the sheet's first edge is half a circumference below it")
+  assert(JSON.stringify(frame.rect) === JSON.stringify({
+    minX: -120, maxX: 80, minY: -15 - 20 * Math.PI, maxY: -15 + 20 * Math.PI,
+  }), `an off-origin bar frames the sheet where the bar is: ${JSON.stringify(frame.rect)}`)
 }
 
 // ── An inch bar ──────────────────────────────────────────────
@@ -144,19 +151,25 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
 
 {
   const frame = aroundSheet(aroundProject(X_BAR))!
-  // No range given: only the sheet's own two edges are turns.
-  assert(frame.turnLines.length === 2, `the sheet edges are the default turns (${frame.turnLines.length})`)
-  assert(frame.turnLines[0].solid && frame.turnLines[0].across === frame.sheetStart, 'k = 0 is the start line, solid')
-  assert(!frame.turnLines[1].solid, 'k = 1 is a plain dashed turn on the far edge')
+  // No range given: the range is the sheet's own two edges. With the zero line
+  // now running through the middle of the sheet (issue #1026), only the k = 0
+  // turn falls inside it — the solid one; the seam edges are the sheet's own
+  // drawn outline.
+  assert(frame.turnLines.length === 1, `the default range reports the zero-line turn (${frame.turnLines.length})`)
+  assert(frame.turnLines[0].solid, 'the zero line is the solid turn')
+  near(frame.turnLines[0].across, frame.zero, 'the solid turn sits on the zero line')
 
   const c = frame.circumference
-  const lines = aroundTurnLines(frame, frame.sheetStart - c, frame.sheetStart + 3 * c)
+  const lines = aroundTurnLines(frame, frame.zero - c, frame.zero + 3 * c)
   assert(lines.length === 5, `a range one turn before to three after has five turns (${lines.length})`)
-  assert(lines.map((line) => Math.round((line.across - frame.sheetStart) / c)).join(',') === '-1,0,1,2,3',
+  assert(lines.map((line) => Math.round((line.across - frame.zero) / c)).join(',') === '-1,0,1,2,3',
     `the turns are every integer k in range: ${lines.map((line) => line.across).join(',')}`)
-  assert(lines.filter((line) => line.solid).length === 1 && lines[1].solid, 'the start line is the only solid turn')
-  const beyond = aroundTurnLines(frame, frame.sheetStart + 0.2 * c, frame.sheetStart + 2.8 * c)
-  assert(beyond.length === 2 && beyond.every((line) => !line.solid), 'turns beyond the sheet are drawn, none solid')
+  assert(lines.filter((line) => line.solid).length === 1 && lines[1].solid, 'the zero line is the only solid turn')
+  near(lines[1].across, frame.zero, 'k = 0 sits on the zero line')
+  near(lines[2].across, frame.zero + c, 'k = 1 is one circumference on from the zero line')
+  near(lines[3].across, frame.zero + 2 * c, 'k = 2 is two circumferences on')
+  const beyond = aroundTurnLines(frame, frame.zero + 0.2 * c, frame.zero + 2.8 * c)
+  assert(beyond.length === 2 && beyond.every((line) => !line.solid), 'turns beyond the zero line are drawn, none solid')
 }
 
 // ── Clamp bands ──────────────────────────────────────────────
@@ -166,14 +179,14 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
   const frame = aroundSheet(project)!
   assert(frame.clampBands.length === 2, `only a chuck and a tailstock are bands (${frame.clampBands.length})`)
   const chuck = frame.clampBands.find((band) => band.id === 'chuck')!
-  near(chuck.y, frame.sheetStart, 'a band starts on the start line')
+  near(chuck.y, frame.sheetStart, "a band starts on the sheet's first edge")
   near(chuck.h, frame.circumference, 'a band spans the whole sheet across')
   near(chuck.x, 100, 'a band keeps its extent along the bar')
   near(chuck.w, 30, 'a band keeps its length along the bar')
   assert(!frame.clampBands.some((band) => band.id === 'step'), 'other clamp types are left out')
 
   const yBand = aroundClampBand(clamp('chuck', 'chuck'), { axis: 'y', sheetStart: 3, circumference: 2 * Math.PI })
-  near(yBand.x, 3, 'a Y bar band starts on the start line (X)')
+  near(yBand.x, 3, "a Y bar band starts on the sheet's first edge (X)")
   near(yBand.w, 2 * Math.PI, 'a Y bar band spans the sheet across (X)')
   near(yBand.y, 40, 'a Y bar band keeps its extent along the bar (Y)')
 
@@ -198,10 +211,10 @@ function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: 
 {
   const project = aroundProject(X_BAR)
   const frame = aroundSheet(project)!
-  assert(frame.origin.x === 55 && frame.origin.y === 30,
-    `the origin marker is on the start line at its along coordinate: ${JSON.stringify(frame.origin)}`)
+  assert(frame.origin.x === 55 && frame.origin.y === 50,
+    `the origin marker is on the zero line at its along coordinate: ${JSON.stringify(frame.origin)}`)
   assert(frame.origin.name === project.origin.name, 'the origin marker keeps the origin name the canvas labels it with')
-  const yMarker = aroundOrigin({ x: 1, y: 2 }, { axis: 'y', sheetStart: 7 })
+  const yMarker = aroundOrigin({ x: 1, y: 2 }, { axis: 'y', zero: 7 })
   assert(JSON.stringify(yMarker) === JSON.stringify({ x: 7, y: 2 }), 'the Y origin marker uses Y as the along coordinate')
 }
 

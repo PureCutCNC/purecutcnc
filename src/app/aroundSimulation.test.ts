@@ -213,7 +213,9 @@ function testAroundIsUnrolledFlat(): void {
   for (const move of local.moves) {
     for (const point of [move.from, move.to]) {
       assert(typeof point.a === 'number', 'a folded point carries its program angle')
-      const foldedAngle = 360 * (point.y - frame.sheetStart) / frame.circumference
+      // Folded points are reported on the sheet; the angle is taken from the
+      // frame's zero line (issue #1026).
+      const foldedAngle = ((360 * (point.y - frame.zero) / frame.circumference) % 360 + 360) % 360
       assert(
         Math.abs((((point.a ?? 0) % 360) + 360) % 360 - foldedAngle) < 1e-9,
         `the angle names the folded across coordinate, got a = ${point.a} at y = ${point.y}`,
@@ -243,7 +245,9 @@ function testAroundSimulatesFlat(): void {
 
   assert(result.stats.removedCellCount > 0, 'the Around pocket removes material from the flat sheet')
   const frame = aroundFrame(AROUND_BAR)
-  const centre = { x: 55, y: frame.sheetStart + 15 }
+  // The Around pocket's own centre: its rect spans across 35..55, five below
+  // the zero line (issue #1026).
+  const centre = { x: 55, y: frame.zero - 5 }
   assert(
     topZAt(result.grid, centre.x, centre.y) < input.project.stock.thickness - 2 * 0.5,
     'the pocket is cut at its flat position',

@@ -75,7 +75,7 @@ function setupOfOperation(
 const unwrapCache = new WeakMap<ToolpathResult, { frame: string; result: ToolpathResult }>()
 
 function unwrapForDisplay(toolpath: ToolpathResult, frame: ReturnType<typeof aroundFrame>): ToolpathResult {
-  const signature = `${frame.axis}:${frame.sheetStart}:${frame.circumference}:${frame.centre}:${frame.radius}`
+  const signature = `${frame.axis}:${frame.zero}:${frame.sheetStart}:${frame.circumference}:${frame.centre}:${frame.radius}`
   const cached = unwrapCache.get(toolpath)
   if (cached && cached.frame === signature) return cached.result
   const result = unwrapToolpath(toolpath, frame)

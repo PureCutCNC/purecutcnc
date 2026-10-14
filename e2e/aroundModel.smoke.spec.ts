@@ -45,6 +45,7 @@ import { getProject, seedProject } from './helpers'
 import {
   defaultTool,
   roundStock,
+  roundStockCentre,
   type Project,
   type RoundStock,
   type SketchProfile,
@@ -52,9 +53,14 @@ import {
 import type { MachineDefinition } from '../src/engine/gcode/types'
 
 const BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
-const SHEET_START = BAR.profile.start.y
+/**
+ * The frame's zero line, the bar's centreline across (issue #1026). A fixture
+ * placed relative to it keeps the angle it was authored at, whichever way the
+ * sheet is framed.
+ */
+const ZERO = roundStockCentre(BAR)
 /** Flat coordinates of the Around pocket: x along the bar, y across the sheet. */
-const POCKET = { x: 50, y: SHEET_START + 12, w: 60, h: 10 }
+const POCKET = { x: 50, y: ZERO + 12, w: 60, h: 10 }
 
 /** A 3 mm flat endmill in mm, referenced by its real id. */
 const TOOL = { ...defaultTool('mm', 1), id: 't1', name: '3 mm Flat Endmill', diameter: 3, maxCutDepth: 40 }

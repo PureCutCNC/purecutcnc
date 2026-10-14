@@ -91,11 +91,11 @@ function slabOf(project: Project, feature: SketchFeature): ManifoldSolid {
   return solid
 }
 
-// The quarter turn's across coordinate: the sheet's zero line plus a quarter of
-// the circumference. A 20 × 10 square centred there, cut 8 deep from the
-// surface (z 40 → 32, so r 12 → 20 + the 2 % surface margin).
+// The quarter turn's across coordinate: the sheet's zero line (issue #1026)
+// plus a quarter of the circumference. A 20 × 10 square centred there, cut 8
+// deep from the surface (z 40 → 32, so r 12 → 20 + the 2 % surface margin).
 const FRAME = aroundFrame(X_BAR)
-const QUARTER_ACROSS = FRAME.sheetStart + FRAME.circumference / 4
+const QUARTER_ACROSS = FRAME.zero + FRAME.circumference / 4
 const R_BOTTOM = 12
 const R_TOP = FRAME.radius * 1.02
 const SIDE_LENGTH = 20
@@ -139,7 +139,7 @@ function vertices(solid: ManifoldSolid, bar: RoundStock): VertexReadout[] {
 function testQuarterTurn(bar: RoundStock): void {
   const project = barProject(bar)
   const frameForBar = aroundFrame(bar)
-  const acrossCentre = frameForBar.sheetStart + frameForBar.circumference / 4
+  const acrossCentre = frameForBar.zero + frameForBar.circumference / 4
   const solid = slabOf(project, aroundFeature(squareForBar(bar, acrossCentre), 'subtract'))
   try {
     const readouts = vertices(solid, bar)
@@ -155,7 +155,7 @@ function testQuarterTurn(bar: RoundStock): void {
     // The shape is symmetric about the quarter turn on the side `wrapPoint` and
     // `stockSpacePoint` agree on: positive across is positive angle.
     assertClose(meanAngle, 90, 0.5, `axis ${bar.axis}: mean angle of a quarter-turn square`)
-    assertClose(frameForBar.sheetStart + frameForBar.circumference / 4, acrossCentre, 1e-12, 'fixture: quarter turn')
+    assertClose(frameForBar.zero + frameForBar.circumference / 4, acrossCentre, 1e-12, 'fixture: quarter turn')
 
     assertClose(solid.volume(), SECTOR_VOLUME, SECTOR_VOLUME * 0.005, `axis ${bar.axis}: slab volume`)
   } finally {
@@ -306,7 +306,7 @@ function testNullCases(): void {
 function testYAxisVolume(): void {
   const project = barProject(Y_BAR)
   const frame = aroundFrame(Y_BAR)
-  const acrossCentre = frame.sheetStart + frame.circumference / 4
+  const acrossCentre = frame.zero + frame.circumference / 4
   const solid = slabOf(project, aroundFeature(squareForBar(Y_BAR, acrossCentre), 'subtract'))
   try {
     // The Y bar's across is its X, so the same square has the same sector

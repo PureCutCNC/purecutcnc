@@ -565,11 +565,11 @@ for (const axis of ['x', 'y'] as const) {
       const flat = sheet.moves[index][key]
       assert.ok(wrapped.a !== undefined, `${axis} move ${index} ${key} has a`)
       const acrossSheet = axis === 'x' ? flat.y : flat.x
-      approx(acrossSheet, frame.sheetStart + wrapped.a * frame.circumference / 360, `${axis} move ${index} ${key} sheet across`)
+      approx(acrossSheet, frame.zero + wrapped.a * frame.circumference / 360, `${axis} move ${index} ${key} sheet across`)
       approx(flat.z, wrapped.z - FINISH_RADIUS, `${axis} move ${index} ${key} sheet height is the tip radius`)
       // The wrap of the sheet point is the emitted point. The angle is compared
-      // with a tolerance because unwrapping subtracts sheetStart (a stock
-      // bound) and re-wrapping adds it back, so float rounding can move the
+      // with a tolerance because unwrapping subtracts the zero line (the bar's
+      // centreline) and re-wrapping adds it back, so float rounding can move the
       // angle by one ulp while every coordinate stays exact.
       const rewrapped = wrapPoint(flat, frame)
       assert.deepEqual({ x: rewrapped.x, y: rewrapped.y, z: rewrapped.z }, { x: wrapped.x, y: wrapped.y, z: wrapped.z },

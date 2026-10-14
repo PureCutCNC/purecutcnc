@@ -31,7 +31,7 @@
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { defaultTool, newProject, roundStock, type Project } from '../src/types/project'
+import { defaultTool, newProject, roundStock, roundStockCentre, type Project } from '../src/types/project'
 import {
   cancelPendingAdd,
   getProject,
@@ -48,6 +48,16 @@ interface SavedFeature {
   operation?: string
 }
 
+/** The fixture bar: 120 long, Ø25 (issue #395). */
+const BAR = roundStock(25, 120, 'x')
+
+/**
+ * The frame's zero line for the fixture bar, its centreline across
+ * (issue #1026). The rectangles below are placed relative to it, so they keep
+ * the angles they were authored at now the sheet is centred on it.
+ */
+const ZERO = roundStockCentre(BAR)
+
 /** A mm round bar with (optionally) a rotary machine along its X axis. */
 function aroundProject(options: { rotary: boolean }): Project {
   const base = newProject('Around smoke', 'mm')
@@ -57,7 +67,7 @@ function aroundProject(options: { rotary: boolean }): Project {
     readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
   ) as Project['meta']['machineDefinitions'][number]
   const machine = { ...grbl, id: 'around-machine', builtin: false }
-  base.stock = roundStock(25, 120, 'x')
+  base.stock = BAR
   base.meta = {
     ...base.meta,
     machineDefinitions: options.rotary
@@ -146,8 +156,8 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
 
   // ── A base and a pocket target, both Around ──
-  await drawRect(page, 10, 5, 100, 15)
-  await drawRect(page, 20, 8, 40, 12)
+  await drawRect(page, 10, ZERO + 5, 100, ZERO + 15)
+  await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
   const drawn = await getProject(page)
   const features = drawn.features as SavedFeature[]
   // A feature's operation lives on its shared definition, not on the instance.

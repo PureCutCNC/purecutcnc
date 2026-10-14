@@ -120,7 +120,8 @@ function aroundSimulationFrame(project: Project, operations: readonly Operation[
  * reach, because that is the keep-out volume the generators must respect. The
  * simulation draws the sheet, where the fixture is what it is there: a flat
  * band. Its footprint along the bar is the fixture's own extent; across, it is
- * clipped to the one circumference being simulated; and its height is already
+ * clipped to the one circumference being simulated (`sheetStart`, the sheet's
+ * first edge, to `sheetStart + circumference`); and its height is already
  * the fixture's height above the bar's surface, carried down by the radius.
  *
  * Only the across extent is rewritten here — the keep-out rectangle

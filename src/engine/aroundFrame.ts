@@ -18,11 +18,14 @@
  * The Around frame (issue #395): a round bar unrolled for top-down generators.
  * `thickness` is diameter D, radius R = D/2. Along is the bar's project axis;
  * across is Y for an X bar and X for a Y bar. X and Y are never swapped.
- * The sheet keeps the along extent and runs across from the stock's minimum
- * `sheetStart` to `sheetStart + C`, C = π·D. Geometry outside it keeps turning.
+ * The zero line (a = 0, the top of the bar) is the bar's centreline across
+ * coordinate, `zero` (issue #1026). The sheet keeps the along extent and runs
+ * across from `sheetStart = zero − C/2` to `zero + C/2`, C = π·D, so the zero
+ * line runs through its middle and its two edges are the seam (the bottom of
+ * the bar, a = ±180°). Geometry outside it keeps turning.
  * Around features store Top-like heights: surface z = D, centreline z = R.
  * Flat heights are lowered by R: the sheet's top is R, its bottom is zero.
- * a = 360·(across − sheetStart)/C, never reduced to one turn. Per rotaryFrame,
+ * a = 360·(across − zero)/C, never reduced to one turn. Per rotaryFrame,
  * a flat height r cuts stock across = centre + r·sin a, z = R + r·cos a;
  * toolSpacePoint of that stock point at a is the wrapped tool point.
  *
@@ -41,22 +44,34 @@ import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from
 
 export interface AroundFrame {
   readonly axis: 'x' | 'y'
-  /** The centreline's across coordinate (roundStockCentre). */
+  /** The centreline's across coordinate (roundStockCentre); the same as `zero`. */
   readonly centre: number
   readonly radius: number
-  /** Across coordinate of the sheet's zero line: the top of the bar at a = 0. */
+  /**
+   * Across coordinate of the zero line — the top of the bar at a = 0
+   * (issue #1026). It is the bar's centreline, `centre`, and every angle is
+   * taken from it: `a = 360·(across − zero)/C`.
+   */
+  readonly zero: number
+  /**
+   * Across coordinate of the sheet's first edge: `zero − C/2`, one
+   * circumference below the zero line. The far edge is `sheetStart + C`; the
+   * two edges are the seam (the bottom of the bar, a = ±180°).
+   */
   readonly sheetStart: number
   readonly circumference: number
 }
 
 export function aroundFrame(stock: RoundStock): AroundFrame {
-  const bounds = getStockBounds(stock)
+  const circumference = Math.PI * stock.thickness
+  const zero = roundStockCentre(stock)
   return {
     axis: stock.axis,
-    centre: roundStockCentre(stock),
+    centre: zero,
     radius: stock.thickness / 2,
-    sheetStart: stock.axis === 'x' ? bounds.minY : bounds.minX,
-    circumference: Math.PI * stock.thickness,
+    zero,
+    sheetStart: zero - circumference / 2,
+    circumference,
   }
 }
 
@@ -90,16 +105,22 @@ export function flatFaceProject(project: Project): Project {
 /** Flat point → tool point on the bar. Always carries `a`. */
 export function wrapPoint(flat: { x: number; y: number; z: number }, frame: AroundFrame): ToolpathPoint {
   const across = frame.axis === 'x' ? flat.y : flat.x
-  const a = 360 * (across - frame.sheetStart) / frame.circumference
+  const a = 360 * (across - frame.zero) / frame.circumference
   return frame.axis === 'x'
     ? { x: flat.x, y: frame.centre, z: flat.z + frame.radius, a }
     : { x: frame.centre, y: flat.y, z: flat.z + frame.radius, a }
 }
 
-/** Exact inverse of wrapPoint; an unwrapped point has no `a` key. */
+/**
+ * Exact inverse of wrapPoint; an unwrapped point has no `a` key. The angle is
+ * taken from the frame's zero line, so a point on the sheet comes back in the
+ * same one-circumference window the sheet is framed in (`zero − C/2` to
+ * `zero + C/2`) and an angle past a full turn keeps turning, never reduced
+ * (issue #395).
+ */
 export function unwrapPoint(point: ToolpathPoint, frame: AroundFrame): { x: number; y: number; z: number } {
   if (point.a === undefined) throw new Error('Unwrapping an Around point requires a rotary angle.')
-  const across = frame.sheetStart + point.a * frame.circumference / 360
+  const across = frame.zero + point.a * frame.circumference / 360
   return frame.axis === 'x'
     ? { x: point.x, y: across, z: point.z - frame.radius }
     : { x: across, y: point.y, z: point.z - frame.radius }

@@ -24,7 +24,7 @@ import { PlaybackController, cloneSimulationGrid } from './playback'
 import { applyMoveToGrid, simulateReplayItemsHeightfield } from './replay'
 
 for (const axis of ['x', 'y'] as const) {
-  const frame: AroundFrame = { axis, centre: 12, radius: 10, sheetStart: -5, circumference: 40 }
+  const frame: AroundFrame = { axis, centre: 12, radius: 10, zero: 15, sheetStart: -5, circumference: 40 }
   const across = axis === 'x' ? 'y' : 'x'
   const point = (along: number, offset: number): { x: number; y: number; z: number } => axis === 'x'
     ? { x: along, y: -5 + offset, z: 3 }
