@@ -64,7 +64,7 @@ export function addToOperationCandidates(project: Project, featureIds: string[])
 
     // Judged on the features being added, from the face of the operation's
     // own setup — not the active one: the menu lists operations of every setup.
-    if (!targetAllowedInSetup(project, { source: 'features', featureIds: missing }, operation.setupId)) {
+    if (!targetAllowedInSetup(project, { source: 'features', featureIds: missing }, operation.setupId, operation.kind)) {
       return false
     }
 

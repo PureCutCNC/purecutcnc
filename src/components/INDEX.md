@@ -54,3 +54,5 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 
 - `cam/PlasmaOperationFields.tsx` — plasma-only kerf side, swirl reversal, line/arc leads and optional contour-start XY; milling controls are excluded by the field policy.
 - `cam/setupSections.ts`, `CamSetupSectionView.tsx` — CAM groups by saved or provisional active setup, program numbers, registration status and scoped export (#946). `SetupPropertiesDialog.tsx` / `SetupRegistrationEditor.tsx` edit flip axis, name, shared-origin display, references and notes; setup deletion lists operations before confirmation. `SetupOperationControls.tsx` confirms validated Move and measures stock-Z reach; `CrossFaceTargetPicker.tsx` explicitly targets opposite-face through subtracts/models without selecting sketch ghosts. `SetupDialogShell.tsx` supplies focus, Escape and scroll handling.
+
+- `cam/rotaryOperations.test.ts` — Rotary rough/finish authoring contract: Around model-only targets, defaults, support cache/units/file persistence and exact field policy (#1015 slice D).

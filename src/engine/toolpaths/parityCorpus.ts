@@ -33,6 +33,7 @@
  *    varies run to run cannot be a parity oracle.
  */
 
+import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { readFileSync, readdirSync } from 'node:fs'
 import {
   circleProfile,
@@ -583,7 +584,11 @@ function syntheticCases(): ParityCase[] {
 
 /** The full corpus, in a stable order. */
 export function buildParityCorpus(): ParityCase[] {
-  return [...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
+  const rotary = (['rotary_rough', 'rotary_finish'] as const).map((kind) => {
+    const project = rotaryOperationFixture('x', kind)
+    return { id: `synthetic/${kind}`, project, operationId: project.operations[0].id }
+  })
+  return [...rotary, ...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
 }
 
 /**

@@ -636,11 +636,17 @@ export type OperationKind =
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'
+  | 'rotary_rough'
+  | 'rotary_finish'
   | 'rough_surface'
   | 'finish_surface'
   | 'finish_surface_cleanup'
   | 'follow_line'
   | 'drilling'
+
+export function isRotaryOperationKind(kind: OperationKind): boolean {
+  return kind === 'rotary_rough' || kind === 'rotary_finish'
+}
 
 export type OperationPass = 'rough' | 'finish'
 
@@ -794,6 +800,9 @@ export interface Operation {
    *  both Edge Route kinds; the relieved corners are the convex corners of
    *  whatever region that operation clears, so no operation kind is named. */
   cornerRelief?: CornerReliefStyle
+  /** Bar length left uncut at each end, in project units. Missing reads as zero. */
+  rotaryChuckSupport?: number
+  rotaryTailSupport?: number
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

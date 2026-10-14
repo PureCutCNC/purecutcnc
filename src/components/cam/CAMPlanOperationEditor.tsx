@@ -35,6 +35,8 @@ function operationLabel(kind: OperationKind): string {
     case 'edge_route_inside': return camT('cam.opLabel.edgeRouteInside')
     case 'edge_route_outside': return camT('cam.opLabel.edgeRouteOutside')
     case 'surface_clean': return camT('cam.opLabel.surfaceClean')
+    case 'rotary_rough': return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface': return camT('cam.opLabel.roughSurface')
     case 'finish_surface': return camT('cam.opLabel.finishSurface')
     case 'finish_surface_cleanup': return camT('cam.opLabel.finishSurfaceCleanup')

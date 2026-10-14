@@ -15,10 +15,12 @@
  */
 
 import type { Operation, OperationKind, Project, Tool } from './types/project'
+import { isRotaryOperationKind } from './types/project'
 import { convertLength } from './utils/units'
 
 /** #957 owns the operation itself; this boundary is ready for its working name. */
 export function isToolCompatibleWithOperation(tool: Pick<Tool, 'type'>, kind: OperationKind | 'plasma_profile'): boolean {
+  if (isRotaryOperationKind(kind)) return tool.type === 'ball_endmill' || tool.type === 'flat_endmill'
   if (kind === 'plasma_profile') return tool.type === 'plasma'
   if (tool.type === 'plasma') return false
   return true

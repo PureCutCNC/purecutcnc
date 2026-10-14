@@ -330,6 +330,8 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
     plungeFeed: convertLength(operation.plungeFeed, from, to),
+    ...(operation.rotaryChuckSupport === undefined ? {} : { rotaryChuckSupport: convertLength(operation.rotaryChuckSupport, from, to) }),
+    ...(operation.rotaryTailSupport === undefined ? {} : { rotaryTailSupport: convertLength(operation.rotaryTailSupport, from, to) }),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
     stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
     trochoidalCutWidth: operation.trochoidalCutWidth === undefined

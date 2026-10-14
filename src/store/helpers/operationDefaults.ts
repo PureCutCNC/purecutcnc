@@ -18,7 +18,7 @@ import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../te
 import { convertLength } from '../../utils/units'
 import { spacingToScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import { roundScallopHeight } from '../../utils/scallopHeightFormat'
-import { defaultRetractOffset, defaultTool } from '../../types/project'
+import { defaultRetractOffset, defaultTool, isRotaryOperationKind } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
@@ -88,6 +88,10 @@ export function operationKindLabel(kind: OperationKind): string {
       return 'Edge route outside'
     case 'surface_clean':
       return 'Surface clean'
+    case 'rotary_rough':
+      return 'Rotary rough'
+    case 'rotary_finish':
+      return 'Rotary finish'
     case 'rough_surface':
       return '3D surface rough'
     case 'finish_surface':
@@ -110,6 +114,12 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     return feature !== undefined && isConstruction(feature)
   })) {
     return false
+  }
+
+  if (isRotaryOperationKind(kind)) {
+    return target.source === 'features' && target.featureIds.length > 0
+      && target.featureIds.every((id) => project.features.some((feature) =>
+        feature.id === id && feature.kind === 'stl' && feature.operation === 'model'))
   }
 
   if (kind === 'plasma_profile') {
@@ -271,7 +281,7 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
 
 export function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
   const baseName = kind === 'plasma_profile' || kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
-    || kind === 'finish_surface_cleanup'
+    || kind === 'finish_surface_cleanup' || isRotaryOperationKind(kind)
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -297,6 +307,7 @@ export function defaultOperationForTarget(
   index: number,
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
+  if (isRotaryOperationKind(kind)) pass = kind === 'rotary_rough' ? 'rough' : 'finish'
   const firstTool = project.tools.find((candidate) => kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma')
   const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
   const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
@@ -363,6 +374,7 @@ export function defaultOperationForTarget(
     // always an explicit choice — unlike roundOutsideCorners, which only
     // affects how the tool travels through a corner it already cleared.
     cornerRelief: 'none',
+    ...(isRotaryOperationKind(kind) ? { rotaryChuckSupport: 0, rotaryTailSupport: 0 } : {}),
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,
@@ -398,6 +410,10 @@ export function defaultOperationForTarget(
 
 export function fallbackOperationTarget(authoritativeProject: Project, kind: OperationKind): OperationTarget {
   if (kind === 'plasma_profile') return { source: 'features', featureIds: [] }
+  if (isRotaryOperationKind(kind)) {
+    return { source: 'features', featureIds: authoritativeProject.features.filter((feature) =>
+      authoritativeProject.featureDefinitions[feature.definitionId]?.kind === 'stl').map((feature) => feature.id) }
+  }
   const project = resolveProject(authoritativeProject)
   if (kind === 'drilling') {
     const firstCircle = project.features.find((feature) => feature.kind === 'circle')
