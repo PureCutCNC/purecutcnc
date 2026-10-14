@@ -684,6 +684,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.rotary.modelOnly': '旋转操作只能以导入的模型为目标。',
   'cam.rotary.roundStockRequired': '旋转操作需要圆棒毛坯。',
   'cam.rotary.aroundRequired': '旋转操作需要周向装夹。',
+  'cam.rotary.roughNoModel': '旋转粗加工需要棒料内有一个导入的模型。',
+  'cam.rotary.finishNoModel': '旋转精加工需要棒料内有一个导入的模型。',
   'cam.rotary.toolRequired': '旋转操作需要球头铣刀或平底铣刀。',
   'cam.rotary.chuckSupport': '卡盘端支撑',
   'cam.rotary.chuckSupportTooltip': '卡盘端保留不切削的棒料长度。卡盘安全区域仍然有效。',

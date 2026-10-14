@@ -616,6 +616,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.rotary.modelOnly': 'Les opérations rotatives ciblent uniquement les modèles importés.',
   'cam.rotary.roundStockRequired': 'Les opérations rotatives nécessitent une barre ronde.',
   'cam.rotary.aroundRequired': 'Les opérations rotatives nécessitent un montage Autour.',
+  'cam.rotary.roughNoModel': "L'ébauche rotative nécessite un modèle importé dans la barre.",
+  'cam.rotary.finishNoModel': 'La finition rotative nécessite un modèle importé dans la barre.',
   'cam.rotary.toolRequired': 'Les opérations rotatives nécessitent une fraise boule ou une fraise à bout plat.',
   'cam.rotary.chuckSupport': 'Support côté mandrin',
   'cam.rotary.chuckSupportTooltip': 'Longueur de barre laissée intacte côté mandrin. Les zones de sécurité du mandrin restent appliquées.',

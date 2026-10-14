@@ -129,6 +129,22 @@ function rotaryTargetHint(project: Project, target: OperationTarget): string | n
     ? null : camT('cam.rotary.modelOnly')
 }
 
+/**
+ * The imported models a rotary operation can machine. The model lives in the
+ * bar and only rotary operations target it, so the whole project is the
+ * candidate set regardless of what is selected (issue #1015).
+ */
+function importedModelFeatureIds(project: Project): string[] {
+  return resolveFeatureInstances(project)
+    .filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+    .map((feature) => feature.id)
+}
+
+/** The per-kind hint for a rotary add-menu row when the project has no model. */
+function rotaryNoModelHint(kind: OperationKind): string {
+  return camT(kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel')
+}
+
 /** Saved-operation refusals shown above the rotary operation's controls. */
 export function rotaryOperationHint(project: Project, operation: Operation): string | null {
   if (!isRotaryOperationKind(operation.kind)) return null
@@ -149,7 +165,10 @@ export function getOperationAddHint(
   if (isRotaryOperationKind(kind)) {
     if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
     if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
-    return rotaryTargetHint(project, { source: 'features', featureIds: selection.selectedFeatureIds })
+    // The model lives in the bar and only rotary operations touch it, so these
+    // rows do not depend on the selection (issue #1015): any imported model
+    // makes them available, and the selection only narrows what Add targets.
+    return importedModelFeatureIds(project).length > 0 ? null : rotaryNoModelHint(kind)
   }
   if (selection.selectedFeatureIds.length === 0) {
     return emptySelectionHint(kind)
@@ -359,6 +378,19 @@ export function operationTargetFromSelection(
   selection: SelectionState,
   kind: OperationKind,
 ): OperationTarget | null {
+  if (isRotaryOperationKind(kind)) {
+    // The rotary rows do not depend on the selection (issue #1015): a selected
+    // model narrows the target, otherwise every imported model in the project
+    // is machined as one surface.
+    if (getOperationAddHint(project, selection, kind) !== null) {
+      return null
+    }
+    const models = importedModelFeatureIds(project)
+    const selected = new Set(selection.selectedFeatureIds)
+    const chosen = models.filter((id) => selected.has(id))
+    return { source: 'features', featureIds: chosen.length > 0 ? chosen : models }
+  }
+
   if (selection.selectedFeatureIds.length === 0) {
     return null
   }
@@ -540,6 +572,16 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
     }))
 }
 
+/**
+ * The rotary kinds "Add to <face>" offers for the setup face in view, before
+ * the machine filter and before validity. A model lives in the bar and only
+ * rotary operations target it, so they are offered on Around alone — never on
+ * Top or Bottom (issue #1015). Every other kind is offered on every face.
+ */
+export function rotaryAddKindsForFace(face: SetupFace): OperationKind[] {
+  return face === 'around' ? ['rotary_rough', 'rotary_finish'] : []
+}
+
 function compatibleFeatureIdsForOperationWithMap(
   project: Project,
   kind: OperationKind,
@@ -547,7 +589,9 @@ function compatibleFeatureIdsForOperationWithMap(
 ): string[] {
   const face = activeSetupFace(project)
   if (isRotaryOperationKind(kind)) {
-    return project.features.filter((feature) => getOperationAddHint(project, singleFeatureSelection(feature.id), kind) === null).map((feature) => feature.id)
+    // Every imported model is a candidate whatever is selected: the model
+    // lives in the bar, not on a face (issue #1015).
+    return importedModelFeatureIds(project)
   }
   return project.features
     .filter((feature) => getOperationAddHintWithMap(

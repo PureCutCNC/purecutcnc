@@ -701,6 +701,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.rotary.modelOnly': 'Rotationsoperationen bearbeiten nur importierte Modelle.',
   'cam.rotary.roundStockRequired': 'Rotationsoperationen benötigen eine Rundstange.',
   'cam.rotary.aroundRequired': 'Rotationsoperationen benötigen eine Rundum-Aufspannung.',
+  'cam.rotary.roughNoModel': 'Rotationsschruppen benötigt ein importiertes Modell in der Stange.',
+  'cam.rotary.finishNoModel': 'Rotationsschlichten benötigt ein importiertes Modell in der Stange.',
   'cam.rotary.toolRequired': 'Rotationsoperationen benötigen einen Kugel- oder Schaftfräser.',
   'cam.rotary.chuckSupport': 'Stützlänge am Spannfutter',
   'cam.rotary.chuckSupportTooltip': 'An diesem Ende bleibt die Stange ungeschnitten. Der Sicherheitsabstand zum Spannfutter gilt weiterhin.',
