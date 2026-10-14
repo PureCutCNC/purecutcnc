@@ -18,7 +18,8 @@ import { getStockBounds, roundStockCentre } from '../../types/project'
 import type { Clamp, RoundStock } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
-import { chooseHeightMapCellSize, getCachedHeightMap, safeToolTipZAt } from './finishSurfaceParallel'
+import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
+import type { HeightMapWindow } from './finishSurfaceParallel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -145,6 +146,375 @@ export function turnedModelPositions(positions: Float32Array, stock: RoundStock,
   return turned
 }
 
+/** Directions per turn in the strip triangle index; must be even. */
+const STRIP_BUCKETS = 256
+
+const TAU = Math.PI * 2
+
+/**
+ * Everything about a mesh that does not depend on the turn angle (issue #1015
+ * slice L): the cross-section in the bar's own plane, the convex hull that owns
+ * the turned bounds, the along extremes, and an index of which triangles can
+ * reach the narrow strip of cells the samples actually read.
+ */
+interface RotaryStripPlan {
+  /** `across` from the centreline and `up` from the half-height, per vertex. */
+  readonly across: Float64Array
+  readonly up: Float64Array
+  /** The cross-section's convex hull as `(across, up)` pairs. */
+  readonly hull: Float64Array
+  readonly minAlong: number
+  readonly maxAlong: number
+  /** CSR offsets into `bucketTriangles`: `STRIP_BUCKETS + 1` entries. */
+  readonly bucketStarts: Uint32Array
+  readonly bucketTriangles: Uint32Array
+  /** Triangle starts (offsets into `index`) that reach the strip at every turn. */
+  readonly always: Uint32Array
+  readonly bucketWidth: number
+}
+
+/** The arc of turn directions over which a triangle can reach the strip. */
+interface StripArc {
+  lo: number
+  length: number
+}
+
+/** Every vertex's position in the bar's cross-section plane. */
+function crossSection(positions: Float32Array, stock: RoundStock): { across: Float64Array; up: Float64Array } {
+  const centre = roundStockCentre(stock)
+  const height = stock.thickness / 2
+  const count = positions.length / 3
+  const across = new Float64Array(count)
+  const up = new Float64Array(count)
+  if (stock.axis === 'x') {
+    for (let v = 0; v < count; v++) {
+      across[v] = positions[v * 3 + 1] - centre
+      up[v] = positions[v * 3 + 2] - height
+    }
+  } else {
+    for (let v = 0; v < count; v++) {
+      across[v] = positions[v * 3] - centre
+      up[v] = positions[v * 3 + 2] - height
+    }
+  }
+  return { across, up }
+}
+
+/** The along-axis extremes `turnModelInto` folds into its turned bounds. */
+function alongExtremes(positions: Float32Array, stock: RoundStock): { min: number; max: number } {
+  const offset = stock.axis === 'x' ? 0 : 1
+  let min = Infinity
+  let max = -Infinity
+  for (let i = offset; i < positions.length; i += 3) {
+    const value = positions[i]
+    if (value < min) min = value
+    if (value > max) max = value
+  }
+  return { min, max }
+}
+
+/**
+ * The convex hull of the cross-section points, as `(across, up)` pairs.
+ *
+ * `turnModelInto` accumulates its turned Y (or X) extreme over every vertex, but
+ * that value is `centre + across cos - up sin` -- a linear function of the
+ * cross-section point -- so its extreme is always attained at a hull vertex.
+ * Folding the same expression over the hull gives the same double, and
+ * `Math.fround` of it the same Float32 bound, because rounding is monotone:
+ * `Math.fround(min(v)) === min(Math.fround(v))`. The hull is computed once per
+ * operation, so the 1.47 M-vertex bust pays one sort instead of a full vertex
+ * scan every angle.
+ *
+ * Collinear points are dropped as the standard monotone chain does. That cannot
+ * move an extreme: a point on the segment between two hull vertices takes a
+ * value between theirs, so it is never the strict argmin, and the coordinates
+ * are the Float32 the mesh stores, so the collinearity test is exact whenever
+ * the products cancel. Only a genuinely convex vertex stays.
+ */
+function crossSectionHull(across: Float64Array, up: Float64Array): Float64Array {
+  const count = across.length
+  if (count === 0) return new Float64Array(0)
+  const order: number[] = new Array(count)
+  for (let i = 0; i < count; i++) order[i] = i
+  order.sort((a, b) => (across[a] - across[b]) || (up[a] - up[b]))
+  const clockwiseOrCollinear = (o: number, a: number, b: number): boolean => {
+    const dx1 = across[a] - across[o]
+    const dy1 = up[a] - up[o]
+    const dx2 = across[b] - across[o]
+    const dy2 = up[b] - up[o]
+    return dx1 * dy2 - dy1 * dx2 <= 0
+  }
+  const hull: number[] = []
+  for (let s = 0; s < count; s++) {
+    const i = order[s]
+    while (hull.length >= 2 && clockwiseOrCollinear(hull[hull.length - 2], hull[hull.length - 1], i)) hull.pop()
+    hull.push(i)
+  }
+  const lowerEnd = hull.length + 1
+  for (let s = count - 2; s >= 0; s--) {
+    const i = order[s]
+    while (hull.length >= lowerEnd && clockwiseOrCollinear(hull[hull.length - 2], hull[hull.length - 1], i)) hull.pop()
+    hull.push(i)
+  }
+  if (hull.length >= 2 && hull[0] === hull[hull.length - 1]) hull.pop()
+  const points = new Float64Array(hull.length * 2)
+  for (let i = 0; i < hull.length; i++) {
+    points[i * 2] = across[hull[i]]
+    points[i * 2 + 1] = up[hull[i]]
+  }
+  return points
+}
+
+/**
+ * The turned X/Y bounds of the whole mesh, computed the way `turnModelInto`
+ * computes them without visiting every vertex: the along extent is constant at
+ * every angle, and the across extreme is folded over the cross-section hull.
+ */
+function turnedBounds(
+  hull: Float64Array,
+  minAlong: number,
+  maxAlong: number,
+  stock: RoundStock,
+  angleDeg: number,
+): TurnedBounds {
+  const centre = roundStockCentre(stock)
+  const t = (angleDeg * Math.PI) / 180
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  let minAcross = Infinity
+  let maxAcross = -Infinity
+  for (let i = 0; i < hull.length; i += 2) {
+    const value = centre + hull[i] * cos - hull[i + 1] * sin
+    if (value < minAcross) minAcross = value
+    if (value > maxAcross) maxAcross = value
+  }
+  return stock.axis === 'x'
+    ? { minX: Math.fround(minAlong), maxX: Math.fround(maxAlong), minY: Math.fround(minAcross), maxY: Math.fround(maxAcross) }
+    : { minX: Math.fround(minAcross), maxX: Math.fround(maxAcross), minY: Math.fround(minAlong), maxY: Math.fround(maxAlong) }
+}
+
+/** Distance from the cross-section origin to the segment `a`-`b`. */
+function segmentDistance(ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSq = dx * dx + dy * dy
+  let t = lengthSq > 0 ? -(ax * dx + ay * dy) / lengthSq : 0
+  if (t < 0) t = 0
+  else if (t > 1) t = 1
+  const px = ax + dx * t
+  const py = ay + dy * t
+  return Math.sqrt(px * px + py * py)
+}
+
+/**
+ * Write the arc of turn directions over which a cross-section triangle can
+ * reach a strip of half-width `reach` around the axis, or return true when it
+ * reaches the strip at every turn.
+ *
+ * A triangle point `p` is in the strip exactly when `|p| |sin(phi - psi)| <=
+ * reach`, where `phi` is its direction and `psi` the strip's own direction.
+ * Within `asin(reach / distance)` of the triangle's direction arc that can
+ * happen, and the arc's own directions are covered by the triangle's span; the
+ * two together are the returned interval. A triangle that comes within `reach`
+ * of the axis -- the axis-crossing case included -- has some point projecting
+ * into the strip for *every* direction, so it is `always`.
+ */
+function stripArc(
+  across: Float64Array,
+  up: Float64Array,
+  v0: number,
+  v1: number,
+  v2: number,
+  reach: number,
+  out: StripArc,
+): boolean {
+  const a0 = across[v0], b0 = up[v0]
+  const a1 = across[v1], b1 = up[v1]
+  const a2 = across[v2], b2 = up[v2]
+  // Edge functions of the origin: all three the same sign means it is outside.
+  const e0 = (a1 - a0) * -b0 - (b1 - b0) * -a0
+  const e1 = (a2 - a1) * -b1 - (b2 - b1) * -a1
+  const e2 = (a0 - a2) * -b2 - (b0 - b2) * -a2
+  if (!((e0 < 0 || e1 < 0 || e2 < 0) && (e0 > 0 || e1 > 0 || e2 > 0))) return true
+  const distance = Math.min(
+    segmentDistance(a0, b0, a1, b1),
+    segmentDistance(a1, b1, a2, b2),
+    segmentDistance(a2, b2, a0, b0),
+  )
+  if (!(distance > reach)) return true
+  const delta = Math.asin(Math.min(1, reach / distance)) + 1e-9
+  let s0 = Math.atan2(b0, a0)
+  let s1 = Math.atan2(b1, a1)
+  let s2 = Math.atan2(b2, a2)
+  if (s0 > s1) { const swap = s0; s0 = s1; s1 = swap }
+  if (s1 > s2) { const swap = s1; s1 = s2; s2 = swap }
+  if (s0 > s1) { const swap = s0; s0 = s1; s1 = swap }
+  const g0 = s1 - s0
+  const g1 = s2 - s1
+  const g2 = s0 + TAU - s2
+  let maxGap = g0
+  let lo = s1
+  if (g1 > maxGap) { maxGap = g1; lo = s2 }
+  if (g2 > maxGap) { maxGap = g2; lo = s0 }
+  // Outside the triangle, the directions it covers are the complement of the
+  // largest gap between its vertices. A rounding error that hides the outside
+  // case is treated as "covers every direction".
+  if (maxGap < Math.PI) return true
+  const length = TAU - maxGap + 2 * delta
+  if (!(length < TAU)) return true
+  out.lo = lo - delta
+  out.length = length
+  return false
+}
+
+/** The bucket holding direction `angle` (radians, any range). */
+function bucketIndex(angle: number, bucketWidth: number): number {
+  let value = angle % TAU
+  if (value < 0) value += TAU
+  return Math.floor(value / bucketWidth) % STRIP_BUCKETS
+}
+
+/** Build the angle-independent strip plan for one `sampleRotaryModel` call. */
+function buildStripPlan(
+  mesh: RotaryModelMesh,
+  stock: RoundStock,
+  tool: NormalizedTool,
+  requestedCellSize: number,
+  anglesDeg: readonly number[],
+): RotaryStripPlan {
+  const { across, up } = crossSection(mesh.positions, stock)
+  const hull = crossSectionHull(across, up)
+  const { min: minAlong, max: maxAlong } = alongExtremes(mesh.positions, stock)
+  const bucketWidth = TAU / STRIP_BUCKETS
+  const triangleCount = Math.floor(mesh.index.length / 3)
+  // The widest strip any angle of this operation reads: `safeToolTipZAt` reads
+  // `ceil(radius / cell)` cells either way from the sample row, the row's own
+  // offset from the centreline adds under half a cell, and one more cell of
+  // slack absorbs the grid arithmetic. A triangle that cannot reach this band
+  // cannot touch any angle's window.
+  let reach = 0
+  for (const angle of anglesDeg) {
+    const bounds = turnedBounds(hull, minAlong, maxAlong, stock, angle)
+    const cellSize = chooseHeightMapCellSize(bounds, requestedCellSize, [])
+    const candidate = (Math.ceil(tool.radius / cellSize) + 2) * cellSize
+    if (candidate > reach) reach = candidate
+  }
+  if (!(reach > 0) || !Number.isFinite(reach)) {
+    const all = new Uint32Array(triangleCount * 3)
+    for (let t = 0; t < all.length; t++) all[t] = t
+    return {
+      across, up, hull, minAlong, maxAlong,
+      bucketStarts: new Uint32Array(STRIP_BUCKETS + 1), bucketTriangles: new Uint32Array(0),
+      always: all, bucketWidth,
+    }
+  }
+  const arcFirst = new Int32Array(triangleCount)
+  const arcLast = new Int32Array(triangleCount)
+  const arc: StripArc = { lo: 0, length: 0 }
+  let alwaysCount = 0
+  for (let t = 0; t < triangleCount; t++) {
+    const offset = t * 3
+    if (stripArc(across, up, mesh.index[offset], mesh.index[offset + 1], mesh.index[offset + 2], reach, arc)) {
+      arcFirst[t] = -1
+      alwaysCount++
+      continue
+    }
+    const first = bucketIndex(arc.lo, bucketWidth)
+    const last = bucketIndex(arc.lo + arc.length, bucketWidth)
+    // One bucket of slack each side absorbs the rounding in `delta`, the polar
+    // angles and the grid arithmetic; the price is a little over-inclusion.
+    const paddedFirst = (first + STRIP_BUCKETS - 1) % STRIP_BUCKETS
+    const paddedLast = (last + 1) % STRIP_BUCKETS
+    if (((paddedLast - paddedFirst + STRIP_BUCKETS) % STRIP_BUCKETS) + 1 >= STRIP_BUCKETS) {
+      arcFirst[t] = -1
+      alwaysCount++
+      continue
+    }
+    arcFirst[t] = paddedFirst
+    arcLast[t] = paddedLast
+  }
+  const always = new Uint32Array(alwaysCount)
+  let alwaysIndex = 0
+  for (let t = 0; t < triangleCount; t++) if (arcFirst[t] < 0) always[alwaysIndex++] = t * 3
+  const bucketStarts = new Uint32Array(STRIP_BUCKETS + 1)
+  for (let t = 0; t < triangleCount; t++) {
+    const first = arcFirst[t]
+    if (first < 0) continue
+    const last = arcLast[t]
+    if (last >= first) {
+      for (let k = first; k <= last; k++) bucketStarts[k + 1]++
+    } else {
+      for (let k = first; k < STRIP_BUCKETS; k++) bucketStarts[k + 1]++
+      for (let k = 0; k <= last; k++) bucketStarts[k + 1]++
+    }
+  }
+  for (let k = 0; k < STRIP_BUCKETS; k++) bucketStarts[k + 1] += bucketStarts[k]
+  const bucketTriangles = new Uint32Array(bucketStarts[STRIP_BUCKETS])
+  const cursor = bucketStarts.slice(0, STRIP_BUCKETS)
+  for (let t = 0; t < triangleCount; t++) {
+    const first = arcFirst[t]
+    if (first < 0) continue
+    const last = arcLast[t]
+    const offset = t * 3
+    if (last >= first) {
+      for (let k = first; k <= last; k++) bucketTriangles[cursor[k]++] = offset
+    } else {
+      for (let k = first; k < STRIP_BUCKETS; k++) bucketTriangles[cursor[k]++] = offset
+      for (let k = 0; k <= last; k++) bucketTriangles[cursor[k]++] = offset
+    }
+  }
+  return { across, up, hull, minAlong, maxAlong, bucketStarts, bucketTriangles, always, bucketWidth }
+}
+
+/**
+ * Write the turned positions of `triangles` (offsets into `index`) into `out`,
+ * with exactly the arithmetic `turnModelInto` uses -- `centre + across cos - up
+ * sin` across and `height + across sin + up cos` up, stored in a Float32 -- so a
+ * rasterised cell is bit-identical to the full-map sampler's.
+ */
+function turnStripTriangles(
+  out: Float32Array,
+  positions: Float32Array,
+  index: Uint32Array,
+  across: Float64Array,
+  up: Float64Array,
+  stock: RoundStock,
+  cos: number,
+  sin: number,
+  triangles: Uint32Array,
+  count: number,
+): void {
+  const centre = roundStockCentre(stock)
+  const height = stock.thickness / 2
+  if (stock.axis === 'x') {
+    for (let s = 0; s < count; s++) {
+      const i = triangles[s]
+      for (let j = 0; j < 3; j++) {
+        const v = index[i + j]
+        const p = v * 3
+        const a = across[v]
+        const u = up[v]
+        out[p] = positions[p]
+        out[p + 1] = centre + a * cos - u * sin
+        out[p + 2] = height + a * sin + u * cos
+      }
+    }
+    return
+  }
+  for (let s = 0; s < count; s++) {
+    const i = triangles[s]
+    for (let j = 0; j < 3; j++) {
+      const v = index[i + j]
+      const p = v * 3
+      const a = across[v]
+      const u = up[v]
+      out[p] = centre + a * cos - u * sin
+      out[p + 1] = positions[p + 1]
+      out[p + 2] = height + a * sin + u * cos
+    }
+  }
+}
+
 export function sampleRotaryModel(
   mesh: RotaryModelMesh,
   stock: RoundStock,
@@ -159,23 +529,59 @@ export function sampleRotaryModel(
   const radius = stock.thickness / 2
   // One turned buffer for the whole operation: the mesh is the same size at
   // every angle, and neither the height map nor the sampling retains it, so a
-  // fresh 3 V Float32 per angle is allocation the run does not need.
+  // fresh 3 V Float32 per angle is allocation the run does not need. Only the
+  // vertices of the triangles this angle rasterises are written into it.
   const turned = new Float32Array(mesh.positions.length)
+  // A triangle can appear in both queried buckets, so the gathered list can be
+  // twice the triangle count; anything beyond that would be a bug.
+  const subset = new Uint32Array(2 * Math.floor(mesh.index.length / 3))
+  let plan: RotaryStripPlan | null = null
   let stopped = false
   for (const angle of options.anglesDeg) {
     if (options.shouldStop?.()) {
       stopped = true
       break
     }
-    const bbox = turnModelInto(turned, mesh.positions, stock, angle)
+    // Built lazily so an immediate stop -- a cancelled worker -- never pays for
+    // a 1.47 M-vertex hull and bucket index.
+    plan ??= buildStripPlan(mesh, stock, tool, options.requestedCellSize, options.anglesDeg)
+    const t = (angle * Math.PI) / 180
+    const cos = Math.cos(t)
+    const sin = Math.sin(t)
+    const bbox = turnedBounds(plan.hull, plan.minAlong, plan.maxAlong, stock, angle)
     const angleWarnings: ToolpathWarning[] = []
     const cellSize = chooseHeightMapCellSize(bbox, options.requestedCellSize, angleWarnings)
     for (const warning of angleWarnings) {
       if (!warnings.some((existing) => existing.code === warning.code)) warnings.push(warning)
     }
-    // The cache key contains bounds and cell size, not orientation or mesh.
-    // An angle owns its host, even when another angle has exactly these bounds.
-    const heightMap = getCachedHeightMap({}, turned, mesh.index, bbox, cellSize)
+    // Every sample sits on the line over the centreline, and `safeToolTipZAt`
+    // only reads cells within `ceil(radius / cell)` of its own. Rasterising the
+    // rows (X bar) or columns (Y bar) that line can reach reproduces every value
+    // the sampling reads, out of a map whose grid is unchanged: same bbox, cell
+    // size, origin, width and height (issue #1015 slice L). The map is not put
+    // through `getCachedHeightMap`, whose key carries neither orientation nor
+    // mesh and which only ever builds full maps.
+    const margin = Math.ceil(tool.radius / cellSize) + 1
+    const window: HeightMapWindow = stock.axis === 'x'
+      ? { minRow: Math.floor((centre - bbox.minY) / cellSize) - margin, maxRow: Math.floor((centre - bbox.minY) / cellSize) + margin }
+      : { minCol: Math.floor((centre - bbox.minX) / cellSize) - margin, maxCol: Math.floor((centre - bbox.minX) / cellSize) + margin }
+    // Only triangles whose cross-section arc covers this turn's strip direction
+    // can put a cell in that window. The bucket index is conservative -- a
+    // triangle lands in every bucket its arc touches, padded a bucket either
+    // side -- so the rasterised set is a superset of the covering triangles, and
+    // a cell's value is the maximum over all covering triangles either way.
+    let count = plan.always.length
+    for (let i = 0; i < plan.always.length; i++) subset[i] = plan.always[i]
+    for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
+      const start = plan.bucketStarts[bucket]
+      const end = plan.bucketStarts[bucket + 1]
+      for (let i = start; i < end; i++) subset[count++] = plan.bucketTriangles[i]
+    }
+    turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
+    const heightMap = buildHeightMap(turned, mesh.index, bbox, cellSize, {
+      window,
+      triangles: subset.subarray(0, count),
+    })
     const row = new Float32Array(along.length)
     for (let i = 0; i < along.length; i++) {
       const x = stock.axis === 'x' ? along[i] : centre

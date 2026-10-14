@@ -262,18 +262,62 @@ export function chooseHeightMapCellSize(
   return cellSize
 }
 
-function buildHeightMap(
+/**
+ * A band of the height map to rasterise, in cell indices. The grid itself --
+ * `originX/originY`, `cellSize`, `width`, `height` and the full-size `data`
+ * array -- is unaffected, so a windowed map has exactly the geometry a full map
+ * would; only the cells outside the band stay at `-Infinity` (issue #1015 slice
+ * L). A caller that reads one row (or column) of cells and their tool-reach
+ * neighbours can therefore pay for those rows alone.
+ */
+export interface HeightMapWindow {
+  /** Lowest row to rasterise, inclusive. */
+  readonly minRow?: number
+  /** Highest row to rasterise, inclusive. */
+  readonly maxRow?: number
+  /** Lowest column to rasterise, inclusive. */
+  readonly minCol?: number
+  /** Highest column to rasterise, inclusive. */
+  readonly maxCol?: number
+}
+
+export interface HeightMapBuildOptions {
+  /** Rasterise only this band of rows / columns. */
+  readonly window?: HeightMapWindow
+  /**
+   * Triangle starts (every third `index` entry) to rasterise, in any order;
+   * every triangle when omitted. A cell's value is the maximum over the
+   * triangles covering it, so a caller that rasterises a superset of the
+   * triangles that can touch its window gets exactly the full map's values
+   * there.
+   */
+  readonly triangles?: Uint32Array
+}
+
+export function buildHeightMap(
   positions: Float32Array,
   index: Uint32Array,
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
   cellSize: number,
+  options?: HeightMapBuildOptions,
 ): HeightMap {
   const width = Math.max(1, Math.ceil((bbox.maxX - bbox.minX) / cellSize))
   const height = Math.max(1, Math.ceil((bbox.maxY - bbox.minY) / cellSize))
   const data = new Float32Array(width * height)
   data.fill(-Infinity)
 
-  for (let i = 0; i < index.length; i += 3) {
+  const minRow = Math.max(0, options?.window?.minRow ?? 0)
+  const maxRow = Math.min(height - 1, options?.window?.maxRow ?? height - 1)
+  const minCol = Math.max(0, options?.window?.minCol ?? 0)
+  const maxCol = Math.min(width - 1, options?.window?.maxCol ?? width - 1)
+  const triangles = options?.triangles
+  const triangleCount = triangles ? triangles.length : Math.floor(index.length / 3)
+  if (minRow > maxRow || minCol > maxCol) {
+    return { data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize }
+  }
+
+  for (let t = 0; t < triangleCount; t++) {
+    const i = triangles ? triangles[t] : t * 3
     const i0 = index[i] * 3
     const i1 = index[i + 1] * 3
     const i2 = index[i + 2] * 3
@@ -287,10 +331,11 @@ function buildHeightMap(
     const tMinY = Math.min(v0y, v1y, v2y)
     const tMaxY = Math.max(v0y, v1y, v2y)
 
-    const colStart = Math.max(0, Math.floor((tMinX - bbox.minX) / cellSize))
-    const colEnd   = Math.min(width - 1, Math.floor((tMaxX - bbox.minX) / cellSize))
-    const rowStart = Math.max(0, Math.floor((tMinY - bbox.minY) / cellSize))
-    const rowEnd   = Math.min(height - 1, Math.floor((tMaxY - bbox.minY) / cellSize))
+    const colStart = Math.max(minCol, Math.floor((tMinX - bbox.minX) / cellSize))
+    const colEnd   = Math.min(maxCol, Math.floor((tMaxX - bbox.minX) / cellSize))
+    const rowStart = Math.max(minRow, Math.floor((tMinY - bbox.minY) / cellSize))
+    const rowEnd   = Math.min(maxRow, Math.floor((tMaxY - bbox.minY) / cellSize))
+    if (colStart > colEnd || rowStart > rowEnd) continue
 
     const e0x = v1x - v0x, e0y = v1y - v0y
     const e1x = v2x - v0x, e1y = v2y - v0y
