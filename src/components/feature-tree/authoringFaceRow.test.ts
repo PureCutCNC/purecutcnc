@@ -58,6 +58,8 @@ const globals = globalThis as unknown as Record<string, unknown>
 globals.window = window
 globals.document = document
 globals.HTMLElement = window.HTMLElement
+// Node 20 (CI) has no global `navigator`; the i18n store reads its languages.
+if (typeof globals.navigator === 'undefined') globals.navigator = { language: 'en', languages: ['en'], userAgent: 'node', platform: '' }
 globals.Element = window.Element
 globals.Node = window.Node
 // Components are authored with the automatic JSX runtime; the tsx runner
