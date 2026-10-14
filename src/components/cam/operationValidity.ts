@@ -24,6 +24,8 @@
  * extracted verbatim from `CAMPanel.tsx` so the panel's hints are unchanged.
  */
 
+import { isRoundStock, isRotaryOperationKind } from '../../types/project'
+import { operationFace } from '../../engine/setupTargets'
 import { activeFace } from '../../store/helpers/activeFace'
 import type { SelectionState } from '../../store/types'
 import type { Operation, OperationKind, OperationPass, OperationTarget, Project, SetupFace } from '../../types/project'
@@ -53,6 +55,10 @@ export function operationKindLabel(kind: OperationKind): string {
       return camT('cam.opLabel.edgeRouteOutside')
     case 'surface_clean':
       return camT('cam.opLabel.surfaceClean')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.opLabel.roughSurface')
     case 'finish_surface':
@@ -115,11 +121,36 @@ export function activeSetupTargetHint(project: Project, featureIds: readonly str
   )
 }
 
+function rotaryTargetHint(project: Project, target: OperationTarget): string | null {
+  if (target.source !== 'features' || target.featureIds.length === 0) return camT('cam.hint.roughSurfaceNoModel')
+  const features = resolveFeatureInstances(project, target.featureIds)
+  if (features.length !== target.featureIds.length) return camT('cam.hint.featuresNotFound')
+  return features.every((feature) => feature.kind === 'stl' && feature.operation === 'model')
+    ? null : camT('cam.rotary.modelOnly')
+}
+
+/** Saved-operation refusals shown above the rotary operation's controls. */
+export function rotaryOperationHint(project: Project, operation: Operation): string | null {
+  if (!isRotaryOperationKind(operation.kind)) return null
+  if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+  if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
+  const targetHint = rotaryTargetHint(project, operation.target)
+  if (targetHint) return targetHint
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!tool) return camT('cam.operation.noTool')
+  return tool.type === 'ball_endmill' || tool.type === 'flat_endmill' ? null : camT('cam.rotary.toolRequired')
+}
+
 export function getOperationAddHint(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+    if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
+    return rotaryTargetHint(project, { source: 'features', featureIds: selection.selectedFeatureIds })
+  }
   if (selection.selectedFeatureIds.length === 0) {
     return emptySelectionHint(kind)
   }
@@ -135,6 +166,11 @@ function getOperationAddHintWithMap(
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    const features = selection.selectedFeatureIds.map((id) => featureById.get(id))
+    return features.length > 0 && features.every((feature) => feature?.kind === 'stl' && feature.operation === 'model')
+      ? null : camT('cam.rotary.modelOnly')
+  }
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target, so any selection containing it is rejected up front
   // with one clear message (issue #199).
@@ -361,6 +397,8 @@ const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
   surface_clean: '2d',
   follow_line: '2d',
   drilling: '2d',
+  rotary_rough: '3d',
+  rotary_finish: '3d',
   rough_surface: '3d',
   finish_surface: '3d',
   finish_surface_cleanup: '3d',
@@ -430,6 +468,10 @@ export function quickOperationLabel(kind: OperationKind): string {
       return camT('cam.quickOp.drilling')
     case 'plasma_profile':
       return camT('cam.quickOp.plasmaProfile')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.quickOp.roughSurface')
     case 'finish_surface':
@@ -504,6 +546,9 @@ function compatibleFeatureIdsForOperationWithMap(
   featureById: ResolvedFeatureMap,
 ): string[] {
   const face = activeSetupFace(project)
+  if (isRotaryOperationKind(kind)) {
+    return project.features.filter((feature) => getOperationAddHint(project, singleFeatureSelection(feature.id), kind) === null).map((feature) => feature.id)
+  }
   return project.features
     .filter((feature) => getOperationAddHintWithMap(
       singleFeatureSelection(feature.id),

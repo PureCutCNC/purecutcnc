@@ -91,7 +91,7 @@ export function createOperationsSlice(
       }
       // A new operation joins the active setup, so its targets are judged
       // from that setup's face (issue #946).
-      if (!targetAllowedInSetup(state.project, target, state.project.activeSetupId)) {
+      if (!targetAllowedInSetup(state.project, target, state.project.activeSetupId, kind)) {
         return null
       }
 
@@ -181,7 +181,7 @@ export function createOperationsSlice(
             // target that became unreachable some other way — its feature was
             // made shallower — must not lock every later edit out, including
             // the one that removes it.
-            if (patch.target !== undefined || patch.setupId !== undefined) {
+            if (patch.target !== undefined || patch.setupId !== undefined || patch.kind !== undefined) {
               const before = new Set(rejectedOperationTargets(s.project, operation).map((verdict) => verdict.featureId))
               const introduced = rejectedOperationTargets(s.project, nextOperation)
                 .some((verdict) => !before.has(verdict.featureId))

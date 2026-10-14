@@ -80,7 +80,7 @@ export function planOperationMove(project: Project, operationId: string, toSetup
   if ((operationFace(project, operation) === 'around') !== (face === 'around')) {
     return { ...base, kept: [], removed: [], target: operation.target, blocked: 'noValidTargets' }
   }
-  const verdicts = judgeTargetsFromFace(project, operation.target, face)
+  const verdicts = judgeTargetsFromFace(project, operation.target, face, operation.kind)
   const kept = verdicts.filter((verdict) => verdict.status !== 'rejected')
   const removed = verdicts.filter((verdict) => verdict.status === 'rejected')
   const removedIds = new Set(removed.map((verdict) => verdict.featureId))

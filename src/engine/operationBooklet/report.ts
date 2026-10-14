@@ -44,6 +44,8 @@ function operationKindLabel(kind: OperationKind): string {
     case 'edge_route_inside': return translate('booklet.operation.insideEdgeRoute')
     case 'edge_route_outside': return translate('booklet.operation.outsideEdgeRoute')
     case 'surface_clean': return translate('booklet.operation.surfaceClean')
+    case 'rotary_rough': return translate('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return translate('cam.opLabel.rotaryFinish')
     case 'rough_surface': return translate('booklet.operation.roughSurface')
     case 'finish_surface': return translate('booklet.operation.finishSurface')
     case 'finish_surface_cleanup': return translate('booklet.operation.finishSurfaceCleanup')
@@ -336,7 +338,10 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     { label: translate('booklet.label.rpm'), value: `${Math.round(operation.rpm)} rpm` },
   ]
 
-  if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
+  if (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish') {
+    if (operation.kind === 'rotary_rough') rows.push({ label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) })
+    rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
+  } else if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push({ label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) })
     if (!isTrochoidalEdgeRoughing(operation)) {
       rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
@@ -477,7 +482,13 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.carveDepth'), value: lengthWithUnits(operation.carveDepth, units) })
   }
 
-  if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
+  if (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish') {
+    rows.push(
+      { label: translate('cam.operation.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
+      { label: translate('cam.rotary.chuckSupport'), value: lengthWithUnits(operation.rotaryChuckSupport ?? 0, units) },
+      { label: translate('cam.rotary.tailSupport'), value: lengthWithUnits(operation.rotaryTailSupport ?? 0, units) },
+    )
+  } else if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push(
       { label: translate('booklet.label.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
       { label: translate('booklet.label.stockToLeaveAxial'), value: lengthWithUnits(operation.stockToLeaveAxial, units) },

@@ -42,11 +42,12 @@
  * store's target validator.
  */
 
-import { isRoundStock } from '../types/project'
+import { isRoundStock, isRotaryOperationKind } from '../types/project'
 import { activeSetup } from '../store/helpers/activeFace'
 import type {
   FeatureInstance,
   Operation,
+  OperationKind,
   OperationTarget,
   Project,
   SetupFace,
@@ -127,7 +128,9 @@ export function featureReachableFromFace(
   project: TargetProject,
   feature: TargetFeature & Pick<FeatureInstance, 'authoringFace'>,
   face: SetupFace,
+  kind?: OperationKind,
 ): boolean {
+  if (kind && isRotaryOperationKind(kind)) return face === 'around' && isImportedModel(project, feature)
   if (face === 'around' && isImportedModel(project, feature)) return false
   if ((feature.authoringFace ?? 'top') === face) return true
   if (face === 'around' || feature.authoringFace === 'around') return false
@@ -168,12 +171,15 @@ export function judgeTargetFromFace(
   project: TargetProject,
   feature: TargetFeature & Pick<FeatureInstance, 'id' | 'name' | 'authoringFace'>,
   face: SetupFace,
+  kind?: OperationKind,
 ): TargetFaceVerdict {
   // A hand-built row without the field reads as Top, like a pre-setup file.
   const authoringFace: SetupFace = feature.authoringFace ?? 'top'
   const { through, model } = crossFaceReach(project, feature)
   const span = featureStockSpan(project, feature)
-  const status: TargetFaceStatus = face === 'around' && model ? 'rejected'
+  const status: TargetFaceStatus = kind && isRotaryOperationKind(kind)
+    ? face === 'around' && model ? 'same-face' : 'rejected'
+    : face === 'around' && model ? 'rejected'
     : authoringFace === face ? 'same-face'
     : face !== 'around' && authoringFace !== 'around' && (through || model) ? 'cross-face' : 'rejected'
   return {
@@ -197,18 +203,19 @@ export function judgeTargetsFromFace(
   project: TargetProject & Pick<Project, 'features'>,
   target: OperationTarget,
   face: SetupFace,
+  kind?: OperationKind,
 ): TargetFaceVerdict[] {
   if (target.source !== 'features') return []
   const featureById = new Map(project.features.map((feature) => [feature.id, feature]))
   return target.featureIds.flatMap((featureId) => {
     const feature = featureById.get(featureId)
-    return feature ? [judgeTargetFromFace(project, feature, face)] : []
+    return feature ? [judgeTargetFromFace(project, feature, face, kind)] : []
   })
 }
 
 /** Every target of an operation, judged from the face its setup turns up. */
 export function operationTargetVerdicts(project: Project, operation: Operation): TargetFaceVerdict[] {
-  return judgeTargetsFromFace(project, operation.target, operationFace(project, operation))
+  return judgeTargetsFromFace(project, operation.target, operationFace(project, operation), operation.kind)
 }
 
 /** The targets an operation may not have from its setup's face. Empty for a valid operation. */
@@ -229,10 +236,11 @@ export function crossFaceTargetIds(project: Project, operation: Operation): stri
  * can never be given a target its setup cannot reach. An unknown setup id
  * answers as Top, matching `setupForOperation`'s reading of a missing one.
  */
-export function targetAllowedInSetup(project: Project, target: OperationTarget, setupId: string | undefined): boolean {
+export function targetAllowedInSetup(project: Project, target: OperationTarget, setupId: string | undefined, kind?: OperationKind): boolean {
   const setup = setupId === project.activeSetupId ? activeSetup(project) : project.setups?.find((entry) => entry.id === setupId)
   const face: SetupFace = setup ? setupFace(setup) : 'top'
-  return judgeTargetsFromFace(project, target, face).every((verdict) => verdict.status !== 'rejected')
+  if (kind && isRotaryOperationKind(kind) && (face !== 'around' || target.source !== 'features' || target.featureIds.length === 0)) return false
+  return judgeTargetsFromFace(project, target, face, kind).every((verdict) => verdict.status !== 'rejected')
 }
 
 // ── Generation ────────────────────────────────────────────────
@@ -252,7 +260,9 @@ export interface SetupGenerationBlock {
  */
 export function setupGenerationBlock(project: Project, operation: Operation): SetupGenerationBlock | null {
   const face = operationFace(project, operation)
-  const verdicts = judgeTargetsFromFace(project, operation.target, face)
+  const rotary = isRotaryOperationKind(operation.kind)
+  if (rotary && face !== 'around') return { reason: 'aroundStockMismatch', face, features: [] }
+  const verdicts = judgeTargetsFromFace(project, operation.target, face, operation.kind)
   if (face === 'around') {
     const setup = setupForOperation(project, operation)
     if (!isRoundStock(project.stock) || setup?.orientation.axis !== project.stock.axis) {
@@ -261,7 +271,7 @@ export function setupGenerationBlock(project: Project, operation: Operation): Se
     // A rejected target is reported as the face mismatch it is: it is not a
     // cut on this face, so its Z is not what blocks the Around operation.
     const centreline = verdicts.filter((verdict) => {
-      if (verdict.status === 'rejected') return false
+      if (rotary || verdict.status === 'rejected') return false
       const feature = project.features.find((entry) => entry.id === verdict.featureId)
       const span = feature && featureStockSpan(project, feature)
       return span !== null && span !== undefined && span.z_bottom <= project.stock.thickness / 2

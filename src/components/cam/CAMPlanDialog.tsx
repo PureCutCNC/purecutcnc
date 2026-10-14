@@ -50,6 +50,8 @@ function operationKindLabel(operation: Operation): string {
     case 'drilling': return camT('cam.opLabel.drilling')
     case 'v_carve': return camT('cam.opLabel.vCarve')
     case 'v_carve_medial': return camT('cam.opLabel.vCarveMedial')
+    case 'rotary_rough': return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface': return camT('cam.opLabel.roughSurface')
     case 'finish_surface': return camT('cam.opLabel.finishSurface')
     case 'finish_surface_cleanup': return camT('cam.opLabel.finishSurfaceCleanup')

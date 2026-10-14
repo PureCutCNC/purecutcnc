@@ -134,6 +134,8 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.roundLinkCorners === b.roundLinkCorners
     && a.cleanWallCorners === b.cleanWallCorners
     && a.cornerRelief === b.cornerRelief
+    && (a.rotaryChuckSupport ?? 0) === (b.rotaryChuckSupport ?? 0)
+    && (a.rotaryTailSupport ?? 0) === (b.rotaryTailSupport ?? 0)
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial
     && a.finishWalls === b.finishWalls
