@@ -20,8 +20,8 @@
  * A round bar with a rotary machine and both a Top and an Around setup: the 3D
  * view draws the real bar with the wrapped passes on its surface (captured from
  * the default view and from a low angle, where the underside of the wrap
- * shows), and the Simulation tab lists both setups and plays the Around job
- * unrolled flat.
+ * shows), and the Simulation tab lists both setups and turns the cut bar
+ * during playback, with an optional flat Unrolled view.
  *
  * The project is seeded through the page's store, as `setupCam.smoke.spec.ts`
  * and `setupPreview.smoke.spec.ts` do. The fixture already fails the test on
@@ -338,7 +338,7 @@ test('the 3D view draws the wrapped Around pass on the real bar', async ({ app, 
   await expect(canvas).toBeVisible()
 })
 
-test('the Simulation tab lists both setups and plays the unrolled Around job', async ({ app, ui }, testInfo) => {
+test('the Simulation tab turns the cut bar under the tool and can unroll it', async ({ app, ui }, testInfo) => {
   const { page } = app
   const project = await seedAroundProject(page)
   const aroundSetup = project.setups.find((setup) => setup.kind === 'around')!
@@ -362,22 +362,53 @@ test('the Simulation tab lists both setups and plays the unrolled Around job', a
   await expect(ui.simSetup.picker(page)).toHaveValue(aroundSetup.id)
   await expect(ui.simSetup.note(page)).toContainText('Around')
 
-  // The flat job is simulated and the fresh sheet loses material.
+  const viewport = ui.simSetup.viewport(page)
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
+  await expect(viewport).toHaveAttribute('data-simulation-bar-angle', '0.000')
   await expect.poll(async () => (await viewportStats(page)).removed).toBeGreaterThan(0)
   expect((await viewportStats(page)).setup).toBe(aroundSetup.id)
   await expect(ui.simSetup.playTool(page)).toBeEnabled()
+  const canvas = ui.simSetup.canvas(page)
+  await expect(canvas).toBeVisible()
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: testInfo.outputPath('around-simulation-bar-default.png') })
 
-  // Play tool runs the unrolled job: the readout leaves zero. (Playing the
-  // whole job takes minutes at playback speed, and a software-rendered CI
-  // runner advances a few percent in the time a laptop does twenty, so neither
-  // completion nor a particular percentage is waited for.)
+  const box = await canvas.boundingBox()
+  expect(box).not.toBeNull()
+  const centre = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+  await page.mouse.move(centre.x, centre.y)
+  await page.mouse.down()
+  await page.mouse.move(centre.x - 60, centre.y, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: testInfo.outputPath('around-simulation-bar-side.png') })
+
+  // This fixture is an X bar. Right looks along world X, so it is end-on.
+  await ui.viewMenu.triggerSim(page).click()
+  await ui.viewMenu.optionSim(page, 'Right').click()
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: testInfo.outputPath('around-simulation-bar-end.png') })
+
   await ui.simSetup.playTool(page).click()
-  const readout = page.locator('#workspace-panel-simulation .simulation-playback-bar__readout')
-  await expect(readout).toBeVisible()
-  const play = page.locator('#workspace-panel-simulation .simulation-playback-bar__btn--primary')
-  await play.click()
-  await expect.poll(async () => Number((await readout.textContent())?.replace('%', '') ?? '0'), {
+  await expect(ui.simSetup.progress(page)).toBeVisible()
+  await ui.simSetup.playPause(page).click()
+  await expect.poll(async () => Math.abs(Number(await viewport.getAttribute('data-simulation-bar-angle'))), {
+    timeout: 30_000,
+  }).toBeGreaterThan(0.001)
+  await expect.poll(async () => Number((await ui.simSetup.progress(page).textContent())?.replace('%', '') ?? '0'), {
     timeout: 30_000,
   }).toBeGreaterThan(0)
-  await page.screenshot({ path: testInfo.outputPath('around-simulation.png') })
+  await ui.simSetup.playPause(page).click()
+
+  await ui.simSetup.unrolled(page).click()
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'unrolled')
+  await expect(viewport).toHaveAttribute('data-simulation-bar-angle', '0.000')
+  await expect(ui.simSetup.unrolled(page)).toHaveAttribute('aria-pressed', 'true')
+  await ui.simSetup.unrolled(page).click()
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
+  await expect(ui.simSetup.unrolled(page)).toHaveAttribute('aria-pressed', 'false')
+
+  await ui.simSetup.picker(page).selectOption(topSetup.id)
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
+  await expect(ui.simSetup.unrolled(page)).toHaveCount(0)
 })

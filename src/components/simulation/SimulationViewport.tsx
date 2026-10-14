@@ -20,6 +20,9 @@ import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { createHeightfieldTexture, createStockPlaneGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
 import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
 import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
+import type { SimulationBar } from '../../app/simulationSetup'
+import type { AroundFrame } from '../../engine/aroundFrame'
+import { createBarTurnGroup, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -112,6 +115,7 @@ interface SimulationViewportProps {
    * those same bands as flat boxes (issue #395).
    */
   stock: Stock
+  bar?: SimulationBar
   stockColor?: string
   stockHasProfile?: boolean
   zoomWindowActive?: boolean
@@ -211,8 +215,9 @@ function disposeSceneObject(object: THREE.Object3D): void {
 function buildHeightfieldSurfaceObject(
   grid: SimulationGrid,
   material: THREE.Material,
+  frame?: AroundFrame,
 ): THREE.Object3D {
-  const geometries = createStockPlaneGeometries(grid)
+  const geometries = createStockPlaneGeometries(grid, frame)
   if (geometries.length === 1) {
     return new THREE.Mesh(geometries[0], material)
   }
@@ -273,6 +278,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   origin,
   units,
   stock,
+  bar,
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
@@ -286,6 +292,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const { t } = useI18n()
   const threePalette = palette.three
   const initialThreePaletteRef = useRef(threePalette)
+  const [unrolled, setUnrolled] = useState(false)
+  const wrappedFrame = bar && !unrolled ? bar.frame : undefined
+  const simulationView = bar ? unrolled ? 'unrolled' : 'bar' : 'flat'
+  const viewOrigin = bar ? unrolled ? bar.unrolledOrigin : bar.origin : origin
+  const barTurnRef = useRef<ReturnType<typeof createBarTurnGroup> | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
   const playbackUnits = playbackInput?.units ?? 'mm'
   const fallbackFeed = playbackUnits === 'in' ? PLAYBACK_FALLBACK_FEED_IN : PLAYBACK_FALLBACK_FEED_MM
@@ -344,6 +356,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Throttled state for the UI readout — updated at ~10 Hz to avoid re-render churn.
   const [displayPose, setDisplayPose] = useState<PlaybackPose>(EMPTY_PLAYBACK_POSE)
   const playbackControllerRef = useRef<PlaybackController | null>(null)
+  const playbackViewRef = useRef<{
+    input: SimulationPlaybackInput
+    view: string
+    controller: PlaybackController
+    playing: boolean
+  } | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
@@ -397,23 +415,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowActiveRef.current = zoomWindowActive
   zoomWindowBoxRef.current = zoomWindowBox
 
-  const disposeCurrentMesh = useCallback((scene: THREE.Scene) => {
+  const disposeCurrentMesh = useCallback(() => {
     if (objectRef.current) {
-      scene.remove(objectRef.current)
+      objectRef.current.removeFromParent()
       disposeSceneObject(objectRef.current)
       objectRef.current = null
     }
     if (boundaryMeshRef.current) {
-      scene.remove(boundaryMeshRef.current)
+      boundaryMeshRef.current.removeFromParent()
       disposeSceneObject(boundaryMeshRef.current)
       boundaryMeshRef.current = null
     }
     needsRenderRef.current = true
   }, [])
 
-  const disposeClampMeshes = useCallback((scene: THREE.Scene) => {
+  const disposeClampMeshes = useCallback(() => {
     for (const mesh of clampObjectsRef.current) {
-      scene.remove(mesh)
+      mesh.removeFromParent()
       mesh.geometry.dispose()
       if (Array.isArray(mesh.material)) {
         mesh.material.forEach((entry) => entry.dispose())
@@ -446,11 +464,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   const zoomToModel = useCallback(() => {
     const controls = controlsRef.current
-    const object = objectRef.current
+    const object = objectRef.current ?? (bar ? playbackMaterialMeshRef.current : null)
     if (!controls || !object) {
       return
     }
 
+    if (bar) object.updateWorldMatrix(true, false)
     const bounds = new THREE.Box3().setFromObject(object)
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
@@ -466,7 +485,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     controls.fitToBounds(bounds)
-  }, [origin.visible])
+  }, [bar, origin.visible])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -566,8 +585,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       cancelAnimationFrame(frameRef.current)
       detachContextGuard()
-      disposeCurrentMesh(scene)
-      disposeClampMeshes(scene)
+      disposeCurrentMesh()
+      disposeClampMeshes()
       controls.dispose()
       resizeObserver.disconnect()
       renderer.dispose()
@@ -579,6 +598,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     rendererRef.current?.setClearColor(threePalette.background, 1)
     needsRenderRef.current = true
   }, [threePalette])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    hasAutoFramedRef.current = false
+    if (!wrappedFrame) return
+    const turn = createBarTurnGroup(wrappedFrame)
+    barTurnRef.current = turn
+    scene.add(turn.pivot)
+    return () => {
+      turn.pivot.removeFromParent()
+      barTurnRef.current = null
+    }
+  }, [wrappedFrame])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -604,11 +637,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     if (playbackEnabled) {
-      disposeCurrentMesh(scene)
+      disposeCurrentMesh()
       return
     }
 
-    disposeCurrentMesh(scene)
+    disposeCurrentMesh()
 
     if (!simulation) {
       return
@@ -617,28 +650,31 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const grid = simulation.grid
     const heightfieldTexture = createHeightfieldTexture(grid)
     const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-    const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
-    const surface = buildHeightfieldSurfaceObject(grid, material)
-    scene.add(surface)
+    const material = createHeightfieldMaterial(heightfieldTexture, grid, color, wrappedFrame)
+    const surface = buildHeightfieldSurfaceObject(grid, material, wrappedFrame)
+    const parent = barTurnRef.current?.content ?? scene
+    parent.add(surface)
     objectRef.current = surface
 
     // Walls at every height step + underside, all shader-driven: nothing to
     // rebuild on the CPU when the simulation result changes, and interior
     // pocket walls render as true verticals instead of one-cell-wide slants.
-    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-    scene.add(boundary)
+    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, wrappedFrame)
+    parent.add(boundary)
     boundaryMeshRef.current = boundary
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
+      surface.updateWorldMatrix(true, false)
       const bounds = new THREE.Box3().setFromObject(surface)
       if (!bounds.isEmpty()) {
         controls.fitToBounds(bounds, true)
         hasAutoFramedRef.current = true
       }
     }
+    return () => heightfieldTexture.dispose()
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, wrappedFrame])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
@@ -678,9 +714,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Store latest pose for UI readout — read by throttled state updater
     latestPoseRef.current = pose
     // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
-    tool.position.set(pose.x, pose.z, pose.y)
+    if (wrappedFrame) tool.position.copy(simulationToolPoint(pose, wrappedFrame))
+    else tool.position.set(pose.x, pose.z, pose.y)
+    if (wrappedFrame && barTurnRef.current) {
+      const angle = simulationBarAngle(pose, wrappedFrame)
+      turnSimulationBar(barTurnRef.current.pivot, angle, wrappedFrame)
+      viewportRef.current?.setAttribute('data-simulation-bar-angle', angle.toFixed(3))
+    }
     needsRenderRef.current = true
-  }, [])
+  }, [wrappedFrame])
 
   const resetPlaybackRuntime = useCallback((building: boolean) => {
     cancelAnimationFrame(playbackFrameRef.current)
@@ -695,9 +737,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     setIsPlaybackBuilding(building)
     latestProgressRef.current = 0
     latestPoseRef.current = EMPTY_PLAYBACK_POSE
+    if (barTurnRef.current && wrappedFrame) turnSimulationBar(barTurnRef.current.pivot, 0, wrappedFrame)
+    viewportRef.current?.setAttribute('data-simulation-bar-angle', '0.000')
     setPlaybackProgress(0)
     setDisplayPose(EMPTY_PLAYBACK_POSE)
-  }, [])
+  }, [wrappedFrame])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -706,13 +750,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     if (!playbackEnabled || !playbackInput) {
+      playbackViewRef.current = null
       if (playbackMaterialMeshRef.current) {
-        scene.remove(playbackMaterialMeshRef.current)
+        playbackMaterialMeshRef.current.removeFromParent()
         disposeSceneObject(playbackMaterialMeshRef.current)
         playbackMaterialMeshRef.current = null
       }
       if (playbackBoundaryMeshRef.current) {
-        scene.remove(playbackBoundaryMeshRef.current)
+        playbackBoundaryMeshRef.current.removeFromParent()
         disposeSceneObject(playbackBoundaryMeshRef.current)
         playbackBoundaryMeshRef.current = null
       }
@@ -731,6 +776,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
+    const previousView = playbackViewRef.current
+    const resume = previousView?.input === playbackInput && previousView.view !== simulationView ? previousView : null
+    playbackViewRef.current = null
     playbackControllerRef.current = null
     resetPlaybackRuntime(true)
 
@@ -741,7 +789,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const buildHandle = requestAnimationFrame(() => {
       if (cancelled) return
 
-      const controller = new PlaybackController(
+      const controller = resume?.controller ?? new PlaybackController(
         playbackInput.getBaseGrid(),
         playbackInput.moves,
         {
@@ -764,15 +812,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const heightfieldTexture = createHeightfieldTexture(grid)
       playbackHeightfieldTextureRef.current = heightfieldTexture
       const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-      const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
-      const surface = buildHeightfieldSurfaceObject(grid, material)
-      scene.add(surface)
+      const material = createHeightfieldMaterial(heightfieldTexture, grid, color, wrappedFrame)
+      const surface = buildHeightfieldSurfaceObject(grid, material, wrappedFrame)
+      const parent = barTurnRef.current?.content ?? scene
+      parent.add(surface)
       playbackMaterialMeshRef.current = surface
 
       // Instanced walls: no per-cell attributes, so any detail level builds
       // instantly and stays within memory — no cell cap needed.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-      scene.add(boundary)
+      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, wrappedFrame)
+      parent.add(boundary)
       playbackBoundaryMeshRef.current = boundary
 
       const tool = buildToolMesh({
@@ -786,9 +835,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(tool)
       toolMeshRef.current = tool
 
-      latestProgressRef.current = 0
-      setPlaybackProgress(0)
+      latestProgressRef.current = controller.totalPathLength > 0 ? controller.getDistanceTraveled() / controller.totalPathLength : 0
+      setPlaybackProgress(latestProgressRef.current)
       updateToolMeshPose()
+      if (bar && !hasAutoFramedRef.current) {
+        surface.updateWorldMatrix(true, false)
+        const bounds = new THREE.Box3().setFromObject(surface)
+        controlsRef.current?.fitToBounds(bounds, true)
+        hasAutoFramedRef.current = true
+      }
+      if (resume?.playing) setIsPlaying(true)
       setIsPlaybackReady(true)
       setIsPlaybackBuilding(false)
     })
@@ -796,13 +852,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       cancelled = true
       cancelAnimationFrame(buildHandle)
+      if (playbackControllerRef.current) playbackViewRef.current = {
+        input: playbackInput,
+        view: simulationView,
+        controller: playbackControllerRef.current,
+        playing: isPlayingRef.current,
+      }
       if (playbackMaterialMeshRef.current) {
-        scene.remove(playbackMaterialMeshRef.current)
+        playbackMaterialMeshRef.current.removeFromParent()
         disposeSceneObject(playbackMaterialMeshRef.current)
         playbackMaterialMeshRef.current = null
       }
       if (playbackBoundaryMeshRef.current) {
-        scene.remove(playbackBoundaryMeshRef.current)
+        playbackBoundaryMeshRef.current.removeFromParent()
         disposeSceneObject(playbackBoundaryMeshRef.current)
         playbackBoundaryMeshRef.current = null
       }
@@ -819,7 +881,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       setIsPlaybackReady(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose])
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, wrappedFrame, simulationView, bar])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -992,27 +1054,29 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    disposeClampMeshes(scene)
+    disposeClampMeshes()
 
-    if (clamps.length === 0) {
+    const visibleClamps = wrappedFrame && bar ? bar.clamps : clamps
+    if (visibleClamps.length === 0) {
       return
     }
 
     const collidingClampIdSet = new Set(collidingClampIds)
-    const nextClampMeshes = clamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, stock),
+    const nextClampMeshes = visibleClamps.map((clamp) =>
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, wrappedFrame && bar ? bar.stock : stock),
     )
+    const parent = barTurnRef.current?.content ?? scene
     for (const mesh of nextClampMeshes) {
-      scene.add(mesh)
+      parent.add(mesh)
     }
     clampObjectsRef.current = nextClampMeshes
     needsRenderRef.current = true
 
     return () => {
-      disposeClampMeshes(scene)
+      disposeClampMeshes()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock])
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock, bar, wrappedFrame])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1021,7 +1085,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     disposeOriginMesh(scene)
-    if (!origin.visible || !simulation) {
+    if (!viewOrigin.visible || !simulation) {
       return
     }
 
@@ -1035,7 +1099,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       ) * 0.05,
       0.05,
     )
-    const triad = buildOriginTriad(origin, axisSize, threePalette)
+    const triad = buildOriginTriad(viewOrigin, axisSize, threePalette)
     scene.add(triad)
     originObjectRef.current = triad
     needsRenderRef.current = true
@@ -1044,7 +1108,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeOriginMesh(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [disposeOriginMesh, origin, simulation])
+  }, [disposeOriginMesh, viewOrigin, simulation])
 
   // Reset camera on project change so the viewport doesn't keep the previous
   // project's camera position/orientation when a new project is created.
@@ -1059,6 +1123,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const timer = setTimeout(() => {
       const object = objectRef.current
       if (object) {
+        object.updateWorldMatrix(true, false)
         const bounds = new THREE.Box3().setFromObject(object)
         if (!bounds.isEmpty()) {
           controls.fitToBounds(bounds, true)
@@ -1096,7 +1161,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   return (
     <div
+      ref={viewportRef}
       className="simulation-viewport"
+      data-simulation-view={simulationView}
+      data-simulation-bar-angle="0.000"
       // Read by the setup simulation e2e (issue #947): which setup is shown
       // and what the heightfield removed, without sampling WebGL pixels.
       data-simulation-setup={setupPicker?.selectedId}
@@ -1217,6 +1285,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           >
             {t('viewport.sim.playTool')}
           </button>
+          {bar && (
+            <button
+              className={`simulation-mode-toggle__btn simulation-playback-toggle ${unrolled ? 'simulation-mode-toggle__btn--active' : ''}`}
+              type="button"
+              aria-pressed={unrolled}
+              onClick={() => setUnrolled((current) => !current)}
+              title={t('viewport.sim.unrolledTitle')}
+            >
+              {t('viewport.sim.unrolled')}
+            </button>
+          )}
         </div>
         <div className="viewport-presets__group viewport-presets__group--views">
           <ViewPresetMenu

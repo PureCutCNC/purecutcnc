@@ -44,18 +44,40 @@
  * to the bar's unrolled sheet and have no place on its rectangle.
  */
 
-import type { Clamp, MachiningSetup, Operation, Project } from '../types/project'
+import type { Clamp, MachineOrigin, MachiningSetup, Operation, Project, RoundStock } from '../types/project'
 import { isAroundSetup, isRoundStock } from '../types/project'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
 import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameProject'
-import { aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
+import { aroundFrame, aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
+import { foldToolpath } from '../engine/aroundFold'
 import type { AroundFrame } from '../engine/aroundFrame'
 import { activeSetup } from '../store/helpers/activeFace'
 
+/** Real bar display data alongside the unchanged unrolled replay project. */
+export interface SimulationBar {
+  frame: AroundFrame
+  stock: RoundStock
+  clamps: Clamp[]
+  origin: MachineOrigin
+  unrolledOrigin: MachineOrigin
+}
+
+export function buildSimulationBar(project: Project, frame: AroundFrame): SimulationBar | undefined {
+  if (!isRoundStock(project.stock)) return undefined
+  return {
+    frame,
+    stock: project.stock,
+    clamps: project.clamps.filter((clamp) => clamp.visible),
+    origin: project.origin,
+    unrolledOrigin: { ...project.origin, z: project.origin.z - frame.radius },
+  }
+}
+
 /** Everything one setup's simulation needs, all of it in that setup's frame. */
 export interface SimulationSetupInput {
+  bar?: SimulationBar
   /** The project turned into the setup's frame; the same object for Top. */
   project: Project
   /** The setup's operations, in the order they are cut, disabled and hidden included. */
@@ -80,8 +102,9 @@ function frameForSetup(setup: MachiningSetup, project: Pick<Project, 'stock'>): 
  * for such a project, and a simulation must not: it reports no simulation for
  * that setup instead of raising out of a render pass.
  */
-function aroundSimulationFrame(project: Project, operations: readonly Operation[]): AroundFrame | null {
-  if (!isRoundStock(project.stock)) return null
+function aroundSimulationFrame(project: Project, operations: readonly Operation[], setup: MachiningSetup): AroundFrame | null {
+  if (!isRoundStock(project.stock) || setup.orientation.axis !== project.stock.axis) return null
+  if (operations.length === 0) return aroundFrame(project.stock)
   for (const operation of operations) {
     try {
       const frame = aroundFrameForOperation(project, operation)
@@ -134,7 +157,8 @@ function unrolledSimulationProject(project: Project, frame: AroundFrame): Projec
  * An Around setup (issue #395) has no rotation frame: its job is the unrolled
  * sheet, so its project is the unrolled block one circumference across and one
  * radius thick, its Around features lowered onto it — and each of its paths is
- * `unwrapToolpath`ed back onto that sheet. Its chuck and tailstock bands are
+ * `unwrapToolpath`ed and folded onto the first circumference of that sheet.
+ * Its chuck and tailstock bands are
  * clipped to that one circumference (`unrolledSimulationProject`): the sheet is
  * what is drawn, not the whole multi-turn keep-out the generators use.
  * Everything downstream then cuts a flat job unchanged. An Around setup whose
@@ -148,7 +172,7 @@ export function buildSimulationSetupInput(
 ): SimulationSetupInput | null {
   const operations = setupOperations(project, setup)
 
-  const around = isAroundSetup(setup) ? aroundSimulationFrame(project, operations) : null
+  const around = isAroundSetup(setup) ? aroundSimulationFrame(project, operations, setup) : null
   if (isAroundSetup(setup) && !around) return null
 
   const frame = around ? undefined : frameForSetup(setup, project)
@@ -158,7 +182,7 @@ export function buildSimulationSetupInput(
     if (!toolpath) continue
     localToolpaths.set(
       operation.id,
-      around ? unwrapToolpath(toolpath, around) : toolpathInSetupFrame(toolpath, frame),
+      around ? foldToolpath(unwrapToolpath(toolpath, around), around) : toolpathInSetupFrame(toolpath, frame),
     )
   }
 
@@ -168,6 +192,7 @@ export function buildSimulationSetupInput(
       : projectInSetupFrame(flatFaceProject(project), frame),
     operations,
     toolpaths: localToolpaths,
+    ...(around ? { bar: buildSimulationBar(project, around) } : {}),
   }
 }
 

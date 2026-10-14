@@ -51,6 +51,8 @@ export const viewportEn = {
   'viewport.sim.playToolDisabledMode': 'Switch to selected mode to use tool playback',
   'viewport.sim.playToolDisabledNoOp': 'Select an operation with a valid toolpath to play',
   'viewport.sim.playToolToggle': 'Toggle tool playback',
+  'viewport.sim.unrolled': 'Unrolled',
+  'viewport.sim.unrolledTitle': "Show the bar's surface unrolled flat, all of it at once",
   'viewport.sim.webglUnavailableTitle': "3D simulation isn't available",
   'viewport.sim.webglUnavailableBody': 'This view requires WebGL2, which your browser or graphics driver did not provide. Try updating your browser or enabling hardware acceleration in its settings.',
   'viewport.sim.webglLostTitle': '3D graphics context lost',

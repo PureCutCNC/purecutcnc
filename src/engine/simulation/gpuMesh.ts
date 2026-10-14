@@ -15,6 +15,8 @@
  */
 
 import * as THREE from 'three'
+import type { AroundFrame } from '../aroundFrame'
+import { aroundBounds } from './aroundWrap'
 import type { DirtyRegion, SimulationGrid } from './types'
 
 /**
@@ -47,7 +49,7 @@ export function createHeightfieldTexture(grid: SimulationGrid): THREE.DataTextur
  * sloped hole. Row instancing keeps the template O(cols) at high detail.
  * position encodes (column, x corner, y corner); gl_InstanceID supplies row.
  */
-export function createStockPlaneGeometry(grid: SimulationGrid): THREE.InstancedBufferGeometry {
+export function createStockPlaneGeometry(grid: SimulationGrid, frame?: AroundFrame): THREE.InstancedBufferGeometry {
   const geometry = new THREE.InstancedBufferGeometry()
   const positions = new Float32Array(grid.cols * 4 * 3)
   const indices = grid.cols * 4 <= 65535
@@ -70,12 +72,13 @@ export function createStockPlaneGeometry(grid: SimulationGrid): THREE.InstancedB
     new THREE.Vector3(grid.originX, grid.stockBottomZ, grid.originY),
     new THREE.Vector3(grid.originX + grid.cols * grid.cellSize, grid.stockTopZ, grid.originY + grid.rows * grid.cellSize),
   )
+  if (frame) geometry.boundingBox = aroundBounds(grid, frame)
   geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere())
   return geometry
 }
 
-export function createStockPlaneGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
-  return [createStockPlaneGeometry(grid)]
+export function createStockPlaneGeometries(grid: SimulationGrid, frame?: AroundFrame): THREE.BufferGeometry[] {
+  return [createStockPlaneGeometry(grid, frame)]
 }
 
 /**

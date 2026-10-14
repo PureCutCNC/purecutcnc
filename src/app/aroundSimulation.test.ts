@@ -45,7 +45,7 @@ import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { PocketToolpathResult, ToolpathResult } from '../engine/toolpaths/types'
 import { simulateReplayItemsHeightfield, type SimulationGrid, type SimulationResult } from '../engine/simulation'
 import { findMillingOperationTool } from '../toolPolicy'
-import { buildSimulationSetupInput, resolveSimulationSetup, simulationSetups, type SimulationSetupInput } from './simulationSetup'
+import { buildSimulationBar, buildSimulationSetupInput, resolveSimulationSetup, simulationSetups, type SimulationSetupInput } from './simulationSetup'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -391,6 +391,37 @@ function testFlatSetupKeepsItsClampsAndBar(): void {
   assert(input.project.stock === project.stock, 'and the real round bar, so its chuck stays round')
 }
 
+function testSecondTurnPocketAndBarData(): void {
+  const { project, setup } = makeAroundProject()
+  const frame = aroundFrame(AROUND_BAR)
+  const secondTurn = projectWithFeatures({ ...project, featureDefinitions: {} }, [
+    pocketFeature('around-pocket', { x: 40, y: 35 + frame.circumference, w: 30, h: 20 }, 40, 36, 'around'),
+  ])
+  const envelope = computeOperationToolpath(secondTurn, secondTurn.operations[0])
+  assert(envelope, 'second turn pocket generates')
+  assert(envelope.result.moves.some((move) => move.kind === 'cut' && (move.from.a ?? 0) > 360), 'fixture really cuts on the second turn')
+  const input = simulationInput(secondTurn, setup, new Map([['opAround', envelope.result]]))
+  for (const move of input.toolpaths.get('opAround')!.moves) {
+    for (const point of [move.from, move.to]) assert(point.y >= frame.sheetStart - 1e-8 && point.y <= frame.sheetStart + frame.circumference + 1e-8, 'second turn paths are folded into first turn')
+  }
+  const result = replaySetup(input)
+  assert(result.stats.removedCellCount > 0, 'a pocket on the second turn removes material')
+  assert(topZAt(result.grid, 55, 45) < frame.radius - 1, 'second-turn pocket cuts the corresponding first-turn cells')
+  const withClamps = { ...project, clamps: [...WORKHOLDING, { ...WORKHOLDING[0], id: 'hidden', visible: false }] }
+  const bar = buildSimulationBar(withClamps, frame)
+  assert(bar, 'pure bar helper builds Around data')
+  assert(bar.stock === project.stock, 'bar uses the actual round stock')
+  assert(bar.origin === project.origin, 'bar keeps the real origin')
+  assertEqual(bar.frame, frame, 'Around frame passes through')
+  assertEqual(bar.clamps, WORKHOLDING, 'only visible real fixtures, with no band rewrite')
+  assert(bar.unrolledOrigin.z === project.origin.z - frame.radius, 'sheet origin is lowered exactly once')
+  assertEqual(input.bar?.stock, secondTurn.stock, 'setup input carries bar display data to the model')
+  assert(simulationInput({ ...project, operations: [] }, setup, new Map()).bar, 'an empty Around setup still draws the bar')
+  const top = { ...setup, kind: undefined, orientation: { axis: 'x' as const, angleDeg: 0 } }
+  assert(!simulationInput({ ...project, setups: [top] }, top, new Map()).bar, 'flat setup has no bar display variant')
+}
+
+testSecondTurnPocketAndBarData()
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
 testPickerAndBrokenAround()

@@ -47,6 +47,8 @@ export const viewportEs: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.playToolDisabledMode': 'Cambie al modo Seleccionado para usar la reproducción de la herramienta',
   'viewport.sim.playToolDisabledNoOp': 'Seleccione una operación con una trayectoria de herramienta válida para reproducir',
   'viewport.sim.playToolToggle': 'Alternar reproducción de la herramienta',
+  'viewport.sim.unrolled': 'Desenrollado',
+  'viewport.sim.unrolledTitle': 'Mostrar toda la superficie de la barra desenrollada en plano',
   'viewport.sim.webglUnavailableTitle': 'La simulación 3D no está disponible',
   'viewport.sim.webglUnavailableBody': 'Esta vista requiere WebGL2, que su navegador o controlador de gráficos no proporcionó. Intente actualizar su navegador o habilitar la aceleración de hardware en su configuración.',
   'viewport.sim.webglLostTitle': 'Se perdió el contexto de los gráficos 3D',
