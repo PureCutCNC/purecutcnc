@@ -36,3 +36,17 @@ bounded slices. Never have multiple agents edit the same files concurrently;
 the owning agent must inspect the real diff and run the required verification.
 For the DeepSeek integration-manager flow, follow the `manager-delegate` skill
 instead of duplicating its credential and worktree procedure here.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on this repo, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
