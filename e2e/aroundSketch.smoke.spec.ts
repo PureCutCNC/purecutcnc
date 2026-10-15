@@ -1026,14 +1026,21 @@ test('the created thread wraps in the 3D overlay and removes simulation material
   ).toBeGreaterThan(0)
 })
 
-// ── Tablet geometry: the dialog must contain its own footer and pickers ──
+// ── Tablet geometry: the dialog must contain its own chrome ─────────────
 //
 // `toBeVisible()` and an element's own bounding box both pass for a control
-// the dialog has clipped: the box is reported in full while its pixels are cut
-// off at the dialog edge. These helpers compare the *complete* rectangle
-// against the dialog and the viewport, then hit-test the centre with
-// `elementFromPoint`, so a control drawn outside its frame fails the test
-// instead of passing on visibility alone (issue #1016 C1 correction).
+// the dialog has clipped or pushed outside its frame: the box is reported in
+// full while its pixels are cut off. These helpers compare the *complete*
+// rectangle against the dialog and the viewport, then hit-test the centre and
+// four points near the corners with `elementFromPoint`, so a control drawn
+// outside its frame fails the test instead of passing on visibility alone.
+//
+// The header (title and close) and the footer actions are measured together
+// from one frame snapshot and the footer is never scrolled into view first:
+// `scrollIntoViewIfNeeded` on a clipped action can bring the whole frame into
+// view and hide the regression (issue #1016 C1 correction, slice D2). Only a
+// field or picker trigger inside the body may scroll, because the body is the
+// one place scrolling is legitimate.
 
 interface Box {
   x: number
@@ -1051,53 +1058,215 @@ function inside(inner: Box, outer: Box, slack = 1): boolean {
   )
 }
 
-/** The complete rectangle is inside the viewport and nothing covers its centre. */
-async function expectReachable(page: Page, locator: Locator, label: string): Promise<Box> {
+/** The centre and four points near the corners are all actually the element. */
+async function expectUnoccluded(locator: Locator, label: string): Promise<void> {
+  const missed = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const across = [0.5, 0.15, 0.85, 0.15, 0.85]
+    const down = [0.5, 0.15, 0.15, 0.85, 0.85]
+    const names = ['centre', 'top-left', 'top-right', 'bottom-left', 'bottom-right']
+    const missedAt: string[] = []
+    names.forEach((name, index) => {
+      const top = document.elementFromPoint(
+        rect.left + rect.width * across[index],
+        rect.top + rect.height * down[index],
+      )
+      if (top === null || !(element === top || element.contains(top))) missedAt.push(name)
+    })
+    return missedAt
+  })
+  expect(missed, `${label} is unoccluded at its centre and corners`).toEqual([])
+}
+
+/**
+ * The complete rectangle is inside the dialog and the viewport, and the
+ * control's own pixels are on top. `scroll` is set only for a field or picker
+ * trigger that legitimately lives in the scrolling body.
+ */
+async function expectComplete(
+  page: Page,
+  locator: Locator,
+  dialog: Locator,
+  label: string,
+  options?: { scroll?: boolean },
+): Promise<Box> {
   // A field below the fold is scrolled into the body first; the box asserted is
   // then the one the user sees, not an off-screen layout position.
-  await locator.scrollIntoViewIfNeeded()
+  if (options?.scroll) await locator.scrollIntoViewIfNeeded()
   const box = await locator.boundingBox()
   expect(box, `${label} has a layout box`).not.toBeNull()
+  const frame = await dialog.boundingBox()
+  expect(frame, 'the dialog has a layout box').not.toBeNull()
   const viewport = page.viewportSize()
   expect(viewport, 'the test has a viewport').not.toBeNull()
+  expect(inside(box!, frame!), `${label} is complete inside the dialog`).toBe(true)
   expect(
     inside(box!, { x: 0, y: 0, width: viewport!.width, height: viewport!.height }),
     `${label} is complete inside the viewport`,
   ).toBe(true)
-  const hit = await locator.evaluate((element, point) => {
-    const top = document.elementFromPoint(point.x, point.y)
-    return top !== null && (element === top || element.contains(top))
-  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 })
-  expect(hit, `${label} centre is not occluded`).toBe(true)
+  await expectUnoccluded(locator, label)
   return box!
 }
 
-/** An action's complete rectangle must also lie inside the dialog's frame. */
-async function expectActionInsideDialog(page: Page, action: Locator, dialog: Locator, label: string): Promise<void> {
-  const box = await expectReachable(page, action, label)
-  const frame = await dialog.boundingBox()
-  expect(frame, 'the dialog has a layout box').not.toBeNull()
-  expect(inside(box, frame!), `${label} is complete inside the dialog`).toBe(true)
+interface ChromeControl {
+  label: string
+  locator: Locator
 }
 
-/** Open a shared Select and prove its list and chosen option are reachable. */
-async function expectPickerReachable(
+interface ChromeSnapshot {
+  frame: Box
+  controls: Array<{ label: string; box: Box }>
+}
+
+/** The header, the title, the close button and both footer actions. */
+function dialogChrome(dialog: Locator, cancel: Locator, create: Locator): ChromeControl[] {
+  return [
+    { label: 'header', locator: dialog.locator('.dialog-header') },
+    { label: 'title', locator: dialog.locator('.dialog-title') },
+    { label: 'close', locator: dialog.locator('.dialog-close') },
+    { label: 'Cancel', locator: cancel },
+    { label: 'Create', locator: create },
+  ]
+}
+
+/**
+ * Measure the header and the footer actions from one frame snapshot without
+ * scrolling anything: either all of them are complete at the same time or the
+ * dialog has failed to contain its own chrome.
+ */
+async function expectChromeComplete(
   page: Page,
+  dialog: Locator,
+  controls: ChromeControl[],
+  label: string,
+): Promise<ChromeSnapshot> {
+  const frame = await dialog.boundingBox()
+  expect(frame, `${label} dialog has a layout box`).not.toBeNull()
+  const viewport = page.viewportSize()
+  expect(viewport, 'the test has a viewport').not.toBeNull()
+  const screen = { x: 0, y: 0, width: viewport!.width, height: viewport!.height }
+  expect(inside(frame!, screen), `${label} dialog is complete inside the viewport`).toBe(true)
+
+  const measured: Array<{ label: string; box: Box }> = []
+  for (const control of controls) {
+    const box = await control.locator.boundingBox()
+    expect(box, `${label} ${control.label} has a layout box`).not.toBeNull()
+    expect(inside(box!, frame!), `${label} ${control.label} is complete inside the dialog`).toBe(true)
+    expect(inside(box!, screen), `${label} ${control.label} is complete inside the viewport`).toBe(true)
+    measured.push({ label: control.label, box: box! })
+  }
+  for (const control of controls) await expectUnoccluded(control.locator, `${label} ${control.label}`)
+  return { frame: frame!, controls: measured }
+}
+
+/** Two chrome snapshots agree: nothing moved while the body scrolled. */
+function expectChromeUnchanged(before: ChromeSnapshot, after: ChromeSnapshot, label: string): void {
+  const moved = (first: Box, second: Box): boolean =>
+    Math.abs(first.x - second.x) > 1 ||
+    Math.abs(first.y - second.y) > 1 ||
+    Math.abs(first.width - second.width) > 1 ||
+    Math.abs(first.height - second.height) > 1
+  expect(moved(before.frame, after.frame), `${label} frame stays put`).toBe(false)
+  before.controls.forEach((control, index) => {
+    expect(moved(control.box, after.controls[index].box), `${label} ${control.label} stays put`).toBe(false)
+  })
+}
+
+/** The header ends above the body, the body above the footer, all inside the frame. */
+async function expectDialogStacked(dialog: Locator, label: string): Promise<void> {
+  const frame = await dialog.boundingBox()
+  const header = await dialog.locator('.dialog-header').boundingBox()
+  const body = await dialog.locator('.dialog-body').boundingBox()
+  const footer = await dialog.locator('.dialog-footer').boundingBox()
+  expect(
+    frame !== null && header !== null && body !== null && footer !== null,
+    `${label} lays out header, body and footer`,
+  ).toBe(true)
+  expect(inside(header!, frame!), `${label} header is inside the dialog`).toBe(true)
+  expect(inside(body!, frame!), `${label} body is inside the dialog`).toBe(true)
+  expect(inside(footer!, frame!), `${label} footer is inside the dialog`).toBe(true)
+  expect(header!.y + header!.height, `${label} header ends above the body`).toBeLessThanOrEqual(body!.y + 1)
+  expect(body!.y + body!.height, `${label} body ends above the footer`).toBeLessThanOrEqual(footer!.y + 1)
+}
+
+interface BodyScroll {
+  scrollTop: number
+  clientHeight: number
+  scrollHeight: number
+  frameScrollTop: number
+}
+
+async function readBodyScroll(dialog: Locator): Promise<BodyScroll> {
+  return dialog.evaluate((element) => {
+    const body = element.querySelector('.dialog-body') as HTMLElement | null
+    if (body === null) throw new Error('the dialog has a body')
+    return {
+      scrollTop: body.scrollTop,
+      clientHeight: body.clientHeight,
+      scrollHeight: body.scrollHeight,
+      frameScrollTop: (element as HTMLElement).scrollTop,
+    }
+  })
+}
+
+/**
+ * The body owns the scroll: the frame's own offset stays at zero while the
+ * form scrolls inside it, and the header and the footer keep the exact
+ * rectangles they had when the dialog opened. The dialog frame must never be
+ * the scroller, or scrolling for a field would carry the header away.
+ */
+async function expectBodyOwnsScroll(
+  page: Page,
+  dialog: Locator,
+  controls: ChromeControl[],
+  baseline: ChromeSnapshot,
+  label: string,
+  options: { requireOverflow: boolean },
+): Promise<void> {
+  await dialog.evaluate((element) => {
+    const body = element.querySelector('.dialog-body') as HTMLElement | null
+    if (body !== null) body.scrollTop = 0
+  })
+  const before = await readBodyScroll(dialog)
+  expect(before.frameScrollTop, `${label} dialog frame is not the scroller`).toBe(0)
+  expect(before.scrollTop, `${label} body starts at the top`).toBe(0)
+  const overflows = before.scrollHeight > before.clientHeight
+  if (options.requireOverflow) expect(overflows, `${label} body is taller than its viewport`).toBe(true)
+
+  await dialog.evaluate((element) => {
+    const body = element.querySelector('.dialog-body') as HTMLElement | null
+    if (body !== null) body.scrollTop = body.scrollHeight
+  })
+  const after = await readBodyScroll(dialog)
+  expect(after.frameScrollTop, `${label} frame stays at scrollTop 0`).toBe(0)
+  if (overflows) {
+    expect(after.scrollTop, `${label} body owns the scroll`).toBeGreaterThan(0)
+  } else {
+    expect(after.scrollTop, `${label} a body that fits does not scroll`).toBe(0)
+  }
+
+  const chrome = await expectChromeComplete(page, dialog, controls, `${label} scrolled`)
+  expectChromeUnchanged(baseline, chrome, `${label} scrolled`)
+}
+
+/**
+ * Open a shared Select and prove the trigger (which may legitimately be
+ * scrolled into the body) and the open list are both complete inside the
+ * dialog. The list is never scrolled into view: a list the dialog cannot show
+ * in place must fail instead of being rescued.
+ */
+async function expectPickerComplete(
+  page: Page,
+  dialog: Locator,
   trigger: Locator,
   option: Locator,
   chosen: string,
-  dialog: Locator,
   label: string,
 ): Promise<void> {
-  const triggerBox = await expectReachable(page, trigger, `${label} trigger`)
-  const frame = await dialog.boundingBox()
-  expect(frame, 'the dialog has a layout box').not.toBeNull()
-  expect(inside(triggerBox, frame!), `${label} trigger is complete inside the dialog`).toBe(true)
-
+  await expectComplete(page, trigger, dialog, `${label} trigger`, { scroll: true })
   await trigger.click()
   await expect(option).toBeVisible()
-  const optionBox = await expectReachable(page, option, `${label} option`)
-  expect(inside(optionBox, frame!), `${label} option is complete inside the dialog`).toBe(true)
+  await expectComplete(page, option, dialog, `${label} option`)
   await option.click()
   await expect(trigger).toContainText(chosen)
 }
@@ -1117,12 +1286,18 @@ test.describe('tablet Thread and Flutes', () => {
 
     const dialog = ui.rotary.dialog(page)
     await expect(dialog).toBeVisible()
-    const box = await dialog.boundingBox()
-    expect(box).not.toBeNull()
-    expect(box!.y).toBeGreaterThanOrEqual(0)
-    expect(box!.y + box!.height).toBeLessThanOrEqual(820)
-    await expect(ui.rotary.createButton(page)).toBeVisible()
-    await expect(ui.rotary.cancelButton(page)).toBeVisible()
+
+    // The whole frame and the header plus both actions are complete at once,
+    // with nothing scrolled into view to hide a footer the frame has pushed
+    // out (issue #1016 C1 correction, slice D2).
+    const chrome = await expectChromeComplete(
+      page,
+      dialog,
+      dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page)),
+      'thread',
+    )
+    expect(chrome.frame.y, 'the dialog frame starts on screen').toBeGreaterThanOrEqual(0)
+    expect(chrome.frame.y + chrome.frame.height, 'the dialog frame ends on screen').toBeLessThanOrEqual(820)
 
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
@@ -1142,34 +1317,39 @@ test.describe('tablet Thread and Flutes', () => {
       const dialog = ui.rotary.dialog(page)
       await expect(dialog).toBeVisible()
 
-      const frame = await dialog.boundingBox()
-      expect(frame, 'the dialog has a layout box').not.toBeNull()
-      const viewport = page.viewportSize()!
-      expect(
-        inside(frame!, { x: 0, y: 0, width: viewport.width, height: viewport.height }),
-        `${kind} dialog is complete inside the viewport`,
-      ).toBe(true)
+      // Fresh open: the header and the actions are complete at once and none of
+      // them is scrolled into view first. A clipped footer cannot pass by being
+      // brought into view.
+      const controls = dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      const fresh = await expectChromeComplete(page, dialog, controls, `${kind} fresh`)
+      await expectDialogStacked(dialog, kind)
 
-      await expectActionInsideDialog(page, ui.rotary.cancelButton(page), dialog, `${kind} Cancel`)
-      await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, `${kind} Create`)
-      await expectPickerReachable(
+      // A field or picker may scroll the body; the frame, header and footer may
+      // not move, and the open list must sit inside the dialog unaided.
+      await expectPickerComplete(
         page,
+        dialog,
         ui.rotary.directionTrigger(page),
         ui.rotary.directionOption(page, 'Left-hand'),
         'Left-hand',
-        dialog,
         `${kind} Direction`,
       )
       if (kind === 'flutes') {
-        await expectPickerReachable(
+        await expectPickerComplete(
           page,
+          dialog,
           ui.rotary.toolTrigger(page),
           ui.rotary.toolOption(page, 'Ball 3'),
           'Ball 3',
-          dialog,
           `${kind} Tool`,
         )
       }
+      const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
+      expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
+
+      // Scrolling the body leaves the header and the footer where they were;
+      // where the body is taller than its viewport it, not the frame, scrolls.
+      await expectBodyOwnsScroll(page, dialog, controls, fresh, kind, { requireOverflow: false })
 
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
@@ -1191,16 +1371,21 @@ test.describe('tablet Thread and Flutes', () => {
     await ui.rotary.field(page, 'twist').fill('2')
     await ui.rotary.field(page, 'depth').fill('1')
 
-    await expectPickerReachable(page, ui.rotary.toolTrigger(page), ui.rotary.toolOption(page, 'Ball 3'), 'Ball 3', dialog, 'Flutes Tool')
-    await expectPickerReachable(
+    await expectPickerComplete(page, dialog, ui.rotary.toolTrigger(page), ui.rotary.toolOption(page, 'Ball 3'), 'Ball 3', 'Flutes Tool')
+    await expectPickerComplete(
       page,
+      dialog,
       ui.rotary.directionTrigger(page),
       ui.rotary.directionOption(page, 'Left-hand'),
       'Left-hand',
-      dialog,
       'Flutes Direction',
     )
-    await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, 'Flutes Create')
+    await expectChromeComplete(
+      page,
+      dialog,
+      dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page)),
+      'Flutes Create',
+    )
     await ui.rotary.createButton(page).click()
     await expect(dialog).toBeHidden()
 
@@ -1235,34 +1420,42 @@ test.describe('tablet Thread and Flutes on a short viewport', () => {
       const dialog = ui.rotary.dialog(page)
       await expect(dialog).toBeVisible()
 
+      // Fresh open: the header and the actions are complete at once and none of
+      // them is scrolled into view first, at the height where the frame has the
+      // least room to spare (issue #1016 C1 correction, slice D2).
+      const controls = dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      const fresh = await expectChromeComplete(page, dialog, controls, `${kind} fresh`)
+      await expectDialogStacked(dialog, kind)
+
       // The form really is taller than the body at this height, so the test is
       // exercising the scroll path and not a form that happens to fit.
-      const overflows = await dialog.evaluate((element) => {
-        const body = element.querySelector('.dialog-body')
-        return body !== null && body.scrollHeight > body.clientHeight
-      })
-      expect(overflows, `${kind} body scrolls on a short viewport`).toBe(true)
+      const metrics = await readBodyScroll(dialog)
+      expect(metrics.scrollHeight, `${kind} body scrolls on a short viewport`).toBeGreaterThan(metrics.clientHeight)
 
-      await expectActionInsideDialog(page, ui.rotary.cancelButton(page), dialog, `${kind} Cancel`)
-      await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, `${kind} Create`)
-      await expectPickerReachable(
+      await expectPickerComplete(
         page,
+        dialog,
         ui.rotary.directionTrigger(page),
         ui.rotary.directionOption(page, 'Left-hand'),
         'Left-hand',
-        dialog,
         `${kind} Direction`,
       )
       if (kind === 'flutes') {
-        await expectPickerReachable(
+        await expectPickerComplete(
           page,
+          dialog,
           ui.rotary.toolTrigger(page),
           ui.rotary.toolOption(page, 'Ball 3'),
           'Ball 3',
-          dialog,
           `${kind} Tool`,
         )
       }
+      const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
+      expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
+
+      // Even with the form taller than the body, the body owns the scroll and
+      // the header and the footer keep the rectangles they opened with.
+      await expectBodyOwnsScroll(page, dialog, controls, fresh, kind, { requireOverflow: true })
 
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
