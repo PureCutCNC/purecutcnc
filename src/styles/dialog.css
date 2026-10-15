@@ -3402,3 +3402,32 @@
     height: 40px;
   }
 }
+
+/* ── Thread / Flutes on Around (issue #1016 C1) ───────────── */
+
+.dialog--rotary {
+  max-width: 420px;
+}
+
+.rotary-dialog__note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.rotary-dialog__error {
+  margin: 0;
+}
+
+.rotary-dialog__create:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The rotary commands sit under the drawing tools in the vertical creation
+   rail, with a little air so the two commands do not read as shapes. */
+.toolbar--creation.toolbar--vertical .toolbar-group--rotary {
+  margin-top: 6px;
+}
+

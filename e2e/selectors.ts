@@ -879,3 +879,20 @@ export const setupCam = {
   /** The "Plan" (automatic CAM plan) header action. */
   planButton: (page: Page) => page.locator('.cam-header-action--plan'),
 }
+
+// Thread and Flutes on the Around face (#1016 C1). The commands carry a stable
+// `data-command` hook; their accessible names are localized button labels.
+export const rotary = {
+  threadButton: (page: Page) => page.locator('[data-command="rotary-thread"]'),
+  flutesButton: (page: Page) => page.locator('[data-command="rotary-flutes"]'),
+  dialog: (page: Page) => page.locator('.dialog--rotary'),
+  field: (page: Page, name: 'start' | 'length' | 'pitch' | 'starts' | 'depth' | 'count' | 'twist') =>
+    page.locator(`#rotary-${name}`),
+  toolTrigger: (page: Page) => rotary.dialog(page).locator('.ui-select__trigger'),
+  toolOption: (page: Page, name: string) => rotary.dialog(page).getByRole('option', { name }),
+  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
+  cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
+  error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
+  note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+}
+
