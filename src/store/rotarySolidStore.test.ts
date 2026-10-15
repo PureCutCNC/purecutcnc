@@ -43,7 +43,10 @@
  *   pointed at the folder → the setup/target assertions fail;
  * - generation treated as working on a square blank → the documented
  *   engine-refusal assertion fails (and would be a false claim);
- * - creation split across two `set` calls → the undo assertion fails.
+ * - creation split across two `set` calls → the undo assertion fails;
+ * - the creation taking its own snapshot (or clearing `transactionStart`)
+ *   inside an open transaction → the combined undo/redo and the "open
+ *   transaction is preserved" assertions fail.
  *
  * Run with: npx tsx src/store/rotarySolidStore.test.ts
  */
@@ -417,6 +420,86 @@ log('Testing one undo and redo on the square blank...')
   assert.equal(redone.operations.length, 2, 'redo restores both operations')
   assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
   assert.deepEqual(redone.stock, stockBefore, 'redo never touches the blank')
+}
+
+// ── creation inside an outer history transaction ──────────────
+
+log('Testing creation inside an outer transaction on the real square setup...')
+{
+  const project = loadSquare(MM_X, [cutter('mm', 'ball')])
+  const bounds = getStockBounds(project.stock)
+  const stockBefore = structuredClone(project.stock)
+  const snapBefore = project.grid.snapIncrement
+  const featuresBefore = project.features.length
+  const operationsBefore = project.operations.length
+  const historyBefore = store().history.past.length
+
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
+  const result = store().addRotarySolid({
+    ...SQUARE_TO_ROUND,
+    diameter: 24,
+    alongStart: bounds.minX + 20,
+    alongEnd: bounds.minX + 80,
+    toolRef: 'ball',
+  })
+  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
+  if (!result.ok) throw new Error('unreachable')
+  const assetId = store().project.featureDefinitions[
+    store().project.features.find((entry) => entry.id === result.featureId)!.definitionId
+  ].stl!.meshAssetId!
+
+  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
+  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
+  assert.equal(store().project.operations.length, operationsBefore + 2, 'both operations exist before the commit')
+
+  store().commitHistoryTransaction()
+  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
+
+  store().undo()
+  const undone = store().project
+  assert.equal(undone.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
+  assert.equal(undone.features.length, featuresBefore, 'undo removes the model')
+  assert.equal(undone.operations.length, operationsBefore, 'undo removes both operations')
+  assert.equal(undone.featureFolders.length, 0, 'undo removes the folder')
+  assert.equal(undone.modelAssets?.[assetId], undefined, 'undo removes the asset')
+  assert.deepEqual(undone.stock, stockBefore, 'undo leaves the blank as it was')
+  assert.equal(activeSetup(undone).id, 'square-around', 'undo keeps the real Around setup in view')
+  assert.equal(store().history.future.length, 1, 'the combined step is redoable')
+
+  store().redo()
+  const redone = store().project
+  assert.equal(redone.grid.snapIncrement, snapBefore * 2, 'redo restores the grid edit')
+  assert.equal(redone.features.length, featuresBefore + 1, 'redo restores the model')
+  assert.equal(redone.operations.length, operationsBefore + 2, 'redo restores both operations')
+  assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
+  assert.deepEqual(redone.stock, stockBefore, 'redo never touches the blank')
+}
+
+log('Testing a refused creation leaves an open transaction alone...')
+{
+  loadSquare(MM_X, [cutter('mm', 'ball')])
+  const bounds = getStockBounds(store().project.stock)
+  const snapBefore = store().project.grid.snapIncrement
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: 3 })
+  const projectAfterEdit = store().project
+  const selectionAfterEdit = store().selection
+  const dirtyAfterEdit = store().dirty
+  const historyAfterEdit = store().history.past.length
+  const transactionStart = store().history.transactionStart
+  assert.ok(transactionStart, 'the transaction is open')
+
+  const refused = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter: 41, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
+  assert.equal(refused.ok, false, 'the bad input is refused')
+  assert.equal(store().history.transactionStart, transactionStart, 'the transaction snapshot is unchanged')
+  assert.equal(store().project, projectAfterEdit, 'the project is unchanged')
+  assert.equal(store().selection, selectionAfterEdit, 'the selection is unchanged')
+  assert.equal(store().dirty, dirtyAfterEdit, 'dirtiness is unchanged')
+  assert.equal(store().history.past.length, historyAfterEdit, 'no snapshot was added')
+
+  store().cancelHistoryTransaction()
+  assert.equal(store().project.grid.snapIncrement, snapBefore, 'the untouched transaction still cancels cleanly')
 }
 
 // ── refusals and the ordinary-edit contract ───────────────────

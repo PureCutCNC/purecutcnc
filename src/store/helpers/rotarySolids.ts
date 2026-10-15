@@ -75,6 +75,7 @@ import { serializeImportedMesh } from '../../engine/importedMesh'
 import type { ImportedTriangleMesh } from '../../engine/importedMesh'
 import { targetAllowedInSetup } from '../../engine/setupTargets'
 import { convertLength, convertToolUnits } from '../../utils/units'
+import type { Units } from '../../utils/units'
 import { uniqueName } from '../../import'
 import { activeFace, activeSetup } from './activeFace'
 import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
@@ -191,23 +192,43 @@ export type RotarySolidResult = RotarySolidCreated | RotarySolidRefused
 // Validation
 // ---------------------------------------------------------------------------
 
-function toolRefusal(tool: Tool | undefined): RotarySolidRefused | null {
+/**
+ * The operation-seeding numerics a tool must carry *after* the conversion into
+ * the project's units. The raw record is not enough: a value finite in its own
+ * units can overflow the project's unit on conversion (a 0.25 in cutter with a
+ * `defaultFeed` of `Number.MAX_VALUE` converts to `Infinity` mm), and the
+ * created operations read the converted copy — so a raw-only check would commit
+ * two operations with an infinite feed. The check runs on the exact converted
+ * object the operations are seeded from, before any state or operation exists.
+ *
+ * A cutter's diameter must be a finite positive physical size. Every default the
+ * two operations are seeded from (feed, plunge feed, stepdown, stepover) must be
+ * a finite positive length, and rpm a finite non-negative speed; `0` stays
+ * allowed for rpm (no spindle) but not for a feed or a depth of cut.
+ */
+function convertedToolRefusal(converted: Tool): RotarySolidRefused | null {
+  // The record is in its own units, so the physical size is asked in
+  // millimetres — a 0.25 in cutter is a real 6.35 mm cutter in an mm project.
+  const physicalDiameter = convertLength(converted.diameter, converted.units, 'mm')
+  if (!Number.isFinite(physicalDiameter) || !(physicalDiameter > 0)) {
+    return { ok: false, reason: 'invalidTool', detail: 'diameter' }
+  }
+  const feedsAndDepths = [converted.defaultFeed, converted.defaultPlungeFeed, converted.defaultStepdown, converted.defaultStepover]
+  if (!feedsAndDepths.every((value) => Number.isFinite(value) && value > 0)) {
+    return { ok: false, reason: 'invalidTool', detail: 'defaults' }
+  }
+  if (!Number.isFinite(converted.defaultRpm) || converted.defaultRpm < 0) {
+    return { ok: false, reason: 'invalidTool', detail: 'defaults' }
+  }
+  return null
+}
+
+function toolRefusal(tool: Tool | undefined, projectUnits: Units): RotarySolidRefused | null {
   if (!tool) return { ok: false, reason: 'toolNotFound' }
   if (!isToolCompatibleWithOperation(tool, 'rotary_rough')) {
     return { ok: false, reason: 'toolIncompatible', detail: tool.type }
   }
-  // A record's diameter is in its own units, so the physical size is asked in
-  // millimetres — a 0.25 in cutter is a real 6.35 mm cutter in an mm project.
-  const physicalDiameter = convertLength(tool.diameter, tool.units, 'mm')
-  if (!Number.isFinite(tool.diameter) || !(physicalDiameter > 0)) {
-    return { ok: false, reason: 'invalidTool', detail: 'diameter' }
-  }
-  const defaults = [tool.defaultStepover, tool.defaultStepdown, tool.defaultFeed, tool.defaultPlungeFeed, tool.defaultRpm]
-  if (!defaults.every((value) => Number.isFinite(value) && value >= 0)
-    || !(tool.defaultStepover > 0) || !(tool.defaultStepdown > 0)) {
-    return { ok: false, reason: 'invalidTool', detail: 'defaults' }
-  }
-  return null
+  return convertedToolRefusal(tool.units === projectUnits ? tool : convertToolUnits(tool, projectUnits))
 }
 
 function alongRangeRefusal(
@@ -367,7 +388,7 @@ export function planRotarySolid(
   }
 
   const tool = project.tools.find((candidate) => candidate.id === input.toolRef)
-  const toolProblem = toolRefusal(tool)
+  const toolProblem = toolRefusal(tool, project.meta.units)
   if (toolProblem) return toolProblem
   const cutter = tool as Tool
 
@@ -491,6 +512,11 @@ function errorText(error: unknown): string {
  * model feature (with its mesh asset and definition) and the two rotary
  * operations. A refusal changes nothing: no folder, no feature, no asset, no
  * operation, no history entry, no selection change and no dirtiness.
+ *
+ * An already-open history transaction is preserved: the creation joins it like
+ * any other edit and the transaction's own commit takes the one snapshot, so a
+ * transaction that also changed the grid, a tool or anything else undoes as one
+ * step. Standalone creation still records its own single step.
  */
 export function createAddRotarySolidAction(
   set: Parameters<StateCreator<ProjectStore>>[0],
@@ -500,15 +526,20 @@ export function createAddRotarySolidAction(
     const state = get()
     const planned = planRotarySolid(state.project, state.selection, input)
     if (!planned.ok) return planned
-    set((current) => ({
-      project: planned.project,
-      selection: planned.selection,
-      history: {
-        past: [...current.history.past, cloneProject(current.project)].slice(-100),
-        future: [],
-        transactionStart: null,
-      },
-    }))
+    set((current) => {
+      const applied = { project: planned.project, selection: planned.selection }
+      if (current.history.transactionStart) {
+        return applied
+      }
+      return {
+        ...applied,
+        history: {
+          past: [...current.history.past, cloneProject(current.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
     return planned.created
   }
 }

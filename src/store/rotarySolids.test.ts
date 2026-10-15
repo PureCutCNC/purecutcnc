@@ -41,13 +41,19 @@
  * - the refusal path calling `set` before validating → the invalid-input
  *   no-change assertions fail;
  * - the input numbers written to the feature/definition → the "no creation
- *   fields persisted" assertions fail.
+ *   fields persisted" assertions fail;
+ * - the tool check run on the raw record instead of the converted copy → the
+ *   finite inch tool that overflows to `Infinity` in mm is created with an
+ *   `Infinity` feed and the overflow refusals fail;
+ * - the creation taking its own snapshot (or clearing `transactionStart`)
+ *   inside an open transaction → the combined undo/redo and the "open
+ *   transaction is preserved" assertions fail.
  *
  * Run with: npx tsx src/store/rotarySolids.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, getStockBounds, newProject, roundStock } from '../types/project'
+import { defaultTool, getStockBounds, isRoundStock, newProject, roundStock } from '../types/project'
 import { squareStock } from '../types/barStock'
 import type { Project, SketchFeature, Tool } from '../types/project'
 import { bundledMachines } from '../machine/registry'
@@ -132,6 +138,29 @@ function loadRotary(spec: BarSpec, tools: Tool[], features: SketchFeature[] = []
   const project = projectWithFeatures(base, features)
   store().loadProject(project)
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
+  return store().project
+}
+
+/** A rotary project on a round bar with a *real* Around setup already active. */
+function loadRoundRealSetup(spec: BarSpec, tools: Tool[]): Project {
+  const base = newProject(`Real ${spec.axis} ${spec.units}`, spec.units)
+  base.meta.projectType = 'rotary'
+  base.stock = roundStock(spec.diameter, spec.length, spec.axis, spec.at)
+  const machine = rotaryMachine(spec.axis)
+  base.meta.machineDefinitions = [machine]
+  base.meta.selectedMachineId = machine.id
+  base.tools = tools
+  base.setups.push({
+    ...base.setups[0],
+    id: 'round-around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: spec.axis, angleDeg: 0 },
+  })
+  base.activeSetupId = 'round-around'
+  store().loadProject(projectWithFeatures(base, []))
+  assert.equal(activeFace(store().project), 'around', 'the fixture is on a real Around setup')
+  assert.notEqual(activeSetup(store().project).id, provisionalSetupId('around'), 'the setup is real')
   return store().project
 }
 
@@ -404,14 +433,37 @@ log('Testing generated rough and finish moves on the actual bar...')
       [],
       `${operation.kind}: no generation warning at any severity`,
     )
-    // The cut stays inside the bar's own radius envelope.
-    const radius = project.stock.thickness / 2
+    // What this measures: every generated point is finite; the path's along
+    // extent is exactly the requested band on the real bar; and its closest
+    // approach to the bar axis reaches the hex's flat (apothem) radius, so the
+    // tool really does make contact with the generated solid. The *maximum*
+    // radial distance is deliberately not bounded — it is the safe-height
+    // retract plane above the bar top, not a cut — so this block makes no
+    // "everything stays inside the bar radius" claim.
+    assert.ok(isRoundStock(project.stock), `${operation.kind}: the fixture is a round bar`)
+    const axis = project.stock.axis
+    const acrossMin = axis === 'x' ? bounds.minY : bounds.minX
+    const acrossMax = axis === 'x' ? bounds.maxY : bounds.maxX
+    const axisCentre = (acrossMin + acrossMax) / 2
+    const pivotZ = project.stock.thickness / 2
+    const apothem = POLYGON.acrossFlats / 2
+    let minAlong = Infinity
+    let maxAlong = -Infinity
+    let minRadius = Infinity
     for (const move of path.moves) {
       for (const point of [move.from, move.to]) {
         assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z), `${operation.kind}: finite points`)
+        const along = axis === 'x' ? point.x : point.y
+        const across = axis === 'x' ? point.y : point.x
+        minAlong = Math.min(minAlong, along)
+        maxAlong = Math.max(maxAlong, along)
+        minRadius = Math.min(minRadius, Math.hypot(across - axisCentre, point.z - pivotZ))
       }
     }
-    assert.ok(radius > 0, `${operation.kind}: a real bar radius`)
+    near(minAlong, alongStart, `${operation.kind}: the path starts at the requested along position`, 1e-4)
+    near(maxAlong, alongEnd, `${operation.kind}: the path ends at the requested along position`, 1e-4)
+    assert.ok(minRadius <= apothem + 1e-3, `${operation.kind}: the path reaches the hex flat surface (${minRadius} vs ${apothem})`)
+    assert.ok(minRadius > 0, `${operation.kind}: the path approaches the axis from the material side`)
   }
 }
 
@@ -421,6 +473,7 @@ log('Testing a tool stored in the other unit...')
 {
   const project = loadRotary(MM_X, [cutter('inch', 'inch-ball')])
   assert.equal(project.meta.units, 'mm', 'the project is metric')
+  const toolBefore = structuredClone(project.tools.find((entry) => entry.id === 'inch-ball')!)
   const bounds = getStockBounds(project.stock)
   const result = store().addRotarySolid({
     ...POLYGON,
@@ -433,17 +486,81 @@ log('Testing a tool stored in the other unit...')
 
   const after = store().project
   const stored = after.tools.find((entry) => entry.id === 'inch-ball')!
+  assert.deepEqual(stored, toolBefore, 'the stored tool record is byte-identical')
   assert.equal(stored.units, 'inch', 'the stored tool keeps its units')
   assert.equal(stored.diameter, 0.125, 'the stored tool keees its raw diameter')
   assert.equal(stored.defaultFeed, 24, 'the stored tool keeps its raw feed')
   assert.equal(stored.defaultStepdown, 0.04, 'the stored tool keeps its raw stepdown')
 
   const rough = after.operations.find((entry) => entry.id === result.roughOperationId)!
+  const finish = after.operations.find((entry) => entry.id === result.finishOperationId)!
   near(rough.feed, 24 * 25.4, 'the operation feed lands in project units', 1e-9)
   near(rough.plungeFeed, 8 * 25.4, 'the operation plunge feed lands in project units', 1e-9)
   near(rough.stepdown, 0.04 * 25.4, 'the operation stepdown lands in project units', 1e-9)
   assert.equal(rough.toolRef, 'inch-ball', 'the operation still references the stored record')
   assert.equal(after.tools.length, 1, 'no tool was added or removed')
+  for (const operation of [rough, finish]) {
+    for (const [field, value] of [
+      ['feed', operation.feed], ['plungeFeed', operation.plungeFeed], ['stepdown', operation.stepdown],
+      ['stepover', operation.stepover], ['rpm', operation.rpm],
+    ] as const) {
+      assert.ok(Number.isFinite(value) && value > 0, `${operation.kind}: ${field} is finite and positive (${value})`)
+    }
+  }
+}
+
+// A large but representable cross-unit value is preserved exactly: not refused
+// and not clamped to some arbitrary ceiling.
+log('Testing a large-but-finite cross-unit conversion...')
+{
+  loadRotary(MM_X, [{ ...cutter('inch', 'inch-big'), defaultFeed: 1e10 }])
+  const bounds = getStockBounds(store().project.stock)
+  const result = store().addRotarySolid({
+    ...POLYGON,
+    alongStart: bounds.minX + 20,
+    alongEnd: bounds.minX + 80,
+    toolRef: 'inch-big',
+  })
+  assert.ok(result.ok, `created (${result.ok ? '' : result.reason})`)
+  if (!result.ok) throw new Error('unreachable')
+  const rough = store().project.operations.find((entry) => entry.id === result.roughOperationId)!
+  near(rough.feed, 1e10 * 25.4, 'the large converted feed is exact', 1e-6)
+}
+
+log('Testing cross-unit tool values that overflow on conversion...')
+{
+  // A record finite in its own units can overflow the project's unit:
+  // 0.25 in × Number.MAX_VALUE is Infinity mm. Every operation-seeding numeric
+  // is checked on the converted copy, so none of these can commit an operation
+  // with an infinite feed or depth.
+  const overflowing: Array<[string, 'diameter' | 'defaults', (tool: Tool) => Tool]> = [
+    ['diameter', 'diameter', (tool) => ({ ...tool, diameter: Number.MAX_VALUE })],
+    ['defaultFeed', 'defaults', (tool) => ({ ...tool, defaultFeed: Number.MAX_VALUE })],
+    ['defaultPlungeFeed', 'defaults', (tool) => ({ ...tool, defaultPlungeFeed: Number.MAX_VALUE })],
+    ['defaultStepdown', 'defaults', (tool) => ({ ...tool, defaultStepdown: Number.MAX_VALUE })],
+  ]
+  for (const [field, detail, mutate] of overflowing) {
+    loadRotary(MM_X, [mutate({ ...cutter('inch', 'edge'), units: 'inch', diameter: 0.25 })])
+    const bounds = getStockBounds(store().project.stock)
+    const before = store().project
+    const selectionBefore = store().selection
+    const dirtyBefore = store().dirty
+    const historyBefore = store().history.past.length
+    const result = store().addRotarySolid({
+      ...POLYGON,
+      alongStart: bounds.minX + 20,
+      alongEnd: bounds.minX + 80,
+      toolRef: 'edge',
+    })
+    assert.equal(result.ok, false, `${field}: the overflowing tool is refused`)
+    assert.equal(refusalReason(result), 'invalidTool', `${field}: with the typed invalidTool reason`)
+    assert.equal(!result.ok ? result.detail : undefined, detail, `${field}: names the unusable field group`)
+    assert.equal(store().project, before, `${field}: leaves the project untouched`)
+    assert.equal(store().selection, selectionBefore, `${field}: leaves the selection untouched`)
+    assert.equal(store().dirty, dirtyBefore, `${field}: leaves dirtiness untouched`)
+    assert.equal(store().history.past.length, historyBefore, `${field}: adds no history entry`)
+    assert.equal(store().project.operations.length, 0, `${field}: creates no operation`)
+  }
 }
 
 // ── unique ids and names beside existing content ──────────────
@@ -524,6 +641,130 @@ log('Testing one undo removes everything and redo restores it...')
   assert.equal(redone.operations.length, 2, 'redo restores both operations')
   assert.ok(redone.modelAssets?.[createdAssetId], 'redo restores the asset')
   assert.equal(activeFace(redone), 'around', 'redo keeps the workspace on Around')
+}
+
+// ── creation inside an outer history transaction ──────────────
+
+log('Testing creation inside an outer transaction on the provisional setup...')
+{
+  loadRotary(MM_X, [cutter('mm', 'ball')])
+  assert.equal(activeSetup(store().project).id, provisionalSetupId('around'), 'the fixture starts provisional')
+  const bounds = getStockBounds(store().project.stock)
+  const projectBefore = store().project
+  const snapBefore = projectBefore.grid.snapIncrement
+  const historyBefore = store().history.past.length
+
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
+  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
+  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
+  if (!result.ok) throw new Error('unreachable')
+  const assetId = store().project.featureDefinitions[
+    store().project.features.find((entry) => entry.id === result.featureId)!.definitionId
+  ].stl!.meshAssetId!
+
+  // The creation joins the open transaction: no snapshot of its own, and the
+  // transaction is still there for its commit to own.
+  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
+  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
+  assert.equal(store().project.operations.length, projectBefore.operations.length + 2, 'both operations exist before the commit')
+  assert.notEqual(activeSetup(store().project).id, provisionalSetupId('around'), 'the write realised the provisional setup')
+
+  store().commitHistoryTransaction()
+  assert.equal(store().history.transactionStart, null, 'the commit closes the transaction')
+  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
+
+  store().undo()
+  const undone = store().project
+  assert.equal(undone.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
+  assert.equal(undone.features.length, projectBefore.features.length, 'undo removes the model')
+  assert.equal(undone.operations.length, projectBefore.operations.length, 'undo removes both operations')
+  assert.equal(undone.featureFolders.length, projectBefore.featureFolders.length, 'undo removes the folder')
+  assert.equal(undone.modelAssets?.[assetId], undefined, 'undo removes the asset')
+  assert.equal(activeFace(undone), 'around', 'undo keeps the workspace on Around')
+  assert.equal(store().history.future.length, 1, 'the combined step is redoable')
+
+  store().redo()
+  const redone = store().project
+  assert.equal(redone.grid.snapIncrement, snapBefore * 2, 'redo restores the grid edit')
+  assert.equal(redone.features.length, projectBefore.features.length + 1, 'redo restores the model')
+  assert.equal(redone.operations.length, projectBefore.operations.length + 2, 'redo restores both operations')
+  assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
+}
+
+log('Testing creation inside an outer transaction on a real setup...')
+{
+  const project = loadRoundRealSetup(MM_X, [cutter('mm', 'ball')])
+  const bounds = getStockBounds(project.stock)
+  const snapBefore = project.grid.snapIncrement
+  const historyBefore = store().history.past.length
+
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 3 })
+  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
+  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
+  if (!result.ok) throw new Error('unreachable')
+  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
+  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
+  assert.equal(activeSetup(store().project).id, 'round-around', 'the real setup stays active')
+
+  store().commitHistoryTransaction()
+  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
+  store().undo()
+  assert.equal(store().project.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
+  assert.equal(store().project.features.length, project.features.length, 'undo removes the model')
+  assert.equal(activeSetup(store().project).id, 'round-around', 'undo keeps the real setup in view')
+  store().redo()
+  assert.equal(store().project.grid.snapIncrement, snapBefore * 3, 'redo restores the grid edit')
+  assert.equal(store().project.features.length, project.features.length + 1, 'redo restores the model')
+}
+
+log('Testing cancelling an outer transaction rolls the creation back...')
+{
+  loadRotary(MM_X, [cutter('mm', 'ball')])
+  const bounds = getStockBounds(store().project.stock)
+  const projectBefore = store().project
+  const snapBefore = projectBefore.grid.snapIncrement
+  const historyBefore = store().history.past.length
+
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
+  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
+  assert.ok(result.ok, 'created inside the transaction')
+  store().cancelHistoryTransaction()
+
+  assert.equal(store().history.transactionStart, null, 'the transaction is closed')
+  assert.equal(store().project.grid.snapIncrement, snapBefore, 'cancel restores the prior grid edit')
+  assert.equal(store().project.features.length, projectBefore.features.length, 'cancel removes the model')
+  assert.equal(store().project.operations.length, projectBefore.operations.length, 'cancel removes the operations')
+  assert.equal(store().history.past.length, historyBefore, 'cancel adds no history entry')
+  assert.equal(activeFace(store().project), 'around', 'cancel keeps the workspace face')
+}
+
+log('Testing a refused creation leaves an open transaction alone...')
+{
+  loadRotary(MM_X, [cutter('mm', 'ball')])
+  const bounds = getStockBounds(store().project.stock)
+  const snapBefore = store().project.grid.snapIncrement
+  store().beginHistoryTransaction()
+  store().setGrid({ ...store().project.grid, snapIncrement: 3 })
+  const projectAfterEdit = store().project
+  const selectionAfterEdit = store().selection
+  const dirtyAfterEdit = store().dirty
+  const historyAfterEdit = store().history.past.length
+  const transactionStart = store().history.transactionStart
+  assert.ok(transactionStart, 'the transaction is open')
+
+  const refused = store().addRotarySolid({ ...POLYGON, sides: 2, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
+  assert.equal(refused.ok, false, 'the bad input is refused')
+  assert.equal(store().history.transactionStart, transactionStart, 'the transaction snapshot is unchanged')
+  assert.equal(store().project, projectAfterEdit, 'the project is unchanged')
+  assert.equal(store().selection, selectionAfterEdit, 'the selection is unchanged')
+  assert.equal(store().dirty, dirtyAfterEdit, 'dirtiness is unchanged')
+  assert.equal(store().history.past.length, historyAfterEdit, 'no snapshot was added')
+
+  store().cancelHistoryTransaction()
+  assert.equal(store().project.grid.snapIncrement, snapBefore, 'the untouched transaction still cancels cleanly')
 }
 
 // ── refusals change nothing ───────────────────────────────────
