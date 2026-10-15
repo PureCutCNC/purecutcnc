@@ -33,6 +33,12 @@
  *   fails;
  * - the parameter records serialized → the "no input fields persisted"
  *   assertions fail.
+ * - the imported V-bit converted with the library entry's own units instead of
+ *   the project's → the cross-unit import tests fail;
+ * - the rotary drive sign dropped (a reversed definition ignored) → the parsed
+ *   export sign tests fail;
+ * - a posted angle reduced modulo 360, or written under the wrong rotary word →
+ *   the parsed lead tests fail.
  *
  * Run with: npx tsx src/store/rotaryPatterns.test.ts
  */
@@ -45,6 +51,7 @@ import { bundledMachines } from '../machine/registry'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { parseGcodeMotion } from '../engine/gcode/gcodeMotionParser'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
 import { rotaryWord, validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
@@ -73,11 +80,24 @@ interface BarSpec {
   at: { x: number; y: number }
 }
 
-const MM_BAR: BarSpec = { axis: 'x', units: 'mm', at: { x: 10, y: 30 } }
-const INCH_BAR: BarSpec = { axis: 'y', units: 'inch', at: { x: 3, y: 5 } }
+const MM_AT = { x: 10, y: 30 }
+const INCH_AT = { x: 3, y: 5 }
+const MM_X_BAR: BarSpec = { axis: 'x', units: 'mm', at: MM_AT }
+const MM_Y_BAR: BarSpec = { axis: 'y', units: 'mm', at: MM_AT }
+const INCH_X_BAR: BarSpec = { axis: 'x', units: 'inch', at: INCH_AT }
+const INCH_Y_BAR: BarSpec = { axis: 'y', units: 'inch', at: INCH_AT }
+const MM_BAR = MM_X_BAR
+const INCH_BAR = INCH_Y_BAR
 
 function barStock(spec: BarSpec): ReturnType<typeof roundStock> {
-  return spec.axis === 'x' ? roundStock(40, 200, 'x', spec.at) : roundStock(2, 8, 'y', spec.at)
+  // The diameter and length follow the units, the orientation follows the axis.
+  const [diameter, length] = spec.units === 'mm' ? [40, 200] : [2, 8]
+  return roundStock(diameter, length, spec.axis, spec.at)
+}
+
+function barFor(axis: 'x' | 'y', units: 'mm' | 'inch'): BarSpec {
+  if (axis === 'x') return units === 'mm' ? MM_X_BAR : INCH_X_BAR
+  return units === 'mm' ? MM_Y_BAR : INCH_Y_BAR
 }
 
 function rotaryMachine(axis: 'x' | 'y', drive: 'own' | 'borrowed', reversed = false): MachineDefinition {
@@ -110,6 +130,18 @@ function vBitLibrary(units: 'mm' | 'inch'): ToolLibraryEntry {
   const { id: _id, ...entry } = vBit(units, 'library')
   void _id
   return { ...entry, key: `vbit-${units}` }
+}
+
+/**
+ * A bundled-library V-bit written in `units`, with every converted length
+ * distinct from its same-unit twin so a wrong conversion target cannot hide
+ * behind an equal number. `maxCutDepth` is deliberately non-zero: on the
+ * library entry it is a real ceiling, so it must convert like any other length.
+ */
+function importVBit(units: 'mm' | 'inch', key: string): ToolLibraryEntry {
+  const { id: _id, ...entry } = vBit(units, key)
+  void _id
+  return { ...entry, key, maxCutDepth: units === 'mm' ? 10 : 0.5 }
 }
 
 /** A rotary project with the given tools, loaded and switched onto Around. */
@@ -376,6 +408,76 @@ log('Testing refusals, V-bit resolution and imported tools...')
   store().undo()
   assert.equal(store().project.tools.length, 0, 'one undo removes the imported tool too')
 
+  // A bundled V-bit written in the other unit system is converted into the
+  // project's units before it is stored, and the Engrave seeded from it is in
+  // project units too (issue #1016 C1 A1). The library entry's own `units` must
+  // never be the conversion target: doing that would store an inch tool in a mm
+  // project (and vice versa), unscaled.
+  const MM_PER_INCH = 25.4
+  const crossUnit = [
+    {
+      label: 'inch library into an mm bar',
+      spec: MM_BAR,
+      libraryUnits: 'inch' as const,
+      projectUnits: 'mm' as const,
+      expected: {
+        diameter: 0.25 * MM_PER_INCH,
+        feed: 24 * MM_PER_INCH,
+        plungeFeed: 8 * MM_PER_INCH,
+        stepdown: 0.02 * MM_PER_INCH,
+        maxCutDepth: 0.5 * MM_PER_INCH,
+      },
+      request: { start: 0, length: 20, pitch: 1, depth: 1 },
+    },
+    {
+      label: 'mm library into an inch bar',
+      spec: INCH_BAR,
+      libraryUnits: 'mm' as const,
+      projectUnits: 'inch' as const,
+      expected: {
+        diameter: 6 / MM_PER_INCH,
+        feed: 600 / MM_PER_INCH,
+        plungeFeed: 200 / MM_PER_INCH,
+        stepdown: 0.4 / MM_PER_INCH,
+        maxCutDepth: 10 / MM_PER_INCH,
+      },
+      request: { start: 0, length: 1, pitch: 0.05, depth: 0.05 },
+    },
+  ]
+  for (const entry of crossUnit) {
+    loadRotary(entry.spec, [])
+    const stepBefore = store().history.past.length
+    const result = store().addRotaryPattern(
+      { kind: 'thread', ...entry.request },
+      [importVBit(entry.libraryUnits, `cross-${entry.libraryUnits}`)],
+    )
+    assert.ok(result.ok, `${entry.label}: the library V-bit is imported`)
+    if (!result.ok) throw new Error('unreachable')
+    const project = store().project
+    const operation = project.operations[0]
+    const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+    assert.ok(tool, `${entry.label}: the imported tool is stored`)
+    if (!tool) throw new Error('unreachable')
+    assert.equal(tool.units, entry.projectUnits, `${entry.label}: the stored tool declares the project's units`)
+    assert.equal(tool.type, 'v_bit', `${entry.label}: it is still a V-bit`)
+    assert.equal(tool.vBitAngle, 60, `${entry.label}: the V angle is an angle, not a converted length`)
+    near(tool.diameter, entry.expected.diameter, `${entry.label}: the diameter is converted into project units`)
+    near(tool.defaultFeed, entry.expected.feed, `${entry.label}: the default feed is converted`)
+    near(tool.defaultPlungeFeed, entry.expected.plungeFeed, `${entry.label}: the plunge feed is converted`)
+    near(tool.defaultStepdown, entry.expected.stepdown, `${entry.label}: the stepdown is converted`)
+    near(tool.maxCutDepth, entry.expected.maxCutDepth, `${entry.label}: the max cut depth is converted`)
+    // The Engrave is seeded from the converted tool, so every length it carries
+    // is in project units without a second conversion.
+    near(operation.feed, entry.expected.feed, `${entry.label}: the operation feed is in project units`)
+    near(operation.plungeFeed, entry.expected.plungeFeed, `${entry.label}: the operation plunge feed is in project units`)
+    near(operation.stepdown, entry.expected.stepdown, `${entry.label}: the operation stepdown is in project units`)
+    assert.equal(store().history.past.length, stepBefore + 1, `${entry.label}: the import is one history step`)
+    store().undo()
+    assert.equal(store().project.tools.length, 0, `${entry.label}: one undo removes the imported tool`)
+    assert.equal(store().project.features.length, 0, `${entry.label}: and every created line`)
+    assert.equal(store().project.operations.length, 0, `${entry.label}: and the Engrave operation`)
+  }
+
   // Flutes: missing and incompatible tools refuse.
   loadRotary(MM_BAR, [{ ...vBit('mm', 'v1'), id: 'plasma', type: 'plasma' } as Tool])
   const missing = store().addRotaryPattern({ kind: 'flutes', start: 0, length: 10, count: 1, twist: 0, depth: 0.5, toolRef: 'nope' })
@@ -398,6 +500,142 @@ log('Testing refusals, V-bit resolution and imported tools...')
   const unavailable = store().addRotaryPattern({ kind: 'thread', start: 0, length: 10, pitch: 1, depth: 0.5 })
   assert.equal(unavailable.ok === false && unavailable.reason, 'aroundUnavailable', 'a non-rotary project is refused')
   resetStore(newProject())
+}
+
+// ── posted-program helpers ────────────────────────────────────
+
+/**
+ * `+1`/`-1`: what a positive physical angle is multiplied by on its way into
+ * the program, restated from the definition's own fields — a reversed axis
+ * flips it, and a borrowed motor riding a negated coordinate entry flips it
+ * again. Deliberately not `rotaryDirection`: this is the expected value the
+ * export is checked against, derived here rather than read back.
+ */
+function expectedDriveSign(definition: MachineDefinition): 1 | -1 {
+  const rotary = definition.rotary
+  assert.ok(rotary, 'the export machine has a rotary block')
+  if (!rotary) throw new Error('unreachable')
+  let sign: 1 | -1 = rotary.reversed ? -1 : 1
+  if (rotary.drive === 'borrowed') {
+    const entry = rotary.about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis
+    if (entry.startsWith('-')) sign = sign === 1 ? -1 : 1
+  }
+  return sign
+}
+
+/**
+ * `+1`/`-1`: the machine along coordinate's sign against the physical along
+ * direction. Project X is physical X, but project Y is physical −Y (the project
+ * frame is Y-down), so a machine Y delta is already the physical along delta. A
+ * negated coordinate entry flips either.
+ */
+function alongAxisSign(axis: 'x' | 'y', definition: MachineDefinition): 1 | -1 {
+  const entry = axis === 'x' ? definition.coordinateSystem.xAxis : definition.coordinateSystem.yAxis
+  assert.equal(entry, axis.toUpperCase(), `the bar's along axis maps to machine ${axis.toUpperCase()}`)
+  return entry.startsWith('-') ? -1 : 1
+}
+
+/**
+ * Create one thread through the store, generate it, export it, and read the
+ * literal program back with the motion parser. Every value the assertions use
+ * comes from the text (or from the definition's own fields), never from the
+ * toolpath the post-processor was handed.
+ */
+function assertExportedHelix(
+  axis: 'x' | 'y',
+  units: 'mm' | 'inch',
+  drive: 'own' | 'borrowed',
+  reversed: boolean,
+  starts: number,
+): void {
+  const spec = barFor(axis, units)
+  const pitch = units === 'mm' ? 2 : 0.05
+  const depth = units === 'mm' ? 1.2 : 0.1
+  const start = units === 'mm' ? 10 : 1
+  const length = units === 'mm' ? 60 : 3
+  const label = `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}`
+
+  loadRotary(spec, [vBit(units, 'v1')])
+  const created = store().addRotaryPattern({ kind: 'thread', start, length, pitch, starts, depth })
+  assert.ok(created.ok, `${label}: thread created`)
+  if (!created.ok) throw new Error('unreachable')
+  const project = store().project
+  const operation = project.operations[0]
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope, `${label}: generation returns an envelope`)
+  if (!envelope) throw new Error('unreachable')
+  const path = envelope.result
+  assert.deepEqual(path.warnings, [], `${label}: no generation warnings`)
+
+  const definition = rotaryMachine(axis, drive, reversed)
+  const tool = normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project)
+  const exported = runPostProcessor({
+    project,
+    definition,
+    operations: [{ operation, tool, toolpath: path }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  const rotaryRefusals = exported.warnings.filter((warning) => warning.code.startsWith('postRotary'))
+  assert.deepEqual(rotaryRefusals, [], `${label}: no rotary refusal`)
+  assert.ok(exported.gcode.includes('G93'), `${label}: turning cuts run in inverse time`)
+  // Nothing nonfinite reached the text at all.
+  assert.doesNotMatch(exported.gcode, /NaN|Infinity|undefined/, `${label}: no nonfinite token in the program`)
+
+  // The letter the rotation is posted under, derived from the drive alone.
+  const word: 'A' | 'X' | 'Y' = drive === 'own' ? 'A' : axis === 'x' ? 'Y' : 'X'
+  assert.equal(rotaryWord(definition), word, `${label}: the machine posts the rotation under ${word}`)
+
+  // Read the literal program back: modal coordinates, and the angle under the
+  // independently expected rotary word.
+  const parsed = parseGcodeMotion(
+    exported.gcode,
+    definition.motion.arcFormat,
+    definition.program.commentPrefix,
+    definition.program.commentSuffix,
+    { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
+  )
+  assert.equal(parsed.status, 'verified', `${label}: the program parses (${parsed.warnings.join('; ')})`)
+  assert.deepEqual(parsed.warnings, [], `${label}: the parser reconstructs every block`)
+
+  // 360 degrees per physical lead: over one lead (`starts * pitch`) of physical
+  // travel the bar turns exactly one revolution. The posted angle carries the
+  // independently derived drive sign; the machine along coordinate carries the
+  // along-axis sign; the two combine into the expected signed ratio.
+  const lead = starts * pitch
+  const expectedRatio = expectedDriveSign(definition) * alongAxisSign(axis, definition) * 360 / lead
+  let feeding = 0
+  for (const move of parsed.moves) {
+    for (const point of [move.from, move.to]) {
+      assert.ok(
+        Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z),
+        `${label}: every posted coordinate is finite`,
+      )
+      if (point.a !== undefined) assert.ok(Number.isFinite(point.a), `${label}: every posted angle is finite`)
+    }
+    if (move.kind !== 'linear') continue
+    const deltaAlong = axis === 'x' ? move.to.x - move.from.x : move.to.y - move.from.y
+    if (Math.abs(deltaAlong) <= 1e-9) continue
+    const fromAngle = move.from.a
+    const toAngle = move.to.a
+    assert.ok(fromAngle !== undefined && toAngle !== undefined, `${label}: a feeding move along the bar posts its angle`)
+    if (fromAngle === undefined || toAngle === undefined) throw new Error('unreachable')
+    const ratio = (toAngle - fromAngle) / deltaAlong
+    const tolerance = Math.abs(expectedRatio) * 1e-6
+    assert.ok(
+      Math.abs(ratio - expectedRatio) <= tolerance,
+      `${label}: the posted angle advances one turn per physical lead (${ratio} != ${expectedRatio})`,
+    )
+    feeding += 1
+  }
+  assert.ok(feeding > 0, `${label}: the program contains feeding moves along the bar`)
+
+  // The turn is never reduced modulo one revolution: the travel spans several
+  // turns and the largest posted angle is well past 360.
+  const posted = parsed.moves
+    .map((move) => move.to.a)
+    .filter((angle): angle is number => angle !== undefined)
+  assert.ok(posted.length > 0, `${label}: the program posts the angle`)
+  assert.ok(Math.max(...posted.map(Math.abs)) > 360, `${label}: the program keeps turning past one revolution`)
 }
 
 // ── the real generation and export seam ───────────────────────
@@ -460,29 +698,32 @@ log('Testing generation and export through the real seam...')
     }
     assert.equal(path.moves.at(-1)!.kind, 'rapid', `${label}: the last move is a retract`)
 
-    // Export through the real post-processor, own-A and borrowed motor.
-    for (const [drive, definition] of [
-      ['own', rotaryMachine(axis, 'own')],
-      ['borrowed', rotaryMachine(axis, 'borrowed')],
-    ] as const) {
-      const tool = normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project)
-      const exported = runPostProcessor({
-        project,
-        definition,
-        operations: [{ operation, tool, toolpath: path }],
-        options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
-      })
-      const rotaryRefusals = exported.warnings.filter((warning) => warning.code.startsWith('postRotary'))
-      assert.deepEqual(rotaryRefusals, [], `${label}/${drive}: no rotary refusal`)
-      assert.ok(exported.gcode.includes('G93'), `${label}/${drive}: turning cuts run in inverse time`)
-      const word = rotaryWord(definition)
-      assert.ok(word !== null, `${label}/${drive}: the machine has a rotary word`)
-      const angles = [...exported.gcode.matchAll(new RegExp(`\\b${word}(-?[0-9.]+)`, 'g'))].map((match) => Number(match[1]))
-      assert.ok(angles.some((angle) => Math.abs(angle) > 360), `${label}/${drive}: the program writes angles past one turn`)
-    }
+    // The exported program text itself — parsed posted coordinates and rotary
+    // words across every axis/units/drive/reversal/start combination — is
+    // checked in the matrix below.
 
     // The same toolpath generates no warning at any severity.
     assert.deepEqual(path.warnings.filter((warning) => warningSeverity(warning.code) !== 'info'), [], `${label}: nothing above info`)
+  }
+}
+
+// ── the posted program, read back ─────────────────────────────
+
+log('Testing the exported program text: posted modal coordinates and rotary words...')
+{
+  // A bounded matrix: both bar axes, both unit systems, own-A and borrowed
+  // motor, normal and reversed rotation, single and multiple starts. Each case
+  // is generated through the store and read back from the literal program.
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      for (const drive of ['own', 'borrowed'] as const) {
+        for (const reversed of [false, true]) {
+          for (const starts of [1, 3]) {
+            assertExportedHelix(axis, units, drive, reversed, starts)
+          }
+        }
+      }
+    }
   }
 }
 
