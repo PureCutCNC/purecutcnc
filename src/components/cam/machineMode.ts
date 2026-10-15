@@ -37,7 +37,7 @@ import type { Operation, OperationKind, Project, ToolType } from '../../types/pr
 export type MachineMode = 'router' | 'plasma'
 
 /** How the Add operation menu treats a kind. */
-export type OperationOffer = 'available' | 'hidden' | 'needs-plasma-machine'
+export type OperationOffer = 'available' | 'hidden' | 'needs-plasma-project'
 
 /** The canonical order every offered tool-type list keeps, whatever the mode. */
 const CANONICAL_TOOL_TYPES: readonly ToolType[] = ['flat_endmill', 'ball_endmill', 'v_bit', 'drill', 'plasma']
@@ -54,20 +54,29 @@ export function machineMode(project: Project): MachineMode {
  * How the Add operation menu treats a kind in this mode. In router mode a
  * plasma operation is not hidden but offered as blocked, so the menu can say
  * what would make it available instead of dropping it silently.
+ *
+ * That reason is the **project type** (issue #1034), like the mode itself: a
+ * milling or rotary project offers the plasma cut as `needs-plasma-project`,
+ * naming the type the user would have to choose — not a machine.
  */
 export function operationOffer(mode: MachineMode, kind: OperationKind): OperationOffer {
   if (mode === 'plasma') {
     return kind === 'plasma_profile' ? 'available' : 'hidden'
   }
-  return kind === 'plasma_profile' ? 'needs-plasma-machine' : 'available'
+  return kind === 'plasma_profile' ? 'needs-plasma-project' : 'available'
 }
 
-/** Whether an operation of this kind can actually cut on the selected machine. */
+/**
+ * Whether an operation of this kind belongs to the project's family, i.e.
+ * whether the project as it stands cuts it. The name is historical (issue
+ * #960, when a machine chose the mode); the answer follows the project type
+ * since #1028.
+ */
 export function operationCutOnMachine(mode: MachineMode, kind: OperationKind): boolean {
   return mode === 'plasma' ? kind === 'plasma_profile' : kind !== 'plasma_profile'
 }
 
-/** How many enabled operations the selected machine cannot run. */
+/** How many enabled operations the project's family does not cut. */
 export function uncutOperationCount(
   mode: MachineMode,
   operations: readonly Pick<Operation, 'kind' | 'enabled'>[],

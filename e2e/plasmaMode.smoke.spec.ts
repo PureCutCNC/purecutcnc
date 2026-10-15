@@ -27,13 +27,16 @@ import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
   clickMenuItem,
+  getProject,
   openRowContextMenu,
   rowByName,
+  seedProject,
   selectFeatures,
   selectMachine,
   setProjectType,
 } from './helpers'
 import {
+  camQuickOperationProjectJson,
   seedCamQuickOperationProject,
   seedCamQuickOperationProjectWithSmallCarveTarget,
 } from './camOperations.helpers'
@@ -44,9 +47,18 @@ const GRBL = JSON.parse(
 ) as { name: string }
 
 const PLASMA_OP = 'Plasma through-cut'
-const PLASMA_HINT = 'Needs a plasma machine. Select one in the machine field of the project properties.'
-const LEFT_OUT_PLASMA = 'Not plasma cuts, left out of the export on this machine: 1'
-const LEFT_OUT_ROUTER = 'Plasma cuts, left out of the export on this machine: 1'
+const PLASMA_HINT = 'Needs a plasma project. Change the project type in the project properties.'
+const LEFT_OUT_PLASMA = 'Not plasma cuts, left out of the export for this project type: 1'
+const LEFT_OUT_ROUTER = 'Plasma cuts, left out of the export for this project type: 1'
+
+/** The CAM quick-operation fixture as a plasma project with no machine (issue #1034). */
+function plasmaProjectJson(): string {
+  const project = JSON.parse(camQuickOperationProjectJson) as { meta: Record<string, unknown> }
+  project.meta.projectType = 'plasma'
+  project.meta.machineDefinitions = []
+  project.meta.selectedMachineId = null
+  return JSON.stringify(project)
+}
 
 /** The properties field whose label is exactly `label`, in the tool editor. */
 function toolField(page: Page, label: string) {
@@ -69,9 +81,9 @@ test.describe('the project type decides plasma mode (#1028)', () => {
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toContainText(['Pocket', 'Edge in'])
 
-    // The plasma cut is present but blocked. The hint string still names the
-    // machine, but the project type is now the root cause: only a plasma
-    // project offers the cut (#1028).
+    // The plasma cut is present but blocked. The hint names the project type,
+    // which is the root cause: only a plasma project offers the cut (#1028,
+    // wording corrected in #1034).
     await ui.operations.addMenuUnavailableToggle(app.page).click()
     const plasmaRow = ui.operations.addMenuUnavailableRows(app.page)
       .filter({ hasText: PLASMA_OP })
@@ -150,7 +162,7 @@ test.describe('the project type decides plasma mode (#1028)', () => {
     // The plasma operation is still listed, badged, and counted above the list.
     const row = ui.operations.rowByName(app.page, PLASMA_OP)
     await expect(row).toBeVisible()
-    await expect(row.locator('.cam-operation-badge')).toHaveText(['not on this machine'])
+    await expect(row.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
     await expect(app.page.locator('.cam-operations-notice')).toHaveText(LEFT_OUT_ROUTER)
 
     await expect(ui.face.switchGroup(app.page)).toBeVisible()
@@ -168,9 +180,9 @@ test.describe('the project type decides plasma mode (#1028)', () => {
 
     await setProjectType(app.page, ui, 'Plasma')
 
-    // Still listed, and now flagged as not on the machine, with the count line.
+    // Still listed, and now flagged as not for this project type, with the count line.
     await expect(pocket).toBeVisible()
-    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not on this machine'])
+    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
     await expect(app.page.locator('.cam-operations-notice')).toHaveText(LEFT_OUT_PLASMA)
 
     // Its tool is still listed and still reads as the milling tool it is.
@@ -223,4 +235,55 @@ test.describe('the project type decides plasma mode (#1028)', () => {
     await expect(ui.contextMenu.item(submenu, 'Create pocket')).toBeVisible()
     await expect(ui.contextMenu.item(submenu, PLASMA_OP)).toHaveCount(0)
   })
+})
+
+/**
+ * Issue #1034 slice B: a plasma project authors plasma work whatever machine
+ * is selected — none, or a router that does not suit the type. The machine is
+ * an output concern; the project type is what offers the torch.
+ */
+test.describe('plasma authoring does not wait for a machine (#1034)', () => {
+  for (const machine of ['none', 'router'] as const) {
+    test(`a plasma project with ${machine} offers and creates the plasma family`, async ({ app, ui }) => {
+      await seedProject(app.page, plasmaProjectJson())
+      if (machine === 'router') {
+        // A router on a plasma project: genuinely incompatible, and only the
+        // export may care about that.
+        await selectMachine(app.page, ui, GRBL.name)
+        await expect(ui.properties.machineTypeMismatch(app.page)).toBeVisible()
+      }
+
+      await selectFeatures(app.page, ['f-carve-target'])
+      await ui.operations.headerAddButton(app.page).click()
+
+      // The Add menu is the plasma family alone; nothing is merely blocked.
+      const available = ui.operations.addMenuAvailableRows(app.page)
+      await expect(ui.operations.addMenuRowLabels(available)).toHaveText([PLASMA_OP])
+      await expect(available.getByRole('button', { name: 'Add', exact: true })).toBeEnabled()
+      await expect(ui.operations.addMenuUnavailableToggle(app.page)).toHaveCount(0)
+
+      // No flat-face switch and no rotary expansion: the type decides both.
+      await expect(ui.face.switchGroup(app.page)).toHaveCount(0)
+      await expect(app.page.locator('.cam-operation-label').filter({ hasText: /^Rotary/ })).toHaveCount(0)
+
+      // The cut is created for real, and its tool is a torch.
+      await available.getByRole('button', { name: 'Add', exact: true }).click()
+      await expect(ui.operations.rowByName(app.page, PLASMA_OP)).toBeVisible()
+      await app.page.getByRole('tab', { name: 'Tools' }).click()
+      await app.page.getByRole('button', { name: 'Add tool', exact: true }).click()
+      await expect(toolField(app.page, 'Type').locator('.ui-select__label')).toHaveText('Plasma')
+
+      // Changing the selection switches neither the mode nor the geometry.
+      const before = await getProject(app.page)
+      await app.page.getByRole('tab', { name: 'Operations' }).click()
+      await selectFeatures(app.page, ['f-machinable-add'])
+      await ui.operations.headerAddButton(app.page).click()
+      await expect(
+        ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
+      ).toHaveText([PLASMA_OP])
+      const after = await getProject(app.page)
+      expect((after.meta as Record<string, unknown>).projectType).toBe('plasma')
+      expect(after.features).toEqual(before.features)
+    })
+  }
 })

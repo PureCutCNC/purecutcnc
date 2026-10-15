@@ -648,13 +648,15 @@ export function CAMPanel({
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
     () => {
       const button = (kind: OperationKind) => {
-        // #960: a kind this machine cannot author is still offered, blocked with
-        // the reason, so the menu can say what would make it available.
-        if (operationOffer(machine, kind) === 'needs-plasma-machine') {
+        // #960/#1034: a kind the project type cannot author is still offered,
+        // blocked with the reason, so the menu can say what would make it
+        // available. The reason is the project type, which is what decides the
+        // family — never the selected machine.
+        if (operationOffer(machine, kind) === 'needs-plasma-project') {
           return {
             kind,
             label: operationAddButtonLabel(kind),
-            hint: camT('cam.addMenu.needsPlasmaMachine'),
+            hint: camT('cam.addMenu.needsPlasmaProject'),
             selectAllFeatureIds: [],
           }
         }
@@ -693,8 +695,8 @@ export function CAMPanel({
   )
 
   const selectedNewOperationHint = selectedNewOperationKind
-    ? operationOffer(machine, selectedNewOperationKind) === 'needs-plasma-machine'
-      ? camT('cam.addMenu.needsPlasmaMachine')
+    ? operationOffer(machine, selectedNewOperationKind) === 'needs-plasma-project'
+      ? camT('cam.addMenu.needsPlasmaProject')
       : getOperationAddHint(project, addSelection, selectedNewOperationKind)
     : null
 
@@ -2318,9 +2320,10 @@ export function CAMPanel({
                 </div>
                 <div className="cam-section-body">
                 {uncutOperations > 0 ? (
-                  // #960: the selected machine cannot run these operations, so
-                  // the export leaves them out. Say so before the list rather
-                  // than only on each row.
+                  // #960/#1034: the project type cuts one family only, so the
+                  // program leaves the other family's operations out. The mode
+                  // is the type, not the machine — say so before the list
+                  // rather than only on each row.
                   <div className="cam-section-note cam-operations-notice" role="note">
                     {camT(
                       machine === 'plasma' ? 'cam.operations.leftOutPlasma' : 'cam.operations.leftOutRouter',
@@ -2449,7 +2452,7 @@ export function CAMPanel({
                               <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">{camT('cam.treeRow.off')}</span> : null}
-                            {!operationCutOnMachine(machine, operation.kind) ? <span className="cam-operation-badge">{camT('cam.treeRow.notOnMachine')}</span> : null}
+                            {!operationCutOnMachine(machine, operation.kind) ? <span className="cam-operation-badge">{camT('cam.treeRow.notForProjectType')}</span> : null}
                             <button
                               className="tree-action-btn"
                               type="button"

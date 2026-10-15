@@ -142,13 +142,13 @@ test.describe('project type in the UI (#1028)', () => {
     await confirmProjectTypeChange(app.page, ui)
 
     // The plasma machine is selected and the milling pocket is reported as not
-    // cut, not dropped.
+    // cut by the project type, not dropped.
     await expect(ui.properties.machineTrigger(app.page).locator('.ui-select__label')).toHaveText(QT_PLASMAC.name)
     await expect(ui.properties.machineTypeMismatch(app.page)).toHaveCount(0)
     await expect(pocket).toBeVisible()
-    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not on this machine'])
+    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
     await expect(app.page.locator('.cam-operations-notice')).toHaveText(
-      'Not plasma cuts, left out of the export on this machine: 1',
+      'Not plasma cuts, left out of the export for this project type: 1',
     )
 
     // ── Plasma → Rotary ─────────────────────────────────────────────

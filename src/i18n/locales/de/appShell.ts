@@ -188,8 +188,6 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.face.switchToTop': 'Auf der Oberseite arbeiten',
   'appShell.face.switchToBottom': 'Auf der Unterseite arbeiten',
   'appShell.face.switchToAround': 'Rund um die Stange arbeiten',
-  'appShell.face.aroundNeedsRotaryMachine': 'Rundum benötigt eine Maschine mit einer Drehachse. Richten Sie eine im Maschinen-Editor ein.',
-  'appShell.face.aroundAxisMismatch': 'Die Drehachse der Maschine liegt entlang {machineAxis}, die Stange entlang {stockAxis}.',
   'appShell.face.busy': 'Aktuelle Bearbeitung abschließen, bevor die Seite gewechselt wird',
   'appShell.face.otherSide': 'Andere Seite',
   'appShell.face.showOtherSide': 'Andere Seite als Geisterbild anzeigen',

@@ -19,7 +19,6 @@ import { useFaceViewStore } from '../../store/faceViewStore'
 import { activeFace, aroundUnavailableReason, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { useI18n } from '../../i18n/i18nContext'
-import { isRoundStock } from '../../types/project'
 import type { Project, SetupFace } from '../../types/project'
 import { Icon } from '../Icon'
 import { machineMode, showsFaceSwitch } from '../cam/machineMode'
@@ -48,11 +47,14 @@ function hasBottomContent(project: Project): boolean {
  * The Top | Bottom | Around segmented control in the workspace header, plus
  * the "Other side" ghost toggle once the project uses both faces.
  *
- * The Around segment appears only on a round bar; without a rotary machine, or
- * when the machine's axis lies across the bar, it stays visible but disabled,
- * saying what is missing. A plasma machine hides the switch entirely (#960) —
- * a plasma table cuts through one sheet — unless the project already carries
- * content on both faces, which must stay reachable.
+ * The Around segment appears only on a rotary project with a round bar
+ * (issue #1028): those two authoring conditions are the whole reason the
+ * segment can be absent, and no machine makes it unavailable — a missing,
+ * non-rotary or wrong-axis machine still lets the user design on Around, and
+ * is enforced instead when a program is posted (issue #1034). A plasma project
+ * hides the switch entirely (#960) — a plasma table cuts through one sheet —
+ * unless the project already carries content on both faces, which must stay
+ * reachable.
  */
 export function FaceSwitch() {
   const { t } = useI18n()
@@ -68,20 +70,13 @@ export function FaceSwitch() {
 
   if (!showsFaceSwitch(machine, bothFaces)) return null
 
-  const aroundReason = aroundUnavailableReason(project)
   // A non-rotary project has no Around face at all (issue #1028), so its
-  // segment is hidden exactly as it is without a round bar.
-  const entries = aroundReason === 'needsRoundBar' || aroundReason === 'needsRotaryProject'
-    ? FLAT_ENTRIES
-    : [...FLAT_ENTRIES, AROUND_ENTRY]
-  const aroundTitle = aroundReason === 'needsRotaryMachine'
-    ? t('appShell.face.aroundNeedsRotaryMachine')
-    : aroundReason === 'machineAxisMismatch'
-      ? t('appShell.face.aroundAxisMismatch', {
-        machineAxis: (project.meta.machineDefinitions?.[0]?.rotary?.about ?? '').toUpperCase(),
-        stockAxis: (isRoundStock(project.stock) ? project.stock.axis : '').toUpperCase(),
-      })
-      : t('appShell.face.switchToAround')
+  // segment is hidden exactly as it is without a round bar. Nothing else can
+  // make the segment unavailable: the machine is not an authoring condition
+  // (issue #1034), so an Around segment that is shown is always usable.
+  const entries = aroundUnavailableReason(project) === null
+    ? [...FLAT_ENTRIES, AROUND_ENTRY]
+    : FLAT_ENTRIES
   // The other-side toggle compares the two flat faces only: Around is not a
   // half-turn of either, so it is never shown there.
   const flatOtherSide = face !== 'around' && (face !== 'top' || hasBottomContent(project))
@@ -92,22 +87,19 @@ export function FaceSwitch() {
       <div className="face-switch__segments" role="group" aria-label={t('appShell.face.label')}>
         {entries.map((entry) => {
           const pressed = face === entry.face
-          const unavailable = entry.face === 'around' && aroundReason !== null
           return (
             <button
               key={entry.face}
               type="button"
               className={`face-switch__segment face-switch__segment--${entry.face}${pressed ? ' face-switch__segment--active' : ''}`}
               aria-pressed={pressed}
-              disabled={unavailable || (busy && !pressed)}
-              title={unavailable
-                ? aroundTitle
-                : busy && !pressed
-                  ? t('appShell.face.busy')
-                  : entry.face === 'around'
-                    ? t('appShell.face.switchToAround')
-                    : t(entry.face === 'top' ? 'appShell.face.switchToTop' : 'appShell.face.switchToBottom')}
-              onClick={() => { if (!pressed && !unavailable) switchWorkspaceFace(entry.face) }}
+              disabled={busy && !pressed}
+              title={busy && !pressed
+                ? t('appShell.face.busy')
+                : entry.face === 'around'
+                  ? t('appShell.face.switchToAround')
+                  : t(entry.face === 'top' ? 'appShell.face.switchToTop' : 'appShell.face.switchToBottom')}
+              onClick={() => { if (!pressed) switchWorkspaceFace(entry.face) }}
             >
               <Icon id={entry.icon} size={18} />
               <span>{t(entry.label)}</span>

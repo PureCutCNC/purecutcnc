@@ -560,18 +560,28 @@ export function dropGhostSelection(
 }
 
 /**
- * Why the Around face cannot be created or selected on this project. The
- * project type comes first (issue #1028): only a rotary project has an Around
- * face at all, and the stock and machine checks below it are the ones that
- * existed before. Callers only ever ask whether this is non-null, so the new
- * first reason needs no UI text of its own beyond hiding the face.
+ * Why the Around face cannot be created or selected on this project.
+ *
+ * This is the **authoring** guard, so only the two things that actually define
+ * the Around geometry are asked: the project type (issue #1028 — only a rotary
+ * project has an Around face at all) and the round bar. `aroundFrame` derives
+ * the whole surface from the bar's axis, diameter and centre, so a missing
+ * machine, a router without a rotary block or a rotary axis across the bar
+ * must not stop the user designing on it (issue #1034).
+ *
+ * Machine suitability is enforced where it is real — at the output boundary:
+ * `projectMachineMismatch` refuses a machine that does not suit the type, and
+ * `planRotaryRefusals` refuses a missing or mismatched rotary axis when a
+ * program is posted. Neither is replaced by a default machine.
+ *
+ * The result carries only those two authoring reasons. The machine reasons the
+ * old guard returned are gone from the union as well, so no caller can branch
+ * on a condition this guard does not test (issue #1034 slice B).
  */
 export function aroundUnavailableReason(
   project: Pick<Project, 'stock' | 'meta'>,
-): null | 'needsRotaryProject' | 'needsRoundBar' | 'needsRotaryMachine' | 'machineAxisMismatch' {
+): null | 'needsRotaryProject' | 'needsRoundBar' {
   if (projectType(project) !== 'rotary') return 'needsRotaryProject'
   if (!isRoundStock(project.stock)) return 'needsRoundBar'
-  const rotary = project.meta.machineDefinitions?.[0]?.rotary
-  if (!rotary) return 'needsRotaryMachine'
-  return rotary.about === project.stock.axis ? null : 'machineAxisMismatch'
+  return null
 }

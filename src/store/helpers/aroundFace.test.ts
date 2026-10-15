@@ -175,8 +175,6 @@ assert.equal(
 for (const [project, reason] of [
   [ { ...fixture(), meta: { ...fixture().meta, projectType: 'milling' as const } }, 'needsRotaryProject' ],
   [ { ...fixture(), stock: newProject().stock }, 'needsRoundBar' ],
-  [ { ...fixture(), meta: { ...fixture().meta, machineDefinitions: [], selectedMachineId: null } }, 'needsRotaryMachine' ],
-  [ { ...fixture(), stock: roundStock(40, 180, 'y') }, 'machineAxisMismatch' ],
 ] satisfies Array<[Project, string]>) {
   load(project)
   assert.equal(aroundUnavailableReason(store().project), reason)
@@ -184,6 +182,18 @@ for (const [project, reason] of [
   assert.equal(store().createSetup({ kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }), null)
   store().setActiveSetup(provisionalSetupId('around'))
   assert.equal(activeFace(store().project), 'top')
+}
+// Machine suitability is an output-boundary concern, not an authoring one
+// (issue #1034): a missing machine and an axis across the bar both leave the
+// Around face authorable. The machine reasons stay in the result union for the
+// UI (slice B), but this guard no longer produces them.
+for (const project of [
+  { ...fixture(), meta: { ...fixture().meta, machineDefinitions: [], selectedMachineId: null } },
+  { ...fixture(), stock: roundStock(40, 180, 'y') },
+] satisfies Project[]) {
+  load(project)
+  assert.equal(aroundUnavailableReason(store().project), null)
+  assert.equal(switchWorkspaceFace('around'), true)
 }
 load(fixture('y'))
 assert.equal(switchWorkspaceFace('around'), true)
@@ -270,9 +280,11 @@ assert.equal(featureReachableFromFace(model, aroundFeature, 'around'), false, 'e
 assert.equal(targetAllowedInSetup(model, target, setup.id), false)
 
 // A provisional view cannot become a new setup after its availability is lost.
+// Since #1034 that loss is the round bar or the project type, never the
+// selected machine.
 load()
 assert.equal(switchWorkspaceFace('around'), true)
-store().setProjectMachine(null)
+store().setStockShape('block')
 const unavailableProvisional = store().project
 store().addFeature(feature('unavailable-feature'))
 assert.equal(store().project, unavailableProvisional)
