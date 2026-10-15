@@ -63,6 +63,13 @@ function near(actual: number, expected: number, label: string, tolerance = 1e-9)
 }
 
 /**
+ * The pure sheet builder never reads `toolRef` — only the store action resolves
+ * a tool — but `FlutesPatternInput` requires one, so every flutes fixture
+ * carries this explicit dummy rather than an omitted field.
+ */
+const FIXTURE_TOOL_REF = 'fixture-tool'
+
+/**
  * The material point at a sheet coordinate, derived straight from the frozen
  * rotary convention (`rotaryFrame.ts`): `a = 360·(across − zero)/C`, and at
  * radius `r` the point is `r·sin a` across the bar and `r·cos a` up. Physical
@@ -182,6 +189,7 @@ console.log('Testing flute count, twist sign and straight flutes...')
     const count = 4
     const twisted = lines(buildRotaryPatternLines(frame, {
       kind: 'flutes', start: 12, length: 40, count, twist: 1.5, depth: 0.8,
+      toolRef: FIXTURE_TOOL_REF,
     }), `${axis} twisted flutes`)
     assert.equal(twisted.length, count, `${axis}: one line per flute`)
     for (let index = 1; index < count; index++) {
@@ -201,12 +209,14 @@ console.log('Testing flute count, twist sign and straight flutes...')
     // Negative twist is the other hand; straight is neither.
     const left = lines(buildRotaryPatternLines(frame, {
       kind: 'flutes', start: 0, length: 10, count: 1, twist: -0.75, depth: 0.5,
+      toolRef: FIXTURE_TOOL_REF,
     }), `${axis} left twist`)
     near(left[0].acrossEnd - left[0].acrossStart, -rotaryHandedness(axis) * 0.75 * frame.circumference, `${axis}: negative twist flips the slope`)
     assert.equal(isRightHanded(frame, left[0]), false, `${axis}: negative twist is left-hand`)
 
     const straightLine = lines(buildRotaryPatternLines(frame, {
       kind: 'flutes', start: 0, length: 10, count: 3, twist: 0, depth: 0.5,
+      toolRef: FIXTURE_TOOL_REF,
     }), `${axis} straight flutes`)
     for (const line of straightLine) {
       near(line.acrossStart, line.acrossEnd, `${axis}: straight flute keeps its across coordinate`)
@@ -220,17 +230,17 @@ console.log('Testing refusals...')
   const cases: Array<[string, ReturnType<typeof buildRotaryPatternLines>]> = [
     ['nonfinite start', buildRotaryPatternLines(frame, { kind: 'thread', start: NaN, length: 5, pitch: 1, depth: 1 })],
     ['zero length', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 0, pitch: 1, depth: 1 })],
-    ['negative length', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: -1, count: 1, twist: 0, depth: 1 })],
+    ['negative length', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: -1, count: 1, twist: 0, depth: 1, toolRef: FIXTURE_TOOL_REF })],
     ['zero depth', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 1, depth: 0 })],
-    ['nonfinite depth', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: Infinity })],
+    ['nonfinite depth', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: Infinity, toolRef: FIXTURE_TOOL_REF })],
     ['depth at the radius', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 1, depth: frame.radius })],
-    ['depth past the radius', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: frame.radius + 1 })],
+    ['depth past the radius', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: frame.radius + 1, toolRef: FIXTURE_TOOL_REF })],
     ['zero pitch', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 0, depth: 1 })],
     ['negative pitch', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: -1, depth: 1 })],
     ['fractional starts', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 1, starts: 1.5, depth: 1 })],
     ['zero starts', buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 1, starts: 0, depth: 1 })],
-    ['fractional count', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 2.5, twist: 1, depth: 1 })],
-    ['nonfinite twist', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 2, twist: NaN, depth: 1 })],
+    ['fractional count', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 2.5, twist: 1, depth: 1, toolRef: FIXTURE_TOOL_REF })],
+    ['nonfinite twist', buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 2, twist: NaN, depth: 1, toolRef: FIXTURE_TOOL_REF })],
   ]
   for (const [label, result] of cases) {
     assert.equal(result.ok, false, `${label} is refused`)
@@ -242,7 +252,7 @@ console.log('Testing refusals...')
   )
   // Just inside the radius is accepted, just outside is not.
   assert.equal(buildRotaryPatternLines(frame, { kind: 'thread', start: 0, length: 5, pitch: 1, depth: frame.radius - 1e-9 }).ok, true)
-  assert.equal(buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: frame.radius + 1e-9 }).ok, false)
+  assert.equal(buildRotaryPatternLines(frame, { kind: 'flutes', start: 0, length: 5, count: 1, twist: 0, depth: frame.radius + 1e-9, toolRef: FIXTURE_TOOL_REF }).ok, false)
 }
 
 console.log('All rotary pattern helper tests passed.')

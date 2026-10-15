@@ -73,7 +73,7 @@ import type { ToolLibraryEntry } from '../../toolLibrary'
 import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import { aroundFrame } from '../../engine/aroundFrame'
 import { targetAllowedInSetup } from '../../engine/setupTargets'
-import { convertToolUnits } from '../../utils/units'
+import { convertLength, convertToolUnits } from '../../utils/units'
 import { uniqueName } from '../../import'
 import { activeFace, activeSetup, aroundUnavailableReason } from './activeFace'
 import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
@@ -263,12 +263,28 @@ export function buildRotaryPatternLines(
 // Tool resolution
 // ---------------------------------------------------------------------------
 
-/** The project's V-bits, smallest nominal diameter first. */
+/**
+ * A tool's diameter as one physical length in millimetres. A record's
+ * `diameter` is in its own `units`, so records written in different units
+ * cannot be ranked until they share a unit (issue #1016 C1 slice A4). The
+ * conversion is the same one `convertToolUnits` uses; a same-unit comparison
+ * is untouched (the factor is 1).
+ */
+function physicalDiameterMm(tool: Pick<Tool, 'diameter' | 'units'>): number {
+  return convertLength(tool.diameter, tool.units, 'mm')
+}
+
+/**
+ * The project's V-bits, smallest physical diameter first. Ties (including the
+ * same physical size written in two units) keep the project's tool order, so
+ * the choice is deterministic. The saved records are never reordered: the
+ * input array is copied before sorting.
+ */
 function vBits(tools: readonly Tool[]): Tool[] {
   return tools
     .filter((tool) => tool.type === 'v_bit')
     .slice()
-    .sort((a, b) => a.diameter - b.diameter)
+    .sort((a, b) => physicalDiameterMm(a) - physicalDiameterMm(b))
 }
 
 /**
@@ -289,7 +305,7 @@ function resolveThreadTool(
   const native = entries.filter((entry) => entry.units === project.meta.units)
   const pool = native.length > 0 ? native : entries
   const entry = pool.reduce((best, candidate) => (
-    candidate.diameter < best.diameter ? candidate : best
+    physicalDiameterMm(candidate) < physicalDiameterMm(best) ? candidate : best
   ))
   const { key: _key, ...template } = entry
   void _key
@@ -347,6 +363,14 @@ function planRotaryPattern(
     tool = resolved
   }
   const toolRef = tool.id
+  // `defaultOperationForTarget` seeds the operation's feed, plunge feed and
+  // stepdown straight from the tool record — correct for `addOperation`, whose
+  // picker only ever offers tools already in project units, but a Thread or
+  // Flutes cutter is an *existing* record that may have been imported or
+  // authored in the other unit (issue #1016). Seed from a throwaway copy
+  // converted into project units so the operation lands in the project's scale;
+  // the stored tool record, its id and the reference above are untouched.
+  const defaultsTool = tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units)
 
   const thickness = project.stock.thickness
   const folderId = nextUniqueGeneratedId(project, 'fd')
@@ -391,7 +415,7 @@ function planRotaryPattern(
   const target: OperationTarget = { source: 'features', featureIds: instances.map((instance) => instance.id) }
   const operationId = nextUniqueGeneratedId(project, 'op')
   const template = defaultOperationForTarget(project, 'follow_line', 'rough', target, project.operations.length, {
-    tool,
+    tool: defaultsTool,
     toolRef,
   })
   const operation: Operation = {
