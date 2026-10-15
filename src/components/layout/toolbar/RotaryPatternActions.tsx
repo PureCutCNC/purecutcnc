@@ -44,21 +44,27 @@ const ROTARY_COMMANDS: readonly RotaryCommand[] = [
   { kind: 'flutes', command: 'rotary-flutes', icon: 'tool-endmill', labelKey: 'dialogs.rotary.flutes.button' },
 ]
 
-function RotaryPatternActions({
-  variant = 'toolbar',
-  tooltipSide = 'bottom',
-}: {
+interface RotaryPatternActionsProps {
   variant?: 'toolbar' | 'rail'
   tooltipSide?: 'bottom' | 'right'
+}
+
+/**
+ * The entries and the dialog they open. It is mounted only while the workspace
+ * is on Around, so leaving Around unmounts this whole subtree: the dialog
+ * closes, its request state dies with it, and an in-flight Create is stopped by
+ * the dialog's own unmount guard. Coming back mounts a fresh, closed one, so a
+ * stale request can never be resurrected.
+ */
+function RotaryAroundActions({
+  variant,
+  tooltipSide,
+}: {
+  variant: 'toolbar' | 'rail'
+  tooltipSide: 'bottom' | 'right'
 }) {
   const { t } = useI18n()
-  const face = useProjectStore((state) => activeFace(state.project))
-  // The face the request was made on is kept with it: leaving Around drops a
-  // dialog whose numbers no longer describe anything, with no state write.
-  const [request, setRequest] = useState<{ face: string; kind: RotaryPatternKind | null }>({ face, kind: null })
-  const openKind = request.face === face ? request.kind : null
-
-  if (face !== 'around') return null
+  const [openKind, setOpenKind] = useState<RotaryPatternKind | null>(null)
 
   const buttons = ROTARY_COMMANDS.map((entry) => {
     const label = t(entry.labelKey)
@@ -72,7 +78,7 @@ function RotaryPatternActions({
             data-command={entry.command}
             aria-label={label}
             aria-haspopup="dialog"
-            onClick={() => setRequest({ face, kind: entry.kind })}
+            onClick={() => setOpenKind(entry.kind)}
           >
             <Icon id={entry.icon} />
           </button>
@@ -88,14 +94,14 @@ function RotaryPatternActions({
         command={entry.command}
         active={active}
         tooltipSide={tooltipSide}
-        onClick={() => setRequest({ face, kind: entry.kind })}
+        onClick={() => setOpenKind(entry.kind)}
       />
     )
   })
 
   const dialog = openKind !== null && typeof document !== 'undefined'
     ? createPortal(
-        <RotaryPatternDialog kind={openKind} onClose={() => setRequest({ face, kind: null })} />,
+        <RotaryPatternDialog kind={openKind} onClose={() => setOpenKind(null)} />,
         document.body,
       )
     : null
@@ -110,6 +116,14 @@ function RotaryPatternActions({
       {dialog}
     </div>
   )
+}
+
+function RotaryPatternActions({ variant = 'toolbar', tooltipSide = 'bottom' }: RotaryPatternActionsProps) {
+  const face = useProjectStore((state) => activeFace(state.project))
+  // Rendering the dialog subtree only on Around lets ordinary unmounting clear
+  // the pending request, so returning to Around never reopens the old dialog.
+  if (face !== 'around') return null
+  return <RotaryAroundActions variant={variant} tooltipSide={tooltipSide} />
 }
 
 export { RotaryPatternActions }

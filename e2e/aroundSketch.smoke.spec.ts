@@ -303,6 +303,8 @@ interface RotaryLineGeometry {
   lead: number | null
   /** Across travel of each line, in project units. */
   acrossPerLine: number[]
+  /** The across coordinate each line starts at, from the ordinary profile.start. */
+  acrossStart: number[]
 }
 
 /**
@@ -325,6 +327,9 @@ async function rotaryLineGeometry(page: Page): Promise<RotaryLineGeometry> {
       const to = segment && segment.type === 'line' ? segment.to : profile.start
       return frame.axis === 'x' ? to.y - profile.start.y : to.x - profile.start.x
     })
+    const acrossStart = profiles.map((profile) => (
+      frame.axis === 'x' ? profile.start.y : profile.start.x
+    ))
     const first = profiles[0]
     let lead: number | null = null
     if (first) {
@@ -334,7 +339,7 @@ async function rotaryLineGeometry(page: Page): Promise<RotaryLineGeometry> {
       const across = acrossPerLine[0]
       lead = across === 0 ? null : Math.abs((along * frame.circumference) / across)
     }
-    return { lineCount: profiles.length, circumference: frame.circumference, lead, acrossPerLine }
+    return { lineCount: profiles.length, circumference: frame.circumference, lead, acrossPerLine, acrossStart }
   })
 }
 
@@ -472,12 +477,17 @@ test('a mm thread creates its folder, lines and Engrave in a single undo step', 
   expect(snapshot.operationId).not.toBeNull()
 
   // A two-start thread has a lead of two pitches, and its starts sit half a
-  // circumference apart across the sheet.
+  // circumference apart across the sheet. The across *start* is what separates
+  // the starts; each line's across travel is its own helix span, not an offset.
   const geometry = await rotaryLineGeometry(page)
   expect(geometry.lineCount).toBe(2)
   expect(geometry.lead ?? 0).toBeCloseTo(4, 6)
-  const offsets = [...geometry.acrossPerLine].sort((a, b) => a - b)
+  const offsets = [...geometry.acrossStart].sort((a, b) => a - b)
   expect(Math.abs((offsets[1] - offsets[0]) - geometry.circumference / 2)).toBeLessThan(1e-6)
+  expect(geometry.acrossPerLine.every((across) => Math.abs(across) > 1e-6)).toBe(true)
+
+  // Let the generation gear settle before reading the generated moves back.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
   // The generated Engrave really moves, wrapped onto the bar.
   const generated = await generatedThreadOperation(page, snapshot.operationId!)
@@ -625,6 +635,48 @@ test('leaving Around while a dialog is open applies nothing', async ({ app, ui }
   await switchToTop(page)
   await expect(ui.rotary.dialog(page)).toHaveCount(0)
   // Returning to Around does not resurrect the stale request.
+  await switchToAround(page)
+  await expect(ui.rotary.dialog(page)).toHaveCount(0)
+  expect(await rotarySnapshot(page)).toMatchObject({
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount,
+    operationCount: baseline.operationCount,
+    historyPast: baseline.historyPast,
+  })
+})
+
+test('leaving Around during a thread catalog load cancels the create', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+  const baseline = await rotarySnapshot(page)
+
+  // Hold the bundled tool-library fetch open so Create is genuinely in flight,
+  // then leave Around. The dialog unmounts mid-await, so when the fetch finally
+  // resolves the create must notice and write nothing.
+  let releaseLibrary: () => void = () => {}
+  const libraryGate = new Promise<void>((resolve) => { releaseLibrary = resolve })
+  await page.route('**/tool-library.json', async (route) => {
+    await libraryGate
+    await route.continue()
+  })
+
+  await ui.rotary.threadButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeVisible()
+  await ui.rotary.field(page, 'length').fill('10')
+  const request = page.waitForRequest('**/tool-library.json')
+  await ui.rotary.createButton(page).click()
+  await request
+
+  await switchToTop(page)
+  await expect(ui.rotary.dialog(page)).toHaveCount(0)
+  releaseLibrary()
+  await page.unrouteAll({ behavior: 'wait' })
+  // The create resumes once the response resolves; give that continuation a
+  // bounded moment to settle before reading the store back.
+  await page.waitForTimeout(300)
+
+  // Nothing was created, and returning to Around does not reopen the dialog.
   await switchToAround(page)
   await expect(ui.rotary.dialog(page)).toHaveCount(0)
   expect(await rotarySnapshot(page)).toMatchObject({
