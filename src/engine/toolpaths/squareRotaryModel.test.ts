@@ -42,11 +42,11 @@
 
 import assert from 'node:assert/strict'
 import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
-import { roundStock } from '../../types/project'
+import { getStockBounds, roundStock } from '../../types/project'
 import type { BarStock, RoundStock, SquareStock } from '../../types/project'
 import { stockSpacePoint, toolSpacePoint } from '../rotaryFrame'
 import { generateRotaryFinish, generateRotaryRough, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
-import type { RotaryModelMesh } from './rotaryModel'
+import type { RotaryFinishParams, RotaryModelMesh } from './rotaryModel'
 import { squareBlankRetainedStub } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove } from './types'
 
@@ -439,6 +439,155 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   }
   assert.equal(PIVOT, SIDE / 2, 'the square pivot is the box centre, not the corner radius')
   console.log('square model: turning is the frozen pivot rotation, vertex for vertex')
+}
+
+// ── 8. Coarse and misaligned spacing at the retained shoulder ─────────
+//
+// The correction's exact repro (#1016 C2-S3): a 20 x 60 square blank, a
+// 12 mm-radius target band 18..42, a 4 mm flat end mill, `sampleSpacing` 12
+// (three along samples) and 45 included. Before the shoulder refinement the
+// single 30 -> 18 move at 45 dropped the cutter's back rim **0.490904 mm**
+// inside the retained square; the 8.125 mm rise over the 12 mm span is gentler
+// than the steep-step guard's 45-degree threshold at that spacing, so the guard
+// never fired.
+//
+// Every case below walks the real cutter (flat disc / ball lower hemisphere)
+// along every cut, plunge and link move, maps it through the frozen
+// `stockSpacePoint` rotation and tests it against the **analytic** retained box
+// at both band ends and the **analytic** target cylinder. The spacing is
+// coarser than the cutter footprint (`2 * radius`) in every case, and the
+// seeded grids are deliberately misaligned so no sample lands on the shoulder.
+// No timing assertions.
+{
+  const sweep = (
+    stock: BarStock,
+    tool: NormalizedTool,
+    mesh: RotaryModelMesh,
+    params: RotaryFinishParams & { stepdown: number },
+    targetRadius: number,
+  ): { retained: number; target: number; moves: number } => {
+    const centre = barCentre(stock)
+    const pivot = barPivotZ(stock)
+    const halfSide = barInscribedRadius(stock)
+    const bounds = getStockBounds(stock)
+    const blankStart = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const blankEnd = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    const offsets = cutterOffsets(tool)
+    let retained = 0
+    let target = 0
+    let movesWalked = 0
+    for (const result of [
+      generateRotaryFinish('shoulder-finish', mesh, stock, tool, params, {}),
+      generateRotaryRough('shoulder-rough', mesh, stock, tool, params, {}),
+    ]) {
+      assert.ok(result.moves.length > 0, 'the coarse shoulder case produces motion')
+      for (const move of result.moves) {
+        if (move.kind === 'rapid') continue
+        movesWalked++
+        const a0 = move.from.a ?? 0
+        const a1 = move.to.a ?? a0
+        const dx = move.to.x - move.from.x
+        const dy = move.to.y - move.from.y
+        const dz = move.to.z - move.from.z
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / (0.1 * tool.radius)))
+        for (let step = 0; step <= steps; step++) {
+          const f = step / steps
+          const px = move.from.x + dx * f
+          const py = move.from.y + dy * f
+          const pz = move.from.z + dz * f
+          const angle = a0 + (a1 - a0) * f
+          for (const offset of offsets) {
+            const point = stockSpacePoint({ x: px + offset[0], y: py + offset[1], z: pz + offset[2], a: angle }, stock)
+            const l = stock.axis === 'x' ? point.x : point.y
+            const across = (stock.axis === 'x' ? point.y : point.x) - centre
+            const up = point.z - pivot
+            // Target: the analytic coaxial cylinder between its end faces.
+            if (l >= params.alongStart && l <= params.alongEnd) {
+              const radial = Math.hypot(across, up)
+              if (radial < targetRadius) target = Math.max(target, Math.min(targetRadius - radial, l - params.alongStart, params.alongEnd - l))
+            }
+            // Retained: the analytic box outside the cut range, inside the blank.
+            if (l >= blankStart && l <= blankEnd && Math.abs(across) < halfSide && Math.abs(up) < halfSide) {
+              const depth = l < params.alongStart
+                ? Math.min(params.alongStart - l, l - blankStart)
+                : l > params.alongEnd ? Math.min(l - params.alongEnd, blankEnd - l) : 0
+              if (depth > 0) retained = Math.max(retained, Math.min(depth, halfSide - Math.abs(across), halfSide - Math.abs(up)))
+            }
+          }
+        }
+      }
+    }
+    return { retained, target, moves: movesWalked }
+  }
+
+  // The exact manager repro.
+  const managerParams = {
+    stepover: 2 * Math.PI * MAX_R / 8, sampleSpacing: 12, stockToLeave: 0,
+    alongStart: BAND_START, alongEnd: BAND_END, safeRadius: 20, requestedCellSize: 0.05, stepdown: 3,
+  }
+  const managerMesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
+  const manager = sweep(SQUARE, FLAT, managerMesh, managerParams, TARGET_RADIUS)
+  const managerAllowance = managerParams.requestedCellSize + 1e-3
+  assert.ok(manager.retained <= managerAllowance,
+    `the exact coarse-shoulder repro stays inside one height-map cell (${manager.retained.toFixed(6)} <= ${managerAllowance})`)
+  // The single straight move that gouged is gone: before the correction this
+  // segment existed and its rim sat 0.490904 mm inside the retained square.
+  const spansShoulder = generateRotaryFinish('manager-shape', managerMesh, SQUARE, FLAT, managerParams, {}).moves.some(
+    (move) => move.kind === 'cut' && move.from.a === 45 && move.to.a === 45
+      && Math.min(move.from.x, move.to.x) === BAND_START && Math.max(move.from.x, move.to.x) === 30)
+  assert.ok(!spansShoulder, 'the coarse shoulder is no longer spanned by one straight move at 45 degrees')
+  console.log(`square shoulder: exact repro retained penetration ${manager.retained.toFixed(6)} mm `
+    + `(allowance ${managerAllowance.toFixed(4)}), ${manager.moves} moves`)
+
+  // Seeded coarse / misaligned cases on both axes, mm and inch, on- and
+  // off-origin, flat and ball, with and without stock to leave. Spacings 12 and
+  // 7.3 mm (project units) are both larger than the 2.4-4.8 mm cutter footprint,
+  // and neither divides the 24 mm band, so the intervals cross the shoulder
+  // reach off-grid. Stock to leave widens the sampling footprint, moving the
+  // step further inside the range.
+  const scaleOf = (units: 'mm' | 'inch'): number => units === 'mm' ? 1 : 0.03937007874015748
+  let worstRetained = 0
+  let worstTarget = 0
+  let cases = 0
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      for (const offset of [false, true]) {
+        for (const type of ['flat_endmill', 'ball_endmill'] as const) {
+          for (const leave of [0, 0.8]) {
+            const scale = scaleOf(units)
+            const stock = squareStock(SIDE * scale, LENGTH * scale, axis, offset ? { x: 11 * scale, y: -7 * scale } : { x: 0, y: 0 })
+            const bounds = getStockBounds(stock)
+            const lower = axis === 'x' ? bounds.minX : bounds.minY
+            const targetRadius = TARGET_RADIUS * scale
+            const bandStart = lower + BAND_START * scale
+            const bandEnd = bandStart + (BAND_END - BAND_START) * scale
+            const radius = (1.2 + (cases % 3) * 0.6) * scale
+            const tool: NormalizedTool = { ...BALL, type, units, radius, diameter: radius * 2 }
+            const spacing = (cases % 2 === 0 ? 12 : 7.3) * scale
+            const params = {
+              stepover: 2 * Math.PI * barMaxRadius(stock) / (7 + (cases % 3)), stepdown: 2 * scale,
+              sampleSpacing: spacing, stockToLeave: leave * scale, alongStart: bandStart, alongEnd: bandEnd,
+              safeRadius: 4 * scale, requestedCellSize: 0.05 * scale,
+            }
+            assert.ok(spacing > 2 * radius, `case ${cases} spacing is coarser than the cutter footprint`)
+            const mesh = cylinderMesh(stock, targetRadius, bandStart, bandEnd, 96)
+            const measured = sweep(stock, tool, mesh, params, targetRadius)
+            const allowance = params.requestedCellSize + 1e-3 * scale
+            assert.ok(measured.retained <= allowance, `case ${cases} (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave}) `
+              + `does not enter the retained square (${measured.retained.toFixed(6)} <= ${allowance.toFixed(6)})`)
+            assert.ok(measured.target <= allowance, `case ${cases} (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave}) `
+              + `does not gouge the target cylinder (${measured.target.toFixed(6)} <= ${allowance.toFixed(6)})`)
+            worstRetained = Math.max(worstRetained, measured.retained)
+            worstTarget = Math.max(worstTarget, measured.target)
+            cases++
+          }
+        }
+      }
+    }
+  }
+  assert.ok(cases === 32, 'both axes, mm and inch, on and off origin, flat and ball, with and without stock to leave are all exercised')
+  console.log(`square shoulder: ${cases} coarse/misaligned cases, worst retained ${worstRetained.toFixed(6)}, `
+    + `worst target ${worstTarget.toFixed(6)}`)
 }
 
 console.log('engine/toolpaths/squareRotaryModel.test.ts: all assertions passed')

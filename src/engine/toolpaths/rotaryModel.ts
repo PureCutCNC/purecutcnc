@@ -848,18 +848,60 @@ function emitRotaryRuns(
 }
 
 /**
+ * The most samples one rotary operation may derive (`passes x along positions`).
+ * Both counts are quotients of caller parameters (`2 pi R / stepover` and
+ * `span / sampleSpacing`), so a value that is positive and finite can still ask
+ * for tens of billions of samples; `Array.from` on that length exhausts the
+ * worker rather than refusing. Sixteen million keeps the per-angle tip rows
+ * under a few hundred megabytes and is far above any job the panel describes.
+ */
+const MAX_ROTARY_SAMPLES = 16_000_000
+
+/**
+ * Per-shoulder cap on the extra along samples the square-blank refinement adds,
+ * so a very small requested cell under a large cutter still cannot allocate an
+ * unbounded grid; the spacing is widened to `zone / MAX_SHOULDER_SAMPLES`.
+ */
+const MAX_SHOULDER_SAMPLES = 4096
+
+/**
+ * The along grid's interval count at `spacing`, or null when it is not a
+ * finite, bounded, positive count. `Math.max(spacing, 1e-9)` mirrors the floors
+ * the generators apply, so a caller that slipped past `rotaryRefusal` still
+ * cannot reach an infinite count here.
+ */
+function boundedIntervals(span: number, spacing: number): number | null {
+  const intervals = Math.ceil(Math.abs(span) / Math.max(spacing, 1e-9))
+  if (!Number.isFinite(intervals) || intervals > MAX_ROTARY_SAMPLES) return null
+  return Math.max(1, intervals)
+}
+
+/**
  * Refuse a job whose sample count would be unbounded, and a bar with no surface
  * to cut. `stepover` becomes the angle step (`ceil(2 pi R / stepover)` passes)
  * and `sampleSpacing` the along interval count (`ceil(span / sampleSpacing)`);
  * flooring either at 1e-9 rather than refusing it asks for about 6e10 samples
  * and hangs the worker mid-generation. A bar with no positive radius has no
  * centreline the wrapped points could be placed on.
+ *
+ * The positivity checks alone do not bound those counts: `sampleSpacing = 1e-9`
+ * is positive and finite and asks for 2.4e10 intervals, so the derived counts
+ * themselves are checked here before any grid is allocated (#1016 C2-S3
+ * correction).
  */
 function rotaryRefusal(stock: BarStock, params: RotaryFinishParams): ToolpathWarningCode | null {
   const radius = barInscribedRadius(stock)
   if (!(radius > 0) || !Number.isFinite(radius)) return 'aroundStockMismatch'
   if (!(params.stepover > 0) || !Number.isFinite(params.stepover)) return 'operationStepoverRatioRange'
   if (!(params.sampleSpacing > 0) || !Number.isFinite(params.sampleSpacing)) return 'operationStepoverRatioRange'
+  // A non-finite cell makes the height map's own derived width/height
+  // non-finite, which `Array` cannot size; `chooseHeightMapCellSize` clamps a
+  // zero or negative request to 1e-6 but passes a non-finite one through.
+  if (!Number.isFinite(params.requestedCellSize)) return 'operationStepoverRatioRange'
+  const passes = Math.ceil((2 * Math.PI * barMaxRadius(stock)) / params.stepover)
+  const intervals = boundedIntervals(params.alongEnd - params.alongStart, params.sampleSpacing)
+  if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || intervals === null) return 'operationStepoverRatioRange'
+  if (passes * (intervals + 1) > MAX_ROTARY_SAMPLES) return 'operationStepoverRatioRange'
   return null
 }
 
@@ -994,6 +1036,88 @@ function withRetainedBar(
   return { positions, index }
 }
 
+/**
+ * The along positions the sampler reads for one operation.
+ *
+ * On a round bar this is exactly the uniform grid `sampleSpacing` asks for.
+ *
+ * A square blank's retained stub beyond each cut range (#1016 C2-S3) puts a
+ * step in the required tip height one (stock-to-leave-enlarged) cutter footprint
+ * inside that range: while the tool's axial rim still reaches the stub the tip
+ * is lifted to the blank's surface, and it drops to the target the moment the
+ * rim clears. That step is a
+ * discontinuity, so a single straight move between two samples that straddle it
+ * cuts the chord below the stub and the rim enters the retained square — a
+ * finer *uniform* grid does not remove it, because the step still falls between
+ * two samples unless one lands on it. The stepped move `emitRotaryRuns` already
+ * knows (rise, run at the higher tip, drop) is safe there, but it only fires
+ * when the rise exceeds the spacing. Both shoulders are therefore sampled at
+ * the height map's own resolution — the requested cell, the bound on the
+ * sampler's discretization — across one cutter footprint plus that cell. There
+ * either the step makes the rise exceed the spacing and the stepped move is
+ * emitted, or the residual chord dip is at most that spacing, the same error
+ * every sampled tip already carries. The rest of the range, and every round
+ * bar, is untouched.
+ */
+function rotaryAlongPositions(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): number[] {
+  const start = params.alongStart
+  const end = params.alongEnd
+  const intervals = boundedIntervals(end - start, params.sampleSpacing) ?? 1
+  const base: number[] = []
+  for (let i = 0; i <= intervals; i++) base.push(start + (end - start) * i / intervals)
+  if (!isSquareStock(stock)) return base
+  const stockBounds = getStockBounds(stock)
+  const meshAlong = alongExtremes(mesh.positions, stock)
+  const lower = Math.min(stock.axis === 'x' ? stockBounds.minX : stockBounds.minY, meshAlong.min)
+  const upper = Math.max(stock.axis === 'x' ? stockBounds.maxX : stockBounds.maxY, meshAlong.max)
+  // The sampler's own resolution for the sampling bbox: the requested cell,
+  // clamped and widened by `chooseHeightMapCellSize` when the grid would exceed
+  // its cell cap. The sampling mesh's along extent contains the stock's (the
+  // retained stubs fill it) and its cross extent never passes `barMaxRadius`
+  // from the centre while the model is inside the blank, so this box contains
+  // every angle's turned bbox and its cell is at least the sampler's. The fine
+  // spacing is the requested cell, at most that cell, so the residual the
+  // refinement leaves is no larger than the sampler's own discretization.
+  const envelope = barMaxRadius(stock)
+  const centre = barCentre(stock)
+  const samplingBounds = stock.axis === 'x'
+    ? { minX: lower, maxX: upper, minY: centre - envelope, maxY: centre + envelope }
+    : { minX: centre - envelope, maxX: centre + envelope, minY: lower, maxY: upper }
+  const cell = chooseHeightMapCellSize(samplingBounds, params.requestedCellSize, [])
+  const fine = Math.max(params.requestedCellSize, 1e-6)
+  // A grid already at or below the resolution resolves the step by itself.
+  if (!(params.sampleSpacing > fine)) return base
+  // The sampler widens the tool by `stockToLeave` (see `rotaryTargets`), so the
+  // step sits one *enlarged* footprint inside the range.
+  const zone = tool.radius + Math.max(0, params.stockToLeave) + cell
+  if (!Number.isFinite(zone) || !(zone > 0)) return base
+  let step = fine
+  if (!(zone / step <= MAX_SHOULDER_SAMPLES)) step = zone / MAX_SHOULDER_SAMPLES
+  if (!Number.isFinite(step) || !(step > 0)) return base
+  // Only a real stub makes a step: `withRetainedBar` leaves one out where the
+  // cut range already meets the bar's end.
+  const addShoulder = (from: number, to: number, direction: number): void => {
+    for (let k = 1; k * step < zone; k++) {
+      const x = from + direction * k * step
+      if (direction > 0 ? x >= to : x <= to) break
+      base.push(x)
+    }
+  }
+  if (start > lower) addShoulder(start, end, 1)
+  if (end < upper) addShoulder(end, start, -1)
+  base.sort((a, b) => a - b)
+  const unique: number[] = []
+  for (const x of base) {
+    if (unique.length === 0 || x - unique[unique.length - 1] > 1e-9) unique.push(x)
+  }
+  return unique
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -1031,9 +1155,7 @@ function rotaryTargets(
   const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
   const angleStep = 360 / passes
   const angles = Array.from({ length: passes }, (_, k) => k * angleStep)
-  const span = Math.abs(params.alongEnd - params.alongStart)
-  const intervals = span <= 0 ? 1 : Math.max(1, Math.ceil(span / Math.max(params.sampleSpacing, 1e-9)))
-  const along = Array.from({ length: intervals + 1 }, (_, i) => params.alongStart + (params.alongEnd - params.alongStart) * i / intervals)
+  const along = rotaryAlongPositions(mesh, stock, tool, params)
   const sampling = sampleRotaryModel(
     withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd),
     stock,
