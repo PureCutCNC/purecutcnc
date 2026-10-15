@@ -48,6 +48,12 @@ const ROTARY_MACHINE = {
   rotary: { about: 'x', drive: 'own' },
 }
 
+/** The same controller, with the rotary axis along Y, for a bar along Y. */
+const ROTARY_MACHINE_Y = {
+  ...ROTARY_MACHINE,
+  rotary: { about: 'y', drive: 'own' },
+}
+
 interface SavedFeature {
   id: string
   authoringFace?: 'top' | 'bottom' | 'around'
@@ -301,10 +307,14 @@ interface RotaryLineGeometry {
   circumference: number
   /** The lead of the first line: along distance per full turn, from the sheet slope. */
   lead: number | null
-  /** Across travel of each line, in project units. */
+  /** Across travel of each line, in project units. Signed: the physical hand. */
   acrossPerLine: number[]
   /** The across coordinate each line starts at, from the ordinary profile.start. */
   acrossStart: number[]
+  /** Along coordinate (the bar's project axis) of each line's first point. */
+  alongStart: number[]
+  /** Along coordinate of each line's last point. */
+  alongEnd: number[]
 }
 
 /**
@@ -322,24 +332,33 @@ async function rotaryLineGeometry(page: Page): Promise<RotaryLineGeometry> {
     const profiles = project.features
       .map((feature) => project.featureDefinitions[feature.definitionId]?.profile)
       .filter((profile): profile is NonNullable<typeof profile> => profile !== undefined)
-    const acrossPerLine = profiles.map((profile) => {
+    const alongOf = (point: { x: number; y: number }): number => (frame.axis === 'x' ? point.x : point.y)
+    const ends = profiles.map((profile) => {
       const segment = profile.segments[0]
-      const to = segment && segment.type === 'line' ? segment.to : profile.start
-      return frame.axis === 'x' ? to.y - profile.start.y : to.x - profile.start.x
+      return segment && segment.type === 'line' ? segment.to : profile.start
     })
+    const acrossPerLine = profiles.map((profile, index) => (
+      frame.axis === 'x' ? ends[index].y - profile.start.y : ends[index].x - profile.start.x
+    ))
     const acrossStart = profiles.map((profile) => (
       frame.axis === 'x' ? profile.start.y : profile.start.x
     ))
     const first = profiles[0]
     let lead: number | null = null
     if (first) {
-      const segment = first.segments[0]
-      const to = segment && segment.type === 'line' ? segment.to : first.start
-      const along = frame.axis === 'x' ? to.x - first.start.x : to.y - first.start.y
+      const along = alongOf(ends[0]) - alongOf(first.start)
       const across = acrossPerLine[0]
       lead = across === 0 ? null : Math.abs((along * frame.circumference) / across)
     }
-    return { lineCount: profiles.length, circumference: frame.circumference, lead, acrossPerLine, acrossStart }
+    return {
+      lineCount: profiles.length,
+      circumference: frame.circumference,
+      lead,
+      acrossPerLine,
+      acrossStart,
+      alongStart: profiles.map((profile) => alongOf(profile.start)),
+      alongEnd: ends.map((point) => alongOf(point)),
+    }
   })
 }
 
@@ -421,6 +440,29 @@ async function seedFluteTools(page: Page): Promise<void> {
       { ...defaultTool('mm', 2), id: 't-v', name: 'V-bit 60', type: 'v_bit', vBitAngle: 60, diameter: 6 },
     ],
   }))
+}
+
+/**
+ * The same Ø25 × 120 mm bar, but along the given axis, with a rotary machine
+ * whose fourth axis lies along it. The physical hand is a property of the
+ * helix, not the screen, so the direction tests run on both axes.
+ */
+async function prepareMmRoundBarAxis(page: Page, axis: 'x' | 'y'): Promise<{ diameter: number }> {
+  const project = await getProject(page)
+  const meta = project.meta as Record<string, unknown>
+  const bar = roundStock(25, 120, axis)
+  await seedProject(page, JSON.stringify({
+    ...project,
+    stock: bar,
+    meta: {
+      ...meta,
+      units: 'mm',
+      projectType: 'rotary',
+      machineDefinitions: [axis === 'x' ? ROTARY_MACHINE : ROTARY_MACHINE_Y],
+      selectedMachineId: 'grbl',
+    },
+  }))
+  return { diameter: bar.thickness }
 }
 
 function rotaryEntry(page: Page, ui: Ui, kind: 'thread' | 'flutes') {
@@ -586,6 +628,222 @@ test('flutes follow count, twist and the chosen tool', async ({ app, ui }) => {
   geometry.acrossPerLine.forEach((across) => {
     expect(Math.abs(Math.abs(across) / geometry.circumference - 2)).toBeLessThan(1e-6)
   })
+})
+
+test('the thread dialog defaults to Right, and Left reverses the same helix', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+
+  // Right is the default, and it is what the store is asked for.
+  await ui.rotary.threadButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeVisible()
+  await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
+  await ui.rotary.field(page, 'start').fill('2')
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1.2')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  const right = await rotaryLineGeometry(page)
+  expect(right.lineCount).toBe(1)
+  expect(right.lead ?? 0).toBeCloseTo(2, 6)
+  expect(right.alongEnd[0] - right.alongStart[0]).toBeCloseTo(30, 6)
+  expect(right.acrossPerLine[0]).toBeGreaterThan(0)
+
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  const rightGenerated = await generatedThreadOperation(page, (await rotarySnapshot(page)).operationId!)
+  expect(rightGenerated.moveCount).toBeGreaterThan(0)
+  expect(rightGenerated.errorCount).toBe(0)
+
+  // Left is the same line mirrored along the bar: same lead and endpoints,
+  // opposite across sign, pitch untouched.
+  await undo(page)
+  await ui.rotary.threadButton(page).click()
+  await ui.rotary.field(page, 'start').fill('2')
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1.2')
+  await ui.rotary.directionTrigger(page).click()
+  await ui.rotary.directionOption(page, 'Left-hand').click()
+  await expect(ui.rotary.directionTrigger(page)).toContainText('Left-hand')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  const left = await rotaryLineGeometry(page)
+  expect(left.lineCount).toBe(1)
+  expect(left.lead ?? 0).toBeCloseTo(2, 6)
+  expect(left.alongEnd[0] - left.alongStart[0]).toBeCloseTo(30, 6)
+  expect(left.alongStart[0]).toBeCloseTo(right.alongStart[0], 6)
+  expect(left.acrossPerLine[0]).toBeLessThan(0)
+  expect(Math.abs(left.acrossPerLine[0])).toBeCloseTo(Math.abs(right.acrossPerLine[0]), 6)
+
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  const leftGenerated = await generatedThreadOperation(page, (await rotarySnapshot(page)).operationId!)
+  expect(leftGenerated.moveCount).toBeGreaterThan(0)
+  expect(leftGenerated.errorCount).toBe(0)
+})
+
+test('an inch Left thread keeps the 20 TPI pitch and reverses the helix', async ({ app, ui }) => {
+  const { page } = app
+  await prepareInchRoundBarWithRotary(page)
+  await switchToAround(page)
+
+  await ui.rotary.threadButton(page).click()
+  await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
+  await ui.rotary.directionTrigger(page).click()
+  await ui.rotary.directionOption(page, 'Left-hand').click()
+  await ui.rotary.field(page, 'length').fill('2')
+  await ui.rotary.field(page, 'pitch').fill('20')
+  await ui.rotary.field(page, 'depth').fill('0.03')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  // The field is still threads per inch: 20 TPI is a 0.05 in physical pitch,
+  // and the Left hand only flips the sheet slope.
+  const geometry = await rotaryLineGeometry(page)
+  expect(geometry.lineCount).toBe(1)
+  expect(geometry.lead ?? 0).toBeCloseTo(0.05, 8)
+  expect(geometry.acrossPerLine[0]).toBeLessThan(0)
+})
+
+test('a Left thread reverses the helix on a bar along Y as well', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarAxis(page, 'y')
+  await switchToAround(page)
+
+  await ui.rotary.threadButton(page).click()
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1.2')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+  const right = await rotaryLineGeometry(page)
+  expect(right.lineCount).toBe(1)
+  expect(right.lead ?? 0).toBeCloseTo(2, 6)
+
+  await undo(page)
+  await ui.rotary.threadButton(page).click()
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1.2')
+  await ui.rotary.directionTrigger(page).click()
+  await ui.rotary.directionOption(page, 'Left-hand').click()
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+  const left = await rotaryLineGeometry(page)
+  expect(left.lineCount).toBe(1)
+  // The hand is physical, so on the other bar axis Left is the mirror of
+  // Right: the same magnitude with the opposite signed across travel.
+  expect(left.acrossPerLine[0] * right.acrossPerLine[0]).toBeLessThan(0)
+  expect(Math.abs(left.acrossPerLine[0])).toBeCloseTo(Math.abs(right.acrossPerLine[0]), 6)
+})
+
+test('flute twist is a magnitude, and Left flips the hand', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await seedFluteTools(page)
+  await switchToAround(page)
+  const baseline = await rotarySnapshot(page)
+
+  // Right-hand (default): two positive turns of twist, cut with the ball tool.
+  await ui.rotary.flutesButton(page).click()
+  await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'count').fill('2')
+  await ui.rotary.field(page, 'twist').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.toolTrigger(page).click()
+  await ui.rotary.toolOption(page, 'Ball 3').click()
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+  const right = await rotaryLineGeometry(page)
+  expect(right.lineCount).toBe(2)
+  expect(right.acrossPerLine.every((across) => across > 0)).toBe(true)
+  expect((await rotarySnapshot(page)).operationToolRef).toBe('t-ball')
+
+  // Left-hand: the same positive magnitude, signed negative, V-bit tool.
+  await undo(page)
+  await ui.rotary.flutesButton(page).click()
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'count').fill('2')
+  await ui.rotary.field(page, 'twist').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.toolTrigger(page).click()
+  await ui.rotary.toolOption(page, 'V-bit 60').click()
+  await ui.rotary.directionTrigger(page).click()
+  await ui.rotary.directionOption(page, 'Left-hand').click()
+  // The field keeps the magnitude the user typed; the hand signs the store call.
+  await expect(ui.rotary.field(page, 'twist')).toHaveValue('2')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+  const left = await rotaryLineGeometry(page)
+  expect(left.lineCount).toBe(2)
+  expect(left.acrossPerLine.every((across) => across < 0)).toBe(true)
+  left.acrossPerLine.forEach((across, index) => {
+    expect(Math.abs(across)).toBeCloseTo(Math.abs(right.acrossPerLine[index]), 6)
+  })
+  expect((await rotarySnapshot(page)).operationToolRef).toBe('t-v')
+
+  // One undo removes the whole pattern; redo restores it.
+  await undo(page)
+  expect(await rotarySnapshot(page)).toMatchObject({
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount,
+    operationCount: baseline.operationCount,
+    historyPast: baseline.historyPast,
+  })
+  await redo(page)
+  expect(await rotarySnapshot(page)).toMatchObject({
+    folderCount: baseline.folderCount + 1,
+    featureCount: baseline.featureCount + 2,
+    operationCount: baseline.operationCount + 1,
+    historyPast: baseline.historyPast + 1,
+  })
+
+  // Zero twist is straight in either hand: Left with 0 has no across travel.
+  await undo(page)
+  await ui.rotary.flutesButton(page).click()
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'count').fill('2')
+  await ui.rotary.field(page, 'twist').fill('0')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.toolTrigger(page).click()
+  await ui.rotary.toolOption(page, 'Ball 3').click()
+  await ui.rotary.directionTrigger(page).click()
+  await ui.rotary.directionOption(page, 'Left-hand').click()
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+  const straight = await rotaryLineGeometry(page)
+  expect(straight.lineCount).toBe(2)
+  expect(straight.acrossPerLine.every((across) => Math.abs(across) < 1e-6)).toBe(true)
+})
+
+test('a negative flute twist is refused without creating anything', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await seedFluteTools(page)
+  await switchToAround(page)
+  const baseline = await rotarySnapshot(page)
+
+  await ui.rotary.flutesButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeVisible()
+  await ui.rotary.field(page, 'length').fill('30')
+  await ui.rotary.field(page, 'twist').fill('-1')
+  await expect(ui.rotary.error(page)).toContainText('cannot be negative')
+  await expect(ui.rotary.createButton(page)).toBeDisabled()
+  expect(await rotarySnapshot(page)).toMatchObject({
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount,
+    operationCount: baseline.operationCount,
+    historyPast: baseline.historyPast,
+  })
+
+  // Twist is a magnitude: the same 1 typed positive is accepted.
+  await ui.rotary.field(page, 'twist').fill('1')
+  await expect(ui.rotary.error(page)).toHaveCount(0)
+  await expect(ui.rotary.createButton(page)).toBeEnabled()
 })
 
 test('a centreline depth is refused, and Cancel or Escape creates nothing', async ({ app, ui }) => {

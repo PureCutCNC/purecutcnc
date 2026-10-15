@@ -24,6 +24,12 @@
  * none). Lengths are project units; the inch thread field is threads per inch
  * and is converted to a physical pitch here, before the store call.
  *
+ * Both dialogs show one Direction control: the physical hand of the helix,
+ * right by default, never a machine A-axis reversal or a cut-direction
+ * (climb/conventional) choice. A thread passes it to the store; a flute's
+ * twist field is a magnitude the hand signs, so Left is that positive number
+ * negated and a straight (0) flute is straight in either hand.
+ *
  * Validation is local so Create can be disabled with an explanation before the
  * store is asked; a store refusal (a race, a tool policy change) is shown in
  * the same place and creates nothing.
@@ -44,6 +50,7 @@ import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Select } from '../../Select'
+import { RotaryDirectionField } from './RotaryDirectionField'
 
 export type RotaryPatternKind = 'thread' | 'flutes'
 
@@ -124,6 +131,9 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
   const [depthEdited, setDepthEdited] = useState(false)
   const [count, setCount] = useState('4')
   const [twist, setTwist] = useState('0')
+  // The only direction state in either dialog: the physical hand, right by
+  // default. It is never inferred or silently defaulted a second time.
+  const [direction, setDirection] = useState<'right' | 'left'>('right')
   const [toolRef, setToolRef] = useState('')
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
@@ -190,7 +200,8 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
     if (!Number.isInteger(countValue) || countValue < 1 || countValue > MAX_FLUTE_COUNT) {
       return t('dialogs.rotary.error.count', { max: MAX_FLUTE_COUNT })
     }
-    if (!Number.isFinite(parseNumber(twist))) return t('dialogs.rotary.error.twist')
+    const twistValue = parseNumber(twist)
+    if (!Number.isFinite(twistValue) || twistValue < 0) return t('dialogs.rotary.error.twist')
     const depthValue = parseNumber(depth)
     if (!Number.isFinite(depthValue) || depthValue <= 0) return t('dialogs.rotary.error.depth')
     if (radius > 0 && depthValue >= radius) return t('dialogs.rotary.error.depthCentreline')
@@ -210,6 +221,7 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
         length: parseNumber(length),
         pitch: units === 'inch' ? 1 / rawPitch : rawPitch,
         starts: parseNumber(starts),
+        direction,
         depth: depthValue,
       }
     }
@@ -218,7 +230,9 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
       start: parseNumber(start),
       length: parseNumber(length),
       count: parseNumber(count),
-      twist: parseNumber(twist),
+      // The field is a magnitude; the physical hand signs it. Zero stays zero
+      // either way, so a straight flute is straight in both hands.
+      twist: (direction === 'left' ? -1 : 1) * parseNumber(twist),
       depth: depthValue,
       toolRef: selectedToolId,
     }
@@ -365,6 +379,8 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
                   </div>
                 </div>
 
+                <RotaryDirectionField value={direction} onChange={setDirection} />
+
                 <p className="rotary-dialog__note">{t('dialogs.rotary.thread.note')}</p>
               </>
             ) : (
@@ -401,6 +417,8 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
                   </div>
                 </div>
 
+                <RotaryDirectionField value={direction} onChange={setDirection} />
+
                 <div className="dialog-section-group">
                   <label className="dialog-section-title" htmlFor="rotary-depth">
                     {t('dialogs.rotary.depth', { units: unitLabel })}
@@ -417,7 +435,7 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
                   </div>
                 </div>
 
-                <div className="dialog-section-group">
+                <div className="dialog-section-group rotary-dialog__tool">
                   <label className="dialog-section-title">
                     {t('dialogs.rotary.flutes.tool')}
                   </label>
