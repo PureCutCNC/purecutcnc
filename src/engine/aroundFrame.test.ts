@@ -24,12 +24,14 @@
  * - a fixture band limited to one circumference: testUnrolledProject
  * - drillCycles retained / split indices not remapped: testToolpaths
  * - generation branch removed: testGenerationParity
+ * - square sheet built from the corner radius / a different zero line: testSquareFrames
  * Run with: npx tsx src/engine/aroundFrame.test.ts
  */
 
 import { deepStrictEqual } from 'node:assert'
 import { circleProfile, defaultTool, getStockBounds, isAroundSetup, newProject, rectProfile, roundStock } from '../types/project'
 import type { MachiningSetup, Operation, Project, SketchFeature, SketchProfile } from '../types/project'
+import { squareStock } from '../types/barStock'
 import { projectWithFeatures, withBottomSetup } from '../test/projectFixtures'
 import { aroundFrame, aroundFrameForOperation, unrolledProject, unwrapPoint, unwrapToolpath, wrapPoint, wrapToolpath } from './aroundFrame'
 import type { AroundFrame } from './aroundFrame'
@@ -95,6 +97,56 @@ function testFrames(): void {
   console.log('Testing frame numbers...')
   equal(aroundFrame(X_BAR), { axis: 'x', centre: 50, radius: 20, zero: 50, sheetStart: 50 - 20 * Math.PI, circumference: 40 * Math.PI }, 'X/mm frame')
   equal(aroundFrame(Y_BAR), { axis: 'y', centre: 4, radius: 1, zero: 4, sheetStart: 4 - Math.PI, circumference: 2 * Math.PI }, 'Y/inch frame')
+}
+
+/**
+ * The square blank's sheet is its *nominal reference cylinder* (#1016 C2-S3):
+ * radius = side / 2 (inscribed), circumference = π · side, zero = the box
+ * centre. It is a coordinate mapping for the angle a sheet column stands for,
+ * not a claim about the blank's surfaces — so it is exactly the round bar's
+ * frame on the same box, and the corner radius never appears in it.
+ */
+function testSquareFrames(): void {
+  console.log('Testing the square blank sheet (nominal reference cylinder)...')
+  for (const [side, length, axis, at] of [
+    [20, 100, 'x', { x: 0, y: 0 }],
+    [2, 8, 'y', { x: 3, y: 5 }],
+    [40, 200, 'x', { x: 10, y: 30 }],
+  ] as const) {
+    const square = squareStock(side, length, axis, at)
+    const sameBoxRound = roundStock(side, length, axis, at)
+    const zero = aroundFrame(sameBoxRound).centre
+    equal(aroundFrame(square), {
+      axis,
+      centre: zero,
+      radius: side / 2,
+      zero,
+      sheetStart: zero - Math.PI * side / 2,
+      circumference: Math.PI * side,
+    }, `${axis} square frame is the inscribed radius and π·side`)
+    // The mapping is the box's, not the blank's shape: the same box's round
+    // bar frames it identically. A circumscribed (corner-radius) envelope or a
+    // different zero line fails here.
+    equal(aroundFrame(square), aroundFrame(sameBoxRound), `${axis} square sheet ≡ round sheet on the same box`)
+    const frame = aroundFrame(square)
+    // A quarter sheet is a quarter turn, and a flat point is raised by the
+    // nominal radius — never by the corner radius.
+    const quarter = flatPoint(frame, at.x + length / 4, frame.zero + frame.circumference / 4, 3)
+    const wrapped = wrapPoint(quarter, frame)
+    near(wrapped.a!, 90, `${axis} quarter sheet is +90°`)
+    equal(frame.axis === 'x' ? wrapped.y : wrapped.x, frame.centre, `${axis} wraps onto the pivot`)
+    equal(wrapped.z, 3 + side / 2, `${axis} flat height raised by the nominal radius`)
+    nearPoint(unwrapPoint(wrapped, frame), quarter, `${axis} square round trip`)
+    // An Around operation on a square blank axis-matched gets the frame; a
+    // mismatched axis is still refused, and a block still throws (testSetups).
+    const project = makeProject(sameBoxRound)
+    const op = operation('pocket', 'around')
+    equal(aroundFrameForOperation({ ...project, stock: square }, op), frame, `${axis} Around frame on a square blank`)
+    const otherAxis = axis === 'x' ? 'y' : 'x'
+    throws(() => aroundFrameForOperation(
+      { ...project, stock: squareStock(side, length, otherAxis, at) }, op,
+    ), `${axis} mismatched square axis refused`)
+  }
 }
 
 function flatPoint(frame: AroundFrame, along: number, across: number, z: number): ToolpathPoint {
@@ -341,6 +393,7 @@ function testSetups(): void {
 }
 
 testFrames()
+testSquareFrames()
 testPoints()
 testUnrolledProject()
 testToolpaths()

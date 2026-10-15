@@ -15,7 +15,7 @@
  */
 
 import type { Operation, Project } from '../../types/project'
-import { isRoundStock } from '../../types/project'
+import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
 import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
@@ -25,14 +25,24 @@ import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './r
 import type { ToolpathResult } from './types'
 import type { ToolpathWarningCode } from './warningCodes'
 
-/** Adapt the saved operation to the rotary generators; the mesh stays in stock space. */
+/**
+ * Adapt the saved operation to the rotary generators; the mesh stays in stock
+ * space.
+ *
+ * A square blank is accepted for `rotary_rough` / `rotary_finish` exactly as a
+ * round bar is (#1016 C2-S3): both generators sample the actual blank and
+ * clear its corners. Only these two kinds reach here, so 2D engraving wrapped
+ * onto a square blank is *not* enabled by this — the wrapped-flat pipeline has
+ * its own guards, and the operation-validity and active-face guards still
+ * refuse square stock until the authoring slice lands.
+ */
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
   const empty = (code: ToolpathWarningCode): ToolpathResult => ({
     operationId: operation.id, moves: [], bounds: null,
     warnings: [{ code, params: { operation: operation.name } }],
   })
   const stock = project.stock
-  if (!isRoundStock(stock) || operationFace(project, operation) !== 'around'
+  if (!isBarStock(stock) || operationFace(project, operation) !== 'around'
     || setupForOperation(project, operation)?.orientation.axis !== stock.axis) return empty('aroundStockMismatch')
   if (operation.target.source !== 'features' || operation.target.featureIds.length === 0) return empty('finishNeedsModel')
   const targets = splitFeatureTargets(project, operation.target.featureIds)
@@ -60,11 +70,15 @@ export function generateRotaryOperation(project: Project, operation: Operation):
     tailEnd: operation.rotaryTailSupport ?? 0,
   })
   if (!range) return empty('rotaryNoRoom')
-  const radius = stock.thickness / 2
-  const rapidRadius = project.meta.maxTravelZ - radius
-  // A saved rapid height below the bar surface cannot clear it. Use one tool
-  // diameter above the bar when maxTravelZ does not provide that clearance.
-  const safeRadius = rapidRadius > radius ? rapidRadius : radius + tool.diameter
+  // The rapid height is a tip radius from the turning pivot. A saved height
+  // below the blank's *largest* radius cannot clear a square blank's corners,
+  // so the fallback is one tool diameter above that envelope — the same rule as
+  // the round bar's surface, and the same number on a round bar, where the two
+  // radii are equal (#1016 C2-S3).
+  const pivot = barPivotZ(stock)
+  const maxRadius = barMaxRadius(stock)
+  const rapidRadius = project.meta.maxTravelZ - pivot
+  const safeRadius = rapidRadius > maxRadius ? rapidRadius : maxRadius + tool.diameter
   const stepover = Math.max((operation.stepover ?? 0.5) * tool.diameter, 1e-3)
   const params = {
     stepover, stepdown: operation.stepdown,

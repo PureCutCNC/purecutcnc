@@ -1566,6 +1566,16 @@ for (const axis of ['x', 'y'] as const) {
   assert.ok(result.moves.length > 0, 'rough fixture generates moves')
   const layers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
   console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${layers.size} layers, ${result.moves.length} moves`)
+  // The rough side of the same frozen matrix as the finish hash below: the
+  // value was captured from the baseline 116f050d module and must not move when
+  // the generators are widened to `BarStock` (#1016 C2-S3). The round bar is
+  // the regression gate for the square work; a square-only change that leaks a
+  // different cap, pass count, layer start or travel height into the round path
+  // fails here.
+  assert.equal(result.moves.length, 2217, 'rough fixture keeps its move count')
+  assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
+    'fac0d7364f3337eabbe95eedc7504e63ef046c642279601d89f4eac55fd2fc24', 'rough fixture keeps its exact points')
+  assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
     // instead of going out to `safeRadius`, so the rough fixture's retract count

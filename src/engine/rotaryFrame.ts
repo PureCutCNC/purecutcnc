@@ -29,10 +29,19 @@
  * positive across the bar's own frame, whichever project axis the bar lies
  * along, so this is the frame the "Around" face (#395) unrolls in and every
  * wrap of a flat toolpath back onto the bar must use it.
+ *
+ * The frame is a rigid rotation about the bar's true turning pivot, so it is
+ * the same map for a round bar and a square blank (#1016 C2-S3): the pivot is
+ * the box centre — `barCentre` across and `barPivotZ = thickness / 2` up — and
+ * the rotation moves any point with it whatever the blank's cross-section is.
+ * A square blank's corners are material at a radius the round bar does not
+ * have; they are *not* a different pivot. Nothing here reads the blank's
+ * surface, so widening the argument to `BarStock` leaves every round point
+ * bit-identical and never moves a square pivot to the corner radius.
  */
 
-import { roundStockCentre } from '../types/project'
-import type { RoundStock } from '../types/project'
+import { barCentre, barPivotZ } from '../types/barStock'
+import type { BarStock } from '../types/project'
 import type { ToolpathPoint } from './toolpaths/types'
 
 /** A point of the unturned stock. */
@@ -49,12 +58,12 @@ export interface StockSpacePoint {
  * A point with no `a` has no rotary component and is returned unchanged as
  * `{x, y, z}`.
  */
-export function stockSpacePoint(point: ToolpathPoint, stock: RoundStock): StockSpacePoint {
+export function stockSpacePoint(point: ToolpathPoint, stock: BarStock): StockSpacePoint {
   if (point.a === undefined) {
     return { x: point.x, y: point.y, z: point.z }
   }
-  const centre = roundStockCentre(stock)
-  const height = stock.thickness / 2
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock)
   const t = (point.a * Math.PI) / 180
   const cos = Math.cos(t)
   const sin = Math.sin(t)
@@ -81,9 +90,9 @@ export function stockSpacePoint(point: ToolpathPoint, stock: RoundStock): StockS
  * — the exact inverse of {@link stockSpacePoint}. The returned point always
  * carries `a`.
  */
-export function toolSpacePoint(stockPoint: StockSpacePoint, a: number, stock: RoundStock): ToolpathPoint {
-  const centre = roundStockCentre(stock)
-  const height = stock.thickness / 2
+export function toolSpacePoint(stockPoint: StockSpacePoint, a: number, stock: BarStock): ToolpathPoint {
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock)
   const t = (a * Math.PI) / 180
   const cos = Math.cos(t)
   const sin = Math.sin(t)
