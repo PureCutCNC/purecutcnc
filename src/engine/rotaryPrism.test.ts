@@ -29,8 +29,16 @@
  * Tolerances, stated where they are used:
  * - Vertex, polygon and volume assertions hold to 1e-4 project units (Float32
  *   mesh positions against analytic doubles).
- * - A cut tip is quantised by the sampler's height-map cell, so its allowance is
- *   derived from that cell and the steepest cross-section slope, not fitted.
+ * - A cut tip is quantised by the sampler's height-map cell. Its allowance is
+ *   derived per sampling angle from the turned edges the footprint can actually
+ *   reach plus the reference grid's own step (see `quantisationFor`) — not from
+ *   a fixed "steepest hexagon edge" and not widened by a fitted constant.
+ *
+ * Both project units are covered. The mm fixtures are mirrored at 1/25.4 scale
+ * in an inch project — inch stock, cutter radii and sampler cell — and the inch
+ * geometry and physically sampled tips are compared back against the mm ones
+ * through `MM_PER_INCH`, so the unit path is asserted as geometry, not as a
+ * meta flag.
  *
  * Run with: npx tsx src/engine/rotaryPrism.test.ts
  *
@@ -45,6 +53,12 @@
  *   `radius + up + 10`): the extracted cross-section is no longer the flat-up
  *   polygon at the bar's centreline, so the ring match fails first and the
  *   stock-space Z assertions would report the offset too.
+ * - Drop the whole-turn reduction in `rotaryPrism.ts`
+ *   (`(input.rotationDeg ?? 0) % 360` → `input.rotationDeg ?? 0`): the
+ *   `Number.MAX_VALUE` / `-Number.MAX_VALUE` fixtures overflow `deg × π / 180`
+ *   to a non-finite rotation, so the emitted coordinates are non-finite and the
+ *   helper throws its Float32-range `RangeError` instead of building the mesh
+ *   the huge-rotation block expects.
  */
 
 import assert from 'node:assert/strict'
@@ -55,6 +69,7 @@ import {
 import { computeMeshBounds, deserializeImportedMesh, serializeImportedMesh, type ImportedTriangleMesh } from './importedMesh'
 import { loadSTLTransformedGeometry } from './csg'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
+import { MM_PER_INCH } from '../utils/units'
 import { sampleRotaryModel, type RotaryModelMesh } from './toolpaths/rotaryModel'
 import type { NormalizedTool } from './toolpaths/types'
 import type { ToolpathWarning } from './toolpaths/warningCodes'
@@ -399,6 +414,75 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 // ---------------------------------------------------------------------------
+// A6b: whole turns and very large finite rotations.
+// ---------------------------------------------------------------------------
+
+{
+  const stock = roundStock(40, 80, 'x', { x: 0, y: 7 })
+  const canonical = analyticCrossSection(6, 15)
+  const base = buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30 })
+  const baseCross = crossSectionOf(base, stock, 6)
+  const baseOffset = matchAnalyticOffset(baseCross, canonical)
+  assert.ok(baseOffset >= 0, 'rotation normalization fixture: the base ring matches the canonical polygon')
+
+  // A whole number of turns, in either direction, is the identity.
+  for (const turnDeg of [0, 360, 720, -360, -720]) {
+    const turned = buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30, rotationDeg: turnDeg })
+    const turnedCross = crossSectionOf(turned, stock, 6)
+    turnedCross.forEach((point, i) => {
+      const partner = baseCross[i]
+      approx(point.across, partner.across, `rotation ${turnDeg} is a whole turn: vertex ${i} across`)
+      approx(point.up, partner.up, `rotation ${turnDeg} is a whole turn: vertex ${i} up`)
+    })
+  }
+
+  // Finite but astronomically large degrees must be reduced before the radians
+  // conversion: left unreduced, `deg x pi / 180` overflows to Infinity and its
+  // sine and cosine become NaN, which finiteness validation alone does not stop.
+  for (const rotationDeg of [Number.MAX_VALUE, -Number.MAX_VALUE, 1e12, -1e12, 1e300]) {
+    const normalized = rotationDeg % 360
+    const huge = buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30, rotationDeg })
+    for (const value of huge.positions) {
+      assert.ok(Number.isFinite(value), `rotation ${rotationDeg} emits finite vertices`)
+    }
+    for (const [field, value] of Object.entries(huge.bounds)) {
+      assert.ok(Number.isFinite(value), `rotation ${rotationDeg} emits a finite ${field} bound`)
+    }
+    // The emitted geometry is the same polygon as its normalized remainder,
+    // compared against an independent construction of the rotation.
+    const expected = analyticCrossSection(6, 15, normalized)
+    const offset = matchAnalyticOffset(crossSectionOf(huge, stock, 6), expected)
+    assert.ok(offset >= 0, `rotation ${rotationDeg} matches its normalized geometry ${normalized}`)
+    const reduced = buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30, rotationDeg: normalized })
+    assert.deepEqual(Array.from(huge.positions), Array.from(reduced.positions),
+      `rotation ${rotationDeg} emits exactly its normalized remainder ${normalized}`)
+  }
+
+  // A finite request whose Float32 mesh geometry cannot exist is refused, never
+  // returned as NaN or Infinity positions.
+  const hugeBar = roundStock(40, Number.MAX_VALUE / 2, 'x')
+  assert.throws(
+    () => buildRotaryPolygonPrism(hugeBar, {
+      sides: 6, acrossFlats: 15, alongStart: Number.MAX_VALUE / 4, alongEnd: Number.MAX_VALUE / 2,
+    }),
+    RangeError, 'a finite span outside the Float32 range is refused')
+  // A finite but astronomically offset bar overflows only the cross coordinate,
+  // so the axial span stays healthy: this pins the coordinate-overflow guard
+  // rather than the collapsed-span one.
+  const offWorldBar = roundStock(40, 80, 'x', { x: 0, y: 1e308 })
+  assert.throws(
+    () => buildRotaryPolygonPrism(offWorldBar, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30 }),
+    RangeError, 'a finite cross coordinate outside the Float32 range is refused')
+  const brokenStock = roundStock(40, 80, 'x', { x: Number.NaN, y: 0 })
+  assert.throws(
+    () => buildRotaryPolygonPrism(brokenStock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30 }),
+    RangeError, 'non-finite stock bounds are refused')
+  assert.throws(
+    () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 10 + 1e-9 }),
+    RangeError, 'an axial span that collapses under Float32 is refused')
+}
+
+// ---------------------------------------------------------------------------
 // A7: the real persisted-model seam preserves the generated geometry.
 // ---------------------------------------------------------------------------
 
@@ -409,8 +493,8 @@ for (const axis of ['x', 'y'] as const) {
  * to the real bounds makes the fit an identity — 0..diameter would stretch the
  * prism.
  */
-function persistedModelProject(mesh: ImportedTriangleMesh): Project {
-  const project = newProject('rotary prism fixture', 'mm')
+function persistedModelProject(mesh: ImportedTriangleMesh, units: 'mm' | 'inch' = 'mm'): Project {
+  const project = newProject('rotary prism fixture', units)
   const assetId = 'model-asset'
   project.modelAssets = { [assetId]: serializeImportedMesh(mesh, 'stl') }
   project.featureDefinitions = {
@@ -513,6 +597,7 @@ function loadPersisted(project: Project): ImportedTriangleMesh {
     ['negative acrossFlats', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: -5, alongStart: 10, alongEnd: 30 })],
     ['infinite acrossFlats', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: Number.POSITIVE_INFINITY, alongStart: 10, alongEnd: 30 })],
     ['NaN acrossFlats', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: Number.NaN, alongStart: 10, alongEnd: 30 })],
+    ['absurd acrossFlats', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 1e9, alongStart: 10, alongEnd: 30 })],
     ['non-finite rotation', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 10, alongStart: 10, alongEnd: 30, rotationDeg: Number.NaN })],
     ['infinite rotation', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 10, alongStart: 10, alongEnd: 30, rotationDeg: Number.POSITIVE_INFINITY })],
     ['non-finite along', () => buildRotaryPolygonPrism(stock, { sides: 6, acrossFlats: 10, alongStart: Number.NaN, alongEnd: 30 })],
@@ -544,17 +629,18 @@ function loadPersisted(project: Project): ImportedTriangleMesh {
   assertClosedOriented(thin, 'thin span')
   assert.ok(signedVolume(thin) > 0, 'thin span keeps a positive volume')
 
-  // The invalid request is refused before large arrays are allocated: an
-  // absurd sides count must not cost proportional work.
-  const started = Date.now()
+  // The invalid request is refused by the cheapest validator first: `sides` is
+  // checked before a single cross-section vertex is built, so an absurd count
+  // cannot cost proportional work. This is deterministic early-validation
+  // coverage, not a timing budget — AGENTS.md forbids absolute millisecond
+  // assertions and this file adds none.
   for (let i = 0; i < 200; i++) {
     assert.throws(
       () => buildRotaryPolygonPrism(stock, { sides: 1e6, acrossFlats: 1e9, alongStart: 10, alongEnd: 30, rotationDeg: Number.NaN }),
-      RangeError,
+      (error: unknown) => error instanceof RangeError && /sides must be an integer/.test(error.message),
+      'an absurd sides count is refused by the sides validator, before geometry work',
     )
   }
-  const elapsed = Date.now() - started
-  assert.ok(elapsed < 1000, `200 oversized refusals are cheap (${elapsed} ms)`)
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +718,37 @@ function prismSurfaceZ(points: CrossPoint[], across: number): number {
   return best
 }
 
+/** Grid resolution of the reference rule; its step bounds the reference's own error. */
+const REFERENCE_STEPS = 600
+
+/** The reference grid's half extent: every point of the turned ring plus a unit of margin. */
+function referenceHalfExtent(points: CrossPoint[]): number {
+  return Math.max(...points.map((point) => Math.hypot(point.across, point.up))) + 1
+}
+
+/**
+ * The steepest |d(up)/d(across)| among the turned edges whose across span the
+ * footprint of radius `reach` can touch. The set is a superset of the edges on
+ * the upper envelope (lower edges are included too), so the value is a
+ * conservative bound on the surface slope the sampled tip can see. An arbitrary
+ * rotation can bring a hexagon's 60° edge into reach, so this is read off the
+ * actual ring rather than assumed to be the flat-up tan 30°.
+ */
+function reachedEdgeSlope(turned: CrossPoint[], reach: number): number {
+  let steepest = 0
+  for (let i = 0; i < turned.length; i++) {
+    const a = turned[i]
+    const b = turned[(i + 1) % turned.length]
+    const lo = Math.min(a.across, b.across)
+    const hi = Math.max(a.across, b.across)
+    if (hi < -reach || lo > reach) continue
+    const run = b.across - a.across
+    const slope = Math.abs(run) > 1e-12 ? Math.abs((b.up - a.up) / run) : Number.POSITIVE_INFINITY
+    if (slope > steepest) steepest = slope
+  }
+  return steepest
+}
+
 /**
  * The exact sampler rule on a fine grid, in the tool's frame for
  * `toolAngleDeg`: turn the cross-section by -angle (the sampler turns the stock
@@ -641,14 +758,13 @@ function prismSurfaceZ(points: CrossPoint[], across: number): number {
  */
 function referenceTipHeight(points: CrossPoint[], toolAngleDeg: number, tool: NormalizedTool): number {
   const turned = rotateCrossSection(points, -toolAngleDeg)
-  const half = Math.max(...turned.map((point) => Math.hypot(point.across, point.up))) + 1
-  const steps = 600
-  const stepSize = (2 * half) / steps
+  const half = referenceHalfExtent(turned)
+  const stepSize = (2 * half) / REFERENCE_STEPS
   const radiusSq = tool.radius * tool.radius
   let best = Number.NEGATIVE_INFINITY
-  for (let i = 0; i <= steps; i++) {
+  for (let i = 0; i <= REFERENCE_STEPS; i++) {
     const across = -half + i * stepSize
-    for (let j = 0; j <= steps; j++) {
+    for (let j = 0; j <= REFERENCE_STEPS; j++) {
       const up = -half + j * stepSize
       const distanceSq = across * across + up * up
       if (distanceSq > radiusSq) continue
@@ -661,6 +777,35 @@ function referenceTipHeight(points: CrossPoint[], toolAngleDeg: number, tool: No
     }
   }
   return best
+}
+
+/**
+ * The allowance for comparing a sampled tip against the reference at one angle.
+ *
+ * The sampler reads surface height at height-map cell centres; the reference
+ * reads it at `REFERENCE_STEPS` points over the same span. The surface varies
+ * only across the bar, so the two maxima differ by at most one cell of surface
+ * rise on each side:
+ *
+ *   maxSlopeReached x (SAMPLE_CELL + referenceStep) + ballClearance + EPS
+ *
+ * `maxSlopeReached` comes from the actual turned ring (`reachedEdgeSlope`), not
+ * a fitted constant. `ballClearance` bounds how much a ball's centre-to-surface
+ * clearance can change over one cell diagonal — zero for a flat cutter, whose
+ * tip height is the surface height itself. `EPS` is the file's Float32 mesh
+ * tolerance: the height map stores each cell in a Float32, the reference does
+ * not.
+ */
+function quantisationFor(points: CrossPoint[], angleDeg: number, tool: NormalizedTool): number {
+  const turned = rotateCrossSection(points, -angleDeg)
+  const slope = reachedEdgeSlope(turned, tool.radius)
+  assert.ok(Number.isFinite(slope), `quantisation: reached-edge slope at ${angleDeg} is finite`)
+  const referenceStep = (2 * referenceHalfExtent(turned)) / REFERENCE_STEPS
+  const halfDiagonal = (SAMPLE_CELL * Math.SQRT2) / 2
+  const ballClearance = tool.type === 'ball_endmill'
+    ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - halfDiagonal * halfDiagonal))
+    : 0
+  return slope * (SAMPLE_CELL + referenceStep) + ballClearance + EPS
 }
 
 // The reference rule itself is checked against closed-form answers before it
@@ -707,12 +852,13 @@ for (const axis of ['x', 'y'] as const) {
 
   // The fixture box is about 17.4 mm across by 20 mm along, so the requested
   // 0.05 mm cell is under the 1,000,000-cell cap and the sampler used 0.05.
-  // A cell-centre footprint can trail the exact envelope by the height change
-  // across one cell, bounded by the steepest hexagon edge slope (tan 30°) times
-  // the cell diagonal. The reference grid is 0.029 mm, itself a small share.
-  const cell = SAMPLE_CELL
-  const quantisation = cell * Math.tan(Math.PI / 6) * Math.SQRT2 + 0.01
-  assert.ok(quantisation < 0.1, `${axis} quantisation allowance is small (${quantisation.toFixed(4)} mm)`)
+  // The per-angle allowance is derived in `quantisationFor` from the turned
+  // edges this footprint actually reaches plus the reference grid step — an
+  // arbitrary rotation brings a 60° edge into reach, so a fixed tan 30° would
+  // understate it.
+  const worstQuantisation = Math.max(...SAMPLE_ANGLES.map((angle) => quantisationFor(cross, angle, FLAT_TOOL)))
+  assert.ok(worstQuantisation < apothem,
+    `${axis} the derived quantisation allowance stays below the apothem (${worstQuantisation.toFixed(4)} mm)`)
 
   let checked = 0
   SAMPLE_ANGLES.forEach((angle, row) => {
@@ -720,13 +866,15 @@ for (const axis of ['x', 'y'] as const) {
     const exactBall = referenceTipHeight(cross, angle, BALL_TOOL)
     assert.ok(Number.isFinite(exactFlat) && Number.isFinite(exactBall), `${axis} angle ${angle} reference is finite`)
 
+    const flatAllowance = quantisationFor(cross, angle, FLAT_TOOL)
+    const ballAllowance = quantisationFor(cross, angle, BALL_TOOL)
     const sampledFlat = flatSample.tipRadius[row][0]
     const sampledBall = ballSample.tipRadius[row][0]
-    approx(sampledFlat, exactFlat, `${axis} flat tip at ${angle} matches the envelope`, quantisation)
-    approx(sampledBall, exactBall, `${axis} ball tip at ${angle} matches the envelope`, quantisation)
+    approx(sampledFlat, exactFlat, `${axis} flat tip at ${angle} matches the envelope`, flatAllowance)
+    approx(sampledBall, exactBall, `${axis} ball tip at ${angle} matches the envelope`, ballAllowance)
     // Neither may go below the physical envelope: that would gouge the model.
-    assert.ok(sampledFlat >= exactFlat - quantisation, `${axis} flat ${angle} does not gouge`)
-    assert.ok(sampledBall >= exactBall - quantisation, `${axis} ball ${angle} does not gouge`)
+    assert.ok(sampledFlat >= exactFlat - flatAllowance, `${axis} flat ${angle} does not gouge`)
+    assert.ok(sampledBall >= exactBall - ballAllowance, `${axis} ball ${angle} does not gouge`)
     checked++
   })
   assert.equal(checked, SAMPLE_ANGLES.length, `${axis} checked every angle`)
@@ -734,9 +882,9 @@ for (const axis of ['x', 'y'] as const) {
   // Anchors that read as geometry, not as sampler output: the tip radius at
   // 0° is the apothem for every cutter (the top flat is exactly that far above
   // the centreline), so a wider or narrower flat must give the same value.
-  approx(flatSample.tipRadius[0][0], apothem, `${axis} flat tip on the top flat is the apothem`, quantisation)
-  approx(ballSample.tipRadius[0][0], apothem, `${axis} ball tip on the top flat is the apothem`, quantisation)
-  approx(narrowFlatSample.tipRadius[0][0], apothem, `${axis} a 2 mm flat gives the same tip on a flat`, quantisation)
+  approx(flatSample.tipRadius[0][0], apothem, `${axis} flat tip on the top flat is the apothem`, quantisationFor(cross, 0, FLAT_TOOL))
+  approx(ballSample.tipRadius[0][0], apothem, `${axis} ball tip on the top flat is the apothem`, quantisationFor(cross, 0, BALL_TOOL))
+  approx(narrowFlatSample.tipRadius[0][0], apothem, `${axis} a 2 mm flat gives the same tip on a flat`, quantisationFor(cross, 0, { ...FLAT_TOOL, radius: 1 }))
 
   // The cutter-width effect. A 2.5D prism's surface is constant along the bar,
   // so the tip moves with the cutter radius only through the *lateral* surface
@@ -754,10 +902,11 @@ for (const axis of ['x', 'y'] as const) {
     const exactWide = referenceTipHeight(cross, angle, FLAT_TOOL)
     const exactNarrow = referenceTipHeight(cross, angle, { ...FLAT_TOOL, radius: 1 })
     const sampledDelta = flatSample.tipRadius[row][0] - narrowFlatSample.tipRadius[row][0]
+    const deltaAllowance = 2 * quantisationFor(cross, angle, FLAT_TOOL)
     approx(sampledDelta, exactWide - exactNarrow,
-      `${axis} cutter-width effect at ${angle} matches the envelope`, quantisation * 2)
+      `${axis} cutter-width effect at ${angle} matches the envelope`, deltaAllowance)
     if (Math.abs(exactWide - exactNarrow) <= 1e-6) {
-      approx(sampledDelta, 0, `${axis} no cutter-width effect inside one facet at ${angle}`, quantisation)
+      approx(sampledDelta, 0, `${axis} no cutter-width effect inside one facet at ${angle}`, quantisationFor(cross, angle, FLAT_TOOL))
     } else {
       assert.ok(sampledDelta > 0, `${axis} the wider cutter sits higher at ${angle} (${sampledDelta})`)
       widthEffectWitnesses++
@@ -770,6 +919,98 @@ for (const axis of ['x', 'y'] as const) {
     `${axis} sampled cross-section circumradius`)
   assert.ok(flatSample.tipRadius.every((row) => row[0] <= radius + circumradius + 1e-6),
     `${axis} no sampled tip exceeds the bar radius + circumradius`)
+}
+
+// ---------------------------------------------------------------------------
+// C: the same physical part at inch scale.
+//
+// The mm fixtures above are the physical authority. Everything here is the
+// 1/25.4 image of them — stock, across-flats, along span, cutter radii and the
+// sampler cell — and every result is converted back through `MM_PER_INCH` and
+// compared with the mm result. A units meta flag proves nothing on its own; the
+// geometry and the sampled physical tip are what must agree.
+// ---------------------------------------------------------------------------
+
+const INCH = 1 / MM_PER_INCH
+
+/** The 1/25.4 image of the mm offset round stock used throughout. */
+function scaledRoundStock(axis: 'x' | 'y', scale: number): RoundStock {
+  const at = axis === 'x' ? { x: 0, y: 7 * scale } : { x: 7 * scale, y: 0 }
+  return roundStock(40 * scale, 80 * scale, axis, at)
+}
+
+{
+  for (const axis of ['x', 'y'] as const) {
+    const mmStock = roundStock(40, 80, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
+    const inchStock = scaledRoundStock(axis, INCH)
+    const mmMesh = buildRotaryPolygonPrism(mmStock, { sides: 6, acrossFlats: 15, alongStart: 10, alongEnd: 30 })
+    const inchMesh = buildRotaryPolygonPrism(inchStock, {
+      sides: 6, acrossFlats: 15 * INCH, alongStart: 10 * INCH, alongEnd: 30 * INCH,
+    })
+
+    // Geometry agreement: the inch mesh, converted to mm, is the mm mesh.
+    assert.equal(inchMesh.positions.length, mmMesh.positions.length, `${axis} inch vertex count`)
+    let maxGeometryDelta = 0
+    for (let i = 0; i < mmMesh.positions.length; i++) {
+      maxGeometryDelta = Math.max(maxGeometryDelta, Math.abs(inchMesh.positions[i] * MM_PER_INCH - mmMesh.positions[i]))
+    }
+    assert.ok(maxGeometryDelta <= EPS,
+      `${axis} inch mesh converted to mm equals the mm mesh (max delta ${maxGeometryDelta})`)
+    for (const field of ['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'] as const) {
+      approx(inchMesh.bounds[field] * MM_PER_INCH, mmMesh.bounds[field], `${axis} inch ${field} converted to mm`)
+    }
+
+    // Persistence and load identity at inch scale, through the real project units.
+    const inchProject = persistedModelProject(inchMesh, 'inch')
+    assert.equal(inchProject.meta.units, 'inch', `${axis} inch fixture really is an inch project`)
+    const loaded = loadPersisted(inchProject)
+    let loadDelta = 0
+    for (let i = 0; i < inchMesh.positions.length; i++) {
+      loadDelta = Math.max(loadDelta, Math.abs(loaded.positions[i] - inchMesh.positions[i]))
+    }
+    assert.ok(loadDelta < 1e-5, `${axis} inch persisted-model load is an identity (max delta ${loadDelta})`)
+    assert.deepEqual(Array.from(loaded.index), Array.from(inchMesh.index), `${axis} inch index preserved`)
+
+    // Inch cutter radii and sampler cell are the mm ones divided by 25.4, so the
+    // sampler sees the same physical footprint and grid.
+    const inchModel: RotaryModelMesh = { positions: loaded.positions, index: loaded.index }
+    const inchFlatTool: NormalizedTool = { ...FLAT_TOOL, diameter: FLAT_TOOL.diameter * INCH, radius: FLAT_TOOL.radius * INCH }
+    const inchBallTool: NormalizedTool = { ...BALL_TOOL, diameter: BALL_TOOL.diameter * INCH, radius: BALL_TOOL.radius * INCH }
+    const inchFlat = sampleRotaryModel(inchModel, inchStock, inchFlatTool,
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG * INCH], requestedCellSize: SAMPLE_CELL * INCH }, [])
+    const inchBall = sampleRotaryModel(inchModel, inchStock, inchBallTool,
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG * INCH], requestedCellSize: SAMPLE_CELL * INCH }, [])
+
+    const mmModel: RotaryModelMesh = { positions: mmMesh.positions, index: mmMesh.index }
+    const mmFlat = sampleRotaryModel(mmModel, mmStock, FLAT_TOOL,
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG], requestedCellSize: SAMPLE_CELL }, [])
+    const mmBall = sampleRotaryModel(mmModel, mmStock, BALL_TOOL,
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG], requestedCellSize: SAMPLE_CELL }, [])
+    const mmNarrow = sampleRotaryModel(mmModel, mmStock, { ...FLAT_TOOL, radius: 1 },
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG], requestedCellSize: SAMPLE_CELL }, [])
+
+    approx(inchFlat.along[0] * MM_PER_INCH, mmFlat.along[0], `${axis} inch along sample converts to the mm position`)
+    SAMPLE_ANGLES.forEach((angle, row) => {
+      approx(inchFlat.tipRadius[row][0] * MM_PER_INCH, mmFlat.tipRadius[row][0],
+        `${axis} inch flat tip at ${angle} converts to the mm physical tip`, EPS)
+      approx(inchBall.tipRadius[row][0] * MM_PER_INCH, mmBall.tipRadius[row][0],
+        `${axis} inch ball tip at ${angle} converts to the mm physical tip`, EPS)
+    })
+
+    // The cutter-width witness survives the unit change: a wider inch cutter
+    // still sits higher where it reaches over an adjacent facet.
+    const inchNarrow = sampleRotaryModel(inchModel, inchStock, { ...inchFlatTool, radius: INCH },
+      { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG * INCH], requestedCellSize: SAMPLE_CELL * INCH }, [])
+    let inchWidthWitnesses = 0
+    SAMPLE_ANGLES.forEach((angle, row) => {
+      const wide = inchFlat.tipRadius[row][0]
+      const narrow = inchNarrow.tipRadius[row][0]
+      approx((wide - narrow) * MM_PER_INCH, mmFlat.tipRadius[row][0] - mmNarrow.tipRadius[row][0],
+        `${axis} inch cutter-width effect at ${angle} converts to the mm effect`, EPS)
+      if (wide - narrow > 1e-6) inchWidthWitnesses++
+    })
+    assert.ok(inchWidthWitnesses > 0, `${axis} the inch fixture measures a real cutter-width effect`)
+  }
 }
 
 console.log('engine/rotaryPrism.test.ts: all assertions passed')

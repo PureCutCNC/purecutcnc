@@ -32,13 +32,18 @@ import type { ImportedTriangleMesh } from './importedMesh'
  *
  * - The cross-section is a regular `sides`-gon inscribed in a circle of radius
  *   `acrossFlats / (2 cos(π / sides))` about the bar's centreline. `acrossFlats`
- *   is twice the apothem for every `sides` — the distance between opposite
- *   flats for an even count, and the natural across-the-corners reference
- *   otherwise — so a hexagon at 10 means a 10 mm across-flats hexagon.
+ *   is twice the apothem for every `sides` — the diameter of the polygon's
+ *   inscribed circle. For an even count that is also the distance between
+ *   opposite flats; for an odd count there is no opposite-flat pair, and
+ *   `acrossFlats` is still twice the apothem, *not* the across-corners distance
+ *   (which is `acrossFlats / cos(π / sides)`, larger). A hexagon at 10 means a
+ *   10 mm across-flats hexagon.
  * - At `rotationDeg` 0 one flat's outward normal points up (+Z). Rotation is
  *   applied in the bar's own (across, up) plane, counterclockwise seen from the
  *   bar's +axially end; positive angles turn the cross-section counterclockwise
- *   in that plane.
+ *   in that plane. Finite degrees are reduced modulo 360 *before* the radians
+ *   conversion, so a whole turn is an identity and a very large finite angle
+ *   cannot overflow `degrees × π / 180` into a non-finite rotation.
  * - The mesh is emitted in final stock coordinates: on the centreline at
  *   `roundStockCentre(stock)` across the bar, on the bar's Z centreline at
  *   `diameter / 2`, and at the absolute `alongStart`/`alongEnd` positions along
@@ -49,6 +54,11 @@ import type { ImportedTriangleMesh } from './importedMesh'
  *   closed prism, endcaps included. `bounds` is computed from the emitted
  *   vertices, so a loader that fits raw Z bounds to a feature's Z span (the
  *   persisted model path) can be handed the real extents.
+ * - A request whose emitted coordinates cannot survive the mesh's Float32
+ *   storage — non-finite stock bounds, a coordinate outside the Float32 range,
+ *   or an axial span that collapses under the Float32 rounding — is refused
+ *   with `RangeError`. The function returns either a mesh whose every stored
+ *   coordinate and bound is finite, or no mesh at all.
  * - The winding is oriented from the local cross-section and the project axis,
  *   never from the global sign of project Y. See the comment at the index
  *   build below for the exact derivation.
@@ -99,6 +109,13 @@ function validate(
     throw new RangeError(`Rotary polygon needs a positive finite stock diameter, got ${diameter}.`)
   }
 
+  // The centreline and both axial extents come from these bounds; a broken
+  // stock must not pass silently just because NaN comparisons are all false.
+  if (![bounds.minX, bounds.maxX, bounds.minY, bounds.maxY].every((value) => Number.isFinite(value))) {
+    throw new RangeError(
+      `Rotary polygon needs finite stock bounds, got x ${bounds.minX}..${bounds.maxX} and y ${bounds.minY}..${bounds.maxY}.`)
+  }
+
   const sides = input.sides
   if (!Number.isInteger(sides) || sides < 3 || sides > MAX_SIDES) {
     throw new RangeError(`Rotary polygon sides must be an integer 3..${MAX_SIDES}, got ${sides}.`)
@@ -142,11 +159,13 @@ function validate(
 /**
  * Build a closed regular polygon prism in stock coordinates inside a round bar.
  *
- * @throws RangeError when the stock has no usable diameter, or when `input` is
- *   out of range: `sides` not an integer 3..64, `acrossFlats` not positive and
- *   finite, `rotationDeg` not finite, `alongStart`/`alongEnd` not finite and
- *   strictly ascending inside the bar, or the polygon's across-corners larger
- *   than the stock diameter (within a small documented numeric tolerance).
+ * @throws RangeError when the stock has no usable diameter or finite bounds, or
+ *   when `input` is out of range: `sides` not an integer 3..64, `acrossFlats`
+ *   not positive and finite, `rotationDeg` not finite, `alongStart`/`alongEnd`
+ *   not finite and strictly ascending inside the bar, the polygon's
+ *   across-corners larger than the stock diameter (within a small documented
+ *   numeric tolerance), or the emitted geometry not representable in the mesh's
+ *   Float32 coordinates (a non-finite vertex or an axial span that collapses).
  */
 export function buildRotaryPolygonPrism(
   stock: RoundStock,
@@ -179,7 +198,10 @@ export function buildRotaryPolygonPrism(
 
   // `rotationDeg` turns the cross-section counterclockwise in (across, up), so
   // a positive angle carries the flat-up hexagon's top flat towards -across.
-  const rotation = (input.rotationDeg ?? 0) * Math.PI / 180
+  // Reduce modulo a whole turn *before* the radians conversion: a finite degree
+  // value near `Number.MAX_VALUE` overflows `deg * π / 180` to Infinity, whose
+  // sine and cosine are NaN, so validation on finiteness alone is not enough.
+  const rotation = ((input.rotationDeg ?? 0) % 360) * Math.PI / 180
   const cos = Math.cos(rotation)
   const sin = Math.sin(rotation)
   if (rotation !== 0) {
@@ -250,9 +272,27 @@ export function buildRotaryPolygonPrism(
     }
   }
 
+  // Float32 storage silently turns a finite double into Infinity, and two
+  // distinct axial positions can round to the same Float32 value. Either way
+  // the emitted mesh would be invalid — a non-finite vertex, or a zero-length
+  // prism with a non-finite or degenerate bounds — so refuse it rather than
+  // return it under a promise that every vertex is finite.
+  for (const value of positions) {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(
+        'Rotary polygon geometry is outside the Float32 range of the mesh coordinates; shorten the span, reduce the stock, or move the bar towards the origin.')
+    }
+  }
+  const meshBounds = computeMeshBounds(positions)
+  const alongSpan = stock.axis === 'x' ? meshBounds.maxX - meshBounds.minX : meshBounds.maxY - meshBounds.minY
+  if (!(alongSpan > 0)) {
+    throw new RangeError(
+      `Rotary polygon span ${alongStart}..${alongEnd} collapses to zero length under Float32 mesh coordinates.`)
+  }
+
   return {
     positions,
     index: new Uint32Array(index),
-    bounds: computeMeshBounds(positions),
+    bounds: meshBounds,
   }
 }
