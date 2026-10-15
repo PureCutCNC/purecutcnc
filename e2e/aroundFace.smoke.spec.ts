@@ -21,11 +21,18 @@
  * Around operation that generates, the export program card, and Print
  * disabled on Around.
  *
+ * Issue #1034 slice B pins the authoring rule on top of that: the **project
+ * type and the round bar** decide whether Around can be entered, and the
+ * selected machine decides nothing about it. A no-machine, plain-router,
+ * plasma, matching and opposite-axis rotary bar all author, select, edit and
+ * keep Around work — and the export boundary still refuses a missing or
+ * incompatible machine.
+ *
  * Deliberately not covered here: the Sketch canvas, the 3D view and the
  * Simulation tab — those are separate slices.
  *
- * NOTE: this spec was added without a browser run (slice D1 worker); it has
- * not been executed locally.
+ * NOTE: the #395 part of this spec was added without a browser run (slice D1
+ * worker); the #1034 matrix below was added without one too.
  */
 
 import { readFileSync } from 'node:fs'
@@ -37,6 +44,8 @@ import {
   getProject,
   placePendingAddAt,
   seedProject,
+  selectFeatures,
+  selectMachine,
   setPendingAddAnchor,
   startAddRectPlacement,
 } from './helpers'
@@ -46,10 +55,40 @@ interface SavedFeature {
   authoringFace?: string
   definitionId: string
   operation?: string
+  z_top?: number
+  z_bottom?: number
 }
+
+interface SavedSetup {
+  id: string
+  kind?: string
+}
+
+interface SavedProject {
+  features: SavedFeature[]
+  featureDefinitions: Record<string, { operation?: string }>
+  setups: SavedSetup[]
+  activeSetupId: string
+  operations: Array<{ id: string; kind: string; setupId?: string }>
+}
+
+type FixtureMachine = Project['meta']['machineDefinitions'][number]
+
+// Read as files: importing the machine registry would pull JSON imports into
+// the Playwright runner, which Node refuses without an attribute.
+const GRBL = JSON.parse(
+  readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
+) as FixtureMachine
+
+const QTPLASMAC = JSON.parse(
+  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
+) as FixtureMachine
 
 /** The fixture bar: 120 long, Ø25 (issue #395). */
 const BAR = roundStock(25, 120, 'x')
+
+/** The inch fixture bar: 5 long, Ø1 — the same shape in the other unit. */
+const INCH_BAR = roundStock(1, 5, 'x')
 
 /**
  * The frame's zero line for the fixture bar, its centreline across
@@ -57,29 +96,75 @@ const BAR = roundStock(25, 120, 'x')
  * the angles they were authored at now the sheet is centred on it.
  */
 const ZERO = roundStockCentre(BAR)
+const INCH_ZERO = roundStockCentre(INCH_BAR)
 
-/** A mm round bar with (optionally) a rotary machine along its X axis. */
-function aroundProject(options: { rotary: boolean }): Project {
-  const base = newProject('Around smoke', 'mm')
-  // Read as a file: importing the machine registry would pull JSON imports
-  // into the Playwright runner, which Node refuses without an attribute.
-  const grbl = JSON.parse(
-    readFileSync(new URL('../src/engine/gcode/definitions/grbl.json', import.meta.url), 'utf8'),
-  ) as Project['meta']['machineDefinitions'][number]
-  const machine = { ...grbl, id: 'around-machine', builtin: false }
-  base.stock = BAR
+/** Every machine a rotary bar is authored against (issue #1034). */
+type AroundMachine = 'none' | 'plain' | 'plasma' | 'rotary-x' | 'rotary-y'
+
+const AROUND_MACHINES: readonly AroundMachine[] = ['none', 'plain', 'plasma', 'rotary-x', 'rotary-y']
+
+/**
+ * One machine snapshot, named distinctly so the machine picker can select a
+ * different one by name without colliding with a bundled definition.
+ */
+function fixtureMachine(machine: AroundMachine): FixtureMachine[] {
+  if (machine === 'none') return []
+  if (machine === 'plasma') {
+    return [{ ...QTPLASMAC, id: 'e2e-around-plasma', name: 'E2E Around Plasma', builtin: false }]
+  }
+  if (machine === 'plain') {
+    return [{ ...GRBL, id: 'e2e-around-router', name: 'E2E Around Router', builtin: false }]
+  }
+  return [{
+    ...GRBL,
+    id: `e2e-around-${machine}`,
+    name: machine === 'rotary-x' ? 'E2E Around Rotary X' : 'E2E Around Rotary Y',
+    builtin: false,
+    rotary: {
+      about: machine === 'rotary-x' ? 'x' : 'y',
+      drive: 'own',
+      reversed: false,
+      inverseTimeFeed: { on: 'G93', off: 'G94' },
+    },
+  }]
+}
+
+interface AroundFixtureOptions {
+  machine?: AroundMachine
+  units?: 'mm' | 'inch'
+}
+
+/**
+ * A rotary project on a round bar with one of the machine snapshots above.
+ * The machine is deliberately allowed to be absent, non-rotary, plasma or
+ * across the bar: none of those may take the Around face away (issue #1034).
+ */
+function aroundProject({ machine = 'rotary-x', units = 'mm' }: AroundFixtureOptions = {}): Project {
+  const base = newProject('Around smoke', units)
+  const definitions = fixtureMachine(machine)
+  base.stock = units === 'mm' ? BAR : INCH_BAR
   base.meta = {
     ...base.meta,
     // The Around face is a rotary project's (issue #1028); the machine below
-    // only decides whether that face is actually usable.
+    // decides nothing about whether the user may design on it (issue #1034).
     projectType: 'rotary',
-    machineDefinitions: options.rotary
-      ? [{ ...machine, rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } } }]
-      : [machine],
-    selectedMachineId: options.rotary ? 'around-machine' : machine.id,
+    machineDefinitions: definitions,
+    selectedMachineId: definitions[0]?.id ?? null,
   }
-  base.tools = [{ ...defaultTool('mm', 1), id: 't1', diameter: 3, maxCutDepth: 20 }]
+  base.tools = [{
+    ...defaultTool(units, 1),
+    id: 't1',
+    diameter: units === 'mm' ? 3 : 0.125,
+    maxCutDepth: units === 'mm' ? 20 : 1,
+  }]
   return base
+}
+
+/** A cut into the bar's surface, in unrolled sheet coordinates, per unit. */
+function fixtureRect(units: 'mm' | 'inch'): [number, number, number, number] {
+  return units === 'mm'
+    ? [10, ZERO + 5, 100, ZERO + 15]
+    : [0.5, INCH_ZERO + 0.2, 4.5, INCH_ZERO + 0.6]
 }
 
 function featureRow(page: Page, id: string) {
@@ -133,21 +218,138 @@ test('a block stock shows exactly the switch it always had: no Around segment', 
   await expect(ui.face.segment(page, 'Around')).toHaveCount(0)
 })
 
-test('a round bar without a rotary machine shows Around disabled, saying what is missing', async ({ app, ui }) => {
-  const { page } = app
-  await seedProject(page, JSON.stringify(aroundProject({ rotary: false })))
+/**
+ * Add the first Around pocket through the CAM Add menu and return its id: the
+ * real authoring path the export tests need a program from.
+ */
+async function addAroundPocket(page: Page, ui: typeof import('./selectors')): Promise<string> {
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  const pocketRow = ui.setupCam.addMenu(page)
+    .locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+  await pocketRow.getByRole('button', { name: 'Rough', exact: true }).click()
+  await expect(ui.operations.rowByName(page, 'Pocket Rough')).toBeVisible()
+  const project = await getProject(page) as unknown as SavedProject
+  return project.operations[0].id
+}
 
-  const around = ui.face.segment(page, 'Around')
-  await expect(around).toBeVisible()
-  await expect(around).toBeDisabled()
-  await expect(around).toHaveAttribute('title', 'Around needs a machine with a rotary axis. Set one in the machine editor.')
-  // Nothing was created by merely looking at the segment.
-  await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
+/** The authoring matrix: every machine, both units on the axis/unit edges. */
+const AUTHORING_MATRIX: ReadonlyArray<{ machine: AroundMachine; units: 'mm' | 'inch' }> = [
+  ...AROUND_MACHINES.map((machine) => ({ machine, units: 'mm' as const })),
+  { machine: 'none', units: 'inch' },
+  { machine: 'rotary-y', units: 'inch' },
+]
+
+test.describe('Around is authored by the project type and bar, never the machine (#1034)', () => {
+  for (const { machine, units } of AUTHORING_MATRIX) {
+    test(`a ${units} rotary bar with ${machine} authors, edits and keeps Around`, async ({ app, ui }) => {
+      const { page } = app
+      await seedProject(page, JSON.stringify(aroundProject({ machine, units })))
+
+      // ── The segment is present and usable, whatever the machine is ──
+      const around = ui.face.segment(page, 'Around')
+      await expect(around).toBeVisible()
+      await expect(around).toBeEnabled()
+      await expect(around).toHaveAttribute('title', 'Work around the bar')
+      await around.click()
+      await expect(around).toHaveAttribute('aria-pressed', 'true')
+
+      // ── Draw a cut: it lands on Around and its provisional setup becomes real ──
+      await drawRect(page, ...fixtureRect(units))
+      const drawn = await getProject(page) as unknown as SavedProject
+      expect(drawn.features).toHaveLength(1)
+      const feature = drawn.features[0]
+      expect(feature.authoringFace).toBe('around')
+      expect(drawn.featureDefinitions[feature.definitionId]?.operation).toBe('subtract')
+      await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
+      const aroundSetup = drawn.setups.find((setup) => setup.kind === 'around')
+      expect(aroundSetup).toBeDefined()
+      expect(drawn.activeSetupId).toBe(aroundSetup!.id)
+      expect(drawn.features[0].z_top).toBe(units === 'mm' ? 25 : 1)
+
+      // ── Select and edit it: the Top-style Z range, with no change-face row ──
+      await featureRow(page, feature.id).click()
+      await page.locator('.properties-panel').getByRole('button', { name: 'Instance', exact: true }).click()
+      await expect(page.locator('.properties-panel .z-range-slider')).toBeVisible()
+      await expect(page.locator('.properties-panel .face-z-range')).toHaveCount(0)
+      const editedTop = Number(feature.z_top) - (units === 'mm' ? 1 : 0.05)
+      const zTop = page.locator('.properties-panel .z-range-slider__field--top')
+      await zTop.fill(String(editedTop))
+      await zTop.press('Enter')
+      const edited = (await getProject(page) as unknown as SavedProject).features[0]
+      expect(edited.z_top).toBeCloseTo(editedTop, 6)
+
+      // ── Changing the machine alone moves neither the face nor the work ──
+      await selectMachine(page, ui, 'GRBL 1.1')
+      await expect(around).toHaveAttribute('aria-pressed', 'true')
+      await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
+      const after = await getProject(page) as unknown as SavedProject
+      expect(after.features.map((entry) => entry.id)).toEqual([feature.id])
+      expect(after.features[0].z_top).toBeCloseTo(editedTop, 6)
+      expect(after.activeSetupId).toBe(drawn.activeSetupId)
+      expect(after.setups.filter((setup) => setup.kind === 'around')).toHaveLength(1)
+    })
+  }
+})
+
+test.describe('the export boundary still refuses a rotary job (#1034)', () => {
+  test('a rotary project with no machine authors and previews Around but cannot post it', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
+    await ui.face.segment(page, 'Around').click()
+    await drawRect(page, ...fixtureRect('mm'))
+    const operationId = await addAroundPocket(page, ui)
+
+    // The design preview is real with no machine anywhere in the project:
+    // generation settles and the Around operation produces wrapped motion.
+    await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+    const generated = await generatedOperation(page, operationId)
+    expect(generated.moveCount).toBeGreaterThan(0)
+    expect(generated.warningCount).toBe(0)
+    expect(generated.allHaveAngle).toBe(true)
+
+    // Only the output is refused — authoring and preview are not.
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    await expect(ui.exportDialog.errors(page).filter({ hasText: 'No machine selected' })).toBeVisible()
+    await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+  })
+
+  test('a plain router on a rotary project blocks the export in the dialog', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'plain' })))
+    await ui.face.segment(page, 'Around').click()
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    await expect(
+      ui.exportDialog.errors(page).filter({ hasText: 'does not match this rotary project' }),
+    ).toContainText('E2E Around Router')
+    await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+  })
+
+  test('an opposite-axis rotary machine leaves the turn out and blocks the save', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-y' })))
+    await ui.face.segment(page, 'Around').click()
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    await expect(
+      ui.exportDialog.errors(page).filter({ hasText: 'was not exported: the machine' }),
+    ).toContainText('rotary axis lies along Y but the bar lies along X')
+    await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+  })
 })
 
 test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and Print', async ({ app, ui }) => {
   const { page } = app
-  await seedProject(page, JSON.stringify(aroundProject({ rotary: true })))
+  await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
 
   // ── The switch, the banner and the empty Around layer ──
   await ui.face.segment(page, 'Around').click()
@@ -243,4 +445,45 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
 
   // From a flat face Print works as it did.
   await expect(ui.toolbar.printButton(page)).toBeEnabled()
+})
+
+test.describe('Around on a tablet with no rotary machine (#1034)', () => {
+  test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
+
+  test('the around switch is usable by focus, the menus name the project type, and undo is one step', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
+
+    // The tablet shell carries the switch in the face row, still enabled.
+    const around = ui.face.segment(page, 'Around')
+    await expect(around).toBeVisible()
+    await expect(around).toBeEnabled()
+    await expect(around).toHaveAttribute('title', 'Work around the bar')
+
+    // Keyboard focus reaches the segment and Enter enters Around.
+    await around.focus()
+    await expect(around).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(around).toHaveAttribute('aria-pressed', 'true')
+
+    // A cut authored here is undone in one step, face and all.
+    await drawRect(page, ...fixtureRect('mm'))
+    expect((await getProject(page) as unknown as SavedProject).features).toHaveLength(1)
+    await page.keyboard.press('ControlOrMeta+z')
+    expect((await getProject(page) as unknown as SavedProject).features).toHaveLength(0)
+
+    // The corrected Add menu: the plasma row names the project type, not a machine.
+    await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
+    const redrawn = await getProject(page) as unknown as SavedProject
+    await selectFeatures(page, [redrawn.features[0].id])
+    await ui.operations.openPanelButton(page).click()
+    await ui.setupCam.add(page).click()
+    await expect(ui.setupCam.addMenu(page)).toBeVisible()
+    await ui.operations.addMenuUnavailableToggle(page).click()
+    const plasmaRow = ui.operations.addMenuUnavailableRows(page).filter({ hasText: 'Plasma through-cut' })
+    await expect(plasmaRow).toHaveCount(1)
+    await expect(plasmaRow.locator('.cam-operation-hint__text')).toHaveText(
+      'Needs a plasma project. Change the project type in the project properties.',
+    )
+  })
 })

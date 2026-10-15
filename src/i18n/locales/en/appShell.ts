@@ -193,8 +193,6 @@ export const appShellEn = {
   'appShell.face.switchToTop': 'Work on the top face',
   'appShell.face.switchToBottom': 'Work on the bottom face',
   'appShell.face.switchToAround': 'Work around the bar',
-  'appShell.face.aroundNeedsRotaryMachine': 'Around needs a machine with a rotary axis. Set one in the machine editor.',
-  'appShell.face.aroundAxisMismatch': 'The machine’s rotary axis lies along {machineAxis}, the bar along {stockAxis}.',
   'appShell.face.busy': 'Finish the current edit before switching face',
   'appShell.face.otherSide': 'Other side',
   'appShell.face.showOtherSide': 'Show the other side as a ghost',

@@ -367,7 +367,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.treeRow.show': 'Anzeigen',
   'cam.treeRow.toolpathFor': 'Werkzeugweg {action} für {name}',
   'cam.treeRow.off': 'Aus',
-  'cam.treeRow.notOnMachine': 'nicht auf dieser Maschine',
+  'cam.treeRow.notForProjectType': 'nicht für diesen Projekttyp',
   'cam.treeRow.duplicateOperation': 'Operation duplizieren',
   'cam.treeRow.deleteOperation': 'Operation löschen',
   'cam.treeRow.dragToReorder': 'Zum Umsortieren ziehen',
@@ -395,11 +395,11 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': 'Beispiel für {title}',
   'cam.addMenu.unavailable': 'Für diese Auswahl nicht verfügbar ({count})',
   'cam.addMenu.selectFirst': 'Geometrie im Baum oder in der Skizze auswählen, dann eine Operation wählen',
-  'cam.addMenu.needsPlasmaMachine': 'Erfordert eine Plasma-Maschine. Wählen Sie eine im Feld Maschine in den Projekteigenschaften.',
+  'cam.addMenu.needsPlasmaProject': 'Erfordert ein Plasma-Projekt. Ändern Sie den Projekttyp in den Projekteigenschaften.',
 
-  // ── What the selected machine cannot cut (#960) ──
-  'cam.operations.leftOutPlasma': 'Keine Plasmaschnitte, auf dieser Maschine vom Export ausgelassen: {count}',
-  'cam.operations.leftOutRouter': 'Plasmaschnitte, auf dieser Maschine vom Export ausgelassen: {count}',
+  // ── What the project type does not cut (#960, #1034) ──
+  'cam.operations.leftOutPlasma': 'Keine Plasmaschnitte, für diesen Projekttyp vom Export ausgelassen: {count}',
+  'cam.operations.leftOutRouter': 'Plasmaschnitte, für diesen Projekttyp vom Export ausgelassen: {count}',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Zuerst ein oder mehrere Kreis-Features auswählen',

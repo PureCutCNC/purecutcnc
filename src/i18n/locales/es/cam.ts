@@ -335,7 +335,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.treeRow.show': 'Mostrar',
   'cam.treeRow.toolpathFor': '{action} trayectoria de herramienta para {name}',
   'cam.treeRow.off': 'Desactivar',
-  'cam.treeRow.notOnMachine': 'no en esta máquina',
+  'cam.treeRow.notForProjectType': 'no para este tipo de proyecto',
   'cam.treeRow.duplicateOperation': 'Duplicar operación',
   'cam.treeRow.deleteOperation': 'Eliminar operación',
   'cam.treeRow.dragToReorder': 'Arrastrar para reordenar',
@@ -361,11 +361,11 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': 'Ejemplo de {title}',
   'cam.addMenu.unavailable': 'No disponible para esta selección ({count})',
   'cam.addMenu.selectFirst': 'Seleccione geometría en el croquis o en el árbol y luego elija una operación.',
-  'cam.addMenu.needsPlasmaMachine': 'Necesita una máquina de plasma. Seleccione una en el campo Máquina de las propiedades del proyecto.',
+  'cam.addMenu.needsPlasmaProject': 'Necesita un proyecto de plasma. Cambie el tipo de proyecto en las propiedades del proyecto.',
 
-  // ── What the selected machine cannot cut (#960) ──
-  'cam.operations.leftOutPlasma': 'Cortes que no son de plasma, excluidos de la exportación en esta máquina: {count}',
-  'cam.operations.leftOutRouter': 'Cortes de plasma, excluidos de la exportación en esta máquina: {count}',
+  // ── What the project type does not cut (#960, #1034) ──
+  'cam.operations.leftOutPlasma': 'Cortes que no son de plasma, excluidos de la exportación para este tipo de proyecto: {count}',
+  'cam.operations.leftOutRouter': 'Cortes de plasma, excluidos de la exportación para este tipo de proyecto: {count}',
   'cam.hint.empty.drilling': 'Seleccione primero uno o más elementos de círculo',
   'cam.hint.empty.followLine': 'Seleccione primero uno o más elementos abiertos o cerrados; las regiones cerradas son filtros opcionales',
   'cam.hint.empty.surfaceClean': 'Seleccione primero uno o más elementos de adición/modelo; las regiones cerradas son filtros opcionales.',

@@ -97,9 +97,10 @@ function testOperationOffer(): void {
       operationOffer('plasma', kind) === (kind === 'plasma_profile' ? 'available' : 'hidden'),
       `plasma mode offer for ${kind}`,
     )
-    // router mode: milling kinds are offered, plasma_profile says what it needs.
+    // router mode: milling kinds are offered, plasma_profile names the project
+    // type it would need (issue #1034) — never a machine.
     assert(
-      operationOffer('router', kind) === (kind === 'plasma_profile' ? 'needs-plasma-machine' : 'available'),
+      operationOffer('router', kind) === (kind === 'plasma_profile' ? 'needs-plasma-project' : 'available'),
       `router mode offer for ${kind}`,
     )
   }

@@ -574,13 +574,13 @@ export function dropGhostSelection(
  * `planRotaryRefusals` refuses a missing or mismatched rotary axis when a
  * program is posted. Neither is replaced by a default machine.
  *
- * `'needsRotaryMachine'` and `'machineAxisMismatch'` stay in the return union
- * for the UI that still names them (slice B owns that cleanup); this function
- * no longer produces them, because neither is an authoring condition.
+ * The result carries only those two authoring reasons. The machine reasons the
+ * old guard returned are gone from the union as well, so no caller can branch
+ * on a condition this guard does not test (issue #1034 slice B).
  */
 export function aroundUnavailableReason(
   project: Pick<Project, 'stock' | 'meta'>,
-): null | 'needsRotaryProject' | 'needsRoundBar' | 'needsRotaryMachine' | 'machineAxisMismatch' {
+): null | 'needsRotaryProject' | 'needsRoundBar' {
   if (projectType(project) !== 'rotary') return 'needsRotaryProject'
   if (!isRoundStock(project.stock)) return 'needsRoundBar'
   return null
