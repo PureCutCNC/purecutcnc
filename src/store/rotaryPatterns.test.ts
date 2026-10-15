@@ -38,7 +38,11 @@
  * - the rotary drive sign dropped (a reversed definition ignored) → the parsed
  *   export sign tests fail;
  * - a posted angle reduced modulo 360, or written under the wrong rotary word →
- *   the parsed lead tests fail.
+ *   the parsed lead tests fail;
+ * - `direction: 'left'` ignored (the posted ratio sign not reversed) → the
+ *   left-hand ratio assertion fails;
+ * - an explicit `direction: 'right'` not identical to an omitted one → the
+ *   paired byte-identity assertion fails.
  *
  * Run with: npx tsx src/store/rotaryPatterns.test.ts
  */
@@ -257,7 +261,7 @@ log('Testing thread creation, geometry and the one-step setup...')
 
   // The input numbers are not stored: nothing but ordinary shapes.
   const serialized = JSON.stringify({ folder, features: project.features, definitions: project.featureDefinitions, operation })
-  for (const field of ['"pitch"', '"starts"', '"twist"', '"length"', 'threadParams', 'fluteParams']) {
+  for (const field of ['"pitch"', '"starts"', '"twist"', '"length"', '"direction"', 'threadParams', 'fluteParams']) {
     assert.ok(!serialized.includes(field), `${field} is not persisted`)
   }
   const rawInstance = project.features.find((entry) => entry.id === result.featureIds[0])!
@@ -549,16 +553,21 @@ function assertExportedHelix(
   drive: 'own' | 'borrowed',
   reversed: boolean,
   starts: number,
-): void {
+  direction?: 'right' | 'left',
+): string {
   const spec = barFor(axis, units)
   const pitch = units === 'mm' ? 2 : 0.05
   const depth = units === 'mm' ? 1.2 : 0.1
   const start = units === 'mm' ? 10 : 1
   const length = units === 'mm' ? 60 : 3
-  const label = `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}`
+  const label = `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}${direction ? `/${direction}` : ''}`
 
   loadRotary(spec, [vBit(units, 'v1')])
-  const created = store().addRotaryPattern({ kind: 'thread', start, length, pitch, starts, depth })
+  const created = store().addRotaryPattern(
+    direction
+      ? { kind: 'thread', start, length, pitch, starts, depth, direction }
+      : { kind: 'thread', start, length, pitch, starts, depth },
+  )
   assert.ok(created.ok, `${label}: thread created`)
   if (!created.ok) throw new Error('unreachable')
   const project = store().project
@@ -604,7 +613,10 @@ function assertExportedHelix(
   // independently derived drive sign; the machine along coordinate carries the
   // along-axis sign; the two combine into the expected signed ratio.
   const lead = starts * pitch
-  const expectedRatio = expectedDriveSign(definition) * alongAxisSign(axis, definition) * 360 / lead
+  // A left-hand thread reverses the physical hand, so the posted angle-vs-along
+  // ratio flips sign while the lead magnitude is unchanged.
+  const handSign = direction === 'left' ? -1 : 1
+  const expectedRatio = handSign * expectedDriveSign(definition) * alongAxisSign(axis, definition) * 360 / lead
   let feeding = 0
   for (const move of parsed.moves) {
     for (const point of [move.from, move.to]) {
@@ -638,19 +650,27 @@ function assertExportedHelix(
     .filter((angle): angle is number => angle !== undefined)
   assert.ok(posted.length > 0, `${label}: the program posts the angle`)
   assert.ok(Math.max(...posted.map(Math.abs)) > 360, `${label}: the program keeps turning past one revolution`)
+
+  return exported.gcode
 }
 
 // ── the real generation and export seam ───────────────────────
 
 log('Testing generation and export through the real seam...')
 {
-  for (const [label, axis, units, spec, pitch, length] of [
-    ['mm X', 'x', 'mm', MM_BAR, 2, 60],
-    ['inch Y', 'y', 'inch', INCH_BAR, 0.05, 3],
+  for (const [label, axis, units, spec, pitch, length, direction] of [
+    ['mm X right', 'x', 'mm', MM_BAR, 2, 60, undefined],
+    ['mm X left', 'x', 'mm', MM_BAR, 2, 60, 'left'],
+    ['inch Y right', 'y', 'inch', INCH_BAR, 0.05, 3, undefined],
+    ['inch Y left', 'y', 'inch', INCH_BAR, 0.05, 3, 'left'],
   ] as const) {
     loadRotary(spec, [vBit(units, 'v1')])
     const depth = units === 'mm' ? 1.2 : 0.1
-    const created = store().addRotaryPattern({ kind: 'thread', start: 10, length, pitch, starts: 1, depth })
+    const created = store().addRotaryPattern(
+      direction
+        ? { kind: 'thread', start: 10, length, pitch, starts: 1, depth, direction }
+        : { kind: 'thread', start: 10, length, pitch, starts: 1, depth },
+    )
     assert.ok(created.ok, `${label}: thread created`)
     if (!created.ok) throw new Error('unreachable')
     const project = store().project
@@ -724,7 +744,18 @@ log('Testing the exported program text: posted modal coordinates and rotary word
       for (const drive of ['own', 'borrowed'] as const) {
         for (const reversed of [false, true]) {
           for (const starts of [1, 3]) {
-            assertExportedHelix(axis, units, drive, reversed, starts)
+            // The existing 32 cases stay exactly as they were: an omitted
+            // direction is the default right hand.
+            const omitted = assertExportedHelix(axis, units, drive, reversed, starts)
+            // An explicit right hand is the same program, byte for byte; the
+            // left hand is the same geometry with the posted ratio reversed.
+            const explicitRight = assertExportedHelix(axis, units, drive, reversed, starts, 'right')
+            assert.equal(
+              explicitRight,
+              omitted,
+              `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}: an explicit right is byte-identical to omitted`,
+            )
+            assertExportedHelix(axis, units, drive, reversed, starts, 'left')
           }
         }
       }

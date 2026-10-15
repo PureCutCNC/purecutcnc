@@ -25,6 +25,8 @@
  * - along endpoints recomputed/rounded instead of `start..start+length`: endpoint test
  * - handedness constant flipped on one axis: the independent chirality test
  * - depth allowed at the radius: the radius-limit refusal
+ * - `direction: 'left'` ignored, or applied to the right hand: the direction
+ *   chirality test and the omitted-vs-right identity assertion
  * Run with: npx tsx src/store/helpers/rotaryPatterns.test.ts
  */
 
@@ -50,6 +52,18 @@ function bar(axis: 'x' | 'y'): Project {
 function frameOf(axis: 'x' | 'y'): RotaryPatternFrame {
   const frame = rotaryPatternFrame(bar(axis))
   assert.ok(frame, `bar ${axis} has a pattern frame`)
+  return frame
+}
+
+/** A bar of either axis in either unit system, for the direction matrix. */
+function frameFor(axis: 'x' | 'y', units: 'mm' | 'inch'): RotaryPatternFrame {
+  const project = newProject('Directions', units)
+  project.meta.projectType = 'rotary'
+  project.stock = units === 'mm'
+    ? roundStock(40, 200, axis, { x: 10, y: 30 })
+    : roundStock(2, 8, axis, { x: 3, y: 5 })
+  const frame = rotaryPatternFrame(project)
+  assert.ok(frame, `bar ${axis}/${units} has a pattern frame`)
   return frame
 }
 
@@ -180,6 +194,64 @@ console.log('Testing thread pitch, lead, starts and endpoints...')
     kind: 'thread', start: 0, length: 5, pitch: 1, depth: 1,
   }), 'bar start')
   near(late[0].alongStart, 10, 'start 0 sits at the bar minimum')
+}
+
+console.log('Testing thread direction: left reverses only the physical hand...')
+{
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      const frame = frameFor(axis, units)
+      const pitch = units === 'mm' ? 2 : 0.05
+      const depth = units === 'mm' ? 1.2 : 0.1
+      const start = units === 'mm' ? 25 : 1
+      const length = units === 'mm' ? 30 : 3
+      for (const starts of [1, 3]) {
+        const base = { kind: 'thread' as const, start, length, pitch, starts, depth }
+        const where = `${axis}/${units}/starts=${starts}`
+        const right = lines(buildRotaryPatternLines(frame, { ...base, direction: 'right' }), `${where} right`)
+        const omitted = lines(buildRotaryPatternLines(frame, base), `${where} omitted`)
+        const left = lines(buildRotaryPatternLines(frame, { ...base, direction: 'left' }), `${where} left`)
+
+        // Omitted is exactly the right hand: the existing default geometry,
+        // field for field.
+        assert.deepEqual(omitted, right, `${where}: an omitted direction is exactly the right hand`)
+        assert.equal(right.length, starts, `${where}: one line per start`)
+        assert.equal(left.length, starts, `${where}: the left hand keeps every start`)
+
+        const lead = starts * pitch
+        for (let index = 0; index < starts; index++) {
+          // Everything but the hand is untouched: the same along endpoints, the
+          // same across start (so the C/starts spacing holds) and the same lead
+          // magnitude.
+          near(left[index].alongStart, right[index].alongStart, `${where}: left keeps the along start`)
+          near(left[index].alongEnd, right[index].alongEnd, `${where}: left keeps the along end`)
+          near(left[index].acrossStart, right[index].acrossStart, `${where}: left keeps the across start`)
+          near(
+            left[index].acrossEnd - left[index].acrossStart,
+            -(right[index].acrossEnd - right[index].acrossStart),
+            `${where}: left negates only the across slope`,
+          )
+          near(
+            Math.abs(right[index].acrossEnd - right[index].acrossStart),
+            frame.circumference * length / lead,
+            `${where}: lead is starts * pitch`,
+          )
+          if (index > 0) {
+            near(
+              left[index].acrossStart - left[index - 1].acrossStart,
+              frame.circumference / starts,
+              `${where}: the starts stay C/starts apart`,
+            )
+          }
+          // The hand itself, re-derived from physical points instead of the
+          // builder's sign constant.
+          assert.equal(isRightHanded(frame, right[index]), true, `${where}: the right hand really is right-hand`)
+          assert.equal(isRightHanded(frame, omitted[index]), true, `${where}: the default really is right-hand`)
+          assert.equal(isRightHanded(frame, left[index]), false, `${where}: the left hand really is left-hand`)
+        }
+      }
+    }
+  }
 }
 
 console.log('Testing flute count, twist sign and straight flutes...')

@@ -36,7 +36,7 @@
  * - A thread with `n` starts advances `lead = n * pitch` along the bar per full
  *   turn, and its `n` lines start evenly `C / n` apart across. A flute line
  *   spans `twist * C` across over the requested length, `count` of them evenly
- *   `C / count` apart. `twist` (and a thread) is right-hand; `0` is straight.
+ *   `C / count` apart. A thread is right-hand unless `direction` is `left`; a flute's positive `twist` is right-hand and `0` is straight.
  *
  * Handedness is the frozen rotary sign, not a screen convention. The physical
  * frame is project X and Z, with physical Y = −project Y (the project frame is
@@ -99,6 +99,8 @@ export interface ThreadPatternInput {
   pitch: number
   /** Number of starts; defaults to 1. Lead is `starts * pitch`. */
   starts?: number
+  /** Thread hand; `left` reverses the physical helix. Omitted is right. */
+  direction?: 'right' | 'left'
   /** Depth below the bar surface, project units. */
   depth: number
 }
@@ -232,7 +234,8 @@ export function buildRotaryPatternLines(
     if (!Number.isInteger(starts) || starts < 1) return { ok: false, reason: 'invalidStarts' }
     if (!Number.isFinite(input.pitch) || input.pitch <= 0) return { ok: false, reason: 'invalidPitch' }
     const lead = starts * input.pitch
-    const acrossPerAlong = (rotaryHandedness(frame.axis) * frame.circumference) / lead
+    const hand = input.direction === 'left' ? -1 : 1
+    const acrossPerAlong = (hand * rotaryHandedness(frame.axis) * frame.circumference) / lead
     const lines = Array.from({ length: starts }, (_, index) => {
       const acrossStart = frame.zero + (index * frame.circumference) / starts
       return {
