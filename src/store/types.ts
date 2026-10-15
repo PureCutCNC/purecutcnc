@@ -52,6 +52,7 @@ import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
 import type { ApplyNestInput } from './helpers/nestApply'
+import type { RotaryPatternInput, RotaryPatternResult } from './helpers/rotaryPatterns'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -680,6 +681,12 @@ export interface ProjectStore {
   addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
   addGearFeature: (name: string, center: Point, outsideRadius: number, params: GearCreationParams, depth: number) => string[]
+  /**
+   * Canned Thread/Flutes on the Around face (issue #1016 C1): a named folder of
+   * ordinary open `line` features plus one Engrave operation, in one undo step.
+   * Returns the created ids, or a typed refusal that changed nothing.
+   */
+  addRotaryPattern: (input: RotaryPatternInput, libraryTools?: ToolLibraryEntry[]) => RotaryPatternResult
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
   addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 

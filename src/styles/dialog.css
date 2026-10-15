@@ -3402,3 +3402,62 @@
     height: 40px;
   }
 }
+
+/* ── Thread / Flutes on Around (issue #1016 C1) ───────────── */
+
+/*
+ * The dialog clips at its own frame and the body scrolls inside it, so the
+ * header and the footer actions stay inside the dialog at tablet heights.
+ * The shared `dialog--no-clip` cannot be used here: it makes the body's
+ * overflow visible, which removes the zero automatic minimum of the `1fr`
+ * body row, so the form's min-content height pushes the footer past the
+ * dialog's `max-height` (issue #1016 C1 correction). `minmax(0, 1fr)` makes
+ * the shrink explicit rather than relying on the scroll-container minimum.
+ */
+.dialog--rotary {
+  max-width: 420px;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.dialog--rotary .dialog-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+/*
+ * The shared Select has no placement API and always opens downward. Both the
+ * Direction and the Tool picker sit low in this form where the now-clipping
+ * body would cut a downward list off, so the list opens upward into the form
+ * space above the field. A long tool list scrolls inside the list instead of
+ * growing past the field above it.
+ */
+.dialog--rotary .ui-select__dropdown {
+  top: auto;
+  bottom: calc(100% + 3px);
+  max-height: min(45vh, 320px);
+  overflow-y: auto;
+}
+
+.rotary-dialog__note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.rotary-dialog__error {
+  margin: 0;
+}
+
+.rotary-dialog__create:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The rotary commands sit under the drawing tools in the vertical creation
+   rail, with a little air so the two commands do not read as shapes. */
+.toolbar--creation.toolbar--vertical .toolbar-group--rotary {
+  margin-top: 6px;
+}
+

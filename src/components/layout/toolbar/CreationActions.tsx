@@ -28,6 +28,7 @@ import {
   TOOLBAR_POPOVER_HOVER_OPEN_DELAY_MS,
 } from './shared'
 import type { CreationShape, PopoverOpenMode } from './shared'
+import { RotaryPatternActions } from './RotaryPatternActions'
 import { ToolbarAction, ToolbarActionButton } from './primitives'
 
 const CREATION_TARGET_LABEL_KEYS: Record<CreationTarget, MessageKey> = {
@@ -328,6 +329,8 @@ function CreationActions({
             )
           : null}
       </div>
+      {/* Thread and Flutes appear only while the workspace is on Around. */}
+      <RotaryPatternActions tooltipSide={tooltipSide} />
     </div>
   )
 }

@@ -26,6 +26,7 @@ import { useSketchCommands } from '../../commands/sketchCommands'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { CreationTarget } from '../../store/types'
+import { RotaryPatternActions } from './toolbar/RotaryPatternActions'
 
 function RailButton({
   icon,
@@ -272,6 +273,8 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             active={lastCreationOption.active}
             onClick={lastCreationOption.onActivate}
           />
+          {/* Thread and Flutes appear only while the workspace is on Around. */}
+          <RotaryPatternActions variant="rail" />
         </div>
 
         {/* Edit tools (visible when features selected) */}

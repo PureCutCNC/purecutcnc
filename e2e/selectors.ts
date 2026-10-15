@@ -879,3 +879,28 @@ export const setupCam = {
   /** The "Plan" (automatic CAM plan) header action. */
   planButton: (page: Page) => page.locator('.cam-header-action--plan'),
 }
+
+// Thread and Flutes on the Around face (#1016 C1). The commands carry a stable
+// `data-command` hook; their accessible names are localized button labels. The
+// Flutes dialog holds two `Select`s (direction and tool), so each is scoped by
+// its own stable wrapper class instead of matching every `.ui-select__trigger`.
+export const rotary = {
+  threadButton: (page: Page) => page.locator('[data-command="rotary-thread"]'),
+  flutesButton: (page: Page) => page.locator('[data-command="rotary-flutes"]'),
+  dialog: (page: Page) => page.locator('.dialog--rotary'),
+  field: (page: Page, name: 'start' | 'length' | 'pitch' | 'starts' | 'depth' | 'count' | 'twist') =>
+    page.locator(`#rotary-${name}`),
+  /** The Right/Left physical-hand group shown by both dialogs. */
+  direction: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__direction'),
+  directionTrigger: (page: Page) => rotary.direction(page).locator('.ui-select__trigger'),
+  directionOption: (page: Page, name: string) => rotary.direction(page).getByRole('option', { name }),
+  /** The Flutes tool picker, alone in its wrapper so direction never matches it. */
+  tool: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__tool'),
+  toolTrigger: (page: Page) => rotary.tool(page).locator('.ui-select__trigger'),
+  toolOption: (page: Page, name: string) => rotary.tool(page).getByRole('option', { name }),
+  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
+  cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
+  error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
+  note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+}
+

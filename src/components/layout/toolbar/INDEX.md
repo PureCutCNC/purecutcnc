@@ -12,6 +12,9 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `ProjectNameControl.tsx` — project name and dirty-state control.
 - `GlobalActions.tsx` — file/history/zoom action group.
 - `CreationActions.tsx` — feature/region creation target and shape picker group.
+- `RotaryPatternActions.tsx` — the Thread and Flutes entries (desktop toolbar and tablet rail variants), shown only on an active Around face.
+- `RotaryPatternDialog.tsx` — the Thread and Flutes parameter dialogs; validates locally and calls `addRotaryPattern` once.
+- `RotaryDirectionField.tsx` — the shared Right/Left physical-hand `Select` both dialogs render; carries a stable `rotary-dialog__direction` hook and an accessible group label (extracted to keep the dialog inside its line budget).
 - `FeatureEditActions.tsx` — selected-feature transform/edit action group, including the one-shot Feature Distribution command.
 - `AlignmentActions.tsx` — align and distribute popover groups.
 - `ShapeToolActions.tsx` — join/cut shape command group.
