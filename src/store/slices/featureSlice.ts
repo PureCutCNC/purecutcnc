@@ -50,6 +50,7 @@ import { toBlockStock } from '../helpers/stockShape'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
+import { createAddRotaryPatternAction } from '../helpers/rotaryPatterns'
 import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
@@ -99,6 +100,7 @@ export type FeatureSlice = Pick<
   | 'addSlotFeature'
   | 'addNgonFeature'
   | 'addGearFeature'
+  | 'addRotaryPattern'
   | 'addRoundRectFeature'
   | 'addChamferRectFeature'
   | 'alignFeatures'
@@ -1156,6 +1158,8 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth)),
 
     addGearFeature: createAddGearFeatureAction(set, get),
+
+    addRotaryPattern: createAddRotaryPatternAction(set, get),
 
     addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
