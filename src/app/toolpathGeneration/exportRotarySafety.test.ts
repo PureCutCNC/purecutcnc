@@ -18,11 +18,17 @@
  * Issue #1034 slice A: the output boundary still refuses what it must.
  *
  * Slice A moved machine suitability out of the authoring guard, so these are
- * the checks that carry the safety: a machine that does not suit the project
- * type, a machine with no rotary axis, and a machine whose rotary axis lies
- * across the bar are each refused through the **real** seam — the export
- * service generates the operation, and `prepareExport` posts it — rather than
- * by asserting the predicate alone. A compatible machine emits its program
+ * the checks that carry the safety, each driven through the **real** seam
+ * rather than by asserting the predicate alone. The export service generates
+ * the rotary fixture and `prepareExport` posts it; the refusals then land on
+ * different sides of that post. A machine whose rotary axis lies across the
+ * bar is refused inside the postprocessor (`postRotaryAxisMismatch`), while a
+ * machine of the wrong type still posts a program and then carries the
+ * `exportMachineTypeMismatch` error appended to it — posting runs and real
+ * G-code is constructed for that case; it is the shared error predicate on the
+ * prepared program that blocks Save and the export/download. The one refusal
+ * that really does happen first is a missing machine, which `prepareExport`
+ * blocks before generation starts. A compatible machine emits its program
  * byte-for-byte as it did at the base commit.
  *
  * Run with: npx tsx src/app/toolpathGeneration/exportRotarySafety.test.ts
@@ -173,7 +179,7 @@ async function main(): Promise<void> {
     )
   })
 
-  await test('a machine with no rotary block is refused before posting', async () => {
+  await test('a machine with no rotary block is posted, then refused as a type mismatch', async () => {
     const project = barProject(PLAIN_ROUTER)
     const operationId = project.operations[0].id
     const h = realService(project)
@@ -189,7 +195,7 @@ async function main(): Promise<void> {
     assert.deepEqual(mismatch.params, { machine: PLAIN_ROUTER.name, expected: 'rotary' })
   })
 
-  await test('a plasma machine on a rotary project is a family mismatch', async () => {
+  await test('a plasma machine on a rotary project is posted, then refused as a family mismatch', async () => {
     const project = barProject(QTPLASMAC)
     const operationId = project.operations[0].id
     const h = realService(project)
