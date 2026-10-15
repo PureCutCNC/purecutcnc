@@ -51,6 +51,7 @@ import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
 import { createAddRotaryPatternAction } from '../helpers/rotaryPatterns'
+import { createAddRotarySolidAction } from '../helpers/rotarySolids'
 import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
@@ -101,6 +102,7 @@ export type FeatureSlice = Pick<
   | 'addNgonFeature'
   | 'addGearFeature'
   | 'addRotaryPattern'
+  | 'addRotarySolid'
   | 'addRoundRectFeature'
   | 'addChamferRectFeature'
   | 'alignFeatures'
@@ -1160,6 +1162,8 @@ export function createFeatureSlice(
     addGearFeature: createAddGearFeatureAction(set, get),
 
     addRotaryPattern: createAddRotaryPatternAction(set, get),
+
+    addRotarySolid: createAddRotarySolidAction(set, get),
 
     addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
