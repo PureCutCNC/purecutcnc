@@ -50,7 +50,7 @@ import type { ToolLibraryEntry } from '../toolLibrary'
 import { bundledMachines } from '../machine/registry'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
-import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { normalizeToolForProject, resolveDimensionRef } from '../engine/toolpaths/geometry'
 import { parseGcodeMotion } from '../engine/gcode/gcodeMotionParser'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
 import { rotaryWord, validateMachineDefinition } from '../engine/gcode/types'
@@ -225,7 +225,7 @@ log('Testing thread creation, geometry and the one-step setup...')
   assert.equal(feature.sketch.profile.closed, false, 'the line is open')
   assert.equal(feature.sketch.profile.segments.length, 1, 'the line is one segment')
   assert.equal(feature.z_top, project.stock.thickness, 'z_top is the bar surface')
-  near(feature.z_bottom, project.stock.thickness - 1.2, 'z_bottom is the requested depth below the surface')
+  near(resolveDimensionRef(project, feature.z_bottom), project.stock.thickness - 1.2, 'z_bottom is the requested depth below the surface')
 
   // Sheet geometry: along is the bar axis, across is the other one and starts
   // on the centered zero line.
@@ -309,6 +309,7 @@ log('Testing multi-start lead, start spacing and the Y/inch sheet...')
     near(Math.abs(end.y - line.start.y), frame.circumference * 30 / (2 * 1.25), 'a two-start thread advances the lead per turn')
   }
   const operation = store().project.operations.at(-1)!
+  assert.equal(operation.target.source, 'features', 'the multi-start Engrave targets features')
   assert.deepEqual(operation.target.featureIds, result.featureIds, 'both starts are one Engrave target')
 
   // Y bar, inch, off-origin: along is Y (from the stock minimum), across is X
@@ -365,6 +366,7 @@ log('Testing flutes: count, twist, straight and tool selection...')
   const operation = store().project.operations.at(-1)!
   assert.equal(operation.toolRef, 'ball', 'the explicitly selected tool is used')
   assert.equal(operation.kind, 'follow_line', 'flutes cut with an Engrave')
+  assert.equal(operation.target.source, 'features', 'all flutes target features')
   assert.deepEqual(operation.target.featureIds, result.featureIds, 'all flutes are one target')
 
   // Straight flutes stay on their own meridian, negative twist reverses.
@@ -659,7 +661,13 @@ log('Testing generation and export through the real seam...')
     assert.ok(envelope, `${label}: generation returns an envelope`)
     const path = envelope.result
     assert.ok(path.moves.length > 0, `${label}: nonempty moves`)
-    assert.deepEqual(path.warnings, [], `${label}: no generation warnings`)
+    // warningSeverity has no 'info' level — its domain is 'warning' | 'error' —
+    // so "no generation warning above info" is exactly "no warnings at all".
+    assert.deepEqual(
+      path.warnings.map((warning) => warningSeverity(warning.code)),
+      [],
+      `${label}: generation emits no warning at any severity`,
+    )
     assert.ok(path.moves.every((move) => move.from.a !== undefined && move.to.a !== undefined), `${label}: every point carries a`)
 
     const axisOf = (point: { x: number; y: number }) => (axis === 'x' ? point.x : point.y)
@@ -701,9 +709,6 @@ log('Testing generation and export through the real seam...')
     // The exported program text itself — parsed posted coordinates and rotary
     // words across every axis/units/drive/reversal/start combination — is
     // checked in the matrix below.
-
-    // The same toolpath generates no warning at any severity.
-    assert.deepEqual(path.warnings.filter((warning) => warningSeverity(warning.code) !== 'info'), [], `${label}: nothing above info`)
   }
 }
 
