@@ -64,6 +64,12 @@ export interface PlaybackPose {
   a?: number
 }
 
+/**
+ * A square grid's `squareBar` descriptor and immutable `initialTopZ` baseline
+ * ride along by reference through the spread; only `topZ` — the mutable
+ * material the cutter lowers — is copied (issue #1016 C2-R1). `reset` restores
+ * `topZ` from the base grid and never touches the baseline.
+ */
 export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
   return { ...source, topZ: new Float32Array(source.topZ) }
 }

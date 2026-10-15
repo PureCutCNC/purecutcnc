@@ -16,6 +16,7 @@
 
 import type { Project, Point } from '../../types/project'
 import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
+import { squareSurfaceRadius, validateSquareBar } from './squareReplay'
 import type { SimulationBuildOptions, SimulationGrid } from './types'
 
 const DEFAULT_LONG_AXIS_CELLS = 180
@@ -35,6 +36,11 @@ export function resolveSimulationGridSpec(
   const cols = Math.max(MIN_AXIS_CELLS, Math.ceil(width / cellSize))
   const rows = Math.max(MIN_AXIS_CELLS, Math.ceil(height / cellSize))
 
+  // A square blank's corners reach side/√2, so the render envelope must hold
+  // them; the true turning pivot stays frame.radius either way.
+  const squareBar = options.squareBar
+  if (squareBar) validateSquareBar(squareBar)
+
   return {
     originX: stockBounds.minX,
     originY: stockBounds.minY,
@@ -42,7 +48,8 @@ export function resolveSimulationGridSpec(
     cols,
     rows,
     stockBottomZ: 0,
-    stockTopZ: project.stock.thickness,
+    stockTopZ: squareBar ? squareBar.side * Math.SQRT1_2 : project.stock.thickness,
+    ...(squareBar ? { squareBar } : {}),
   }
 }
 
@@ -58,6 +65,34 @@ function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
   return inside
 }
 
+/**
+ * Fill a square grid with the blank's true cross section. Along the bar the
+ * section is constant, so the radial height depends only on the across cell's
+ * angle from the frame's zero line: `halfSide / max(|sin|,|cos|)`. The
+ * baseline is immutable — every later write lowers `topZ` only.
+ */
+function seedSquareTopZ(
+  topZ: Float32Array,
+  spec: Omit<SimulationGrid, 'topZ'>,
+): void {
+  const { squareBar } = spec
+  if (!squareBar) return
+  const anglePerAcross = (2 * Math.PI) / squareBar.frame.circumference
+  const acrossOrigin = squareBar.frame.axis === 'x' ? spec.originY : spec.originX
+  const acrossCount = squareBar.frame.axis === 'x' ? spec.rows : spec.cols
+  const acrossHeights = new Float32Array(acrossCount)
+  for (let across = 0; across < acrossCount; across += 1) {
+    const coordinate = acrossOrigin + (across + 0.5) * spec.cellSize
+    acrossHeights[across] = squareSurfaceRadius(squareBar.side, (coordinate - squareBar.frame.zero) * anglePerAcross)
+  }
+  for (let row = 0; row < spec.rows; row += 1) {
+    for (let col = 0; col < spec.cols; col += 1) {
+      const across = squareBar.frame.axis === 'x' ? row : col
+      topZ[row * spec.cols + col] = acrossHeights[across]
+    }
+  }
+}
+
 export function createSimulationGrid(
   project: Project,
   options: SimulationBuildOptions = {},
@@ -65,6 +100,18 @@ export function createSimulationGrid(
   const spec = resolveSimulationGridSpec(project, options)
   const cellCount = spec.cols * spec.rows
   const topZ = new Float32Array(cellCount)
+
+  if (spec.squareBar) {
+    seedSquareTopZ(topZ, spec)
+    const initialTopZ = new Float32Array(topZ)
+    return {
+      ...spec,
+      ...(options.wrap ? { wrap: options.wrap } : {}),
+      initialTopZ,
+      topZ,
+    }
+  }
+
   topZ.fill(spec.stockTopZ)
 
   // If stock has a non-rectangular profile (from a source feature), mask cells

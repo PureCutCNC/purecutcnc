@@ -15,7 +15,24 @@
  */
 
 import type { ToolType } from '../../types/project'
+import type { AroundFrame } from '../aroundFrame'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
+
+/**
+ * A square blank being simulated (issue #1016 C2-R1). Transient simulation
+ * input — it is never persisted in a project and never reaches the `.camj`
+ * format.
+ *
+ * `side` is the blank's physical side. `frame` is the Around unroll frame the
+ * unrolled sheet is framed in: its nominal reference cylinder keeps
+ * `radius = side/2` and `circumference = π·side`, which is only the coordinate
+ * mapping — the blank's real corners reach `side/√2` from the pivot. The true
+ * turning axis stays at `frame.radius`, never at the corner radius.
+ */
+export interface SquareBarDescriptor {
+  side: number
+  frame: AroundFrame
+}
 
 export interface SimulationGrid {
   originX: number
@@ -26,6 +43,19 @@ export interface SimulationGrid {
   stockBottomZ: number
   stockTopZ: number
   wrap?: { axis: 'x' | 'y'; period: number }
+  /**
+   * Present only on a square-blank grid. Flat and round grids keep their exact
+   * original keys and values.
+   */
+  squareBar?: SquareBarDescriptor
+  /**
+   * The immutable virgin square baseline, one radial height per cell. Present
+   * only with `squareBar`; the physical cell values are a true square cross
+   * section, so statistics compare each cell against its own baseline rather
+   * than a uniform stock top. Never written after grid creation;
+   * `topZ` is the mutable copy the cutter lowers.
+   */
+  initialTopZ?: Float32Array
   topZ: Float32Array
 }
 
@@ -39,6 +69,11 @@ export interface DirtyRegion {
 export interface SimulationBuildOptions {
   wrap?: SimulationGrid['wrap']
   targetLongAxisCells?: number
+  /**
+   * Simulate a square blank instead of a round bar (issue #1016 C2-R1).
+   * Transient; validated at grid creation and never persisted.
+   */
+  squareBar?: SquareBarDescriptor
 }
 
 export interface SimulationStats {

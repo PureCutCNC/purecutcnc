@@ -112,6 +112,35 @@ function maxGridDelta(a: SimulationGrid, b: SimulationGrid): number {
   return max
 }
 
+/**
+ * The pre-change `applyMoveToGrid`, seam copies included, kept as the round/flat
+ * behavioural reference. The square dispatch must leave this path byte-exact.
+ */
+function referenceApplyMoveToGrid(
+  grid: SimulationGrid,
+  move: ToolpathMove,
+  toolRadius: number,
+  toolType: ToolType,
+  vBitAngle: number | null,
+): void {
+  referenceApplyMove(grid, move, toolRadius, toolType, vBitAngle)
+  if (!grid.wrap) return
+  const { axis, period } = grid.wrap
+  const low = axis === 'x' ? grid.originX : grid.originY
+  const min = Math.min(move.from[axis], move.to[axis]) - toolRadius
+  const max = Math.max(move.from[axis], move.to[axis]) + toolRadius
+  const shifts: number[] = []
+  if (min < low) shifts.push(period)
+  if (max > low + period) shifts.push(-period)
+  for (const shift of shifts) {
+    referenceApplyMove(grid, {
+      ...move,
+      from: { ...move.from, [axis]: move.from[axis] + shift },
+      to: { ...move.to, [axis]: move.to[axis] + shift },
+    }, toolRadius, toolType, vBitAngle)
+  }
+}
+
 const TEST_MOVES: ToolpathMove[] = [
   // Diagonal ramp cut crossing cell rows at an angle.
   { kind: 'cut', from: { x: -1, y: -1, z: -0.5 }, to: { x: 18, y: 14, z: -2.5 } },
@@ -171,6 +200,72 @@ function testDirtyRegionCoversChangedCells(): void {
   console.log('dirty region bounds changed cells: PASSED')
 }
 
+/** A round/Around wrapped grid: across is Y, one `period` wide in rows. */
+function makeWrappedGrid(): SimulationGrid {
+  const cols = 60
+  const rows = 40
+  const cellSize = 0.5
+  return {
+    cols,
+    rows,
+    cellSize,
+    originX: -3,
+    originY: -10,
+    stockTopZ: 0,
+    stockBottomZ: -6,
+    wrap: { axis: 'y', period: 20 },
+    topZ: new Float32Array(cols * rows).fill(0),
+  }
+}
+
+function testWrappedRoundSeamMatchesReference(): void {
+  console.log('Testing a wrapped round grid still replays the exact pre-change seam copies...')
+  const seamMoves: ToolpathMove[] = [
+    // Crosses the low seam.
+    { kind: 'cut', from: { x: -1, y: -12, z: -1 }, to: { x: 14, y: 3, z: -2 } },
+    // Crosses the high seam.
+    { kind: 'cut', from: { x: 2, y: 8, z: -1.5 }, to: { x: 20, y: 22, z: -3 } },
+    // Stays inside.
+    { kind: 'cut', from: { x: 4, y: -2, z: -1 }, to: { x: 18, y: 9, z: -1 } },
+  ]
+  for (const [toolType, toolRadius, vBitAngle] of [
+    ['flat_endmill', 1.5, null],
+    ['ball_endmill', 2, null],
+    ['v_bit', 3, 60],
+  ] as [ToolType, number, number | null][]) {
+    const optimized = makeWrappedGrid()
+    const reference = makeWrappedGrid()
+    for (const move of seamMoves) {
+      applyMoveToGrid(optimized, move, toolRadius, toolType, vBitAngle)
+      referenceApplyMoveToGrid(reference, move, toolRadius, toolType, vBitAngle)
+    }
+    const delta = maxGridDelta(optimized, reference)
+    assert(delta <= 1e-6, `${toolType} wrapped seam must match the reference (max delta ${delta})`)
+  }
+  console.log('wrapped round seam parity: PASSED')
+}
+
+function testRoundAndFlatGridsGainNoSquareKeys(): void {
+  console.log('Testing a round/flat grid gains no square keys and reports no baseline...')
+  const grid = makeWrappedGrid()
+  applyMoveToGrid(grid, { kind: 'cut', from: { x: 2, y: 0, z: -1 }, to: { x: 12, y: 6, z: -1 } }, 2, 'flat_endmill', null)
+  assert(!('squareBar' in grid), 'a round grid must not gain a squareBar key')
+  assert(!('initialTopZ' in grid), 'a round grid must not gain an initialTopZ key')
+  const keys = Object.keys(grid).sort()
+  const expected = ['cellSize', 'cols', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ', 'wrap'].sort()
+  assert(keys.length === expected.length && keys.every((key, i) => key === expected[i]), `round grid keys drifted: ${keys.join(',')}`)
+
+  const flat = makeGrid()
+  applyMoveToGrid(flat, { kind: 'cut', from: { x: 2, y: 3, z: -1 }, to: { x: 12, y: 6, z: -1 } }, 2, 'flat_endmill', null)
+  const flatKeys = Object.keys(flat).sort()
+  const expectedFlat = ['cellSize', 'cols', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ'].sort()
+  assert(
+    flatKeys.length === expectedFlat.length && flatKeys.every((key, i) => key === expectedFlat[i]),
+    `flat grid keys drifted: ${flatKeys.join(',')}`,
+  )
+  console.log('round/flat grids gain no square keys: PASSED')
+}
+
 try {
   testKernelMatchesReferenceProfile('flat_endmill', 1.5, null)
   testKernelMatchesReferenceProfile('ball_endmill', 2, null)
@@ -178,6 +273,8 @@ try {
   testKernelMatchesReferenceProfile('v_bit', 3, 90)
   testKernelMatchesReferenceProfile('drill', 1.25, null)
   testDirtyRegionCoversChangedCells()
+  testWrappedRoundSeamMatchesReference()
+  testRoundAndFlatGridsGainNoSquareKeys()
   console.log('\nAll replay kernel tests PASSED.')
 } catch (e) {
   console.error(e)

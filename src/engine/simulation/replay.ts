@@ -20,6 +20,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
+import { applySquareMoveToGrid } from './squareReplay'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
 function clamp(value: number, min: number, max: number): number {
@@ -154,7 +155,12 @@ function applyMoveKernel(
   }
 }
 
-/** Periodic cutter overlap is dispatched outside the unchanged cell kernel. */
+/**
+ * A square-blank grid replays through the physical polar kernel: a radial
+ * heightfield's flat-sheet distance math would carve grooves that the finite
+ * cutter never makes (issue #1016 C2-R1). Every flat/round grid keeps the
+ * kernel and seam copies below byte-identical.
+ */
 export function applyMoveToGrid(
   grid: SimulationGrid,
   move: ToolpathMove,
@@ -162,8 +168,12 @@ export function applyMoveToGrid(
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
 ): ApplyMoveResult {
+  if (grid.squareBar) {
+    return applySquareMoveToGrid(grid, move, toolRadius, toolType)
+  }
   const result = applyMoveKernel(grid, move, toolRadius, toolType, vBitAngle)
   if (!grid.wrap) return result
+  // Periodic cutter overlap is dispatched outside the unchanged cell kernel.
   const { axis, period } = grid.wrap
   const low = axis === 'x' ? grid.originX : grid.originY
   const min = Math.min(move.from[axis], move.to[axis]) - toolRadius
@@ -193,6 +203,24 @@ export function applyMoveToGrid(
 }
 
 function computeStats(grid: SimulationGrid, processedMoveCount: number): SimulationStats {
+  // A square blank's virgin surface is its true cross section, not a uniform
+  // stock top, so each cell is measured against the immutable baseline (issue
+  // #1016 C2-R1). A virgin square grid therefore reports zero removed cells.
+  if (grid.squareBar && grid.initialTopZ) {
+    const baseline = grid.initialTopZ
+    let removedCellCount = 0
+    let minTopZ = grid.stockTopZ
+    let maxRemovedDepth = 0
+    for (let index = 0; index < grid.topZ.length; index += 1) {
+      const z = grid.topZ[index]
+      if (z < minTopZ) minTopZ = z
+      const removedDepth = baseline[index] - z
+      if (removedDepth > 1e-9) removedCellCount += 1
+      if (removedDepth > maxRemovedDepth) maxRemovedDepth = removedDepth
+    }
+    return { removedCellCount, minTopZ, maxRemovedDepth, processedMoveCount }
+  }
+
   let removedCellCount = 0
   let minTopZ = grid.stockTopZ
 
