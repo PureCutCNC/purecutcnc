@@ -46,6 +46,7 @@ import type {
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
+import { normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -572,14 +573,20 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
 
 /**
  * A loaded stock in canonical form. A round bar is repaired by
- * {@link normalizeRoundStock}; anything else — `shape` absent, `'block'`, or an
- * unknown value — becomes a block with no `shape` and no `axis` key, so files
- * written before round stock existed normalize exactly as they did before.
+ * {@link normalizeRoundStock} and a square blank by
+ * {@link normalizeSquareStock}, each keeping its shape and axis; anything else
+ * — `shape` absent, `'block'`, or an unknown value — becomes a block with no
+ * `shape` and no `axis` key, so files written before round stock existed
+ * normalize exactly as they did before and an old 3.3 file is never read as a
+ * bar.
  */
 function canonicalizeStock(stock: Stock): Stock {
   const profile = { ...stock.profile, closed: stock.profile.closed ?? true }
   if (stock.shape === 'round') {
     return normalizeRoundStock({ ...stock, profile })
+  }
+  if (stock.shape === 'square') {
+    return normalizeSquareStock({ ...stock, profile })
   }
   const { shape: _shape, axis: _axis, ...block } = stock as BlockStock & { axis?: unknown }
   return { ...block, profile }

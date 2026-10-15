@@ -29,6 +29,7 @@
  */
 
 import { isRotaryOperationKind, isRoundStock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { resolveMachineKind } from '../../engine/gcode/types'
 import { setupFace } from '../../engine/setupOrientation'
 import type { MachineDefinition } from '../../engine/gcode/types'
@@ -72,7 +73,8 @@ function inferType(project: {
 }): ProjectType {
   const definition = activeMachine(project)
   if (definition && resolveMachineKind(definition) === 'plasma') return 'plasma'
-  return isRoundStock(project.stock) ? 'rotary' : 'milling'
+  // Either bar shape is a turning job (#1016 C2-S1); a block is milling.
+  return isBarStock(project.stock) ? 'rotary' : 'milling'
 }
 
 /**

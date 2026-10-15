@@ -583,7 +583,22 @@ export interface RoundStock extends StockBase {
   axis: StockAxis
 }
 
-export type Stock = BlockStock | RoundStock
+/**
+ * A square bar lying along `axis` — the physical blank a square-to-round job
+ * turns (#1016 C2-S1). `thickness` is the physical side and `profile` is the
+ * rectangle the bar shows from above: side across `axis`, length along it. The
+ * corner radius is therefore `thickness * √½`, not the round bar's half-side;
+ * the pure geometry lives in `barStock.ts`.
+ */
+export interface SquareStock extends StockBase {
+  shape: 'square'
+  axis: StockAxis
+}
+
+/** The bar stock shapes: a round bar or a square blank. */
+export type BarStock = RoundStock | SquareStock
+
+export type Stock = BlockStock | RoundStock | SquareStock
 
 export interface GridSettings {
   extent: number

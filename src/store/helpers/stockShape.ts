@@ -39,6 +39,7 @@ import {
   type StockAxis,
 } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
+import { isBarStock } from '../../types/barStock'
 import { defaultRoundWorkholding, isRoundWorkholding } from './roundWorkholding'
 
 /** A block turned into a bar: the long side becomes the length, the thickness the diameter. */
@@ -60,7 +61,7 @@ export function toRoundStock(stock: Stock): RoundStock {
 
 /** A bar turned back into a block of the same box. */
 export function toBlockStock(stock: Stock): BlockStock {
-  if (!isRoundStock(stock)) return stock
+  if (!isBarStock(stock)) return stock
   const bounds = getStockBounds(stock)
   const { shape: _shape, axis: _axis, ...rest } = stock
   return {
