@@ -138,11 +138,14 @@ function legacyMachineMode(project: Project): 'router' | 'plasma' {
   return projectMachineKind(project)
 }
 
-/** `aroundUnavailableReason` before #1028: round bar plus a matching rotary block. */
-function legacyAroundAvailable(project: Project): boolean {
-  if (project.stock.shape !== 'round') return false
-  const rotary = project.meta.machineDefinitions?.[0]?.rotary
-  return rotary !== undefined && rotary.about === project.stock.axis
+/**
+ * Around authorability as of #1034 slice A: the project type and the round bar
+ * alone. The machine and its axis are output-boundary concerns now, so a
+ * legacy round-bar project with no (or a mismatched) rotary machine is
+ * authorable exactly when the inference calls it a rotary project.
+ */
+function aroundAvailableFromType(legacy: Project): boolean {
+  return inferProjectType(legacy) === 'rotary'
 }
 
 function assertInferenceParity(label: string, legacy: Project): void {
@@ -151,8 +154,8 @@ function assertInferenceParity(label: string, legacy: Project): void {
   assertEqual(machineMode(typed), legacyMachineMode(legacy), `${label}: machineMode is unchanged`)
   assertEqual(
     aroundUnavailableReason(typed) === null,
-    legacyAroundAvailable(legacy),
-    `${label}: Around availability is unchanged`,
+    aroundAvailableFromType(legacy),
+    `${label}: Around authoring follows the inferred type, not the machine`,
   )
 }
 
