@@ -15,24 +15,36 @@
  */
 
 /**
- * A chuck and a tailstock on a round bar (#392 slice C). Both are round about
- * the bar's axis, so seen from above each is a rectangle centred on the bar's
- * centreline that looks the same at every index angle. Their height follows
- * from the bar's diameter and their own: the bar's radius plus their own, so
- * the existing clamp check in `engine/toolpaths/clamps.ts` needs no round case.
+ * A chuck and a tailstock on a bar (#392 slice C, square blank #1016 C2-S2).
+ * Both are round about the bar's axis, so seen from above each is a rectangle
+ * centred on the bar's centreline that looks the same at every index angle.
+ * Their height follows from the bar's pivot and their own radius — the bar's
+ * half-thickness plus their own — so the existing clamp check in
+ * `engine/toolpaths/clamps.ts` needs no bar case.
+ *
+ * A square blank is not a cylinder: its centreline is still the pivot (Z =
+ * side/2) and that is where the workholding stays. Its corners reach further
+ * than the pivot, so a *new* square chuck is sized to clear the corner
+ * envelope (the circumscribed circle), while an existing chuck keeps whatever
+ * diameter the user gave it — the sync never enlarges it.
  */
 
 import {
   getStockBounds,
-  isRoundStock,
-  roundStockCentre,
   roundStockDiameter,
-  roundStockLength,
+  type BarStock,
   type Clamp,
   type Project,
   type ProjectMeta,
-  type RoundStock,
 } from '../../types/project'
+import {
+  barCentre,
+  barLength,
+  barMaxRadius,
+  barPivotZ,
+  isBarStock,
+  isSquareStock,
+} from '../../types/barStock'
 import { convertLength } from '../../utils/units'
 
 /** True for the two round workholding types: a chuck or a tailstock. */
@@ -41,30 +53,34 @@ export function isRoundWorkholding(clamp: Clamp): boolean {
 }
 
 /** The clamp's diameter: its size across the bar's axis (h for axis 'x', w for axis 'y'). */
-export function roundWorkholdingDiameter(clamp: Clamp, stock: RoundStock): number {
+export function roundWorkholdingDiameter(clamp: Clamp, stock: BarStock): number {
   return stock.axis === 'x' ? clamp.h : clamp.w
 }
 
 /**
  * A chuck or tailstock at its default place and size on this bar. The default
- * body is 40 mm and the diameter the larger of twice the bar's and 50 mm. A
- * chuck grips the bar's start end — 15 mm inside it, never more than a quarter
- * of its length — and reaches the body past the end; a tailstock touches the
- * far end face and reaches the body beyond it. Either way the height is the
- * bar's radius plus its own, and it is centred on the centreline.
+ * body is 40 mm and the diameter the larger of twice the bar's and 50 mm — for
+ * a square blank, twice the *corner* envelope diameter, so the clamp clears the
+ * corners the blank reaches. A chuck grips the bar's start end — 15 mm inside
+ * it, never more than a quarter of its length — and reaches the body past the
+ * end; a tailstock touches the far end face and reaches the body beyond it.
+ * Either way the height is the pivot (`side`/`diameter` over two) plus the
+ * clamp's own radius, so it is centred on the centreline at the true pivot, not
+ * at the corner radius. A round bar's numbers are unchanged.
  */
 export function defaultRoundWorkholding(
   type: 'chuck' | 'tailstock',
-  stock: RoundStock,
+  stock: BarStock,
   units: ProjectMeta['units'],
 ): Pick<Clamp, 'type' | 'x' | 'y' | 'w' | 'h' | 'height'> {
-  const barDiameter = roundStockDiameter(stock)
-  const ownDiameter = Math.max(2 * barDiameter, convertLength(50, 'mm', units))
+  const ownDiameter = isSquareStock(stock)
+    ? Math.max(4 * barMaxRadius(stock), convertLength(50, 'mm', units))
+    : Math.max(2 * roundStockDiameter(stock), convertLength(50, 'mm', units))
   const body = convertLength(40, 'mm', units)
   const bounds = getStockBounds(stock)
-  const centre = roundStockCentre(stock)
-  const height = barDiameter / 2 + ownDiameter / 2
-  const grip = Math.min(convertLength(15, 'mm', units), roundStockLength(stock) / 4)
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock) + ownDiameter / 2
+  const grip = Math.min(convertLength(15, 'mm', units), barLength(stock) / 4)
 
   // Along the axis: a chuck covers `grip` inside the start end plus the body
   // past it; a tailstock stops at the far end face and adds only the body.
@@ -85,22 +101,25 @@ export function defaultRoundWorkholding(
 
 /**
  * Every chuck and tailstock centred on the bar's centreline with its height
- * derived from the bar's diameter. Its position and size along the axis are
- * never touched, and other clamps never are. A block is left alone. Returns
- * the same project object when nothing needs changing, so a write that does
- * not affect workholding does not churn identity.
+ * derived from the bar's pivot. Its position and size along the axis — and its
+ * across diameter, which the user may have set by hand — are never touched, and
+ * other clamps never are. On a square blank the centre is the true pivot
+ * (`side`/2), not the corner radius; the clamp keeps its own diameter, so
+ * nothing is silently enlarged. A block is left alone. Returns the same project
+ * object when nothing needs changing, so a write that does not affect
+ * workholding does not churn identity.
  */
 export function syncRoundWorkholding(project: Project): Project {
-  if (!isRoundStock(project.stock)) return project
+  if (!isBarStock(project.stock)) return project
   const stock = project.stock
-  const centre = roundStockCentre(stock)
+  const centre = barCentre(stock)
   let changed = false
 
   const clamps = project.clamps.map((clamp) => {
     if (!isRoundWorkholding(clamp)) return clamp
     const ownDiameter = roundWorkholdingDiameter(clamp, stock)
     const across = centre - ownDiameter / 2
-    const height = stock.thickness / 2 + ownDiameter / 2
+    const height = barPivotZ(stock) + ownDiameter / 2
     if (stock.axis === 'x') {
       if (clamp.y === across && clamp.height === height) return clamp
       changed = true

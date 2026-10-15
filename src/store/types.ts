@@ -415,11 +415,11 @@ export interface ProjectStore {
   /** Set the stock and the machine origin in one undo step (a block↔bar switch moves both). */
   setStockAndOrigin: (stock: Stock, origin: Project['origin']) => void
   /**
-   * Switch the stock between a block and a round bar in one undo step: the
-   * origin follows, a bar gains a chuck, a block loses every chuck and
-   * tailstock (#392 slice C).
+   * Switch the stock between a block, a round bar and a square blank in one
+   * undo step: the origin follows, a bar gains a chuck, a block loses every
+   * chuck and tailstock (#392 slice C, square blank #1016 C2-S2).
    */
-  setStockShape: (shape: 'block' | 'round') => void
+  setStockShape: (shape: 'block' | 'round' | 'square') => void
   /**
    * Choose the project type (issue #1028) in one undo step: the stock takes a
    * shape the new type offers, and — when the selected machine no longer suits

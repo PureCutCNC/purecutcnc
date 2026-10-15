@@ -24,7 +24,6 @@ import {
   defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
-  isRoundStock,
   LATEST_PROJECT_VERSION, cloneTextLayout,
   normalizeRoundStock,
 } from '../../types/project'
@@ -46,7 +45,7 @@ import type {
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
-import { normalizeSquareStock } from '../../types/barStock'
+import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -748,14 +747,15 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
   // The legacy rule moves an origin that sits on the block's min corner (its
-  // former default). A round bar is never a legacy file, so a bar whose origin
-  // the user put on its min corner reloads unchanged.
+  // former default). A bar — round or square — is never a legacy file, so a
+  // bar whose origin the user put on its min corner reloads unchanged
+  // (#1016 C2-S2: a square blank keeps a custom corner origin too).
   const legacyDefaultOrigin = authoritativeProject.origin
     && authoritativeProject.origin.name === 'Origin'
     && authoritativeProject.origin.x === stockBounds.minX
     && authoritativeProject.origin.y === stockBounds.minY
     && authoritativeProject.origin.z === authoritativeProject.stock.thickness
-    && !isRoundStock(authoritativeProject.stock)
+    && !isBarStock(authoritativeProject.stock)
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,

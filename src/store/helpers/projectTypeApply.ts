@@ -32,6 +32,7 @@
 import { setupFace } from '../../engine/setupOrientation'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { Project, ProjectType } from '../../types/project'
+import { isSquareStock } from '../../types/barStock'
 import { activeSetup, findSetupForFace } from './activeFace'
 import { provisionalSetupId } from './provisionalSetup'
 import {
@@ -54,7 +55,14 @@ export function projectWithProjectType(
   type: ProjectType,
   candidates: readonly MachineDefinition[],
 ): Project {
-  const shaped = projectWithStockShape(project, stockShapesForProjectType(type)[0])
+  const targetShape = stockShapesForProjectType(type)[0]
+  // Rotary asks for a round bar, but a square blank already authored for
+  // turning is a valid rotary stock (#1016 C2-S2): preserve it. A shape
+  // selector between the two bars comes in a later slice; a project leaving
+  // rotary converts through the same block path as before and deletes nothing.
+  const shaped = isSquareStock(project.stock) && targetShape === 'round'
+    ? project
+    : projectWithStockShape(project, targetShape)
   // The stored-field comparison is deliberate: a hand-built project without the
   // field takes the write, so saving always carries the type (issue #1028).
   const typed = project.meta.projectType === type ? shaped : { ...shaped, meta: { ...shaped.meta, projectType: type } }

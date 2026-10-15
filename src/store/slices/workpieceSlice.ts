@@ -23,7 +23,9 @@ import {
   rectProfile,
   stockFromFeature,
   type FeatureInstance,
+  type Stock,
 } from '../../types/project'
+import { isSquareStock, normalizeSquareStock } from '../../types/barStock'
 import { originPlacementFromStock } from '../helpers/activeFace'
 import { projectWithStockShape, toBlockStock } from '../helpers/stockShape'
 import { projectWithProjectType } from '../helpers/projectTypeApply'
@@ -49,6 +51,15 @@ export type WorkpieceSlice = Pick<
   | 'startPlaceOrigin'
   | 'placeOriginAt'
 >
+
+/**
+ * A written stock keeps a square blank canonical: its across width is always
+ * the physical side, on the existing centreline (#1016 C2-S2). A block or a
+ * round bar is returned untouched, byte-identically.
+ */
+function canonicalStock(stock: Stock): Stock {
+  return isSquareStock(stock) ? normalizeSquareStock(stock) : stock
+}
 
 export function createWorkpieceSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
@@ -130,7 +141,7 @@ export function createWorkpieceSlice(
       set((s) => {
         const nextProject = {
           ...s.project,
-          stock,
+          stock: canonicalStock(stock),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {
@@ -158,7 +169,7 @@ export function createWorkpieceSlice(
       set((s) => {
         const nextProject = {
           ...s.project,
-          stock,
+          stock: canonicalStock(stock),
           origin,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
@@ -441,7 +452,7 @@ export function createWorkpieceSlice(
           }
         }
 
-        const nextStock = isRoundStock(s.project.stock)
+        const nextStock: Stock = isRoundStock(s.project.stock)
           ? normalizeRoundStock({
               ...s.project.stock,
               // A change across the bar's axis is a diameter change; along it is
@@ -451,10 +462,20 @@ export function createWorkpieceSlice(
                 : s.project.stock.thickness,
               profile: rectProfile(newMinX, newMinY, newW, newH),
             })
-          : {
-              ...s.project.stock,
-              profile: rectProfile(newMinX, newMinY, newW, newH),
-            }
+          : isSquareStock(s.project.stock)
+            ? normalizeSquareStock({
+                ...s.project.stock,
+                // The same rule for a square blank: across is the physical side
+                // (and so the Z extent), along is the length.
+                thickness: (s.project.stock.axis === 'x' ? axis === 'height' : axis === 'width')
+                  ? value
+                  : s.project.stock.thickness,
+                profile: rectProfile(newMinX, newMinY, newW, newH),
+              })
+            : {
+                ...s.project.stock,
+                profile: rectProfile(newMinX, newMinY, newW, newH),
+              }
 
         const nextProject = {
           ...s.project,

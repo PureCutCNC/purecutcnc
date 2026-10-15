@@ -1728,8 +1728,14 @@ export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): numb
 
 export function defaultOrigin(stock: Stock): MachineOrigin {
   const bounds = getStockBounds(stock)
-  if (isRoundStock(stock)) {
-    const centre = roundStockCentre(stock)
+  // Both bars sit their default origin on the centreline (#1016 C2-S2): the
+  // round bar's former rule, with the same X-start / Y-start convention, so a
+  // square blank's origin is X minX / Y centre (axis 'x') and X centre / Y maxY
+  // (axis 'y'), and Z stays the physical top. A block keeps its corner origin.
+  if (isRoundStock(stock) || stock.shape === 'square') {
+    const centre = stock.axis === 'x'
+      ? (bounds.minY + bounds.maxY) / 2
+      : (bounds.minX + bounds.maxX) / 2
     return {
       name: 'Origin',
       x: stock.axis === 'x' ? bounds.minX : centre,

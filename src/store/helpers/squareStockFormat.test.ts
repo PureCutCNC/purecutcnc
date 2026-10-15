@@ -209,6 +209,48 @@ test('a square blank infers a rotary project exactly where a round bar does', ()
   assert.equal(decodeProjectFormat(raw).project.meta.projectType, 'rotary', 'a saved square project loads as rotary')
 })
 
+// ── A custom origin stays custom ──────────────────────────────
+
+test('a square blank with a custom corner origin keeps it on load — the legacy block migration never applies to a bar', () => {
+  const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
+  const bounds = getStockBounds(stock)
+  // The exact shape of the legacy block default origin: min corner, Z = thickness.
+  const cornerOrigin = { name: 'Origin', x: bounds.minX, y: bounds.minY, z: stock.thickness, visible: true }
+  const loaded = saveAndLoad({ ...projectWithStock(stock), origin: cornerOrigin })
+  assert.deepEqual(loaded.origin, cornerOrigin, 'the square keeps the origin the user put on its corner')
+  assert.notDeepEqual(defaultOrigin(loaded.stock), cornerOrigin,
+    'the default origin really is elsewhere, so the migration would have moved it')
+
+  // The same origin on a block is still migrated to the block default.
+  const blockCorner = { name: 'Origin', x: 0, y: 0, z: 20, visible: true }
+  const loadedBlock = saveAndLoad({ ...projectWithStock(defaultStock(100, 80, 20)), origin: blockCorner })
+  assert.deepEqual(loadedBlock.origin, defaultOrigin(loadedBlock.stock),
+    'a block still takes the legacy migration')
+})
+
+test('a moved square origin survives save/load and the existing unit conversion', () => {
+  const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
+  const moved = { name: 'Corner', x: 3, y: -2, z: 12, visible: false }
+  const project = { ...projectWithStock(stock), origin: moved }
+
+  assert.deepEqual(saveAndLoad(project).origin, moved, 'save/load keeps the moved origin exactly')
+
+  const inches = convertProjectUnits(project, 'inch')
+  closeTo(inches.origin.x, 3 / 25.4, 'the origin X converts')
+  closeTo(inches.origin.y, -2 / 25.4, 'the origin Y converts')
+  closeTo(inches.origin.z, 12 / 25.4, 'the origin Z converts')
+  assert.equal(inches.origin.name, 'Corner', 'the name survives')
+  assert.equal(inches.origin.visible, false, 'the visibility survives')
+  assert.equal(inches.stock.shape, 'square', 'the blank stays square through the conversion')
+
+  const back = saveAndLoad(convertProjectUnits(inches, 'mm'))
+  closeTo(back.origin.x, 3, 'the origin X returns to mm')
+  closeTo(back.origin.y, -2, 'the origin Y returns to mm')
+  closeTo(back.origin.z, 12, 'the origin Z returns to mm')
+  assert.equal(back.stock.shape, 'square', 'the loaded blank is still square')
+  assert.equal(back.stock.axis, 'x', 'and keeps its axis')
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 console.log('All squareStockFormat tests PASSED.')
