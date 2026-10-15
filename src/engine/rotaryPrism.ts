@@ -54,11 +54,12 @@ import type { ImportedTriangleMesh } from './importedMesh'
  *   closed prism, endcaps included. `bounds` is computed from the emitted
  *   vertices, so a loader that fits raw Z bounds to a feature's Z span (the
  *   persisted model path) can be handed the real extents.
- * - A request whose emitted coordinates cannot survive the mesh's Float32
- *   storage — non-finite stock bounds, a coordinate outside the Float32 range,
- *   or an axial span that collapses under the Float32 rounding — is refused
- *   with `RangeError`. The function returns either a mesh whose every stored
- *   coordinate and bound is finite, or no mesh at all.
+ * - A request whose emitted geometry cannot survive the mesh's Float32 storage
+ *   is refused with `RangeError`: non-finite stock bounds, a coordinate outside
+ *   the Float32 range, an axial span that collapses under the Float32 rounding,
+ *   a cross-section that rounds to fewer than `sides` distinct ring vertices,
+ *   or a triangle that rounds to zero area. The function returns either a mesh
+ *   that is still a closed prism, or no mesh at all.
  * - The winding is oriented from the local cross-section and the project axis,
  *   never from the global sign of project Y. See the comment at the index
  *   build below for the exact derivation.
@@ -157,6 +158,59 @@ function validate(
 }
 
 /**
+ * Validate the geometry as the Float32 mesh actually stores it. Every requested
+ * number can be finite, positive and inside the bar while the emitted ring is
+ * not a polygon at all: rounding can collapse a small cross-section to a single
+ * point, merge two ring vertices into one, or flatten three distinct vertices
+ * into a straight line. Those cases pass the finite-vertex and axial-span
+ * checks, so they are refused here, before the mesh is returned. Nothing is
+ * compared against a minimum feature size — only the geometry that would be
+ * handed back.
+ */
+function assertEmittedGeometry(positions: Float32Array, index: readonly number[], sides: number): void {
+  // The two rings share the cross-section: ring r's vertex i lives at
+  // (r * sides + i) * 3. A ring whose vertices are not all distinct is not the
+  // requested polygon, and the endcap fan from it is necessarily degenerate.
+  for (let ring = 0; ring < 2; ring++) {
+    for (let i = 0; i < sides; i++) {
+      for (let j = i + 1; j < sides; j++) {
+        const a = (ring * sides + i) * 3
+        const b = (ring * sides + j) * 3
+        if (positions[a] === positions[b]
+          && positions[a + 1] === positions[b + 1]
+          && positions[a + 2] === positions[b + 2]) {
+          throw new RangeError(
+            `Rotary polygon cross-section collapses under Float32 mesh coordinates: vertices ${i} and ${j} of a ring coincide. `
+            + 'Move the bar closer to the origin or enlarge the polygon.')
+        }
+      }
+    }
+  }
+
+  // A zero-area triangle is a sliver the loaders and CSG cannot use, and the
+  // ring check above does not catch three *distinct* vertices that rounded into
+  // a straight line — a small polygon at an offset can do exactly that.
+  for (let t = 0; t < index.length; t += 3) {
+    const a = index[t] * 3
+    const b = index[t + 1] * 3
+    const c = index[t + 2] * 3
+    const ux = positions[b] - positions[a]
+    const uy = positions[b + 1] - positions[a + 1]
+    const uz = positions[b + 2] - positions[a + 2]
+    const vx = positions[c] - positions[a]
+    const vy = positions[c + 1] - positions[a + 1]
+    const vz = positions[c + 2] - positions[a + 2]
+    if (uy * vz - uz * vy === 0
+      && uz * vx - ux * vz === 0
+      && ux * vy - uy * vx === 0) {
+      throw new RangeError(
+        `Rotary polygon triangle ${t / 3} is degenerate under Float32 mesh coordinates; `
+        + 'the cross-section or the span is too small to represent in the mesh.')
+    }
+  }
+}
+
+/**
  * Build a closed regular polygon prism in stock coordinates inside a round bar.
  *
  * @throws RangeError when the stock has no usable diameter or finite bounds, or
@@ -165,7 +219,8 @@ function validate(
  *   not finite and strictly ascending inside the bar, the polygon's
  *   across-corners larger than the stock diameter (within a small documented
  *   numeric tolerance), or the emitted geometry not representable in the mesh's
- *   Float32 coordinates (a non-finite vertex or an axial span that collapses).
+ *   Float32 coordinates (a non-finite coordinate, a collapsed axial span, a
+ *   duplicated ring vertex, or a degenerate triangle).
  */
 export function buildRotaryPolygonPrism(
   stock: RoundStock,
@@ -289,6 +344,10 @@ export function buildRotaryPolygonPrism(
     throw new RangeError(
       `Rotary polygon span ${alongStart}..${alongEnd} collapses to zero length under Float32 mesh coordinates.`)
   }
+
+  // The axial span can survive while the cross-section does not, so the emitted
+  // ring and triangles are checked as stored before the mesh is returned.
+  assertEmittedGeometry(positions, index, sides)
 
   return {
     positions,

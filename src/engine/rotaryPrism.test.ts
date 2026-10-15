@@ -59,6 +59,10 @@
  *   to a non-finite rotation, so the emitted coordinates are non-finite and the
  *   helper throws its Float32-range `RangeError` instead of building the mesh
  *   the huge-rotation block expects.
+ * - Disable the emitted-geometry guard in `rotaryPrism.ts` (comment out the
+ *   `assertEmittedGeometry` call): the A9 collapse, offset-ring and zero-area
+ *   triangle fixtures stop throwing, so their `assert.throws` fails with
+ *   "Missing expected exception".
  */
 
 import assert from 'node:assert/strict'
@@ -644,6 +648,65 @@ function loadPersisted(project: Project): ImportedTriangleMesh {
 }
 
 // ---------------------------------------------------------------------------
+// A9: what the emitted mesh can actually represent.
+//
+// Every requested number can be finite, positive and inside the bar while
+// Float32 storage still cannot hold the prism: the cross-section collapses to a
+// point, two ring vertices round together, or three distinct vertices round
+// into a straight line. The guard reads the emitted geometry, not a minimum
+// feature size, so it behaves the same on both bar axes.
+// ---------------------------------------------------------------------------
+
+{
+  const plain = {
+    x: roundStock(40, 80, 'x'),
+    y: roundStock(40, 80, 'y'),
+  } as const
+  // A representable across-flats at a bar whose centre is far from the origin:
+  // the ring values are fine as numbers, but adding them to ~1e7 and storing
+  // Float32 rounds the vertices together.
+  const offset = {
+    x: roundStock(40, 80, 'x', { x: 0, y: 1e7 }),
+    y: roundStock(40, 80, 'y', { x: 1e7, y: 0 }),
+  } as const
+
+  for (const axis of ['x', 'y'] as const) {
+    // The reported case: a finite, positive across-flats below the Float32
+    // resolution of the bar's centre. It used to emit 2 * sides coordinates of
+    // which only two were distinct — a span with no solid in it.
+    assert.throws(
+      () => buildRotaryPolygonPrism(plain[axis], { sides: 6, acrossFlats: 1e-100, alongStart: 10, alongEnd: 30 }),
+      RangeError, `${axis} an across-flats below the mesh's Float32 resolution is refused`)
+
+    // The representable-but-offset collapse: the polygon is 1 mm across flats
+    // at a bar 1e7 from the origin, so the emitted ring has fewer than `sides`
+    // distinct vertices even though its axial span is healthy.
+    assert.throws(
+      () => buildRotaryPolygonPrism(offset[axis], { sides: 6, acrossFlats: 1, alongStart: 10, alongEnd: 30 }),
+      RangeError, `${axis} a representable ring that collapses at a large across offset is refused`)
+
+    // All `sides` ring vertices stay distinct here, but three of them round
+    // into a straight line: the degenerate-triangle half of the guard is what
+    // refuses this one, not the duplicate-vertex half.
+    assert.throws(
+      () => buildRotaryPolygonPrism(plain[axis], { sides: 6, acrossFlats: 4e-6, alongStart: 10, alongEnd: 30 }),
+      RangeError, `${axis} a triangle that rounds to zero area is refused`)
+
+    // The accepted side: a small but genuinely representable cross-section
+    // still builds as a closed, outward prism with a positive volume.
+    const small = buildRotaryPolygonPrism(plain[axis], { sides: 6, acrossFlats: 1e-3, alongStart: 10, alongEnd: 30 })
+    assert.equal(small.positions.length, 6 * 2 * 3, `${axis} small prism keeps two rings of six vertices`)
+    const distinct = new Set<string>()
+    for (let i = 0; i < small.positions.length; i += 3) {
+      distinct.add(`${small.positions[i]},${small.positions[i + 1]},${small.positions[i + 2]}`)
+    }
+    assert.equal(distinct.size, 12, `${axis} small prism keeps all twelve ring vertices distinct`)
+    assertClosedOriented(small, `${axis} small representable prism`)
+    assert.ok(signedVolume(small) > 0, `${axis} small representable prism keeps a positive volume`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // B: physical cutter sampling through the real shared sampler.
 //
 // The reference is the sampler's own admissible-tip rule applied to the exact
@@ -972,10 +1035,16 @@ function scaledRoundStock(axis: 'x' | 'y', scale: number): RoundStock {
     assert.deepEqual(Array.from(loaded.index), Array.from(inchMesh.index), `${axis} inch index preserved`)
 
     // Inch cutter radii and sampler cell are the mm ones divided by 25.4, so the
-    // sampler sees the same physical footprint and grid.
+    // sampler sees the same physical footprint and grid. `sourceUnits` stays mm
+    // (that is where the cutter was defined); `units` is the numeric unit the
+    // tool is expressed in, which is the inch project's, not the spread mm tool.
     const inchModel: RotaryModelMesh = { positions: loaded.positions, index: loaded.index }
-    const inchFlatTool: NormalizedTool = { ...FLAT_TOOL, diameter: FLAT_TOOL.diameter * INCH, radius: FLAT_TOOL.radius * INCH }
-    const inchBallTool: NormalizedTool = { ...BALL_TOOL, diameter: BALL_TOOL.diameter * INCH, radius: BALL_TOOL.radius * INCH }
+    const inchFlatTool: NormalizedTool = {
+      ...FLAT_TOOL, units: 'inch', diameter: FLAT_TOOL.diameter * INCH, radius: FLAT_TOOL.radius * INCH,
+    }
+    const inchBallTool: NormalizedTool = {
+      ...BALL_TOOL, units: 'inch', diameter: BALL_TOOL.diameter * INCH, radius: BALL_TOOL.radius * INCH,
+    }
     const inchFlat = sampleRotaryModel(inchModel, inchStock, inchFlatTool,
       { anglesDeg: SAMPLE_ANGLES, along: [SAMPLE_ALONG * INCH], requestedCellSize: SAMPLE_CELL * INCH }, [])
     const inchBall = sampleRotaryModel(inchModel, inchStock, inchBallTool,
