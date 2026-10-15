@@ -347,6 +347,14 @@ function planRotaryPattern(
     tool = resolved
   }
   const toolRef = tool.id
+  // `defaultOperationForTarget` seeds the operation's feed, plunge feed and
+  // stepdown straight from the tool record — correct for `addOperation`, whose
+  // picker only ever offers tools already in project units, but a Thread or
+  // Flutes cutter is an *existing* record that may have been imported or
+  // authored in the other unit (issue #1016). Seed from a throwaway copy
+  // converted into project units so the operation lands in the project's scale;
+  // the stored tool record, its id and the reference above are untouched.
+  const defaultsTool = tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units)
 
   const thickness = project.stock.thickness
   const folderId = nextUniqueGeneratedId(project, 'fd')
@@ -391,7 +399,7 @@ function planRotaryPattern(
   const target: OperationTarget = { source: 'features', featureIds: instances.map((instance) => instance.id) }
   const operationId = nextUniqueGeneratedId(project, 'op')
   const template = defaultOperationForTarget(project, 'follow_line', 'rough', target, project.operations.length, {
-    tool,
+    tool: defaultsTool,
     toolRef,
   })
   const operation: Operation = {
