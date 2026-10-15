@@ -277,7 +277,7 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div
-        className="dialog dialog--import dialog--no-clip dialog--rotary"
+        className="dialog dialog--import dialog--rotary"
         role="dialog"
         aria-modal="true"
         aria-labelledby="rotary-dialog-title"

@@ -27,7 +27,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
   cancelPendingAdd,
@@ -1026,6 +1026,82 @@ test('the created thread wraps in the 3D overlay and removes simulation material
   ).toBeGreaterThan(0)
 })
 
+// ── Tablet geometry: the dialog must contain its own footer and pickers ──
+//
+// `toBeVisible()` and an element's own bounding box both pass for a control
+// the dialog has clipped: the box is reported in full while its pixels are cut
+// off at the dialog edge. These helpers compare the *complete* rectangle
+// against the dialog and the viewport, then hit-test the centre with
+// `elementFromPoint`, so a control drawn outside its frame fails the test
+// instead of passing on visibility alone (issue #1016 C1 correction).
+
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function inside(inner: Box, outer: Box, slack = 1): boolean {
+  return (
+    inner.x >= outer.x - slack &&
+    inner.y >= outer.y - slack &&
+    inner.x + inner.width <= outer.x + outer.width + slack &&
+    inner.y + inner.height <= outer.y + outer.height + slack
+  )
+}
+
+/** The complete rectangle is inside the viewport and nothing covers its centre. */
+async function expectReachable(page: Page, locator: Locator, label: string): Promise<Box> {
+  // A field below the fold is scrolled into the body first; the box asserted is
+  // then the one the user sees, not an off-screen layout position.
+  await locator.scrollIntoViewIfNeeded()
+  const box = await locator.boundingBox()
+  expect(box, `${label} has a layout box`).not.toBeNull()
+  const viewport = page.viewportSize()
+  expect(viewport, 'the test has a viewport').not.toBeNull()
+  expect(
+    inside(box!, { x: 0, y: 0, width: viewport!.width, height: viewport!.height }),
+    `${label} is complete inside the viewport`,
+  ).toBe(true)
+  const hit = await locator.evaluate((element, point) => {
+    const top = document.elementFromPoint(point.x, point.y)
+    return top !== null && (element === top || element.contains(top))
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 })
+  expect(hit, `${label} centre is not occluded`).toBe(true)
+  return box!
+}
+
+/** An action's complete rectangle must also lie inside the dialog's frame. */
+async function expectActionInsideDialog(page: Page, action: Locator, dialog: Locator, label: string): Promise<void> {
+  const box = await expectReachable(page, action, label)
+  const frame = await dialog.boundingBox()
+  expect(frame, 'the dialog has a layout box').not.toBeNull()
+  expect(inside(box, frame!), `${label} is complete inside the dialog`).toBe(true)
+}
+
+/** Open a shared Select and prove its list and chosen option are reachable. */
+async function expectPickerReachable(
+  page: Page,
+  trigger: Locator,
+  option: Locator,
+  chosen: string,
+  dialog: Locator,
+  label: string,
+): Promise<void> {
+  const triggerBox = await expectReachable(page, trigger, `${label} trigger`)
+  const frame = await dialog.boundingBox()
+  expect(frame, 'the dialog has a layout box').not.toBeNull()
+  expect(inside(triggerBox, frame!), `${label} trigger is complete inside the dialog`).toBe(true)
+
+  await trigger.click()
+  await expect(option).toBeVisible()
+  const optionBox = await expectReachable(page, option, `${label} option`)
+  expect(inside(optionBox, frame!), `${label} option is complete inside the dialog`).toBe(true)
+  await option.click()
+  await expect(trigger).toContainText(chosen)
+}
+
 test.describe('tablet Thread and Flutes', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
@@ -1053,6 +1129,144 @@ test.describe('tablet Thread and Flutes', () => {
     // Closing returns focus to the canvas.
     const canvasFocused = await page.evaluate(() => document.activeElement?.classList.contains('sketch-canvas') ?? false)
     expect(canvasFocused).toBe(true)
+  })
+
+  test('both dialogs keep every action and picker complete inside the dialog', async ({ app, ui }) => {
+    const { page } = app
+    await prepareMmRoundBarWithRotary(page)
+    await seedFluteTools(page)
+    await switchToAround(page)
+
+    for (const kind of ['thread', 'flutes'] as const) {
+      await rotaryEntry(page, ui, kind).click()
+      const dialog = ui.rotary.dialog(page)
+      await expect(dialog).toBeVisible()
+
+      const frame = await dialog.boundingBox()
+      expect(frame, 'the dialog has a layout box').not.toBeNull()
+      const viewport = page.viewportSize()!
+      expect(
+        inside(frame!, { x: 0, y: 0, width: viewport.width, height: viewport.height }),
+        `${kind} dialog is complete inside the viewport`,
+      ).toBe(true)
+
+      await expectActionInsideDialog(page, ui.rotary.cancelButton(page), dialog, `${kind} Cancel`)
+      await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, `${kind} Create`)
+      await expectPickerReachable(
+        page,
+        ui.rotary.directionTrigger(page),
+        ui.rotary.directionOption(page, 'Left-hand'),
+        'Left-hand',
+        dialog,
+        `${kind} Direction`,
+      )
+      if (kind === 'flutes') {
+        await expectPickerReachable(
+          page,
+          ui.rotary.toolTrigger(page),
+          ui.rotary.toolOption(page, 'Ball 3'),
+          'Ball 3',
+          dialog,
+          `${kind} Tool`,
+        )
+      }
+
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+    }
+  })
+
+  test('a Left flute created from the tablet dialog reverses the hand and undoes in one step', async ({ app, ui }) => {
+    const { page } = app
+    await prepareMmRoundBarWithRotary(page)
+    await seedFluteTools(page)
+    await switchToAround(page)
+    const baseline = await rotarySnapshot(page)
+
+    await ui.rotary.flutesButton(page).click()
+    const dialog = ui.rotary.dialog(page)
+    await expect(dialog).toBeVisible()
+    await ui.rotary.field(page, 'length').fill('30')
+    await ui.rotary.field(page, 'count').fill('2')
+    await ui.rotary.field(page, 'twist').fill('2')
+    await ui.rotary.field(page, 'depth').fill('1')
+
+    await expectPickerReachable(page, ui.rotary.toolTrigger(page), ui.rotary.toolOption(page, 'Ball 3'), 'Ball 3', dialog, 'Flutes Tool')
+    await expectPickerReachable(
+      page,
+      ui.rotary.directionTrigger(page),
+      ui.rotary.directionOption(page, 'Left-hand'),
+      'Left-hand',
+      dialog,
+      'Flutes Direction',
+    )
+    await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, 'Flutes Create')
+    await ui.rotary.createButton(page).click()
+    await expect(dialog).toBeHidden()
+
+    const geometry = await rotaryLineGeometry(page)
+    expect(geometry.lineCount).toBe(2)
+    expect(geometry.acrossPerLine.every((across) => across < 0)).toBe(true)
+    expect((await rotarySnapshot(page)).operationToolRef).toBe('t-ball')
+
+    await undo(page)
+    expect(await rotarySnapshot(page)).toMatchObject({
+      folderCount: baseline.folderCount,
+      featureCount: baseline.featureCount,
+      operationCount: baseline.operationCount,
+      historyPast: baseline.historyPast,
+    })
+  })
+})
+
+test.describe('tablet Thread and Flutes on a short viewport', () => {
+  // At this height the form is taller than the body, so the body must scroll
+  // while the header and the footer actions stay put.
+  test.use({ viewport: { width: 1180, height: 600 }, hasTouch: true })
+
+  test('both dialogs keep their actions and pickers reachable while the body scrolls', async ({ app, ui }) => {
+    const { page } = app
+    await prepareMmRoundBarWithRotary(page)
+    await seedFluteTools(page)
+    await switchToAround(page)
+
+    for (const kind of ['thread', 'flutes'] as const) {
+      await rotaryEntry(page, ui, kind).click()
+      const dialog = ui.rotary.dialog(page)
+      await expect(dialog).toBeVisible()
+
+      // The form really is taller than the body at this height, so the test is
+      // exercising the scroll path and not a form that happens to fit.
+      const overflows = await dialog.evaluate((element) => {
+        const body = element.querySelector('.dialog-body')
+        return body !== null && body.scrollHeight > body.clientHeight
+      })
+      expect(overflows, `${kind} body scrolls on a short viewport`).toBe(true)
+
+      await expectActionInsideDialog(page, ui.rotary.cancelButton(page), dialog, `${kind} Cancel`)
+      await expectActionInsideDialog(page, ui.rotary.createButton(page), dialog, `${kind} Create`)
+      await expectPickerReachable(
+        page,
+        ui.rotary.directionTrigger(page),
+        ui.rotary.directionOption(page, 'Left-hand'),
+        'Left-hand',
+        dialog,
+        `${kind} Direction`,
+      )
+      if (kind === 'flutes') {
+        await expectPickerReachable(
+          page,
+          ui.rotary.toolTrigger(page),
+          ui.rotary.toolOption(page, 'Ball 3'),
+          'Ball 3',
+          dialog,
+          `${kind} Tool`,
+        )
+      }
+
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+    }
   })
 })
 
