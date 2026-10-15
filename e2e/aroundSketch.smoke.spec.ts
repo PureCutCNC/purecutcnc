@@ -84,7 +84,7 @@ async function prepareRoundBarWithRotary(page: Page): Promise<RoundBar> {
   await seedProject(page, JSON.stringify({
     ...project,
     stock: bar,
-    meta: { ...meta, machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
+    meta: { ...meta, projectType: 'rotary', machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
   }))
   const barBounds = getProfileBounds(bar.profile)
   const zero = barBounds.minY + diameter / 2

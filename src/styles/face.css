@@ -427,6 +427,31 @@
   line-height: 1.5;
 }
 
+/* Project type change confirm (issue #1028). */
+.dialog-body.project-type-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.project-type-change__intro {
+  margin: 0;
+  color: var(--status-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-type-change__list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.project-type-change__list li + li {
+  margin-top: 4px;
+}
+
 .change-face__table {
   width: 100%;
   border: 1px solid var(--line);

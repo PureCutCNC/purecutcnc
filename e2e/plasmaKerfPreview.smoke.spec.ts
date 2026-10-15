@@ -25,7 +25,6 @@
  * — so a change to the fixture geometry or the fit keeps the test honest.
  */
 
-import { readFileSync } from 'node:fs'
 import type { Locator, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
@@ -33,16 +32,7 @@ import {
   openRowContextMenu,
   rowByName,
   seedProject,
-  selectMachine,
 } from './helpers'
-
-/**
- * The bundled definitions are the machines the picker offers, so the fixture's
- * selected machine is read from the same JSON the app ships.
- */
-const QT_PLASMAC = JSON.parse(
-  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
-) as { name: string }
 
 const PLASMA_OP = 'Plasma through-cut'
 const TORCH_DIAMETER_MM = 3
@@ -67,7 +57,7 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
 }
 
 /**
- * A small mm project with a plasma machine absent, one torch and one closed
+ * A small mm plasma project with no machine, one torch and one closed
  * subtract, so the plasma cut is added the way a user adds it — and a kerf that
  * is many canvas pixels wide. A large stock would make the band sub-pixel and
  * the probe meaningless.
@@ -81,6 +71,9 @@ function buildPlasmaKerfFixtureJson(): string {
       created: now,
       modified: now,
       units: 'mm',
+      // The project type, not a machine, is what makes this a plasma project
+      // and offers the plasma cut (issue #1028).
+      projectType: 'plasma',
       showFeatureInfo: true,
       showDimensions: true,
       copyMode: 'reference',
@@ -169,10 +162,9 @@ function buildPlasmaKerfFixtureJson(): string {
   })
 }
 
-/** Seed the fixture, select the plasma machine and add the plasma cut on the closed feature. */
+/** Seed the plasma fixture and add the plasma cut on the closed feature. */
 async function openPlasmaKerfProject(page: Page, ui: typeof import('./selectors')): Promise<void> {
   await seedProject(page, buildPlasmaKerfFixtureJson())
-  await selectMachine(page, ui, QT_PLASMAC.name)
 
   const menu = await openRowContextMenu(page, rowByName(page, 'Kerf Target'))
   await ui.contextMenu.item(menu, 'Create operation').hover()

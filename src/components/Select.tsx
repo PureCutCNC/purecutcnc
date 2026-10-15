@@ -14,13 +14,20 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 
 export interface SelectOption<T extends string> {
   value: T
   label: string
   detail?: string
   disabled?: boolean
+  /**
+   * Heading this option sits under. Consecutive options sharing a group render
+   * one non-interactive heading above them — the machine picker's "Other
+   * machines" section (issue #1028). Options with no group render plain, as
+   * every existing picker does.
+   */
+  group?: string
 }
 
 interface SelectProps<T extends string> {
@@ -72,23 +79,27 @@ export function Select<T extends string>({ value, options, onChange, disabled }:
       </button>
       {open && (
         <div className="ui-select__dropdown" role="listbox">
-          {options.map((option) => (
-            <div
-              key={option.value}
-              className={`ui-select__option ${option.value === value ? 'ui-select__option--selected' : ''} ${option.disabled ? 'ui-select__option--disabled' : ''}`}
-              role="option"
-              aria-selected={option.value === value}
-              aria-disabled={option.disabled || undefined}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                if (option.disabled) return
-                onChange(option.value)
-                setOpen(false)
-              }}
-            >
-              <span className="ui-select__option-label">{option.label}</span>
-              {option.detail ? <span className="ui-select__option-detail">{option.detail}</span> : null}
-            </div>
+          {options.map((option, index) => (
+            <Fragment key={option.value}>
+              {option.group !== undefined && option.group !== options[index - 1]?.group ? (
+                <div className="ui-select__group" role="presentation">{option.group}</div>
+              ) : null}
+              <div
+                className={`ui-select__option ${option.value === value ? 'ui-select__option--selected' : ''} ${option.disabled ? 'ui-select__option--disabled' : ''}`}
+                role="option"
+                aria-selected={option.value === value}
+                aria-disabled={option.disabled || undefined}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  if (option.disabled) return
+                  onChange(option.value)
+                  setOpen(false)
+                }}
+              >
+                <span className="ui-select__option-label">{option.label}</span>
+                {option.detail ? <span className="ui-select__option-detail">{option.detail}</span> : null}
+              </div>
+            </Fragment>
           ))}
         </div>
       )}

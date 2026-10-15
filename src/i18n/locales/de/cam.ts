@@ -638,6 +638,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.setup.export': 'Aufspannung exportieren: {name}',
   'cam.setup.flipped': 'Um {axis} gedreht',
   'cam.setup.aroundStatus': 'Stange in der Drehachse',
+  'cam.setup.aroundKeptNotCut': 'Around-Operationen bleiben erhalten, werden aber in einem {type}-Projekt nicht geschnitten',
   'cam.setup.noRegistration': 'Keine Registrierreferenzen. Werkstückposition nach dem Wenden prüfen.',
   'cam.setup.registrationCount': 'Registrierreferenzen: {count}',
   'cam.setup.empty': 'Keine Operationen in dieser Aufspannung.',

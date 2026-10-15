@@ -32,6 +32,7 @@ export const dialogsEn = {
   // ── New Project dialog ──
   'dialogs.newProject.title': 'New project',
   'dialogs.newProject.projectName': 'Project name',
+  'dialogs.newProject.projectType': 'Project type',
   'dialogs.newProject.template': 'Template',
   'dialogs.newProject.templateBlankMetric': 'Blank metric',
   'dialogs.newProject.templateBlankMetricMeta': 'Empty project in millimeters.',
@@ -65,6 +66,18 @@ export const dialogsEn = {
   'dialogs.newProject.templateLabel.fileSetup': 'Template file setup: {name}',
   'dialogs.newProject.templateLabel.fileSetupFallback': 'Template file setup',
   'dialogs.newProject.templateFileMetaSettings': '{name} (settings only)',
+
+  // ── Project type change confirm (issue #1028) ──
+  'dialogs.projectType.title': 'Change project type',
+  'dialogs.projectType.intro': 'Nothing is deleted. Changing to {to}:',
+  'dialogs.projectType.inactiveOperations.one': '1 enabled operation will not be cut',
+  'dialogs.projectType.inactiveOperations.other': '{count} enabled operations will not be cut',
+  'dialogs.projectType.hiddenAroundFeatures.one': '1 Around feature is kept, hidden and not exported',
+  'dialogs.projectType.hiddenAroundFeatures.other': '{count} Around features are kept, hidden and not exported',
+  'dialogs.projectType.toRound': 'The block becomes a round bar of the same size',
+  'dialogs.projectType.toBlock': 'The round bar becomes a block of the same size',
+  'dialogs.projectType.machineChange': 'Machine changes to {name}',
+  'dialogs.projectType.confirm': 'Change project type',
 
   // ── Import Geometry dialog ──
   'dialogs.importGeometry.title': 'Import geometry',

@@ -91,7 +91,7 @@ const ALL_CODES = [
   'aroundStockMismatch', 'aroundCentreline', 'aroundCutReachesCentreline',
   'rotaryToolUnsupported', 'rotaryBelowCentreline', 'rotaryNoRoom', 'rotaryModelOutsideBar',
   'setupTargetNotThrough', 'postMixedSetups', 'postSetupOperationRefused',
-  'postSetupNoRegistration',
+  'postSetupNoRegistration', 'exportMachineTypeMismatch',
   'postPlasmaOperationSkipped', 'postPlasmaCutSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postPlasmaSafeHeightMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',
   'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis', 'postRotaryDrillNotExpanded',

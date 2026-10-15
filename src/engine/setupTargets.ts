@@ -44,6 +44,7 @@
 
 import { isRoundStock, isRotaryOperationKind } from '../types/project'
 import { activeSetup } from '../store/helpers/activeFace'
+import { aroundFeaturesActive } from '../store/helpers/projectType'
 import type {
   FeatureInstance,
   Operation,
@@ -78,7 +79,11 @@ export function featureStockSpan(
 
 /** What the rule reads of a feature: its row, whose definition says what it is. */
 type TargetFeature = Pick<FeatureInstance, 'definitionId' | 'z_top' | 'z_bottom'>
-type TargetProject = Pick<Project, 'dimensions' | 'stock' | 'featureDefinitions'>
+/**
+ * What the target rules read of a project. `meta` and `stock` are here for the
+ * project type (issue #1028): rotary targets exist only in a rotary project.
+ */
+type TargetProject = Pick<Project, 'dimensions' | 'stock' | 'featureDefinitions' | 'meta'>
 
 /** True when a span reaches both stock faces: its top at or above the top face, its bottom at or below the bottom one. */
 export function spanReachesBothFaces(span: StockZSpan, stock: Pick<Project['stock'], 'thickness'>): boolean {
@@ -130,7 +135,9 @@ export function featureReachableFromFace(
   face: SetupFace,
   kind?: OperationKind,
 ): boolean {
-  if (kind && isRotaryOperationKind(kind)) return face === 'around' && isImportedModel(project, feature)
+  if (kind && isRotaryOperationKind(kind)) {
+    return aroundFeaturesActive(project) && face === 'around' && isImportedModel(project, feature)
+  }
   if (face === 'around' && isImportedModel(project, feature)) return false
   if ((feature.authoringFace ?? 'top') === face) return true
   if (face === 'around' || feature.authoringFace === 'around') return false
@@ -178,7 +185,7 @@ export function judgeTargetFromFace(
   const { through, model } = crossFaceReach(project, feature)
   const span = featureStockSpan(project, feature)
   const status: TargetFaceStatus = kind && isRotaryOperationKind(kind)
-    ? face === 'around' && model ? 'same-face' : 'rejected'
+    ? aroundFeaturesActive(project) && face === 'around' && model ? 'same-face' : 'rejected'
     : face === 'around' && model ? 'rejected'
     : authoringFace === face ? 'same-face'
     : face !== 'around' && authoringFace !== 'around' && (through || model) ? 'cross-face' : 'rejected'
@@ -239,7 +246,8 @@ export function crossFaceTargetIds(project: Project, operation: Operation): stri
 export function targetAllowedInSetup(project: Project, target: OperationTarget, setupId: string | undefined, kind?: OperationKind): boolean {
   const setup = setupId === project.activeSetupId ? activeSetup(project) : project.setups?.find((entry) => entry.id === setupId)
   const face: SetupFace = setup ? setupFace(setup) : 'top'
-  if (kind && isRotaryOperationKind(kind) && (face !== 'around' || target.source !== 'features' || target.featureIds.length === 0)) return false
+  if (kind && isRotaryOperationKind(kind)
+    && (!aroundFeaturesActive(project) || face !== 'around' || target.source !== 'features' || target.featureIds.length === 0)) return false
   return judgeTargetsFromFace(project, target, face, kind).every((verdict) => verdict.status !== 'rejected')
 }
 
@@ -261,6 +269,13 @@ export interface SetupGenerationBlock {
 export function setupGenerationBlock(project: Project, operation: Operation): SetupGenerationBlock | null {
   const face = operationFace(project, operation)
   const rotary = isRotaryOperationKind(operation.kind)
+  // Around work exists only in a rotary project (issue #1028). A project whose
+  // type moved away from rotary keeps its Around setup, features and
+  // operations, but none of them generate: nothing is modelled or cut for a
+  // face the project no longer has.
+  if (!aroundFeaturesActive(project) && (face === 'around' || rotary)) {
+    return { reason: 'aroundStockMismatch', face, features: [] }
+  }
   if (rotary && face !== 'around') return { reason: 'aroundStockMismatch', face, features: [] }
   const verdicts = judgeTargetsFromFace(project, operation.target, face, operation.kind)
   if (face === 'around') {

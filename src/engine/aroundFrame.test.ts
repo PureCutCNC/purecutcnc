@@ -143,6 +143,8 @@ function testPoints(): void {
 function makeProject(stock = X_BAR): Project {
   const base = newProject('Around', stock.axis === 'x' ? 'mm' : 'inch')
   base.stock = stock
+  // The Around face and its features exist only in a rotary project (issue #1028).
+  base.meta.projectType = 'rotary'
   base.dimensions = { floor: { id: 'floor', name: 'floor', value: stock.thickness * 0.75, formula: null } }
   const built = projectWithFeatures(base, [
     feature('around', 'rect', rectProfile(20, 40, 30, 10), stock.thickness, 'floor'),
@@ -278,6 +280,7 @@ function testGenerationParity(): void {
       if (kind === 'edge_route_outside') draft.operation = 'add'
       const base = newProject('Parity', units)
       base.stock = stock
+      base.meta.projectType = 'rotary'
       base.tools = [{ ...defaultTool(units, 1), id: 't1', diameter: toolDiameter, type: kind === 'drilling' ? 'drill' : 'flat_endmill' }]
       const op = { ...operation(kind), stepdown: depth / 2, carveDepth: depth, maxCarveDepth: depth, drillType: 'peck' as const, peckDepth: depth / 2 }
       // Apply Around after fixture normalization: loading Around is slice B.

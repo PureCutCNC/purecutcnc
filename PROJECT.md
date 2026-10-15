@@ -13,6 +13,12 @@ volumetric intent, while CAM operations describe how selected geometry should
 be machined. Users should be able to move from an idea to inspectable machine
 output without adopting the full complexity of an industrial 3D CAD suite.
 
+Every project has a **project type** the user chooses: Milling / routing,
+Plasma, or Rotary. The type, not the selected machine or the stock, decides
+what the project offers: which machines suit it, which stock shapes, faces and
+operations exist. Content made under another type is kept but not cut, and a
+machine that does not suit the type cannot export.
+
 ## Primary users and jobs
 
 PureCutCNC is designed for people who need to:

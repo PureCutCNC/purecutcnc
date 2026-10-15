@@ -25,6 +25,9 @@ export function rotaryOperationFixture(axis: 'x' | 'y' = 'x', kind: OperationKin
   const base = newProject('Rotary operation fixture', 'mm')
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
   base.meta.maxTravelZ = 25
+  // A rotary project: the Around face, its setup and the rotary operations
+  // exist only in one (issue #1028).
+  base.meta.projectType = 'rotary'
   base.stock = roundStock(12, 30, axis)
   base.tools = [{ ...defaultTool('mm', 1), id: 't1', type: 'ball_endmill', diameter: 2, defaultStepover: 0.8, defaultStepdown: 1 }]
   const positions = new Float32Array([

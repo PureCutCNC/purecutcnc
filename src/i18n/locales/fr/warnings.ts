@@ -227,6 +227,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postMixedSetups': 'Le programme contient des opérations de plusieurs montages ({setups}). La pièce est retournée à la main entre les montages, chaque montage est donc exporté dans son propre programme.',
   'warnings.postSetupOperationRefused': 'L’opération « {operation} » n’a pas de parcours d’outil, car son montage ne peut pas l’usiner. Corrigez ou supprimez l’opération avant d’exporter.',
   'warnings.postSetupNoRegistration': 'Le montage « {setup} » n’a aucune référence de repositionnement : rien n’indique comment la pièce est positionnée après retournement. Ajoutez une référence de pion, de butée ou de coin dans les réglages du montage.',
+  'warnings.exportMachineTypeMismatch': 'La machine sélectionnée « {machine} » ne correspond pas à ce projet de type {expected}. Choisissez une machine compatible ou changez le type de projet avant d’exporter.',
   'warnings.postWcsNullSelect': 'La définition de machine demande {wcsCommand} dans l’en-tête, mais selectCommand est nul.',
   'warnings.postToolChangesDisabled': 'L’opération « {operation} » nécessite l’outil « {tool} », mais les changements d’outil sont désactivés : le programme continue de couper avec l’outil précédent. Activez les changements d’outil, ou exportez une opération à la fois.',
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',

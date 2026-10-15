@@ -28,6 +28,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   // ── New Project dialog ──
   'dialogs.newProject.title': 'Neues Projekt',
   'dialogs.newProject.projectName': 'Projektname',
+  'dialogs.newProject.projectType': 'Projekttyp',
   'dialogs.newProject.template': 'Vorlage',
   'dialogs.newProject.templateBlankMetric': 'Leer metrisch',
   'dialogs.newProject.templateBlankMetricMeta': 'Leeres Projekt in Millimetern.',
@@ -61,6 +62,18 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.newProject.templateLabel.fileSetup': 'Vorlagendatei-Einrichtung: {name}',
   'dialogs.newProject.templateLabel.fileSetupFallback': 'Vorlagendatei-Einrichtung',
   'dialogs.newProject.templateFileMetaSettings': '{name} (nur Einstellungen)',
+
+  // ── Project type change confirm (issue #1028) ──
+  'dialogs.projectType.title': 'Projekttyp ändern',
+  'dialogs.projectType.intro': 'Nichts wird gelöscht. Änderung zu {to}:',
+  'dialogs.projectType.inactiveOperations.one': '1 aktivierte Operation wird nicht geschnitten',
+  'dialogs.projectType.inactiveOperations.other': '{count} aktivierte Operationen werden nicht geschnitten',
+  'dialogs.projectType.hiddenAroundFeatures.one': '1 Around-Feature bleibt erhalten, wird aber ausgeblendet und nicht exportiert',
+  'dialogs.projectType.hiddenAroundFeatures.other': '{count} Around-Features bleiben erhalten, werden aber ausgeblendet und nicht exportiert',
+  'dialogs.projectType.toRound': 'Der Block wird zu einer Rundstange gleicher Größe',
+  'dialogs.projectType.toBlock': 'Die Rundstange wird zu einem Block gleicher Größe',
+  'dialogs.projectType.machineChange': 'Maschine wechselt zu {name}',
+  'dialogs.projectType.confirm': 'Projekttyp ändern',
 
   // ── Import Geometry dialog ──
   'dialogs.importGeometry.title': 'Geometrie importieren',

@@ -189,6 +189,12 @@ export const featureTreeEn = {
   'featureTree.properties.units.mm': 'Millimeters',
   'featureTree.properties.units.inch': 'Inches',
 
+  // ── Properties: project type (issue #1028) ──
+  'featureTree.properties.projectType': 'Project type',
+  'featureTree.properties.projectType.milling': 'Milling / routing',
+  'featureTree.properties.projectType.plasma': 'Plasma',
+  'featureTree.properties.projectType.rotary': 'Rotary',
+
   // ── Properties: machine ──
   'featureTree.properties.machine.none': 'None',
   'featureTree.properties.machine.updateAvailable': 'Update available',
@@ -197,6 +203,8 @@ export const featureTreeEn = {
   'featureTree.properties.machine.builtin': 'Built-in',
   'featureTree.properties.machine.custom': 'Custom',
   'featureTree.properties.machine.duplicateHint': 'duplicate to edit',
+  'featureTree.properties.machine.groupOther': 'Other machines',
+  'featureTree.properties.machine.mismatch': 'This is not a {type} machine. Export is disabled until you pick one.',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': 'Place origin',

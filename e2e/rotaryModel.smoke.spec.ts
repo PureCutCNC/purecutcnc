@@ -91,6 +91,9 @@ function rotaryModelProject(): Project {
   const base = newProject('Rotary model', 'mm')
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
   base.meta.maxTravelZ = 25
+  // The Around face and the rotary add-menu belong to a rotary project
+  // (issue #1028).
+  base.meta.projectType = 'rotary'
   base.stock = roundStock(12, 30, 'x')
   base.tools = [{ ...defaultTool('mm', 1), id: 't1', type: 'ball_endmill', diameter: 2, defaultStepover: 0.8, defaultStepdown: 1 }]
   const positions = new Float32Array([

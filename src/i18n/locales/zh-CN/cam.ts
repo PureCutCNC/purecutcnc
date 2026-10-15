@@ -621,6 +621,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.setup.export': '导出设置：{name}',
   'cam.setup.flipped': '绕 {axis} 翻转',
   'cam.setup.aroundStatus': '棒料位于旋转轴中',
+  'cam.setup.aroundKeptNotCut': 'Around 工序会保留，但在 {type} 项目中不加工',
   'cam.setup.noRegistration': '未指定定位参考。请检查翻转后工件的定位方式。',
   'cam.setup.registrationCount': '定位参考：{count}',
   'cam.setup.empty': '此设置中没有操作。',

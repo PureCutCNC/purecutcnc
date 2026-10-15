@@ -228,6 +228,9 @@ function buildFixture(
 ): Fixture {
   const base = newProject(`Around ${units}`, units)
   base.stock = stock
+  // The Around face, its setup and its operations exist only in a rotary
+  // project (issue #1028).
+  base.meta.projectType = 'rotary'
   base.origin = originFor(stock)
   base.tools = tools
   const built = projectWithFeatures(base, drafts.map(sketchFeature))

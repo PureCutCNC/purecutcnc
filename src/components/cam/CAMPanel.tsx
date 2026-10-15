@@ -73,6 +73,7 @@ import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
 import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
+import { projectType } from '../../store/helpers/projectType'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
 import { Icon } from '../Icon'
@@ -683,8 +684,9 @@ export function CAMPanel({
         button('plasma_profile'),
         // The model lives in the bar: the rotary rows are offered on Around
         // whether or not one exists, and are refused with their own hint when
-        // it does not (issue #1015).
-        ...rotaryAddKindsForFace(currentSetupFace).map((kind) => button(kind)),
+        // it does not (issue #1015). Only a rotary project offers them at all
+        // (issue #1028).
+        ...rotaryAddKindsForFace(project, currentSetupFace).map((kind) => button(kind)),
       ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
     [project, addSelection, machine, currentSetupFace]
@@ -2335,7 +2337,7 @@ export function CAMPanel({
                     <div className="tree-root-label">{camT('cam.panel.cam')}</div>
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
-                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
+                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
                         {section.operations.map((operation) => (
                         <div
                           key={operation.id}

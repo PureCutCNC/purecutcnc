@@ -137,4 +137,38 @@ assert.equal(caseRunsOnValidator(rotaryRoughOwnAxis, 'grbl-gvalidate', GRBL_MACH
 assert.equal(caseRunsOnValidator(rotaryRoughOwnAxis, 'linuxcnc-rs274', LINUXCNC_MACHINES), true,
   'and it runs on the LinuxCNC validator')
 
+// ── 5. The wrapped and hand-built rotary fixtures declare their type ──
+//
+// Since #1028 the project type is stored on the project and read by the
+// generation gate, and `newProject` defaults it to `'milling'`. A round bar
+// alone no longer makes a project rotary, so a corpus fixture that set round
+// stock without declaring the type generated nothing: the Around cases threw
+// `aroundStockMismatch` before any export. Each fixture now declares
+// `'rotary'`, and rendering the case here pins that declaration — the
+// borrowed motor's angle word, the own axis's `A`, and the inverse-time pair
+// around each turn.
+//
+// Removing a wrapped fixture's declaration makes `renderCase` throw on the
+// first call, so this section is the regression that fails for that mutation.
+
+const ROTARY_FAMILY_CASES: ReadonlyArray<[name: string, angleWord: RegExp]> = [
+  ['rotary-borrowed-y-inverse-time', /\bY-?\d/],
+  ['rotary-own-axis-inverse-time', /\bA-?\d/],
+  ['around-engrave-borrowed-y', /\bY-?\d/],
+  ['around-pocket-own-axis', /\bA-?\d/],
+]
+
+for (const [name, angleWord] of ROTARY_FAMILY_CASES) {
+  const entry = CORPUS.find((candidate) => candidate.name === name)
+  assert.ok(entry, `${name} is registered in the corpus`)
+  const { gcode, warnings } = renderCase(entry)
+  assert.deepEqual(warnings, [], `${name} exports without warnings`)
+  assert.match(gcode, angleWord, `${name} writes the angle under its machine's rotary word`)
+  assert.match(gcode, /\bG93\b/, `${name} turns in inverse time, so the rotary block reached the export`)
+  assert.match(gcode, /\bG94\b/, `${name} leaves inverse time again (rule 4)`)
+  if (name.startsWith('around-')) {
+    assert.match(gcode, /SETUP 01: Around/, `${name} carries the Around setup header`)
+  }
+}
+
 console.log('gcode-conformance corpus selection tests passed')

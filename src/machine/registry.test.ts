@@ -22,6 +22,7 @@ import {
   duplicateMachineAsCustom,
   duplicateMachineName,
   isBundledMachineId,
+  machineCandidates,
   machineFingerprint,
   machineSnapshotStatus,
   machinesFunctionallyEqual,
@@ -221,5 +222,23 @@ assert(bundledCandidateMerge.added.length === 0, 'a bundled-id candidate is neve
 
 const invalidMerge = mergeCustomMachineList([], [{ id: 'broken' } as unknown as MachineDefinition])
 assert(invalidMerge.added.length === 0, 'an invalid candidate is skipped')
+
+// The machine picker's candidate list (issue #1028), shared with `setProjectType`.
+{
+  const library = bundledMachines()
+  const embeddedOnly = customFrom({ id: 'embedded-only', name: 'Embedded Only' })
+  assert(
+    machineCandidates(library, null).length === library.length,
+    'with no embedded machine the list is the library',
+  )
+  assert(
+    machineCandidates(library, library[0]).length === library.length,
+    'an embedded machine already in the library adds nothing',
+  )
+  const withEmbedded = machineCandidates(library, embeddedOnly)
+  assert(withEmbedded.length === library.length + 1, 'an embedded machine missing from the library is offered')
+  assert(withEmbedded[withEmbedded.length - 1].id === 'embedded-only', 'and it is offered last')
+  assert(library.every((definition) => !definition.id.includes('embedded-only')), 'the library itself is not mutated')
+}
 
 console.log('machine/registry.test.ts: all assertions passed')

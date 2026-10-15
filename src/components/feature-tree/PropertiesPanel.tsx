@@ -27,11 +27,18 @@ import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
-import type { StockAxis, TabShape } from '../../types/project'
+import type { ProjectType, StockAxis, TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { originAfterStockEdit, resizeRoundStock } from '../../store/helpers/stockShape'
 import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
-import { machineMode } from '../cam/machineMode'
+import {
+  projectMachineMismatch,
+  projectType,
+  projectTypeChangeSummary,
+  stockShapesForProjectType,
+} from '../../store/helpers/projectType'
+import { ProjectTypeChangeDialog } from './ProjectTypeChangeDialog'
+import { PROJECT_TYPES, machineOptionsForType, projectTypeChangeIsEmpty, projectTypeLabelKey } from './projectTypeChoice'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
@@ -39,7 +46,7 @@ import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { machineSnapshotStatus } from '../../machine/registry'
+import { machineCandidates, machineSnapshotStatus } from '../../machine/registry'
 import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
@@ -73,6 +80,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const setShowFeatureInfo = useProjectStore((s) => s.setShowFeatureInfo)
   const setProjectClearances = useProjectStore((s) => s.setProjectClearances)
   const setProjectMachine = useProjectStore((s) => s.setProjectMachine)
+  const setProjectType = useProjectStore((s) => s.setProjectType)
   const { library: machineLibrary } = useMachineLibrary()
   const setOrigin = useProjectStore((s) => s.setOrigin)
   const startPlaceOrigin = useProjectStore((s) => s.startPlaceOrigin)
@@ -203,13 +211,33 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // application library, plus the embedded machine when it is not in it.
   const selectedMachine = getActiveMachineDefinition(project)
   const machineStatus = machineSnapshotStatus(selectedMachine, machineLibrary)
-  const machineOptions = [
-    { value: '', label: t('featureTree.properties.machine.none') },
-    ...machineLibrary.map((definition) => ({ value: definition.id, label: definition.name })),
-    ...(selectedMachine && !machineLibrary.some((definition) => definition.id === selectedMachine.id)
-      ? [{ value: selectedMachine.id, label: selectedMachine.name }]
-      : []),
-  ]
+  // One candidate list, shared with `setProjectType` (issue #1028).
+  const machineOptionCandidates = machineCandidates(machineLibrary, selectedMachine)
+  // The type's own machines come first; the rest keep their place under a
+  // heading, so a machine that does not suit the type stays selectable.
+  const currentProjectType = projectType(project)
+  const machineOptions = machineOptionsForType(
+    machineOptionCandidates,
+    currentProjectType,
+    t('featureTree.properties.machine.none'),
+    t('featureTree.properties.machine.groupOther'),
+  )
+  const machineMismatch = projectMachineMismatch(project)
+  // A type change opens the confirm only when it has something to say.
+  const [pendingTypeChange, setPendingTypeChange] = useState<{ to: ProjectType; summary: ReturnType<typeof projectTypeChangeSummary> } | null>(null)
+
+  /** Apply a type change, or ask first when the change is visible (issue #1028). */
+  function chooseProjectType(to: ProjectType) {
+    if (to === currentProjectType) {
+      return
+    }
+    const summary = projectTypeChangeSummary(project, to, machineOptionCandidates)
+    if (projectTypeChangeIsEmpty(summary)) {
+      setProjectType(to, machineOptionCandidates)
+      return
+    }
+    setPendingTypeChange({ to, summary })
+  }
 
   function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -307,6 +335,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               }}
             />
           </label>
+          <label className="properties-field properties-field--project-type">
+            <span>{t('featureTree.properties.projectType')}</span>
+            <div data-testid="project-type">
+              <Select
+                value={currentProjectType}
+                options={PROJECT_TYPES.map((type) => ({ value: type, label: t(projectTypeLabelKey(type)) }))}
+                onChange={chooseProjectType}
+              />
+            </div>
+          </label>
           <label className="properties-check">
             <input
               type="checkbox"
@@ -369,7 +407,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 }
                 // Re-picking a machine that is only in the project keeps the
                 // embedded snapshot rather than clearing the selection.
-                const picked = machineLibrary.find((definition) => definition.id === value)
+                const picked = machineOptionCandidates.find((definition) => definition.id === value)
                   ?? (selectedMachine?.id === value ? selectedMachine : null)
                 setProjectMachine(picked)
               }}
@@ -394,6 +432,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               {selectedMachine.builtin ? (
                 <span className="properties-machine-hint">{t('featureTree.properties.machine.duplicateHint')}</span>
               ) : null}
+            </div>
+          ) : null}
+          {machineMismatch ? (
+            <div className="properties-field-message cam-field-message" role="note" data-testid="machine-type-mismatch">
+              {t('featureTree.properties.machine.mismatch', { type: t(projectTypeLabelKey(machineMismatch.expected)) })}
             </div>
           ) : null}
           <div className="properties-actions">
@@ -475,10 +518,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
     const round = isRoundStock(project.stock) ? project.stock : null
-    // Plasma mode follows the selected machine (#960). Plasma is sheet work, so
-    // a block hides the Shape field; a bar keeps it, so the user can go back.
-    const plasmaMode = machineMode(project) === 'plasma'
-    const hideShape = plasmaMode && !round
+    // The shape control offers only what the project type does (issue #1028):
+    // milling and plasma cut a block, rotary turns a round bar. A shape the
+    // current stock already has stays listed, so a bar kept from an earlier
+    // type can still be converted instead of becoming an unreachable value.
+    const offeredShapes = stockShapesForProjectType(currentProjectType)
+    const currentShape: 'block' | 'round' = round ? 'round' : 'block'
+    const shapeOptions: ReadonlyArray<'block' | 'round'> = offeredShapes.includes(currentShape)
+      ? offeredShapes
+      : [...offeredShapes, currentShape]
     const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
       if (!round) return
       const next = resizeRoundStock(round, change)
@@ -558,21 +606,20 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <span>{t('featureTree.properties.name')}</span>
             <DraftTextInput value={t('featureTree.properties.stock.nameDisabled')} disabled />
           </label>
-          {hideShape ? null : (
-            <label className="properties-field">
-              <span>{t('featureTree.properties.shape')}</span>
-              <div data-testid="stock-shape">
-                <Select
-                  value={round ? 'round' : 'block'}
-                  options={[
-                    { value: 'block', label: t('featureTree.properties.stock.block') },
-                    { value: 'round', label: t('featureTree.properties.stock.roundBar') },
-                  ]}
-                  onChange={(value) => setStockShape(value)}
-                />
-              </div>
-            </label>
-          )}
+          <label className="properties-field">
+            <span>{t('featureTree.properties.shape')}</span>
+            <div data-testid="stock-shape">
+              <Select
+                value={currentShape}
+                options={shapeOptions.map((shape) => ({
+                  value: shape,
+                  label: t(shape === 'block' ? 'featureTree.properties.stock.block' : 'featureTree.properties.stock.roundBar'),
+                }))}
+                onChange={(value) => setStockShape(value)}
+                disabled={shapeOptions.length === 1}
+              />
+            </div>
+          </label>
           {round ? (
             <>
               <label className="properties-field">
@@ -1744,6 +1791,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
       {showManager && (
         <MachineDefinitionManagerDialog
           onClose={() => setShowManager(false)}
+        />
+      )}
+      {pendingTypeChange && (
+        <ProjectTypeChangeDialog
+          summary={pendingTypeChange.summary}
+          onConfirm={() => {
+            setProjectType(pendingTypeChange.to, machineOptionCandidates)
+            setPendingTypeChange(null)
+          }}
+          onCancel={() => setPendingTypeChange(null)}
         />
       )}
     </>

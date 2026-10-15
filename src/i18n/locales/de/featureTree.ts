@@ -184,6 +184,12 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.units.mm': 'Millimeter',
   'featureTree.properties.units.inch': 'Zoll',
 
+  // ── Properties: project type (issue #1028) ──
+  'featureTree.properties.projectType': 'Projekttyp',
+  'featureTree.properties.projectType.milling': 'Fräsen / Oberfräse',
+  'featureTree.properties.projectType.plasma': 'Plasma',
+  'featureTree.properties.projectType.rotary': 'Drehachse',
+
   // ── Properties: machine ──
   'featureTree.properties.machine.none': 'Keine',
   'featureTree.properties.machine.updateAvailable': 'Aktualisierung verfügbar',
@@ -192,6 +198,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.machine.builtin': 'Integriert',
   'featureTree.properties.machine.custom': 'Benutzerdefiniert',
   'featureTree.properties.machine.duplicateHint': 'zum Bearbeiten duplizieren',
+  'featureTree.properties.machine.groupOther': 'Andere Maschinen',
+  'featureTree.properties.machine.mismatch': 'Dies ist keine Maschine für {type}. Der Export ist deaktiviert, bis Sie eine passende wählen.',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': 'Nullpunkt setzen',

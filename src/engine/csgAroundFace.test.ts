@@ -185,6 +185,8 @@ function draft(id: string, spec: Draft, face: 'top' | 'around', visible = true):
 
 function barProject(bar: RoundStock, features: SketchFeature[]): Project {
   const base = projectWithFeatures({ ...newProject('around-face'), stock: bar }, features)
+  // The Around face and its features exist only in a rotary project (issue #1028).
+  base.meta.projectType = 'rotary'
   return {
     ...base,
     setups: [...base.setups, { ...AROUND_SETUP, orientation: { axis: bar.axis, angleDeg: 0 } }],
@@ -193,7 +195,11 @@ function barProject(bar: RoundStock, features: SketchFeature[]): Project {
 }
 
 function topProject(bar: RoundStock, features: SketchFeature[]): Project {
-  return projectWithFeatures({ ...newProject('around-face'), stock: bar }, features)
+  // A flat (Top) setup inside a rotary project: the Around features still
+  // belong to the model (issue #1028).
+  const base = projectWithFeatures({ ...newProject('around-face'), stock: bar }, features)
+  base.meta.projectType = 'rotary'
+  return base
 }
 
 /** The radii and angles of a model mesh's vertices, in project coordinates. */
@@ -401,6 +407,27 @@ for (const bar of [BAR, Y_BAR]) {
   assert(
     JSON.stringify(sceneSummary(noAround)) === JSON.stringify(sceneSummary(invisibleAround)),
     'an invisible Around feature draws nothing, so the scene is unchanged',
+  )
+}
+
+// ── 5b. Only a rotary project models Around features (issue #1028) ───────────
+
+{
+  const around = barProject(BAR, [draft('around-pocket', AROUND_POCKET, 'around')])
+  const milling: Project = { ...around, meta: { ...around.meta, projectType: 'milling' } }
+  const withoutFeature: Project = { ...milling, features: [] }
+  const withFeature = await buildScene(milling, threePalette)
+  const without = await buildScene(withoutFeature, threePalette)
+  assert(
+    JSON.stringify(sceneSummary(withFeature)) === JSON.stringify(sceneSummary(without)),
+    'a non-rotary project leaves its Around features out of the 3D model',
+  )
+
+  // The same project as a rotary one does model it, so the case is not vacuous.
+  const rotary = await buildScene(around, threePalette)
+  assert(
+    JSON.stringify(sceneSummary(rotary)) !== JSON.stringify(sceneSummary(without)),
+    'and the rotary project does model it',
   )
 }
 

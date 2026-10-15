@@ -102,6 +102,9 @@ interface RunOptions {
 /** Build the project with the production actions and post it, as the export does. */
 async function runExport(options: RunOptions): Promise<ExportPreparation> {
   const base = newProject('Plasma feed regression', options.units)
+  // A plasma project: the mode follows the type since #1028, and every
+  // scenario here selects a plasma machine and adds a plasma cut.
+  base.meta.projectType = 'plasma'
   base.stock.thickness = 5
   base.origin = { ...base.origin, x: 0, y: 100, z: 5 }
   const featureIds = options.twoParts ? ['part', 'part-2'] : ['part']

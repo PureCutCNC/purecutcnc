@@ -553,6 +553,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.setup.export': 'Export setup: {name}',
   'cam.setup.flipped': 'Flipped about {axis}',
   'cam.setup.aroundStatus': 'Barra en el rotativo',
+  'cam.setup.aroundKeptNotCut': 'Las operaciones Around se conservan pero no se mecanizan en un proyecto {type}',
   'cam.setup.noRegistration': 'No registration references. Check how the stock will be located after the flip.',
   'cam.setup.registrationCount': 'Registration references: {count}',
   'cam.setup.empty': 'No operations in this setup.',

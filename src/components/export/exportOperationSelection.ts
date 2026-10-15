@@ -24,6 +24,7 @@
 import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
 import { projectExportsPerSetup, setupProgramNumber } from '../../engine/gcode/setupPrograms'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
+import { operationHiddenByProjectType } from '../../store/helpers/projectType'
 
 /**
  * Translation-key references for operation exportability reasons.
@@ -42,7 +43,12 @@ export interface ExportOperationOption {
 }
 
 export function listExportOperationOptions(project: Project): ExportOperationOption[] {
-  return project.operations.map((operation) => {
+  // Only operations in an Around setup of a non-rotary project are left off the
+  // checklist: that setup's face does not exist for the type (issue #1028, rule
+  // (a)), and leaving them off also keeps them out of the programs it feeds. An
+  // operation of the other family stays listed — the postprocessor skips it and
+  // the dialog shows its warning (issue #960).
+  return project.operations.filter((operation) => !operationHiddenByProjectType(project, operation)).map((operation) => {
     const hasTool = operation.toolRef !== null
       && project.tools.some((tool) => tool.id === operation.toolRef)
     const reasonKey: ExportOperationReasonKey | null = !operation.enabled

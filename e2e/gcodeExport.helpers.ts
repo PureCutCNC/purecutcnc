@@ -109,6 +109,11 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
   const now = '2026-01-01T00:00:00.000Z'
   const stockW = 180
   const stockH = 120
+  // The fixture's legacy `machineId` used to imply the project type on load.
+  // Write the type explicitly instead: a plasma machine id means a plasma
+  // project, everything else is milling (issue #1028).
+  const machineId = options.machineId ?? 'grbl'
+  const projectType = machineId === 'qtplasmac' || machineId === 'grbl-plasma' ? 'plasma' : 'milling'
 
   return JSON.stringify({
     version: '3.0',
@@ -124,7 +129,8 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
       operationClearanceZ: 0.2,
       clampClearanceXY: 0.5,
       clampClearanceZ: 0.2,
-      machineId: options.machineId ?? 'grbl',
+      projectType,
+      machineId,
     },
     grid: {
       extent: 200,

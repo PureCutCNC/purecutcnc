@@ -35,6 +35,7 @@ import type {
   OperationTarget,
   Point,
   Project,
+  ProjectType,
   Segment,
   SetupFace,
   SetupOrientation,
@@ -418,6 +419,13 @@ export interface ProjectStore {
    * tailstock (#392 slice C).
    */
   setStockShape: (shape: 'block' | 'round') => void
+  /**
+   * Choose the project type (issue #1028) in one undo step: the stock takes a
+   * shape the new type offers, and — when the selected machine no longer suits
+   * the type — the first matching machine in `candidates` (the same list the
+   * machine picker shows) is selected. Nothing is deleted.
+   */
+  setProjectType: (type: ProjectType, candidates: readonly MachineDefinition[]) => void
   setStockSourceFeature: (featureId: string | null) => void
   enterStockSketchEdit: (featureId: string) => void
   /** Resize rectangular stock by changing width or height while holding one side fixed. */
