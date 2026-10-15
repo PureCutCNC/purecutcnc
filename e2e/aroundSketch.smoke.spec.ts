@@ -645,15 +645,47 @@ test('leaving Around while a dialog is open applies nothing', async ({ app, ui }
   })
 })
 
-test('leaving Around during a thread catalog load cancels the create', async ({ app, ui }) => {
+/** The face the store says the workspace is on, read from the live project. */
+async function workspaceFace(page: Page): Promise<string> {
+  return page.evaluate(async () => {
+    const storeUrl = '/src/store/projectStore.ts'
+    const { useProjectStore } = await import(storeUrl) as typeof import('../src/store/projectStore')
+    const faceUrl = '/src/store/helpers/activeFace.ts'
+    const { activeFace } = await import(faceUrl) as typeof import('../src/store/helpers/activeFace')
+    return activeFace(useProjectStore.getState().project)
+  })
+}
+
+/**
+ * The parked create's own catalog await, reached from outside the unmounted
+ * dialog. `loadBundledToolLibrary` memoizes one promise per page, and the
+ * Create click registered its continuation on that promise first; a reaction
+ * registered on it later runs later, so by the time this resolves the parked
+ * `handleCreate` has already resumed — and already written, if the unmount
+ * guard is missing. That is what makes the assertion below about the guard
+ * rather than about the clock: the store is read after the create, not racing
+ * it. This drives the real loader; nothing is stubbed.
+ */
+async function awaitCatalogContinuation(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const url = '/src/toolLibrary.ts'
+    const { loadBundledToolLibrary } = await import(url) as typeof import('../src/toolLibrary')
+    await loadBundledToolLibrary()
+  })
+}
+
+test('a thread catalog load held across leaving and returning to Around creates nothing', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
+  // A V-bit in the project, so a create that wrongly gets through cannot fail
+  // for want of a tool: whether the abandoned request writes is the only
+  // question left. The dialog still awaits the catalog for a thread regardless.
+  await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
+  expect(await workspaceFace(page)).toBe('around')
 
-  // Hold the bundled tool-library fetch open so Create is genuinely in flight,
-  // then leave Around. The dialog unmounts mid-await, so when the fetch finally
-  // resolves the create must notice and write nothing.
+  // Hold the bundled tool-library fetch open so Create is genuinely in flight.
   let releaseLibrary: () => void = () => {}
   const libraryGate = new Promise<void>((resolve) => { releaseLibrary = resolve })
   await page.route('**/tool-library.json', async (route) => {
@@ -668,16 +700,30 @@ test('leaving Around during a thread catalog load cancels the create', async ({ 
   await ui.rotary.createButton(page).click()
   await request
 
+  // Leaving Around unmounts the dialog and parks its create on the held fetch.
   await switchToTop(page)
   await expect(ui.rotary.dialog(page)).toHaveCount(0)
-  releaseLibrary()
-  await page.unrouteAll({ behavior: 'wait' })
-  // The create resumes once the response resolves; give that continuation a
-  // bounded moment to settle before reading the store back.
-  await page.waitForTimeout(300)
 
-  // Nothing was created, and returning to Around does not reopen the dialog.
+  // Return to Around *before* the catalog is released. The face is valid again
+  // and the store would accept the create if the parked request simply resumed,
+  // so only the dialog's own unmount guard can stop it. A fresh, closed dialog
+  // mounts; the stale one is not resurrected.
   await switchToAround(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.dialog(page)).toHaveCount(0)
+  expect(await workspaceFace(page)).toBe('around')
+
+  // Only now release the catalog, and wait for the held response to be
+  // delivered and the parked create to resume against it.
+  const response = page.waitForResponse('**/tool-library.json')
+  releaseLibrary()
+  await response
+  await awaitCatalogContinuation(page)
+  await page.unrouteAll({ behavior: 'wait' })
+  // Belt and braces for any continuation that ran past the memoized promise.
+  await page.waitForTimeout(250)
+
+  // The abandoned create wrote nothing, and the fresh dialog stayed closed.
   await expect(ui.rotary.dialog(page)).toHaveCount(0)
   expect(await rotarySnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
