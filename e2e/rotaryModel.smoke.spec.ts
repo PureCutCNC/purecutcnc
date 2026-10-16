@@ -57,6 +57,7 @@ import { test, expect } from './fixtures'
 import { getProject, seedProject } from './helpers'
 import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
+import { squareStock } from '../src/types/barStock'
 import type { MachineDefinition } from '../src/engine/gcode/types'
 import type { FeatureDefinition, FeatureInstance, Project, RoundStock } from '../src/types/project'
 
@@ -292,4 +293,273 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   ).toBeGreaterThan(0)
   await page.waitForTimeout(500)
   await page.screenshot({ path: testInfo.outputPath('rotary-model-simulation-bar.png') })
+})
+
+// ── #1016 C2: square blanks and the generation cache ────────────────
+//
+// The generated geometry is what the preview and the simulation show, so these
+// read the real `computeOperationToolpath` paths back from the live project.
+// "Up to date" on the gear is not proof of motion, and a cached round path
+// surviving a stock change would be exactly the failure this pins.
+
+interface PathSignature {
+  moveCount: number
+  cutMoveCount: number
+  minZ: number
+  maxZ: number
+  minAlong: number
+  maxAlong: number
+  cutMinAlong: number
+  cutMaxAlong: number
+  hasAngle: boolean
+}
+
+/** The generated path of one operation, with along/Z extents and cut-only bounds. */
+async function pathSignature(page: Page, operationId: string): Promise<PathSignature> {
+  return page.evaluate(async (id) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const project = useProjectStore.getState().project
+    const operation = project.operations.find((candidate) => candidate.id === id)
+    if (!operation) throw new Error(`e2e: the project has no operation ${id}`)
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) throw new Error(`e2e: ${id} did not generate`)
+    const axis = project.stock.axis
+    const alongOf = (point: { x: number; y: number }): number => (axis === 'x' ? point.x : point.y)
+    let minZ = Number.POSITIVE_INFINITY
+    let maxZ = Number.NEGATIVE_INFINITY
+    let minAlong = Number.POSITIVE_INFINITY
+    let maxAlong = Number.NEGATIVE_INFINITY
+    let cutMinAlong = Number.POSITIVE_INFINITY
+    let cutMaxAlong = Number.NEGATIVE_INFINITY
+    let cutMoveCount = 0
+    let hasAngle = true
+    for (const move of envelope.result.moves) {
+      if (move.kind === 'cut') {
+        cutMoveCount += 1
+        cutMinAlong = Math.min(cutMinAlong, alongOf(move.from), alongOf(move.to))
+        cutMaxAlong = Math.max(cutMaxAlong, alongOf(move.from), alongOf(move.to))
+      }
+      for (const point of [move.from, move.to]) {
+        minZ = Math.min(minZ, point.z)
+        maxZ = Math.max(maxZ, point.z)
+        minAlong = Math.min(minAlong, alongOf(point))
+        maxAlong = Math.max(maxAlong, alongOf(point))
+        if (typeof point.a !== 'number') hasAngle = false
+      }
+    }
+    return {
+      moveCount: envelope.result.moves.length,
+      cutMoveCount,
+      minZ, maxZ, minAlong, maxAlong, cutMinAlong, cutMaxAlong, hasAngle,
+    }
+  }, operationId)
+}
+
+/** What one operation generates right now: moves, or a refusal. */
+async function generationOutcome(page: Page, operationId: string): Promise<{ moveCount: number; warningCodes: string[] }> {
+  return page.evaluate(async (id) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const project = useProjectStore.getState().project
+    const operation = project.operations.find((candidate) => candidate.id === id)
+    if (!operation) throw new Error(`e2e: the project has no operation ${id}`)
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) return { moveCount: 0, warningCodes: [] }
+    return {
+      moveCount: envelope.result.moves.length,
+      warningCodes: envelope.result.warnings.map((warning) => warning.code),
+    }
+  }, operationId)
+}
+
+/**
+ * A Ø25 × 120 mm square blank along X, an Around setup and a rotary machine:
+ * the real starting box of a square-to-round job. No model yet — the UI's
+ * Square to round creates the finished round target.
+ */
+async function seedSquareBlankProject(page: Page): Promise<Project> {
+  const base = newProject('Rotary square', 'mm')
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.maxTravelZ = 60
+  base.meta.projectType = 'rotary'
+  base.stock = squareStock(25, 120, 'x')
+  base.tools = [{
+    ...defaultTool('mm', 1), id: 't1', name: 'Flat 6', type: 'flat_endmill',
+    diameter: 6, defaultStepover: 3, defaultStepdown: 2,
+  }]
+  base.clamps = [{ id: 'chuck', name: 'Chuck', type: 'chuck', x: 0, y: 0, w: 10, h: 25, height: 40, visible: true }]
+  base.setups = [
+    ...base.setups,
+    { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } },
+  ]
+  base.activeSetupId = 'around'
+  base.meta.machineDefinitions = [rotaryMachine()]
+  base.meta.selectedMachineId = 'e2e-rotary'
+  await seedProject(page, JSON.stringify(base))
+  return await getProject(page) as unknown as Project
+}
+
+/** Add a rotary operation through the real Add menu, the way a user does. */
+async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), label: 'Rotary rough' | 'Rotary finish'): Promise<void> {
+  const row = ui.setupCam.addMenu(page).locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: label, exact: true }) })
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  await expect(row).toHaveCount(1)
+  await row.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(ui.operations.rowByName(page, label)).toBeVisible()
+}
+
+test('turning the bar square invalidates the preview and changes generated geometry', async ({ app, ui }) => {
+  test.setTimeout(180_000)
+  const { page } = app
+  const project = await seedRotaryModelProject(page)
+  expect((project.stock as RoundStock).shape).toBe('round')
+  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+
+  await addRotaryOperation(page, ui, 'Rotary finish')
+  await addRotaryOperation(page, ui, 'Rotary rough')
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+
+  const before = await getProject(page) as unknown as Project
+  const finishBefore = before.operations.find((operation) => operation.kind === 'rotary_finish')!
+  const round = await pathSignature(page, finishBefore.id)
+  expect(round.moveCount).toBeGreaterThan(0)
+  expect(round.hasAngle).toBe(true)
+
+  // Round → square, same physical box. The generation cache keys on the stock,
+  // so the old round path must not survive as the preview/simulation.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().setStockShape('square')
+  })
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+
+  const after = await getProject(page) as unknown as Project
+  expect((after.stock as { shape?: string }).shape).toBe('square')
+  const finishAfter = after.operations.find((operation) => operation.kind === 'rotary_finish')!
+  const square = await pathSignature(page, finishAfter.id)
+  expect(square.moveCount).toBeGreaterThan(0)
+  // A square blank's turning job clears corners the round path never touched,
+  // so the geometry must differ — never a reused round path.
+  const changed = square.moveCount !== round.moveCount
+    || Math.abs(square.minZ - round.minZ) > 1e-6
+    || Math.abs(square.maxZ - round.maxZ) > 1e-6
+  expect(changed).toBe(true)
+})
+
+test('a stock axis change on a populated Around setup does not transpose the model', async ({ app, ui }) => {
+  test.setTimeout(120_000)
+  const { page } = app
+  const seeded = await seedRotaryModelProject(page)
+  const modelBefore = seeded.features.find((feature) => seeded.featureDefinitions[feature.definitionId]?.kind === 'stl')!
+  const profileBefore = seeded.featureDefinitions[modelBefore.definitionId]!.profile
+
+  // Populate the Around setup through the real Add menu, so the setup follows
+  // the bar only while it is empty (a stock axis change is then a mismatch,
+  // not a silent transposition of the stored model).
+  await addRotaryOperation(page, ui, 'Rotary finish')
+  await addRotaryOperation(page, ui, 'Rotary rough')
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  const finishId = (await getProject(page) as unknown as Project).operations.find((operation) => operation.kind === 'rotary_finish')!.id
+
+  /** Re-aim the round bar, keeping its length and diameter. */
+  const setBarAxis = async (axis: 'x' | 'y'): Promise<void> => {
+    await page.evaluate(async (nextAxis) => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+      const { resizeRoundStock } = await import('/src/store/helpers/stockShape.ts') as typeof import('../src/store/helpers/stockShape')
+      const state = useProjectStore.getState()
+      const stock = state.project.stock
+      if (stock.shape !== 'round') throw new Error('e2e: the stock is not a round bar')
+      const next = resizeRoundStock(stock, { axis: nextAxis })
+      state.setStockAndOrigin(next, state.project.origin)
+    }, axis)
+  }
+
+  await setBarAxis('y')
+  const reaimed = await getProject(page) as unknown as Project
+  // The non-empty setup keeps its own axis and the model is not transposed.
+  expect(reaimed.setups.find((setup) => setup.kind === 'around')!.orientation.axis).toBe('x')
+  expect(reaimed.featureDefinitions[modelBefore.definitionId]!.profile).toEqual(profileBefore)
+  // The mismatch refuses: no transposed geometry is generated from the old path.
+  const mismatched = await generationOutcome(page, finishId)
+  expect(mismatched.moveCount).toBe(0)
+
+  // Restoring the axis makes the setup match again and a real path returns.
+  await setBarAxis('x')
+  const restored = await getProject(page) as unknown as Project
+  expect(restored.setups.find((setup) => setup.kind === 'around')!.orientation.axis).toBe('x')
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  const path = await pathSignature(page, finishId)
+  expect(path.moveCount).toBeGreaterThan(0)
+})
+
+test('square to round generates inside the band and removes material', async ({ app, ui }, testInfo) => {
+  test.setTimeout(180_000)
+  const { page } = app
+  await seedSquareBlankProject(page)
+  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+
+  await ui.rotarySolid.squareToRoundButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('10')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+
+  const project = await getProject(page) as unknown as Project
+  expect((project.stock as { shape?: string }).shape).toBe('square')
+  const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')!
+  const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')!
+  const band = await pathSignature(page, finish.id)
+  expect(band.cutMoveCount).toBeGreaterThan(0)
+  expect(band.hasAngle).toBe(true)
+  // Cutting stays on the requested band: the square material outside 10..40 is
+  // retained end stock, not turned away. (Lead and rapid moves may reach
+  // outside; only the cuts are pinned.)
+  expect(band.cutMinAlong).toBeGreaterThanOrEqual(10 - 1e-6)
+  expect(band.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
+  const roughBand = await pathSignature(page, rough.id)
+  expect(roughBand.cutMoveCount).toBeGreaterThan(0)
+  expect(roughBand.cutMinAlong).toBeGreaterThanOrEqual(10 - 1e-6)
+  expect(roughBand.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
+
+  // Simulation: the Around bar view removes material.
+  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await ui.viewMenu.tabSimulation(page).click()
+  const viewport = ui.simSetup.viewport(page)
+  await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
+  await expect.poll(
+    async () => Number(await viewport.getAttribute('data-simulation-removed-cells')),
+    { timeout: 60_000 },
+  ).toBeGreaterThan(0)
+
+  // 3D: the overlay draws the generated passes; a low orbit and an end view
+  // both keep the canvas alive.
+  await ui.viewMenu.tab3d(page).click()
+  const canvas = ui.viewport3d.canvas(page)
+  await expect(canvas).toBeVisible()
+  const overlay = ui.viewport3d.overlay(page)
+  await expect.poll(
+    async () => Number(await overlay.getAttribute('data-toolpath-segments')),
+    { timeout: 15_000 },
+  ).toBeGreaterThan(0)
+  const box = await canvas.boundingBox()
+  expect(box).not.toBeNull()
+  const centre = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+  await page.mouse.move(centre.x, centre.y)
+  await page.mouse.down()
+  await page.mouse.move(centre.x - 60, centre.y - 40, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: testInfo.outputPath('square-to-round-3d-low-angle.png') })
+
+  // End view of the bar: the 3D view preset menu still drives the camera.
+  await ui.viewMenu.trigger3d(page).click()
+  await ui.viewMenu.option3d(page, 'Right view').click()
+  await expect(canvas).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('square-to-round-3d-end-view.png') })
 })

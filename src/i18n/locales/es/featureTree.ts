@@ -169,6 +169,8 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.nameDisabled': 'Material en bruto',
   'featureTree.properties.stock.block': 'Bloque',
   'featureTree.properties.stock.roundBar': 'Barra redonda',
+  'featureTree.properties.stock.squareBlank': 'Bloque cuadrado',
+  'featureTree.properties.side': 'Lado',
   'featureTree.properties.diameter': 'Diámetro',
   'featureTree.properties.length': 'Longitud',
   'featureTree.properties.axis': 'Eje',

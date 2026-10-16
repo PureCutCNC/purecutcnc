@@ -219,6 +219,8 @@ export const featureTreeEn = {
   'featureTree.properties.stock.nameDisabled': 'Stock',
   'featureTree.properties.stock.block': 'Block',
   'featureTree.properties.stock.roundBar': 'Round bar',
+  'featureTree.properties.stock.squareBlank': 'Square blank',
+  'featureTree.properties.side': 'Side',
   'featureTree.properties.diameter': 'Diameter',
   'featureTree.properties.length': 'Length',
   'featureTree.properties.axis': 'Axis',

@@ -65,6 +65,7 @@ export const appShellEn = {
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': 'Stock: {width} × {height} × {thickness} {units}',
   'appShell.status.stockDimRound': 'Stock: Ø{diameter} × {length} {units}',
+  'appShell.status.stockDimSquare': 'Stock: ▢{side} × {length} {units}',
   'appShell.status.editStockDimensions': 'Edit stock dimensions',
   'appShell.status.changeUnits': 'Change project units from {from} to {to}',
 

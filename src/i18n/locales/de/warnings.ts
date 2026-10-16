@@ -237,7 +237,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketFinishIslandWallTooTight': 'Der Fräser passt nicht zwischen eine Insel und die Taschenwand; der Schlichtgang an der Insel wurde auf den Bereich gekürzt, in den er passt, sodass dort Material stehen bleibt',
   // postprocessor
   'warnings.setupTargetNotThrough': '{features}: auf der anderen Seite gezeichnet und kein durchgehender Ausschnitt, daher kann diese Aufspannung es nicht erreichen. Nur ein Abzug, der beide Rohteilseiten erreicht, oder ein importiertes 3D-Modell kann von der anderen Seite bearbeitet werden. Es wurde nichts erzeugt.',
-  'warnings.aroundStockMismatch': '{operation}: Die Around-Seite benötigt eine Rundstange entlang derselben Achse wie bei der Einrichtung.',
+  'warnings.aroundStockMismatch': '{operation}: Die Around-Seite benötigt eine Stange entlang derselben Achse wie bei der Einrichtung.',
   'warnings.aroundCentreline': '{operation}: {feature} erreicht die Mittellinie der Stange; ein Schnitt auf der Around-Seite muss davor enden.',
   'warnings.aroundCutReachesCentreline': '{operation}: Der Schnitt würde die Mittellinie der Stange erreichen. Reduziere die Tiefe, damit er vor der Mitte der Stange endet.',
   'warnings.rotaryNoRoom': '{operation}: Zwischen den Endstützen, dem Spannfutter und dem Reitstock ist kein Platz zum Fräsen. Kürzen Sie die Stützen oder verschieben Sie das Modell.',

@@ -11,9 +11,11 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `ToolbarDialog.tsx` — portaled new/import/text dialogs launched by toolbar commands.
 - `ProjectNameControl.tsx` — project name and dirty-state control.
 - `GlobalActions.tsx` — file/history/zoom action group.
-- `CreationActions.tsx` — feature/region creation target and shape picker group.
-- `RotaryPatternActions.tsx` — the Thread and Flutes entries (desktop toolbar and tablet rail variants), shown only on an active Around face.
+- `CreationActions.tsx` — feature/region creation target and shape picker group. On a square blank's Around sheet the 2D drawing controls are hidden (the sheet is round-only, #1016 C2-U1/U2) and only the one-shot solid entries remain.
+- `RotaryPatternActions.tsx` — the Thread and Flutes entries (desktop toolbar and tablet rail variants), shown only on an active Around face with a **round** bar: the unrolled sheet's raw coordinates describe a round bar, so a square blank does not offer them (#1016 C2-U2).
 - `RotaryPatternDialog.tsx` — the Thread and Flutes parameter dialogs; validates locally and calls `addRotaryPattern` once.
+- `RotarySolidActions.tsx` — the one-shot Around solids (#1016 C2-U2): Polygon / hex on a round bar and Square to round on a square blank. Exactly one entry is offered at a time, keyed on the bar's shape; the entry and its dialog unmount with the face, so a half-filled form cannot be resurrected. Desktop toolbar and tablet rail variants.
+- `RotarySolidDialog.tsx` — the Polygon and Square-to-round form for `addRotarySolid` (#1016 C2-U2). One discriminated form; it maps a chuck-end start/length into absolute stock-space endpoints (X from `minX`, Y from `maxY`), validates the across-flats ceiling and the finished-diameter bound locally, and shows a typed store refusal as real text. No parameter block is stored.
 - `RotaryDirectionField.tsx` — the shared Right/Left physical-hand `Select` both dialogs render; carries a stable `rotary-dialog__direction` hook and an accessible group label (extracted to keep the dialog inside its line budget).
 - `FeatureEditActions.tsx` — selected-feature transform/edit action group, including the one-shot Feature Distribution command.
 - `AlignmentActions.tsx` — align and distribute popover groups.

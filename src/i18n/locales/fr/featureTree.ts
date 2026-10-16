@@ -169,6 +169,8 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.nameDisabled': 'Brut',
   'featureTree.properties.stock.block': 'Bloc',
   'featureTree.properties.stock.roundBar': 'Barre ronde',
+  'featureTree.properties.stock.squareBlank': 'Carré plein',
+  'featureTree.properties.side': 'Côté',
   'featureTree.properties.diameter': 'Diamètre',
   'featureTree.properties.length': 'Longueur',
   'featureTree.properties.axis': 'Axe',

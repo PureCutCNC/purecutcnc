@@ -471,16 +471,19 @@ export const properties = {
   stockShape: (page: Page) => page.getByTestId('stock-shape'),
 
   /** An option in the open Shape select. */
-  stockShapeOption: (page: Page, label: 'Block' | 'Round bar') =>
+  stockShapeOption: (page: Page, label: 'Block' | 'Round bar' | 'Square blank') =>
     properties.stockShape(page).getByRole('option', { name: label, exact: true }),
 
   /** The Diameter number input, present only for a round bar. */
   stockDiameter: (page: Page) => page.getByTestId('stock-diameter').locator('input'),
 
-  /** The Length number input, present only for a round bar. */
+  /** The Side number input, present only for a square blank. */
+  stockSide: (page: Page) => page.getByTestId('stock-side').locator('input'),
+
+  /** The Length number input, present for either bar shape. */
   stockLength: (page: Page) => page.getByTestId('stock-length').locator('input'),
 
-  /** The Axis custom-select root, present only for a round bar. */
+  /** The Axis custom-select root, present for either bar shape. */
   stockAxis: (page: Page) => page.getByTestId('stock-axis'),
 
   /** An option in the open Axis select. */
@@ -902,5 +905,26 @@ export const rotary = {
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+}
+
+// Polygon / hex and Square to round on the Around face (#1016 C2-U2). The two
+// entries carry stable `data-command` hooks and only one is offered at a time
+// (Polygon on a round bar, Square to round on a square blank). The dialog reuses
+// the C1 rotary frame and field hooks but keeps its own `rotary-solid-dialog`
+// root, so the two dialogs' selectors can never be confused if both are mounted.
+export const rotarySolid = {
+  polygonButton: (page: Page) => page.locator('[data-command="rotary-polygon"]'),
+  squareToRoundButton: (page: Page) => page.locator('[data-command="rotary-square-to-round"]'),
+  dialog: (page: Page) => page.locator('.rotary-solid-dialog'),
+  field: (page: Page, name: 'start' | 'length' | 'sides' | 'across-flats' | 'rotation' | 'diameter') =>
+    page.locator(`#rotary-solid-${name}`),
+  /** The tool picker, alone in its wrapper so nothing else matches it. */
+  tool: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__tool'),
+  toolTrigger: (page: Page) => rotarySolid.tool(page).locator('.ui-select__trigger'),
+  toolOption: (page: Page, name: string) => rotarySolid.tool(page).getByRole('option', { name }),
+  createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__create'),
+  cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
+  error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
+  note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
 }
 

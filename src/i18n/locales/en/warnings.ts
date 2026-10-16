@@ -237,7 +237,7 @@ export const warningsEn = {
   'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
   'warnings.setupTargetNotThrough': '{features}: drawn on the other face and not a cut that goes through the stock, so this setup cannot reach it. Only a subtract that reaches both stock faces, or an imported 3D model, can be machined from the other side. Nothing was generated.',
-  'warnings.aroundStockMismatch': '{operation}: the around face needs a round bar lying along the same axis as when it was set up.',
+  'warnings.aroundStockMismatch': '{operation}: the around face needs a bar lying along the same axis as when it was set up.',
   'warnings.aroundCentreline': "{operation}: {feature} reaches the bar's centreline; a cut on the around face must stop short of it.",
   'warnings.aroundCutReachesCentreline': "{operation}: the cut would reach the bar's centreline. Reduce its depth so it stops short of the middle of the bar.",
   'warnings.rotaryNoRoom': '{operation}: no room to cut between the end supports and the chuck and tailstock. Shorten the supports or move the model.',

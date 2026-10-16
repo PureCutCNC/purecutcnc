@@ -217,7 +217,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'No se pudo limpiar de forma segura una esquina redondeada de la pared del vaciado; se mantuvo la trayectoria de pared afilada para ese anillo.',
   'warnings.pocketFinishIslandWallTooTight': 'La fresa no cabe entre una isla y la pared del vaciado; la pasada de acabado de la isla se recortó hasta donde sí cabe, por lo que queda material en ese hueco.',
   'warnings.setupTargetNotThrough': '{features}: dibujado en la otra cara y no es un corte pasante, por lo que esta sujeción no puede alcanzarlo. Solo una sustracción que llega a las dos caras del material, o un modelo 3D importado, puede mecanizarse desde el otro lado. No se generó nada.',
-  'warnings.aroundStockMismatch': '{operation}: la cara Around necesita una barra redonda situada sobre el mismo eje que cuando se configuró.',
+  'warnings.aroundStockMismatch': '{operation}: la cara Around necesita una barra situada sobre el mismo eje que cuando se configuró.',
   'warnings.aroundCentreline': '{operation}: {feature} alcanza la línea central de la barra; un corte en la cara Around debe detenerse antes de ella.',
   'warnings.aroundCutReachesCentreline': '{operation}: el corte alcanzaría la línea central de la barra. Reduce su profundidad para que se detenga antes del centro de la barra.',
   'warnings.rotaryNoRoom': '{operation}: no hay espacio para cortar entre los soportes de los extremos, el mandril y el contrapunto. Acorte los soportes o mueva el modelo.',

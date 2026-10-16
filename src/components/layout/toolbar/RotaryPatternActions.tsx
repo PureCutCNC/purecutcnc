@@ -25,7 +25,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace } from '../../../store/helpers/activeFace'
+import { activeFace, aroundSketchAuthoringAvailable } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Icon } from '../../Icon'
@@ -120,9 +120,15 @@ function RotaryAroundActions({
 
 function RotaryPatternActions({ variant = 'toolbar', tooltipSide = 'bottom' }: RotaryPatternActionsProps) {
   const face = useProjectStore((state) => activeFace(state.project))
+  const project = useProjectStore((state) => state.project)
   // Rendering the dialog subtree only on Around lets ordinary unmounting clear
   // the pending request, so returning to Around never reopens the old dialog.
   if (face !== 'around') return null
+  // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2): the
+  // unrolled sheet's raw coordinates describe a round bar, so on a square blank
+  // the entries are absent rather than offered and refused. The solid
+  // conveniences (`RotarySolidActions`) are the square blank's workflow.
+  if (!aroundSketchAuthoringAvailable(project)) return null
   return <RotaryAroundActions variant={variant} tooltipSide={tooltipSide} />
 }
 

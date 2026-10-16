@@ -214,6 +214,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.nameDisabled': 'Rohteil',
   'featureTree.properties.stock.block': 'Block',
   'featureTree.properties.stock.roundBar': 'Rundstab',
+  'featureTree.properties.stock.squareBlank': 'Vierkantrohling',
+  'featureTree.properties.side': 'Seite',
   'featureTree.properties.diameter': 'Durchmesser',
   'featureTree.properties.length': 'Länge',
   'featureTree.properties.axis': 'Achse',

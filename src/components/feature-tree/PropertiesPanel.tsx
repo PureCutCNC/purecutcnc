@@ -28,8 +28,9 @@ import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
 import type { ProjectType, StockAxis, TabShape } from '../../types/project'
+import { barLength, isSquareStock } from '../../types/barStock'
 import { useProjectStore } from '../../store/projectStore'
-import { originAfterStockEdit, resizeRoundStock } from '../../store/helpers/stockShape'
+import { originAfterStockEdit, resizeRoundStock, resizeSquareStock } from '../../store/helpers/stockShape'
 import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
 import {
   projectMachineMismatch,
@@ -52,6 +53,7 @@ import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import { activeFace, faceAngles, linkedCopiesOffFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
 import { FaceZRange } from './FaceZRange'
@@ -518,18 +520,33 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
     const round = isRoundStock(project.stock) ? project.stock : null
+    const square = isSquareStock(project.stock) ? project.stock : null
     // The shape control offers only what the project type does (issue #1028):
-    // milling and plasma cut a block, rotary turns a round bar. A shape the
-    // current stock already has stays listed, so a bar kept from an earlier
-    // type can still be converted instead of becoming an unreachable value.
+    // milling and plasma cut a block, rotary turns a bar — round or square
+    // (issue #1016 C2-U1). A shape the current stock already has stays listed,
+    // so a bar kept from an earlier type can still be converted instead of
+    // becoming an unreachable value.
     const offeredShapes = stockShapesForProjectType(currentProjectType)
-    const currentShape: 'block' | 'round' = round ? 'round' : 'block'
-    const shapeOptions: ReadonlyArray<'block' | 'round'> = offeredShapes.includes(currentShape)
+    const currentShape: 'block' | 'round' | 'square' = round ? 'round' : square ? 'square' : 'block'
+    const shapeOptions: ReadonlyArray<'block' | 'round' | 'square'> = offeredShapes.includes(currentShape)
       ? offeredShapes
       : [...offeredShapes, currentShape]
+    const shapeLabelKey = (shape: 'block' | 'round' | 'square'): MessageKey => shape === 'block'
+      ? 'featureTree.properties.stock.block'
+      : shape === 'round'
+        ? 'featureTree.properties.stock.roundBar'
+        : 'featureTree.properties.stock.squareBlank'
     const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
       if (!round) return
       const next = resizeRoundStock(round, change)
+      setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
+    }
+    // A square blank is resized through its own helper: the side is the physical
+    // thickness, the true pivot is side / 2, and a manual origin or a custom
+    // workholding diameter is preserved rather than reset (issue #1016 C2-S2).
+    const commitSquare = (change: { side?: number; length?: number; axis?: StockAxis }) => {
+      if (!square) return
+      const next = resizeSquareStock(square, change)
       setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
     }
 
@@ -613,7 +630,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 value={currentShape}
                 options={shapeOptions.map((shape) => ({
                   value: shape,
-                  label: t(shape === 'block' ? 'featureTree.properties.stock.block' : 'featureTree.properties.stock.roundBar'),
+                  label: t(shapeLabelKey(shape)),
                 }))}
                 onChange={(value) => setStockShape(value)}
                 disabled={shapeOptions.length === 1}
@@ -676,6 +693,67 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   checked={project.stock.visible}
                   onChange={(event) => {
                     setStock({ ...project.stock, visible: event.target.checked })
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          ) : square ? (
+            <>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.side')}</span>
+                <div data-testid="stock-side">
+                  <DraftNumberInput
+                    key={`stock-side-${square.thickness}`}
+                    value={square.thickness}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitSquare({ side: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.length')}</span>
+                <div data-testid="stock-length">
+                  <DraftNumberInput
+                    key={`stock-length-${barLength(square)}`}
+                    value={barLength(square)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitSquare({ length: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.axis')}</span>
+                <div data-testid="stock-axis">
+                  <Select
+                    value={square.axis}
+                    options={[
+                      { value: 'x', label: t('featureTree.properties.axis.x') },
+                      { value: 'y', label: t('featureTree.properties.axis.y') },
+                    ]}
+                    onChange={(value) => commitSquare({ axis: value })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    // Keep the blank: rebuild only the colour, never defaultStock.
+                    setStock({ ...square, color: event.target.value })
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    setStock({ ...square, visible: event.target.checked })
                   }}
                 />
                 <span>{t("featureTree.properties.visible")}</span>

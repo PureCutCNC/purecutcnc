@@ -51,6 +51,7 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.drawer.creationTools': 'Outils de création',
   'appShell.status.stockDim': 'Brut : {width} × {height} × {thickness} {units}',
   'appShell.status.stockDimRound': 'Brut : Ø{diameter} × {length} {units}',
+  'appShell.status.stockDimSquare': 'Brut : ▢{side} × {length} {units}',
   'appShell.status.editStockDimensions': 'Modifier les dimensions du brut',
   'appShell.status.changeUnits': 'Changer les unités du projet de {from} à {to}',
   'appShell.status.expand': 'Développer la barre d’état',
