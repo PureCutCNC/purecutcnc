@@ -278,7 +278,13 @@ for (const axis of ['x', 'y'] as const) {
     // sheet coordinates, so the display is the exact inverse it claims to be.
     const back = wrapToolpath(drawn!, frame)
     for (let index = 0; index < back.moves.length; index += 251) {
-      near(back.moves[index].from.a, result.moves[index].from.a, `${axis} ${kind}: the round trip recovers the angle`)
+      const backAngle = back.moves[index].from.a
+      const sourceAngle = result.moves[index].from.a
+      // The wrap has to put the angle back; assert it is there rather than
+      // defaulting, so a lost angle fails instead of being rounded to zero.
+      assert(backAngle !== undefined && sourceAngle !== undefined,
+        `${axis} ${kind}: the round trip recovers an angle`)
+      near(backAngle, sourceAngle, `${axis} ${kind}: the round trip recovers the angle`)
       near(back.moves[index].from.z, result.moves[index].from.z, `${axis} ${kind}: the round trip recovers the tool height`)
     }
   }
