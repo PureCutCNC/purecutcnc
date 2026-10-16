@@ -341,21 +341,21 @@ testMutedOverlayOpacity()
 const AROUND_BAR_X = roundStock(40, 200, 'x', { x: 10, y: 30 })
 const AROUND_BAR_Y = roundStock(2, 8, 'y', { x: 3, y: 5 })
 
-/** The bar's centreline in the tool frame. */
-function barCentre(bar: RoundStock): number {
+/** The bar's centreline in the tool frame, for a round bar's own fixtures. */
+function roundBarCentre(bar: RoundStock): number {
   return bar.axis === 'x' ? bar.profile.start.y + bar.thickness / 2 : bar.profile.start.x + bar.thickness / 2
 }
 
 /** A wrapped tool point: on the centreline, `radius` from the axis, at `a`. */
 function wrappedToolPoint(bar: RoundStock, along: number, radius: number, a: number) {
   return bar.axis === 'x'
-    ? { x: along, y: barCentre(bar), z: bar.thickness / 2 + radius, a }
-    : { x: barCentre(bar), y: along, z: bar.thickness / 2 + radius, a }
+    ? { x: along, y: roundBarCentre(bar), z: bar.thickness / 2 + radius, a }
+    : { x: roundBarCentre(bar), y: along, z: bar.thickness / 2 + radius, a }
 }
 
 /** Distance of a stock-space point from the bar's axis. */
 function distanceFromBarAxis(bar: RoundStock, point: { x: number; y: number; z: number }): number {
-  const centre = barCentre(bar)
+  const centre = roundBarCentre(bar)
   const height = bar.thickness / 2
   return bar.axis === 'x'
     ? Math.hypot(point.y - centre, point.z - height)

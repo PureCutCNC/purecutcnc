@@ -16,7 +16,7 @@
 
 import type { SketchControlRef } from '../../store/types'
 import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
-import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
+import type { BackdropImage, BarStock, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
 import { barCentre, isBarStock } from '../../types/barStock'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
@@ -329,7 +329,7 @@ export interface StockLabelRect {
 }
 
 /** The stock fields a dimension label reads. */
-type DimensionLabelStock = Pick<Stock, 'shape'> & Partial<Pick<Stock, 'axis'>>
+type DimensionLabelStock = Pick<Stock, 'shape'> & Partial<Pick<BarStock, 'axis'>>
 
 /**
  * The stock's two dimension labels. A round bar's dimension **across** its
