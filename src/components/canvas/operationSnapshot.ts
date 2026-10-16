@@ -15,8 +15,9 @@
  */
 
 import { getFeatureGeometryProfiles } from '../../text'
-import { getProfileBounds, isRoundStock, rectProfile } from '../../types/project'
+import { getProfileBounds, rectProfile } from '../../types/project'
 import type { Clamp, Operation, Project, SketchProfile, Stock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { aroundFrame, unwrapToolpath } from '../../engine/aroundFrame'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import type { ToolpathVisibility } from '../toolpathVisibility'
@@ -257,11 +258,12 @@ export function drawOperationSnapshot(
 
   // An Around operation is cut on the bar's surface unrolled flat, so the
   // snapshot shows the sheet and the path on it, not the bar's rectangle
-  // (issue #395).
+  // (issue #395). A square blank unrolls through the same nominal reference
+  // cylinder (#1016 C2-U1V), so its path is unwrapped exactly as a round one.
   const sheet = aroundSheetForOperation(project, operation)
   const frameStock = sheet ? aroundSheetStock(project.stock, sheet) : project.stock
   // `aroundSheetForOperation` only answers on a bar, so this is a type narrowing.
-  const displayToolpath = sheet && toolpath && isRoundStock(project.stock)
+  const displayToolpath = sheet && toolpath && isBarStock(project.stock)
     ? unwrapToolpath(toolpath, aroundFrame(project.stock))
     : toolpath
 

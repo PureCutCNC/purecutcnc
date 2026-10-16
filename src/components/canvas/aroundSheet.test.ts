@@ -23,6 +23,11 @@
  * Mutations checked one at a time against these assertions:
  * - the sheet one diameter across instead of one circumference → "the sheet is
  *   one circumference across" fails;
+ * - the square blank's nominal radius taken from the corner radius or the
+ *   physical perimeter instead of `side / 2` / `π · side` → the square
+ *   circumference and radius assertions fail (#1016 C2-U1V);
+ * - the square blank refused by the bar guard → the square sheet assertions
+ *   fail;
  * - the sheet swapped for a Y bar (X/Y swapped) → the Y-bar assertions fail;
  * - the turn lines taken from the sheet's first edge instead of the zero line
  *   (issue #1026) → "the zero line is the only solid turn" fails;
@@ -40,8 +45,9 @@
  * Run with: npx tsx src/components/canvas/aroundSheet.test.ts
  */
 
+import { squareStock } from '../../types/barStock'
 import { DEFAULT_SETUP_ID, newProject, rectProfile, roundStock } from '../../types/project'
-import type { Clamp, MachiningSetup, Project, RoundStock, SketchFeature, SketchProfile } from '../../types/project'
+import type { BarStock, Clamp, MachiningSetup, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   aroundClampBand,
@@ -64,7 +70,7 @@ function near(actual: number, expected: number, message: string, epsilon = 1e-9)
 const X_BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
 const Y_BAR = roundStock(2, 8, 'y', { x: 3, y: 5 })
 
-function aroundSetup(stock: RoundStock, id = 'setup-around'): MachiningSetup {
+function aroundSetup(stock: BarStock, id = 'setup-around'): MachiningSetup {
   return {
     id,
     name: 'Around',
@@ -81,7 +87,7 @@ function clamp(id: string, type: Clamp['type']): Clamp {
   return { id, name: id, type, x: 100, y: 40, w: 30, h: 20, height: 25, visible: true }
 }
 
-function aroundProject(stock: RoundStock, clamps: Clamp[] = [], activeSetupId?: string): Project {
+function aroundProject(stock: BarStock, clamps: Clamp[] = [], activeSetupId?: string): Project {
   const base = newProject()
   const setup = aroundSetup(stock)
   return {
@@ -367,6 +373,87 @@ function modelFeature(id: string, profile: SketchProfile, overrides: Partial<Ske
     frame.modelBands.length === 0,
     `a model wholly outside the bar is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
   )
+}
+
+// ── A square blank unrolls through the nominal reference cylinder ──
+//
+// The sheet of a square blank is the same coordinate mapping as a round bar's,
+// with radius = side / 2 and circumference = π · side (#1016 C2-S3/U1V). The
+// nominal circumference is deliberately *not* the blank's physical perimeter
+// (4 · side), so a mapping that used the square's own geometry fails.
+
+{
+  for (const axis of ['x', 'y'] as const) {
+    const square = squareStock(12, 30, axis, { x: 4, y: 7 })
+    const frame = aroundSheet(aroundProject(square))!
+    assert(frame !== null, `${axis}: a square blank on Around has a sheet`)
+    assert(frame.axis === axis, `${axis}: the square blank keeps its own along axis`)
+    near(frame.radius, 6, `${axis}: the nominal radius is half the side`)
+    near(frame.circumference, Math.PI * 12, `${axis}: the nominal circumference is pi times the side`)
+    assert(Math.abs(frame.circumference - 4 * 12) > 1, `${axis}: the frame never uses the physical perimeter`)
+    const zero = axis === 'x' ? 7 + 6 : 4 + 6
+    near(frame.zero, zero, `${axis}: the zero line is the square blank's centreline`)
+    near(frame.sheetStart, zero - Math.PI * 6, `${axis}: the sheet starts half a nominal circumference below the zero line`)
+    const rect = axis === 'x'
+      ? { minX: 4, maxX: 34, minY: zero - Math.PI * 6, maxY: zero + Math.PI * 6 }
+      : { minX: zero - Math.PI * 6, maxX: zero + Math.PI * 6, minY: 7, maxY: 37 }
+    assert(JSON.stringify(frame.rect) === JSON.stringify(rect),
+      `${axis}: the square sheet frames the blank's own rectangle: ${JSON.stringify(frame.rect)}`)
+    const along = axis === 'x' ? { min: 4, max: 34 } : { min: 7, max: 37 }
+    assert(JSON.stringify(frame.along) === JSON.stringify(along), `${axis}: the square sheet keeps its length along`)
+    assert(frame.origin.x === (axis === 'x' ? 55 : zero) && frame.origin.y === (axis === 'y' ? 62 : zero),
+      `${axis}: the origin marker sits on the square zero line at its along coordinate`)
+  }
+}
+
+{
+  // An off-origin square blank and an inch one: the frame follows the blank,
+  // never the drawing origin.
+  const offOrigin = squareStock(20, 100, 'x', { x: -120, y: -35 })
+  const frame = aroundSheet(aroundProject(offOrigin))!
+  near(frame.zero, -25, 'an off-origin square blank centres the sheet where it is')
+  near(frame.circumference, Math.PI * 20, 'an off-origin square blank keeps its nominal circumference')
+  near(frame.radius, 10, 'an off-origin square blank keeps half its side as the radius')
+
+  const inch = newProject('inch square', 'inch')
+  const stock = squareStock(0.5, 2, 'x', { x: 0, y: 0 })
+  const project: Project = { ...inch, stock, activeSetupId: aroundSetup(stock).id, setups: [...inch.setups, aroundSetup(stock)] }
+  const inchFrame = aroundSheet(project)!
+  near(inchFrame.circumference, 0.5 * Math.PI, 'an inch square circumference is pi times its inch side')
+  near(inchFrame.rect.maxY - inchFrame.rect.minY, 0.5 * Math.PI, 'the inch square sheet is one nominal circumference tall')
+}
+
+{
+  // Turn lines still come from the nominal circumference and the zero line.
+  const square = squareStock(12, 30, 'x', { x: 4, y: 7 })
+  const frame = aroundSheet(aroundProject(square))!
+  const c = frame.circumference
+  const lines = aroundTurnLines(frame, frame.zero - c, frame.zero + 2 * c)
+  assert(lines.length === 4, `a square sheet reports four turns over three circumferences (${lines.length})`)
+  assert(lines[1].solid && Math.abs(lines[1].across - frame.zero) < 1e-9, 'the square zero line is the solid turn')
+}
+
+{
+  // An imported model is still banded along a square blank.
+  const square = squareStock(12, 30, 'x', { x: 4, y: 7 })
+  const project = projectWithFeatures(aroundProject(square), [modelFeature('bust', rectProfile(2, 6, 20, 5))])
+  const frame = aroundSheet(project)!
+  assert(frame.modelBands.length === 1, `a square blank bands its visible model (${frame.modelBands.length})`)
+  assert(JSON.stringify(frame.modelBands[0].along) === JSON.stringify({ min: 4, max: 22 }),
+    `the square band is clipped to the blank: ${JSON.stringify(frame.modelBands[0].along)}`)
+}
+
+// ── A square blank's operation sheet ─────────────────────────
+
+{
+  const square = squareStock(12, 30, 'x', { x: 4, y: 7 })
+  const project = aroundProject(square)
+  const around = aroundSheetForOperation(project, { id: 'op-around', setupId: 'setup-around' })
+  assert(around !== null, "a square blank's Around operation draws its own sheet")
+  near(around!.radius, 6, "the operation's square sheet uses the nominal radius")
+  near(around!.circumference, Math.PI * 12, "the operation's square sheet uses the nominal circumference")
+  assert(aroundSheetForOperation(project, { id: 'op-top', setupId: DEFAULT_SETUP_ID }) === null,
+    'a Top operation on a square blank still has no sheet')
 }
 
 console.log('aroundSheet: all assertions passed')
