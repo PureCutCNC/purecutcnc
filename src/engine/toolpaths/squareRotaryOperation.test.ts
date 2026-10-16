@@ -15,17 +15,19 @@
  */
 
 /**
- * The square blank through the saved-operation adapter (#1016 C2-S3).
+ * The square blank through the saved-operation adapter (#1016 C2-S3), and the
+ * production dispatch that now admits it (#1016 C2-S4).
  *
- * `generateRotaryOperation` is the seam `generateOperation.ts:151` calls for
+ * `generateRotaryOperation` is the seam `generateOperation.ts` calls for
  * `rotary_rough` / `rotary_finish` only, so accepting a square blank here
  * cannot enable a wrapped 2D path: a non-rotary kind never reaches it. The
  * production dispatch in front of it (`setupGenerationBlock`,
- * `src/engine/setupTargets.ts:283`) still requires `isRoundStock`, and the
- * store / UI guards (`activeFace.ts:585`, `operationValidity.ts:191,207`,
- * `motionPipeline.ts`, the CSG and overlay readers) still refuse square stock.
- * Those are the required off-scope integration guards, reported with this
- * slice — not silently widened.
+ * `src/engine/setupTargets.ts`) additionally requires a bar on the matching
+ * Around axis, a real model target, and a physical workholding / ordinary-clamp
+ * setup the square corner envelope supports; the store / UI guards
+ * (`activeFace.ts`, `operationValidity.ts`, the CSG and overlay readers) still
+ * refuse square stock and are the required off-scope integration guards
+ * reported with this slice — not silently widened.
  *
  * Mutations checked: `safeRadius` from the inscribed radius (the low-rapid
  * assertion fails), the adapter still gated on `isRoundStock` (every square
@@ -37,8 +39,9 @@ import assert from 'node:assert/strict'
 import { isDeepStrictEqual } from 'node:util'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { isRoundStock, newProject } from '../../types/project'
-import type { RoundStock, SquareStock } from '../../types/project'
+import type { Clamp, RoundStock, SquareStock } from '../../types/project'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { computeOperationToolpath } from './generateOperation'
 import { generateRotaryOperation } from './rotaryOperation'
 import { rotaryAlongRange } from './rotaryModel'
@@ -53,13 +56,20 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   return new Set(moves.filter((m) => m.to.a !== undefined).map((m) => Math.round(m.to.a! % 360 * 1e6) / 1e6)).size
 }
 
-/** The fixture's blank relabelled to a square of the same physical box. */
+/**
+ * The fixture's blank relabelled to a square of the same physical box, with the
+ * S2 default square workholding: a chuck centred on the true pivot whose outer
+ * diameter clears the corner envelope. The round-sized fixture chuck is too
+ * small for a square blank, so it is replaced — the physical guard's refusal of
+ * exactly that case is exercised in `squareRotaryOutput.test.ts`.
+ */
 function squareProject(axis: 'x' | 'y', kind: 'rotary_rough' | 'rotary_finish', at = { x: 0, y: 0 }) {
   const project = rotaryOperationFixture(axis, kind)
   const stock = project.stock
   assert.ok(isRoundStock(stock), 'the fixture ships a round bar')
   const square: SquareStock = squareStock(stock.thickness, 30, axis, at)
-  return { project: { ...project, stock: square }, square }
+  const chuck: Clamp = { ...defaultRoundWorkholding('chuck', square, 'mm'), id: 'chuck', name: 'Chuck', visible: true }
+  return { project: { ...project, stock: square, clamps: [chuck] }, square, chuck }
 }
 
 for (const axis of ['x', 'y'] as const) {
@@ -171,16 +181,24 @@ for (const axis of ['x', 'y'] as const) {
   console.log('square op: off-origin pivot, radial stock and stepdown all reach the square path')
 }
 
-// ── the documented production boundary ───────────────────────────────
+// ── the production dispatch accepts the safe square blank ────────────
 {
   const { project } = squareProject('x', 'rotary_finish')
   const operation = project.operations[0]
   const envelope = computeOperationToolpath(project, operation)
   assert.ok(envelope, 'the dispatch returns an envelope')
-  assert.equal(envelope.result.moves.length, 0, 'the production dispatch still stops before the square adapter')
+  assert.ok(envelope.result.moves.length > 0, 'the production dispatch generates the square blank')
+  assert.ok(
+    !envelope.result.warnings.some((warning) => warning.code === 'aroundStockMismatch'),
+    'and does not report a stock/setup mismatch',
+  )
   assert.equal(envelope.raw, null, 'the rotary dispatch never carries a flat trace')
-  console.log(`square op: production dispatch still refuses the square blank (${envelope.result.warnings[0]?.code}); `
-    + 'widening setupGenerationBlock to isBarStock is the next bounded slice')
+  for (const move of envelope.result.moves) {
+    assert.ok(move.to.a !== undefined, 'every dispatched move carries an angle')
+    assert.equal(move.to.y, barCentre(project.stock as SquareStock), 'and stays on the true pivot across the bar')
+  }
+  console.log(`square op: production dispatch generates ${envelope.result.moves.length} moves, `
+    + `${distinctAngles(envelope.result.moves)} angles`)
 }
 
 console.log('engine/toolpaths/squareRotaryOperation.test.ts: all assertions passed')

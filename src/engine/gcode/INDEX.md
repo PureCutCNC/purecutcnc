@@ -94,11 +94,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   corner — and the reasons an
   operation cannot run on this machine's rotary axis: no axis, no inverse-time
   feed, travel on the borrowed motor's axis beyond the one value the program
-  may use across all its operations, a non-round bar, canned-cycle drill holes
+  may use across all its operations, a non-bar stock, canned-cycle drill holes
   with no expanded moves, a feed move or arc that carries an angle on one end
   only, a feed move that starts before the program has turned
   the bar to its angle, and the bar lying along the other horizontal axis than
-  the machine's rotary (`postRotaryAxisMismatch`, #395); `planStepFeeds` throws
+  the machine's rotary (`postRotaryAxisMismatch`, #395); a **square** blank
+  (#1016 C2-S4) is judged by the generation guard again before the angle gate:
+  only a legitimate rotary rough/finish against a real model on a matching
+  Around setup with a supported physical workholding / ordinary-clamp setup may
+  post, a non-rotary kind or a stale wholly-angle-free rotary toolpath is
+  refused, and `rotaryCentreline` returns the true pivot (`barPivotZ = side /
+  2`) whichever bar shape the stock is; `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
   from), and the emitted-number
   helpers arc validation judges
@@ -214,6 +220,19 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
   angle and the single closing unwind, `postRotaryAxisMismatch`, and the
   program read back through `parseGcodeMotion` onto the flat toolpath).
+- `squareRotaryOutput.test.ts` — the square blank through generation and the
+  real posted program (#1016 C2-S4): both axes, both units, rough/finish and
+  own / borrowed / reversed machines post nonempty angle-bearing inverse-time
+  motion from the true pivot with no refusal; the round bar is byte-identical
+  across the same 24-cell matrix to a fingerprint captured from the base commit;
+  axis mismatch, a machine with no rotary, borrowed-axis travel, a split-angle
+  feed, a non-rotary square Around path and stale wholly-angle-free motion all
+  refuse; a manual too-small chuck is preserved but refuses generation (no
+  motion, error severity) and output (no motion posted), hidden workholding
+  still counts, axial-disjoint and end-face-touching supports are clear,
+  off-centre / wrong-height / invalid clamp rows fail closed, an ordinary clamp
+  in the swept envelope refuses while a provably disjoint one passes, and 40
+  seeded pure-turn feeds match the analytic true-pivot inverse-time word.
 
 ## Adding a dialect
 

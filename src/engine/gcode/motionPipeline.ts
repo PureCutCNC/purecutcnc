@@ -44,7 +44,8 @@
  */
 
 import type { Operation, Project } from '../../types/project'
-import { isRoundStock, roundStockCentre } from '../../types/project'
+import { isRotaryOperationKind } from '../../types/project'
+import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
@@ -569,17 +570,28 @@ export interface RotaryCentreline {
   point: ToolpathPoint
 }
 
-/** The centreline of the project's round bar, or null when the stock is a block. */
+/**
+ * The centreline of the project's bar — round or square — or null when the
+ * stock is a block (#1016 C2-S4).
+ *
+ * A square blank turns about the same physical axis as a round bar of the same
+ * box: the true pivot `side / 2` at the stock rectangle's centreline. The
+ * corner radius is never the pivot; moving it there would turn the blank about
+ * a point it does not rotate around. Every number here is identical to the
+ * round bar's for a round stock, so an existing program's arithmetic is
+ * unchanged.
+ */
 export function rotaryCentreline(stock: Project['stock']): RotaryCentreline | null {
-  if (!isRoundStock(stock)) return null
+  if (!isBarStock(stock)) return null
+  const centre = barCentre(stock)
   return {
     axis: stock.axis,
     // The bar's axis sits at Z = thickness / 2 (issue #392); across the bar it
     // is the stock rectangle's centreline. The along-bar coordinate is unused.
     point: {
-      x: stock.axis === 'x' ? 0 : roundStockCentre(stock),
-      y: stock.axis === 'x' ? roundStockCentre(stock) : 0,
-      z: stock.thickness / 2,
+      x: stock.axis === 'x' ? 0 : centre,
+      y: stock.axis === 'x' ? centre : 0,
+      z: barPivotZ(stock),
     },
   }
 }
@@ -963,6 +975,7 @@ function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): Tool
 function inspectRotaryOperation(args: {
   definition: MachineDefinition
   project: Project
+  operation: Operation
   toolpath: ToolpathResult
   operationName: string
   trackedAngle: number | null
@@ -972,7 +985,7 @@ function inspectRotaryOperation(args: {
   trackedAngle: number | null
   borrowedCoordinate: number | null
 } {
-  const { definition, project, toolpath, operationName, trackedAngle, borrowedCoordinate } = args
+  const { definition, project, operation, toolpath, operationName, trackedAngle, borrowedCoordinate } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   // The bar and the machine must agree (issue #395, rule 3): a stored angle is
@@ -980,7 +993,8 @@ function inspectRotaryOperation(args: {
   // horizontal axis would turn the stock the wrong way. Checked before the
   // borrowed-axis arithmetic below, which would otherwise read the bar's own
   // travel as travel on the borrowed motor — the same axis, on that machine.
-  if (hasAngle && definition.rotary && isRoundStock(project.stock)
+  // A square blank's axis is read the same way (#1016 C2-S4).
+  if (hasAngle && definition.rotary && isBarStock(project.stock)
     && project.stock.axis !== definition.rotary.about) {
     return {
       refused: {
@@ -1021,6 +1035,23 @@ function inspectRotaryOperation(args: {
       return { refused: { code: 'postRotaryDrillNotExpanded', params: { operation: operationName } } }
     }
   }
+  // Square semantic validation runs before the angle early-return (#1016
+  // C2-S4). A square blank carries only a legitimate rotary rough/finish
+  // against a real model on a matching Around setup: that is exactly the
+  // generation guard, asked again here so a stale manually supplied
+  // `ToolpathResult` cannot post motion the engine would never have generated.
+  // A wholly-angle-free rotary path is stale: an actual square turning pass
+  // always carries `A`, so its absence is refused rather than passed through
+  // as an ordinary flat path. Non-rotary kinds in a square Around setup and
+  // synthetic angle-bearing paths from them are refused by the same guard.
+  if (isSquareStock(project.stock)) {
+    if (setupGenerationBlock(project, operation)) {
+      return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
+    }
+    if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
+      return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
+    }
+  }
   if (!hasAngle) {
     return { refused: null, trackedAngle, borrowedCoordinate: nextBorrowed }
   }
@@ -1039,7 +1070,7 @@ function inspectRotaryOperation(args: {
     && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
     return { refused: { code: 'postRotaryNoInverseTime', params: { operation: operationName } } }
   }
-  if (!isRoundStock(project.stock)) {
+  if (!isBarStock(project.stock)) {
     return { refused: { code: 'postRotaryNeedsRoundStock', params: { operation: operationName } } }
   }
   // Rule 2: cut only at an angle the program has actually turned to. The
@@ -1075,6 +1106,7 @@ export function planRotaryRefusals(
     const verdict = inspectRotaryOperation({
       definition,
       project,
+      operation: entry.operation,
       toolpath: entry.toolpath,
       operationName: entry.operation.name,
       trackedAngle,

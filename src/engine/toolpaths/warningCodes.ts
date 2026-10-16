@@ -317,7 +317,10 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
-  /** Around needs the original round-bar axis. */
+  /** Around needs a bar round or square, lying along the setup's axis, that
+   *  the operation may cut: a wrapped 2D operation on a square blank, or any
+   *  square turning setup the physical workholding/clamp guard refuses, is
+   *  reported here and produces no motion (#1016 C2-S4). */
   | 'aroundStockMismatch'
   /** A radial cut must stop above the bar centreline. */
   | 'aroundCentreline'
@@ -480,9 +483,16 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   left out of the program (issue #393). The file would otherwise be saved
  *   without that pass, and approximating any of them would cut the stock at
  *   the wrong angle or the wrong feed.
+ * - `aroundStockMismatch` — no motion was generated for an Around operation:
+ *   the stock is not a bar the setup can turn, or — on a square blank — the
+ *   operation kind is not a rotary rough/finish, its target is not a real
+ *   model, or the physical workholding / ordinary-clamp guard says the setup
+ *   cannot hold the blank (#1016 C2-S4). A saved program would quietly lack a
+ *   pass the operation list promises, so this is an error rather than a note.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
+  'aroundStockMismatch',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',

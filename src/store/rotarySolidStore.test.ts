@@ -22,8 +22,10 @@
  * insist on: the created model is the round finished target inside it, and the
  * stored stock is byte-identical to the square the job started from. The
  * retained square ends and the actual square-stock generation are the engine
- * slice's work (see the note at the end of this file); nothing here pretends
- * that path is integrated.
+ * slice's work; this file proves the created rough and finish operations
+ * generate real motion through the production seam on the square blank
+ * (C2-S4), and that the physical workholding guard is what the setup is judged
+ * by rather than a shape assumption.
  *
  * Mutations checked one at a time against these assertions:
  * - the blank relabelled `round` (or rebuilt through the round normalizer) →
@@ -41,8 +43,8 @@
  *   fail on any diameter below the side;
  * - the model's operations left on the provisional setup id, or the target
  *   pointed at the folder → the setup/target assertions fail;
- * - generation treated as working on a square blank → the documented
- *   engine-refusal assertion fails (and would be a false claim);
+ * - generation treated as working on a square blank → the successful
+ *   nonempty-motion assertions fail (and would be a false claim);
  * - creation split across two `set` calls → the undo assertion fails;
  * - the creation taking its own snapshot (or clearing `transactionStart`)
  *   inside an open transaction → the combined undo/redo and the "open
@@ -354,9 +356,9 @@ log('Testing diameter at and above the blank side...')
   }
 }
 
-// ── generation is refused today, and the test says so ─────────
+// ── the production seam generates on the square blank ─────────
 
-log('Testing the documented square-stock generation limitation...')
+log('Testing the production seam generates safe square rough and finish motion...')
 {
   loadSquare(MM_X, [cutter('mm', 'ball')])
   const bounds = getStockBounds(store().project.stock)
@@ -370,19 +372,28 @@ log('Testing the documented square-stock generation limitation...')
   assert.ok(result.ok, 'the model and its operations are created')
   if (!result.ok) throw new Error('unreachable')
 
-  // The engine's own square-stock guards still refuse motion. This is the
-  // engine slice's work; asserting it here keeps the creation slice from
-  // claiming generation it does not have.
+  // The production dispatch admits the real square blank: the same seam the
+  // engine slice owns (`setupGenerationBlock` → `generateRotaryOperation`)
+  // now produces motion instead of the documented shape refusal.
+  const pivot = barPivotZ(store().project.stock as SquareStock)
+  const centre = barCentre(store().project.stock as SquareStock)
   for (const id of [result.roughOperationId, result.finishOperationId]) {
     const operation = store().project.operations.find((entry) => entry.id === id)!
     const envelope = computeOperationToolpath(store().project, operation)
     assert.ok(envelope, `${operation.kind}: the engine answers`)
     if (!envelope) throw new Error('unreachable')
-    assert.equal(envelope.result.moves.length, 0, `${operation.kind}: no motion on a square blank yet`)
+    assert.ok(envelope.result.moves.length > 0, `${operation.kind}: nonempty motion on the square blank`)
     assert.ok(
-      envelope.result.warnings.some((warning) => warning.code === 'aroundStockMismatch'),
-      `${operation.kind}: refused as a shape/stock mismatch`,
+      !envelope.result.warnings.some((warning) => warning.code === 'aroundStockMismatch'),
+      `${operation.kind}: admitted, not refused as a shape/setup mismatch`,
     )
+    for (const move of envelope.result.moves) {
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.a !== undefined, `${operation.kind}: every endpoint carries A`)
+        assert.equal(point.y, centre, `${operation.kind}: across stays on the true pivot`)
+        assert.ok(point.z >= pivot - 1e-9, `${operation.kind}: never cuts below the pivot`)
+      }
+    }
   }
 }
 
@@ -602,10 +613,13 @@ log('Testing refusals, the wrong stock shape and ordinary model editing...')
 log('rotarySolidStore: all assertions passed.')
 
 /**
- * Remaining guard sites (reported, not edited here — the engine slice owns
- * them): `generateRotaryOperation` refuses a non-round stock
- * (`isRoundStock`), and `setupGenerationBlock` refuses every rotary operation
- * on an Around setup whose stock is not round. The created model, its asset,
- * its Z band and its two operations are already the ordinary persisted shapes
- * those paths will consume once the square case is integrated.
+ * Guard sites outside this file, reported and not edited here (the engine /
+ * UI slices own them): `activeFace.ts`'s `aroundUnavailableReason` still
+ * answers `needsRoundBar` for a square blank and the face switcher still
+ * refuses to enter Around; `operationValidity.ts`, the CSG / overlay readers
+ * and the simulation setup still branch on `isRoundStock`. The engine
+ * production seam (`setupGenerationBlock` → `generateRotaryOperation`) and the
+ * output planner (`motionPipeline.ts`) now admit the square blank; the
+ * physical workholding / ordinary-clamp guard and the refusal severity live in
+ * `squareRotarySafety.ts` and `warningCodes.ts`.
  */

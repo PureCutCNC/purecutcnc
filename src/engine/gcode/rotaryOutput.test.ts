@@ -27,6 +27,7 @@
 
 import assert from 'node:assert/strict'
 import { defaultTool, getStockBounds, newProject, roundStock, rectProfile } from '../../types/project'
+import { squareStock } from '../../types/barStock'
 import type { BlockStock, MachineOrigin, Operation, Project, RoundStock, Stock } from '../../types/project'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { normalizeToolForProject } from '../toolpaths/geometry'
@@ -1137,6 +1138,26 @@ const NINETY = Math.PI / 2
     ])
     assert.deepEqual(result.warnings, [{ code: 'postRotaryNeedsRoundStock', params: { operation: 'Block' } }])
     assert.doesNotMatch(result.gcode, /A90\b/, 'the refused operation emits no motion')
+  }
+
+  // (e) a square blank turns about the true pivot, and the axis rule applies to
+  // it exactly as to a round bar (#1016 C2-S4): the centreline is mid-side, not
+  // the corner radius.
+  {
+    const square = squareStock(20, 100, 'x')
+    assert.deepEqual(
+      rotaryCentreline(square),
+      { axis: 'x', point: { x: 0, y: 10, z: 10 } },
+      'the square centreline is the true pivot at the stock rectangle\'s centreline',
+    )
+    const result = exportProgram(projectWith(square), rotaryMachine({ ...OWN_AXIS, about: 'y' }), [
+      { operation: operation('Square'), moves: turning },
+    ])
+    assert.deepEqual(result.warnings, [{
+      code: 'postRotaryAxisMismatch',
+      params: { operation: 'Square', machineAxis: 'Y', stockAxis: 'X' },
+    }], 'a square blank on the wrong machine axis is refused')
+    assert.doesNotMatch(result.gcode, /A90\b/, 'and emits no motion')
   }
 
   // Every refusal blocks a save, not merely annotates one.

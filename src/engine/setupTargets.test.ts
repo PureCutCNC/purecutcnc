@@ -32,6 +32,7 @@
  */
 
 import { circleProfile, defaultTool, newProject, rectProfile } from '../types/project'
+import { squareStock } from '../types/barStock'
 import type { Operation, Project, SetupFace, SketchFeature, SketchProfile } from '../types/project'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup } from '../test/projectFixtures'
 import { syncProjectSetups } from '../store/helpers/setups'
@@ -552,3 +553,82 @@ for (const face of ['top', 'bottom', 'around'] as const) {
     `a rotary kind reaches no 2D feature, from ${face}`,
   )
 }
+
+// ── Square blank: Around is rotary-only (#1016 C2-S4) ─────────
+//
+// On a square blank the Around face carries no constant-depth cylinder
+// wrapping, so only a rotary rough/finish against a real model may target it.
+// The store guard (`targetAllowedInSetup`) and generation
+// (`setupGenerationBlock`) must agree, or `addOperation` could author a wrapped
+// 2D path the engine then silently refuses.
+
+const squareProject: Project = makeProject([])
+squareProject.meta.projectType = 'rotary'
+squareProject.stock = squareStock(40, 100, 'x')
+squareProject.featureDefinitions = {
+  ...squareProject.featureDefinitions,
+  model: { ...squareProject.featureDefinitions[rectTarget.definitionId], id: 'model', kind: 'stl', operation: 'model' },
+}
+squareProject.features = [
+  { ...squareProject.features[0], id: 'model', definitionId: 'model' },
+  { ...squareProject.features[0], id: 'wrapped', definitionId: rectTarget.definitionId, authoringFace: 'around' },
+]
+squareProject.setups = [{
+  ...squareProject.setups[0],
+  id: 'around',
+  name: 'Around',
+  kind: 'around',
+  orientation: { axis: 'x', angleDeg: 0 },
+}]
+squareProject.activeSetupId = 'around'
+squareProject.clamps = []
+
+const squareTarget = (...featureIds: string[]) => ({ source: 'features' as const, featureIds })
+const wrappedFeature = squareProject.features.find((entry) => entry.id === 'wrapped')!
+const squareModelFeature = squareProject.features.find((entry) => entry.id === 'model')!
+
+assert(
+  targetAllowedInSetup(squareProject, squareTarget('model'), 'around', 'rotary_rough'),
+  'a square blank admits a rotary operation on a real model',
+)
+assert(
+  !targetAllowedInSetup(squareProject, squareTarget('wrapped'), 'around', 'rotary_rough'),
+  'a rotary operation may not target a wrapped 2D feature on a square blank',
+)
+for (const kind of ['follow_line', 'pocket', 'v_carve'] as const) {
+  assert(
+    !targetAllowedInSetup(squareProject, squareTarget('wrapped'), 'around', kind),
+    `${kind} may not target the square Around face`,
+  )
+  assert(
+    !targetAllowedInSetup(squareProject, squareTarget('model'), 'around', kind),
+    `${kind} may not target the square Around face even on a model`,
+  )
+}
+assert(
+  targetAllowedInSetup(squareProject, { source: 'stock' }, 'around', 'pocket'),
+  'a stock target carries no Around feature to refuse',
+)
+assert(
+  !featureReachableFromFace(squareProject, wrappedFeature, 'around', 'follow_line'),
+  'the feature-tree reach agrees: a wrapped 2D feature is not reachable on a square blank',
+)
+assert(
+  !featureReachableFromFace(squareProject, squareModelFeature, 'around', 'pocket'),
+  'nor a model for a non-rotary kind',
+)
+
+assert(
+  setupGenerationBlock(squareProject, { ...operation('rough', ['model']), kind: 'rotary_rough', setupId: 'around' }) === null,
+  'generation admits the square model rough',
+)
+assertEqual(
+  setupGenerationBlock(squareProject, { ...operation('engrave', ['wrapped']), kind: 'follow_line', setupId: 'around' })?.reason,
+  'aroundStockMismatch',
+  'generation refuses a wrapped 2D operation on a square blank',
+)
+assertEqual(
+  setupGenerationBlock(squareProject, { ...operation('finish', ['wrapped']), kind: 'rotary_finish', setupId: 'around' })?.reason,
+  'aroundStockMismatch',
+  'generation refuses a rotary operation whose target is not a model',
+)
