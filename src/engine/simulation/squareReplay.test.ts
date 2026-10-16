@@ -27,8 +27,14 @@
  */
 
 import { applyMoveToGrid } from './replay'
-import { applySquareMoveToGrid, squareSurfaceRadius } from './squareReplay'
-import { PlaybackController } from './playback'
+import { applySquareMoveToGrid, squareMaterialIntervals, squareSurfaceRadius } from './squareReplay'
+import { PlaybackController, cloneSimulationGrid } from './playback'
+import { createSimulationGrid } from './grid'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import { generateRotaryRough } from '../toolpaths/rotaryModel'
+import { buildRotaryCylinder } from '../rotaryCylinder'
 import type { SimulationGrid } from './types'
 import type { AroundFrame } from '../aroundFrame'
 import type { ToolpathMove } from '../toolpaths/types'
@@ -138,8 +144,9 @@ function gridsApproxEqual(a: SimulationGrid, b: SimulationGrid, epsilon = 1e-6):
  * cell's radial ray at radius r, material angle `a`, when the program is at
  * angle A(t), sits at machine `(along, r·cos(a−A), r·sin(a−A))` about the true
  * pivot. A flat cutter is the half-cylinder `|Z| ≤ rt, Y ≥ z`; a ball is the
- * sphere of radius rt centred one radius above its tip. The outermost radius
- * that no sampled pose removes is the cell's new height.
+ * sphere of radius rt centred one radius above its tip plus the cylindrical
+ * shank of the same radius beyond its equator. The outermost radius that no
+ * sampled pose removes is the cell's new height.
  *
  * `rSamples` sets the oracle's own radial resolution (h0 / rSamples), which is
  * the geometry tolerance every parity assertion is measured against.
@@ -191,8 +198,11 @@ function oracleHeight(
       const r = (h0 * ri) / rSamples
       const y = r * cos
       const zz = r * sin
+      // Ball: the lower hemisphere plus the cylindrical shank beyond its
+      // equator — a bare sphere loses the body the tool actually has.
       const inside = ball
         ? dx * dx + (y - ballCenterY) * (y - ballCenterY) + zz * zz <= rt * rt
+          || (dx * dx + zz * zz <= rt * rt && y >= ballCenterY)
         : dx * dx + zz * zz <= rt * rt && y >= z
       if (inside) removable[ri] = 1
     }
@@ -554,6 +564,348 @@ function testPlaybackPreservesDescriptorAndBaseline(): void {
   console.log('playback descriptor and baseline: PASSED')
 }
 
+/**
+ * A one-cell square grid, matching the manager's independent defect fixtures:
+ * the cell sits on the ray at `angle` and at `along`, and its virgin radial
+ * height is the blank's true cross-section there.
+ */
+function oneCellGrid(side: number, angle: number, along: number): SimulationGrid {
+  const radius = side / 2
+  const period = Math.PI * side
+  const across = angle * radius
+  const cellSize = 1
+  const height = squareSurfaceRadius(side, angle)
+  const frame: AroundFrame = {
+    axis: 'x',
+    centre: 0,
+    radius,
+    zero: 0,
+    sheetStart: -period / 2,
+    circumference: period,
+  }
+  return {
+    originX: along - cellSize / 2,
+    originY: across - cellSize / 2,
+    cellSize,
+    cols: 1,
+    rows: 1,
+    stockBottomZ: 0,
+    stockTopZ: side * Math.SQRT1_2,
+    wrap: { axis: 'y', period },
+    squareBar: { side, frame },
+    initialTopZ: new Float32Array([height]),
+    topZ: new Float32Array([height]),
+    squareMaterial: new Map<number, readonly number[]>(),
+  }
+}
+
+/**
+ * The kernel refuses what it cannot model physically instead of quietly
+ * treating it as a flat cutter, and rejects invalid data before it touches the
+ * grid.
+ */
+function testUnsupportedAndInvalidInputsRefuse(): void {
+  console.log('Testing unsupported and invalid square inputs are refused...')
+  const expectThrow = (label: string, run: () => void): void => {
+    let threw = false
+    try {
+      run()
+    } catch (error) {
+      threw = error instanceof RangeError
+    }
+    assert(threw, `${label} must throw a RangeError`)
+  }
+  const message: ToolpathMove = { kind: 'cut', from: { x: 20, y: 0, z: 5 }, to: { x: 60, y: 0, z: 5 } }
+  expectThrow('a v-bit cutter', () => applySquareMoveToGrid(oneCellGrid(20, 0, 40), message, 3, 'v_bit'))
+  expectThrow('a non-positive tool radius', () => applySquareMoveToGrid(oneCellGrid(20, 0, 40), message, 0, 'flat_endmill'))
+  expectThrow('a non-finite move', () => applySquareMoveToGrid(
+    oneCellGrid(20, 0, 40),
+    { kind: 'cut', from: { x: Number.NaN, y: 0, z: 5 }, to: { x: 60, y: 0, z: 5 } },
+    3,
+    'flat_endmill',
+  ))
+  const untouched = oneCellGrid(20, 0, 40)
+  const before = squareMaterialIntervals(untouched, 0)
+  try {
+    applySquareMoveToGrid(untouched, { kind: 'cut', from: { x: 20, y: 0, z: Number.NaN }, to: { x: 60, y: 0, z: 5 } }, 3, 'flat_endmill')
+  } catch {
+    // expected
+  }
+  assert(untouched.squareMaterial!.size === 0, 'a refused move must not mutate the grid')
+  assert(squareMaterialIntervals(untouched, 0).every((v, i) => v === before[i]), 'a refused move must not change material')
+  console.log('unsupported and invalid input refusal: PASSED')
+}
+
+/**
+ * The three defects the R1 slice was rejected for/**
+ * The three defects the R1 slice was rejected for, each measured independently
+ * on the actual geometry:
+ *
+ *  1. a sloping ball cut was evaluated at a global lowest tip, overcutting
+ *     1.99 mm — the tip and its axial position must stay correlated;
+ *  2. the ball was a bare sphere, losing the cylindrical body above its
+ *     equator — constant tip 5 must cut to radius 5, not stop at 10;
+ *  3. an interior flat groove left the outer lip standing, which a single
+ *     `topZ` cannot represent at all.
+ */
+function testMeasuredDefectsReproduce(): void {
+  console.log('Testing the three measured C2-R1F defects no longer reproduce...')
+  const ballTolerance = 3e-5
+
+  // 1. Sloping ball: the independent reference is
+  //    min over the sweep of tip + rt − sqrt(rt² − dx²).
+  {
+    const grid = oneCellGrid(20, 0, 40)
+    applyMoveToGrid(grid, { kind: 'cut', from: { x: 20, y: 0, z: 11 }, to: { x: 60, y: 0, z: 7 } }, 2, 'ball_endmill', null)
+    let reference = 10
+    for (let n = 0; n <= 100000; n += 1) {
+      const t = n / 100000
+      const along = 20 + 40 * t
+      const tip = 11 - 4 * t
+      const dx = 40 - along
+      if (Math.abs(dx) <= 2) reference = Math.min(reference, tip + 2 - Math.sqrt(4 - dx * dx))
+    }
+    assert(approx(grid.topZ[0], reference, ballTolerance), `sloping ball cut must reach ${reference}, got ${grid.topZ[0]}`)
+    console.log(`sloping ball reach: PASSED (${grid.topZ[0].toFixed(6)} vs ${reference.toFixed(6)})`)
+  }
+
+  // 2. Ball body: the lower hemisphere plus the cylindrical shank reaches tip.
+  {
+    const grid = oneCellGrid(20, 0, 40)
+    applyMoveToGrid(grid, { kind: 'cut', from: { x: 20, y: 0, z: 5 }, to: { x: 60, y: 0, z: 5 } }, 2, 'ball_endmill', null)
+    assert(approx(grid.topZ[0], 5, ballTolerance), `a constant tip 5 ball must cut to radius 5, got ${grid.topZ[0]}`)
+    console.log(`ball body floor: PASSED (${grid.topZ[0].toFixed(6)})`)
+  }
+
+  // 3. Flat interior groove: two surviving pieces, outer height unchanged.
+  {
+    const theta = 50 * Math.PI / 180
+    const tip = 5.9981231689453125
+    const grid = oneCellGrid(20, theta, 50)
+    const initial = grid.topZ[0]
+    const result = applyMoveToGrid(grid, { kind: 'cut', from: { x: 28, y: 0, z: tip }, to: { x: 72, y: 0, z: tip } }, 8, 'flat_endmill', null)
+    const intervals = squareMaterialIntervals(grid, 0)
+    const expectedLow = tip / Math.cos(theta)
+    const expectedHigh = 8 / Math.sin(theta)
+    assert(intervals.length === 4, `the groove must leave two pieces, got ${JSON.stringify(intervals)}`)
+    assert(approx(intervals[1], expectedLow, ballTolerance), `inner gap edge must be ${expectedLow}, got ${intervals[1]}`)
+    assert(approx(intervals[2], expectedHigh, ballTolerance), `outer gap edge must be ${expectedHigh}, got ${intervals[2]}`)
+    assert(grid.topZ[0] === initial, 'the outer shell must keep the cell height')
+    assert(result.changedCount === 1, 'the interior groove must count as removal')
+    console.log(`flat interior groove: PASSED (${intervals.map((v) => v.toFixed(5)).join(', ')})`)
+
+    // A clone owns its own material map, so replaying into it cannot alias the
+    // base or resurrect the base's removed band.
+    const clone = cloneSimulationGrid(grid)
+    assert(clone.squareMaterial !== grid.squareMaterial, 'a clone must own its material map')
+    const before = [...squareMaterialIntervals(grid, 0)]
+    applyMoveToGrid(clone, { kind: 'cut', from: { x: 28, y: theta * 10, z: 10 }, to: { x: 72, y: theta * 10, z: 10 } }, 8, 'flat_endmill', null)
+    assert(approx(clone.topZ[0], expectedLow, ballTolerance), `a later aligned pass must expose the gap floor ${expectedLow}, got ${clone.topZ[0]}`)
+    const after = squareMaterialIntervals(grid, 0)
+    assert(after.length === before.length && after.every((v, i) => v === before[i]), 'the cloned replay must not mutate the base material')
+    assert(grid.topZ[0] === initial, 'the cloned replay must not mutate the base height')
+    console.log('clone isolation and later exposure: PASSED')
+  }
+}
+
+/**
+ * The removed radial bands of one cell under a move, from the independent/**
+ * The removed radial bands of one cell under a move, from the independent
+ * machine-stock-space oracle — the full interval, not just the outermost
+ * endpoint, so an interior groove and a surviving outer shell are both visible.
+ *
+ * `rSamples` sets the radial resolution, so the returned endpoints carry a
+ * geometry tolerance of about one sample.
+ */
+function oracleRemovedBands(
+  grid: SimulationGrid,
+  row: number,
+  col: number,
+  move: ToolpathMove,
+  rt: number,
+  ball: boolean,
+  rSamples: number,
+  tSamples: number,
+): Array<[number, number]> {
+  const frame = grid.squareBar!.frame
+  const xAxis = frame.axis === 'x'
+  const cellSize = grid.cellSize
+  const along = xAxis ? grid.originX + (col + 0.5) * cellSize : grid.originY + (row + 0.5) * cellSize
+  const across = xAxis ? grid.originY + (row + 0.5) * cellSize : grid.originX + (col + 0.5) * cellSize
+  const h0 = grid.initialTopZ![row * grid.cols + col]
+  const materialAngle = (across - frame.zero) * TWO_PI / frame.circumference
+
+  const fromAlong = xAxis ? move.from.x : move.from.y
+  const toAlong = xAxis ? move.to.x : move.to.y
+  const fromAcross = xAxis ? move.from.y : move.from.x
+  const toAcross = xAxis ? move.to.y : move.to.x
+
+  const removable = new Uint8Array(rSamples + 1)
+  for (let ti = 0; ti <= tSamples; ti += 1) {
+    const t = ti / tSamples
+    const l = fromAlong + (toAlong - fromAlong) * t
+    const dx = along - l
+    if (dx * dx > rt * rt) continue
+    const at = fromAcross + (toAcross - fromAcross) * t
+    const z = move.from.z + (move.to.z - move.from.z) * t
+    const theta = materialAngle - (at - frame.zero) * TWO_PI / frame.circumference
+    const cos = Math.cos(theta)
+    const sin = Math.sin(theta)
+    const ballCenterY = z + rt
+    for (let ri = 0; ri <= rSamples; ri += 1) {
+      if (removable[ri] !== 0) continue
+      const r = (h0 * ri) / rSamples
+      const y = r * cos
+      const zz = r * sin
+      const inside = ball
+        ? dx * dx + (y - ballCenterY) * (y - ballCenterY) + zz * zz <= rt * rt
+          || (dx * dx + zz * zz <= rt * rt && y >= ballCenterY)
+        : dx * dx + zz * zz <= rt * rt && y >= z
+      if (inside) removable[ri] = 1
+    }
+  }
+
+  const bands: Array<[number, number]> = []
+  let start: number | null = null
+  for (let ri = 0; ri <= rSamples; ri += 1) {
+    const r = (h0 * ri) / rSamples
+    if (removable[ri] !== 0 && start === null) start = r
+    if (removable[ri] === 0 && start !== null) {
+      bands.push([start, r])
+      start = null
+    }
+  }
+  if (start !== null) bands.push([start, h0])
+  return bands
+}
+
+/** The cell whose across coordinate is closest to a material angle. */
+function cellNearestAngle(grid: SimulationGrid, angle: number): { row: number; col: number } {
+  const frame = grid.squareBar!.frame
+  const xAxis = frame.axis === 'x'
+  const acrossOrigin = xAxis ? grid.originY : grid.originX
+  const acrossCount = xAxis ? grid.rows : grid.cols
+  let best = 0
+  let bestDelta = Infinity
+  for (let i = 0; i < acrossCount; i += 1) {
+    const across = acrossOrigin + (i + 0.5) * grid.cellSize
+    const delta = Math.abs((across - frame.zero) * TWO_PI / frame.circumference - angle)
+    if (delta < bestDelta) {
+      bestDelta = delta
+      best = i
+    }
+  }
+  const along = Math.max(0, Math.min(grid.cols - 1, Math.round((40 - grid.originX) / grid.cellSize)))
+  return xAxis ? { row: best, col: along } : { row: along, col: best }
+}
+
+/**
+ * The actual generated rough (issue #1016 C2-R1F). The first A0 pass of the
+ * real `generateRotaryRough` output cuts an **interior** radial band on a 50°
+ * ray: the outer shell survives, so the cell must keep two remaining intervals,
+ * its derived outer `topZ` must not move, and the removal must still count.
+ * Later passes may expose that gap but must never resurrect the material.
+ */
+function testActualGeneratedRoughInteriorGap(): void {
+  console.log('Testing the actual generated rough keeps its interior gap and outer shell...')
+  const side = 20
+  const length = 100
+  const stock = squareStock(side, length, 'x')
+  const blank = newProject('gap', 'mm')
+  const tool = normalizeToolForProject(
+    { ...defaultTool('mm', 1), type: 'flat_endmill', diameter: 16 },
+    blank,
+  )
+  const mesh = buildRotaryCylinder(stock, { diameter: 12, alongStart: 20, alongEnd: 80 }, 'mm')
+  const rough = generateRotaryRough('gap', mesh, stock, tool, {
+    stepover: 2 * Math.PI * barMaxRadius(stock) / 8,
+    stepdown: 9,
+    stockToLeave: 0,
+    sampleSpacing: 12,
+    requestedCellSize: 0.25,
+    alongStart: 20,
+    alongEnd: 80,
+    safeRadius: 25,
+  }, {})
+  assert(rough.moves.length > 0, 'the generated rough must produce motion')
+
+  const zero = barCentre(stock)
+  const frame: AroundFrame = {
+    axis: 'x',
+    centre: zero,
+    radius: side / 2,
+    zero,
+    sheetStart: zero - Math.PI * side / 2,
+    circumference: Math.PI * side,
+  }
+  const project = newProject('gap', 'mm')
+  project.stock = {
+    ...project.stock,
+    profile: rectProfile(0, frame.sheetStart, length, frame.circumference),
+    thickness: side / 2,
+  }
+  const grid = createSimulationGrid(project, { squareBar: { side, frame }, targetLongAxisCells: 180 })
+
+  // The generated moves are in stock space; the sheet's radial axis is
+  // pivot-referenced, exactly as the manager's defect-3 probe reads it.
+  const pivot = barPivotZ(stock)
+  const toSheet = (move: ToolpathMove): ToolpathMove => ({
+    ...move,
+    from: { ...move.from, z: move.from.z - pivot },
+    to: { ...move.to, z: move.to.z - pivot },
+  })
+
+  const first = rough.moves.find((move) => move.kind === 'cut'
+    && move.from.a === 0 && move.to.a === 0
+    && Math.min(move.from.x, move.to.x) < 50 && Math.max(move.from.x, move.to.x) > 50)
+  assert(first !== undefined, 'the generated rough must contain a central A0 cut')
+  const firstSheet = toSheet(first!)
+
+  const { row, col } = cellNearestAngle(grid, 50 * Math.PI / 180)
+  const idx = row * grid.cols + col
+  const baseline = grid.initialTopZ![idx]
+  const result = applyMoveToGrid(grid, firstSheet, 8, 'flat_endmill', null)
+  const intervals = grid.squareMaterial?.get(idx)
+  assert(intervals !== undefined, 'the interior cut must write the cell material')
+  assert(intervals!.length === 4, `the interior cut must leave two surviving pieces, got ${JSON.stringify(intervals)}`)
+  assert(intervals![0] === 0, 'the inner core must start at the stock bottom')
+  assert(grid.topZ[idx] === baseline, 'the derived outer height must not move when only an interior band is cut')
+  assert(result.changedCount > 0, 'the interior cut must count as removed material')
+
+  const oracleSamples = 200000
+  const oracle = oracleRemovedBands(grid, row, col, firstSheet, 8, false, oracleSamples, 400)
+  assert(oracle.length === 1, `the oracle must see one removed band, got ${JSON.stringify(oracle)}`)
+  // The oracle reports the last removable radial sample, so each endpoint
+  // carries its own resolution (h0 / rSamples) as the geometry tolerance.
+  const tolerance = 3 * (baseline / oracleSamples)
+  assert(
+    Math.abs(intervals![1] - oracle[0][0]) <= tolerance && Math.abs(intervals![2] - oracle[0][1]) <= tolerance,
+    `gap endpoints [${intervals![1]}, ${intervals![2]}] must match the independent oracle ${JSON.stringify(oracle[0])}`,
+  )
+  // The gap interior is air: no surviving piece may reach into it.
+  assert(!(intervals![1] < baseline && intervals![1] === intervals![2]), 'the gap must be a real interval')
+  console.log(`generated rough gap: PASSED (${intervals!.map((v) => v.toFixed(5)).join(', ')})`)
+
+  // Later rough passes may expose the gap floor, but a subtract-only material
+  // can never resurrect the removed band.
+  const remaining = rough.moves.slice(rough.moves.indexOf(first!) + 1).map(toSheet)
+  for (const move of remaining) {
+    if (move.kind !== 'cut' && move.kind !== 'plunge' && move.kind !== 'lead_in' && move.kind !== 'lead_out') continue
+    applyMoveToGrid(grid, move, 8, 'flat_endmill', null)
+  }
+  const after = squareMaterialIntervals(grid, idx)
+  const gapLow = intervals![1]
+  const gapHigh = intervals![2]
+  for (let i = 0; i < after.length; i += 2) {
+    assert(
+      after[i + 1] <= gapLow + 1e-6 || after[i] >= gapHigh - 1e-6,
+      `later passes must not resurrect the removed gap ${JSON.stringify(after)}`,
+    )
+  }
+  assert(after.length <= intervals!.length, 'later passes only remove material')
+  console.log('generated rough gap survives later passes: PASSED')
+}
+
 try {
   testJustTouchRemovesNothing()
   testNaiveUnrolledKernelWouldHaveFailed()
@@ -565,6 +917,9 @@ try {
   testPivotIsTheTrueTurningAxis()
   testPlaybackMatchesBatchReplay()
   testPlaybackPreservesDescriptorAndBaseline()
+  testMeasuredDefectsReproduce()
+  testUnsupportedAndInvalidInputsRefuse()
+  testActualGeneratedRoughInteriorGap()
   console.log('\nAll square replay tests PASSED.')
 } catch (e) {
   console.error(e)

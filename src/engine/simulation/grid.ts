@@ -108,6 +108,7 @@ export function createSimulationGrid(
       ...spec,
       ...(options.wrap ? { wrap: options.wrap } : {}),
       initialTopZ,
+      squareMaterial: new Map<number, readonly number[]>(),
       topZ,
     }
   }

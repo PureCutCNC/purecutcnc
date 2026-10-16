@@ -20,7 +20,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
-import { applySquareMoveToGrid } from './squareReplay'
+import { applySquareMoveToGrid } from './squareMaterial'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
 function clamp(value: number, min: number, max: number): number {
@@ -205,7 +205,9 @@ export function applyMoveToGrid(
 function computeStats(grid: SimulationGrid, processedMoveCount: number): SimulationStats {
   // A square blank's virgin surface is its true cross section, not a uniform
   // stock top, so each cell is measured against the immutable baseline (issue
-  // #1016 C2-R1). A virgin square grid therefore reports zero removed cells.
+  // #1016 C2-R1). A physical removal counts even when it only takes an interior
+  // radial band and leaves the cell's outer `topZ` unchanged, which is why the
+  // count reads the remaining canonical intervals rather than `topZ`.
   if (grid.squareBar && grid.initialTopZ) {
     const baseline = grid.initialTopZ
     let removedCellCount = 0
@@ -214,9 +216,21 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
     for (let index = 0; index < grid.topZ.length; index += 1) {
       const z = grid.topZ[index]
       if (z < minTopZ) minTopZ = z
-      const removedDepth = baseline[index] - z
-      if (removedDepth > 1e-9) removedCellCount += 1
-      if (removedDepth > maxRemovedDepth) maxRemovedDepth = removedDepth
+      // Only a cell the cutter actually changed is ever written into the map,
+      // so a present key is a physical removal — even when the cell's outer
+      // endpoint did not move.
+      const intervals = grid.squareMaterial?.get(index)
+      if (intervals === undefined) continue
+      removedCellCount += 1
+      // The deepest removed radial point: when the core still reaches the stock
+      // bottom it is the low edge of the first removed band; otherwise the
+      // material below the innermost kept interval was cut to the bottom.
+      let deepestRemoved = grid.stockBottomZ
+      if (intervals.length >= 2 && intervals[0] <= grid.stockBottomZ + 1e-9) {
+        deepestRemoved = intervals[1]
+      }
+      const depth = baseline[index] - deepestRemoved
+      if (depth > maxRemovedDepth) maxRemovedDepth = depth
     }
     return { removedCellCount, minTopZ, maxRemovedDepth, processedMoveCount }
   }

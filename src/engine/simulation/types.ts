@@ -56,6 +56,20 @@ export interface SimulationGrid {
    * `topZ` is the mutable copy the cutter lowers.
    */
   initialTopZ?: Float32Array
+  /**
+   * The square blank's remaining canonical radial intervals (issue #1016
+   * C2-R1F), present only with `squareBar`. Each entry is a cell's ordered,
+   * disjoint `[lo, hi]` endpoint pairs; a missing key is virgin material and
+   * an empty array is fully removed. Values are immutable after assignment: a
+   * cut replaces a cell's canonical array, so a shared array can never alias
+   * two grids. Never persisted — this is transient simulation state.
+   *
+   * `topZ` stays as the derived outermost remaining radial endpoint, for the
+   * render envelope and compatibility only; it is never authoritative square
+   * material and a physical removal that leaves the outer endpoint unchanged
+   * still counts.
+   */
+  squareMaterial?: Map<number, readonly number[]>
   topZ: Float32Array
 }
 
