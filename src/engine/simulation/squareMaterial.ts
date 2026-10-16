@@ -59,12 +59,19 @@
  * parameter the tip sits at `tip(s)`, the tool at `along(s)`, so a cell's axial
  * offset is `Δx(s) = cellAlong − along(s)`. Both the sphere and the shank cut
  * the cell's ray in a closed-form interval, and the material removed by the
- * whole move is the union of those intervals. For a constant-angle move the
- * swept body is convex, so that union is exactly `[min_s floor(s),
- * max_s reach(s)]` — solved here by a scan whose bracket is then converged, so
- * the result does not depend on the scan count. A move that changes the program
- * angle rotates the body and is split into small chunks whose sampled intervals
- * are merged.
+ * whole move is the union of those intervals.
+ *
+ * For a constant-angle move the ray meets each part of the body over one
+ * interval of the move parameter — the part's margin (its reach minus its inner
+ * boundary, or the ball's discriminant) is concave, so its non-negative set is
+ * an interval — and over a connected feasible interval the removed set is
+ * `[min floor, max reach]`, because the per-pose interval varies continuously.
+ * The feasible interval is found from the concavity (a converged maximum, then
+ * bisected crossings) and the extrema are converged on it, so no uniform scan
+ * has to land inside a narrow window and a sloping pass keeps its tip and its
+ * axial position correlated. A move that changes the program angle below the
+ * blank's envelope sweeps a rotating body whose removed set is not certified at
+ * grid resolution; it is refused explicitly before any material is touched.
  */
 
 import type { ToolType } from '../../types/project'
@@ -74,17 +81,15 @@ import type { DirtyRegion, SimulationGrid } from './types'
 const TWO_PI = Math.PI * 2
 
 /**
- * Scan points across a move parameter window before the extrema are converged.
- * This is a resolution floor, not the accuracy: the winning bracket is refined
- * to machine precision afterwards.
+ * Iterations for the golden-section extrema and the bisected feasible-window
+ * crossings. A bracket shrinks by the golden ratio (~0.618) per step, so this
+ * reaches Float64 resolution long before the budget runs out; the result is
+ * independent of the count.
  */
-const SCAN_POINTS = 64
+const CONVERGE_ITERATIONS = 96
 
-/** Golden-section iterations: 48 shrinks a bracket to ~1e-10 of its width. */
-const REFINE_ITERATIONS = 48
-
-/** Samples per chunk for a move whose program angle changes (chunked body). */
-const ANGLED_SAMPLES = 48
+/** A sine below this is treated as exactly axial, where the reach is infinite. */
+const AXIAL_EPSILON = 1e-12
 
 /** Relative tolerance of one Float32 ulp, for "did the stored value move". */
 const ULP = 2 ** -23
@@ -256,43 +261,86 @@ function angleIsConstant(geometry: MoveGeometry): boolean {
     : geometry.fromAcross === geometry.toAcross
 }
 
-/** The radial endpoints of the interval one instant cuts, or null. */
-function poseEdges(
-  cellAlong: number,
-  cellAcross: number,
-  geometry: MoveGeometry,
-  s: number,
-  rt: number,
-  ball: boolean,
-): [number, number] | null {
-  const along = geometry.fromAlong + (geometry.toAlong - geometry.fromAlong) * s
-  const tip = geometry.tipFrom + (geometry.tipTo - geometry.tipFrom) * s
-  const theta = thetaAt(geometry, cellAcross, s)
-  const cos = Math.cos(theta)
-  if (!(cos > 0)) return null
-  const sinAbs = Math.abs(Math.sin(theta))
-  const dx = cellAlong - along
-  if (!(dx * dx <= rt * rt)) return null
-  const reach = sinAbs < 1e-12 ? Infinity : Math.sqrt(rt * rt - dx * dx) / sinAbs
-  if (!ball) {
-    const low = tip / cos
-    return low <= reach ? [low, reach] : null
+/**
+ * The converged maximum of a concave function on `[lo, hi]`, by golden section
+ * with the endpoints also compared. Concavity is what makes the sweep exact: a
+ * uniform scan can step over a narrow window, a converged maximum cannot.
+ */
+function maximizeConcave(
+  evaluate: (s: number) => number,
+  lo: number,
+  hi: number,
+): { s: number; value: number } {
+  const invPhi = (Math.sqrt(5) - 1) / 2
+  let a = lo
+  let b = hi
+  let c = b - (b - a) * invPhi
+  let d = a + (b - a) * invPhi
+  let fc = evaluate(c)
+  let fd = evaluate(d)
+  for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
+    if (fc > fd) {
+      b = d
+      d = c
+      fd = fc
+      c = b - (b - a) * invPhi
+      fc = evaluate(c)
+    } else {
+      a = c
+      c = d
+      fc = fd
+      d = a + (b - a) * invPhi
+      fd = evaluate(d)
+    }
   }
-  const centre = tip + rt
-  const disc = rt * rt - centre * centre * sinAbs * sinAbs - dx * dx
-  let low = Infinity
-  let high = -Infinity
-  if (disc >= 0) {
-    const root = Math.sqrt(disc)
-    low = Math.min(low, centre * cos - root)
-    high = Math.max(high, centre * cos + root)
+  const mid = (a + b) / 2
+  let bestS = mid
+  let bestValue = evaluate(mid)
+  for (const candidate of [lo, hi]) {
+    const value = evaluate(candidate)
+    if (value > bestValue) {
+      bestValue = value
+      bestS = candidate
+    }
   }
-  const shankLow = centre / cos
-  if (shankLow <= reach) {
-    low = Math.min(low, shankLow)
-    high = Math.max(high, reach)
+  return { s: bestS, value: bestValue }
+}
+
+/** The converged minimum of a convex function on `[lo, hi]`. */
+function minimizeConvex(
+  evaluate: (s: number) => number,
+  lo: number,
+  hi: number,
+): { s: number; value: number } {
+  const peak = maximizeConcave((s) => -evaluate(s), lo, hi)
+  return { s: peak.s, value: -peak.value }
+}
+
+/** The non-negative side of a sign change of `evaluate` on `[negative, positive]`. */
+function bisectCrossing(evaluate: (s: number) => number, negative: number, positive: number): number {
+  let a = negative
+  let b = positive
+  for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
+    const mid = (a + b) / 2
+    if (evaluate(mid) >= 0) b = mid
+    else a = mid
   }
-  return high >= low ? [low, high] : null
+  return b
+}
+
+/**
+ * The sub-interval of `[lo, hi]` on which a concave `evaluate` is non-negative,
+ * or null when it never is. A concave function's non-negative set is a single
+ * interval, so the maximum is converged and each side's crossing is bisected —
+ * a narrow feasible window between any two scan nodes is still found exactly.
+ */
+function concaveDomain(evaluate: (s: number) => number, lo: number, hi: number): [number, number] | null {
+  if (!(hi > lo)) return evaluate(lo) >= 0 ? [lo, hi] : null
+  const peak = maximizeConcave(evaluate, lo, hi)
+  if (!(peak.value >= 0)) return null
+  const left = evaluate(lo) >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s)
+  const right = evaluate(hi) >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s)
+  return [left, right]
 }
 
 /**
@@ -312,42 +360,127 @@ function reachableWindow(cellAlong: number, geometry: MoveGeometry, rt: number):
   return hi > lo ? [lo, hi] : null
 }
 
-/** Golden-section search for the minimum of `evaluate` on [lo, hi]. */
-function minimize(lo: number, hi: number, evaluate: (s: number) => number): number {
-  const invPhi = (Math.sqrt(5) - 1) / 2
-  let a = lo
-  let b = hi
-  let c = b - (b - a) * invPhi
-  let d = a + (b - a) * invPhi
-  let fc = evaluate(c)
-  let fd = evaluate(d)
-  for (let i = 0; i < REFINE_ITERATIONS; i += 1) {
-    if (fc < fd) {
-      b = d
-      d = c
-      fd = fc
-      c = b - (b - a) * invPhi
-      fc = evaluate(c)
+/**
+ * The radial bands a constant-angle move removes from one cell's ray, canonical
+ * and ascending. Null when the body never meets the ray.
+ *
+ * The tool never changes orientation, so the ray's machine angle `θ` is fixed
+ * and only the move parameter matters. Each part of the body is feasible where
+ * its concave margin is non-negative:
+ *
+ *   - the flat cylinder and the ball's shank are feasible where
+ *     `reach(s) − inner(s) ≥ 0`, with `reach = √(rt² − Δx(s)²)/|sin θ|` concave
+ *     and `inner` linear (`tip/cos` for the flat, `(tip+rt)/cos` for the shank);
+ *   - the ball is feasible where its discriminant
+ *     `rt² − (tip+rt)²sin²θ − Δx(s)² ≥ 0`, a concave quadratic.
+ *
+ * A concave margin's non-negative set is one interval, so each part's feasible
+ * parameters are found by a converged maximum plus bisected crossings and no
+ * uniform scan can step over a narrow window. The parts' intervals form one or
+ * two connected components; over a connected component the per-pose interval
+ * `[min floor, max reach]` varies continuously, so the removed set is exactly
+ * `[min floor, max reach]` there — the extrema are converged, never sampled.
+ */
+function constantAngleBands(
+  cellAlong: number,
+  cellAcross: number,
+  geometry: MoveGeometry,
+  rt: number,
+  ball: boolean,
+  loS: number,
+  hiS: number,
+): Array<[number, number]> | null {
+  const theta = thetaAt(geometry, cellAcross, loS)
+  const cos = Math.cos(theta)
+  if (!(cos > 0)) return null
+  const sinAbs = Math.abs(Math.sin(theta))
+  const axial = sinAbs < AXIAL_EPSILON
+
+  const alongDelta = geometry.toAlong - geometry.fromAlong
+  const tipDelta = geometry.tipTo - geometry.tipFrom
+  const dxAt = (s: number): number => cellAlong - geometry.fromAlong - alongDelta * s
+  const tipAt = (s: number): number => geometry.tipFrom + tipDelta * s
+  /** The cylinder wall's radial reach at `s`; only valid inside the strip. */
+  const reachAt = (s: number): number => {
+    const dx = dxAt(s)
+    const squared = rt * rt - dx * dx
+    return squared > 0 ? Math.sqrt(squared) / sinAbs : 0
+  }
+
+  const bands: Array<[number, number]> = []
+
+  if (!ball) {
+    const floorAt = (s: number): number => tipAt(s) / cos
+    const domain = axial ? [loS, hiS] as [number, number] : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS)
+    if (!domain) return null
+    const low = Math.min(floorAt(domain[0]), floorAt(domain[1]))
+    const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1]).value
+    return high > low ? [[low, high]] : null
+  }
+
+  const centreAt = (s: number): number => tipAt(s) + rt
+  /** The ball's ray discriminant; concave, so its non-negative set is one interval. */
+  const discAt = (s: number): number => {
+    const centre = centreAt(s)
+    const dx = dxAt(s)
+    return rt * rt - centre * centre * sinAbs * sinAbs - dx * dx
+  }
+  const sphereLow = (s: number): number => centreAt(s) * cos - Math.sqrt(Math.max(0, discAt(s)))
+  const sphereHigh = (s: number): number => centreAt(s) * cos + Math.sqrt(Math.max(0, discAt(s)))
+
+  const sphereDomain = concaveDomain(discAt, loS, hiS)
+  const shankDomain: [number, number] | null = axial
+    ? [loS, hiS]
+    : concaveDomain((s) => reachAt(s) - centreAt(s) / cos, loS, hiS)
+
+  const domains = [sphereDomain, shankDomain].filter((domain): domain is [number, number] => domain !== null)
+  if (domains.length === 0) return null
+  domains.sort((a, b) => a[0] - b[0])
+  const components: Array<[number, number]> = []
+  for (const domain of domains) {
+    const last = components.length > 0 ? components[components.length - 1] : null
+    if (last && domain[0] <= last[1]) {
+      if (domain[1] > last[1]) last[1] = domain[1]
     } else {
-      a = c
-      c = d
-      fc = fd
-      d = a + (b - a) * invPhi
-      fd = evaluate(d)
+      components.push([domain[0], domain[1]])
     }
   }
-  return Math.min(fc, fd, evaluate((a + b) / 2))
+
+  const overlaps = (domain: [number, number], component: [number, number]): boolean =>
+    domain[0] <= component[1] && domain[1] >= component[0]
+
+  for (const [componentLow, componentHigh] of components) {
+    let low = Infinity
+    let high = -Infinity
+    if (sphereDomain && overlaps(sphereDomain, [componentLow, componentHigh])) {
+      const from = Math.max(componentLow, sphereDomain[0])
+      const to = Math.min(componentHigh, sphereDomain[1])
+      low = Math.min(low, minimizeConvex(sphereLow, from, to).value)
+      high = Math.max(high, maximizeConcave(sphereHigh, from, to).value)
+    }
+    if (shankDomain && overlaps(shankDomain, [componentLow, componentHigh])) {
+      const from = Math.max(componentLow, shankDomain[0])
+      const to = Math.min(componentHigh, shankDomain[1])
+      low = Math.min(low, centreAt(from) / cos, centreAt(to) / cos)
+      high = Math.max(high, axial ? Infinity : maximizeConcave(reachAt, from, to).value)
+    }
+    if (high > low) bands.push([low, high])
+  }
+
+  if (bands.length === 0) return null
+  return mergeIntervals(bands, 1e-9 * (1 + Math.abs(rt)))
 }
 
 /**
  * The radial bands a move removes from one cell's ray, canonical and ascending.
  * Null when the body never meets it.
  *
- * A constant-angle move sweeps a convex body, so its removed set is one
- * interval `[min floor, max reach]`; the extrema are scanned then converged, so
- * a sloping pass keeps its tip and its axial position correlated instead of
- * collapsing onto a global `minZ`. A move whose program angle changes rotates
- * the body, so it is sampled in small chunks and the intervals merged.
+ * Only a constant-angle move reaches here: an angle-changing move below the
+ * blank's envelope is refused before any material is touched (see
+ * `applySquareMoveToGrid`), and an above-envelope one never reaches a cell. The
+ * feasible parameter window and its extrema are solved from the body's
+ * concavity in `constantAngleBands`, so the answer does not depend on a uniform
+ * scan landing inside the window.
  */
 function removedBandsForCell(
   cellAlong: number,
@@ -358,78 +491,7 @@ function removedBandsForCell(
 ): Array<[number, number]> | null {
   const window = reachableWindow(cellAlong, geometry, rt)
   if (!window) return null
-  const [loS, hiS] = window
-
-  if (angleIsConstant(geometry)) {
-    const edgeAt = (s: number): number => {
-      const edges = poseEdges(cellAlong, cellAcross, geometry, s, rt, ball)
-      return edges ? edges[0] : Infinity
-    }
-    const highAt = (s: number): number => {
-      const edges = poseEdges(cellAlong, cellAcross, geometry, s, rt, ball)
-      return edges ? edges[1] : -Infinity
-    }
-    // Scan for the bracket, then converge it — the result does not depend on
-    // the scan count, only on the physical endpoints.
-    let low = Infinity
-    let high = -Infinity
-    let lowIndex = 0
-    let highIndex = 0
-    for (let i = 0; i <= SCAN_POINTS; i += 1) {
-      const s = loS + ((hiS - loS) * i) / SCAN_POINTS
-      const edges = poseEdges(cellAlong, cellAcross, geometry, s, rt, ball)
-      if (!edges) continue
-      if (edges[0] < low) {
-        low = edges[0]
-        lowIndex = i
-      }
-      if (edges[1] > high) {
-        high = edges[1]
-        highIndex = i
-      }
-    }
-    if (!Number.isFinite(low) && !Number.isFinite(high)) return null
-    const step = (hiS - loS) / SCAN_POINTS
-    const lowBracket: [number, number] = [
-      Math.max(loS, loS + (lowIndex - 1) * step),
-      Math.min(hiS, loS + (lowIndex + 1) * step),
-    ]
-    const highBracket: [number, number] = [
-      Math.max(loS, loS + (highIndex - 1) * step),
-      Math.min(hiS, loS + (highIndex + 1) * step),
-    ]
-    const fixedLow = Number.isFinite(lowBracket[0]) && lowIndex > 0 && lowIndex < SCAN_POINTS
-      ? minimize(lowBracket[0], lowBracket[1], edgeAt)
-      : low
-    const fixedHigh = Number.isFinite(highBracket[0]) && highIndex > 0 && highIndex < SCAN_POINTS
-      ? -minimize(highBracket[0], highBracket[1], (s) => -highAt(s))
-      : high
-    const finalLow = Math.min(low, fixedLow)
-    const finalHigh = Math.max(high, fixedHigh)
-    if (!(finalHigh > finalLow)) return null
-    return [[finalLow, finalHigh]]
-  }
-
-  // Angle-changing move: rotate the body in small chunks and merge the
-  // intervals, so a diagonal submove cannot step over a band.
-  const angleSpan = geometry.angleFrom !== null && geometry.angleTo !== null
-    ? Math.abs(wrapPi(geometry.angleTo - geometry.angleFrom))
-    : Math.abs(wrapPi((geometry.toAcross - geometry.fromAcross) * geometry.anglePerAcross))
-  const chunks = Math.max(1, Math.min(64, Math.ceil(angleSpan / 0.05)))
-  const bands: Array<[number, number]> = []
-  for (let chunk = 0; chunk < chunks; chunk += 1) {
-    const c0 = chunk / chunks
-    const c1 = (chunk + 1) / chunks
-    const s0 = loS + (hiS - loS) * c0
-    const s1 = loS + (hiS - loS) * c1
-    for (let i = 0; i <= ANGLED_SAMPLES; i += 1) {
-      const s = s0 + ((s1 - s0) * i) / ANGLED_SAMPLES
-      const edges = poseEdges(cellAlong, cellAcross, geometry, s, rt, ball)
-      if (edges) bands.push(edges)
-    }
-  }
-  if (bands.length === 0) return null
-  return mergeIntervals(bands, 1e-9 * (1 + Math.abs(rt)))
+  return constantAngleBands(cellAlong, cellAcross, geometry, rt, ball, window[0], window[1])
 }
 
 /** Merge overlapping and touching intervals into a canonical ascending order. */
@@ -572,13 +634,6 @@ export function applySquareMoveToGrid(
   const angleFrom = explicitAngle ? (move.from.a as number) * Math.PI / 180 : null
   const angleTo = explicitAngle ? (move.to.a as number) * Math.PI / 180 : null
 
-  // A tip above the whole blank can never reach any cell's outer surface: the
-  // tip plane crossing z/cos θ is then above the material everywhere. This is
-  // the above-envelope link the generators retract through, and it costs O(1).
-  if (Math.min(move.from.z, move.to.z) >= grid.stockTopZ) {
-    return ZERO_RESULT
-  }
-
   const geometry: MoveGeometry = {
     fromAlong,
     toAlong,
@@ -591,6 +646,27 @@ export function applySquareMoveToGrid(
     zero: frame.zero,
     anglePerAcross,
   }
+
+  // A tip above the whole blank can never reach any cell's outer surface: the
+  // tip plane crossing z/cos θ is then above the material everywhere. This is
+  // the above-envelope link the generators retract through, and it costs O(1).
+  if (Math.min(move.from.z, move.to.z) >= grid.stockTopZ) {
+    return ZERO_RESULT
+  }
+
+  // A move that turns the stock as it travels sweeps a rotating body whose
+  // removed set is not certified at grid resolution, so it is refused
+  // explicitly before any cell is touched rather than approximated by a fixed
+  // pose sample. Generated square motion is constant-angle and its angle links
+  // are above the envelope, returned just above; a constant explicit `a` with a
+  // changing `across` is a constant-angle move too (the program angle is `a`).
+  if (!angleIsConstant(geometry)) {
+    throw new RangeError(
+      'square kernel: a move that changes the program angle below the corner envelope is not supported; ' +
+        'the square kernel certifies constant-angle cuts and plunges only',
+    )
+  }
+
   const topZ = grid.topZ
   const bottom = grid.stockBottomZ
   let changed = 0
