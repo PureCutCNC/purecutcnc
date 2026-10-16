@@ -317,10 +317,13 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
-  /** Around needs a bar round or square, lying along the setup's axis, that
-   *  the operation may cut: a wrapped 2D operation on a square blank, or any
-   *  square turning setup the physical workholding/clamp guard refuses, is
-   *  reported here and produces no motion (#1016 C2-S4). */
+  /** Around needs a bar — round or square — lying along the setup's axis for
+   *  the operation to cut. A warning, as it always was: the operation produces
+   *  no motion, but the code's severity is part of the frozen round/flat
+   *  contract. The **square** blank's own new refusals (#1016 C2-S4: a wrapped
+   *  2D operation, a non-model target, or a physical workholding/clamp setup
+   *  the guard refuses) report `postSetupOperationRefused` instead, so only
+   *  they block a save. */
   | 'aroundStockMismatch'
   /** A radial cut must stop above the bar centreline. */
   | 'aroundCentreline'
@@ -352,7 +355,11 @@ export type ToolpathWarningCode =
    *  never run across the turn. */
   | 'postMixedSetups'
   /** An operation in the program generated nothing because its setup may not
-   *  cut it (`setupTargetNotThrough`). The file would be missing a pass. */
+   *  cut it (`setupTargetNotThrough`), or because a **square** blank's Around
+   *  face was asked for a job it does not support (#1016 C2-S4: a non-rotary
+   *  kind, a target that is not a real model, or a physical workholding /
+   *  ordinary-clamp setup this build cannot hold). The file would be missing a
+   *  pass. */
   | 'postSetupOperationRefused'
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */
@@ -483,16 +490,16 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   left out of the program (issue #393). The file would otherwise be saved
  *   without that pass, and approximating any of them would cut the stock at
  *   the wrong angle or the wrong feed.
- * - `aroundStockMismatch` — no motion was generated for an Around operation:
- *   the stock is not a bar the setup can turn, or — on a square blank — the
- *   operation kind is not a rotary rough/finish, its target is not a real
- *   model, or the physical workholding / ordinary-clamp guard says the setup
- *   cannot hold the blank (#1016 C2-S4). A saved program would quietly lack a
- *   pass the operation list promises, so this is an error rather than a note.
+ *
+ * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
+ * round bar or a block in an Around setup is a note about a job the setup does
+ * not describe, and promoting the code globally would have changed existing
+ * round/flat programs' severity (a frozen contract). The square blank's own
+ * new refusals do not reuse it — they report `postSetupOperationRefused`
+ * (already an error), so only the square case blocks a save.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
-  'aroundStockMismatch',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',

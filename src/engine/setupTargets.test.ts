@@ -606,8 +606,12 @@ for (const kind of ['follow_line', 'pocket', 'v_carve'] as const) {
   )
 }
 assert(
-  targetAllowedInSetup(squareProject, { source: 'stock' }, 'around', 'pocket'),
-  'a stock target carries no Around feature to refuse',
+  !targetAllowedInSetup(squareProject, { source: 'stock' }, 'around', 'pocket'),
+  'a non-rotary kind is refused on the square Around face even for a stock target',
+)
+assert(
+  !targetAllowedInSetup(squareProject, { source: 'stock' }, 'around'),
+  'and with no kind at all: every target source is refused for a non-rotary square Around setup',
 )
 assert(
   !featureReachableFromFace(squareProject, wrappedFeature, 'around', 'follow_line'),
@@ -624,11 +628,11 @@ assert(
 )
 assertEqual(
   setupGenerationBlock(squareProject, { ...operation('engrave', ['wrapped']), kind: 'follow_line', setupId: 'around' })?.reason,
-  'aroundStockMismatch',
+  'squareRotaryUnsupported',
   'generation refuses a wrapped 2D operation on a square blank',
 )
 assertEqual(
   setupGenerationBlock(squareProject, { ...operation('finish', ['wrapped']), kind: 'rotary_finish', setupId: 'around' })?.reason,
-  'aroundStockMismatch',
+  'squareRotaryUnsupported',
   'generation refuses a rotary operation whose target is not a model',
 )

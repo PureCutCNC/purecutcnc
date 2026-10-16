@@ -102,9 +102,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (#1016 C2-S4) is judged by the generation guard again before the angle gate:
   only a legitimate rotary rough/finish against a real model on a matching
   Around setup with a supported physical workholding / ordinary-clamp setup may
-  post, a non-rotary kind or a stale wholly-angle-free rotary toolpath is
-  refused, and `rotaryCentreline` returns the true pivot (`barPivotZ = side /
-  2`) whichever bar shape the stock is; `planStepFeeds` throws
+  post, every angle-bearing square path must be that operation whatever face it
+  claims (a synthetic `A` path from a Top/Bottom or wrapped 2D kind is refused),
+  the emitted cutter must be the project's own referenced row (a removed,
+  unusable or different cutter fails closed rather than letting the guard prove
+  one tool clear and the emitter write another), a non-rotary kind or a stale
+  wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
+  the true pivot (`barPivotZ = side / 2`) whichever bar shape the stock is;
+  `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
   from), and the emitted-number
   helpers arc validation judges
@@ -228,11 +233,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   axis mismatch, a machine with no rotary, borrowed-axis travel, a split-angle
   feed, a non-rotary square Around path and stale wholly-angle-free motion all
   refuse; a manual too-small chuck is preserved but refuses generation (no
-  motion, error severity) and output (no motion posted), hidden workholding
-  still counts, axial-disjoint and end-face-touching supports are clear,
-  off-centre / wrong-height / invalid clamp rows fail closed, an ordinary clamp
-  in the swept envelope refuses while a provably disjoint one passes, and 40
-  seeded pure-turn feeds match the analytic true-pivot inverse-time word.
+  motion, `postSetupOperationRefused`) and output (no motion posted), hidden
+  workholding still counts, axial-disjoint and end-face-touching supports are
+  clear, off-centre / wrong-height / invalid clamp rows fail closed, an ordinary
+  clamp in the swept envelope refuses while a provably disjoint one passes, and
+  a clamp past the blank end but inside the finite cutter-body overhang refuses
+  — with an independent analytic cutter-body-vs-clamp witness — while one past
+  that overhang, non-finite clearances, a degenerate blank and a missing /
+  empty-ref / different-larger emitted cutter all fail closed; 40 seeded
+  pure-turn feeds match the analytic true-pivot inverse-time word.
 
 ## Adding a dialect
 

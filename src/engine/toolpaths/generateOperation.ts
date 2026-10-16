@@ -99,6 +99,10 @@ export interface OperationToolpathEnvelope {
 
 function setupBlockWarning(block: SetupGenerationBlock, operation: Operation): ToolpathWarning {
   if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
+  // The square blank's own unsupported-setup refusal (#1016 C2-S4) is an
+  // error, so it blocks a save; the round/flat mismatch above keeps its
+  // historical warning severity.
+  if (block.reason === 'squareRotaryUnsupported') return { code: 'postSetupOperationRefused', params: { operation: operation.name } }
   if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
   return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
 }

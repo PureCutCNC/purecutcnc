@@ -255,10 +255,13 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
   if (kind && isRotaryOperationKind(kind)
     && (!aroundFeaturesActive(project) || face !== 'around' || target.source !== 'features' || target.featureIds.length === 0)) return false
   // A square blank's Around face carries no wrapped 2D feature targets at all
-  // (#1016 C2-S4): only a rotary rough/finish may target it, so the store can
-  // never hand an Engrave, thread or flute the square face the round bar allows.
+  // (#1016 C2-S4): only an explicit rotary rough/finish may target it, so the
+  // store can never hand an Engrave, thread or flute the square face the round
+  // bar allows. Every other kind is refused **whatever the target source** —
+  // a stock or model target is not a wrapped path either, and a caller that
+  // leaves `kind` off gets the same refusal rather than a bypass.
   if (face === 'around' && isSquareStock(project.stock) && !(kind && isRotaryOperationKind(kind))) {
-    return target.source !== 'features'
+    return false
   }
   return judgeTargetsFromFace(project, target, face, kind).every((verdict) => verdict.status !== 'rejected')
 }
@@ -267,7 +270,7 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
 
 /** Why an operation generates nothing in its setup. */
 export interface SetupGenerationBlock {
-  reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline'
+  reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline' | 'squareRotaryUnsupported'
   face: SetupFace
   features: TargetFaceVerdict[]
 }
@@ -288,6 +291,27 @@ function targetsAreModels(project: Project, operation: Operation): boolean {
     const definition = project.featureDefinitions[feature.definitionId]
     return definition?.kind === 'stl' && definition.operation === 'model'
   })
+}
+
+/**
+ * True only for the one square-blank turning job this build supports (#1016
+ * C2-S4): an explicit rotary rough/finish, cut on an Around setup whose axis
+ * is the blank's own, in a rotary project, against a real imported model.
+ * Everything else — a wrapped 2D path, any other kind, any other face, or a
+ * target that is not a model — is not square turning, whatever the stored
+ * moves say.
+ *
+ * Generation asks this through {@link setupGenerationBlock}; output
+ * (`gcode/motionPipeline.ts`) asks it again before it posts a square
+ * angle-bearing path, so a stale `ToolpathResult` carrying synthetic `A`
+ * motion cannot reach the program by claiming an operation the engine would
+ * never have generated.
+ */
+export function squareRotaryWorkAdmitted(project: Project, operation: Operation): boolean {
+  if (!isSquareStock(project.stock) || !isRotaryOperationKind(operation.kind)) return false
+  if (!aroundFeaturesActive(project) || operationFace(project, operation) !== 'around') return false
+  if (setupForOperation(project, operation)?.orientation.axis !== project.stock.axis) return false
+  return targetsAreModels(project, operation)
 }
 
 /**
@@ -321,11 +345,12 @@ export function setupGenerationBlock(project: Project, operation: Operation): Se
     // Judged here, before any motion, so the same verdict refuses at generation
     // and at output (`motionPipeline.ts` asks this function again).
     if (isSquareStock(project.stock)) {
-      if (!rotary || !targetsAreModels(project, operation)) {
-        return { reason: 'aroundStockMismatch', face, features: [] }
-      }
-      if (squareRotarySafetyRefusal(project, operation)) {
-        return { reason: 'aroundStockMismatch', face, features: [] }
+      if (!squareRotaryWorkAdmitted(project, operation) || squareRotarySafetyRefusal(project, operation)) {
+        // A **square**-only refusal gets its own reason, reported as
+        // `postSetupOperationRefused` (an error): the old `aroundStockMismatch`
+        // code keeps the warning severity it has always had for round/flat
+        // mismatches (#1016 C2-S4 compatibility).
+        return { reason: 'squareRotaryUnsupported', face, features: [] }
       }
     }
     // A rejected target is reported as the face mismatch it is: it is not a

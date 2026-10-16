@@ -28,29 +28,40 @@
  * resizes the clamp and never moves the pivot (Frank's C2-S2 contract,
  * 2026-10-15).
  *
- * `roundWorkholdingDiameter` is the clamp's **outer** diameter, not a bore or
- * a capacity: the check is a *supported-setup envelope criterion*, not a proof
- * that the jaws intersect the blank at a particular angle. That distinction is
- * deliberate — a diameter that clears `2 × barMaxRadius` about the true pivot
- * is the smallest claim this module makes.
+ * `roundWorkholdingDiameter` is the clamp's **outer** diameter. The criterion
+ * below is a *supported-setup restriction*, deliberately weaker than a claim
+ * about the hardware: it is neither a measured bore/capacity nor a proof that
+ * a particular jaw intersects the blank at a particular angle. What it does
+ * say is that a diameter clearing `2 × barMaxRadius` about the true pivot is
+ * the smallest claim this module makes about a support that grips the blank.
  *
  * Ordinary clamps (step, toe, vacuum, vise) are not workholding a turning job
  * holds the bar with, and rotary generation bypasses `applyClampWarnings`
  * entirely. So the same guard asks whether any ordinary clamp reaches into the
  * region the blank sweeps as it turns, grown by the cutter's own body and the
- * project's XY clamp clearance. That region is the **circumscribed cylinder**
- * of the corner envelope — the blank's cross-section is entirely inside it at
+ * project's clamp clearance. That region is the **circumscribed cylinder** of
+ * the corner envelope — the blank's cross-section is entirely inside it at
  * every angle — so it is conservative for the blank, and it is not a general
- * 4-axis collision model. A clamp provably outside it (across the bar, or past
- * the blank's ends) passes.
+ * 4-axis collision model.
+ *
+ * Being past the blank's end face is **not** by itself clear: the last cut can
+ * sit on the end face while a finite cutter body reaches one tool radius plus
+ * the XY clearance beyond it. The along span is therefore grown by that same
+ * cutter + clearance envelope before a clamp is called distant, and only a
+ * fixture with a real gap left between the two is passed.
  *
  * Visibility is never consulted: a hidden chuck still holds the bar, and
  * `rotaryAlongRange` already ignores `visible` for the same reason.
  *
- * Everything here fails closed. A NaN, a non-finite or non-positive clamp
- * dimension, a clamp off the true centreline, or a height not derived from the
- * pivot is refused rather than repaired — the stored placement is what the
- * machine would actually be set up with.
+ * Everything here fails closed. A NaN or non-finite clamp dimension, a
+ * non-positive width, depth or **height**, a far corner that overflows to
+ * infinity, a clamp off the true centreline, a height not derived from the
+ * pivot, a blank whose axial extent or bounds do not read, a project whose own
+ * clamp clearances are not finite, or a referenced tool that names no usable
+ * row is refused rather than repaired — the stored placement is what the
+ * machine would actually be set up with. A non-finite clearance used to be
+ * floored to zero, which made it *less* conservative than the declared value;
+ * it now refuses instead.
  */
 
 import {
@@ -65,8 +76,10 @@ import { convertToolUnits, exportGeometryTolerance } from '../utils/units'
 
 /** Why a square blank's physical setup is not one this build supports. */
 export type SquareRotarySafetyReason =
-  /** The blank's own dimensions are unreadable: no pivot, centre or envelope. */
+  /** The blank's own dimensions are unreadable: no pivot, centre, envelope or axial extent. */
   | 'blankEnvelope'
+  /** The project's own clamp clearances are not finite, so the swept envelope is unknown. */
+  | 'projectInvalid'
   /** A clamp row carries a non-finite or non-positive dimension. */
   | 'clampInvalid'
   /** A chuck/tailstock is off the true centreline or its height is not pivot-derived. */
@@ -75,8 +88,10 @@ export type SquareRotarySafetyReason =
   | 'workholdingDiameter'
   /** An ordinary clamp reaches into the swept blank/cutter envelope. */
   | 'ordinaryClampOverlap'
+  /** The cutter the emitter holds is missing, unusable, or not the project's referenced row. */
+  | 'cutterStale'
 
-/** The clamp (if any) the verdict names. `clampId`/`clampName` are empty for a blank verdict. */
+/** The clamp (if any) the verdict names. `clampId`/`clampName` are empty for a blank or cutter verdict. */
 export interface SquareRotarySafetyRefusal {
   reason: SquareRotarySafetyReason
   clampId: string
@@ -98,15 +113,18 @@ function finite(...values: number[]): boolean {
 }
 
 /**
- * The cutter radius the swept envelope is grown by, in project units. Zero for
- * an operation with no tool row at all: the blank's own envelope is still
- * checked, and the caller's own "no tool" refusal fires before any motion. A
- * tool row that exists but carries an unusable diameter fails closed — the
- * swept envelope is unknown, so no ordinary clamp may be called clear.
+ * The cutter radius the swept envelope is grown by, in project units.
+ *
+ * A `toolRef` that names no row, or names one whose diameter is not a usable
+ * positive finite length, is **unknown**, not zero: the swept envelope cannot
+ * be computed, so no ordinary clamp may be called clear. Generation's own
+ * `noToolAssigned` refusal is not a substitute — a stale `ToolpathResult` can
+ * reach the postprocessor with no project tool row at all, and the physical
+ * verdict must not depend on a downstream guard that never ran.
  */
 function operationToolRadius(project: Pick<Project, 'tools' | 'meta'>, operation: Pick<Operation, 'toolRef'>): number {
-  const record = project.tools.find((tool) => tool.id === operation.toolRef)
-  if (!record) return 0
+  const record = operation.toolRef ? project.tools.find((tool) => tool.id === operation.toolRef) : undefined
+  if (!record) return Number.POSITIVE_INFINITY
   // The same section `normalizeToolForProject` computes, without importing the
   // clipper-backed geometry module into a pure setup guard.
   const radius = convertToolUnits(record, project.meta.units).diameter / 2
@@ -128,7 +146,29 @@ function spanOverlap(a: Span, b: Span): number {
   return Math.min(a.max, b.max) - Math.max(a.min, b.min)
 }
 
-/** The rectangle a clamp occupies in the plane the bar turns in, grown by `expand`. */
+/**
+ * True when the two spans leave a real gap: a gap no wider than the safety
+ * tolerance is judged, so a tangency is refused, and only a fixture that is
+ * provably further away than that is passed.
+ */
+function spansAreApart(a: Span, b: Span, tolerance: number): boolean {
+  return spanOverlap(a, b) < -tolerance
+}
+
+/**
+ * True when a clamp row is a box the guard can reason about: finite
+ * coordinates, positive finite width, depth and **height**, and finite far
+ * corners. A non-positive height is refused rather than read as a zero-height
+ * box, and `x + w` / `y + h` are checked so a huge coordinate cannot overflow
+ * to infinity and compare its way to "clear".
+ */
+function clampBoxIsSane(clamp: Clamp): boolean {
+  return finite(clamp.x, clamp.y, clamp.w, clamp.h, clamp.height)
+    && clamp.w > 0 && clamp.h > 0 && clamp.height > 0
+    && finite(clamp.x + clamp.w, clamp.y + clamp.h)
+}
+
+/** The rectangle a clamp occupies in the plane the bar turns in. */
 interface CrossSection {
   minAcross: number
   maxAcross: number
@@ -165,6 +205,11 @@ function verdict(reason: SquareRotarySafetyReason, clamp?: Clamp): SquareRotaryS
  * are judged: a support that sits wholly past the end face is not holding the
  * bar (the default tailstock only touches its end face and is therefore
  * skipped), while the default chuck, which grips inside the end, is judged.
+ *
+ * The engagement span is the blank's own. A cutter's overhang past the end is
+ * an *ordinary-clamp* question: a chuck that no longer touches the blank is
+ * clear of it even when the cutter sweeps past, because the support has
+ * stopped holding it.
  */
 function workholdingRefusal(
   stock: SquareStock,
@@ -175,9 +220,7 @@ function workholdingRefusal(
   stockAlong: Span,
   tolerance: number,
 ): SquareRotarySafetyRefusal | null {
-  if (!finite(clamp.x, clamp.y, clamp.w, clamp.h, clamp.height) || !(clamp.w > 0) || !(clamp.h > 0)) {
-    return verdict('clampInvalid', clamp)
-  }
+  if (!clampBoxIsSane(clamp)) return verdict('clampInvalid', clamp)
   if (spanOverlap(clampSpan(clamp, stock.axis), stockAlong) <= tolerance) return null
   const across = stock.axis === 'x' ? clamp.y + clamp.h / 2 : clamp.x + clamp.w / 2
   const diameter = workholdingDiameter(clamp, stock)
@@ -190,9 +233,10 @@ function workholdingRefusal(
 /**
  * Why an ordinary clamp cannot be ignored on this square blank, or `null` when
  * it is provably clear. The blank's corners sweep a cylinder of radius
- * `barMaxRadius` about the true pivot; the clamp's footprint is grown by the
- * cutter's body and the project's XY clearance, and a clamp whose along span
- * misses the blank entirely is clear.
+ * `barMaxRadius` about the true pivot; growing that **circle** by the cutter's
+ * body and the project's XY clearance is the conservative envelope of the
+ * swept blank, and a clamp whose along span still misses the blank's own span
+ * grown by the same amount is clear.
  */
 function ordinaryClampRefusal(
   stock: SquareStock,
@@ -205,20 +249,19 @@ function ordinaryClampRefusal(
   clampClearanceZ: number,
   tolerance: number,
 ): SquareRotarySafetyRefusal | null {
-  if (!finite(clamp.x, clamp.y, clamp.w, clamp.h, clamp.height) || !(clamp.w > 0) || !(clamp.h > 0)) {
-    return verdict('clampInvalid', clamp)
-  }
-  if (spanOverlap(clampSpan(clamp, stock.axis), stockAlong) <= tolerance) return null
-  const acrossCentre = stock.axis === 'x' ? clamp.y + clamp.h / 2 : clamp.x + clamp.w / 2
-  const acrossHalf = (stock.axis === 'x' ? clamp.h : clamp.w) / 2 + expand
+  if (!clampBoxIsSane(clamp)) return verdict('clampInvalid', clamp)
+  // Past the end face is not clear on its own: the last cut sits on that face
+  // and the cutter body reaches `toolRadius + clearanceXY` beyond it.
+  const sweptAlong: Span = { min: stockAlong.min - expand, max: stockAlong.max + expand }
+  if (spansAreApart(clampSpan(clamp, stock.axis), sweptAlong, tolerance)) return null
   const rectangle: CrossSection = {
-    minAcross: acrossCentre - acrossHalf,
-    maxAcross: acrossCentre + acrossHalf,
+    minAcross: stock.axis === 'x' ? clamp.y : clamp.x,
+    maxAcross: stock.axis === 'x' ? clamp.y + clamp.h : clamp.x + clamp.w,
     // Every clamp stands on the bed at stock Z 0 and rises to its own height.
     minUp: 0,
     maxUp: clamp.height + clampClearanceZ,
   }
-  return rectangleTouchesCircle(rectangle, centre, pivot, cornerRadius, tolerance)
+  return rectangleTouchesCircle(rectangle, centre, pivot, cornerRadius + expand, tolerance)
     ? verdict('ordinaryClampOverlap', clamp)
     : null
 }
@@ -243,24 +286,56 @@ export function squareRotarySafetyRefusal(
   const stockAlong: Span = stock.axis === 'x'
     ? { min: bounds.minX, max: bounds.maxX }
     : { min: bounds.minY, max: bounds.maxY }
+  const alongLength = stockAlong.max - stockAlong.min
   if (!(stock.thickness > 0) || !finite(stock.thickness, centre, pivot, cornerRadius)
-    || cornerRadius <= 0 || !finite(stockAlong.min, stockAlong.max)) {
+    || !finite(bounds.minX, bounds.maxX, bounds.minY, bounds.maxY)
+    || cornerRadius <= 0
+    || !finite(stockAlong.min, stockAlong.max)
+    || !(alongLength > 0) || !Number.isFinite(alongLength)) {
     return verdict('blankEnvelope')
   }
-  const tolerance = exportGeometryTolerance(project.meta.units)
-  // The clearances are read the way the flat clamp check reads them. A
-  // non-finite value cannot be allowed to make the grown rectangle NaN — a
-  // NaN comparison is false and would silently clear every clamp — so it is
-  // floored to 0, the least clearance the project actually declares.
-  const clearanceXY = Number.isFinite(project.meta.clampClearanceXY) ? Math.max(0, project.meta.clampClearanceXY) : 0
-  const clearanceZ = Number.isFinite(project.meta.clampClearanceZ) ? Math.max(0, project.meta.clampClearanceZ) : 0
+  // The clearances are the values the swept envelope is grown by. A non-finite
+  // one cannot be allowed to make the grown rectangle NaN — a NaN comparison
+  // is false and would silently clear every clamp — and flooring it to 0 would
+  // claim *less* clearance than the project declares, so it fails closed.
+  if (!Number.isFinite(project.meta.clampClearanceXY) || !Number.isFinite(project.meta.clampClearanceZ)) {
+    return verdict('projectInvalid')
+  }
+  const clearanceXY = Math.max(0, project.meta.clampClearanceXY)
+  const clearanceZ = Math.max(0, project.meta.clampClearanceZ)
   const expand = clearanceXY + operationToolRadius(project, operation)
-  const clampClearanceZ = clearanceZ
+  const tolerance = exportGeometryTolerance(project.meta.units)
   for (const clamp of project.clamps) {
     const refusal = isWorkholding(clamp)
       ? workholdingRefusal(stock, centre, pivot, cornerRadius, clamp, stockAlong, tolerance)
-      : ordinaryClampRefusal(stock, centre, pivot, cornerRadius, clamp, stockAlong, expand, clampClearanceZ, tolerance)
+      : ordinaryClampRefusal(stock, centre, pivot, cornerRadius, clamp, stockAlong, expand, clearanceZ, tolerance)
     if (refusal) return refusal
   }
   return null
+}
+
+/**
+ * Why the cutter the emitter is about to write must not cut this square blank,
+ * or `null` when it is the project's own referenced row. Asked only by output.
+ *
+ * The postprocessor holds the normalized tool row it will actually emit; the
+ * physical guard above resolves the same reference from the project. When they
+ * disagree — a row removed from the project, an unusable diameter, or a stale
+ * entry carrying a different cutter — the guard could prove one cutter clear
+ * and the emitter then write a larger one. A square angle-bearing program
+ * fails closed instead. Round output never asks this.
+ */
+export function squareRotaryCutterRefusal(
+  project: Pick<Project, 'tools' | 'meta'>,
+  operation: Pick<Operation, 'toolRef'>,
+  emittedRadius: number,
+): SquareRotarySafetyRefusal | null {
+  if (!Number.isFinite(emittedRadius) || emittedRadius <= 0) return verdict('cutterStale')
+  const record = operation.toolRef ? project.tools.find((tool) => tool.id === operation.toolRef) : undefined
+  if (!record) return verdict('cutterStale')
+  const referenced = convertToolUnits(record, project.meta.units).diameter / 2
+  if (!Number.isFinite(referenced) || referenced <= 0) return verdict('cutterStale')
+  return Math.abs(referenced - emittedRadius) <= exportGeometryTolerance(project.meta.units)
+    ? null
+    : verdict('cutterStale')
 }

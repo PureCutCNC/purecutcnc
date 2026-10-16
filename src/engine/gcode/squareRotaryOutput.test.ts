@@ -26,7 +26,14 @@
  * about the **true** pivot (a corner-radius pivot fails it), a too-small manual
  * chuck must refuse generation and output without posting the affected
  * motion, and an ordinary clamp inside the swept envelope must refuse while a
- * provably disjoint one passes.
+ * provably disjoint one passes. The ordinary-clamp verdict is witnessed
+ * analytically — the cutter body the emitted move implies is measured against
+ * the clamp box — rather than only through the guard's predicate, both for a
+ * clamp in the finite cutter overhang past the blank's end and for one beyond
+ * it. Stale posted output is exercised directly too: a missing project tool
+ * row, an empty `toolRef`, a different larger emitted cutter, and an
+ * axially-distant clamp with an invalid dimension all fail closed, while a
+ * legitimately unit-converted tool row still posts.
  *
  * The round bar is the frozen baseline: every matrix cell posts byte-identical
  * text to the value captured from the base commit before this slice's guards
@@ -38,7 +45,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { defaultTool, getStockBounds, newProject, rectProfile } from '../../types/project'
 import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool } from '../../types/project'
 import { barCentre, barPivotZ, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
@@ -48,7 +55,7 @@ import { computeOperationToolpath } from '../toolpaths/generateOperation'
 import { setupGenerationBlock } from '../setupTargets'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { warningSeverity } from '../toolpaths/warningCodes'
-import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { inverseTimeFeedValue, rotaryCentreline } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
@@ -276,9 +283,10 @@ for (const cell of MATRIX_CELLS) {
   if (!envelope) throw new Error('unreachable')
   const label = `${cell.axis}/${cell.units}/${cell.kind}/${cell.machine}`
   assert.ok(envelope.result.moves.length > 0, `${label}: nonempty square motion`)
-  assert.ok(
-    !envelope.result.warnings.some((warning) => warning.code === 'aroundStockMismatch'),
-    `${label}: admitted, not a shape refusal`,
+  assert.deepEqual(
+    envelope.result.warnings,
+    [],
+    `${label}: admitted, not a shape/kind/setup refusal`,
   )
   const pivot = barPivotZ(stock)
   const centre = barCentre(stock)
@@ -369,7 +377,7 @@ console.log('Testing square output refusals...')
   }
   assert.equal(
     setupGenerationBlock(project, wrappedEngrave)?.reason,
-    'aroundStockMismatch',
+    'squareRotaryUnsupported',
     'generation refuses a wrapped 2D Engrave on the square Around face',
   )
   assert.deepEqual(
@@ -383,6 +391,29 @@ console.log('Testing square output refusals...')
     codes(post(project, machine('own', 'x'), operation, toolpathOf(operation, stale))),
     ['postRotaryAngleNotEstablished'],
     'a wholly-angle-free rotary toolpath is refused',
+  )
+  // (h) a synthetic angle-bearing path on an ordinary Top operation: the
+  // operation's face does not make the motion square turning, so it is refused
+  // however legitimate the Top operation itself is.
+  const topSynthetic: Operation = {
+    ...operation,
+    id: 'top-synthetic',
+    name: 'Top synthetic',
+    kind: 'pocket',
+    setupId: project.setups[0].id,
+    target: { source: 'stock' },
+  }
+  assert.deepEqual(
+    codes(post(project, machine('own', 'x'), topSynthetic, envelope.result)),
+    ['postSetupOperationRefused'],
+    'a synthetic A path on an ordinary Top operation is refused',
+  )
+  // The same operation with angle-free moves stays ordinary Top machining.
+  const topFlat: ToolpathMove[] = [{ kind: 'cut', from: { x: 4, y: 6, z: 12 }, to: { x: 20, y: 6, z: 12 } }]
+  assert.deepEqual(
+    codes(post(project, machine('own', 'x'), topSynthetic, toolpathOf(topSynthetic, topFlat))),
+    [],
+    'and an angle-free Top operation is untouched',
   )
 }
 
@@ -404,8 +435,9 @@ const tooSmallChuck = (stock: SquareStock): Clamp[] => [{
   assert.ok(6 < 2 * stock.thickness * Math.SQRT1_2, 'fixture: the manual chuck is smaller than the corner envelope')
   const envelope = computeOperationToolpath(project, operation)!
   assert.equal(envelope.result.moves.length, 0, 'generation posts no affected motion')
-  assert.deepEqual(envelope.result.warnings.map((warning) => warning.code), ['aroundStockMismatch'], 'and says why')
-  assert.equal(warningSeverity('aroundStockMismatch'), 'error', 'the refusal blocks a save')
+  assert.deepEqual(envelope.result.warnings.map((warning) => warning.code), ['postSetupOperationRefused'], 'and says why')
+  assert.equal(warningSeverity('postSetupOperationRefused'), 'error', 'the refusal blocks a save')
+  assert.equal(warningSeverity('aroundStockMismatch'), 'warning', 'the old round/flat mismatch stays a warning')
   // The clamp itself is preserved: the guard reports, it never repairs.
   assert.equal(project.clamps[0].h, 6, 'the manual chuck diameter is not resized')
   assert.equal(project.clamps[0].height, barPivotZ(stock) + 3, 'and its pivot is not raised')
@@ -446,14 +478,14 @@ console.log('Testing workholding axial engagement and raw placement...')
   assert.ok(computeOperationToolpath(withClamps([touching]), base.operation)!.result.moves.length > 0, 'an end-face-touching tailstock is clear')
   // Off the centreline.
   const offCentre: Clamp = { ...small, x: 0, y: centre - 3 + 1 }
-  assert.equal(computeOperationToolpath(withClamps([offCentre]), base.operation)!.result.warnings[0]?.code, 'aroundStockMismatch', 'an off-centre clamp is refused')
+  assert.equal(computeOperationToolpath(withClamps([offCentre]), base.operation)!.result.warnings[0]?.code, 'postSetupOperationRefused', 'an off-centre clamp is refused')
   // A height not derived from the true pivot.
   const wrongHeight: Clamp = { ...small, height: barPivotZ(stock) + 3 + 1 }
-  assert.equal(computeOperationToolpath(withClamps([wrongHeight]), base.operation)!.result.warnings[0]?.code, 'aroundStockMismatch', 'a pivot-derived height is required')
+  assert.equal(computeOperationToolpath(withClamps([wrongHeight]), base.operation)!.result.warnings[0]?.code, 'postSetupOperationRefused', 'a pivot-derived height is required')
   // Invalid dimensions fail closed.
   for (const bad of [NaN, Infinity, 0, -1]) {
     const invalid: Clamp = { ...small, h: bad }
-    assert.equal(computeOperationToolpath(withClamps([invalid]), base.operation)!.result.warnings[0]?.code, 'aroundStockMismatch', `an invalid chuck dimension (${bad}) is refused`)
+    assert.equal(computeOperationToolpath(withClamps([invalid]), base.operation)!.result.warnings[0]?.code, 'postSetupOperationRefused', `an invalid chuck dimension (${bad}) is refused`)
   }
 }
 
@@ -471,7 +503,7 @@ console.log('Testing ordinary fixtures in the swept square envelope...')
   // Directly under the bar, inside the corner envelope: refused.
   assert.equal(
     computeOperationToolpath(withClamps([ordinary({})]), base.operation)!.result.warnings[0]?.code,
-    'aroundStockMismatch',
+    'postSetupOperationRefused',
     'an ordinary clamp inside the swept envelope is refused',
   )
   // Across the bar, outside the envelope: provably disjoint, allowed.
@@ -480,11 +512,13 @@ console.log('Testing ordinary fixtures in the swept square envelope...')
     computeOperationToolpath(withClamps([clear]), base.operation)!.result.moves.length > 0,
     'an ordinary clamp across the bar, outside the corner envelope, is clear',
   )
-  // Along-disjoint from the blank: allowed even on the centreline.
+  // Along-disjoint from the blank *beyond the finite cutter overhang*: allowed
+  // even on the centreline. `x: max + 5` is past the (radius + clearance)
+  // envelope the guard grows the blank by, so it is provably distant.
   const beyond = ordinary({ x: bounds.max + 5 })
   assert.ok(
     computeOperationToolpath(withClamps([beyond]), base.operation)!.result.moves.length > 0,
-    'an ordinary clamp past the blank end is clear',
+    'an ordinary clamp past the blank end, beyond the cutter overhang, is clear',
   )
 }
 
@@ -495,6 +529,247 @@ function strictClear(base: ReturnType<typeof fixture>): Clamp {
     id: 'clear', name: 'Clear clamp', type: 'step_clamp',
     x: 5, y: barCentre(base.stock) + radius, w: 4, h: 4, height: 8, visible: true,
   }
+}
+
+/** Post one operation with an explicit tool row — the stale entry an emitter would write. */
+function postWithTool(
+  project: Project,
+  definition: MachineDefinition,
+  operation: Operation,
+  tool: NormalizedTool,
+  toolpath: ToolpathResult,
+): PostProcessorResult {
+  return runPostProcessor({
+    project,
+    definition,
+    operations: [{ operation, tool, toolpath }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+}
+
+/** The cut move reaching furthest in `direction` along the bar's own axis. */
+function extremeCut(moves: readonly ToolpathMove[], axis: Axis, direction: 1 | -1): ToolpathMove | null {
+  const at = (point: ToolpathPoint) => (axis === 'x' ? point.x : point.y)
+  let best: ToolpathMove | null = null
+  let bestValue = direction === 1 ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    const value = direction === 1
+      ? Math.max(at(move.from), at(move.to))
+      : Math.min(at(move.from), at(move.to))
+    if (direction === 1 ? value > bestValue : value < bestValue) {
+      best = move
+      bestValue = value
+    }
+  }
+  return best
+}
+
+/**
+ * The physical witness, independent of the guard's own predicates: the tool tip
+ * stands a vertical cylinder of `radius` out of the bed, the clamp is its
+ * stored box, and the two collide when their XY footprints meet with the
+ * clamp's height reaching the tip. Both ends of the move are tested; a straight
+ * cut at constant across the bar is closest to the clamp at one of them.
+ */
+function cutterBodyOverlapsClamp(move: ToolpathMove, radius: number, clamp: Clamp): boolean {
+  const maxX = clamp.x + clamp.w
+  const maxY = clamp.y + clamp.h
+  return [move.from, move.to].some((tip) => {
+    const nearX = Math.min(Math.max(tip.x, clamp.x), maxX)
+    const nearY = Math.min(Math.max(tip.y, clamp.y), maxY)
+    const dx = tip.x - nearX
+    const dy = tip.y - nearY
+    return dx * dx + dy * dy <= radius * radius && clamp.height >= tip.z
+  })
+}
+
+// ── 4b. ordinary clamps past an end: the finite cutter overhang ─
+
+console.log('Testing ordinary clamps past the blank end against the cutter-body overhang...')
+for (const axis of ['x', 'y'] as const) {
+  for (const units of ['mm', 'inch'] as const) {
+    const { project, operation, tool } = fixture({ axis, units, kind: 'rotary_rough' })
+    const stock = project.stock as SquareStock
+    const definition = machine('own', axis)
+    const bounds = getStockBounds(stock)
+    const alongMin = axis === 'x' ? bounds.minX : bounds.minY
+    const alongMax = axis === 'x' ? bounds.maxX : bounds.maxY
+    const centre = barCentre(stock)
+    const radius = tool.diameter / 2
+    const clearance = project.meta.clampClearanceXY
+    const expand = radius + clearance
+    const label = `${axis}/${units}`
+    const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+    const clean = computeOperationToolpath(project, operation)!
+    assert.ok(clean.result.moves.length > 0, `${label}: fixture generates`)
+
+    const pastEnd = (along: number): Clamp => axis === 'x'
+      ? { id: 'end', name: 'End clamp', type: 'step_clamp', x: along, y: centre - 1, w: 2, h: 2, height: 20, visible: true }
+      : { id: 'end', name: 'End clamp', type: 'step_clamp', x: centre - 1, y: along, w: 2, h: 2, height: 20, visible: true }
+
+    // This fixture's model stops short of the blank end, so the *analytic*
+    // witness lives at the farthest cut the path actually makes; the guard is
+    // still conservative about the whole blank (asserted below).
+    const reach = clean.result.moves
+      .filter((move) => move.kind !== 'rapid')
+      .reduce((max, move) => Math.max(max, axis === 'x' ? move.to.x : move.to.y), Number.NEGATIVE_INFINITY)
+    assert.ok(reach < alongMax && reach > alongMin, `${label}: fixture: the cut stops short of the blank end`)
+
+    // Half a cutter radius past the farthest cut: the cutter body reaches it.
+    const colliding = pastEnd(reach + radius / 2)
+    const blocked = { ...project, clamps: [colliding] }
+    assert.equal(computeOperationToolpath(blocked, operation)!.result.moves.length, 0, `${label}: generation refuses a clamp in the overhang`)
+    assert.deepEqual(computeOperationToolpath(blocked, operation)!.result.warnings.map((warning) => warning.code), ['postSetupOperationRefused'], `${label}: and says why`)
+    const stale = postWithTool(blocked, definition, operation, normalizeToolForProject(tool, project), clean.result)
+    assert.deepEqual(codes(stale), ['postSetupOperationRefused'], `${label}: stale posted output refuses too`)
+    assert.equal(stale.stats.moveCount, 0, `${label}: none of the affected motion is posted`)
+
+    // The witness is geometry, not the predicate: the terminal cut's cutter
+    // body overlaps the clamp box.
+    const terminal = extremeCut(clean.result.moves, axis, 1)
+    assert.ok(terminal && cutterBodyOverlapsClamp(terminal, radius, colliding), `${label}: the analytic cutter body overlaps the clamp at the far end`)
+
+    // The growth is symmetric: a clamp before the near end, within the same
+    // finite overhang, is refused too, and the near-end cut witnesses it.
+    const reachMin = clean.result.moves
+      .filter((move) => move.kind !== 'rapid')
+      .reduce((min, move) => Math.min(min, axis === 'x' ? move.to.x : move.to.y), Number.POSITIVE_INFINITY)
+    const near = pastEnd(reachMin - radius / 2)
+    assert.equal(computeOperationToolpath({ ...project, clamps: [near] }, operation)!.result.moves.length, 0, `${label}: a clamp before the near end is refused too`)
+    const start = extremeCut(clean.result.moves, axis, -1)
+    assert.ok(start && cutterBodyOverlapsClamp(start, radius, near), `${label}: and the near-end cutter body overlaps it`)
+
+    // With zero XY clearance the finite overhang is exactly the cutter radius:
+    // the clamp a quarter-radius past the farthest cut still refuses, and one a
+    // full radius + margin beyond it is clear.
+    const noClearance = { ...project, meta: { ...project.meta, clampClearanceXY: 0 } }
+    const zeroOverhang = pastEnd(reach + radius / 4)
+    assert.equal(computeOperationToolpath({ ...noClearance, clamps: [zeroOverhang] }, operation)!.result.moves.length, 0, `${label}: zero clearance still refuses the cutter overhang`)
+    const zeroClear = pastEnd(alongMax + 2 * radius)
+    assert.ok(computeOperationToolpath({ ...noClearance, clamps: [zeroClear] }, operation)!.result.moves.length > 0, `${label}: and clears past the finite radius`)
+
+    // Conservative over the whole blank: a clamp past the end face but inside
+    // the finite cutter + clearance overhang is refused even though this
+    // fixture's own path stopped short of the end.
+    const atBlankEnd = pastEnd(alongMax + expand / 4)
+    assert.equal(computeOperationToolpath({ ...project, clamps: [atBlankEnd] }, operation)!.result.moves.length, 0, `${label}: the blank-envelope overhang is refused too`)
+
+    // A hidden clamp is still physical.
+    const hidden = { ...project, clamps: [{ ...colliding, visible: false }] }
+    assert.equal(computeOperationToolpath(hidden, operation)!.result.moves.length, 0, `${label}: a hidden clamp is still refused`)
+
+    // A reversed machine refuses the same stale path.
+    const reversed = postWithTool(blocked, machine('reversed', axis), operation, normalizeToolForProject(tool, project), clean.result)
+    assert.deepEqual(codes(reversed), ['postSetupOperationRefused'], `${label}: reversed output refuses`)
+
+    // Past the finite overhang the fixture is provably distant, and the
+    // witness agrees: no endpoint's cutter body reaches it.
+    const clear = pastEnd(alongMax + expand + 2 * clearance)
+    assert.ok(computeOperationToolpath({ ...project, clamps: [clear] }, operation)!.result.moves.length > 0, `${label}: a clamp past the overhang is clear`)
+    assert.ok(terminal && !cutterBodyOverlapsClamp(terminal, radius, clear), `${label}: and the cutter body does not reach it`)
+  }
+}
+
+// ── 4c. the emitted cutter reference on square output ─────────
+
+console.log('Testing the emitted cutter row on square output...')
+{
+  const { project, operation, tool } = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish' })
+  const definition = machine('own', 'x')
+  const toolpath = computeOperationToolpath(project, operation)!.result
+  assert.ok(toolpath.moves.length > 0, 'fixture: the clean square path generates')
+  const emitted = normalizeToolForProject(tool, project)
+  const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+
+  // (a) The project row the operation references is gone. The physical guard
+  // cannot resolve the cutter it must prove clear, and output must not post.
+  const removed = postWithTool({ ...project, tools: [] }, definition, operation, emitted, toolpath)
+  assert.deepEqual(codes(removed), ['postSetupOperationRefused'], 'a removed project tool refuses square output')
+  assert.equal(removed.stats.moveCount, 0, 'and posts no motion')
+
+  // (b) An empty toolRef names no cutter at all.
+  const emptyRef = postWithTool(project, definition, { ...operation, toolRef: '' }, emitted, toolpath)
+  assert.deepEqual(codes(emptyRef), ['postSetupOperationRefused'], 'an empty toolRef refuses square output')
+  assert.equal(emptyRef.stats.moveCount, 0, 'and posts no motion')
+
+  // (c) A stale entry carrying a *larger* cutter than the referenced row: the
+  // guard could prove the 2 mm cutter clear and the emitter write an 8 mm one.
+  const larger: NormalizedTool = { ...emitted, diameter: emitted.diameter * 4, radius: emitted.radius * 4 }
+  const largerResult = postWithTool(project, definition, operation, larger, toolpath)
+  assert.deepEqual(codes(largerResult), ['postSetupOperationRefused'], 'a stale larger cutter refuses square output')
+  assert.equal(largerResult.stats.moveCount, 0, 'and posts no motion')
+
+  // (d) A legitimate row in another unit system is converted, not a mismatch:
+  // the inch record normalizes to exactly the mm radius the project's own
+  // generation used.
+  const inchTool = { ...tool, units: 'inch' as const, diameter: tool.diameter / MM_PER_INCH }
+  const inchProject = { ...project, tools: [inchTool] }
+  const inchPath = computeOperationToolpath(inchProject, operation)!.result
+  const converted = postWithTool(inchProject, definition, operation, normalizeToolForProject(inchTool, inchProject), inchPath)
+  assert.deepEqual(codes(converted), [], 'an inch tool row in an mm project is converted, not refused')
+  assert.ok(converted.stats.moveCount > 0, 'and its motion posts')
+
+  // (e) The measured stale case: zero project clamp clearances, a 4 mm flat
+  // tool whose envelope reaches an ordinary clamp, then the project tool
+  // removed. Both must refuse; the missing tool must not post 25 moves.
+  const flatTool = { ...tool, type: 'flat_endmill' as const, diameter: 4 }
+  const flatProject = { ...project, tools: [flatTool], meta: { ...project.meta, clampClearanceXY: 0, clampClearanceZ: 0 } }
+  const clampIn = { id: 'flat', name: 'Flat clamp', type: 'step_clamp' as const, x: 8, y: barCentre(flatProject.stock as SquareStock) + 8.5, w: 5, h: 2, height: 30, visible: true }
+  const flatPath = computeOperationToolpath(flatProject, operation)!.result
+  assert.ok(flatPath.moves.length > 0, 'fixture: the 4 mm tool generates without the clamp')
+  const flatEmitted = normalizeToolForProject(flatTool, flatProject)
+  const withFlatClamp = { ...flatProject, clamps: [clampIn] }
+  assert.deepEqual(
+    codes(postWithTool(withFlatClamp, definition, operation, flatEmitted, flatPath)),
+    ['postSetupOperationRefused'],
+    'the 4 mm cutter envelope reaches the ordinary clamp',
+  )
+  assert.deepEqual(
+    codes(postWithTool({ ...withFlatClamp, tools: [] }, definition, operation, flatEmitted, flatPath)),
+    ['postSetupOperationRefused'],
+    'and removing the project tool still refuses instead of posting the path',
+  )
+}
+
+// ── 4d. invalid project dimensions and clearances fail closed ─
+
+console.log('Testing invalid project dimensions and clearances fail closed...')
+{
+  const base = fixture({ axis: 'x', units: 'mm', kind: 'rotary_rough' })
+  const centre = barCentre(base.stock)
+  const refused = (overrides: Partial<Project>): string | undefined =>
+    computeOperationToolpath({ ...base.project, ...overrides }, base.operation)!.result.warnings[0]?.code
+  const bad = (overrides: Partial<Clamp>): Clamp => ({
+    id: 'bad', name: 'Bad clamp', type: 'step_clamp',
+    x: 200, y: centre - 1, w: 2, h: 2, height: 10, visible: true,
+    ...overrides,
+  })
+  // Axially far from the blank: the row must still be judged, not skipped.
+  for (const height of [0, -1, NaN, Infinity]) {
+    assert.equal(refused({ clamps: [bad({ height })] }), 'postSetupOperationRefused', `a clamp height of ${height} fails closed even when distant`)
+  }
+  for (const [key, value] of [
+    ['w', 0], ['w', NaN], ['w', -3], ['h', 0], ['h', Infinity],
+  ] as const) {
+    assert.equal(refused({ clamps: [bad({ [key]: value })] }), 'postSetupOperationRefused', `a clamp ${key} of ${value} fails closed`)
+  }
+  // A far corner that overflows to infinity is not a finite box.
+  assert.equal(refused({ clamps: [bad({ x: 1e308, w: 1e308 })] }), 'postSetupOperationRefused', 'an overflowing far corner fails closed')
+  // Non-finite clearances must not silently shrink the swept envelope.
+  for (const clampClearanceXY of [NaN, Infinity, -Infinity]) {
+    assert.equal(refused({ meta: { ...base.project.meta, clampClearanceXY } }), 'postSetupOperationRefused', `an XY clearance of ${clampClearanceXY} fails closed`)
+  }
+  for (const clampClearanceZ of [NaN, Infinity, -Infinity]) {
+    assert.equal(refused({ meta: { ...base.project.meta, clampClearanceZ } }), 'postSetupOperationRefused', `a Z clearance of ${clampClearanceZ} fails closed`)
+  }
+  // A blank with no axial extent has no envelope to prove anything against.
+  const degenerate = { ...base.project, stock: { ...base.stock, profile: rectProfile(0, 0, 0, 12) } }
+  assert.equal(
+    computeOperationToolpath(degenerate, base.operation)!.result.warnings[0]?.code,
+    'postSetupOperationRefused',
+    'a blank with no axial extent fails closed',
+  )
 }
 
 // ── 5. a seeded physical reference for the new motion ─────────
