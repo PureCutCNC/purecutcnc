@@ -104,8 +104,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   Around setup with a supported physical workholding / ordinary-clamp setup may
   post, every angle-bearing square path must be that operation whatever face it
   claims (a synthetic `A` path from a Top/Bottom or wrapped 2D kind is refused),
-  the emitted cutter must be the project's own referenced row (a removed,
-  unusable or different cutter fails closed rather than letting the guard prove
+  the emitted cutter must be the project's own referenced row — the row's `id`
+  is what `planProgramSequence` selects the program's tool number from, and its
+  normalized `units` label must be the project's, so an entry naming another
+  valid row or carrying a foreign unit label is refused even when its shape and
+  numbers were spoofed to match; a removed, unusable, differently shaped or
+  differently sized cutter fails closed too, rather than letting the guard prove
   one tool clear and the emitter write another), a non-rotary kind or a stale
   wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
   the true pivot (`barPivotZ = side / 2`) whichever bar shape the stock is;
@@ -239,9 +243,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   clamp in the swept envelope refuses while a provably disjoint one passes, and
   a clamp past the blank end but inside the finite cutter-body overhang refuses
   — with an independent analytic cutter-body-vs-clamp witness — while one past
-  that overhang, non-finite clearances, a degenerate blank and a missing /
-  empty-ref / different-larger emitted cutter all fail closed; 40 seeded
-  pure-turn feeds match the analytic true-pivot inverse-time word.
+  that overhang is provably clear and passes; a clamp row with a non-positive
+  height, a non-finite clearance and a degenerate blank all fail closed, as do a
+  missing / empty-ref emitted cutter, a stale larger cutter, a same-radius
+  cutter of the other supported shape, an unsupported `v_bit` on either side, an
+  emitted row naming another valid tool row (a real tool-change program is
+  refused), a normalized row labelled in another unit system, and a body whose
+  radius is not half its diameter (with the flat/ball surface difference
+  witnessed analytically), while a genuinely converted same-id row still posts;
+  40 seeded pure-turn feeds match the analytic true-pivot inverse-time word.
 
 ## Adding a dialect
 

@@ -31,9 +31,17 @@
  * the clamp box — rather than only through the guard's predicate, both for a
  * clamp in the finite cutter overhang past the blank's end and for one beyond
  * it. Stale posted output is exercised directly too: a missing project tool
- * row, an empty `toolRef`, a different larger emitted cutter, and an
- * axially-distant clamp with an invalid dimension all fail closed, while a
- * legitimately unit-converted tool row still posts.
+ * row, an empty `toolRef`, a different larger emitted cutter, a same-radius
+ * cutter of the other supported shape, an unsupported `v_bit` on either side, a
+ * body whose radius is not half its diameter, a non-finite dimension, a row
+ * naming another valid project tool (whose `id` selects the program's tool
+ * number, so a real tool-change program is refused) and a normalized row
+ * labelled in another unit system all fail closed, while a legitimately
+ * unit-converted flat or ball row under its own id still posts. The flat/ball
+ * difference is witnessed geometrically as well — at a nonzero tangential
+ * offset a ball's lower surface stands `r − √(r² − d²)` above the tip the flat
+ * still passes through — so the shape check is load-bearing geometry, not enum
+ * equality.
  *
  * The round bar is the frozen baseline: every matrix cell posts byte-identical
  * text to the value captured from the base commit before this slice's guards
@@ -46,7 +54,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
 import { defaultTool, getStockBounds, newProject, rectProfile } from '../../types/project'
-import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool } from '../../types/project'
+import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool, ToolType } from '../../types/project'
 import { barCentre, barPivotZ, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
@@ -61,13 +69,15 @@ import { inverseTimeFeedValue, rotaryCentreline } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
 import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
-import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 
 // ── fixtures ──────────────────────────────────────────────────
 
 type Axis = 'x' | 'y'
 type Units = 'mm' | 'inch'
 type MachineKind = 'own' | 'borrowed' | 'reversed'
+/** The two cutter shapes a square turning rough/finish supports. */
+type SupportedCutter = Extract<ToolType, 'flat_endmill' | 'ball_endmill'>
 
 const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)
 
@@ -105,6 +115,8 @@ interface FixtureOptions {
   at?: { x: number; y: number }
   clamps?: (stock: SquareStock, units: Units) => Clamp[]
   round?: boolean
+  /** The referenced project cutter shape; the fixture default is a ball. */
+  toolType?: SupportedCutter
 }
 
 /**
@@ -112,7 +124,7 @@ interface FixtureOptions {
  * with an Around setup, a model target and the S2 default workholding.
  */
 function fixture(options: FixtureOptions): { project: Project; operation: Operation; stock: SquareStock; tool: Tool } {
-  const { axis, units, kind, at = { x: 0, y: 0 }, round = false } = options
+  const { axis, units, kind, at = { x: 0, y: 0 }, round = false, toolType = 'ball_endmill' } = options
   const scale = units === 'mm' ? 1 : 1 / MM_PER_INCH
   const square = squareStock(12 * scale, 30 * scale, axis, at)
   const stock = round ? { ...square, shape: 'round' as const } : square
@@ -126,7 +138,7 @@ function fixture(options: FixtureOptions): { project: Project; operation: Operat
     id: 't1',
     name: 'Ball 2',
     units,
-    type: 'ball_endmill',
+    type: toolType,
     diameter: 2 * scale,
     defaultStepover: 0.8,
     defaultStepdown: 1 * scale,
@@ -538,12 +550,13 @@ function postWithTool(
   operation: Operation,
   tool: NormalizedTool,
   toolpath: ToolpathResult,
+  options: { emitToolChanges?: boolean } = {},
 ): PostProcessorResult {
   return runPostProcessor({
     project,
     definition,
     operations: [{ operation, tool, toolpath }],
-    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+    options: { emitToolChanges: options.emitToolChanges ?? false, emitCoolant: false, programName: project.meta.name },
   })
 }
 
@@ -730,6 +743,131 @@ console.log('Testing the emitted cutter row on square output...')
     ['postSetupOperationRefused'],
     'and removing the project tool still refuses instead of posting the path',
   )
+}
+
+// ── 4e. the emitted cutter body on square output ──────────────
+
+console.log('Testing the emitted cutter shape on square output...')
+
+/**
+ * The analytic lowest surface a cutter leaves, measured above the tool tip, at
+ * a horizontal (tangential) offset `d` from the tool axis. A flat endmill's
+ * bottom is a plane through the tip, so its surface is the tip at every offset
+ * within its radius. A ball endmill of radius `r` touches the tip only on its
+ * axis; at offset `d` its lowest point has risen by `r − √(r² − d²)`. The two
+ * bodies therefore coincide at `d = 0` and differ for every `0 < d < r`: equal
+ * radii are not interchangeable shapes. This witness is independent of the
+ * guard — it is the geometry the same-radius substitution changes.
+ */
+function lowestSurfaceAboveTip(type: SupportedCutter, radius: number, offset: number): number {
+  return type === 'flat_endmill' ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - offset * offset))
+}
+
+{
+  const radius = 2
+  assert.equal(lowestSurfaceAboveTip('ball_endmill', radius, 0), 0, 'witness: both bodies reach the tip on the axis')
+  const offset = radius * Math.sqrt(3) / 2
+  const ball = lowestSurfaceAboveTip('ball_endmill', radius, offset)
+  const flat = lowestSurfaceAboveTip('flat_endmill', radius, offset)
+  assert.ok(ball - flat > 0, 'witness: a ball leaves stock the flat removes at a nonzero tangential offset')
+  assert.ok(Math.abs(ball - radius / 2) < 1e-12, 'witness: the ball surface is exactly r/2 above the tip at d = r·√3/2')
+  let witnessed = 0
+  for (let step = 1; step < 40; step += 1) {
+    const d = radius * step / 40
+    assert.ok(
+      lowestSurfaceAboveTip('ball_endmill', radius, d) > lowestSurfaceAboveTip('flat_endmill', radius, d),
+      `witness: the flat and ball bodies differ at d = ${d.toFixed(4)}`,
+    )
+    witnessed += 1
+  }
+  console.log(`   ${witnessed} off-axis offsets confirm the ball stands ${ball.toFixed(4)} above the flat at d = r·√3/2`)
+}
+
+for (const axis of ['x', 'y'] as const) {
+  for (const units of ['mm', 'inch'] as const) {
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+        const label = `${axis}/${units}/${kind}/${toolType}`
+        const { project, operation, tool } = fixture({ axis, units, kind, toolType })
+        const definition = machine('own', axis)
+        const envelope = computeOperationToolpath(project, operation)!
+        assert.ok(envelope.result.moves.length > 0, `${label}: the fixture generates a real square turning path`)
+        const emitted = normalizeToolForProject(tool, project)
+        const clean = postWithTool(project, definition, operation, emitted, envelope.result)
+        assert.deepEqual(clean.warnings, [], `${label}: the project's own supported shape posts`)
+        assert.ok(clean.stats.moveCount > 0, `${label}: and posts its motion`)
+
+        const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+        const refuses = (name: string, result: PostProcessorResult) => {
+          assert.deepEqual(codes(result), ['postSetupOperationRefused'], `${label}: ${name} refuses`)
+          assert.equal(result.stats.moveCount, 0, `${label}: ${name} posts no affected motion`)
+        }
+
+        // The same radius with the other supported shape: a ball where a flat
+        // was referenced, or a flat where a ball was, removes a different solid
+        // from the same tip. The equal radius does not make them one body.
+        const other: SupportedCutter = toolType === 'flat_endmill' ? 'ball_endmill' : 'flat_endmill'
+        refuses('a same-radius substituted shape', postWithTool(project, definition, operation, { ...emitted, type: other }, envelope.result))
+
+        // An unsupported shape cannot be validated as another body: neither on
+        // the emitted entry nor on the referenced project row.
+        refuses('an unsupported emitted V bit', postWithTool(project, definition, operation, { ...emitted, type: 'v_bit' }, envelope.result))
+        const vBitProject = { ...project, tools: [{ ...tool, type: 'v_bit' as const }] }
+        refuses('an unsupported referenced V bit', postWithTool(vBitProject, definition, operation, { ...emitted, type: 'v_bit' }, envelope.result))
+
+        // A body whose radius is not half its diameter is not one cutter — even
+        // though that radius still matches the referenced row, so a radius-only
+        // check would wave it through.
+        const inconsistent = { ...emitted, diameter: emitted.diameter * 4, radius: emitted.radius }
+        assert.ok(
+          Math.abs(inconsistent.radius - emitted.radius) <= exportGeometryTolerance(units),
+          `${label}: witness: the inconsistent body still matches the referenced radius`,
+        )
+        refuses('a radius that is not half its diameter', postWithTool(project, definition, operation, inconsistent, envelope.result))
+        // Every non-finite or non-positive normalized dimension fails closed.
+        for (const bad of [NaN, Infinity, 0, -1]) {
+          refuses(`a radius of ${bad}`, postWithTool(project, definition, operation, { ...emitted, radius: bad }, envelope.result))
+          refuses(`a diameter of ${bad}`, postWithTool(project, definition, operation, { ...emitted, diameter: bad }, envelope.result))
+        }
+        // Internally consistent but a different size from the referenced row.
+        refuses('a consistently larger body', postWithTool(project, definition, operation, { ...emitted, diameter: emitted.diameter * 2, radius: emitted.radius * 2 }, envelope.result))
+
+        // The row's identity is not cosmetic: `planProgramSequence` selects the
+        // programme's tool number from the emitted `id`, so an entry naming
+        // another *valid* project row writes a wrong-tool instruction even when
+        // its shape and size were spoofed to match. The refusal is posted
+        // output with tool changes enabled, where the wrong number would appear.
+        const secondRecord: Tool = { ...tool, id: 't2', name: 'Second cutter' }
+        const twoToolProject = { ...project, tools: [tool, secondRecord] }
+        const wrongId = { ...emitted, id: 't2' }
+        assert.equal(wrongId.type, emitted.type, `${label}: witness: the wrong-id row keeps the referenced shape`)
+        assert.equal(wrongId.diameter, emitted.diameter, `${label}: witness: and the referenced diameter`)
+        refuses(
+          'an emitted row naming another valid tool row',
+          postWithTool(twoToolProject, definition, operation, wrongId, envelope.result, { emitToolChanges: true }),
+        )
+        const correctId = postWithTool(twoToolProject, definition, operation, emitted, envelope.result, { emitToolChanges: true })
+        assert.deepEqual(correctId.warnings, [], `${label}: the operation's own row posts with tool changes on`)
+        assert.match(correctId.gcode, /; Tool 1:/, `${label}: and writes its own tool number`)
+
+        // The normalized unit label is not cosmetic either: the same numbers
+        // labelled in another system are a different body to the machine.
+        const wrongUnits = { ...emitted, units: units === 'mm' ? 'inch' as const : 'mm' as const }
+        assert.equal(wrongUnits.radius, emitted.radius, `${label}: witness: the wrong-unit row keeps the same numbers`)
+        refuses('a normalized row labelled in another unit system', postWithTool(project, definition, operation, wrongUnits, envelope.result))
+
+        // A genuine row written in the other unit system is converted, not a
+        // mismatch: the same physical flat or ball, under the same id, posts.
+        const otherRecord = convertToolUnits(tool, units === 'mm' ? 'inch' : 'mm')
+        assert.equal(otherRecord.id, tool.id, `${label}: witness: conversion keeps the referenced identity`)
+        const otherProject = { ...project, tools: [otherRecord] }
+        const otherPath = computeOperationToolpath(otherProject, operation)!.result
+        const converted = postWithTool(otherProject, definition, operation, normalizeToolForProject(otherRecord, otherProject), otherPath)
+        assert.deepEqual(converted.warnings, [], `${label}: a converted-locale row is not a stale cutter`)
+        assert.ok(converted.stats.moveCount > 0, `${label}: and its motion posts`)
+      }
+    }
+  }
 }
 
 // ── 4d. invalid project dimensions and clearances fail closed ─

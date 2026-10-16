@@ -62,6 +62,14 @@
  * machine would actually be set up with. A non-finite clearance used to be
  * floored to zero, which made it *less* conservative than the declared value;
  * it now refuses instead.
+ *
+ * The cutter is a **body**, not a number. Equal radii do not make two shapes
+ * interchangeable: at a horizontal offset `d` from the tool axis, a flat
+ * endmill's bottom is still the tip plane, while a ball endmill's lowest
+ * surface has risen to `tip + r − √(r² − d²)`. The two leave different stock
+ * for every `0 < d < r`, so the shape the geometry was generated with and the
+ * shape the emitter writes must be the same supported cutter, and its radius
+ * must be the half-diameter of the body it claims to be.
  */
 
 import {
@@ -71,8 +79,9 @@ import {
   isSquareStock,
 } from '../types/barStock'
 import { getStockBounds } from '../types/project'
-import type { Clamp, Operation, Project, SquareStock } from '../types/project'
+import type { Clamp, Operation, Project, SquareStock, ToolType } from '../types/project'
 import { convertToolUnits, exportGeometryTolerance } from '../utils/units'
+import type { Units } from '../utils/units'
 
 /** Why a square blank's physical setup is not one this build supports. */
 export type SquareRotarySafetyReason =
@@ -88,7 +97,11 @@ export type SquareRotarySafetyReason =
   | 'workholdingDiameter'
   /** An ordinary clamp reaches into the swept blank/cutter envelope. */
   | 'ordinaryClampOverlap'
-  /** The cutter the emitter holds is missing, unusable, or not the project's referenced row. */
+  /**
+   * The cutter the emitter holds is missing, unusable, the wrong shape, named
+   * by another project row, in another unit system, or not the project's
+   * referenced row.
+   */
   | 'cutterStale'
 
 /** The clamp (if any) the verdict names. `clampId`/`clampName` are empty for a blank or cutter verdict. */
@@ -315,6 +328,29 @@ export function squareRotarySafetyRefusal(
 }
 
 /**
+ * The normalized cutter body the emitter is about to write, reduced to the
+ * fields this physical guard reasons about: which project row it is, the unit
+ * system its numbers are in, and the physical shape and size it will drive.
+ * Passed explicitly by the caller (`gcode/motionPipeline.ts`), never inferred
+ * from the stored operation or the moves.
+ */
+export interface EmittedSquareCutter {
+  /** The project tool row the emitter's tool number is selected from. */
+  id: string
+  /** The unit system the diameter and radius below are expressed in. */
+  units: Units
+  /** The cutter's physical shape, as normalized for the project. */
+  type: ToolType
+  /** The normalized outside diameter, in project units. */
+  diameter: number
+  /** The normalized tip radius, in project units. */
+  radius: number
+}
+
+/** The only cutter shapes a square turning rough/finish is generated with. */
+const SQUARE_ROTARY_CUTTER_TYPES: readonly ToolType[] = ['flat_endmill', 'ball_endmill']
+
+/**
  * Why the cutter the emitter is about to write must not cut this square blank,
  * or `null` when it is the project's own referenced row. Asked only by output.
  *
@@ -322,20 +358,63 @@ export function squareRotarySafetyRefusal(
  * physical guard above resolves the same reference from the project. When they
  * disagree — a row removed from the project, an unusable diameter, or a stale
  * entry carrying a different cutter — the guard could prove one cutter clear
- * and the emitter then write a larger one. A square angle-bearing program
- * fails closed instead. Round output never asks this.
+ * and the emitter then write another. A square angle-bearing program fails
+ * closed instead. Round output never asks this.
+ *
+ * Identity is not cosmetic. `planProgramSequence` selects the program's tool
+ * number from the emitted row's `id`, so an entry naming a *different* project
+ * row writes a wrong-tool instruction — a `; Tool 2` and a manual change stop —
+ * even when its shape, diameter and radius were spoofed to match. The emitted
+ * `id` must therefore be the operation's own `toolRef`, and its normalized
+ * `units` must be the project's: a row labelled in another unit system while
+ * the project is not is a different body to the machine. `sourceUnits` is the
+ * record's own storage label and may legitimately differ after conversion, so
+ * it is deliberately not compared. This is the row's identity and physical
+ * body only — never its display name, feeds or material.
+ *
+ * Equal radii are not enough either. The emitted body's **shape** must be the
+ * same supported cutter as the referenced row: a ball substituted for a
+ * referenced flat (or a flat for a ball) removes a different solid at the same
+ * tip position, and an unsupported shape (`v_bit`, `drill`) has no definition
+ * this build can cut a turning pass with at all. The emitted row's own radius
+ * and diameter must also describe one body — a radius that is not the half of
+ * its diameter is not a cutter this guard can reason about. Every one of those
+ * is refused with the same `cutterStale`.
+ *
+ * The emitted row is read field by field from the normalized row the caller
+ * will post. Its type is never inferred from the stored operation or from the
+ * moves: only the shape the emitter actually holds can describe what the
+ * machine will drive.
  */
 export function squareRotaryCutterRefusal(
   project: Pick<Project, 'tools' | 'meta'>,
   operation: Pick<Operation, 'toolRef'>,
-  emittedRadius: number,
+  emitted: EmittedSquareCutter,
 ): SquareRotarySafetyRefusal | null {
-  if (!Number.isFinite(emittedRadius) || emittedRadius <= 0) return verdict('cutterStale')
+  const tolerance = exportGeometryTolerance(project.meta.units)
+  // The row's identity and the system its numbers are in come first: a
+  // different tool number or a foreign unit label is a different cutter to the
+  // machine however equal its numbers look.
+  if (emitted.id !== operation.toolRef) return verdict('cutterStale')
+  if (emitted.units !== project.meta.units) return verdict('cutterStale')
+  // The body the emitter writes must be a shape this build turns with, and its
+  // own radius/diameter pair must describe that one body.
+  if (!SQUARE_ROTARY_CUTTER_TYPES.includes(emitted.type)) return verdict('cutterStale')
+  if (!Number.isFinite(emitted.radius) || emitted.radius <= 0) return verdict('cutterStale')
+  if (!Number.isFinite(emitted.diameter) || emitted.diameter <= 0) return verdict('cutterStale')
+  if (Math.abs(emitted.diameter / 2 - emitted.radius) > tolerance) return verdict('cutterStale')
   const record = operation.toolRef ? project.tools.find((tool) => tool.id === operation.toolRef) : undefined
   if (!record) return verdict('cutterStale')
-  const referenced = convertToolUnits(record, project.meta.units).diameter / 2
-  if (!Number.isFinite(referenced) || referenced <= 0) return verdict('cutterStale')
-  return Math.abs(referenced - emittedRadius) <= exportGeometryTolerance(project.meta.units)
+  const referenced = convertToolUnits(record, project.meta.units)
+  // The referenced row's shape is what the geometry was generated with: it must
+  // be supported too, and identical to the emitted body. The comparison is the
+  // physical shape and the normalized radius only — not a broad metadata
+  // equality over name, feeds or material.
+  if (!SQUARE_ROTARY_CUTTER_TYPES.includes(referenced.type)) return verdict('cutterStale')
+  if (referenced.type !== emitted.type) return verdict('cutterStale')
+  const referencedRadius = referenced.diameter / 2
+  if (!Number.isFinite(referencedRadius) || referencedRadius <= 0) return verdict('cutterStale')
+  return Math.abs(referencedRadius - emitted.radius) <= tolerance
     ? null
     : verdict('cutterStale')
 }

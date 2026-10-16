@@ -57,6 +57,7 @@ import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
+import type { EmittedSquareCutter } from '../squareRotarySafety'
 import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
@@ -979,8 +980,8 @@ function inspectRotaryOperation(args: {
   operation: Operation
   toolpath: ToolpathResult
   operationName: string
-  /** The radius of the normalized cutter the emitter will actually write. */
-  emittedRadius: number
+  /** The normalized cutter body the emitter will actually write. */
+  emittedCutter: EmittedSquareCutter
   trackedAngle: number | null
   borrowedCoordinate: number | null
 }): { refused: ToolpathWarning } | {
@@ -988,7 +989,7 @@ function inspectRotaryOperation(args: {
   trackedAngle: number | null
   borrowedCoordinate: number | null
 } {
-  const { definition, project, operation, toolpath, operationName, emittedRadius, trackedAngle, borrowedCoordinate } = args
+  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   // The bar and the machine must agree (issue #395, rule 3): a stored angle is
@@ -1047,18 +1048,19 @@ function inspectRotaryOperation(args: {
   // Every angle-bearing square path must be that operation, whatever face the
   // operation claims — a Top/Bottom or wrapped 2D operation carrying synthetic
   // `A` motion is refused rather than posted. The emitted cutter must also be
-  // the project's own referenced row: a stale entry whose tool was removed, or
-  // that carries a different (larger) cutter, must not let the physical guard
-  // prove one tool clear while the emitter writes another. A wholly-angle-free
-  // rotary path is stale too: an actual square turning pass always carries
-  // `A`, so its absence is refused rather than passed through as a flat path.
+  // the project's own referenced row, in the same supported shape and body: a
+  // stale entry whose tool was removed, or that carries a different (larger or
+  // differently shaped) cutter, must not let the physical guard prove one tool
+  // clear while the emitter writes another. A wholly-angle-free rotary path is
+  // stale too: an actual square turning pass always carries `A`, so its
+  // absence is refused rather than passed through as a flat path.
   if (isSquareStock(project.stock)) {
     if (setupGenerationBlock(project, operation)) {
       return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
     }
     if (hasAngle
       && (!squareRotaryWorkAdmitted(project, operation)
-        || squareRotaryCutterRefusal(project, operation, emittedRadius))) {
+        || squareRotaryCutterRefusal(project, operation, emittedCutter))) {
       return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
     }
     if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
@@ -1122,7 +1124,13 @@ export function planRotaryRefusals(
       operation: entry.operation,
       toolpath: entry.toolpath,
       operationName: entry.operation.name,
-      emittedRadius: entry.tool.radius,
+      emittedCutter: {
+        id: entry.tool.id,
+        units: entry.tool.units,
+        type: entry.tool.type,
+        diameter: entry.tool.diameter,
+        radius: entry.tool.radius,
+      },
       trackedAngle,
       borrowedCoordinate,
     })
