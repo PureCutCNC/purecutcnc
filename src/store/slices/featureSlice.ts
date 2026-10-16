@@ -113,6 +113,20 @@ export type FeatureSlice = Pick<
   | 'expandTextFeature'
 >
 
+/**
+ * Whether a derived-creation result would author new geometry on a round-only
+ * Around sheet (issue #1016 C2-U1F). A derived feature keeps its source's
+ * {@link SketchFeature.authoringFace} (`derivedFeatures.ts`), and these paths
+ * insert it directly rather than through `addFeature`, so the resulting faces
+ * — not the current workspace face — are what the square blank's policy must
+ * judge. An unset face means Top, so it is never refused here.
+ *
+ * Returns true before any project, selection, history or pending mutation.
+ */
+function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
+  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+}
+
 function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature | null {
   const raw = feature as unknown as Record<string, unknown>
   const hasDefinitionId = 'definitionId' in raw
@@ -774,6 +788,12 @@ export function createFeatureSlice(
         })
         .filter((result): result is NonNullable<typeof result> => result !== null)
       const createdFeatures = createdResults.map((result) => result.feature)
+      // A join preserves the anchor's authoring face, so a union of Around
+      // features would land as new Around rows even though the workspace may
+      // have moved Top (issue #1016 C2-U1F). Refuse before any state write.
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const newDefinitions = createdResults.map((result) => result.definition)
       const createdInstances = createdResults.map((result) =>
         createFeatureInstance(result.feature, result.definition.id),
@@ -844,6 +864,11 @@ export function createFeatureSlice(
       const cutResult = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
       const createdGroups = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
+      // A cut preserves each target's authoring face; direct insertion would
+      // bypass `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       let definitionIndex = 0
       const createdInstanceGroups: Array<DerivedFeatureGroup<FeatureInstance>> = createdGroups.map((group) => ({
         sourceId: group.sourceId,
@@ -906,6 +931,11 @@ export function createFeatureSlice(
       const state = get()
       const offsetResult = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
       const createdFeatures = offsetResult.features
+      // An offset preserves its base feature's authoring face and is inserted
+      // directly, bypassing `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const createdInstances = createdFeatures.map((feature, index) => {
         const definition = offsetResult.definitions[index]
         if (!definition) {

@@ -33,15 +33,23 @@
  * - `defaultSetupForFace` defaulting a square blank's Around axis to `'x'` →
  *   the Y-axis realization and axis assertions fail;
  * - `operationCutsInProject` letting a non-rotary Around operation count on a
- *   square blank → the round→square disabled-retained assertion fails.
+ *   square blank → the round→square disabled-retained assertion fails;
+ * - removing the derived-create guard in `offsetSelectedFeatures` /
+ *   `mergeSelectedFeatures` / `cutSelectedFeatures` or in the offset/cut/join
+ *   completions (issue #1016 C2-U1F) → the square derived refusals fail;
+ * - removing the gear guard in `createAddGearFeatureAction` → the gear
+ *   refusals (both branches) fail;
+ * - judging the derived-create guard by `activeFace` instead of the resulting
+ *   feature's own face → the "Around sources under Top" refusals fail.
  *
  * Run with: npx tsx src/store/squareAroundPolicy.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../types/project'
+import { DEFAULT_SETUP_ID, defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../types/project'
 import { isSquareStock, squareStock } from '../types/barStock'
 import type { Project, SketchFeature, Stock, Tool } from '../types/project'
+import { defaultGearCreationParams } from '../sketch/gearProfile'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
@@ -116,6 +124,37 @@ function squareProject(spec: Spec): Project {
   base.meta.selectedMachineId = null
   base.tools = [cutter(spec.units)]
   return base
+}
+
+/** A rotary round bar with no machine selected and no Around setup yet. */
+function roundProject(spec: Spec): Project {
+  const base = newProject(`Round ${spec.axis} ${spec.units}`, spec.units)
+  base.meta.projectType = 'rotary'
+  base.stock = roundStock(spec.side, spec.length, spec.axis, spec.at)
+  base.meta.machineDefinitions = []
+  base.meta.selectedMachineId = null
+  base.tools = [cutter(spec.units)]
+  return base
+}
+
+/** A closed rect draft authored on `face`, overlapping its sibling at `x`. */
+function rectFeature(
+  id: string,
+  x: number,
+  authoringFace: 'top' | 'around',
+  operation: SketchFeature['operation'] = 'subtract',
+): SketchFeature {
+  const base = feature(id, authoringFace)
+  return {
+    ...base,
+    operation,
+    sketch: { ...base.sketch, profile: rectProfile(x, 10, 10, 8) },
+  }
+}
+
+/** Gear creation params with an explicit bore, so both action branches are reachable. */
+function gearParams(boreDiameter: number) {
+  return { ...defaultGearCreationParams(8), boreDiameter }
 }
 
 interface Snapshot {
@@ -301,5 +340,275 @@ assert.deepEqual(store().project.features, geometryBefore, 'the geometry survive
 for (const operation of store().project.operations) {
   assert.equal(operationCutsInProject(store().project, operation), true, 'the Around operation cuts again')
 }
+
+// ── 4. Derived-create and gear boundaries (U1F) ────────────────
+
+log('Testing the derived-create and gear refusals on a square blank...')
+
+/**
+ * Identity snapshot of everything a refusal must leave alone: the whole
+ * project (features, definitions, assets, tree, folders, operations, setups,
+ * stock), selection, dirtiness, the history object (past/future/
+ * transactionStart) and every pending request. Reference equality is the
+ * strongest form of "unchanged" available.
+ */
+function fullSnapshot() {
+  const state = store()
+  return {
+    project: state.project,
+    selection: state.selection,
+    pendingAdd: state.pendingAdd,
+    pendingMove: state.pendingMove,
+    pendingTransform: state.pendingTransform,
+    pendingOffset: state.pendingOffset,
+    pendingShapeAction: state.pendingShapeAction,
+    dirty: state.dirty,
+    history: state.history,
+  }
+}
+
+function assertRefused(before: ReturnType<typeof fullSnapshot>, label: string): void {
+  const state = store()
+  assert.equal(state.project, before.project, `${label}: project identity unchanged`)
+  assert.equal(state.selection, before.selection, `${label}: selection identity unchanged`)
+  assert.equal(state.pendingAdd, before.pendingAdd, `${label}: pending add unchanged`)
+  assert.equal(state.pendingMove, before.pendingMove, `${label}: pending move unchanged`)
+  assert.equal(state.pendingTransform, before.pendingTransform, `${label}: pending transform unchanged`)
+  assert.equal(state.pendingOffset, before.pendingOffset, `${label}: pending offset unchanged`)
+  assert.equal(state.pendingShapeAction, before.pendingShapeAction, `${label}: pending shape action unchanged`)
+  assert.equal(state.dirty, before.dirty, `${label}: dirtiness unchanged`)
+  assert.equal(state.history, before.history, `${label}: history past/future/transaction unchanged`)
+}
+
+// Both axes and both unit systems: the refusals must not depend on the blank's
+// axis or the project's units.
+let before: ReturnType<typeof fullSnapshot>
+for (const spec of SPECS) {
+  const label = `${spec.axis}/${spec.units}`
+
+  // A stale offset request armed on the round bar, completed after the blank
+  // became square, is refused and stays pending.
+  store().loadProject(projectWithFeatures(roundProject(spec), [
+    rectFeature('a', 20, 'around'),
+    rectFeature('b', 25, 'around'),
+  ]))
+  assert.equal(switchWorkspaceFace('around'), true, `${label}: the round bar enters Around`)
+  store().selectFeatures(['a', 'b'])
+  store().startOffsetSelectedFeatures()
+  assert.ok(store().pendingOffset, `${label}: the offset request is armed on the round bar`)
+  store().setStockShape('square')
+  assert.ok(isSquareStock(store().project.stock), `${label}: the blank is now square`)
+  before = fullSnapshot()
+  assert.deepEqual(store().completePendingOffset(1), [], `${label}: the stale offset completion is refused`)
+  assertRefused(before, `${label}: stale pending offset`)
+
+  // The direct derived paths preserve the source's Around face and insert
+  // without passing through `addFeature`, so each is refused after conversion.
+  store().selectFeatures(['a', 'b'])
+  before = fullSnapshot()
+  assert.deepEqual(store().offsetSelectedFeatures(1), [], `${label}: direct offset is refused`)
+  assertRefused(before, `${label}: direct offset`)
+  assert.deepEqual(store().mergeSelectedFeatures(true), [], `${label}: direct join is refused`)
+  assertRefused(before, `${label}: direct join`)
+  assert.deepEqual(store().cutSelectedFeatures(true), [], `${label}: direct cut is refused`)
+  assertRefused(before, `${label}: direct cut`)
+
+  // Both gear branches (without and with a bore) are refused before any
+  // insertion, so the non-bore branch cannot fabricate a success id.
+  before = fullSnapshot()
+  assert.deepEqual(
+    store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(0), 2),
+    [],
+    `${label}: a gear without a bore is refused`,
+  )
+  assertRefused(before, `${label}: gear without bore`)
+  assert.deepEqual(
+    store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(2), 2),
+    [],
+    `${label}: a gear with a bore is refused`,
+  )
+  assertRefused(before, `${label}: gear with bore`)
+}
+
+// A pending cut and a pending join armed on the round bar are refused the same
+// way: the cut is refused before its direct set, the join before the initial
+// `selectFeatures` and the pending clear (see `completePendingShapeAction`).
+log('Testing the stale pending cut and join refusals...')
+
+store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [
+  rectFeature('a', 20, 'around'),
+  rectFeature('b', 25, 'around'),
+]))
+assert.equal(switchWorkspaceFace('around'), true, 'the round bar enters Around for the cut')
+store().selectFeatures(['a'])
+store().startCutSelectedFeatures()
+const cutAction = store().pendingShapeAction
+assert.equal(cutAction?.kind, 'cut', 'a cut request is armed')
+if (cutAction?.kind !== 'cut') throw new Error('unreachable')
+assert.equal(cutAction.phase, 'targets', 'the single cutter opens on target selection')
+store().selectFeature('b', true)
+const cutActionWithTarget = store().pendingShapeAction
+if (cutActionWithTarget?.kind !== 'cut') throw new Error('unreachable')
+assert.deepEqual(cutActionWithTarget.targetIds, ['b'], 'the target is chosen before conversion')
+store().setStockShape('square')
+before = fullSnapshot()
+assert.deepEqual(store().completePendingShapeAction(), [], 'the stale cut completion is refused')
+assertRefused(before, 'stale pending cut')
+store().cancelPendingShapeAction()
+
+store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [
+  rectFeature('a', 20, 'around', 'subtract'),
+  rectFeature('b', 25, 'around', 'add'),
+]))
+assert.equal(switchWorkspaceFace('around'), true, 'the round bar enters Around for the join')
+store().selectFeatures(['a', 'b'])
+store().startJoinSelectedFeatures()
+const joinAction = store().pendingShapeAction
+assert.equal(joinAction?.kind, 'join', 'a join request is armed (mixed operations keep the panel)')
+if (joinAction?.kind !== 'join') throw new Error('unreachable')
+assert.equal(joinAction.entityIds.length, 2, 'with both members')
+store().setStockShape('square')
+before = fullSnapshot()
+assert.deepEqual(store().completePendingShapeAction(), [], 'the stale join completion is refused')
+assertRefused(before, 'stale pending join')
+store().cancelPendingShapeAction()
+
+// The guard reads the resulting feature's own face, not the workspace face.
+// A direct edit cannot be reached from the other face — the ghost guard drops
+// an off-face member from the selection (#945) — but a pending request keeps
+// its entity ids across a workspace move, and `setActiveSetup` is the store's
+// own contract (the UI's `switchWorkspaceFace` refuses while an edit is live,
+// this call does not). Judging by `activeFace` there would let the Around rows
+// through.
+log('Testing that an Around source is still refused from a Top workspace...')
+
+store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [
+  rectFeature('a', 20, 'around'),
+  rectFeature('b', 25, 'around'),
+]))
+assert.equal(switchWorkspaceFace('around'), true, 'the round bar enters Around for the stale offset')
+store().selectFeatures(['a', 'b'])
+store().startOffsetSelectedFeatures()
+assert.ok(store().pendingOffset, 'the offset request is armed')
+store().setStockShape('square')
+store().setActiveSetup(DEFAULT_SETUP_ID)
+assert.equal(activeFace(store().project), 'top', 'the workspace is now Top')
+before = fullSnapshot()
+assert.deepEqual(store().completePendingOffset(1), [], 'the Around offset completion is refused from Top')
+assertRefused(before, 'Around pending offset under Top')
+store().cancelPendingOffset()
+
+store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [
+  rectFeature('a', 20, 'around', 'subtract'),
+  rectFeature('b', 25, 'around', 'add'),
+]))
+assert.equal(switchWorkspaceFace('around'), true, 'the round bar enters Around for the stale join')
+store().selectFeatures(['a', 'b'])
+store().startJoinSelectedFeatures()
+assert.equal(store().pendingShapeAction?.kind, 'join', 'the join request is armed')
+store().setStockShape('square')
+store().setActiveSetup(DEFAULT_SETUP_ID)
+assert.equal(activeFace(store().project), 'top', 'the workspace is Top for the join too')
+before = fullSnapshot()
+assert.deepEqual(store().completePendingShapeAction(), [], 'the Around join completion is refused from Top')
+assertRefused(before, 'Around pending join under Top')
+store().cancelPendingShapeAction()
+
+// A mixed-face selection is not reachable through the store: the workspace
+// ghost guard drops the off-face member (#945), so a derived result always
+// lands on the face its own sources were selected on. The anchor rule in
+// `mergeSelectedFeatures` is what keeps a same-face Around union refused.
+log('Testing that a mixed-face selection is not selectable...')
+
+store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [
+  rectFeature('top-rect', 20, 'top'),
+  rectFeature('around-rect', 25, 'around'),
+]))
+assert.equal(activeFace(store().project), 'top', 'the workspace starts on Top')
+store().selectFeatures(['top-rect', 'around-rect'])
+assert.deepEqual(
+  store().selection.selectedFeatureIds,
+  ['top-rect'],
+  'the off-face Around member is a ghost and cannot be selected from Top',
+)
+
+// ── 5. The allowed controls ───────────────────────────────────
+
+log('Testing the allowed round-bar Around and square Top controls...')
+
+let pastBefore: number
+
+// Round Around: the same derived and gear authoring still works, with one undo
+// per creation.
+for (const spec of [SPECS[0], SPECS[3]]) {
+  const label = `control ${spec.axis}/${spec.units}`
+  store().loadProject(projectWithFeatures(roundProject(spec), [
+    rectFeature('a', 20, 'around'),
+    rectFeature('b', 25, 'around'),
+  ]))
+  assert.equal(switchWorkspaceFace('around'), true, `${label}: the round bar enters Around`)
+
+  store().selectFeatures(['a', 'b'])
+  pastBefore = store().history.past.length
+  const offsetIds = store().offsetSelectedFeatures(1)
+  assert.ok(offsetIds.length > 0, `${label}: a round-bar offset is created`)
+  assert.equal(
+    store().project.features.find((candidate) => candidate.id === offsetIds[0])?.authoringFace,
+    'around',
+    `${label}: the offset keeps the Around face`,
+  )
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the offset is one undo step`)
+  store().undo()
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the offset`)
+
+  store().selectFeatures(['a', 'b'])
+  pastBefore = store().history.past.length
+  const joinIds = store().mergeSelectedFeatures(true)
+  assert.ok(joinIds.length > 0, `${label}: a round-bar join is created`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the join is one undo step`)
+  store().undo()
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the join`)
+
+  pastBefore = store().history.past.length
+  const gearIds = store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(0), 2)
+  assert.equal(gearIds.length, 1, `${label}: a round-bar gear without a bore is created`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the gear is one undo step`)
+  store().undo()
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the gear`)
+
+  pastBefore = store().history.past.length
+  const groupedIds = store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(2), 2)
+  assert.equal(groupedIds.length, 2, `${label}: a round-bar gear with a bore is created as a group`)
+  const grouped = store().project.features.find((candidate) => candidate.id === groupedIds[0])
+  assert.ok(grouped && grouped.folderId !== null, `${label}: the grouped gear lands in a folder`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the grouped gear is one undo step`)
+  store().undo()
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the grouped gear`)
+}
+
+// Square Top: ordinary Top authoring stays available on the square blank.
+store().loadProject(projectWithFeatures(squareProject(SPECS[0]), []))
+assert.equal(activeFace(store().project), 'top', 'the square blank starts on Top')
+pastBefore = store().history.past.length
+store().addFeature(rectFeature('top-a', 20, 'top'))
+store().addFeature(rectFeature('top-b', 25, 'top'))
+assert.equal(store().project.features.length, 2, 'ordinary Top features are authored on the square blank')
+assert.equal(store().history.past.length, pastBefore + 2, 'each in its own undo step')
+
+store().selectFeatures(['top-a', 'top-b'])
+pastBefore = store().history.past.length
+const topOffsetIds = store().offsetSelectedFeatures(1)
+assert.ok(topOffsetIds.length > 0, 'a Top-anchored offset succeeds on the square blank')
+assert.equal(
+  store().project.features.find((candidate) => candidate.id === topOffsetIds[0])?.authoringFace,
+  'top',
+  'and lands on Top',
+)
+assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo step')
+
+pastBefore = store().history.past.length
+const topGearIds = store().addGearFeature('Gear', { x: 60, y: 20 }, 8, gearParams(2), 2)
+assert.equal(topGearIds.length, 2, 'a Top gear with a bore succeeds on the square blank')
+assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo step')
 
 log('squareAroundPolicy: all assertions passed.')

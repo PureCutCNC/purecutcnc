@@ -36,6 +36,7 @@ import { isMachinable, sectionForOperation } from './featureRoles'
 import { nextUniqueGeneratedId } from './ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
 import { resolvedProjectFeatures } from './resolveFeatures'
+import { activeFace, aroundSketchAuthoringRefused } from './activeFace'
 
 interface GroupedGearInsertResult {
   createdIds: string[]
@@ -251,11 +252,25 @@ export function createAddGearFeatureAction(
       name,
       depth,
     )
+    // A gear is drawn on the workspace's active face, so a square blank's
+    // round-only Around sheet must refuse it here — before either branch and
+    // before any project, selection or history mutation (issue #1016 C2-U1F).
+    // `addFeature` enforces the same rule for a direct draft, but the grouped
+    // gear+bore path below writes the project itself and would bypass it.
+    const gearFace = gearFeature.authoringFace ?? activeFace(state.project)
+    if (aroundSketchAuthoringRefused(state.project, gearFace)) {
+      return []
+    }
     const shouldCreateBore = params.boreDiameter > 0 && sectionForOperation(gearFeature.operation) === 'features'
 
     if (!shouldCreateBore) {
+      const existingIds = new Set(state.project.features.map((feature) => feature.id))
       state.addFeature(gearFeature)
-      return [gearFeature.id]
+      // `addFeature` refuses or is a no-op in some cases; report only the ids
+      // it actually created rather than a fabricated success.
+      return get().project.features
+        .filter((feature) => !existingIds.has(feature.id))
+        .map((feature) => feature.id)
     }
 
     let createdIds: string[] = []
