@@ -45,6 +45,7 @@ import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, squareStock } f
 import { getStockBounds, roundStock } from '../../types/project'
 import type { BarStock, RoundStock, SquareStock } from '../../types/project'
 import { stockSpacePoint, toolSpacePoint } from '../rotaryFrame'
+import { chooseHeightMapCellSize } from './finishSurfaceParallel'
 import { generateRotaryFinish, generateRotaryRough, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryFinishParams, RotaryModelMesh } from './rotaryModel'
 import { squareBlankRetainedStub } from './squareRotaryStock'
@@ -105,6 +106,74 @@ function cutterOffsets(tool: NormalizedTool): ReadonlyArray<readonly [number, nu
   ring(r, 12)
   if (tool.type === 'ball_endmill') ring(0.85 * r, 10)
   return points
+}
+
+/**
+ * Walk every cut, plunge and link move of both generators in
+ * tenth-of-cutter-radius steps, map the **real** cutter back into the unturned
+ * blank through the frozen `stockSpacePoint` rotation, and measure how far it
+ * enters the **analytic** target cylinder and the **analytic** retained box.
+ * The reference never reads the height map the generator used.
+ */
+function sweep(
+  stock: BarStock,
+  tool: NormalizedTool,
+  mesh: RotaryModelMesh,
+  params: RotaryFinishParams & { stepdown: number },
+  targetRadius: number,
+): { retained: number; target: number; moves: number } {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const halfSide = barInscribedRadius(stock)
+  const bounds = getStockBounds(stock)
+  const blankStart = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const blankEnd = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const offsets = cutterOffsets(tool)
+  let retained = 0
+  let target = 0
+  let movesWalked = 0
+  for (const result of [
+    generateRotaryFinish('shoulder-finish', mesh, stock, tool, params, {}),
+    generateRotaryRough('shoulder-rough', mesh, stock, tool, params, {}),
+  ]) {
+    assert.ok(result.moves.length > 0, 'the coarse shoulder case produces motion')
+    for (const move of result.moves) {
+      if (move.kind === 'rapid') continue
+      movesWalked++
+      const a0 = move.from.a ?? 0
+      const a1 = move.to.a ?? a0
+      const dx = move.to.x - move.from.x
+      const dy = move.to.y - move.from.y
+      const dz = move.to.z - move.from.z
+      const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / (0.1 * tool.radius)))
+      for (let step = 0; step <= steps; step++) {
+        const f = step / steps
+        const px = move.from.x + dx * f
+        const py = move.from.y + dy * f
+        const pz = move.from.z + dz * f
+        const angle = a0 + (a1 - a0) * f
+        for (const offset of offsets) {
+          const point = stockSpacePoint({ x: px + offset[0], y: py + offset[1], z: pz + offset[2], a: angle }, stock)
+          const l = stock.axis === 'x' ? point.x : point.y
+          const across = (stock.axis === 'x' ? point.y : point.x) - centre
+          const up = point.z - pivot
+          // Target: the analytic coaxial cylinder between its end faces.
+          if (l >= params.alongStart && l <= params.alongEnd) {
+            const radial = Math.hypot(across, up)
+            if (radial < targetRadius) target = Math.max(target, Math.min(targetRadius - radial, l - params.alongStart, params.alongEnd - l))
+          }
+          // Retained: the analytic box outside the cut range, inside the blank.
+          if (l >= blankStart && l <= blankEnd && Math.abs(across) < halfSide && Math.abs(up) < halfSide) {
+            const depth = l < params.alongStart
+              ? Math.min(params.alongStart - l, l - blankStart)
+              : l > params.alongEnd ? Math.min(l - params.alongEnd, blankEnd - l) : 0
+            if (depth > 0) retained = Math.max(retained, Math.min(depth, halfSide - Math.abs(across), halfSide - Math.abs(up)))
+          }
+        }
+      }
+    }
+  }
+  return { retained, target, moves: movesWalked }
 }
 
 const SQUARE: SquareStock = squareStock(SIDE, LENGTH, 'x')
@@ -459,67 +528,6 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
 // seeded grids are deliberately misaligned so no sample lands on the shoulder.
 // No timing assertions.
 {
-  const sweep = (
-    stock: BarStock,
-    tool: NormalizedTool,
-    mesh: RotaryModelMesh,
-    params: RotaryFinishParams & { stepdown: number },
-    targetRadius: number,
-  ): { retained: number; target: number; moves: number } => {
-    const centre = barCentre(stock)
-    const pivot = barPivotZ(stock)
-    const halfSide = barInscribedRadius(stock)
-    const bounds = getStockBounds(stock)
-    const blankStart = stock.axis === 'x' ? bounds.minX : bounds.minY
-    const blankEnd = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-    const offsets = cutterOffsets(tool)
-    let retained = 0
-    let target = 0
-    let movesWalked = 0
-    for (const result of [
-      generateRotaryFinish('shoulder-finish', mesh, stock, tool, params, {}),
-      generateRotaryRough('shoulder-rough', mesh, stock, tool, params, {}),
-    ]) {
-      assert.ok(result.moves.length > 0, 'the coarse shoulder case produces motion')
-      for (const move of result.moves) {
-        if (move.kind === 'rapid') continue
-        movesWalked++
-        const a0 = move.from.a ?? 0
-        const a1 = move.to.a ?? a0
-        const dx = move.to.x - move.from.x
-        const dy = move.to.y - move.from.y
-        const dz = move.to.z - move.from.z
-        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / (0.1 * tool.radius)))
-        for (let step = 0; step <= steps; step++) {
-          const f = step / steps
-          const px = move.from.x + dx * f
-          const py = move.from.y + dy * f
-          const pz = move.from.z + dz * f
-          const angle = a0 + (a1 - a0) * f
-          for (const offset of offsets) {
-            const point = stockSpacePoint({ x: px + offset[0], y: py + offset[1], z: pz + offset[2], a: angle }, stock)
-            const l = stock.axis === 'x' ? point.x : point.y
-            const across = (stock.axis === 'x' ? point.y : point.x) - centre
-            const up = point.z - pivot
-            // Target: the analytic coaxial cylinder between its end faces.
-            if (l >= params.alongStart && l <= params.alongEnd) {
-              const radial = Math.hypot(across, up)
-              if (radial < targetRadius) target = Math.max(target, Math.min(targetRadius - radial, l - params.alongStart, params.alongEnd - l))
-            }
-            // Retained: the analytic box outside the cut range, inside the blank.
-            if (l >= blankStart && l <= blankEnd && Math.abs(across) < halfSide && Math.abs(up) < halfSide) {
-              const depth = l < params.alongStart
-                ? Math.min(params.alongStart - l, l - blankStart)
-                : l > params.alongEnd ? Math.min(l - params.alongEnd, blankEnd - l) : 0
-              if (depth > 0) retained = Math.max(retained, Math.min(depth, halfSide - Math.abs(across), halfSide - Math.abs(up)))
-            }
-          }
-        }
-      }
-    }
-    return { retained, target, moves: movesWalked }
-  }
-
   // The exact manager repro.
   const managerParams = {
     stepover: 2 * Math.PI * MAX_R / 8, sampleSpacing: 12, stockToLeave: 0,
@@ -588,6 +596,182 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   assert.ok(cases === 32, 'both axes, mm and inch, on and off origin, flat and ball, with and without stock to leave are all exercised')
   console.log(`square shoulder: ${cases} coarse/misaligned cases, worst retained ${worstRetained.toFixed(6)}, `
     + `worst target ${worstTarget.toFixed(6)}`)
+}
+
+// ── 9. The refined grid is budgeted and the shoulder cap is proven ────
+//
+// Two independent safety gaps from the pass-2 review of the shoulder
+// refinement (#1016 C2-S3):
+//
+// (a) `rotaryRefusal` bounds the *uniform* `passes x (intervals + 1)` grid, but
+//     the shoulder refinement then adds up to `2 * MAX_SHOULDER_SAMPLES`
+//     positions. A 100,000-pass operation with a tiny finite cell passed the
+//     uniform bound at 300,000 samples and then asked for ~8e8. The generator
+//     must refuse the **refined** count before an angle row is allocated or an
+//     angle is sampled.
+// (b) `MAX_SHOULDER_SAMPLES` can widen the added spacing past the cell the
+//     sampler actually uses, which invalidates the one-cell proof. The proof is
+//     evaluated at a flat -- the smallest cell any angle of the turn uses -- and
+//     the job is refused when the capped spacing cannot honour it, never
+//     accepted at a coarser tolerance in silence.
+{
+  // A generator run whose `onAngle` throws: in the corrected code the refusal
+  // happens before the sampler, so the hook never fires. The thrown error turns
+  // a regression (the refactor deleting the guard) into a fast failure instead
+  // of an ~8e8-sample allocation.
+  const runBeforeSampling = <T>(
+    run: (onAngle: (done: number, total: number) => void) => T,
+    label: string,
+  ): { result: T; sampled: boolean } => {
+    let sampled = false
+    try {
+      const result = run(() => { sampled = true; throw new Error('sampling started') })
+      return { result, sampled }
+    } catch (error) {
+      assert.fail(`${label}: the job must refuse before sampling (${String(error)})`)
+    }
+  }
+
+  // (a) The refined-count guard: the uniform bound the old check applied passes
+  // (100,000 passes x 3 uniform positions = 300,000), but the refined grid is
+  // 100,000 x ~8,193 = ~8.2e8 and must be refused first.
+  const refinedMesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
+  const refinedParams = {
+    stepover: (2 * Math.PI * MAX_R) / 100000, stepdown: 3, sampleSpacing: 12, stockToLeave: 0,
+    alongStart: BAND_START, alongEnd: BAND_END, safeRadius: 20, requestedCellSize: 1e-6,
+  }
+  const uniformPositions = Math.ceil((refinedParams.alongEnd - refinedParams.alongStart) / refinedParams.sampleSpacing) + 1
+  assert.ok(100000 * uniformPositions <= 16_000_000, 'the uniform bound the old guard checked passes for this job')
+  for (const [label, run] of [
+    ['refined count (finish)', (onAngle: (done: number, total: number) => void) =>
+      generateRotaryFinish('refined-count-finish', refinedMesh, SQUARE, FLAT, refinedParams, { onAngle })],
+    ['refined count (rough)', (onAngle: (done: number, total: number) => void) =>
+      generateRotaryRough('refined-count-rough', refinedMesh, SQUARE, FLAT, refinedParams, { onAngle })],
+  ] as const) {
+    const { result, sampled } = runBeforeSampling(run, label)
+    assert.equal(sampled, false, `${label}: no angle row is allocated or sampled`)
+    assert.deepEqual(result.moves, [], `${label}: the refused job emits no motion`)
+    assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'],
+      `${label}: refuses with the sampling-ratio code`)
+  }
+
+  // (b) The capped-spacing guard. A 0.4 x 0.5 blank with a 4 mm cutter sampled
+  // at a requested cell below `zone / MAX_SHOULDER_SAMPLES` cannot honour the
+  // flat-aligned effective cell once the cap widens the added spacing, so the
+  // job refuses. Both axes, mm and inch, on and off origin, flat and ball, both
+  // ends (a misaligned band) and stock to leave on and off.
+  const scaleOf = (units: 'mm' | 'inch'): number => units === 'mm' ? 1 : 0.03937007874015748
+  let cappedRefusals = 0
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      for (const offset of [false, true]) {
+        for (const type of ['flat_endmill', 'ball_endmill'] as const) {
+          for (const leave of [0, 0.8]) {
+            const scale = scaleOf(units)
+            const stock = squareStock(0.4 * scale, 0.5 * scale, axis, offset ? { x: 0.13 * scale, y: -0.07 * scale } : { x: 0, y: 0 })
+            const bounds = getStockBounds(stock)
+            const lower = axis === 'x' ? bounds.minX : bounds.minY
+            const upper = axis === 'x' ? bounds.maxX : bounds.maxY
+            const length = 0.5 * scale
+            const start = lower + 0.2 * length
+            const end = start + 0.25 * length
+            const tool: NormalizedTool = { ...BALL, type, units, radius: 2 * scale, diameter: 4 * scale }
+            const params = {
+              stepover: 0.5 * scale, stepdown: 0.2 * scale, sampleSpacing: 0.1 * scale, stockToLeave: leave * scale,
+              alongStart: start, alongEnd: end, safeRadius: 5 * scale, requestedCellSize: 4.4e-4 * scale,
+            }
+            assert.ok(start > lower && end < upper, 'the misaligned band leaves a retained shoulder at both ends')
+            const mesh = cylinderMesh(stock, 0.08 * scale, start, end, 32)
+            const label = `capped cell (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave})`
+            const { result, sampled } = runBeforeSampling(
+              (onAngle) => generateRotaryFinish('capped-cell', mesh, stock, tool, params, { onAngle }),
+              label,
+            )
+            assert.equal(sampled, false, `${label}: no angle is sampled`)
+            assert.deepEqual(result.moves, [], `${label}: emits no motion`)
+            assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'], `${label}: refuses`)
+            cappedRefusals++
+          }
+        }
+      }
+    }
+  }
+  assert.equal(cappedRefusals, 32, 'both axes, mm and inch, on and off origin, flat and ball, both ends and both stock values are exercised')
+
+  // The same geometry with a requested cell one step *below* the cap still
+  // generates -- the guard refuses only the spacing that cannot honour the
+  // effective cell, it is not a blanket refusal of capped jobs.
+  {
+    let nearCapCases = 0
+    for (const axis of ['x', 'y'] as const) {
+      for (const units of ['mm', 'inch'] as const) {
+        const scale = scaleOf(units)
+        const stock = squareStock(0.4 * scale, 0.5 * scale, axis)
+        const bounds = getStockBounds(stock)
+        const lower = axis === 'x' ? bounds.minX : bounds.minY
+        const length = 0.5 * scale
+        const start = lower + 0.1 * length
+        const end = start + 0.25 * length
+        const tool: NormalizedTool = { ...BALL, type: 'flat_endmill', units, radius: 2 * scale, diameter: 4 * scale }
+        const params = {
+          stepover: 0.5 * scale, stepdown: 0.2 * scale, sampleSpacing: 0.1 * scale, stockToLeave: 0,
+          alongStart: start, alongEnd: end, safeRadius: 5 * scale, requestedCellSize: 5e-4 * scale,
+        }
+        const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.08 * scale, start, end, 32), stock, tool, params, {})
+        assert.ok(near.moves.length > 0, `near-cap (${axis}/${units}) still generates`)
+        assert.ok(!near.warnings.some((w) => w.code === 'operationStepoverRatioRange'), `near-cap (${axis}/${units}) is not refused`)
+        nearCapCases++
+      }
+    }
+    assert.equal(nearCapCases, 4, 'near-cap jobs generate on both axes and in both units')
+  }
+
+  // (c) The bound is *proven* when the cap binds on a real part: the manager
+  // geometry (20 x 60, band 18..42) at a requested cell far below the sampler's
+  // effective cell. The cap widens the added spacing to
+  // `zone / MAX_SHOULDER_SAMPLES`, but the guard admits it because that spacing
+  // is still inside the **narrowest** effective cell (the flat-aligned one, the
+  // worst case for resolving the step). The residual the sweep measures is the
+  // drop's height-map quantization, bounded by the **widest** effective cell
+  // (the corner-aligned one, the worst case for the map itself). The test uses
+  // that widest effective cell -- several orders above the requested 1e-6 --
+  // and never the requested one.
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      for (const type of ['flat_endmill', 'ball_endmill'] as const) {
+        for (const leave of [0, 0.8]) {
+          const scale = scaleOf(units)
+          const stock = squareStock(SIDE * scale, LENGTH * scale, axis)
+          const bounds = getStockBounds(stock)
+          const lower = axis === 'x' ? bounds.minX : bounds.minY
+          const upper = axis === 'x' ? bounds.maxX : bounds.maxY
+          const bandStart = lower + BAND_START * scale
+          const bandEnd = bandStart + (BAND_END - BAND_START) * scale
+          const tool: NormalizedTool = { ...BALL, type, units, radius: 2 * scale, diameter: 4 * scale }
+          const params = {
+            stepover: (2 * Math.PI * barMaxRadius(stock)) / 8, stepdown: 3 * scale, sampleSpacing: 12 * scale,
+            stockToLeave: leave * scale, alongStart: bandStart, alongEnd: bandEnd, safeRadius: 20 * scale,
+            requestedCellSize: 1e-6,
+          }
+          const centre = barCentre(stock)
+          const envelope = barMaxRadius(stock)
+          const samplingBounds = axis === 'x'
+            ? { minX: lower, maxX: upper, minY: centre - envelope, maxY: centre + envelope }
+            : { minX: centre - envelope, maxX: centre + envelope, minY: lower, maxY: upper }
+          const effectiveCell = chooseHeightMapCellSize(samplingBounds, params.requestedCellSize, [])
+          assert.ok(effectiveCell > params.requestedCellSize * 1000,
+            `the cap widens the effective cell far above the requested one (${effectiveCell})`)
+          const measured = sweep(stock, tool, cylinderMesh(stock, TARGET_RADIUS * scale, bandStart, bandEnd, 96), params, TARGET_RADIUS * scale)
+          const allowance = effectiveCell + 1e-3 * scale
+          assert.ok(measured.retained <= allowance, `cap-bound retained (${axis}/${units}/${type}/leave ${leave}) `
+            + `stays within the effective cell (${measured.retained.toFixed(6)} <= ${allowance.toFixed(6)})`)
+          assert.ok(measured.target <= allowance, `cap-bound target (${axis}/${units}/${type}/leave ${leave}) `
+            + `stays within the effective cell (${measured.target.toFixed(6)} <= ${allowance.toFixed(6)})`)
+        }
+      }
+    }
+  }
+  console.log('square count: refined-count and shoulder-cap refusals happen before allocation; the cap bound is proven')
 }
 
 console.log('engine/toolpaths/squareRotaryModel.test.ts: all assertions passed')
