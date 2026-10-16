@@ -23,7 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
-import { activeFace } from '../helpers/activeFace'
+import { activeFace, aroundSketchAuthoringRefused } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -488,6 +488,12 @@ export function createFeatureSlice(
         // face is known before the base-solid rule runs: an Around feature is
         // never the base solid, so it must not be forced to Add (#395).
         const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
+        // The Around face is workflow-available on a real square blank, but its
+        // unrolled sheet is round-only (issue #1016 C2-U1): a feature that would
+        // be authored there is refused before any id, asset, tree, history or
+        // selection work. A generated solid (C2-B) lands as an ordinary Top
+        // model through its own action and never comes through here.
+        if (aroundSketchAuthoringRefused(s.project, authoringFace)) return {}
         const isFirstSolidFeature = isSolid({ ...featureForInsert, authoringFace })
           && !resolvedProjectFeatures(s.project).some(isSolid)
         const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)

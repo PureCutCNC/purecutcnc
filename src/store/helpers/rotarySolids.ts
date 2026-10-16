@@ -39,16 +39,17 @@
  *
  * ## What this module deliberately does not do
  *
- * - It does not use `aroundUnavailableReason`: that guard still reports a
- *   square blank as `needsRoundBar` while the square authoring/output paths are
- *   being completed, so it would refuse every square-to-round creation. The
+ * - It does not use `aroundUnavailableReason` as its contract: the face's
+ *   workflow availability now admits a square blank (#1016 C2-U1), and the
  *   contract here is checked explicitly — rotary project, bar stock of the
- *   right shape, an active Around setup whose axis matches the bar.
+ *   right shape, an active Around setup whose axis matches the bar. A
+ *   provisional Around setup on a square blank is realised by the store's
+ *   reconciler in the same write.
  * - It does not widen `targetAllowedInSetup` / `isOperationTargetValid`, and it
  *   does not touch the square-stock engine paths. A square-to-round creation
  *   lands as an ordinary model and operations; generation then refuses it at
  *   the engine's own round-bar guards (`generateRotaryOperation`,
- *   `setupGenerationBlock`), which remain the engine slice's to extend.
+ *   `setupGenerationBlock`), which remain the output slice's to extend.
  * - It never writes round stock. The real square blank stays exactly as it was
  *   and the generated cylinder is only the finished round target inside it.
  * - It does not chain `addFeature` (which refuses a model on Around) or
@@ -140,13 +141,6 @@ export type RotarySolidRefusal =
   | 'notAroundFace'
   /** The active Around setup turns about the other bar axis. */
   | 'setupAxisMismatch'
-  /**
-   * Square-to-round on a *provisional* Around setup. The store's reconciler
-   * only realises that setup when the project's type and stock allow it, and
-   * it still refuses a square blank, so the write would be discarded silently;
-   * the plan refuses instead of reporting a creation that did not happen.
-   */
-  | 'provisionalAroundUnsupported'
   /** A polygon needs a round bar. */
   | 'needsRoundBar'
   /** Square-to-round needs a square blank. */
@@ -376,16 +370,9 @@ export function planRotarySolid(
   const setup = activeSetup(project)
   if (setup.kind !== 'around') return { ok: false, reason: 'notAroundFace' }
   if (setup.orientation.axis !== stock.axis) return { ok: false, reason: 'setupAxisMismatch' }
-  // The store's setup reconciler realises a provisional Around setup in the
-  // same write, but only where the project's type and stock allow it — and it
-  // still answers `needsRoundBar` for a square blank. There the write would be
-  // discarded without an error, so a plan that would report success for a
-  // creation that never lands is refused up front. A round bar keeps the
-  // provisional path (the reconciler realises it); the square blank needs a
-  // real Around setup until the UI/engine slices widen that path.
-  if (isSquareStock(stock) && !project.setups.some((entry) => entry.id === setup.id)) {
-    return { ok: false, reason: 'provisionalAroundUnsupported' }
-  }
+  // A provisional Around setup is realised by the store's reconciler in this
+  // same write now that the Around face's workflow availability admits a
+  // square blank (#1016 C2-U1), so no provisional-square refusal is needed.
 
   const tool = project.tools.find((candidate) => candidate.id === input.toolRef)
   const toolProblem = toolRefusal(tool, project.meta.units)

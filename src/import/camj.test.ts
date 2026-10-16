@@ -37,7 +37,9 @@ import {
   stockFromFeature,
 } from '../types/project'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
+import { squareStock } from '../types/barStock'
 import { projectWithFeatures, replaceProjectFeatures, withBottomSetup } from '../test/projectFixtures'
+import { camjImportWarnings } from '../components/project/camjImportWarnings'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -907,3 +909,106 @@ function testMergeAroundKind(): void {
   }
 }
 testMergeAroundKind()
+
+function testMergeSquareRotaryModel(): void {
+  // #1016 C2-U1: a matching-axis square blank admits the generated-model
+  // rotary pair (an ordinary Top-authored STL plus its rotary rough/finish),
+  // while hand-drawn Around sheet geometry stays round-bar only. The matched
+  // axis is part of the contract: a mismatch refuses the pair, never re-axes
+  // it.
+  const aroundSetup = (id: string, axis: 'x' | 'y'): MachiningSetup => ({
+    id, name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
+    indexing: 'manual', registration: [], notes: '', operationIds: [],
+  })
+  const squareTarget = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Square target', 'mm')
+    return { ...base, stock: squareStock(40, 200, axis, { x: 10, y: 30 }) }
+  }
+  const modelSource = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Source', 'mm')
+    const source = projectWithFeatures({
+      ...base,
+      featureFolders: [makeFolder('fd-src-a', 'Bracket')],
+      featureTree: [{ type: 'folder', folderId: 'fd-src-a' }],
+    }, [
+      makeFeature({ id: 'f-src-1', name: 'Outline', folderId: 'fd-src-a' }),
+      makeFeature({ id: 'f-src-2', name: 'Slot', folderId: 'fd-src-a' }),
+      makeFeature({ id: 'f-src-model', name: 'Square to round Model', folderId: 'fd-src-a' }),
+    ])
+    source.stock = squareStock(40, 200, axis, { x: 10, y: 30 })
+    source.tools = [makeTool('t-src-1', 'Endmill')]
+    source.modelAssets = { 'mesh-model': makeMesh() }
+    const modelInstance = source.features.find((feature) => feature.id === 'f-src-model')!
+    source.featureDefinitions[modelInstance.definitionId] = {
+      ...source.featureDefinitions[modelInstance.definitionId],
+      kind: 'stl',
+      operation: 'model',
+      stl: { meshAssetId: 'mesh-model', scale: 1 },
+    }
+    source.features = source.features.map((feature) => (
+      feature.id === 'f-src-2' ? { ...feature, authoringFace: 'around' as const } : feature
+    ))
+    const top = source.setups[0]
+    const around = aroundSetup('src-around', axis)
+    source.setups = [top, around]
+    source.operations = [
+      { ...makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'), setupId: top.id },
+      { ...makeOperation('op-rough', 'Rotary rough', ['f-src-model'], 't-src-1'), kind: 'rotary_rough', pass: 'rough', setupId: around.id },
+      { ...makeOperation('op-finish', 'Rotary finish', ['f-src-model'], 't-src-1'), kind: 'rotary_finish', pass: 'finish', setupId: around.id },
+      { ...makeOperation('op-around-line', 'Around line', ['f-src-2'], 't-src-1'), kind: 'follow_line', setupId: around.id },
+    ]
+    return source
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] })
+
+  // Matching square axis: the model, its asset and the rotary pair import; the
+  // hand-drawn Around line is left out with an accurate warning.
+  const imported = merge(squareTarget('x'), modelSource('x'))
+  assert(imported.project.features.some((feature) => feature.name === 'Outline'), 'the ordinary Top feature imports')
+  const model = imported.project.features.find((feature) => feature.name === 'Square to round Model')
+  assert(model !== undefined, 'the generated model imports')
+  const modelDefinition = model && imported.project.featureDefinitions[model.definitionId]
+  assert(modelDefinition?.kind === 'stl' && modelDefinition.operation === 'model', 'the model keeps its ordinary definition')
+  const meshAssetId = modelDefinition?.stl?.meshAssetId
+  assert(meshAssetId !== undefined && imported.project.modelAssets[meshAssetId] !== undefined, 'and its mesh asset comes too')
+  assert(imported.project.operations.some((entry) => entry.name === 'Top pocket'), 'the Top operation imports')
+  assert(imported.project.operations.some((entry) => entry.name === 'Rotary rough'), 'rotary rough imports')
+  assert(imported.project.operations.some((entry) => entry.name === 'Rotary finish'), 'rotary finish imports')
+  assert(!imported.project.operations.some((entry) => entry.name === 'Around line'), 'the hand-drawn Around operation is left out')
+  assert(!imported.project.features.some((feature) => feature.authoringFace === 'around'), 'and its feature too')
+  const importedAround = imported.project.setups.filter((setup) => setup.kind === 'around')
+  assert(importedAround.length === 1, 'exactly one Around setup carries the pair')
+  assert(importedAround[0].orientation.axis === 'x', 'on the target blank axis')
+  for (const name of ['Rotary rough', 'Rotary finish']) {
+    assert(
+      imported.project.operations.find((entry) => entry.name === name)?.setupId === importedAround[0].id,
+      `${name} joins the imported Around setup`,
+    )
+  }
+  assert(
+    imported.warnings.some((warning) => warning.includes('Around content was not imported') && warning.includes('square')),
+    `the warning is accurate for a square blank (${imported.warnings.join(' | ')})`,
+  )
+  assert(
+    JSON.stringify(camjImportWarnings({
+      currentProject: squareTarget('x'),
+      sourceProject: modelSource('x'),
+      selectedFolderIds: ['fd-src-a'],
+    })) === JSON.stringify(imported.warnings),
+    'camjImportWarnings shares the merge planner',
+  )
+
+  // Source mismatch: a Y source into an X blank refuses the Around work — the
+  // hand-drawn feature and the rotary pair — and creates no Around setup.
+  const mismatched = merge(squareTarget('x'), modelSource('y'))
+  assert(!mismatched.project.features.some((feature) => feature.authoringFace === 'around'), 'no Around feature on a mismatch')
+  assert(
+    !mismatched.project.operations.some((entry) => entry.name === 'Rotary rough' || entry.name === 'Rotary finish'),
+    'the rotary pair is refused on a mismatch, never transposed',
+  )
+  assert(mismatched.project.setups.every((setup) => setup.kind !== 'around'), 'and no Around setup is created')
+  assert(mismatched.warnings.some((warning) => warning.includes('Around content was not imported')), 'with a warning')
+  assert(mismatched.project.features.some((feature) => feature.name === 'Outline'), 'the rest of the folder still imports')
+}
+testMergeSquareRotaryModel()

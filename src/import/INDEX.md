@@ -14,11 +14,11 @@ Geometry file importers: SVG, DXF, STL, OBJ, STEP, and .camj.
 - `svg.ts` — SVG parser: path/shape/text extraction, unit handling, paint-intent tracking (fill/stroke)
 - `dxf.ts` — DXF parser: entity extraction, INSERT expansion, polyline/spline/lwpolyline profiles, open-profile stitching, deduplication
 - `stl.ts` — STL/OBJ mesh silhouette extraction
-- `camj.ts` — .camj inspection and folder/stock merge through the shared strict format decoder, including legacy-source conversion, attached plasma-start ID remapping and incompatible operation/tool-reference repair
+- `camj.ts` — .camj inspection and folder/stock merge through the shared strict format decoder, including legacy-source conversion, attached plasma-start ID remapping and incompatible operation/tool-reference repair. Around content has two separate admissions since #1016 C2-U1: hand-drawn sheet **features** stay round-bar only (never re-axed), while an Around setup's `rotary_rough`/`rotary_finish` **operations** also come onto a matching-axis square blank, but only when every target is an ordinary Top-authored STL model (the C2-B generated pair); anything else is left out with a warning that names the square blank rather than the old round-bar requirement, and no geometry is ever transposed
 - `index.ts` — barrel re-exports
 
 ## Tests
 - `svg.test.ts` — SVG paint-intent: inherited/default fill, stroke-only, fill+stroke, inline style precedence, open geometry intent
 - `classifier.test.ts` — nesting classifier: Paths/Solid regions/Auto modes, SVG paint intent, alternating nesting, smallest container, cross-layer nesting, ambiguity warnings, and manual-operation inference
-- `camj.test.ts` — current-format .camj inspection plus folder, linked-instance, asset, constraint, operation, and stock merge coverage
+- `camj.test.ts` — current-format .camj inspection plus folder, linked-instance, asset, constraint, operation, and stock merge coverage; a mixed folder into a matching square blank keeps the generated model, its asset and the rotary pair while dropping hand-drawn Around sheet work with an accurate warning, a mismatched axis refuses the pair, and `camjImportWarnings` provably shares the merge planner (#1016 C2-U1)
 - `stl.test.ts`, `obj.test.ts` — mesh silhouette extraction

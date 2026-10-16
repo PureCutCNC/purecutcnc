@@ -36,6 +36,7 @@ import {
   type Tool, cloneTextLayout,
 } from '../types/project'
 import { cloneTextFeatureData } from '../types/project'
+import { isBarStock } from '../types/barStock'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
@@ -243,17 +244,27 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   // lying along another axis (or on a block) would have its along-the-bar
   // travel silently turned into rotation. Never re-axis: leave that content
   // out, with a warning, and merge the rest of the source as before.
+  //
+  // Feature admission and operation admission are separate rules since #1016
+  // C2-U1. Hand-drawn Around sheet geometry is round-bar authoring only, so its
+  // admission keeps the round requirement. The Around setup's *operations* may
+  // also come onto a matching **square** blank, but only the generated-model
+  // rotary pair: the target model is an ordinary Top-authored STL whose own
+  // coordinates carry across unchanged, so nothing is transposed either.
   const sourceAroundSetup = (sourceProject.setups ?? []).find(isAroundSetup)
-  const aroundImportable = sourceAroundSetup !== undefined
-    && isRoundStock(currentProject.stock)
-    && currentProject.stock.axis === sourceAroundSetup.orientation.axis
+  const targetBarAxis = isBarStock(currentProject.stock) ? currentProject.stock.axis : null
+  const aroundAxisMatches = sourceAroundSetup !== undefined
+    && targetBarAxis !== null
+    && targetBarAxis === sourceAroundSetup.orientation.axis
+  const aroundFeaturesImportable = aroundAxisMatches && isRoundStock(currentProject.stock)
+  const aroundOperationsImportable = aroundAxisMatches
   let aroundLeftOut = 0
 
   const sourceFolderById = new Map(sourceProject.featureFolders.map((f) => [f.id, f]))
   const importedFeatures: FeatureInstance[] = []
   for (const feature of sourceProject.features) {
     if (feature.folderId && selectedFolderIdSet.has(feature.folderId)) {
-      if (feature.authoringFace === 'around' && !aroundImportable) {
+      if (feature.authoringFace === 'around' && !aroundFeaturesImportable) {
         aroundLeftOut += 1
         continue
       }
@@ -413,6 +424,27 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   // 7. Decide which operations to import. Only operations whose target is
   //    'features' AND all target featureIds are inside the imported set.
   const importedFeatureSourceIds = new Set(importedFeatures.map((f) => f.id))
+  const importedFeatureById = new Map(importedFeatures.map((f) => [f.id, f]))
+  /**
+   * The generated-model rotary pair (issue #1016 C2-B/U1): an ordinary
+   * Top-authored STL model is the only Around-setup target that carries onto a
+   * square blank. Anything else in the source Around setup is hand-drawn sheet
+   * work and stays round-bar only.
+   */
+  const isRotaryModelOperation = (operation: Operation): boolean => (
+    (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish')
+    && operation.target.source === 'features'
+    && operation.target.featureIds.length > 0
+    && operation.target.featureIds.every((id) => {
+      const feature = importedFeatureById.get(id)
+      const definition = feature === undefined ? undefined : sourceProject.featureDefinitions[feature.definitionId]
+      return feature !== undefined
+        && definition !== undefined
+        && definition.kind === 'stl'
+        && definition.operation === 'model'
+        && (feature.authoringFace ?? 'top') === 'top'
+    })
+  )
   const sourceSetupById = new Map((sourceProject.setups ?? []).map((setup) => [setup.id, setup]))
   const operationsToImport: Operation[] = []
   for (const operation of sourceProject.operations) {
@@ -420,8 +452,11 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     const targetIds = operation.target.featureIds
     if (targetIds.length === 0) continue
     if (!targetIds.every((id) => importedFeatureSourceIds.has(id))) continue
-    // The Around setup is left out with its features when the bars disagree.
-    if (!aroundImportable && sourceAroundSetup !== undefined && operation.setupId === sourceAroundSetup.id) {
+    // The Around setup is left out with its features when the bars disagree,
+    // and on a matching square blank everything but the generated-model rotary
+    // pair is hand-drawn sheet work that cannot transpose.
+    if (sourceAroundSetup !== undefined && operation.setupId === sourceAroundSetup.id
+      && (!aroundOperationsImportable || (!aroundFeaturesImportable && !isRotaryModelOperation(operation)))) {
       aroundLeftOut += 1
       continue
     }
@@ -435,10 +470,14 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   }
 
   if (aroundLeftOut > 0 && sourceAroundSetup !== undefined) {
+    const axis = sourceAroundSetup.orientation.axis.toUpperCase()
     warnings.push(
-      `Around content was not imported: the source's "Around" setup is for a bar lying along ${sourceAroundSetup.orientation.axis.toUpperCase()}, `
-      + `and this project has no round bar on that axis. The rest of the source was imported; `
-      + `move this project's bar onto that axis, or re-author the Around work here.`,
+      aroundAxisMatches
+        ? `Around content was not imported: this project's blank is square, whose Around sheet takes generated rotary models only (a bar lying along ${axis} carries the generated-model pair). `
+          + `The rest of the source was imported; mount a round bar along ${axis} to import hand-drawn Around work.`
+        : `Around content was not imported: the source's "Around" setup is for a bar lying along ${axis}, `
+          + `and this project has no round bar on that axis. The rest of the source was imported; `
+          + `move this project's bar onto that axis, or re-author the Around work here.`,
     )
   }
 
@@ -475,7 +514,10 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   const setupIdFor = (operation: Operation): string => {
     const sourceSetup = operation.setupId === undefined ? undefined : sourceSetupById.get(operation.setupId)
     const template = sourceSetup ?? defaultTopSetup()
-    const orientation = template.kind === 'around' && isRoundStock(currentProject.stock)
+    // Either bar shape re-axes an imported Around setup (issue #1016 C2-U1).
+    // `findSetupWithTurn` below still refuses to borrow an Around turn across
+    // axes; the matched-axis cases never transpose geometry.
+    const orientation = template.kind === 'around' && isBarStock(currentProject.stock)
       ? { axis: currentProject.stock.axis, angleDeg: 0 } : template.orientation
     // `findSetupWithTurn` matches an Around setup only on the same axis: an
     // Around turn is never borrowed across axes, because the imported

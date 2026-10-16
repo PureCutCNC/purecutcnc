@@ -68,7 +68,7 @@ import { activeFace, activeSetup } from './helpers/activeFace'
 import { provisionalSetupId } from './helpers/provisionalSetup'
 import { useProjectStore } from './projectStore'
 import type { RotarySolidRefusal } from './helpers/rotarySolids'
-import { planRotarySolid } from './helpers/rotarySolids'
+import { switchWorkspaceFace } from './workspaceFace'
 
 /** The typed refusal reason, or undefined when the creation succeeded. */
 function refusalReason(result: { ok: boolean; reason?: RotarySolidRefusal }): RotarySolidRefusal | undefined {
@@ -130,10 +130,9 @@ function squareBlankFor(spec: BlankSpec): SquareStock {
 
 /**
  * A rotary project on a real square blank with a real Around setup, already
- * active. `switchWorkspaceFace` refuses to enter Around on a square blank
- * today (`aroundUnavailableReason` still answers `needsRoundBar`), so the
- * fixture points the workspace at the real setup directly — the documented
- * state the UI slice will widen.
+ * active. The face switch now enters Around on a square blank too (#1016
+ * C2-U1), but this fixture pins a known setup id and axis directly so the
+ * assertions below can name it.
  */
 function loadSquare(spec: BlankSpec, tools: Tool[]): Project {
   const base = newProject(`Square ${spec.axis} ${spec.units}`, spec.units)
@@ -574,23 +573,53 @@ log('Testing refusals, the wrong stock shape and ordinary model editing...')
   store().loadProject(newProject('Milling', 'mm'))
   assert.equal(refusalReason(store().addRotarySolid({ ...base })), 'notRotaryProject', 'a non-rotary project is refused')
 
-  // A provisional Around setup cannot be realised on a square blank: the
-  // store's reconciler would discard the write, so the plan refuses instead of
-  // reporting success. The state is unreachable through the store's own face
-  // switcher today, so it is driven through the pure plan directly.
-  loadSquare(MM_X, [cutter('mm', 'ball')])
-  const provisional = { ...store().project, activeSetupId: provisionalSetupId('around') }
+  // A provisional Around setup on a square blank is realised for real
+  // (issue #1016 C2-U1): the face switch enters Around, `addRotarySolid`
+  // creates the model and both operations in the same write that makes the
+  // setup real, and one undo removes them together.
+  const provisionalBase = newProject('Square provisional', 'mm')
+  provisionalBase.meta.projectType = 'rotary'
+  provisionalBase.stock = squareBlankFor(MM_X)
+  const provisionalMachine = rotaryMachine(MM_X.axis)
+  provisionalBase.meta.machineDefinitions = [provisionalMachine]
+  provisionalBase.meta.selectedMachineId = provisionalMachine.id
+  provisionalBase.tools = [cutter('mm', 'ball')]
+  store().loadProject(projectWithFeatures(provisionalBase, []))
+  assert.equal(switchWorkspaceFace('around'), true, 'the square blank enters Around')
   assert.equal(
-    refusalReason(planRotarySolid(provisional, store().selection, {
-      ...SQUARE_TO_ROUND,
-      diameter: 24,
-      alongStart: bounds.minX + 20,
-      alongEnd: bounds.minX + 80,
-      toolRef: 'ball',
-    })),
-    'provisionalAroundUnsupported',
-    'a provisional Around setup is refused for square-to-round',
+    activeSetup(store().project).id,
+    provisionalSetupId('around'),
+    'the workspace looks at the provisional Around setup',
   )
+  const provisionalBounds = getStockBounds(store().project.stock)
+  const provisionalHistoryBefore = store().history.past.length
+  const provisionalResult = store().addRotarySolid({
+    ...SQUARE_TO_ROUND,
+    diameter: 24,
+    alongStart: provisionalBounds.minX + 20,
+    alongEnd: provisionalBounds.minX + 80,
+    toolRef: 'ball',
+  })
+  assert.ok(
+    provisionalResult.ok,
+    `created on the realised setup (${provisionalResult.ok ? '' : provisionalResult.reason})`,
+  )
+  if (!provisionalResult.ok) throw new Error('unreachable')
+  const realised = store().project
+  const realisedSetup = activeSetup(realised)
+  assert.notEqual(realisedSetup.id, provisionalSetupId('around'), 'the provisional setup became real')
+  assert.equal(realisedSetup.kind, 'around', 'and it is a real Around setup')
+  assert.equal(realisedSetup.orientation.axis, MM_X.axis, 'on the blank axis')
+  for (const operation of realised.operations) {
+    assert.equal(operation.setupId, realisedSetup.id, 'both operations join the realised setup')
+  }
+  assert.equal(store().history.past.length, provisionalHistoryBefore + 1, 'one history step')
+  store().undo()
+  const undone = store().project
+  assert.equal(undone.setups.some((setup) => setup.kind === 'around'), false, 'one undo removes the realised setup')
+  assert.equal(undone.operations.length, 0, 'and both operations')
+  assert.equal(undone.features.length, 0, 'and the model')
+  assert.equal(activeFace(undone), 'around', 'the workspace stays on the Around face')
 
   // A created model is an ordinary feature: renaming it is an ordinary edit.
   loadSquare(MM_X, [cutter('mm', 'ball')])

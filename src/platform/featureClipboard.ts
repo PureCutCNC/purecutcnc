@@ -18,7 +18,7 @@ import { getProfileBounds } from '../types/project'
 import type { FeatureDefinition, Point, Project } from '../types/project'
 import { buildCopiedFeatures, type ReferencedSketchFeature } from '../store/helpers/copyFeatures'
 import { transformProfile } from '../geometry/profile'
-import { activeFace, crossFaceArtworkMirror, crossFaceArtworkTransform } from '../store/helpers/activeFace'
+import { activeFace, aroundSketchAuthoringRefused, crossFaceArtworkMirror, crossFaceArtworkTransform } from '../store/helpers/activeFace'
 import { multiplyMatrix } from '../store/helpers/instanceTransforms'
 import type { ProjectStore } from '../store/types'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../store/helpers/resolveFeatures'
@@ -176,6 +176,12 @@ export function pasteClipboardFeatures(
   clipboard: FeatureClipboardPayload,
   placementPoint: Point,
 ): string[] {
+  // Pasting puts the copies on the face the workspace is on (issue #945); the
+  // square blank's Around sheet is round-only (issue #1016 C2-U1), so a paste
+  // there is refused before the history transaction opens.
+  if (aroundSketchAuthoringRefused(store.project, activeFace(store.project))) {
+    return []
+  }
   const features = buildPlacedClipboardFeatures(clipboard, store.project, placementPoint)
   if (features.length === 0) {
     return []

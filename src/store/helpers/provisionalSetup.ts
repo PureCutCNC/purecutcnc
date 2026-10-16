@@ -29,7 +29,7 @@
 
 import { orientationForFace, setupFace } from '../../engine/setupOrientation'
 import { uniqueName } from '../../import/normalize'
-import { isRoundStock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import type { MachiningSetup, Project, FlatFace, SetupFace } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { syncProjectSetups } from './setups'
@@ -63,7 +63,9 @@ export function defaultSetupForFace(face: FlatFace): MachiningSetup
 export function defaultSetupForFace(face: SetupFace, project: Partial<Pick<Project, 'stock'>>): MachiningSetup
 export function defaultSetupForFace(face: SetupFace, project?: Partial<Pick<Project, 'stock'>>): MachiningSetup {
   if (face !== 'around') return PROVISIONAL_SETUPS[face]
-  const axis = project?.stock && isRoundStock(project.stock) ? project.stock.axis : 'x'
+  // Either bar shape turns about its own axis (issue #1016 C2-U1): a square
+  // blank's provisional Around setup is on X or Y exactly as a round bar's is.
+  const axis = project?.stock && isBarStock(project.stock) ? project.stock.axis : 'x'
   const cached = aroundDefaults.get(axis)
   if (cached) return cached
   const setup: MachiningSetup = {

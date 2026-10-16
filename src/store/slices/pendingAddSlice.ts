@@ -16,7 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import { convertLength } from '../../utils/units'
-import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, Project, Segment, SketchFeature, Tab } from '../../types/project'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
@@ -24,7 +24,7 @@ import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
-import { activeFace, faceArtworkTransform, newFeatureSpan } from '../helpers/activeFace'
+import { activeFace, aroundSketchAuthoringRefused, faceArtworkTransform, newFeatureSpan } from '../helpers/activeFace'
 import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
@@ -90,6 +90,16 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
   }
 }
 
+/**
+ * True when arming a drawing tool must be refused: the workspace is on a
+ * square blank's Around sheet, which is round-only for hand-drawn geometry
+ * (issue #1016 C2-U1). Clamps stay allowed (they are workholding, not sheet
+ * geometry) and the tab tool keeps its own Around refusal.
+ */
+function refusesSquareAroundSketch(project: Project): boolean {
+  return aroundSketchAuthoringRefused(project, activeFace(project))
+}
+
 function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
   const session = nextPlacementSession()
   switch (current.shape) {
@@ -129,7 +139,7 @@ export function createPendingAddSlice(
     pendingAdd: null,
 
     startAddRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -173,7 +183,7 @@ export function createPendingAddSlice(
       })),
 
     startAddCirclePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -183,7 +193,7 @@ export function createPendingAddSlice(
       })),
 
     startAddEllipsePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'ellipse', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -193,7 +203,7 @@ export function createPendingAddSlice(
       })),
 
     startAddPolygonPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -203,7 +213,7 @@ export function createPendingAddSlice(
       })),
 
     startAddSplinePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -213,7 +223,7 @@ export function createPendingAddSlice(
       })),
 
     startAddCompositePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: {
           shape: 'composite',
           start: null,
@@ -232,7 +242,7 @@ export function createPendingAddSlice(
       })),
 
     startAddTextPlacement: (config) =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'text', config, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -242,7 +252,7 @@ export function createPendingAddSlice(
       })),
 
     startAddSlotPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'slot', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -252,7 +262,7 @@ export function createPendingAddSlice(
       })),
 
     startAddNgonPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'ngon', anchor: null, sides: 6, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -262,7 +272,7 @@ export function createPendingAddSlice(
       })),
 
     startAddGearPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: {
           shape: 'gear',
           anchor: null,
@@ -278,7 +288,7 @@ export function createPendingAddSlice(
       })),
 
     startAddRoundRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'roundrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -288,7 +298,7 @@ export function createPendingAddSlice(
       })),
 
     startAddChamferRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s.project) ? {} : ({
         pendingAdd: { shape: 'chamferrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -438,6 +448,11 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'text') {
         return []
       }
+      // A run started on a round bar and completed after the blank became
+      // square is refused here, before any project, history or selection write.
+      if (refusesSquareAroundSketch(state.project)) {
+        return []
+      }
 
       const baseFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
       if (!baseFeature) {
@@ -513,6 +528,7 @@ export function createPendingAddSlice(
     completePendingPolygon: () => {
       const state = get()
       if (!state.pendingAdd || !('points' in state.pendingAdd) || state.pendingAdd.points.length < 3) return
+      if (refusesSquareAroundSketch(state.project)) return
 
       const depth = Math.min(state.project.stock.thickness, 10)
       if (state.pendingAdd.shape === 'spline') {
@@ -535,6 +551,7 @@ export function createPendingAddSlice(
       const state = get()
       if (!state.pendingAdd || !('points' in state.pendingAdd)) return
       if (state.creationTarget === 'region') return
+      if (refusesSquareAroundSketch(state.project)) return
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const openPathOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
@@ -776,6 +793,7 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'composite' || !state.pendingAdd.start) {
         return
       }
+      if (refusesSquareAroundSketch(state.project)) return
 
       const closedSegments = resolveCompositeDraftSegments(state.pendingAdd)
       if (!closedSegments) {
@@ -806,6 +824,7 @@ export function createPendingAddSlice(
         return
       }
       if (state.creationTarget === 'region') return
+      if (refusesSquareAroundSketch(state.project)) return
 
       const openSegments = resolveOpenCompositeDraftSegments(state.pendingAdd)
       if (!openSegments) {
@@ -898,6 +917,7 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'gear' || !state.pendingAdd.anchor || state.pendingAdd.outsideRadius === null) {
         return []
       }
+      if (refusesSquareAroundSketch(state.project)) return []
       const depth = Math.min(state.project.stock.thickness, 10)
       const createdIds = state.addGearFeature(
         `Gear ${state.project.features.length + 1}`,

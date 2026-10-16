@@ -24,7 +24,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema; `barStock.ts` adds the shape-agnostic bar geometry beside the round helpers — the square blank (`squareStock`, `normalizeSquareStock`) and `barCentre`/`barLength`/`barPivotZ`/`barInscribedRadius`/`barMaxRadius`/`barSurfaceRadius` (#1016 C2-S1)
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
-- [platform/](platform/) — platform abstraction (web vs Tauri), including touch-only `.camj.json` save compatibility, desktop integration, feature clipboard helpers, and hidden-iframe HTML printing (`printDocument.ts`)
+- [platform/](platform/) — platform abstraction (web vs Tauri), including touch-only `.camj.json` save compatibility, desktop integration, feature clipboard helpers (a paste onto a square blank's Around sheet is refused before its history transaction opens, #1016 C2-U1), and hidden-iframe HTML printing (`printDocument.ts`)
 - [styles/](styles/) — shared CSS (incl. `tablet.css` for touch UX and `face.css` for the Top / Bottom face switch, banner, tree layers, depth fields and CAM setup sections/dialogs)
 - [assets/](assets/) — editable per-icon SVG sources in `icons/` (see `icons/README.md`), fonts, etc.
 - [test/](test/INDEX.md) — shared helpers for constructing strict current-format test projects

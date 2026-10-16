@@ -24,7 +24,8 @@
  * extracted verbatim from `CAMPanel.tsx` so the panel's hints are unchanged.
  */
 
-import { isRoundStock, isRotaryOperationKind } from '../../types/project'
+import { isRotaryOperationKind } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { operationFace } from '../../engine/setupTargets'
 import { activeFace } from '../../store/helpers/activeFace'
 import type { SelectionState } from '../../store/types'
@@ -188,7 +189,10 @@ export function rotaryOperationHint(project: Project, operation: Operation): str
   // A rotary operation belongs to a rotary project (issue #1028); outside one
   // it is kept, shown as what it is, and refused like a missing Around face.
   if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
-  if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+  // A rotary model lives in the bar, round or square (issue #1016 C2-U1): the
+  // generated square-to-round target is a rotary model too. The string key is
+  // unchanged and now means "no bar at all" (a block).
+  if (!isBarStock(project.stock)) return camT('cam.rotary.roundStockRequired')
   if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
   const targetHint = rotaryTargetHint(project, operation)
   if (targetHint) return targetHint
@@ -204,7 +208,7 @@ export function getOperationAddHint(
 ): string | null {
   if (isRotaryOperationKind(kind)) {
     if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
-    if (!isRoundStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+    if (!isBarStock(project.stock)) return camT('cam.rotary.roundStockRequired')
     if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
     // The model lives in the bar and only rotary operations touch it, so these
     // rows do not depend on the selection (issue #1015): any imported model
