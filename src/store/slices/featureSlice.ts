@@ -1223,6 +1223,17 @@ export function createFeatureSlice(
         return
       }
 
+      // Every generated glyph instance copies the text feature's authoring
+      // face (`textExpansion.ts`) and is inserted directly, so a Square blank's
+      // round-only Around sheet must refuse the expansion atomically — before
+      // the folders, definitions, rows, selection and history are written, and
+      // judged by the rows about to be created rather than the workspace face.
+      // Ordinary Top and round-bar Around text expansion is unaffected
+      // (issue #1016 C2-U1G).
+      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+        return
+      }
+
       set((s) => {
         // Add new folders
         const nextFeatureFolders = [...s.project.featureFolders, ...folders]

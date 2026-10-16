@@ -23,7 +23,7 @@ import {
   profilePathLength,
   type FeatureDistributionSpec,
 } from '../../sketch/featureDistribution'
-import { faceAngles, faceOffsets } from '../helpers/activeFace'
+import { aroundSketchAuthoringRefused, faceAngles, faceOffsets } from '../helpers/activeFace'
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
@@ -197,6 +197,16 @@ export function createFeatureDistributionSlice(
           s.project.featureDefinitions,
           s.project.meta.copyMode,
         ).map((feature) => ({ ...feature, folderId: null }))
+        // A distribution copy spread its source row, so it keeps that source's
+        // authoring face (`copyFeatures.ts`), and the copies are inserted
+        // directly. Judge the rows about to be created — never the workspace
+        // face — and refuse the whole commit, grid/radial/path and both copy
+        // modes alike, before the source placement moves, the pending request
+        // clears, or any history/selection write. Top and STL distribution is
+        // unaffected (issue #1016 C2-U1G).
+        if (created.some((feature) => aroundSketchAuthoringRefused(s.project, feature.authoringFace ?? 'top'))) {
+          return {}
+        }
         const definitions = extractClonedDefinitions(created)
         const instances = created.map((feature) => createFeatureInstance(feature, feature.definitionId, feature.transform))
         createdIds = created.map((feature) => feature.id)

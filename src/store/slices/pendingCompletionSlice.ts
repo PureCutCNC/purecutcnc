@@ -97,10 +97,11 @@ function instanceFromReferencedDraft(feature: ReferencedSketchFeature): FeatureI
 
 /**
  * Whether a derived-creation result would author new geometry on a round-only
- * Around sheet (issue #1016 C2-U1F). Offset and cut keep their source's
- * {@link SketchFeature.authoringFace} and insert directly rather than through
- * `addFeature`, so the resulting faces are what the policy judges — not the
- * current workspace face. An unset face means Top and is never refused.
+ * Around sheet (issue #1016 C2-U1F, extended by C2-U1G). Offset and cut keep
+ * their source's {@link SketchFeature.authoringFace}, and copies spread their
+ * source row (`copyFeatures.ts`), so the resulting faces are what the policy
+ * judges — not the current workspace face. All of these insert directly rather
+ * than through `addFeature`. An unset face means Top and is never refused.
  */
 function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
   return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
@@ -204,6 +205,17 @@ export function createPendingCompletionSlice(
                 return rest
               })
             : []
+
+          // A copy preserves its source's authoring face (`copyFeatures.ts`
+          // spreads the source row) and is inserted directly, so a Square
+          // blank's round-only Around sheet must refuse the whole completion.
+          // Judged by the rows about to be created, never the workspace face,
+          // so moving the workspace to Top cannot bypass it. In-place moves and
+          // the clamp/tab/backdrop branches create no rows and stay allowed
+          // (issue #1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, cleanedCreatedFeatures)) {
+            return {}
+          }
 
           // Detect group copy: the sources are the ENTIRE membership of one
           // grouped folder. Only then do the copies get their own new grouped
@@ -525,6 +537,13 @@ export function createPendingCompletionSlice(
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
           }
+          // Rotated copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // rotation before any write. In-place rotate stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
+          }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
             ...s.project,
@@ -568,6 +587,13 @@ export function createPendingCompletionSlice(
           )
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
+          }
+          // Mirrored copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // mirror before any write. In-place mirror stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
           }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
