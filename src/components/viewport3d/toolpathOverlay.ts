@@ -15,8 +15,8 @@
  */
 
 import type { ToolpathBounds, ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
-import type { RoundStock, Stock } from '../../types/project'
-import { isRoundStock } from '../../types/project'
+import type { BarStock, Stock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { aroundFrame, unwrapPoint, wrapPoint } from '../../engine/aroundFrame'
 import { stockSpacePoint } from '../../engine/rotaryFrame'
 import { moveMatchesToolpathLevel } from '../toolpathLevels'
@@ -51,9 +51,10 @@ export interface DisplayToolpath {
 const displayToolpathCache = new WeakMap<object, WeakMap<object, DisplayToolpath>>()
 
 /** The toolpath to draw (issue #395). A wrapped Around toolpath — any point
- *  carrying `a` — is drawn at `stockSpacePoint`, its turning moves subdivided;
- *  an angle-free toolpath is handed back unchanged, so its line data is
- *  exactly what it is today.
+ *  carrying `a` — is drawn at its stock-space point about the true pivot, its
+ *  turning moves subdivided; a round bar and a square blank share that rigid
+ *  rotation (#1016 C2-S3). An angle-free toolpath is handed back unchanged, so
+ *  its line data is exactly what it is today.
  *
  *  The result is cached on the pair, so the split and the subdivided move
  *  array survive a scene rebuild (issue #395) and the layer split below can
@@ -76,7 +77,7 @@ function computeStockSpaceToolpath<T extends { readonly moves: readonly Toolpath
   toolpath: T,
   stock: Stock,
 ): DisplayToolpath {
-  if (!isRoundStock(stock)) return toolpath
+  if (!isBarStock(stock)) return toolpath
   if (!toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) return toolpath
   // Mapped one generated move at a time so each drawn piece can name the move
   // it came from; `stockSpaceMoves` maps a whole list and loses that link.
@@ -356,10 +357,15 @@ export const MAX_WRAPPED_PIECE_TURN_DEGREES = 5
  * back: the flat across coordinate is linear in the angle, so the pieces turn
  * by equal steps. A move whose angle does not change stays one segment.
  *
+ * A square blank turns about the same true pivot (#1016 C2-S3), so the map is
+ * the same rigid rotation and the corners never shift the pivot:
+ * `stockSpacePoint` takes a `BarStock` and turns either shape about the box
+ * centre.
+ *
  * An angle-free toolpath is returned exactly as it is — the same moves array —
  * so the line data it draws cannot change.
  */
-export function stockSpaceMoves(moves: readonly ToolpathMove[], stock: RoundStock): readonly ToolpathMove[] {
+export function stockSpaceMoves(moves: readonly ToolpathMove[], stock: BarStock): readonly ToolpathMove[] {
   if (!moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) {
     return moves
   }
