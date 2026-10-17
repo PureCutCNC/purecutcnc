@@ -1,8 +1,9 @@
 # INDEX — src/engine/simulation/
 
-Heightfield-based material-removal simulation. A `SimulationGrid` stores a
-`topZ` heightfield; toolpath moves lower cells the cutter passes over, and the
-result is rendered as a GPU-driven heightfield mesh. Pure logic + Three.js mesh
+Material-removal simulation. Flat and round grids store a `topZ` heightfield
+and render through a GPU heightfield mesh. A square bar stores every remaining
+radial interval; `topZ` is only its outer envelope, and its boundary geometry
+keeps disconnected material and real air gaps. Pure logic + Three.js mesh
 builders — no React.
 
 ## Core
@@ -15,8 +16,10 @@ builders — no React.
 - `playback.ts` — playback state: poses, options, grid cloning for stepped playback. Forward seeks advance incrementally (cuts are monotonic); the dirty region accumulates until the caller uploads and clears it; the transient square descriptor and immutable baseline ride along by reference while `topZ` and the `squareMaterial` interval map are copied, so a clone (and a `reset`) can never alias or drop the base grid's material
 
 ## Rendering (Three.js)
+- `squareMaterialGeometry.ts` — actual square material boundary geometry (#1016 C2-R2M/R2MF): every interval clipped to the physical blank, true-pivot world coordinates, explicit axial bounds, triangular collapsed endcaps, shared angular partitions and incident radial corner knots for conforming adjoining faces; dirty regions reach touched angular chunks and neighbours/seam
+- `squareMaterialMesh.ts` — owned chunked Three.js resource over the interval geometry: `createSquareMaterialMesh`, shared material, exact physical axial bounds, null unchanged/no-op updates, undefined full resets, dirty chunk replacement and idempotent disposal
 - `gpuMesh.ts` — builds a `DataTexture` over the grid's `topZ` array and an instanced row-strip surface with one flat top per cell (no shared corners that can collapse narrow tab bridges); bounds cover the shader-displaced Y range; `uploadHeightfieldRegion` pushes only the dirty rectangle to the GPU via `texSubImage2D`
-- `instancedBoundary.ts` — boundary walls + stock underside as instanced row-strips whose geometry the vertex shader derives from `gl_InstanceID` + the heightfield texture (GLSL3 `texelFetch`); O(cols) template memory at any detail, no CPU rebuilds while cutting. The sole boundary path for both static and playback views. A step gets a wall lit by its own normal; a riser inside a slope is drawn too, but lit as the surface it belongs to
+- `instancedBoundary.ts` — boundary walls + stock underside as instanced row-strips whose geometry the vertex shader derives from `gl_InstanceID` + the heightfield texture (GLSL3 `texelFetch`); O(cols) template memory at any detail, no CPU rebuilds while cutting. The heightfield boundary path for flat/round static and playback views. A step gets a wall lit by its own normal; a riser inside a slope is drawn too, but lit as the surface it belongs to
 - `heightfieldShader.ts` — the heightfield surface shader material (`createHeightfieldMaterial`) plus the GLSL both meshes share: the `LIGHTING_GLSL` light rig, the `STEP_GLSL` step/slope predicate (`edgeIsStep`), and the smoothed surface normal (`SLOPE_GRADIENT_GLSL` + `SURFACE_NORMAL_GLSL`). The surface takes a lighting gradient only across an edge `edgeIsStep` calls a slope, interpolated across the cell so it is continuous over cell borders and widened when a cell is under a pixel; `instancedBoundary.ts` lights the steps it leaves flat, so the two meshes cannot disagree about which of them shades an edge
 - `toolMesh.ts` — builds/disposes the moving cutter mesh group; a plasma torch gets the same plain flat-endmill cylinder as a flat endmill
 
@@ -24,6 +27,8 @@ builders — no React.
 - `index.ts` — barrel export
 
 ## Tests
+- `squareMaterialGeometry.test.ts` — actual square flats/corners, every surviving radial band and generated interior gap, independent ray/volume classification, exact ends, collapsed triangular caps, shared directed-edge incidence, stepped wedges and multi-chunk Y conformance
+- `squareMaterialMesh.test.ts` — resource layout, null geometry identity, interval-only dirty updates, neighbouring chunk content/seam dependency, reset, topology replacement, bounds, invalid inputs and exact idempotent disposal
 - `aroundReplay.test.ts` — multi-turn folded replay, periodic cutter overlap on both seam sides and axes, dirty-region union, flat-reference parity and playback/scrub parity
 - `aroundWrap.test.ts` — executes the actual scalar GLSL against the frozen rotary transforms on both axes in every quadrant; tests bar-group turn/tool placement, radial normals, cylinder bounds and compile-time material variants; also runs the seam's integer `aroundCell` lookup (both bar axes, along index never wrapped) and the `sameAroundFrame` comparison that keys the viewport's effects (issue #395 G3)
 - `gpuMesh.test.ts` — heightfield texture/mesh construction and per-cell top geometry
