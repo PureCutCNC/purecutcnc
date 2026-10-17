@@ -30,6 +30,7 @@ available; do not treat one-off diagnostics as normal quality gates.
 - [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded provider-neutral worker prompt template (historic filename retained for compatibility).
 - [`test-claude-agent.sh`](test-claude-agent.sh) — mocked Claude leaf coverage for read-only/implement flags, credential scrubbing, progress and final/session artifacts, model precedence, and failure propagation.
 - [`test-claude-deepseek-agent.sh`](test-claude-deepseek-agent.sh), [`test-dsh-agent.sh`](test-dsh-agent.sh), [`test-dispatch-task.sh`](test-dispatch-task.sh), and [`worker-progress-filter.jq`](worker-progress-filter.jq) — harness tests and Claude progress filtering.
+- [`worker-instances.sh`](worker-instances.sh) — list the dispatch workers running on this machine across every provider (`dsh`, `claude`, `claude-deepseek`, `codex`): provider leaves, raw `dsh --profile headless` / `codex exec` / `claude -p` runs, and `dispatch-task.sh` itself during the build gate. Shows worktree, phase, idle time and branch; `--logs`/`--follow` tail the progress logs, while `--pid`, `--slug` and `--provider` narrow the list. `--all` adds idle app processes (dsh `web`/`tui`, Claude desktop sessions). Liveness always comes from the process table — a log without `[dispatch] done` is not treated as running.
 
 Use this path only after explicit delegation approval and follow
 [`manager-delegate`](../.agents/skills/manager-delegate/SKILL.md). Direct
