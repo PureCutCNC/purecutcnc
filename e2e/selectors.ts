@@ -870,6 +870,12 @@ export const simSetup = {
   note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-note'),
   modeVisible: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Visible', exact: true }),
   playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),
+  /** Detail slider: the grid resolution both the app and its witness build at. */
+  detail: (page: Page) => page.locator('#workspace-panel-simulation .simulation-detail-control__slider'),
+  /** The playback progress range (0..1000), aria-labelled "Playback progress". */
+  progressSlider: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__progress input[type="range"]'),
+  /** Stop & reset — the playback teardown that restores the starting stock. */
+  stop: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn[title="Stop & reset"]'),
 }
 
 // CAM setup sections, scoped Add targets and setup dialogs (#946, #395).
