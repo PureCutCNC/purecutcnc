@@ -2145,4 +2145,41 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
   assert.ok(compared > 0, 'the strip test compared real samples')
   console.log(`rotary strip: ${compared} tips bit-identical to the full-map reference`)
 }
+// ── invalid radial allowance refuses, on a round bar too ──────
+//
+// The same destructive path exists on a round bar: a negative or non-finite
+// allowance destroys the sampler's radius, every sample reads "no model", and
+// the rough maps that to radius 0 (the pivot). Round output for a valid
+// allowance is unchanged; only an unusable one refuses.
+{
+  const stock = roundStock(40, 60, 'x')
+  const mesh = prism(stock, CIRCLE)
+  const params = { ...FINISH_BASE, stepover: 20, stepdown: 4 }
+  const valid = generateRotaryRough('round-valid', mesh, stock, FINISH_PASS_MM, params, {})
+  assert.ok(valid.moves.length > 0, 'a valid round allowance generates motion')
+  assert.deepEqual(valid.warnings, [], 'a valid round allowance raises no warning')
+  const validLeave = generateRotaryFinish('round-valid-leave', mesh, stock, FINISH_PASS_MM, { ...params, stockToLeave: 0.5 }, {})
+  assert.ok(validLeave.moves.length > 0, 'a valid positive round allowance still generates')
+
+  // -2 gives a zero sampling radius on this 2 mm radius ball, -3 a negative one; both
+  // also fail the non-negative allowance rule. NaN and Infinity fail finiteness.
+  for (const allow of [-2, -3, NaN, Infinity]) {
+    for (const generate of [generateRotaryRough, generateRotaryFinish]) {
+      const result = generate(`round-invalid-${String(allow)}`, mesh, stock, FINISH_PASS_MM, { ...params, stockToLeave: allow }, {})
+      assert.deepEqual(result.moves, [], `round allowance ${String(allow)}: ${generate.name} emits no moves`)
+      assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryStockToLeaveInvalid'],
+        `round allowance ${String(allow)}: ${generate.name} says why`)
+      assert.equal(result.bounds, null, `round allowance ${String(allow)}: ${generate.name} has no bounds`)
+    }
+  }
+  // The sampler distinguishes invalid geometry from empty space: no angle rows
+  // at all and `valid: false`, rather than rows of NaN that the rough would map
+  // to a cut down the axis.
+  const invalidSampling = sampleRotaryModel(mesh, stock, { ...FINISH_PASS_MM, radius: -1, diameter: -4 }, {
+    anglesDeg: [0, 90], along: [FINISH_BASE.alongStart, FINISH_BASE.alongEnd], requestedCellSize: CELL,
+  }, [])
+  assert.equal(invalidSampling.valid, false, 'the round sampler reports invalid tool geometry')
+  assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid round geometry produced no angle rows')
+  assert.deepEqual(invalidSampling.tipRadius, [], 'invalid round geometry cannot look like empty space')
+}
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')

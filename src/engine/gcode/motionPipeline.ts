@@ -45,7 +45,7 @@
 
 import type { Operation, Project } from '../../types/project'
 import { isRotaryOperationKind } from '../../types/project'
-import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
@@ -1065,6 +1065,20 @@ function inspectRotaryOperation(args: {
     }
     if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
       return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
+    }
+    // A square blank's corners stand `barMaxRadius` out from the turning pivot
+    // at every angle, so a move that changes A below that corner envelope
+    // drives the standing corner through the cutter. The generators keep every
+    // A-changing move at `pivot + barMaxRadius + a clearance`; a supplied or
+    // stale path is asked the same question here. A turn placed exactly on the
+    // envelope is not below it, so the comparison uses the tolerance the
+    // generators use for heights. This runs only for square stock: a round
+    // bar's output stays frozen.
+    const turnEnvelope = barPivotZ(project.stock) + barMaxRadius(project.stock)
+    const turnTolerance = convertLength(0.001, 'mm', project.meta.units)
+    if (toolpath.moves.some((move) => turns(move)
+      && Math.min(move.from.z, move.to.z) < turnEnvelope - turnTolerance)) {
+      return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
     }
   }
   if (!hasAngle) {

@@ -244,6 +244,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryToolUnsupported': '{operation}: Die Rotationsbearbeitung benötigt einen Kugel- oder Schaftfräser.',
   'warnings.rotaryBelowCentreline': '{operation}: Das Modell reicht nahe {along} entlang der Stange, bei {angle}°, unter die Mittellinie der Stange. Das Werkzeug hält dort an der Mittellinie an.',
   'warnings.rotaryModelOutsideBar': '{operation}: Ein Teil des Modells liegt außerhalb der Stange. Diese Teile werden nicht bearbeitet.',
+  'warnings.rotaryStockToLeaveInvalid': '{operation}: Das radiale Aufmaß muss ein endlicher Wert von null oder mehr sein und einen brauchbaren Abtastradius übrig lassen. Es wird keine Bewegung erzeugt.',
   'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',
   'warnings.postSetupOperationRefused': 'Operation „{operation}" hat keine Werkzeugbahn, weil ihre Aufspannung sie nicht schneiden kann. Korrigieren oder entfernen Sie die Operation vor dem Export.',
   'warnings.postSetupNoRegistration': 'Aufspannung „{setup}" hat keine Ausrichtreferenz, daher ist nicht festgehalten, wie das Teil nach dem Wenden positioniert wird. Fügen Sie in den Aufspannungseinstellungen eine Passstift-, Anschlag- oder Eckreferenz hinzu.',
@@ -269,6 +270,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Die Vorlagen der Maschine schreiben {axis}, das Wort, das an dieser Maschine die Drehachse dreht. Entfernen Sie es vor dem Export aus den Vorlagen der Maschine.',
   'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
+  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

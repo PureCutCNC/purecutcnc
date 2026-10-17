@@ -55,7 +55,7 @@ import { createHash } from 'node:crypto'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
 import { defaultTool, getStockBounds, newProject, rectProfile } from '../../types/project'
 import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool, ToolType } from '../../types/project'
-import { barCentre, barPivotZ, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -217,7 +217,12 @@ function postsAngle(program: string, word: 'A' | 'X' | 'Y'): boolean {
   return motionLines(program).some((line) => new RegExp(`${word}[-\\d.]`).test(line))
 }
 
-/** Program motion/text fingerprint that never normalises geometry or feeds. */
+/**
+ * Program motion/text fingerprint that never normalises geometry or feeds. The
+ * generated-date comment is the one wall-clock byte in the program, so it is
+ * pinned the way `legacyMachineParity.test.ts` pins it; every other output byte
+ * is compared.
+ */
 function fingerprint(project: Project, definition: MachineDefinition, operation: Operation): string {
   const envelope = computeOperationToolpath(project, operation)
   assert.ok(envelope, 'fixture: the dispatch answers')
@@ -227,7 +232,7 @@ function fingerprint(project: Project, definition: MachineDefinition, operation:
   return [
     `moves=${hash(JSON.stringify(moves))}`,
     `warnings=${envelope.result.warnings.map((warning) => warning.code).join(',')}`,
-    `gcode=${hash(result.gcode)}`,
+    `gcode=${hash(result.gcode.replace(/\d{4}-\d{2}-\d{2}/g, '2000-01-01'))}`,
     `post=${result.warnings.map((warning) => warning.code).join(',')}`,
   ].join('|')
 }
@@ -249,30 +254,30 @@ for (const axis of ['x', 'y'] as const) {
  * move; any drift is a real change, not a normalisation.
  */
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/own': 'moves=7fe3ee48a37762e1|warnings=|gcode=9e1f185c8c5edbcd|post=',
-  'x/mm/rotary_rough/borrowed': 'moves=7fe3ee48a37762e1|warnings=|gcode=bb3c7ec9aa064275|post=',
-  'x/mm/rotary_rough/reversed': 'moves=7fe3ee48a37762e1|warnings=|gcode=773e956bba7f904b|post=',
-  'x/mm/rotary_finish/own': 'moves=1d574e92197f6066|warnings=|gcode=3635333a6cf9fb84|post=',
-  'x/mm/rotary_finish/borrowed': 'moves=1d574e92197f6066|warnings=|gcode=65aba1333aba48e1|post=',
-  'x/mm/rotary_finish/reversed': 'moves=1d574e92197f6066|warnings=|gcode=0827c7d10cc75746|post=',
-  'x/inch/rotary_rough/own': 'moves=f2cb628cb08a9347|warnings=|gcode=70985876da09cb73|post=',
-  'x/inch/rotary_rough/borrowed': 'moves=f2cb628cb08a9347|warnings=|gcode=e179efb6e6eb1c99|post=',
-  'x/inch/rotary_rough/reversed': 'moves=f2cb628cb08a9347|warnings=|gcode=3d354749b93477f0|post=',
-  'x/inch/rotary_finish/own': 'moves=d860a1762aca651e|warnings=|gcode=52e91e045fa0da14|post=',
-  'x/inch/rotary_finish/borrowed': 'moves=d860a1762aca651e|warnings=|gcode=4f67a7ea8336b731|post=',
-  'x/inch/rotary_finish/reversed': 'moves=d860a1762aca651e|warnings=|gcode=50efba2e4a993821|post=',
-  'y/mm/rotary_rough/own': 'moves=6726dfdfc4a90270|warnings=|gcode=a7536e60c4680f56|post=',
-  'y/mm/rotary_rough/borrowed': 'moves=6726dfdfc4a90270|warnings=|gcode=cfc84d5111b5b536|post=',
-  'y/mm/rotary_rough/reversed': 'moves=6726dfdfc4a90270|warnings=|gcode=4cbdbcfc0d5f00d3|post=',
-  'y/mm/rotary_finish/own': 'moves=036cc8e3b273a0b5|warnings=|gcode=a985a7d4913d55cf|post=',
-  'y/mm/rotary_finish/borrowed': 'moves=036cc8e3b273a0b5|warnings=|gcode=cd62c24cfc71ff81|post=',
-  'y/mm/rotary_finish/reversed': 'moves=036cc8e3b273a0b5|warnings=|gcode=d849444906006e13|post=',
-  'y/inch/rotary_rough/own': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=84291f24eaee0b5c|post=',
-  'y/inch/rotary_rough/borrowed': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=c755d1ffdc6adef9|post=',
-  'y/inch/rotary_rough/reversed': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=99c8b94821b7112d|post=',
-  'y/inch/rotary_finish/own': 'moves=dfa5445394219315|warnings=|gcode=b49b4749c9d92433|post=',
-  'y/inch/rotary_finish/borrowed': 'moves=dfa5445394219315|warnings=|gcode=48710ef0eadec711|post=',
-  'y/inch/rotary_finish/reversed': 'moves=dfa5445394219315|warnings=|gcode=9672b823130029f6|post=',
+  'x/mm/rotary_rough/own': 'moves=7fe3ee48a37762e1|warnings=|gcode=7a502d1bde47e137|post=',
+  'x/mm/rotary_rough/borrowed': 'moves=7fe3ee48a37762e1|warnings=|gcode=663ce4ae030af882|post=',
+  'x/mm/rotary_rough/reversed': 'moves=7fe3ee48a37762e1|warnings=|gcode=6071a6310b442795|post=',
+  'x/mm/rotary_finish/own': 'moves=1d574e92197f6066|warnings=|gcode=f4305f4d6264e61d|post=',
+  'x/mm/rotary_finish/borrowed': 'moves=1d574e92197f6066|warnings=|gcode=d0f41a3e5b470e9b|post=',
+  'x/mm/rotary_finish/reversed': 'moves=1d574e92197f6066|warnings=|gcode=f293e990152af34c|post=',
+  'x/inch/rotary_rough/own': 'moves=f2cb628cb08a9347|warnings=|gcode=885bb4e511509a44|post=',
+  'x/inch/rotary_rough/borrowed': 'moves=f2cb628cb08a9347|warnings=|gcode=eb29f30216fc4bde|post=',
+  'x/inch/rotary_rough/reversed': 'moves=f2cb628cb08a9347|warnings=|gcode=584c4ffc2658eaab|post=',
+  'x/inch/rotary_finish/own': 'moves=d860a1762aca651e|warnings=|gcode=7cc74fc4a1882c4f|post=',
+  'x/inch/rotary_finish/borrowed': 'moves=d860a1762aca651e|warnings=|gcode=64b954e8ba23738d|post=',
+  'x/inch/rotary_finish/reversed': 'moves=d860a1762aca651e|warnings=|gcode=fdc0f052b7c20ece|post=',
+  'y/mm/rotary_rough/own': 'moves=6726dfdfc4a90270|warnings=|gcode=40487403a2b4c40c|post=',
+  'y/mm/rotary_rough/borrowed': 'moves=6726dfdfc4a90270|warnings=|gcode=dee4c8893c3c2846|post=',
+  'y/mm/rotary_rough/reversed': 'moves=6726dfdfc4a90270|warnings=|gcode=ddfe4e3db6b35a80|post=',
+  'y/mm/rotary_finish/own': 'moves=036cc8e3b273a0b5|warnings=|gcode=43b5ddb34eec33ca|post=',
+  'y/mm/rotary_finish/borrowed': 'moves=036cc8e3b273a0b5|warnings=|gcode=f7049d7991265d11|post=',
+  'y/mm/rotary_finish/reversed': 'moves=036cc8e3b273a0b5|warnings=|gcode=85bd834b866235ce|post=',
+  'y/inch/rotary_rough/own': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=786d4d7fc68668c5|post=',
+  'y/inch/rotary_rough/borrowed': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=e5397b7d479398fe|post=',
+  'y/inch/rotary_rough/reversed': 'moves=2ed07fc1b9dc3f17|warnings=|gcode=2c51736eb47821ee|post=',
+  'y/inch/rotary_finish/own': 'moves=dfa5445394219315|warnings=|gcode=25633564a9ba1e10|post=',
+  'y/inch/rotary_finish/borrowed': 'moves=dfa5445394219315|warnings=|gcode=9305dfb040803a5c|post=',
+  'y/inch/rotary_finish/reversed': 'moves=dfa5445394219315|warnings=|gcode=1257da43a0b0671e|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_ROUND === '1') {
@@ -427,6 +432,47 @@ console.log('Testing square output refusals...')
     [],
     'and an angle-free Top operation is untouched',
   )
+}
+
+// ── 3b. a square turn must clear the corner envelope ─────────
+
+console.log('Testing square turning height against the corner envelope...')
+{
+  const { project, operation, stock } = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish' })
+  const definition = machine('own', 'x')
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const envelope = pivot + barMaxRadius(stock)
+  // A rapid establishes A0, then a feed turns the blank from A0 to A45 at the
+  // probe height. The cut is the operation's real turning move, so it is the
+  // one that reaches the program under G93.
+  const turnAt = (z: number): ToolpathMove[] => [
+    { kind: 'rapid', from: { x: 15, y: centre, z: 25, a: 0 }, to: { x: 15, y: centre, z: 25, a: 0 } },
+    { kind: 'cut', from: { x: 15, y: centre, z, a: 0 }, to: { x: 15, y: centre, z, a: 45 } },
+  ]
+  assert.ok(12 < envelope - 0.5, 'fixture: Z12 is below the corner envelope')
+
+  const refused = post(project, definition, operation, toolpathOf(operation, turnAt(12)))
+  assert.deepEqual(
+    refused.warnings.map((warning) => warning.code),
+    ['postRotarySquareTurnBelowEnvelope'],
+    'the Z12 A0 -> A45 probe is refused at export',
+  )
+  assert.ok(!postsAngle(refused.gcode, 'A'), 'none of the too-low turn is posted')
+  assert.equal(warningSeverity('postRotarySquareTurnBelowEnvelope'), 'error', 'the refusal blocks a save')
+
+  const accepted = post(project, definition, operation, toolpathOf(operation, turnAt(envelope + 0.5)))
+  assert.deepEqual(accepted.warnings, [], 'a turn just above the envelope is accepted')
+  assert.ok(postsAngle(accepted.gcode, 'A'), 'and the accepted turn is posted')
+  assert.match(accepted.gcode, /G93/, 'the accepted turning cut uses inverse time')
+  assert.equal(warningSeverity('postRotarySquareTurnBelowEnvelope'), 'error', 'the accepted path is not refused')
+
+  // Round output is frozen: a round bar has no square corner envelope, so the
+  // same low turn on the same box still posts exactly as before.
+  const round = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish', round: true })
+  const roundResult = post(round.project, definition, round.operation, toolpathOf(round.operation, turnAt(12)))
+  assert.deepEqual(roundResult.warnings, [], 'the round bar is not given the square envelope guard')
+  assert.ok(postsAngle(roundResult.gcode, 'A'), 'the round turn is still posted')
 }
 
 // ── 4. the physical workholding guard, generation and output ──

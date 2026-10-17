@@ -201,4 +201,26 @@ for (const axis of ['x', 'y'] as const) {
     + `${distinctAngles(envelope.result.moves)} angles`)
 }
 
+// ── an unusable radial allowance refuses at the operation seam ─────────
+//
+// The saved operation's allowance reaches `rotaryTargets` unchanged. The
+// fixture's ball is 2 mm across, so -2 leaves a negative sampling radius, -1
+// leaves zero, and NaN / Infinity fail finiteness: every one must refuse with
+// no motion rather than let the rough read "no model" everywhere and cut to
+// the pivot (#1016 C2 correction M1). A valid allowance still generates.
+for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+  const { project } = squareProject('x', kind)
+  const operation = project.operations[0]
+  assert.ok(generateRotaryOperation(project, operation).moves.length > 0, `${kind}: the fixture generates`)
+  for (const allow of [-2, -1, NaN, Infinity]) {
+    const result = generateRotaryOperation(project, { ...operation, stockToLeaveRadial: allow })
+    assert.deepEqual(result.moves, [], `${kind}: allowance ${String(allow)} emits no moves`)
+    assert.equal(result.warnings[0]?.code, 'rotaryStockToLeaveInvalid', `${kind}: allowance ${String(allow)} says why`)
+    assert.equal(result.bounds, null, `${kind}: allowance ${String(allow)} has no bounds`)
+  }
+  const valid = generateRotaryOperation(project, { ...operation, stockToLeaveRadial: 0.5 })
+  assert.ok(valid.moves.length > 0, `${kind}: a valid allowance still generates`)
+  assert.deepEqual(valid.warnings, [], `${kind}: a valid allowance raises no warning`)
+}
+
 console.log('engine/toolpaths/squareRotaryOperation.test.ts: all assertions passed')

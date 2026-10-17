@@ -350,6 +350,12 @@ export type ToolpathWarningCode =
    *  own surface there, so those parts are machined as air; the operation still
    *  runs and says so (issue #1015). */
   | 'rotaryModelOutsideBar'
+  /** The operation's radial stock to leave is not a usable allowance: it is
+   *  not finite, it is negative, or it makes the sampler's tool radius zero or
+   *  negative. Sampling with that radius would read "no model" everywhere, and
+   *  the rough would cut the whole pass down to the axis, so it refuses with
+   *  no motion instead (issue #1016 C2 correction M1). */
+  | 'rotaryStockToLeaveInvalid'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
@@ -433,6 +439,12 @@ export type ToolpathWarningCode =
    *  different motion on this machine, so the operation is not exported
    *  (issue #395). */
   | 'postRotaryAxisMismatch'
+  /** A square blank's corners sweep `barMaxRadius` about the true pivot as the
+   *  blank turns. A supplied or stale path that changes A while the cutter's
+   *  lowest point is below that corner envelope would drive the standing
+   *  corners through the cutter, so the operation is refused rather than
+   *  posted (issue #1016 C2 correction M1). */
+  | 'postRotarySquareTurnBelowEnvelope'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -485,11 +497,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   would quietly lack that operation's cuts (issue #983).
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
- *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded` and
- *   `postRotaryAxisMismatch` — a rotary operation the machine cannot run is
- *   left out of the program (issue #393). The file would otherwise be saved
- *   without that pass, and approximating any of them would cut the stock at
- *   the wrong angle or the wrong feed.
+ *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
+ *   `postRotaryAxisMismatch` and `postRotarySquareTurnBelowEnvelope` — a rotary
+ *   operation the machine cannot run is left out of the program (issues #393,
+ *   #1016 C2 M1). The file would otherwise be saved without that pass, and
+ *   approximating any of them would cut the stock at the wrong angle, the
+ *   wrong feed, or through the square blank's standing corners.
  *
  * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
  * round bar or a block in an Around setup is a note about a job the setup does
@@ -515,6 +528,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryTemplateUsesBorrowedAxis',
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
+  'postRotarySquareTurnBelowEnvelope',
 ])
 
 /**
