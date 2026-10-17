@@ -1736,6 +1736,94 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await ui.rotarySolid.cancelButton(page).click()
 })
 
+/**
+ * How far a stored Float32 ring vertex may sit off the requested radius. The
+ * persisted positions are Float32: a point at a ~20 mm coordinate is rounded
+ * to the nearest representable value, which moves it by at most half an ulp
+ * (~1e-6) per coordinate, so its distance from the axis is off by ~1.3e-6 at
+ * worst (measured 1.03e-6 here). 1e-5 leaves that rounding margin without
+ * admitting a genuinely different radius — the bug this replaced was a ~1e-3
+ * bbox shortfall.
+ */
+const STORED_RADIAL_FLOAT32_SLACK = 1e-5
+
+interface StoredSolidRadialSummary {
+  /** Vertices in the persisted mesh; never zero (the helper throws otherwise). */
+  vertexCount: number
+  /** Distinct axial coordinates of the stored vertices, ascending: the ring ends. */
+  ringAlongs: number[]
+  /** Vertices on each ring, in the same order as `ringAlongs`. */
+  ringVertexCounts: number[]
+  /** Closest stored vertex to the bar's axis in the YZ plane. */
+  minRadial: number
+  /** Farthest stored vertex from the bar's axis in the YZ plane. */
+  maxRadial: number
+}
+
+/**
+ * Measure the **created model's persisted mesh**, read back through the same
+ * deserialize seam a reload uses (`project.modelAssets` → `deserializeImportedMesh`),
+ * so this asserts the geometry that would be saved, not a fresh builder call.
+ *
+ * A round finished target on a square blank is emitted as exactly two rings of
+ * vertices on the requested radius, with no cap-centre vertices. Grouping the
+ * stored vertices by their axial coordinate therefore yields the two ends and
+ * each ring's vertex count; the min/max distance from the bar's true pivot
+ * covers **every** vertex in one bound. The caller compares that against
+ * `side / 2`; the bbox across a finite-sided ring is a chord, not the diameter,
+ * which is why it cannot stand in for the radius.
+ */
+async function storedSolidRadialSummary(page: Page): Promise<StoredSolidRadialSummary> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { deserializeImportedMesh } = await import('/src/engine/importedMesh.ts') as typeof import('../src/engine/importedMesh')
+    const { isSquareStock } = await import('/src/types/barStock.ts') as typeof import('../src/types/barStock')
+    const { getStockBounds } = await import('/src/types/project.ts') as typeof import('../src/types/project')
+
+    const project = useProjectStore.getState().project
+    const models = project.features.filter((feature) => project.featureDefinitions[feature.definitionId]?.kind === 'stl')
+    if (models.length !== 1) throw new Error(`e2e: expected the one created model, found ${models.length}`)
+    const model = models[0]
+    const assetId = project.featureDefinitions[model.definitionId]?.stl?.meshAssetId
+    if (!assetId) throw new Error('e2e: the created model has no stored mesh asset')
+    const asset = project.modelAssets[assetId]
+    if (!asset) throw new Error(`e2e: model asset ${assetId} is missing from the project`)
+    const mesh = deserializeImportedMesh(asset)
+    if (!mesh) throw new Error(`e2e: model asset ${assetId} does not deserialize`)
+    if (mesh.positions.length === 0) throw new Error('e2e: the stored model mesh has no vertices')
+
+    const stock = project.stock
+    if (!isSquareStock(stock)) throw new Error('e2e: the blank is no longer square')
+    const bounds = getStockBounds(stock)
+    const axis = stock.axis === 'x' ? 'x' : 'y'
+    // The cylinder axis is the blank's true pivot in both across and Z.
+    const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+    const pivotZ = stock.thickness / 2
+
+    const ringSizes = new Map<number, number>()
+    let minRadial = Number.POSITIVE_INFINITY
+    let maxRadial = 0
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const along = axis === 'x' ? mesh.positions[i] : mesh.positions[i + 1]
+      const across = axis === 'x' ? mesh.positions[i + 1] : mesh.positions[i]
+      const up = mesh.positions[i + 2] - pivotZ
+      ringSizes.set(along, (ringSizes.get(along) ?? 0) + 1)
+      const radial = Math.hypot(across - centre, up)
+      minRadial = Math.min(minRadial, radial)
+      maxRadial = Math.max(maxRadial, radial)
+    }
+
+    const ringAlongs = [...ringSizes.keys()].sort((left, right) => left - right)
+    return {
+      vertexCount: mesh.positions.length / 3,
+      ringAlongs,
+      ringVertexCounts: ringAlongs.map((along) => ringSizes.get(along) ?? 0),
+      minRadial,
+      maxRadial,
+    }
+  })
+}
+
 test('awkward stock dimensions keep an exact default and still create', async ({ app, ui }) => {
   test.setTimeout(180_000)
   const { page } = app
@@ -1800,7 +1888,34 @@ test('awkward stock dimensions keep an exact default and still create', async ({
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
   const squareCreated = (await solidSnapshot(page)).modelBounds[0]!
   expect(squareCreated.maxX - squareCreated.minX).toBeCloseTo(23.70006, 3)
-  expect(squareCreated.maxY - squareCreated.minY).toBeCloseTo(20.00006, 3)
+
+  // The finished target physically: every stored vertex must sit on the
+  // requested radius (side / 2) about the blank's own pivot. A finite-sided
+  // ring's bbox across is a chord of the circle, not the diameter, so it
+  // cannot stand in for the radius.
+  const radial = await storedSolidRadialSummary(page)
+  const blankBounds = getProfileBounds(blank.profile)
+  const finishedRadius = blank.thickness / 2
+  expect(radial.vertexCount).toBeGreaterThan(0)
+  // Exactly two rings, equal and non-empty: no cap-centre vertices ride along.
+  expect(radial.ringAlongs).toHaveLength(2)
+  expect(radial.ringVertexCounts).toHaveLength(2)
+  expect(radial.ringVertexCounts[0]).toBeGreaterThan(0)
+  expect(radial.ringVertexCounts[1]).toBe(radial.ringVertexCounts[0])
+  expect(radial.ringVertexCounts[0] + radial.ringVertexCounts[1]).toBe(radial.vertexCount)
+  // Both axial ends are the blank's own absolute along ends.
+  expect(radial.ringAlongs[0]).toBeCloseTo(blankBounds.minX, 5)
+  expect(radial.ringAlongs[1]).toBeCloseTo(blankBounds.maxX, 5)
+  // min/max over the stored vertices covers every one of them.
+  expect(radial.minRadial).toBeGreaterThanOrEqual(finishedRadius - STORED_RADIAL_FLOAT32_SLACK)
+  expect(radial.maxRadial).toBeLessThanOrEqual(finishedRadius + STORED_RADIAL_FLOAT32_SLACK)
+
+  // Creating the round target never rewrites the real square blank.
+  const preserved = await liveBar(page)
+  expect(preserved.shape).toBe('square')
+  expect(preserved.axis).toBe('x')
+  expect(preserved.thickness).toBe(blank.thickness)
+  expect(preserved.length).toBeCloseTo(blankBounds.maxX - blankBounds.minX, 6)
 })
 
 test('a loaded non-rotary file offers no Around solid, and restoring the type brings it back', async ({ app, ui }) => {
