@@ -58,9 +58,10 @@ import { getProject, seedProject } from './helpers'
 import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
 import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
-import { squareStock } from '../src/types/barStock'
+import { barMaxRadius, squareStock } from '../src/types/barStock'
 import type { MachineDefinition } from '../src/engine/gcode/types'
-import type { FeatureDefinition, FeatureInstance, Project, RoundStock } from '../src/types/project'
+import type { MaterialInterval, SimulationGeometryWitness, SimulationObserverSnapshot } from '../src/components/simulation/simulationObserver'
+import type { FeatureDefinition, FeatureInstance, Operation, Project, RoundStock, SquareStock } from '../src/types/project'
 
 /**
  * A complete bundled definition plus a rotary axis about x, as the sibling
@@ -685,4 +686,444 @@ test('square to round generates inside the band and removes material', async ({ 
   await ui.viewMenu.option3d(page, 'Right view').click()
   await expect(canvas).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('square-to-round-3d-end-view.png') })
+})
+
+// ── #1016 C2: the mounted square playback, not its props ────────────
+//
+// The shipped `data-simulation-*` attributes come from the static result, so
+// they cannot prove what playback actually mounts: its starting stock, the
+// geometry a reset/back-seek restores, or that a stock edit disposed the old
+// resource. This test reads the DEV observer (`window.__pcTest`) that samples
+// the viewport's own `squarePlaybackRef` and `PlaybackController`, and compares
+// its ray-cast witnesses with independently generated production material.
+
+const SQUARE_SIDE = 12
+const SQUARE_LENGTH = 30
+
+/**
+ * A production square-to-round job: a 12 mm square blank, the accepted prism
+ * model, the app's own default chuck for that blank, and a rotary machine. The
+ * blank's corner diameter is 12·√2 ≈ 16.97 mm; the default chuck's 50 mm body
+ * clears it, so the square safety guard admits real generation (#1016 C2-S4).
+ */
+function squarePlaybackProject(): Project {
+  const base = newProject('Square playback', 'mm')
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.maxTravelZ = 25
+  base.meta.projectType = 'rotary'
+  const blank = squareStock(SQUARE_SIDE, SQUARE_LENGTH, 'x')
+  base.stock = blank
+  base.tools = [{
+    ...defaultTool('mm', 1), id: 't1', name: 'Ball 2', type: 'ball_endmill',
+    diameter: 2, defaultStepover: 0.8, defaultStepdown: 1,
+  }]
+  // The same closed asymmetric prism the square simulation wiring test uses:
+  // along 3..27, across 4..8 about the blank centre, top 9 / bottom 4. It sits
+  // inside the 12 mm section, so the stock is the only thing setting the
+  // corner envelope.
+  const positions = new Float32Array([
+    3, 4, 4, 27, 4, 4, 27, 8, 4, 3, 8, 4,
+    3, 4, 8, 27, 4, 9, 27, 8, 9, 3, 8, 8,
+  ])
+  const index = new Uint32Array([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7])
+  base.modelAssets = { asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl') }
+  const definition: FeatureDefinition = {
+    id: 'model', kind: 'stl', profile: rectProfile(3, 4, 24, 4), dimensions: [], text: null,
+    stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' }, operation: 'model',
+  }
+  const feature: FeatureInstance = {
+    id: 'model', name: 'Model', definitionId: 'model', transform: IDENTITY_MATRIX, textLayout: null,
+    constraints: [], z_top: 9, z_bottom: 4, authoringFace: 'top', folderId: null, visible: true, locked: false,
+  }
+  base.featureDefinitions = { model: definition }
+  base.features = [feature]
+  base.featureTree = [{ type: 'feature', featureId: 'model' }]
+  base.setups = [...base.setups, { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }]
+  base.activeSetupId = 'around'
+  // The application's own workholding, not a hand-sized block: the probe that
+  // produced 2393 rough moves used this exact default on this blank.
+  base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', blank, 'mm') }]
+  // The two operations are seeded in cut order (rough then finish) with the
+  // accepted square fixture's radial stock: the rough leaves 0.4 mm so the
+  // finish is a real second material state, not a duplicate of the rough. They
+  // are ordinary production operations; the test drives them through the same
+  // rows, simulation panel and playback controls a user does.
+  const rough: Operation = {
+    id: 'op1', name: 'Rotary rough', description: '', kind: 'rotary_rough', pass: 'rough',
+    setupId: 'around', enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'features', featureIds: ['model'] }, toolRef: 't1',
+    stepdown: 1, stepover: 0.8, feed: 1200, plungeFeed: 300, rpm: 18000,
+    pocketPattern: 'offset', pocketAngle: 0,
+    stockToLeaveRadial: 0.4, stockToLeaveAxial: 0,
+    finishWalls: true, finishFloor: true,
+    carveDepth: 1, maxCarveDepth: 1,
+    cutDirection: 'conventional', machiningOrder: 'feature_first',
+    rotaryChuckSupport: 0, rotaryTailSupport: 0,
+  }
+  const finish: Operation = {
+    ...rough, id: 'op2', name: 'Rotary finish', kind: 'rotary_finish', pass: 'finish',
+    stockToLeaveRadial: 0,
+  }
+  base.operations = [rough, finish]
+  return base
+}
+
+async function seedSquarePlaybackProject(page: Page): Promise<Project> {
+  const project = squarePlaybackProject()
+  project.meta.machineDefinitions = [...(project.meta.machineDefinitions ?? []), rotaryMachine()]
+  project.meta.selectedMachineId = 'e2e-rotary'
+  await seedProject(page, JSON.stringify(project))
+  return await getProject(page) as unknown as Project
+}
+
+interface WitnessCell {
+  index: number
+  intervals: MaterialInterval[]
+  gapWidth: number
+}
+
+interface GridShape {
+  cols: number
+  rows: number
+  cellSize: number
+  originX: number
+  originY: number
+}
+
+interface ExpectedSquareState {
+  detailCells: number
+  moveCounts: { rough: number; finish: number }
+  warningCodes: string[]
+  rough: { removedCells: number; materialCells: number; signature: string; grid: GridShape; witness: WitnessCell | null }
+  finished: { removedCells: number; materialCells: number; signature: string; grid: GridShape; witness: WitnessCell | null }
+}
+
+/**
+ * The independent production reference: generate both operations again, build
+ * the same simulation setup input the app builds, and replay them through the
+ * shipped `computeSimulationResult` at the detail the panel is really using.
+ * This is deliberately not the observer's own grid — the observer is the
+ * observed value, this is the expected one.
+ */
+async function expectedSquareState(page: Page, detailCells: number): Promise<ExpectedSquareState> {
+  return page.evaluate(async (detail) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const { buildSimulationSetupInput } = await import('/src/app/simulationSetup.ts') as typeof import('../src/app/simulationSetup')
+    const { computeSimulationResult } = await import('/src/app/useSimulationModel.ts') as typeof import('../src/app/useSimulationModel')
+    const { squareMaterialIntervals } = await import('/src/engine/simulation/squareReplay.ts') as typeof import('../src/engine/simulation/squareReplay')
+    type Grid = import('../src/engine/simulation/types').SimulationGrid
+
+    const project = useProjectStore.getState().project
+    const around = project.setups.find((setup) => setup.kind === 'around')
+    if (!around) throw new Error('e2e: the square playback fixture has no Around setup')
+    const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')
+    const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')
+    if (!rough || !finish) throw new Error('e2e: the square playback fixture is missing a rotary operation')
+
+    const paths = new Map<string, import('../src/engine/toolpaths/types').ToolpathResult>()
+    const warningCodes = new Set<string>()
+    for (const operation of [rough, finish]) {
+      const envelope = computeOperationToolpath(project, operation)
+      if (!envelope) throw new Error(`e2e: ${operation.name} did not generate`)
+      for (const warning of envelope.result.warnings) warningCodes.add(warning.code)
+      paths.set(operation.id, envelope.result)
+    }
+    const setupInput = buildSimulationSetupInput(project, around, paths)
+    if (!setupInput) throw new Error('e2e: the square playback fixture yields no simulation input')
+
+    const roughResult = computeSimulationResult({
+      setupInput,
+      project,
+      simulationMode: 'selected',
+      simulationDetailCells: detail,
+      selectedInSetup: rough,
+      paths,
+    })
+    const finishedResult = computeSimulationResult({
+      setupInput,
+      project,
+      simulationMode: 'visible',
+      simulationDetailCells: detail,
+      selectedInSetup: finish,
+      paths,
+    })
+
+    const intervalsAt = (grid: Grid, index: number): MaterialInterval[] => {
+      const flat = squareMaterialIntervals(grid, index)
+      const pairs: MaterialInterval[] = []
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        if (flat[i + 1] > flat[i]) pairs.push({ lo: flat[i], hi: flat[i + 1] })
+      }
+      return pairs
+    }
+    const witnessAt = (grid: Grid): WitnessCell | null => {
+      let best: WitnessCell | null = null
+      for (const index of grid.squareMaterial?.keys() ?? []) {
+        const intervals = intervalsAt(grid, index)
+        let gapWidth = 0
+        for (let i = 0; i + 1 < intervals.length; i += 1) {
+          gapWidth = Math.max(gapWidth, intervals[i + 1].lo - intervals[i].hi)
+        }
+        if (!best || gapWidth > best.gapWidth) best = { index, intervals, gapWidth }
+      }
+      return best
+    }
+    const signature = (grid: Grid): string => {
+      let hash = 0x811c9dc5
+      const mix = (value: number): void => {
+        hash ^= value
+        hash = Math.imul(hash, 0x01000193)
+      }
+      for (const [index, intervals] of [...(grid.squareMaterial?.entries() ?? [])].sort((a, b) => a[0] - b[0])) {
+        mix(index)
+        for (const value of intervals) mix(Math.round(value * 1e6))
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0')
+    }
+    const summarize = (grid: Grid): ExpectedSquareState['rough'] => ({
+      removedCells: grid.squareMaterial?.size ?? 0,
+      materialCells: grid.squareMaterial?.size ?? 0,
+      signature: signature(grid),
+      grid: {
+        cols: grid.cols,
+        rows: grid.rows,
+        cellSize: grid.cellSize,
+        originX: grid.originX,
+        originY: grid.originY,
+      },
+      witness: witnessAt(grid),
+    })
+
+    return {
+      detailCells: detail,
+      moveCounts: {
+        rough: paths.get(rough.id)?.moves.length ?? 0,
+        finish: paths.get(finish.id)?.moves.length ?? 0,
+      },
+      warningCodes: [...warningCodes],
+      rough: summarize(roughResult.grid),
+      finished: summarize(finishedResult.grid),
+    }
+  }, detailCells)
+}
+
+async function observerSnapshot(page: Page): Promise<SimulationObserverSnapshot> {
+  return page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { getSimulationObserver: () => Promise<SimulationObserverSnapshot> } }
+    return w.__pcTest.getSimulationObserver()
+  })
+}
+
+async function observerWitness(page: Page, index: number): Promise<SimulationGeometryWitness> {
+  const witness = await page.evaluate(async (request) => {
+    const w = window as unknown as { __pcTest: { getSimulationWitness: (r?: { index?: number }) => Promise<SimulationGeometryWitness | null> } }
+    return w.__pcTest.getSimulationWitness(request)
+  }, { index })
+  expect(witness, 'the DEV observer witness is registered').not.toBeNull()
+  return witness!
+}
+
+/** Drive a real range control the way a pointer/keyboard would (0..1000). */
+async function setPlaybackProgress(page: Page, ui: typeof import('./selectors'), value: number): Promise<void> {
+  await ui.simSetup.progressSlider(page).evaluate((element, next) => {
+    const input = element as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, String(next))
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  }, value)
+}
+
+function expectMaterialMatches(actual: MaterialInterval[], expected: MaterialInterval[], label: string): void {
+  expect(actual.length, `${label}: interval count`).toBe(expected.length)
+  for (let i = 0; i < actual.length; i += 1) {
+    expect(Math.abs(actual[i].lo - expected[i].lo), `${label}[${i}].lo`).toBeLessThanOrEqual(5e-3)
+    expect(Math.abs(actual[i].hi - expected[i].hi), `${label}[${i}].hi`).toBeLessThanOrEqual(5e-3)
+  }
+}
+
+test('square playback mounts the prior rough material, follows the finish and disposes on replacement', async ({ app, ui }) => {
+  test.setTimeout(300_000)
+  const { page } = app
+  const seeded = await seedSquarePlaybackProject(page)
+  const blank = seeded.stock as SquareStock
+  expect(blank.shape).toBe('square')
+  expect(blank.thickness).toBe(SQUARE_SIDE)
+  // The physical corner diameter the chuck has to clear, not the nominal side.
+  expect(2 * barMaxRadius(blank)).toBeCloseTo(16.97, 2)
+  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+
+  // The fixture carries the operation order: the finish's prior operation is
+  // the rough, which is what produced the starting material.
+  const authored = await getProject(page) as unknown as Project
+  const around = authored.setups.find((setup) => setup.kind === 'around')!
+  const roughIndex = authored.operations.findIndex((operation) => operation.kind === 'rotary_rough')
+  const finishIndex = authored.operations.findIndex((operation) => operation.kind === 'rotary_finish')
+  expect(roughIndex).toBeGreaterThanOrEqual(0)
+  expect(finishIndex).toBeGreaterThan(roughIndex)
+
+  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await ui.viewMenu.tabSimulation(page).click()
+  await expect(ui.simSetup.picker(page)).toBeVisible()
+  await ui.simSetup.picker(page).selectOption(around.id)
+  await expect(ui.simSetup.playTool(page)).toBeEnabled({ timeout: 60_000 })
+
+  const detailCells = Number(await ui.simSetup.detail(page).inputValue())
+  expect(detailCells).toBeGreaterThan(0)
+  const expected = await expectedSquareState(page, detailCells)
+  expect(expected.moveCounts.rough, 'the production rough is nonempty').toBeGreaterThan(0)
+  expect(expected.moveCounts.finish, 'the production finish is nonempty').toBeGreaterThan(0)
+  expect(expected.warningCodes, 'the production square job generates without warnings').toEqual([])
+  expect(expected.rough.removedCells, 'the rough really removed material').toBeGreaterThan(0)
+  expect(expected.finished.removedCells, 'the finish really removed material').toBeGreaterThan(0)
+  expect(expected.finished.signature, 'rough and rough+finish are different physical states').not.toBe(expected.rough.signature)
+  expect(expected.rough.witness, 'the prior rough leaves a surviving disconnected radial gap').not.toBeNull()
+  expect(expected.rough.witness!.gapWidth).toBeGreaterThan(0)
+  expect(expected.finished.witness, 'the finished material has a cell to witness').not.toBeNull()
+
+  // ── A stock length edit replaces the mounted static resource ──
+  // Done before playback so the shipped "project edit stops playback" rule
+  // cannot be mistaken for a resource failure. The observed object is still the
+  // mounted square material, and the undo is the app's own history step.
+  await expect.poll(async () => (await observerSnapshot(page)).active?.mode ?? null, { timeout: 60_000 }).toBe('static')
+  const beforeResize = await observerSnapshot(page)
+  const originalKey = beforeResize.active!.key
+  const originalBounds = beforeResize.active!.bounds
+  const originalGrid = beforeResize.active!.grid
+  const originalRetired = beforeResize.retired.length
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { originAfterStockEdit, resizeSquareStock } = await import('/src/store/helpers/stockShape.ts') as typeof import('../src/store/helpers/stockShape')
+    const state = useProjectStore.getState()
+    const stock = state.project.stock
+    if (stock.shape !== 'square') throw new Error('e2e: the stock is not a square blank')
+    const resized = resizeSquareStock(stock, { length: 40 })
+    state.setStockAndOrigin(resized, originAfterStockEdit(state.project.origin, stock, resized))
+  })
+  await expect.poll(async () => {
+    const snapshot = await observerSnapshot(page)
+    const key = snapshot.active?.key ?? null
+    // Wait for the rebuilt *material*, not the transient empty acquisition grid.
+    return key !== null && key !== originalKey && (snapshot.active?.stats.triangleCount ?? 0) > 0 ? key : null
+  }, { timeout: 60_000 }).not.toBeNull()
+  const resized = await observerSnapshot(page)
+  expect(resized.active?.mode).toBe('static')
+  expect(resized.active?.key).not.toBe(originalKey)
+  expect(resized.active?.bounds).not.toEqual(originalBounds)
+  // Same long-axis cell count, longer blank: the grid's physical cell size
+  // changed, so the material was rebuilt for the new stock, not re-labelled.
+  expect(resized.active?.grid?.cellSize).not.toBe(originalGrid?.cellSize)
+  expect(resized.retired.length).toBeGreaterThan(originalRetired)
+  const retiredStatic = resized.retired.find((entry) => entry.key === originalKey)
+  expect(retiredStatic?.disposed, 'the old static resource was disposed').toBe(true)
+  expect(retiredStatic?.stats.geometryDisposals ?? 0, 'its geometry buffers were released').toBeGreaterThan(0)
+  expect(resized.lifecycle.some((event) => event.kind === 'dispose' && event.mode === 'static')).toBe(true)
+  const resizedKey = resized.active!.key
+
+  // The app's own undo restores the 30 mm blank on a freshly built resource.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().undo()
+  })
+  await expect.poll(async () => {
+    const snapshot = await observerSnapshot(page)
+    return snapshot.active?.mode === 'static'
+      && snapshot.active.key === originalKey
+      && snapshot.active.stats.triangleCount > 0
+      ? 'restored'
+      : null
+  }, { timeout: 60_000 }).toBe('restored')
+  const undone = await observerSnapshot(page)
+  expect(undone.active?.key).toBe(originalKey)
+  expect(undone.active?.grid?.cellSize).toBe(originalGrid?.cellSize)
+  expect(undone.retired.some((entry) => entry.key === resizedKey && entry.disposed), 'the resized resource was disposed').toBe(true)
+
+  // ── Progress 0 is the prior rough, measured on the mounted resource ──
+  await expect(ui.simSetup.playTool(page)).toBeEnabled({ timeout: 60_000 })
+  await ui.simSetup.playTool(page).click()
+  await expect.poll(async () => (await observerSnapshot(page)).active?.mode ?? null, { timeout: 60_000 }).toBe('playback')
+  await expect.poll(async () => (await observerSnapshot(page)).playbackReady, { timeout: 60_000 }).toBe(true)
+  const start = await observerSnapshot(page)
+  expect(start.registered).toBe(true)
+  expect(start.view).toBe('bar')
+  expect(start.square).toBe(true)
+  expect(start.progress).toBe(0)
+  expect(start.active).not.toBeNull()
+  expect(start.active!.mounted).toBe(true)
+  expect(start.active!.disposed).toBe(false)
+  expect(start.active!.key.length).toBeGreaterThan(0)
+  expect(start.active!.stats.chunkCount).toBeGreaterThan(0)
+  expect(start.active!.stats.triangleCount).toBeGreaterThan(0)
+  expect(start.active!.triangles).toBeGreaterThan(0)
+  expect(start.active!.bounds).not.toBeNull()
+  expect(start.active!.grid?.side).toBe(SQUARE_SIDE)
+  expect(start.controller?.total ?? 0).toBeGreaterThan(0)
+  // The playback's own starting grid is the prior rough, not virgin stock.
+  expect(start.controller?.baseMaterialCells).toBe(expected.rough.materialCells)
+  expect(start.controller?.liveMaterialCells).toBe(expected.rough.materialCells)
+  // The independent grid and the mounted one are the same lattice, so the
+  // witness cell index below addresses the same physical cell in both.
+  expect(start.active?.grid?.cols).toBe(expected.rough.grid.cols)
+  expect(start.active?.grid?.rows).toBe(expected.rough.grid.rows)
+  expect(start.active!.grid!.cellSize).toBeCloseTo(expected.rough.grid.cellSize, 9)
+  expect(start.active!.grid!.originX).toBeCloseTo(expected.rough.grid.originX, 9)
+  expect(start.active!.grid!.originY).toBeCloseTo(expected.rough.grid.originY, 9)
+
+  const startWitness = await observerWitness(page, expected.rough.witness!.index)
+  expect(startWitness.mode).toBe('playback')
+  expect(startWitness.actual.triangles).toBeGreaterThan(0)
+  expect(startWitness.actual.gaps, 'the mounted geometry has a real air gap').toBeGreaterThan(0)
+  expect(startWitness.actual.intervals.length).toBeGreaterThanOrEqual(2)
+  expect(startWitness.virgin.intervals.length, 'virgin stock is one uninterrupted interval').toBe(1)
+  expect(startWitness.matches, 'the mounted geometry agrees with its live grid').toBe(true)
+  expectMaterialMatches(startWitness.actual.intervals, expected.rough.witness!.intervals, 'progress 0 vs prior rough')
+  const startDigest = startWitness.digest
+  expect(startDigest).not.toBeNull()
+
+  // ── Play a burst: the mounted material is live, then seek to the end ──
+  await ui.simSetup.playPause(page).click()
+  await expect.poll(async () => (await observerSnapshot(page)).progress, { timeout: 60_000 }).toBeGreaterThan(0.02)
+  await ui.simSetup.playPause(page).click()
+  await expect.poll(async () => (await observerSnapshot(page)).playing).toBe(false)
+
+  await setPlaybackProgress(page, ui, 1000)
+  await expect.poll(async () => (await observerSnapshot(page)).controller?.finished ?? false, { timeout: 60_000 }).toBe(true)
+  await expect.poll(async () => (await observerSnapshot(page)).progress, { timeout: 60_000 }).toBeGreaterThan(0.999)
+  const ended = await observerSnapshot(page)
+  expect(ended.controller?.liveMaterialCells).toBe(expected.finished.materialCells)
+  expect(ended.controller?.liveGrid?.cols).toBe(expected.finished.grid.cols)
+  expect(ended.controller?.liveGrid?.rows).toBe(expected.finished.grid.rows)
+
+  const endWitness = await observerWitness(page, expected.finished.witness!.index)
+  expect(endWitness.matches).toBe(true)
+  expectMaterialMatches(endWitness.actual.intervals, expected.finished.witness!.intervals, 'end vs rough+finish')
+  expect(endWitness.digest, 'the actual mounted mesh changed between rough and rough+finish').not.toBe(startDigest)
+
+  // ── Stop & reset restores the prior rough, not virgin ──
+  await ui.simSetup.stop(page).click()
+  await expect.poll(async () => (await observerSnapshot(page)).progress, { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => (await observerSnapshot(page)).controller?.fraction ?? -1, { timeout: 30_000 }).toBe(0)
+  const resetWitness = await observerWitness(page, expected.rough.witness!.index)
+  expectMaterialMatches(resetWitness.actual.intervals, expected.rough.witness!.intervals, 'reset vs prior rough')
+  expect(resetWitness.digest).toBe(startDigest)
+
+  // ── Back-seek: mid-path, then back to zero restores the same rough ──
+  await setPlaybackProgress(page, ui, 600)
+  await expect.poll(async () => (await observerSnapshot(page)).controller?.fraction ?? -1, { timeout: 30_000 }).toBeGreaterThan(0.59)
+  await setPlaybackProgress(page, ui, 0)
+  await expect.poll(async () => (await observerSnapshot(page)).controller?.fraction ?? -1, { timeout: 30_000 }).toBe(0)
+  const backSeekWitness = await observerWitness(page, expected.rough.witness!.index)
+  expectMaterialMatches(backSeekWitness.actual.intervals, expected.rough.witness!.intervals, 'back-seek vs prior rough')
+  expect(backSeekWitness.digest).toBe(startDigest)
+
+  // ── Turning playback off tears its resource down; no stale active entry ──
+  await ui.simSetup.playTool(page).click()
+  await expect.poll(async () => (await observerSnapshot(page)).active?.mode ?? null, { timeout: 30_000 }).toBe('static')
+  const afterPlaybackTeardown = await observerSnapshot(page)
+  expect(afterPlaybackTeardown.active?.disposed).toBe(false)
+  const retiredPlayback = afterPlaybackTeardown.retired.find((entry) => entry.mode === 'playback')
+  expect(retiredPlayback?.disposed, 'the playback resource was disposed').toBe(true)
+  expect(retiredPlayback?.stats.geometryDisposals ?? 0, 'its geometry buffers were released').toBeGreaterThan(0)
+  expect(afterPlaybackTeardown.mounted.playback).toBeNull()
+  expect((await observerWitness(page, expected.finished.witness!.index)).mode).toBe('static')
 })

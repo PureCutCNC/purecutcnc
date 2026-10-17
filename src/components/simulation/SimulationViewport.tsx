@@ -40,6 +40,15 @@ import type { Clamp, MachineOrigin, Operation, SetupFace, Stock, ToolType } from
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
+import type {
+  ObserverLifecycleEvent,
+  SimulationObserverLifecycle,
+  SimulationObserverProvider,
+  SimulationObserverRuntime,
+  SquareMeshStats,
+  SquareResourceBounds,
+  SquareResourceSummary,
+} from './simulationObserver'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -213,6 +222,15 @@ function disposeSceneObject(object: THREE.Object3D): void {
   materials.forEach((material) => material.dispose())
 }
 
+/** Copied resource bounds for the DEV observer; plain arrays survive teardown. */
+function squareResourceBounds(bounds: THREE.Box3): SquareResourceBounds | null {
+  if (bounds.isEmpty()) return null
+  return {
+    min: [bounds.min.x, bounds.min.y, bounds.min.z],
+    max: [bounds.max.x, bounds.max.y, bounds.max.z],
+  }
+}
+
 function buildHeightfieldSurfaceObject(
   grid: SimulationGrid,
   material: THREE.Material,
@@ -383,6 +401,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // idempotent disposal and never through `disposeSceneObject`.
   const squareStaticRef = useRef<SquarePreviewSurface | null>(null)
   const squarePlaybackRef = useRef<SquarePreviewSurface | null>(null)
+  // The grids those resources were built from; kept beside the resources so the
+  // DEV witness can compare actual geometry with the authoritative intervals
+  // of the state that produced it. Cleared with the resource.
+  const squareStaticGridRef = useRef<SimulationGrid | null>(null)
+  const squarePlaybackGridRef = useRef<SimulationGrid | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
@@ -408,6 +431,141 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     setPlaybackMaxStep(defaultStep)
   }, [defaultStep])
 
+  // ── DEV-only square-material observer (issue #1016 C2) ─────────────
+  // The shipped data-* attributes are derived from the static result props, so
+  // they cannot prove the mounted playback geometry, its starting stock, a
+  // reset/back-seek, replacement or disposal. This state is only ever written
+  // under `import.meta.env.DEV`; the observer module that reads it is loaded by
+  // a DEV-only dynamic import below, so production ships no observer at all.
+  const devObserverRef = useRef<SimulationObserverLifecycle | null>(null)
+  const devRuntimeRef = useRef<SimulationObserverRuntime>({
+    view: 'flat',
+    square: false,
+    playbackEnabled: false,
+    playbackReady: false,
+    playing: false,
+    progress: 0,
+    isActive,
+  })
+  if (import.meta.env.DEV) {
+    devRuntimeRef.current = {
+      view: simulationView,
+      square: Boolean(simulation?.grid.squareBar)
+        || squareStaticRef.current !== null
+        || squarePlaybackRef.current !== null,
+      playbackEnabled,
+      playbackReady: isPlaybackReady,
+      playing: isPlaying,
+      progress: latestProgressRef.current,
+      isActive,
+    }
+  }
+
+  const devObserverLifecycle = useCallback((): SimulationObserverLifecycle => {
+    let lifecycle = devObserverRef.current
+    if (!lifecycle) {
+      lifecycle = {
+        nextId: 0,
+        nextSequence: 0,
+        ids: new WeakMap(),
+        createdProgress: new WeakMap(),
+        retired: [],
+        events: [],
+        teardown: false,
+      }
+      devObserverRef.current = lifecycle
+    }
+    return lifecycle
+  }, [])
+
+  const devPushLifecycleEvent = useCallback((event: Omit<ObserverLifecycleEvent, 'sequence'>) => {
+    const lifecycle = devObserverLifecycle()
+    lifecycle.nextSequence += 1
+    lifecycle.events.push({ ...event, sequence: lifecycle.nextSequence })
+    if (lifecycle.events.length > 40) {
+      lifecycle.events.splice(0, lifecycle.events.length - 40)
+    }
+  }, [devObserverLifecycle])
+
+  const devNoteCreated = useCallback((
+    mode: 'static' | 'playback',
+    surface: SquarePreviewSurface,
+  ) => {
+    if (!import.meta.env.DEV) return
+    const lifecycle = devObserverLifecycle()
+    lifecycle.nextId += 1
+    lifecycle.ids.set(surface, lifecycle.nextId)
+    lifecycle.createdProgress.set(surface, latestProgressRef.current)
+    devPushLifecycleEvent({
+      kind: 'create',
+      mode,
+      id: lifecycle.nextId,
+      key: surface.key,
+      progress: latestProgressRef.current,
+      disposed: false,
+    })
+  }, [devObserverLifecycle, devPushLifecycleEvent])
+
+  const devNoteDisposed = useCallback((
+    mode: 'static' | 'playback',
+    surface: SquarePreviewSurface,
+    statsBefore: SquareMeshStats,
+  ) => {
+    if (!import.meta.env.DEV) return
+    const lifecycle = devObserverLifecycle()
+    const id = lifecycle.ids.get(surface) ?? 0
+    const summary: SquareResourceSummary = {
+      id,
+      mode,
+      key: surface.key,
+      uuid: surface.object.uuid,
+      mounted: surface.object.parent !== null,
+      disposed: surface.disposed || surface.resource.disposed,
+      triangles: statsBefore.triangleCount,
+      stats: {
+        ...statsBefore,
+        chunkCount: statsBefore.chunkCount,
+        triangleCount: statsBefore.triangleCount,
+        geometriesCreated: surface.resource.stats.geometriesCreated,
+        geometryDisposals: surface.resource.stats.geometryDisposals,
+        materialDisposals: surface.resource.stats.materialDisposals,
+      },
+      bounds: squareResourceBounds(surface.resource.bounds),
+      grid: null,
+      createdAtProgress: lifecycle.createdProgress.get(surface) ?? 0,
+      retiredAtProgress: latestProgressRef.current,
+    }
+    lifecycle.retired.push(summary)
+    if (lifecycle.retired.length > 12) {
+      lifecycle.retired.splice(0, lifecycle.retired.length - 12)
+    }
+    devPushLifecycleEvent({
+      kind: 'dispose',
+      mode,
+      id,
+      key: surface.key,
+      progress: latestProgressRef.current,
+      disposed: summary.disposed,
+    })
+  }, [devObserverLifecycle, devPushLifecycleEvent])
+
+  /** One release path for both square resources: record, dispose, clear. */
+  const releaseSquareSurface = useCallback((mode: 'static' | 'playback') => {
+    const surface = mode === 'static' ? squareStaticRef.current : squarePlaybackRef.current
+    if (!surface) return
+    const statsBefore = { ...surface.resource.stats }
+    surface.dispose()
+    if (mode === 'static') {
+      squareStaticRef.current = null
+      squareStaticGridRef.current = null
+    } else {
+      squarePlaybackRef.current = null
+      squarePlaybackGridRef.current = null
+    }
+    devNoteDisposed(mode, surface, statsBefore)
+    needsRenderRef.current = true
+  }, [devNoteDisposed])
+
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -432,8 +590,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const disposeCurrentMesh = useCallback(() => {
     // The square resource owns its geometry and material; removing its object
     // and calling `dispose()` exactly once is the whole disposal.
-    squareStaticRef.current?.dispose()
-    squareStaticRef.current = null
+    releaseSquareSurface('static')
     if (objectRef.current) {
       objectRef.current.removeFromParent()
       disposeSceneObject(objectRef.current)
@@ -445,7 +602,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       boundaryMeshRef.current = null
     }
     needsRenderRef.current = true
-  }, [])
+  }, [releaseSquareSurface])
 
   const disposeClampMeshes = useCallback(() => {
     for (const mesh of clampObjectsRef.current) {
@@ -698,6 +855,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const surface = createSquarePreviewSurface(grid, currentBar.stock, color)
       parent.add(surface.object)
       squareStaticRef.current = surface
+      squareStaticGridRef.current = grid
+      devNoteCreated('static', surface)
       needsRenderRef.current = true
       if (!hasAutoFramedRef.current) {
         // The resource's envelope already spans the corner rotation about the
@@ -845,8 +1004,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
       // A square playback resource owns its geometry and material: release it
       // through its own idempotent disposal, never `disposeSceneObject`.
-      squarePlaybackRef.current?.dispose()
-      squarePlaybackRef.current = null
+      releaseSquareSurface('playback')
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -903,6 +1061,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         const square = createSquarePreviewSurface(grid, currentBar.stock, color)
         parent.add(square.object)
         squarePlaybackRef.current = square
+        squarePlaybackGridRef.current = grid
+        devNoteCreated('playback', square)
         fitBounds = square.resource.bounds.clone()
       } else {
         const heightfieldTexture = createHeightfieldTexture(grid)
@@ -963,8 +1123,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Covers the deferred-build cancellation and the playback-effect
       // cleanup; the surface's own disposal is idempotent, so a path that also
       // ran the disabled branch cannot double-free.
-      squarePlaybackRef.current?.dispose()
-      squarePlaybackRef.current = null
+      releaseSquareSurface('playback')
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -973,8 +1132,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time.
-  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time. The observer callbacks are stable.
+  }, [playbackEnabled, playbackInput, releaseSquareSurface, resetPlaybackRuntime, stockColor, updateToolMeshPose, devNoteCreated, frameKey])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -1261,6 +1420,51 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       setZoomWindowBox(null)
     }
   }, [zoomWindowActive])
+
+  // DEV-only observer registration (issue #1016 C2). The dynamic import keeps
+  // the whole observer out of production; the provider reads the live refs, so
+  // nothing is copied or reconstructed while playback runs.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    let cancelled = false
+    let provider: SimulationObserverProvider | null = null
+    let stop: (() => void) | null = null
+    void import('./simulationObserver').then((observer) => {
+      if (cancelled) return
+      provider = observer.createSimulationObserverProvider({
+        readStatic: () => squareStaticRef.current
+          ? { surface: squareStaticRef.current, grid: squareStaticGridRef.current }
+          : null,
+        readPlayback: () => squarePlaybackRef.current
+          ? { surface: squarePlaybackRef.current, grid: squarePlaybackGridRef.current }
+          : null,
+        readController: () => playbackControllerRef.current,
+        readRuntime: () => devRuntimeRef.current,
+        readLifecycle: devObserverLifecycle,
+      })
+      observer.registerSimulationObserver(provider)
+      stop = () => observer.unregisterSimulationObserver(provider ?? undefined)
+    }).catch(() => {
+      // The observer is evidence tooling, never a runtime dependency.
+    })
+    return () => {
+      cancelled = true
+      const lifecycle = devObserverLifecycle()
+      lifecycle.teardown = true
+      devPushLifecycleEvent({
+        kind: 'teardown',
+        mode: null,
+        id: null,
+        key: null,
+        progress: latestProgressRef.current,
+        disposed: false,
+      })
+      // The renderer effect above disposes the resources in this same unmount
+      // commit. A microtask lets that disposal land in the final snapshot
+      // whatever order React runs the two cleanups in.
+      queueMicrotask(() => stop?.())
+    }
+  }, [devObserverLifecycle, devPushLifecycleEvent])
 
   const zoomBoxStyle = zoomWindowBox
     ? {
