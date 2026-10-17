@@ -56,6 +56,7 @@ import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { getProject, seedProject } from './helpers'
 import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
+import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
 import { squareStock } from '../src/types/barStock'
 import type { MachineDefinition } from '../src/engine/gcode/types'
@@ -95,7 +96,8 @@ function rotaryModelProject(): Project {
   // The Around face and the rotary add-menu belong to a rotary project
   // (issue #1028).
   base.meta.projectType = 'rotary'
-  base.stock = roundStock(12, 30, 'x')
+  const bar = roundStock(12, 30, 'x')
+  base.stock = bar
   base.tools = [{ ...defaultTool('mm', 1), id: 't1', type: 'ball_endmill', diameter: 2, defaultStepover: 0.8, defaultStepdown: 1 }]
   const positions = new Float32Array([
     3, 4, 4, 27, 4, 4, 27, 8, 4, 3, 8, 4,
@@ -116,7 +118,11 @@ function rotaryModelProject(): Project {
   base.featureTree = [{ type: 'feature', featureId: 'model' }]
   base.setups = [...base.setups, { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }]
   base.activeSetupId = 'around'
-  base.clamps = [{ id: 'chuck', name: 'Chuck', type: 'chuck', x: 0, y: 0, w: 2, h: 12, height: 14, visible: true }]
+  // The app's own workholding for this bar, not an arbitrary 12 mm block: the
+  // cache test turns the same physical box square, and a chuck that did not
+  // clear the square corner envelope would make the accepted S4 output guard
+  // refuse every pass the test claims (issue #1016 C2-U2F).
+  base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', bar, 'mm') }]
   return base
 }
 
@@ -374,21 +380,27 @@ async function generationOutcome(page: Page, operationId: string): Promise<{ mov
 }
 
 /**
- * A Ø25 × 120 mm square blank along X, an Around setup and a rotary machine:
- * the real starting box of a square-to-round job. No model yet — the UI's
- * Square to round creates the finished round target.
+ * A square blank of side 25 mm and length 120 mm along X, an Around setup and a
+ * rotary machine: the real starting box of a square-to-round job. No model yet
+ * — the UI's Square to round creates the finished round target. The clamp is
+ * the app's default round workholding for this blank, which clears the square
+ * corner envelope and sits at the true pivot (`side / 2`); a manual chuck only
+ * as wide as the side would clash with the corners the accepted S4 guard
+ * checks (issue #1016 C2-U2F). Its grip is the existing start-end clearance,
+ * so the generated cut range is shortened by the normal end-support rule.
  */
 async function seedSquareBlankProject(page: Page): Promise<Project> {
   const base = newProject('Rotary square', 'mm')
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
   base.meta.maxTravelZ = 60
   base.meta.projectType = 'rotary'
-  base.stock = squareStock(25, 120, 'x')
+  const blank = squareStock(25, 120, 'x')
+  base.stock = blank
   base.tools = [{
     ...defaultTool('mm', 1), id: 't1', name: 'Flat 6', type: 'flat_endmill',
     diameter: 6, defaultStepover: 3, defaultStepdown: 2,
   }]
-  base.clamps = [{ id: 'chuck', name: 'Chuck', type: 'chuck', x: 0, y: 0, w: 10, h: 25, height: 40, visible: true }]
+  base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', blank, 'mm') }]
   base.setups = [
     ...base.setups,
     { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } },
@@ -411,8 +423,94 @@ async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), 
   await expect(ui.operations.rowByName(page, label)).toBeVisible()
 }
 
-test('turning the bar square invalidates the preview and changes generated geometry', async ({ app, ui }) => {
-  test.setTimeout(180_000)
+/**
+ * What the 3D preview actually drew, read from the panel's own readout. This is
+ * the consumer output of the generation cache — the same path the scene built,
+ * not a path recomputed beside it.
+ */
+interface DrawnToolpathStats {
+  segments: number
+  minZ: number
+  maxZ: number
+}
+
+async function drawnToolpathStats(page: Page): Promise<DrawnToolpathStats | null> {
+  const overlay = page.locator('#workspace-panel-preview3d .viewport-3d')
+  const segments = await overlay.getAttribute('data-toolpath-segments')
+  const minZ = await overlay.getAttribute('data-toolpath-min-z')
+  const maxZ = await overlay.getAttribute('data-toolpath-max-z')
+  if (segments === null || minZ === null || maxZ === null) return null
+  return { segments: Number(segments), minZ: Number(minZ), maxZ: Number(maxZ) }
+}
+
+/**
+ * An **independent expected reference** for that readout: the same production
+ * display mapping, applied to a fresh generation of the live project. It is
+ * deliberately not the observed value — only `data-toolpath-*` is the cached
+ * output the preview consumes — so a cache that keeps a path from an older
+ * stock fails the comparison instead of matching itself.
+ */
+async function expectedDrawnToolpathStats(page: Page): Promise<DrawnToolpathStats> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const { stockSpaceToolpath } = await import('/src/components/viewport3d/toolpathOverlay.ts') as typeof import('../src/components/viewport3d/toolpathOverlay')
+    const project = useProjectStore.getState().project
+    let segments = 0
+    let minZ = Number.POSITIVE_INFINITY
+    let maxZ = Number.NEGATIVE_INFINITY
+    for (const operation of project.operations) {
+      if (!operation.showToolpath) continue
+      const envelope = computeOperationToolpath(project, operation)
+      if (!envelope) continue
+      const drawn = stockSpaceToolpath(envelope.result, project.stock)
+      segments += drawn.moves.length
+      for (const move of drawn.moves) {
+        for (const point of [move.from, move.to]) {
+          minZ = Math.min(minZ, point.z)
+          maxZ = Math.max(maxZ, point.z)
+        }
+      }
+    }
+    return { segments, minZ, maxZ }
+  })
+}
+
+/**
+ * The readout's fields are published rounded to 3 decimals; compare the same
+ * text the panel exposes so the expected reference and the observed value are
+ * formatted identically.
+ */
+function drawnStatsKey(stats: DrawnToolpathStats): string {
+  return `${stats.segments}|${stats.minZ.toFixed(3)}|${stats.maxZ.toFixed(3)}`
+}
+
+/**
+ * Wait until the 3D overlay is drawing a non-empty path that matches a fresh
+ * generation for the live stock, then return that reference. The per-operation
+ * pending badges are the cache-validity signal: the gear's "up to date" text
+ * comes from the queue and can be true while a preview result is still stale.
+ */
+async function expectDrawnMatchesFresh(
+  page: Page,
+  ui: typeof import('./selectors'),
+  label: string,
+): Promise<DrawnToolpathStats> {
+  const expected = await expectedDrawnToolpathStats(page)
+  expect(expected.segments, `${label}: the fresh reference is not empty`).toBeGreaterThan(0)
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      const drawn = await drawnToolpathStats(page)
+      return drawn === null ? 'not drawn' : drawnStatsKey(drawn)
+    }, { timeout: 60_000, message: `${label}: the 3D overlay draws the output generated for the live stock` })
+    .toBe(drawnStatsKey(expected))
+  return expected
+}
+
+test('turning the bar square, and resizing the square, invalidates the preview cache', async ({ app, ui }) => {
+  test.setTimeout(240_000)
   const { page } = app
   const project = await seedRotaryModelProject(page)
   expect((project.stock as RoundStock).shape).toBe('round')
@@ -428,13 +526,18 @@ test('turning the bar square invalidates the preview and changes generated geome
   expect(round.moveCount).toBeGreaterThan(0)
   expect(round.hasAngle).toBe(true)
 
+  // The preview the user is looking at: what the 3D overlay drew, not a fresh
+  // path beside it.
+  await ui.viewMenu.tab3d(page).click()
+  await expect(ui.viewport3d.canvas(page)).toBeVisible()
+  const roundDrawn = await expectDrawnMatchesFresh(page, ui, 'round bar')
+
   // Round → square, same physical box. The generation cache keys on the stock,
-  // so the old round path must not survive as the preview/simulation.
+  // so the old round path must not survive as the preview.
   await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().setStockShape('square')
   })
-  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
 
   const after = await getProject(page) as unknown as Project
   expect((after.stock as { shape?: string }).shape).toBe('square')
@@ -447,6 +550,26 @@ test('turning the bar square invalidates the preview and changes generated geome
     || Math.abs(square.minZ - round.minZ) > 1e-6
     || Math.abs(square.maxZ - round.maxZ) > 1e-6
   expect(changed).toBe(true)
+  const squareDrawn = await expectDrawnMatchesFresh(page, ui, 'square blank')
+  expect(drawnStatsKey(squareDrawn), 'the preview really changed with the stock').not.toBe(drawnStatsKey(roundDrawn))
+
+  // A side resize is a different physical box while the shape stays square: the
+  // stock object changes, so the preview and simulation must be regenerated for
+  // it rather than reused from the first square.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { originAfterStockEdit, resizeSquareStock } = await import('/src/store/helpers/stockShape.ts') as typeof import('../src/store/helpers/stockShape')
+    const state = useProjectStore.getState()
+    const stock = state.project.stock
+    if (stock.shape !== 'square') throw new Error('e2e: the stock is not a square blank')
+    const resized = resizeSquareStock(stock, { side: 20 })
+    state.setStockAndOrigin(resized, originAfterStockEdit(state.project.origin, stock, resized))
+  })
+  const resized = await getProject(page) as unknown as Project
+  expect((resized.stock as { shape?: string; thickness: number }).shape).toBe('square')
+  expect((resized.stock as { thickness: number }).thickness).toBeCloseTo(20, 6)
+  const resizedDrawn = await expectDrawnMatchesFresh(page, ui, 'resized square blank')
+  expect(drawnStatsKey(resizedDrawn), 'the preview really followed the side resize').not.toBe(drawnStatsKey(squareDrawn))
 })
 
 test('a stock axis change on a populated Around setup does not transpose the model', async ({ app, ui }) => {

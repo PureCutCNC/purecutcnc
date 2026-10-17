@@ -31,15 +31,25 @@
  * persists a parameter block.
  *
  * The entry is mounted only while the workspace is on an available, active
- * Around face. Leaving Around unmounts this subtree, so the dialog closes and a
- * half-filled form cannot be resurrected by coming back — the same rule C1's
- * Thread and Flutes entries follow.
+ * Around face — workflow availability, not merely a remembered face: a file
+ * loaded from a non-rotary project can retain a bar and an Around setup, and
+ * `addRotarySolid` would refuse every command there. Leaving Around (or losing
+ * availability) unmounts this subtree, so the dialog closes and a half-filled
+ * form cannot be resurrected by coming back — the same rule C1's Thread and
+ * Flutes entries follow.
+ *
+ * A form is opened against one physical bar, so the whole subtree is keyed on
+ * the context signature (`solidContextSignature`): a units conversion, a
+ * stock shape/axis/size/origin change, a setup change or a project replacement
+ * unmounts it during the same render. The numbers typed for the old bar can
+ * never be paired with the new bounds.
  */
 
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace } from '../../../store/helpers/activeFace'
+import { activeFace, aroundUnavailableReason, activeSetup } from '../../../store/helpers/activeFace'
+import { getStockBounds, type Project } from '../../../types/project'
 import { isBarStock, isSquareStock } from '../../../types/barStock'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
@@ -61,30 +71,58 @@ const ROTARY_SOLID_COMMANDS: readonly RotarySolidCommand[] = [
   { kind: 'square-to-round', command: 'rotary-square-to-round', icon: 'roundrect', labelKey: 'dialogs.rotarySolid.squareToRound.button', shape: 'square' },
 ]
 
+/**
+ * Everything one request is measured against, as one string: the document
+ * session (`projectKey` — incremented by new/load/open), the units, the
+ * workflow type, the bar's shape/axis/size/box, the machine origin and the
+ * active setup. A form's React `key` and its Create-time re-check both use it,
+ * so a request can only ever be built from the context it was opened against.
+ */
+function solidContextSignature(project: Project, projectKey: number): string {
+  const stock = project.stock
+  const bounds = getStockBounds(stock)
+  const setup = activeSetup(project)
+  return [
+    `document:${projectKey}`,
+    `units:${project.meta.units}`,
+    `type:${project.meta.projectType}`,
+    `shape:${stock.shape ?? 'block'}`,
+    `axis:${isBarStock(stock) ? stock.axis : '-'}`,
+    `thickness:${stock.thickness}`,
+    `box:${bounds.minX},${bounds.maxX},${bounds.minY},${bounds.maxY}`,
+    `origin:${project.origin.x},${project.origin.y},${project.origin.z}`,
+    `setup:${setup.id}:${setup.kind ?? 'flat'}:${setup.orientation.axis}:${setup.orientation.angleDeg}`,
+  ].join('|')
+}
+
 interface RotarySolidActionsProps {
   variant?: 'toolbar' | 'rail'
   tooltipSide?: 'bottom' | 'right'
 }
 
-function RotarySolidAroundActions({
-  variant,
-  tooltipSide,
-}: {
+interface RotarySolidAroundActionsProps {
+  isSquare: boolean
+  contextIsCurrent: () => boolean
   variant: 'toolbar' | 'rail'
   tooltipSide: 'bottom' | 'right'
-}) {
+}
+
+function RotarySolidAroundActions({
+  isSquare,
+  contextIsCurrent,
+  variant,
+  tooltipSide,
+}: RotarySolidAroundActionsProps) {
   const { t } = useI18n()
-  const isSquare = useProjectStore((state) => isSquareStock(state.project.stock))
   const [openKind, setOpenKind] = useState<RotarySolidKind | null>(null)
 
   // One entry, not two: the bar shape decides which solid can be cut from it.
   const entry = ROTARY_SOLID_COMMANDS.find((candidate) => (candidate.shape === 'square') === isSquare)
   if (!entry) return null
   const label = t(entry.labelKey)
-  // A form opened for the entry the bar no longer offers (the stock was turned
-  // round↔square while it was open) closes here rather than lingering: the open
-  // kind must still be the offered one, so a stale form can never post the
-  // wrong kind to the store.
+  // Only the entry the bar currently offers may be open. The key on this whole
+  // component already drops the form when the physical context changes; this
+  // keeps the same guarantee if open state ever outlives a turn.
   const open = openKind === entry.kind
 
   const button = variant === 'rail' ? (
@@ -114,7 +152,11 @@ function RotarySolidAroundActions({
 
   const dialog = open && typeof document !== 'undefined'
     ? createPortal(
-        <RotarySolidDialog kind={entry.kind} onClose={() => setOpenKind(null)} />,
+        <RotarySolidDialog
+          kind={entry.kind}
+          contextIsCurrent={contextIsCurrent}
+          onClose={() => setOpenKind(null)}
+        />,
         document.body,
       )
     : null
@@ -132,18 +174,24 @@ function RotarySolidAroundActions({
 }
 
 function RotarySolidActions({ variant = 'toolbar', tooltipSide = 'bottom' }: RotarySolidActionsProps) {
-  const face = useProjectStore((state) => activeFace(state.project))
-  const isBar = useProjectStore((state) => isBarStock(state.project.stock))
-  const isSquare = useProjectStore((state) => isSquareStock(state.project.stock))
+  const project = useProjectStore((state) => state.project)
+  const projectKey = useProjectStore((state) => state.projectKey)
   // Rendering the dialog subtree only on an available Around face lets ordinary
   // unmounting clear a half-filled form, so returning never reopens it. The
-  // `key` extends that to a bar turn: round↔square remounts the group, so a form
-  // opened for the other shape is dropped for good instead of reappearing when
-  // the bar is turned back.
-  if (face !== 'around' || !isBar) return null
+  // `key` extends that to every physical input the form is measured against, so
+  // a units conversion, a bar edit or a project load drops it for good instead
+  // of reappearing with numbers that belong to the old context.
+  if (activeFace(project) !== 'around' || aroundUnavailableReason(project) !== null) return null
+  const contextKey = solidContextSignature(project, projectKey)
+  const contextIsCurrent = () => {
+    const live = useProjectStore.getState()
+    return solidContextSignature(live.project, live.projectKey) === contextKey
+  }
   return (
     <RotarySolidAroundActions
-      key={isSquare ? 'square' : 'round'}
+      key={contextKey}
+      isSquare={isSquareStock(project.stock)}
+      contextIsCurrent={contextIsCurrent}
       variant={variant}
       tooltipSide={tooltipSide}
     />

@@ -37,9 +37,17 @@
  * ceiling is the bar's own across-corners limit: `acrossFlats <= diameter ×
  * cos(π / sides)`. A square-to-round finished diameter defaults to the blank
  * side and cannot exceed it.
+ *
+ * Every default is the exact stock dimension, not a rounded display of it: the
+ * fields are measured against the bar's own bounds, so a default that rounded
+ * past them would open the form already refusing itself. Defaults keep the
+ * shortest round-tripping decimal. The form is keyed on
+ * `solidContextSignature`, so a change to the units, bar, origin, setup
+ * or document unmounts it; `handleCreate` re-checks that signature so a click
+ * cannot land between the store change and React's commit.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useProjectStore } from '../../../store/projectStore'
 import type { RotarySolidInput, RotarySolidRefusal } from '../../../store/helpers/rotarySolids'
 import { getStockBounds, isRoundStock } from '../../../types/project'
@@ -91,9 +99,18 @@ function parseNumber(value: string): number {
   return value.trim() === '' ? Number.NaN : Number(value)
 }
 
-/** A number that round-trips through the field without scientific notation. */
+/**
+ * A default field value that reads back as exactly the same number.
+ *
+ * Four-decimal rounding used to push a valid stock dimension past its own
+ * physical bound — a 20.00006 side defaulted to 20.0001 and a 23.70006 length
+ * to 23.7001, so the form opened refusing its own default. The shortest
+ * round-tripping decimal cannot widen any bound; an exponent is a valid
+ * floating-point value for the number input, so it round-trips too. Only
+ * defaults are formatted here — a typed value is never rounded or clamped.
+ */
 function tidy(value: number): string {
-  return String(Number(value.toFixed(4)))
+  return Number.isFinite(value) ? String(value) : ''
 }
 
 /**
@@ -116,12 +133,19 @@ function alongEndpoints(
 
 interface RotarySolidDialogProps {
   kind: RotarySolidKind
+  /**
+   * True while the live store still matches the physical context this form was
+   * opened for. Checked again on Create, because a click can land in the commit
+   * gap between a store change and the keyed remount that drops the form.
+   */
+  contextIsCurrent: () => boolean
   onClose: () => void
 }
 
-export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
+export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySolidDialogProps) {
   useRestoreCanvasFocus()
   const { t } = useI18n()
+  const dialogRef = useRef<HTMLDivElement>(null)
   const project = useProjectStore((state) => state.project)
   const addRotarySolid = useProjectStore((state) => state.addRotarySolid)
   const units = project.meta.units
@@ -142,14 +166,65 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
   const [toolRef, setToolRef] = useState('')
   const [refusal, setRefusal] = useState<string | null>(null)
 
+  // The form owns the keyboard while it is open: focus starts on the first
+  // field the user fills, Tab/Shift+Tab wrap inside the frame, Escape closes
+  // (unless an open picker claims it), and unmounting returns focus to the
+  // canvas through `useRestoreCanvasFocus` — the C1 dialog's own contract.
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLInputElement>('#rotary-solid-start')?.focus()
+  }, [])
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
+      const node = dialogRef.current
+      if (!node) return
+      if (event.key === 'Escape') {
+        // A Select's own Escape closes the list first: one Escape never
+        // dismisses both the picker and the whole form.
+        if (node.querySelector('.ui-select--open')) return
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = [...node.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
+      )]
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (!first || !last) return
+      const active = document.activeElement
+      const inside = active instanceof HTMLElement && node.contains(active)
+      if (!inside) {
+        event.preventDefault()
+        const target = event.shiftKey ? last : first
+        target.focus()
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    // Capture, like the tool library's trap: a Select closes itself on the
+    // trigger's own keydown, which would otherwise clear the open marker before
+    // a bubble-phase handler could tell that the picker still owned the key.
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onClose])
+
+  /**
+   * A store refusal describes the request as it was when Create was pressed. It
+   * is cleared by the first edit to any field, so a corrected form never shows
+   * a reason for numbers that are no longer on screen.
+   */
+  function changeField(setter: (next: string) => void): (event: ChangeEvent<HTMLInputElement>) => void {
+    return (event) => {
+      setter(event.target.value)
+      setRefusal(null)
+    }
+  }
 
   // The solid is machined by a rotary operation, so the picker offers exactly
   // the cutters that policy admits: flat and ball end mills in this project.
@@ -250,6 +325,14 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
 
   function handleCreate() {
     if (problem !== null) return
+    // The key on the owning subtree drops this form when the physical context
+    // changes, but a click can still land in the commit gap. Re-check the
+    // signature against the live store so Create can never post numbers typed
+    // for a different bar, unit or document.
+    if (!contextIsCurrent()) {
+      onClose()
+      return
+    }
     const result = addRotarySolid(buildInput())
     if (result.ok) {
       onClose()
@@ -272,6 +355,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="dialog dialog--import dialog--rotary rotary-solid-dialog"
         role="dialog"
         aria-modal="true"
@@ -300,7 +384,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                   min="0"
                   step="any"
                   value={start}
-                  onChange={(event) => setStart(event.target.value)}
+                  onChange={changeField(setStart)}
                 />
               </div>
             </div>
@@ -316,7 +400,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                   min="0"
                   step="any"
                   value={length}
-                  onChange={(event) => setLength(event.target.value)}
+                  onChange={changeField(setLength)}
                 />
               </div>
             </div>
@@ -335,7 +419,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                       max={MAX_POLYGON_SIDES}
                       step="1"
                       value={sides}
-                      onChange={(event) => setSides(event.target.value)}
+                      onChange={changeField(setSides)}
                     />
                   </div>
                 </div>
@@ -351,7 +435,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                       min="0"
                       step="any"
                       value={acrossFlats}
-                      onChange={(event) => setAcrossFlats(event.target.value)}
+                      onChange={changeField(setAcrossFlats)}
                     />
                   </div>
                 </div>
@@ -366,7 +450,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                       type="number"
                       step="any"
                       value={rotation}
-                      onChange={(event) => setRotation(event.target.value)}
+                      onChange={changeField(setRotation)}
                     />
                   </div>
                 </div>
@@ -383,7 +467,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                     min="0"
                     step="any"
                     value={finishedDiameter}
-                    onChange={(event) => setFinishedDiameter(event.target.value)}
+                    onChange={changeField(setFinishedDiameter)}
                   />
                 </div>
               </div>
@@ -403,7 +487,7 @@ export function RotarySolidDialog({ kind, onClose }: RotarySolidDialogProps) {
                     // a mixed-unit project never compares raw numbers.
                     detail: `Ø${formatLength(convertLength(tool.diameter, tool.units, units), units)} ${unitLabel}`,
                   }))}
-                  onChange={(value) => setToolRef(value)}
+                  onChange={(value) => { setToolRef(value); setRefusal(null) }}
                 />
               </div>
             </div>
