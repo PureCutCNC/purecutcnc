@@ -45,6 +45,7 @@ import {
 } from './helpers/normalize'
 import { transformProfile } from '../geometry/profile'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import { aroundSketchAuthoringRefused } from './helpers/activeFace'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
@@ -135,6 +136,18 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
     const result = resolveBreak(definition.profile)
     if (!result) {
+      return {}
+    }
+
+    // A split inserts a new row beside the original (issue #1016 C2-U1H). On a
+    // square blank the Around sheet is round-only (`aroundSketchAuthoringRefused`),
+    // so the split half would be a new Around row no other Around creation path
+    // admits: refuse the whole edit here — before `createDerivedFeature`, so the
+    // original profile, definitions, tree, selection and history stay untouched —
+    // judged by the source row's own face so a Top workspace cannot bypass it.
+    // Breaks that stay in place (a closed outline opened, an end segment removed)
+    // create no row and remain allowed.
+    if (result.splitProfile && aroundSketchAuthoringRefused(s.project, feature.authoringFace ?? 'top')) {
       return {}
     }
 

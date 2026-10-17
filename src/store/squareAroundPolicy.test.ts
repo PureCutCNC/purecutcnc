@@ -48,7 +48,11 @@
  *   `completeFeatureDistribution` and `applyNest` (issue #1016 C2-U1G) → the
  *   text, distribution and nest refusals fail;
  * - judging any of those copy guards by `activeFace` instead of the created
- *   row's own face → the "under Top" copy refusals fail.
+ *   row's own face → the "under Top" copy refusals fail;
+ * - removing the split guard in `applyProfileBreak` (issue #1016 C2-U1H) → the
+ *   square Around segment-delete and point-disconnect refusals fail;
+ * - judging that split guard by `activeFace` instead of the source row's own
+ *   face → the "split under Top" refusals fail.
  *
  * Run with: npx tsx src/store/squareAroundPolicy.test.ts
  */
@@ -58,7 +62,7 @@ import { DEFAULT_SETUP_ID, defaultTool, getStockBounds, newProject, rectProfile,
 import { isSquareStock, squareStock } from '../types/barStock'
 import type { Project, SketchFeature, Stock, Tool } from '../types/project'
 import { defaultGearCreationParams } from '../sketch/gearProfile'
-import { projectWithFeatures } from '../test/projectFixtures'
+import { projectWithFeatures, resolvedFeature } from '../test/projectFixtures'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
 import {
@@ -1030,5 +1034,171 @@ const roundNestId = store().applyNest({
 assert.ok(roundNestId, 'a round-bar Around nest is applied')
 assert.equal(store().project.features.length, 3, 'the round-bar nest adds both kept-original Around copies')
 assert.equal(store().history.past.length, pastBefore + 1, 'the round-bar nest is one undo step')
+
+// ── 8. The atomic Around split boundary (U1H) ─────────────────
+//
+// `applyProfileBreak` sits behind `deleteFeatureSegment` and
+// `disconnectFeaturePoint`. It resolves the break into the edited profile plus
+// an optional split half, and a split inserts a derived row that inherits the
+// source's authoring face without passing through `addFeature`. On a square
+// blank that new row would be an Around row, so the whole edit is refused
+// before `createDerivedFeature` — judged by the source row's own face, so a
+// Top workspace cannot bypass it. A break that stays in place (a closed
+// outline opened, an end segment removed) creates no row and remains allowed
+// (issue #1016 C2-U1H).
+
+log('Testing the atomic split refusal on a square blank Around sheet...')
+
+/** An open polyline whose interior break would split it into two rows. */
+function openFaceFeature(id: string, authoringFace: 'top' | 'around'): SketchFeature {
+  const base = feature(id, authoringFace)
+  return {
+    ...base,
+    kind: 'polygon',
+    operation: 'add',
+    sketch: {
+      ...base.sketch,
+      profile: {
+        start: { x: 0, y: 0 },
+        segments: [
+          { type: 'line', to: { x: 10, y: 0 } },
+          { type: 'line', to: { x: 20, y: 0 } },
+          { type: 'line', to: { x: 30, y: 0 } },
+        ],
+        closed: false,
+      },
+    },
+  }
+}
+
+/** The interior break of `openFaceFeature` through each of the two entrypoints. */
+function breakFeature(id: string, entry: 'delete' | 'disconnect'): void {
+  if (entry === 'delete') store().deleteFeatureSegment(id, 1)
+  else store().disconnectFeaturePoint(id, 1)
+}
+
+// Both entrypoints, both axes and both units: a split started on a round bar
+// and completed after the blank became square is refused whole — the original
+// profile, definitions, tree, folders, operations, selection, all pending
+// requests, full history and dirtiness keep their identity.
+for (const spec of SPECS) {
+  for (const entry of ['delete', 'disconnect'] as const) {
+    const label = `${entry} split ${spec.axis}/${spec.units}`
+    store().loadProject(projectWithFeatures(roundProject(spec), [openFaceFeature('a', 'around')]))
+    assert.equal(switchWorkspaceFace('around'), true, `${label}: the round bar enters Around`)
+    store().setStockShape('square')
+    assert.ok(isSquareStock(store().project.stock), `${label}: the blank is now square`)
+    before = fullSnapshot()
+    breakFeature('a', entry)
+    assertRefused(before, label)
+  }
+}
+
+// A split armed directly on the square blank's Around sheet is refused the
+// same way, with a pending edit request present whose identity must survive.
+store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [openFaceFeature('a', 'around')]))
+assert.equal(switchWorkspaceFace('around'), true, 'the square blank enters Around')
+store().startMoveFeature('a')
+assert.ok(store().pendingMove, 'a pending move is armed')
+before = fullSnapshot()
+store().deleteFeatureSegment('a', 1)
+assertRefused(before, 'live square split')
+store().cancelPendingMove()
+
+// The guard reads the source row's own face, not the workspace face: the same
+// Around source stays refused after `setActiveSetup` moves the workspace Top.
+for (const entry of ['delete', 'disconnect'] as const) {
+  const label = `${entry} split under Top`
+  store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [openFaceFeature('a', 'around')]))
+  assert.equal(switchWorkspaceFace('around'), true, `${label}: the round bar enters Around`)
+  store().setStockShape('square')
+  store().setActiveSetup(DEFAULT_SETUP_ID)
+  assert.equal(activeFace(store().project), 'top', `${label}: the workspace is now Top`)
+  before = fullSnapshot()
+  breakFeature('a', entry)
+  assertRefused(before, label)
+}
+
+// A refusal inside an open history transaction keeps `transactionStart` too.
+store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [openFaceFeature('a', 'around')]))
+assert.equal(switchWorkspaceFace('around'), true, 'the square blank enters Around for the transaction')
+store().beginHistoryTransaction()
+assert.ok(store().history.transactionStart, 'a history transaction is open')
+before = fullSnapshot()
+store().deleteFeatureSegment('a', 1)
+assertRefused(before, 'split inside a history transaction')
+store().cancelHistoryTransaction()
+
+// And it leaves a non-empty redo future untouched as well.
+store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [
+  openFaceFeature('a', 'around'),
+  rectFeature('b', 50, 'around'),
+]))
+assert.equal(switchWorkspaceFace('around'), true, 'the square blank enters Around with a redo future')
+store().deleteFeatureSegment('b', 1)
+store().undo()
+assert.ok(store().history.future.length > 0, 'undo leaves a redo future')
+before = fullSnapshot()
+store().deleteFeatureSegment('a', 1)
+assertRefused(before, 'split with a redo future')
+
+log('Testing the allowed in-place breaks and the Top/Round splits...')
+
+// Square Around: opening a closed outline is an in-place edit, so it creates no
+// row and stays allowed through both entrypoints.
+for (const entry of ['delete', 'disconnect'] as const) {
+  const label = `${entry} open closed Around outline`
+  store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [rectFeature('a', 20, 'around')]))
+  assert.equal(switchWorkspaceFace('around'), true, `${label}: the square blank enters Around`)
+  pastBefore = store().history.past.length
+  if (entry === 'delete') store().deleteFeatureSegment('a', 1)
+  else store().disconnectFeaturePoint('a', 1)
+  assert.equal(store().project.features.length, 1, `${label}: opening a closed outline adds no row`)
+  assert.equal(resolvedFeature(store().project, 'a').sketch.profile.closed, false, `${label}: the outline is open`)
+  assert.equal(store().project.features[0]?.authoringFace, 'around', `${label}: and stays on Around`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: it is one undo step`)
+  store().undo()
+  assert.equal(store().project.features.length, 1, `${label}: undo restores the single row`)
+}
+
+// Removing an end segment of an open outline also stays in place.
+for (const segmentIndex of [0, 2]) {
+  const label = `end segment ${segmentIndex}`
+  store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [openFaceFeature('a', 'around')]))
+  assert.equal(switchWorkspaceFace('around'), true, `${label}: the square blank enters Around`)
+  pastBefore = store().history.past.length
+  store().deleteFeatureSegment('a', segmentIndex)
+  assert.equal(store().project.features.length, 1, `${label}: an end segment adds no row`)
+  assert.equal(resolvedFeature(store().project, 'a').sketch.profile.segments.length, 2, `${label}: the outline shortens`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: it is one undo step`)
+  store().undo()
+}
+
+// Square Top and Round Around splits still create the derived row: two rows on
+// the source face, in exactly one undo/redo step.
+for (const context of ['square-top', 'round-around'] as const) {
+  for (const entry of ['delete', 'disconnect'] as const) {
+    const label = `${entry} ${context} split`
+    const face = context === 'square-top' ? 'top' : 'around'
+    if (context === 'square-top') {
+      store().loadProject(projectWithFeatures(squareProject(SPECS[0]), [openFaceFeature('a', 'top')]))
+      assert.equal(activeFace(store().project), 'top', `${label}: the square blank starts on Top`)
+    } else {
+      store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [openFaceFeature('a', 'around')]))
+      assert.equal(switchWorkspaceFace('around'), true, `${label}: the round bar enters Around`)
+    }
+    pastBefore = store().history.past.length
+    breakFeature('a', entry)
+    assert.equal(store().project.features.length, 2, `${label}: the split creates the second row`)
+    for (const row of store().project.features) {
+      assert.equal(row.authoringFace, face, `${label}: ${row.id} keeps the source face`)
+    }
+    assert.equal(store().history.past.length, pastBefore + 1, `${label}: the split is one undo step`)
+    store().undo()
+    assert.equal(store().project.features.length, 1, `${label}: one undo removes the second row`)
+    store().redo()
+    assert.equal(store().project.features.length, 2, `${label}: redo restores both rows`)
+  }
+}
 
 log('squareAroundPolicy: all assertions passed.')
