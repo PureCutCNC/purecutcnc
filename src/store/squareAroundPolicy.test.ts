@@ -47,6 +47,10 @@
  * - removing the resulting-row face checks in `expandTextFeature`,
  *   `completeFeatureDistribution` and `applyNest` (issue #1016 C2-U1G) → the
  *   text, distribution and nest refusals fail;
+ * - substituting the nest input's part ids — or the selected rows — for the
+ *   actual copied rows in `applyNest` (issue #1016 C2-U1I) → the asymmetric
+ *   mixed-face nests fail: the Top-copy nest is wrongly refused (input ids),
+ *   and the unselected Around copy is wrongly admitted (selection ids);
  * - judging any of those copy guards by `activeFace` instead of the created
  *   row's own face → the "under Top" copy refusals fail;
  * - removing the split guard in `applyProfileBreak` (issue #1016 C2-U1H) → the
@@ -63,6 +67,7 @@ import { isSquareStock, squareStock } from '../types/barStock'
 import type { Project, SketchFeature, Stock, Tool } from '../types/project'
 import { defaultGearCreationParams } from '../sketch/gearProfile'
 import { projectWithFeatures, resolvedFeature } from '../test/projectFixtures'
+import { applyNestToProject } from './helpers/nestApply'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
 import {
@@ -860,6 +865,152 @@ const containedNestId = store().applyNest({
 assert.equal(containedNestId, null, 'the nest with an Around copy is rejected entirely')
 assertRefused(before, 'contained Around nest')
 store().cancelNest()
+
+// 6f. The guard must judge the rows the nest actually copies, not the ids its
+// input carries or the rows that happen to be selected (issue #1016 C2-U1I).
+// A nest input names every part's sources explicitly, so a moved Around source
+// appears there even though no Around row is created; and a Top-only selection
+// can still receive an Around copy from a part the user never selected. The
+// fixtures are asymmetric — one part moves, the other copies — so neither the
+// input ids nor the selection can stand in for `result.copyIds`.
+function nestPlacementFor(partId: string, copyIndex: number, x: number) {
+  return { partId, copyIndex, rotation: 0, translation: { x, y: 0 } }
+}
+
+/** A square blank carrying a retained Around row and a Top row. */
+function asymmetricSquareProject(spec: Spec): Project {
+  return projectWithFeatures(roundProject(spec), [
+    rectFeature('around-src', 20, 'around'),
+    rectFeature('top-src', 60, 'top'),
+  ])
+}
+
+const ASYMMETRIC_SPECS = [SPECS[0], SPECS[3]]
+
+log('Testing the asymmetric mixed-face nest copies...')
+
+/** Load the mixed-face blank and prove the Around row survived the conversion. */
+function loadAsymmetric(spec: Spec, label: string): void {
+  store().loadProject(asymmetricSquareProject(spec))
+  store().setStockShape('square')
+  assert.ok(isSquareStock(store().project.stock), `${label}: the blank is square`)
+  assert.equal(
+    store().project.features.filter((row) => row.authoringFace === 'around').length,
+    1,
+    `${label}: the Around source is retained`,
+  )
+}
+
+for (const spec of ASYMMETRIC_SPECS) {
+  const label = `asymmetric Top-copy nest ${spec.axis}/${spec.units}`
+  loadAsymmetric(spec, label)
+  store().selectFeatures(['top-src'])
+  store().startNest()
+  assert.deepEqual(store().selection.selectedFeatureIds, ['top-src'], `${label}: only the Top row is selected`)
+  assert.deepEqual(store().pendingNest?.sourceIds, ['top-src'], `${label}: the nest is armed on that selection`)
+
+  const projectBefore = structuredClone(store().project)
+  const pastBeforeNest = store().history.past.length
+  // Part 0 (Around) moves in place through its copyIndex 0, creating no row.
+  // Part 1 (Top) moves through its copyIndex 0 and is copied at copyIndex 1, so
+  // the only actual copy is a Top row. The part ids are distinct on purpose.
+  const nested = store().applyNest({
+    parts: [
+      { featureIds: ['around-src'], quantity: 1 },
+      { featureIds: ['top-src'], quantity: 2 },
+    ],
+    placements: [
+      nestPlacementFor('0', 0, 100),
+      nestPlacementFor('1', 0, 0),
+      nestPlacementFor('1', 1, 150),
+    ],
+    settings: { rotations: [0], minimumGap: 2, keepOriginals: false },
+  })
+  assert.ok(nested, `${label}: the nest whose only copy is Top is applied`)
+  assert.equal(store().history.past.length, pastBeforeNest + 1, `${label}: it is one undo step`)
+
+  const applied = store().project
+  assert.equal(applied.features.length, 3, `${label}: two sources plus exactly one copy`)
+  assert.equal(
+    applied.features.filter((row) => row.authoringFace === 'around').length,
+    1,
+    `${label}: the Around source only moved, no Around row was created`,
+  )
+  const record = applied.nests?.[0] ?? null
+  assert.ok(record, `${label}: the nest is recorded`)
+  assert.equal(record.copyIds.length, 1, `${label}: exactly one row is copied`)
+  const copy = applied.features.find((row) => row.id === record.copyIds[0])
+  assert.ok(copy, `${label}: the copy exists`)
+  assert.equal(copy.authoringFace, 'top', `${label}: the copied row is the Top source's`)
+  assert.deepEqual(copy.transform, { a: 1, b: 0, c: 0, d: 1, e: 150, f: 0 }, `${label}: the copy sits at its own part's placement`)
+  assert.deepEqual(
+    record.movedOriginals.map((entry) => entry.featureId).sort(),
+    ['around-src', 'top-src'],
+    `${label}: both sources moved in place, neither became a copy`,
+  )
+  assert.deepEqual(
+    applied.features.find((row) => row.id === 'around-src')?.transform,
+    { a: 1, b: 0, c: 0, d: 1, e: 100, f: 0 },
+    `${label}: the Around part moved by its copyIndex 0 placement`,
+  )
+  assert.deepEqual(
+    applied.features.find((row) => row.id === 'top-src')?.transform,
+    { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    `${label}: the Top part moved by its copyIndex 0 placement`,
+  )
+
+  const appliedState = structuredClone(applied)
+  store().undo()
+  assert.deepEqual(store().project, projectBefore, `${label}: one undo restores the whole project and both source transforms`)
+  assert.equal(store().project.nests?.length ?? 0, 0, `${label}: undo drops the nest record`)
+  store().redo()
+  assert.deepEqual(store().project, appliedState, `${label}: redo restores both source transforms and the Top copy`)
+}
+
+for (const spec of ASYMMETRIC_SPECS) {
+  const label = `asymmetric Around-copy nest ${spec.axis}/${spec.units}`
+  loadAsymmetric(spec, label)
+  store().selectFeatures(['top-src'])
+  store().startNest()
+  assert.deepEqual(store().selection.selectedFeatureIds, ['top-src'], `${label}: only the Top row is selected`)
+  assert.deepEqual(store().pendingNest?.sourceIds, ['top-src'], `${label}: the nest is armed on that selection`)
+
+  // Part 0 (Top) moves in place; part 1 (Around) moves and is copied, so the
+  // one actual copy is an Around row the selection never names.
+  const input = {
+    parts: [
+      { featureIds: ['top-src'], quantity: 1 },
+      { featureIds: ['around-src'], quantity: 2 },
+    ],
+    placements: [
+      nestPlacementFor('0', 0, 0),
+      nestPlacementFor('1', 0, 0),
+      nestPlacementFor('1', 1, 150),
+    ],
+    settings: { rotations: [0], minimumGap: 2, keepOriginals: false },
+  }
+
+  // The pure helper proves the input is realizable: both explicit parts resolve
+  // and it would create exactly the unselected Around copy — so a `null` from
+  // the store is the guard's refusal, not an early missing-part rejection.
+  const preview = applyNestToProject(store().project, input)
+  assert.ok(preview, `${label}: the input resolves both parts`)
+  assert.equal(preview.copyIds.length, 1, `${label}: it would create exactly one copy`)
+  const previewCopy = preview.project.features.find((row) => row.id === preview.copyIds[0])
+  assert.ok(previewCopy, `${label}: the preview copy exists`)
+  assert.equal(previewCopy.authoringFace, 'around', `${label}: and it is the unselected Around row`)
+
+  const projectBefore = structuredClone(store().project)
+  before = fullSnapshot()
+  const refused = store().applyNest(input)
+  assert.equal(refused, null, `${label}: the whole nest is refused for its unselected Around copy`)
+  assertRefused(before, label)
+  assert.equal(store().project.features.length, 2, `${label}: the Top source did not move and no copy appeared`)
+  assert.equal(store().project.featureFolders.length, projectBefore.featureFolders.length, `${label}: no nest folder was added`)
+  assert.equal(store().project.nests?.length ?? 0, 0, `${label}: no partial nest record`)
+  assert.deepEqual(store().selection.selectedFeatureIds, ['top-src'], `${label}: the Top selection is untouched`)
+  assert.deepEqual(store().pendingNest?.sourceIds, ['top-src'], `${label}: the armed nest is still pending`)
+}
 
 // ── 7. The copy boundaries' allowed controls ──────────────────
 
