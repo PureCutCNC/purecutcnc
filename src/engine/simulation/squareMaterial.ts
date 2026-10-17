@@ -96,13 +96,19 @@ import type { DirtyRegion, SimulationGrid } from './types'
 const TWO_PI = Math.PI * 2
 
 /**
- * Hard upper bound on the golden-section extrema and the bisected
- * feasible-window crossings. A bracket shrinks by the golden ratio (~0.618) per
- * step, so 96 reaches Float64 resolution long before the budget runs out. The
- * loops stop as soon as the bracket is below `searchTolerance` and, for a
- * crossing, the stored radial endpoint has stopped moving (see
- * `storedEndpointsAgree`); this stays as a safety net so a pathological
- * bracket can never loop without end.
+ * Iterations for the golden-section extrema and the bisected feasible-window
+ * crossings. Both loops run exactly this many steps and never stop early.
+ *
+ * The count is fixed because the stored interval topology is decided on the
+ * unrounded doubles: `compactIntervals` drops a band narrower than one Float32
+ * ulp. A tolerance stop leaves the bracket wherever the tolerance landed, and a
+ * tangential crossing — where the endpoint moves like `√(s − s*)` — can then
+ * straddle that threshold. The two-cut regression is exactly this: fixed 96
+ * stores no surviving interval (topZ 0), while an early stop leaves a one-cell
+ * `[4.236314232713846, 4.236314737894846]` spike. A bracket shrinks by the
+ * golden ratio (~0.618) per step, so 96 drives it ~30 decades below one Float64
+ * ulp, far past anything the stored Float32 values can resolve; the loop is
+ * defined by its full count, not by a value it may stop at.
  */
 const CONVERGE_ITERATIONS = 96
 
@@ -112,46 +118,12 @@ const AXIAL_EPSILON = 1e-12
 /** Relative tolerance of one Float32 ulp, for "did the stored value move". */
 const ULP = 2 ** -23
 
-/** Test-only iteration accounting for the fixed-count searches. */
-export interface SearchIterationStats {
-  maximizeCalls: number
-  maximizeIterations: number
-  bisectCalls: number
-  bisectIterations: number
-  /**
-   * Bisected feasible-window endpoints that came back on the infeasible side.
-   * The search contract is the last known non-negative point, so this must stay
-   * zero; it is recorded here because a sign-side regression can still land
-   * within the Float32 endpoint tolerance and be invisible in the stored
-   * material.
-   */
-  crossingsOnNegativeSide: number
-  /**
-   * Stored endpoint values compared by `storedEndpointsAgree`, and the number
-   * of times that comparison ran. A crossing search only reaches the comparison
-   * once its parameter bracket has converged, so these count the Float32 work
-   * that actually resolves the stored boundary. The convergence test uses them
-   * to prove each configured endpoint list is consulted: an endpoint silently
-   * dropped from a list lowers `endpointChecks` without changing any iteration
-   * count, which is exactly the C2-P1F manager mutation.
-   */
-  endpointChecks: number
-  endpointCalls: number
-}
-
 /**
- * Test-only control over the fixed-count searches (issue #1016 C2-P1).
+ * Test-only control over the across-cell loop (issue #1016 C2-P3).
  *
- * Production callers never pass this: the early exit is the default. The
- * convergence test supplies it to replay the pre-P1 fixed-96 search through
- * exactly the same code, so any difference in stored material comes from the
- * tolerance and not from a re-implementation.
+ * Production callers never pass this: the angle window is the default.
  */
 export interface SquareSearchOptions {
-  /** Run the legacy fixed-count search with no early exit. */
-  legacyFixedSearch?: boolean
-  /** Accumulate the iterations each search actually took. */
-  searchIterations?: SearchIterationStats
   /**
    * Visit every across cell for every move instead of the angle window the
    * tool can reach (issue #1016 C2-P3). The window test replays a move set
@@ -179,11 +151,6 @@ interface LoopControl {
   /** Search every across cell, whatever the angle window says. */
   fullLoop: boolean
   tested?: TestedCellStats
-}
-
-interface SearchControl {
-  legacy: boolean
-  stats?: SearchIterationStats
 }
 
 export interface SquareApplyResult {
@@ -545,96 +512,30 @@ function acrossWindow(
 }
 
 /**
- * The move-parameter bracket width below which another golden-section step
- * cannot change the stored result. Kept next to its only use so the derivation
- * stays with the code.
- *
- * The parameter is the fraction along the move, so the bracket's own scale is
- * its bounds, about one; one Float32 ulp of the parameter is `ULP`. A concave
- * maximum is value-stable at this width: the returned value is the maximum of
- * the sampled points, and near an interior maximum the value error is
- * quadratic in the argument error, so the bracket already resolves it far past
- * one ulp. A maximum that lands on a domain endpoint is returned exactly. Both
- * loops keep `CONVERGE_ITERATIONS` as the hard ceiling; the old fixed 96 drove
- * the bracket to ~1e-20, twenty orders below anything the grid can hold.
- */
-const SEARCH_TOLERANCE_ULPS = ULP / 64
-
-function searchTolerance(lo: number, hi: number): number {
-  return SEARCH_TOLERANCE_ULPS * Math.max(1, Math.abs(lo), Math.abs(hi))
-}
-
-/**
- * Whether every stored radial quantity a crossing determines has stopped
- * moving across its bracket in the space the grid actually stores.
- *
- * The parameter tolerance alone is not enough for a *crossing*. Its stored
- * endpoint is a closed-form function of `s` (a tip plane, a ball centre, a
- * cylinder reach) whose slope can be arbitrarily large where the feasibility
- * margin touches zero: at a tangential boundary the reach changes like
- * `√(s − s*)`, so a bracket a thousand times below one parameter ulp can still
- * move the endpoint by a whole Float32 ulp. That is not academic: side 12, a
- * cell at along 0.5 whose ray is 0.6 rad from the tool, a flat 2.4 cutter and a
- * (0, 4.6) → (2.9000000572999998, 0) move leave a `[0, 1.1921845e-7]` sliver
- * under the parameter-only stop (the endpoint moved just across the
- * compaction threshold) where fixed-96 stores one interval.
- *
- * So the crossing also has to settle the endpoint at Float32 resolution, which
- * is what `Math.fround` equality across the bracket means: `a` is the
- * infeasible side and `b` the non-negative side, so the exact crossing value
- * lies between them, and if both ends round to the same Float32 value the whole
- * bracket stores one endpoint — well inside one Float32 ulp. Each closure is a
- * quantity the band will store (a flat floor, a shank's inner wall or reach, a
- * ball's lower or upper ray intersection), so this is the stored material, not
- * a proxy scaled from the parameter. Floating point floors the achievable
- * width, so `CONVERGE_ITERATIONS` remains the hard ceiling.
- */
-type EndpointValue = (s: number) => number
-
-function storedEndpointsAgree(
-  endpoints: readonly EndpointValue[],
-  a: number,
-  b: number,
-): boolean {
-  for (const endpoint of endpoints) {
-    if (Math.fround(endpoint(a)) !== Math.fround(endpoint(b))) return false
-  }
-  return true
-}
-
-/**
  * The converged maximum of a concave function on `[lo, hi]`, by golden section
  * with the endpoints also compared. Concavity is what makes the sweep exact: a
  * uniform scan can step over a narrow window, a converged maximum cannot.
- *
- * The loop stops once the bracket is below `searchTolerance`, because another
- * step cannot move the stored value; `CONVERGE_ITERATIONS` remains the hard
- * upper bound.
  */
 function maximizeConcave(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
-  search: SearchControl,
   // Callers that already have the endpoint values (the feasible-domain search
   // does) pass them in, so the maximum evaluates each endpoint once instead of
-  // once for the sign check and again for the final comparison.
+  // once for the sign check and again for the final comparison. The values are
+  // the same ones `evaluate(lo)` and `evaluate(hi)` would return, so this is
+  // arithmetic-neutral.
   loValue: number = evaluate(lo),
   hiValue: number = evaluate(hi),
 ): { s: number; value: number } {
   const invPhi = (Math.sqrt(5) - 1) / 2
-  const tolerance = searchTolerance(lo, hi)
-  const earlyExit = !search.legacy
   let a = lo
   let b = hi
   let c = b - (b - a) * invPhi
   let d = a + (b - a) * invPhi
   let fc = evaluate(c)
   let fd = evaluate(d)
-  let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
-    if (earlyExit && b - a <= tolerance) break
-    iterations += 1
     if (fc > fd) {
       b = d
       d = c
@@ -648,10 +549,6 @@ function maximizeConcave(
       d = a + (b - a) * invPhi
       fd = evaluate(d)
     }
-  }
-  if (search.stats) {
-    search.stats.maximizeCalls += 1
-    search.stats.maximizeIterations += iterations
   }
   const mid = (a + b) / 2
   let bestS = mid
@@ -672,54 +569,19 @@ function minimizeConvex(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
-  search: SearchControl,
 ): { s: number; value: number } {
-  const peak = maximizeConcave((s) => -evaluate(s), lo, hi, search)
+  const peak = maximizeConcave((s) => -evaluate(s), lo, hi)
   return { s: peak.s, value: -peak.value }
 }
 
-/**
- * The non-negative side of a sign change of `evaluate` on `[negative, positive]`.
- * The bracket is halved until it is below `searchTolerance` **and** the stored
- * radial quantities the crossing determines have stopped moving
- * (`storedEndpointsAgree`), then the last known non-negative point is returned.
- * The value check is the part that guarantees a Float32-stable endpoint: the
- * parameter tolerance alone is not enough where the endpoint's slope is large
- * (see `storedEndpointsAgree`).
- */
-function bisectCrossing(
-  evaluate: (s: number) => number,
-  negative: number,
-  positive: number,
-  search: SearchControl,
-  endpoints: readonly EndpointValue[],
-): number {
-  const tolerance = searchTolerance(negative, positive)
-  const earlyExit = !search.legacy
+/** The non-negative side of a sign change of `evaluate` on `[negative, positive]`. */
+function bisectCrossing(evaluate: (s: number) => number, negative: number, positive: number): number {
   let a = negative
   let b = positive
-  let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
-    if (earlyExit && Math.abs(b - a) <= tolerance) {
-      if (search.stats) {
-        search.stats.endpointCalls += 1
-        search.stats.endpointChecks += endpoints.length
-      }
-      if (storedEndpointsAgree(endpoints, a, b)) break
-    }
     const mid = (a + b) / 2
-    // A tangential endpoint changes like √(s − s*), so the value check can sit
-    // just above tolerance when the bracket is already two adjacent doubles.
-    // No further halving can move either end, and legacy's 96 iterations would
-    // return this same `b`, so stop here rather than spin to the hard cap.
-    if (earlyExit && (mid === a || mid === b)) break
-    iterations += 1
     if (evaluate(mid) >= 0) b = mid
     else a = mid
-  }
-  if (search.stats) {
-    search.stats.bisectCalls += 1
-    search.stats.bisectIterations += iterations
   }
   return b
 }
@@ -730,32 +592,21 @@ function bisectCrossing(
  * interval, so the maximum is converged and each side's crossing is bisected —
  * a narrow feasible window between any two scan nodes is still found exactly.
  * The endpoint values are computed once here and passed into the maximum, so
- * the feasible-domain search never evaluates the same endpoint twice, and the
- * `endpoints` closures let each crossing settle in stored-value space as well
- * as in the parameter (see `bisectCrossing`).
+ * the feasible-domain search never evaluates the same endpoint twice; the
+ * values are identical to the ones the maximum would evaluate itself.
  */
 function concaveDomain(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
-  search: SearchControl,
-  endpoints: readonly EndpointValue[],
 ): [number, number] | null {
   if (!(hi > lo)) return evaluate(lo) >= 0 ? [lo, hi] : null
   const loValue = evaluate(lo)
   const hiValue = evaluate(hi)
-  const peak = maximizeConcave(evaluate, lo, hi, search, loValue, hiValue)
+  const peak = maximizeConcave(evaluate, lo, hi, loValue, hiValue)
   if (!(peak.value >= 0)) return null
-  const left = loValue >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s, search, endpoints)
-  const right = hiValue >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s, search, endpoints)
-  if (search.stats) {
-    // Test-only invariant: a crossing must be the non-negative side. The
-    // stored endpoint is resolved to Float32, so an off-by-one-side return can
-    // still be inside the tolerance and invisible in the stored values; this
-    // check is what catches it.
-    if (!(evaluate(left) >= 0)) search.stats.crossingsOnNegativeSide += 1
-    if (!(evaluate(right) >= 0)) search.stats.crossingsOnNegativeSide += 1
-  }
+  const left = loValue >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s)
+  const right = hiValue >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s)
   return [left, right]
 }
 
@@ -805,7 +656,6 @@ function constantAngleBands(
   ball: boolean,
   loS: number,
   hiS: number,
-  search: SearchControl,
 ): Array<[number, number]> | null {
   const theta = thetaAt(geometry, cellAcross, loS)
   const cos = Math.cos(theta)
@@ -836,10 +686,10 @@ function constantAngleBands(
     // floor.
     const domain = axial
       ? [loS, hiS] as [number, number]
-      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search, [floorAt, reachAt])
+      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS)
     if (!domain) return null
     const low = Math.min(floorAt(domain[0]), floorAt(domain[1]))
-    const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1], search).value
+    const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1]).value
     return high > low ? [[low, high]] : null
   }
 
@@ -861,17 +711,11 @@ function constantAngleBands(
     return centre * cos + Math.sqrt(Math.max(0, discFrom(centre, dxAt(s))))
   }
 
-  // The sphere's two ray intersections are its stored low and high, and at a
-  // discriminant crossing they coincide at `centre·cos`. The non-negative-side
-  // endpoint the bisection returns sits just inside the domain, and the sign of
-  // the centre's slope decides which of the two intersections is the one that
-  // settles in Float32, so both are checked. The shank's boundary values are
-  // its inner wall and its reach, which also meet at its crossing.
   const shankInnerAt = (s: number): number => centreAt(s) / cos
-  const sphereDomain = concaveDomain(discAt, loS, hiS, search, [sphereLow, sphereHigh])
+  const sphereDomain = concaveDomain(discAt, loS, hiS)
   const shankDomain: [number, number] | null = axial
     ? [loS, hiS]
-    : concaveDomain((s) => reachAt(s) - shankInnerAt(s), loS, hiS, search, [shankInnerAt, reachAt])
+    : concaveDomain((s) => reachAt(s) - shankInnerAt(s), loS, hiS)
 
   const domains = [sphereDomain, shankDomain].filter((domain): domain is [number, number] => domain !== null)
   if (domains.length === 0) return null
@@ -895,14 +739,14 @@ function constantAngleBands(
     if (sphereDomain && overlaps(sphereDomain, [componentLow, componentHigh])) {
       const from = Math.max(componentLow, sphereDomain[0])
       const to = Math.min(componentHigh, sphereDomain[1])
-      low = Math.min(low, minimizeConvex(sphereLow, from, to, search).value)
-      high = Math.max(high, maximizeConcave(sphereHigh, from, to, search).value)
+      low = Math.min(low, minimizeConvex(sphereLow, from, to).value)
+      high = Math.max(high, maximizeConcave(sphereHigh, from, to).value)
     }
     if (shankDomain && overlaps(shankDomain, [componentLow, componentHigh])) {
       const from = Math.max(componentLow, shankDomain[0])
       const to = Math.min(componentHigh, shankDomain[1])
       low = Math.min(low, centreAt(from) / cos, centreAt(to) / cos)
-      high = Math.max(high, axial ? Infinity : maximizeConcave(reachAt, from, to, search).value)
+      high = Math.max(high, axial ? Infinity : maximizeConcave(reachAt, from, to).value)
     }
     if (high > low) bands.push([low, high])
   }
@@ -928,11 +772,10 @@ function removedBandsForCell(
   geometry: MoveGeometry,
   rt: number,
   ball: boolean,
-  search: SearchControl,
 ): Array<[number, number]> | null {
   const window = reachableWindow(cellAlong, geometry, rt)
   if (!window) return null
-  return constantAngleBands(cellAlong, cellAcross, geometry, rt, ball, window[0], window[1], search)
+  return constantAngleBands(cellAlong, cellAcross, geometry, rt, ball, window[0], window[1])
 }
 
 /** Merge overlapping and touching intervals into a canonical ascending order. */
@@ -1032,11 +875,10 @@ function finitePoint(point: ToolpathPoint): boolean {
  * including an interior interval whose outer `topZ` is unchanged, which the
  * envelope-only representation could not report at all.
  *
- * `options` exists only for the #1016 tests: P1's convergence test can replay
- * the pre-P1 fixed-96 search and collect iteration counts, and P3's window test
- * can replay the pre-window every-cell loop and count the cells a replay
- * searches. Every production caller omits it and gets the early-exit search
- * inside the angle window, so the public call shape is unchanged.
+ * `options` exists only for the #1016 tests: P3's window test can replay the
+ * pre-window every-cell loop and count the cells a replay searches. Every
+ * production caller omits it and gets the fixed-count searches inside the angle
+ * window, so the public call shape is unchanged.
  */
 export function applySquareMoveToGrid(
   grid: SimulationGrid,
@@ -1061,12 +903,7 @@ export function applySquareMoveToGrid(
   }
 
   const frame = bar.frame
-  // The test-only options are read once; production takes the early-exit path
-  // and the angle window.
-  const search: SearchControl = {
-    legacy: options?.legacyFixedSearch === true,
-    stats: options?.searchIterations,
-  }
+  // The test-only options are read once; production takes the angle window.
   const loop: LoopControl = {
     fullLoop: options?.legacyFullLoop === true,
     tested: options?.testedCells,
@@ -1166,7 +1003,7 @@ export function applySquareMoveToGrid(
         if (!(height > bottom + 1e-12)) continue
 
         if (tested) tested.tested += 1
-        const bands = removedBandsForCell(along, across, geometry, rt, ball, search)
+        const bands = removedBandsForCell(along, across, geometry, rt, ball)
         if (!bands) continue
         if (tested) tested.withBand += 1
 
