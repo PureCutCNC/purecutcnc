@@ -1882,14 +1882,19 @@ test('a store refusal disappears when the request it described is corrected', as
   })
 
   // Correcting an input clears the reason immediately: it described the
-  // request as it was, not the form now on screen.
-  await ui.rotarySolid.field(page, 'start').fill('1')
+  // request as it was, not the form now on screen. Rotation is the field to
+  // edit here: the length default is the whole bar, so moving the start would
+  // push the band past the bar and raise the form's own range refusal — a
+  // different, legitimate message.
+  await ui.rotarySolid.field(page, 'rotation').fill('1')
   await expect(ui.rotarySolid.error(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
 
   // Choosing a usable cutter is the actual fix; the same form then creates.
   await ui.rotarySolid.toolTrigger(page).click()
   await ui.rotarySolid.toolOption(page, 'Good flat').click()
   await expect(ui.rotarySolid.error(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
   const created = await solidSnapshot(page)
