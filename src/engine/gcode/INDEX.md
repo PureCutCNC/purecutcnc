@@ -60,9 +60,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rotary word, judged on the rendered lines the program actually writes
   (`postRotaryTemplateUsesBorrowedAxis`).
   A program that turned the bar and ends at a non-zero angle gets one closing
-  unwind rapid to 0 (#395, rule 5), written at the height the last operation
-  retracted to and before the footer; never between operations, and none for a
-  program that ends at 0 or that never carried an angle.
+  unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
+  and none for a program that ends at 0 or that never carried an angle. On a
+  square blank it first rapids to the generators' travel height whenever the
+  last emitted Z is below it or unknown, because the last operation may have
+  descended at a constant angle. A template that can move Z (a Z word, a
+  canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
+  A word is preceded by a validated retract to that height — a header or
+  tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -114,7 +119,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   cutter's lowest point is below the corner envelope `barPivotZ + barMaxRadius`
   is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1; the generators
   keep every A-changing move above that envelope, and a turn placed exactly on
-  it is within the generator's own 0.001 mm tolerance), a non-rotary kind or a
+  it is within the generator's own tolerance — the emitted Z's half-step), and
+  the inverse-time refusal keeps its own whole-operation turning-feed test,
+  independent of the angle tracker, so an unestablished constant-angle feed
+  cannot hide a later turning feed and change which refusal a round bar reports
+  (#1016 C2 M1 P2), a non-rotary kind or a
   stale wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
   the true pivot (`barPivotZ = side / 2`) whichever bar shape the stock is;
   `planStepFeeds` throws
@@ -261,6 +270,18 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   radius is not half its diameter (with the flat/ball surface difference
   witnessed analytically), while a genuinely converted same-id row still posts;
   40 seeded pure-turn feeds match the analytic true-pivot inverse-time word.
+- `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
+  **emitted text** (#1016 C2 M1 correction): a seeded property test (300
+  programs, seed 1016) generates supplied paths with safe turns, constant-angle
+  descents, A-only rapids whose endpoints agree while the controller is
+  elsewhere, multiple operations, own/borrowed/reversed machines, mm/inch and
+  header/operation-header/tool-change/footer templates that move Z. Each whole
+  program is posted, then replayed by an independent modal interpreter written
+  in the test (G0/G1/G2/G3, the machine's rotary word, Z, G20/G21, G90/G91):
+  every accepted program's rotary changes must execute at or above the emitted
+  travel height, and every refused program must carry a refusal code. Focused
+  cases pin the closing-unwind retract, the template Z-unknown rule, and the
+  restored whole-operation turning-feed precedence on a round bar.
 
 ## Adding a dialect
 

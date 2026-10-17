@@ -932,8 +932,6 @@ interface TrackedOperationAngle {
    * emitted block will command, not by the stale `from.a` a toolpath may carry.
    */
   lowestTurnZ: number | null
-  /** True when a feed move (not a rapid) changes its own start/end angle. */
-  turningFeed: boolean
 }
 
 /**
@@ -952,8 +950,6 @@ interface TrackedOperationAngle {
  * start the controller is at zero, and a rapid, feed, arc or lead move is
  * treated the same way; the lowest Z of a turning move is reported so the
  * square-blank guard can refuse a turn below the generator's travel height.
- * `turningFeed` keeps the inverse-time rule's original question — does a feed
- * move itself change angle — so that refusal does not move for supplied paths.
  */
 function trackOperationAngle(
   moves: readonly ToolpathMove[],
@@ -962,7 +958,6 @@ function trackOperationAngle(
 ): TrackedOperationAngle {
   let current = tracked
   let lowestTurnZ: number | null = null
-  let turningFeed = false
   const noteTurn = (move: ToolpathMove) => {
     const low = Math.min(move.from.z, move.to.z)
     if (lowestTurnZ === null || low < lowestTurnZ) lowestTurnZ = low
@@ -972,12 +967,9 @@ function trackOperationAngle(
     if (!carriesAngle) continue
     // A feed move with an angle on one end only is broken, not trackable: say
     // the angle is not established so the operation is refused.
-    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ, turningFeed }
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ }
     const start = move.from.a === undefined ? undefined : move.from.a * direction
     const end = move.to.a === undefined ? undefined : move.to.a * direction
-    // A feed move that changes its own angle needs inverse time whether or not
-    // the controller was at its start; keep that rule's original test.
-    if (move.kind !== 'rapid' && start !== end) turningFeed = true
     // The emitter's modal angle is unknown before the first angle word, and a
     // program starts on the machine's zero. A rapid's endpoint is what the
     // emitted block commands; the controller goes there from here.
@@ -992,12 +984,22 @@ function trackOperationAngle(
       // end angle from the controller's actual angle; report the turn so the
       // square guard sees the physical motion the emitter would write.
       if (end !== undefined && end !== controller) noteTurn(move)
-      return { established: false, trackedAngle: current, lowestTurnZ, turningFeed }
+      return { established: false, trackedAngle: current, lowestTurnZ }
     }
     if (end !== undefined && end !== controller) noteTurn(move)
     if (end !== undefined) current = end
   }
-  return { established: true, trackedAngle: current, lowestTurnZ, turningFeed }
+  return { established: true, trackedAngle: current, lowestTurnZ }
+}
+
+/**
+ * True when a feed move changes the angle its own endpoints carry. This is the
+ * inverse-time rule's original whole-operation question, asked independently
+ * of {@link trackOperationAngle}: an angle the tracker cannot establish must
+ * not hide a later turning feed and change which refusal a round bar reports.
+ */
+function operationHasTurningFeed(moves: readonly ToolpathMove[]): boolean {
+  return moves.some((move) => move.kind !== 'rapid' && !feedAngleIsSplit(move) && !sameAngle(move.from.a, move.to.a))
 }
 
 /**
@@ -1148,7 +1150,7 @@ function inspectRotaryOperation(args: {
   if (toolpath.moves.some(feedAngleIsSplit)) {
     return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
   }
-  if (rotary.inverseTimeFeed === null && tracked.turningFeed) {
+  if (rotary.inverseTimeFeed === null && operationHasTurningFeed(toolpath.moves)) {
     return { refused: { code: 'postRotaryNoInverseTime', params: { operation: operationName } } }
   }
   if (!isBarStock(project.stock)) {

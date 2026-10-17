@@ -22,9 +22,11 @@ import type {
 } from './types'
 import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { formatGCodeNumber } from './utils'
+import { formatGCodeNumber, projectToMachinePoint } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import { isSquareStock } from '../../types/barStock'
+import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import type { OperationTarget } from '../../types/project'
 import { resolveEmittedArc } from './arcFitting'
 import type { ArcMoveDescriptor } from './arcFitting'
@@ -68,6 +70,11 @@ interface ModalState {
    *  canned cycle or the program end. */
   inverseTime: boolean
   currentPosition: ToolpathPoint | null
+  /** True when the last emitted Z is still known to be where the controller is.
+   *  A machine template may move any axis behind the emitter's back, so every
+   *  template that can move Z clears this until a motion block writes Z again
+   *  (issue #1016 C2 correction M1). */
+  zKnown: boolean
   lineNumber: number
 }
 
@@ -113,6 +120,42 @@ function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string
   }
   for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
     if (match[1].toUpperCase() === letter) return true
+  }
+  return false
+}
+
+/**
+ * Commands a machine template can spell without moving any axis. Every other
+ * `G`/`M` command is distrusted: a canned cycle, a macro call, a home, a tool
+ * change or a coordinate-system change can move Z without naming it, and the
+ * emitter must not keep believing a Z it can no longer prove.
+ */
+const INERT_TEMPLATE_COMMANDS: ReadonlySet<string> = new Set([
+  'G4', 'G17', 'G18', 'G19', 'G20', 'G21',
+  'G40', 'G41', 'G42', 'G54', 'G55', 'G56', 'G57', 'G58', 'G59',
+  'G61', 'G64', 'G80', 'G90', 'G91', 'G93', 'G94', 'G98', 'G99',
+  'M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M7', 'M8', 'M9', 'M30',
+])
+
+/**
+ * True when a rendered machine template can move the cutter in Z behind the
+ * emitter's back. A Z word is decisive. Without one, a line is treated as
+ * moving unless every `G`/`M` command on it is a known inert modal/program
+ * command: a macro, home, tool change or canned cycle can move an axis the
+ * line never names, and assuming otherwise is how the next A word gets written
+ * at a height nobody proved. Comments are stripped first, so prose never
+ * counts as a command.
+ */
+function templateCanMoveZ(line: string, commentPrefix: string): boolean {
+  if (lineCarriesAxisWord(line, 'Z', commentPrefix)) return true
+  let code = line.replace(/\([^)]*\)/g, ' ')
+  if (commentPrefix.length > 0 && commentPrefix !== '(') {
+    const at = code.indexOf(commentPrefix)
+    if (at >= 0) code = code.slice(0, at)
+  }
+  for (const match of code.matchAll(/\b([GM])\s*(\d+(?:\.\d+)?)/gi)) {
+    const command = `${match[1].toUpperCase()}${Number(match[2])}`
+    if (!INERT_TEMPLATE_COMMANDS.has(command)) return true
   }
   return false
 }
@@ -186,6 +229,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     rotaryWord: rotaryWord(definition),
     inverseTime: false,
     currentPosition: null,
+    zKnown: false,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
 
@@ -198,6 +242,42 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   const formatValue = createEmittedValueFormatter(definition, outputUnits)
   const arcEmitOptions = createArcEmitOptions(definition, outputUnits, definition.motion.arcFormat)
+
+  // #1016 C2 correction M1 — the square blank's turning clearance, in the
+  // emitted machine frame. A square blank turns only at the generators' travel
+  // height (`rotaryTravelZ`); the planner refuses a supplied turn below it, but
+  // two motions are written outside the planner and need their own guard: a
+  // machine template that moves Z behind the emitter's back, and the closing
+  // unwind. Both are repaired here by a rapid retract to this height, so no
+  // A word is ever written with the cutter below the blank's standing corners.
+  // The height is a project coordinate; map it exactly as the move's own Z is
+  // mapped, never with a second copy of the origin arithmetic.
+  const operationTurns = operations.some(({ toolpath }) => toolpath.moves.some(
+    (move) => move.from.a !== undefined || move.to.a !== undefined,
+  ))
+  const squareRetractZ = isSquareStock(project.stock)
+    ? projectToMachinePoint({
+      x: 0,
+      y: 0,
+      z: rotaryTravelZ(project.stock, project.meta.units),
+    }, project.origin, definition).z
+    : null
+  const squareRetractHalfStep = 0.5 * 10 ** -definition.numberFormat.decimalPlaces[outputUnits]
+  if (squareRetractZ !== null && operationTurns && !Number.isFinite(squareRetractZ)) {
+    // The blank carries no usable turning height (a corrupt or degenerate
+    // stock), so the retract cannot be placed. Refuse the program rather than
+    // turn it with no proven clearance. Only a program that turns is refused:
+    // an angle-free program on the same blank is byte-identical to before.
+    return {
+      gcode: '',
+      warnings: [{
+        code: 'postRotarySquareTurnBelowEnvelope',
+        params: { operation: operations[0]?.operation.name ?? 'program' },
+      }],
+      stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+      ...(captureTrace ? { motionTraces: [] } : null),
+    }
+  }
 
   // Where the *controller* believes the tool is: every emitted coordinate
   // after number formatting. Arc I/J offsets are relative to this, not to the
@@ -221,14 +301,31 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // value, and a command that is never written at all (`pauseCommand` with
   // `pauseAfterChange` off) are all judged by what was actually emitted.
   const templateLines: string[] = []
+  /**
+   * Write a machine template line.
+   *
+   * A template can move the machine behind the emitter's back (`G0 Z-8`, a
+   * tool-change macro, a canned cycle), and nothing corrects the emitter's
+   * tracked Z when it does. For a square blank that matters: the next A word
+   * would be written as if the cutter were still where the emitter left it. So
+   * a line that can move Z clears the known Z, and a later motion block
+   * re-establishes it; an inert line (`M5`, `G94`, a comment) leaves it
+   * provable. Round and non-rotary programs never read the flag, so their
+   * bytes do not move.
+   *
+   * A template may hold several physical lines (`"; note\nG0 Y0"`). The
+   * program carries them as one entry, but they are judged one physical line
+   * at a time: the axis-word scan drops everything after a line's comment
+   * marker, so scanning the joined text would lose the code on every line
+   * after the first.
+   */
   const emitTemplateLine = (content: string) => {
-    // A template may hold several physical lines (`"; note\nG0 Y0"`). The
-    // program carries them as one entry, but they are judged one physical line
-    // at a time: the axis-word scan drops everything after a line's comment
-    // marker, so scanning the joined text would lose the code on every line
-    // after the first.
-    templateLines.push(...content.split(/\r?\n/))
+    const physicalLines = content.split(/\r?\n/)
+    templateLines.push(...physicalLines)
     emitLine(content)
+    if (physicalLines.some((line) => templateCanMoveZ(line, definition.program.commentPrefix))) {
+      state.zKnown = false
+    }
   }
 
   const substituteTemplates = (text: string, context: Record<string, string | number>): string => {
@@ -341,11 +438,43 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         ? { a: axes.a }
         : state.currentPosition?.a !== undefined ? { a: state.currentPosition.a } : null),
     }
+    if (axes.z !== undefined) state.zKnown = true
 
     emittedPosition = {
       x: axes.x !== undefined ? formatValue(axes.x) : emittedPosition?.x ?? 0,
       y: axes.y !== undefined ? formatValue(axes.y) : emittedPosition?.y ?? 0,
     }
+  }
+
+  /** Rapid to the square blank's turning height, in the emitted frame. */
+  const retractToSquareTravel = () => {
+    if (squareRetractZ === null) return
+    emitMotionLine(definition.motion.rapidCommand, { z: squareRetractZ })
+  }
+
+  /**
+   * Clear a recovered unknown Z before an A word: a template may have moved the
+   * cutter, so the emitter cannot prove the turn is above the blank. Only an
+   * unknown Z is repaired here. A *known* low Z is the planner's turn guard
+   * (`postRotarySquareTurnBelowEnvelope`), and repairing it here would post
+   * motion the planner had already refused — the guard must stay the decision.
+   */
+  const retractUnknownSquareZ = () => {
+    if (squareRetractZ === null || state.zKnown) return
+    retractToSquareTravel()
+  }
+
+  /**
+   * Before the closing unwind the cutter may legitimately sit below the travel
+   * height (the last operation descended at a constant angle). A turn there is
+   * never safe, so the unwind retracts whenever Z is unknown or known low.
+   */
+  const retractForSquareUnwind = () => {
+    if (squareRetractZ === null) return
+    const clear = state.zKnown && state.currentPosition !== null
+      && state.currentPosition.z >= squareRetractZ - squareRetractHalfStep
+    if (clear) return
+    retractToSquareTravel()
   }
 
   /**
@@ -356,6 +485,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * modal-feed rules exactly as before.
    */
   const emitPlannedMove = (point: ToolpathPoint, directive: FeedDirective) => {
+    if (point.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== point.a) {
+      retractUnknownSquareZ()
+    }
     if (directive.mode === 'inverse') {
       if (!state.inverseTime) {
         const on = definition.rotary?.inverseTimeFeed?.on
@@ -893,6 +1025,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       // which block carries the angle — never a block with Z (issue #393).
       const emitRapid = (pt: ToolpathPoint) => {
         for (const axes of splitRapid(state.currentPosition, pt)) {
+          // A rapid that carries a new A word turns the blank. If a template
+          // moved Z since the last motion block, the height the split decided
+          // from is no longer trustworthy, so retract before writing the angle
+          // (the split already keeps the angle off any Z block).
+          if (axes.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== axes.a) {
+            retractUnknownSquareZ()
+          }
           emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }
@@ -971,11 +1110,15 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // turned the stock and stops at a non-zero angle is returned to 0 so the
   // operator's next part starts where this one did. Not between operations,
   // and never written when the program never turned or already ends at 0. The
-  // tool stays at the height the last operation retracted to, so the rotation
-  // happens clear of the work. The block spells the rapid word itself rather
-  // than relying on modal motion: a command that does not move the tool must
-  // not be read as a continuation of whatever mode was left behind.
+  // last operation may have descended at a constant angle (that is not a turn),
+  // or a template may have moved Z, so the unwind first raises a square blank's
+  // cutter to the generators' travel height; a round bar keeps the historical
+  // "at the height the last operation retracted to" bytes. The block spells the
+  // rapid word itself rather than relying on modal motion: a command that does
+  // not move the tool must not be read as a continuation of whatever mode was
+  // left behind.
   if (state.rotaryAngle !== null && state.rotaryAngle !== 0) {
+    retractForSquareUnwind()
     emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
     state.motionCommand = definition.motion.rapidCommand
     state.rotaryAngle = 0
@@ -1000,9 +1143,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     const templateDrivesRotary = templateLines.some(
       (line) => lineCarriesAxisWord(line, rotaryLetter, prefix),
     )
-    const operationTurns = operations.some(({ toolpath }) => toolpath.moves.some(
-      (move) => move.from.a !== undefined || move.to.a !== undefined,
-    ))
     if (templateDrivesRotary && (rotaryBorrowedAxis(definition) !== null || operationTurns)) {
       return {
         gcode: '',
