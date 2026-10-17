@@ -72,6 +72,21 @@
  * axial position correlated. A move that changes the program angle below the
  * blank's envelope sweeps a rotating body whose removed set is not certified at
  * grid resolution; it is refused explicitly before any material is touched.
+ *
+ * ## The angle window (C2-P3)
+ *
+ * A cell only ever loses material where the tool body actually reaches its
+ * ray, and the body is confined to `±rt` about the tool's own bar position
+ * while never dipping below `tip`. With the cell's ray at machine angle `θ`
+ * from the tool and its radius `u` measured from the pivot, a hit needs
+ * `u·|sin θ| ≤ rt` (across reach) and `u·cos θ ≥ tip` (the flat floor, the
+ * ball's lowest point, or the shank's inner wall). For a tip that stays above
+ * the pivot (`tipMin > 0`) those two force `|θ| ≤ atan(rt / tipMin)`, so each
+ * move iterates only the across cells inside that window instead of searching
+ * every cell all the way round the bar. See `angleWindowBound` for the proof
+ * and `acrossWindow` for the index mapping; a window that reaches the seam is
+ * two index ranges, and anything not finite, a tip at or below the pivot, or a
+ * window that covers the circumference falls back to the full loop.
  */
 
 import type { ToolType } from '../../types/project'
@@ -125,6 +140,33 @@ export interface SquareSearchOptions {
   legacyFixedSearch?: boolean
   /** Accumulate the iterations each search actually took. */
   searchIterations?: SearchIterationStats
+  /**
+   * Visit every across cell for every move instead of the angle window the
+   * tool can reach (issue #1016 C2-P3). The window test replays a move set
+   * both ways through exactly the same code, so a difference in stored
+   * material can only come from the window itself.
+   */
+  legacyFullLoop?: boolean
+  /** Accumulate the across cells the loop tested and how many got a band. */
+  testedCells?: TestedCellStats
+}
+
+/** Test-only accounting for the across cells a replay actually searched. */
+export interface TestedCellStats {
+  /** Across cells that reached the per-cell cut search. */
+  tested: number
+  /**
+   * Of those, the cells whose search returned a removal band. Every band a
+   * full loop finds must still be found, so this count is the invariant the
+   * window is not allowed to shrink.
+   */
+  withBand: number
+}
+
+interface LoopControl {
+  /** Search every across cell, whatever the angle window says. */
+  fullLoop: boolean
+  tested?: TestedCellStats
 }
 
 interface SearchControl {
@@ -269,10 +311,18 @@ interface MoveGeometry {
   anglePerAcross: number
 }
 
-/** The explicit rotary program angle at move parameter `s`, or null. */
-function explicitAngleAt(geometry: MoveGeometry, s: number): number | null {
-  if (geometry.angleFrom === null || geometry.angleTo === null) return null
-  return geometry.angleFrom + (geometry.angleTo - geometry.angleFrom) * s
+/**
+ * The unwrapped machine angle between a cell's ray and the tool's program angle
+ * at move parameter `s`, before the periodic wrap. `thetaAt` is this wrapped;
+ * the angle window solves against the unwrapped form.
+ */
+function rawThetaAt(geometry: MoveGeometry, cellAcross: number, s: number): number {
+  if (geometry.angleFrom !== null && geometry.angleTo !== null) {
+    const materialAngle = (cellAcross - geometry.zero) * geometry.anglePerAcross
+    return materialAngle - (geometry.angleFrom + (geometry.angleTo - geometry.angleFrom) * s)
+  }
+  const toolAcross = geometry.fromAcross + (geometry.toAcross - geometry.fromAcross) * s
+  return (cellAcross - toolAcross) * geometry.anglePerAcross
 }
 
 /**
@@ -283,13 +333,7 @@ function explicitAngleAt(geometry: MoveGeometry, s: number): number | null {
  * 2π.
  */
 function thetaAt(geometry: MoveGeometry, cellAcross: number, s: number): number {
-  const explicit = explicitAngleAt(geometry, s)
-  if (explicit !== null) {
-    const materialAngle = (cellAcross - geometry.zero) * geometry.anglePerAcross
-    return wrapPi(materialAngle - explicit)
-  }
-  const toolAcross = geometry.fromAcross + (geometry.toAcross - geometry.fromAcross) * s
-  return wrapPi((cellAcross - toolAcross) * geometry.anglePerAcross)
+  return wrapPi(rawThetaAt(geometry, cellAcross, s))
 }
 
 /** True when the move's program angle is constant over its whole travel. */
@@ -297,6 +341,126 @@ function angleIsConstant(geometry: MoveGeometry): boolean {
   return geometry.angleFrom !== null && geometry.angleTo !== null
     ? geometry.angleFrom === geometry.angleTo
     : geometry.fromAcross === geometry.toAcross
+}
+
+/**
+ * Absolute widening applied to the proven angle bound before it is turned into
+ * cells, in radians. Well above the rounding of the angular step (one Float64
+ * ulp of an angle near π is ~1e-16, and the index solve is a handful of ulps),
+ * and far below any cell. The index ranges are widened by a whole cell on top
+ * of this, so the window is never narrower than the proof.
+ */
+const ANGLE_WINDOW_EPSILON = 1e-12
+
+/**
+ * The widest `|θ|` at which a cell can still lose material, or null when the
+ * whole across loop must be searched.
+ *
+ * Proof. A material point at radius `u ≥ 0` on a cell's ray, at machine angle
+ * `θ` from the tool's program angle, sits at radial `u·cos θ` and across
+ * `u·|sin θ|` from the pivot. The tool body — the flat cutter's cylinder, the
+ * ball and its shank — is confined to `|across| ≤ rt` about the tool's own bar
+ * position and never reaches below the tip, so a hit needs both
+ *
+ *     u·|sin θ| ≤ rt        (across reach)
+ *     u·cos θ ≥ tip         (radial floor; the ball's lowest point and the
+ *                            shank's inner wall are both at or above the tip)
+ *
+ * with `tip ≥ tipMin` for every reachable move parameter (the tip is linear in
+ * the parameter, so its minimum over any reachable sub-window is at least the
+ * minimum over the whole move). For `tipMin > 0` the second inequality forces
+ * `cos θ > 0` and `u ≥ tipMin / cos θ`; substituting into the first gives
+ * `tipMin·tan|θ| ≤ rt`, i.e. `|θ| ≤ atan(rt / tipMin)`. The bound is necessary,
+ * never sufficient, so widening it can only cost cells, never material.
+ *
+ * The material's own outer radius tightens this only through
+ * `|θ| ≤ acos(tipMin / R)` (`R = side/√2`, the corner radius), which is looser
+ * than the tan bound exactly when `rt² + tipMin² ≤ R²` — always true inside
+ * the certified region `rt ≤ side/2`, `tipMin ≤ side/2`. It is therefore
+ * omitted rather than rested on a material bound the kernel would have to scan
+ * the grid to prove.
+ *
+ * A tip at or below the pivot (`tipMin ≤ 0`) makes the radial condition
+ * satisfiable at any angle, and any non-finite input has no usable bound: both
+ * return null for the full loop.
+ */
+function angleWindowBound(toolRadius: number, tipMin: number): number | null {
+  if (!Number.isFinite(toolRadius) || !(toolRadius > 0)) return null
+  if (!Number.isFinite(tipMin) || !(tipMin > 0)) return null
+  const ratio = toolRadius / tipMin
+  const bound = Math.atan(ratio)
+  if (!Number.isFinite(bound) || !(bound > 0) || bound >= Math.PI) return null
+  return bound
+}
+
+/** An inclusive range of across-cell indices. */
+type AcrossRange = [number, number]
+
+/**
+ * The across cells whose ray can lie within `bound` of the tool's program
+ * angle, as ascending inclusive index ranges. The angle is periodic, so a
+ * window that reaches the seam is two ranges (one at each end of the sheet); a
+ * window that covers the circumference is the single full range.
+ *
+ * The mapping is the one `rawThetaAt` uses, solved for the across coordinate:
+ * the unwrapped angle is linear in the cell index (the across coordinates are
+ * uniform), so each periodic copy of `[−bound, bound]` gives one `c` interval.
+ * Ranges are widened by a whole cell at each end on top of
+ * `ANGLE_WINDOW_EPSILON`, so the Float64 solve can never exclude a cell whose
+ * angle sits on the bound.
+ */
+function acrossWindow(
+  geometry: MoveGeometry,
+  acrossOrigin: number,
+  cellSize: number,
+  acrossCount: number,
+  bound: number,
+): AcrossRange[] {
+  const full: AcrossRange[] = [[0, acrossCount - 1]]
+  const step = geometry.anglePerAcross * cellSize
+  if (!Number.isFinite(step) || !(step > 0) || acrossCount <= 0) return full
+  const widened = bound + ANGLE_WINDOW_EPSILON * Math.max(1, bound)
+  if (!Number.isFinite(widened) || widened >= Math.PI) return full
+
+  // The unwrapped angle at the first cell centre, and its step per cell.
+  const u0 = rawThetaAt(geometry, acrossOrigin + 0.5 * cellSize, 0)
+  if (!Number.isFinite(u0)) return full
+  const lastAngle = u0 + step * (acrossCount - 1)
+  if (!Number.isFinite(lastAngle)) return full
+
+  // One interval per periodic copy of the window that the grid can reach. The
+  // reach carries a whole cell on top of the widened bound, because the ±1
+  // index widening below can pull in a cell whose angle lies up to one cell
+  // outside the span.
+  const reach = widened + step
+  const first = Math.floor((u0 - reach) / TWO_PI)
+  const last = Math.ceil((lastAngle + reach) / TWO_PI)
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last - first > acrossCount + 4) return full
+
+  const ranges: AcrossRange[] = []
+  for (let wrap = first; wrap <= last; wrap += 1) {
+    const lowAngle = -widened + TWO_PI * wrap
+    const highAngle = widened + TWO_PI * wrap
+    // c·step + u0 ∈ [lowAngle, highAngle], solved for c and widened one cell.
+    const from = Math.max(0, Math.ceil((lowAngle - u0) / step) - 1)
+    const to = Math.min(acrossCount - 1, Math.floor((highAngle - u0) / step) + 1)
+    if (from <= to) ranges.push([from, to])
+  }
+  if (ranges.length === 0) return []
+  ranges.sort((a, b) => a[0] - b[0])
+
+  // The copies of one periodic window meet at the seam; an adjacent pair is the
+  // same window and merges.
+  const merged: AcrossRange[] = []
+  for (const [from, to] of ranges) {
+    const lastRange = merged.length > 0 ? merged[merged.length - 1] : null
+    if (lastRange && from <= lastRange[1] + 1) {
+      if (to > lastRange[1]) lastRange[1] = to
+    } else {
+      merged.push([from, to])
+    }
+  }
+  return merged
 }
 
 /**
@@ -723,9 +887,11 @@ function finitePoint(point: ToolpathPoint): boolean {
  * including an interior interval whose outer `topZ` is unchanged, which the
  * envelope-only representation could not report at all.
  *
- * `options` exists only for the #1016-P1 convergence test: it can replay the
- * pre-P1 fixed-96 search and collect iteration counts. Every production caller
- * omits it and gets the early-exit search, so the public call shape is unchanged.
+ * `options` exists only for the #1016 tests: P1's convergence test can replay
+ * the pre-P1 fixed-96 search and collect iteration counts, and P3's window test
+ * can replay the pre-window every-cell loop and count the cells a replay
+ * searches. Every production caller omits it and gets the early-exit search
+ * inside the angle window, so the public call shape is unchanged.
  */
 export function applySquareMoveToGrid(
   grid: SimulationGrid,
@@ -750,10 +916,15 @@ export function applySquareMoveToGrid(
   }
 
   const frame = bar.frame
-  // The test-only options are read once; production takes the early-exit path.
+  // The test-only options are read once; production takes the early-exit path
+  // and the angle window.
   const search: SearchControl = {
     legacy: options?.legacyFixedSearch === true,
     stats: options?.searchIterations,
+  }
+  const loop: LoopControl = {
+    fullLoop: options?.legacyFullLoop === true,
+    tested: options?.testedCells,
   }
   const xAxis = frame.axis === 'x'
   const ball = toolType === 'ball_endmill'
@@ -825,37 +996,54 @@ export function applySquareMoveToGrid(
     alongCount,
   )
 
+  // Only the across cells inside the angle window can possibly lose material
+  // (see `angleWindowBound`); everything outside it is skipped without a search
+  // instead of searched all the way round the bar. The window is constant over
+  // the move because a constant-angle move's θ depends on the cell's across
+  // position alone, so it is solved once here. `legacyFullLoop` replays the old
+  // every-cell loop through this same code.
+  const tipMin = Math.min(geometry.tipFrom, geometry.tipTo)
+  const bound = loop.fullLoop ? null : angleWindowBound(rt, tipMin)
+  const acrossRanges: AcrossRange[] = bound === null
+    ? [[0, acrossCount - 1]]
+    : acrossWindow(geometry, acrossOrigin, cellSize, acrossCount, bound)
+
+  const tested = loop.tested
   for (let a = alongStart; a <= alongEnd; a += 1) {
     const along = alongOrigin + (a + 0.5) * cellSize
-    for (let c = 0; c < acrossCount; c += 1) {
-      const across = acrossOrigin + (c + 0.5) * cellSize
-      const col = xAxis ? a : c
-      const row = xAxis ? c : a
-      const idx = row * grid.cols + col
-      const height = topZ[idx]
-      if (!(height > bottom + 1e-12)) continue
+    for (const [rangeStart, rangeEnd] of acrossRanges) {
+      for (let c = rangeStart; c <= rangeEnd; c += 1) {
+        const across = acrossOrigin + (c + 0.5) * cellSize
+        const col = xAxis ? a : c
+        const row = xAxis ? c : a
+        const idx = row * grid.cols + col
+        const height = topZ[idx]
+        if (!(height > bottom + 1e-12)) continue
 
-      const bands = removedBandsForCell(along, across, geometry, rt, ball, search)
-      if (!bands) continue
+        if (tested) tested.tested += 1
+        const bands = removedBandsForCell(along, across, geometry, rt, ball, search)
+        if (!bands) continue
+        if (tested) tested.withBand += 1
 
-      const material = squareMaterialIntervals(grid, idx)
-      let next: readonly number[] = material
-      for (const [bandLo, bandHi] of bands) {
-        const lo = bandLo > bottom ? bandLo : bottom
-        const hi = bandHi < height ? bandHi : height
-        if (!(hi > lo)) continue
-        next = subtractBand(next, lo, hi)
+        const material = squareMaterialIntervals(grid, idx)
+        let next: readonly number[] = material
+        for (const [bandLo, bandHi] of bands) {
+          const lo = bandLo > bottom ? bandLo : bottom
+          const hi = bandHi < height ? bandHi : height
+          if (!(hi > lo)) continue
+          next = subtractBand(next, lo, hi)
+        }
+        if (next !== material) next = compactIntervals([...next])
+        if (!materialDiffers(next, material)) continue
+
+        setSquareMaterialIntervals(grid, idx, next)
+        topZ[idx] = next.length > 0 ? Math.fround(next[next.length - 1]) : bottom
+        changed += 1
+        if (col < dirtyColMin) dirtyColMin = col
+        if (col > dirtyColMax) dirtyColMax = col
+        if (row < dirtyRowMin) dirtyRowMin = row
+        if (row > dirtyRowMax) dirtyRowMax = row
       }
-      if (next !== material) next = compactIntervals([...next])
-      if (!materialDiffers(next, material)) continue
-
-      setSquareMaterialIntervals(grid, idx, next)
-      topZ[idx] = next.length > 0 ? Math.fround(next[next.length - 1]) : bottom
-      changed += 1
-      if (col < dirtyColMin) dirtyColMin = col
-      if (col > dirtyColMax) dirtyColMax = col
-      if (row < dirtyRowMin) dirtyRowMin = row
-      if (row > dirtyRowMax) dirtyRowMax = row
     }
   }
 
