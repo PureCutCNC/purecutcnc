@@ -963,7 +963,7 @@ function testMultiChunkAxisYConformance(): void {
   // A crossing cell plus a cut band in the chunk on the other side.
   const crossingCi = angularIndexNearest(grid, 24 * Math.PI / 180)
   setSquareMaterialIntervals(grid, cellIndex(grid, crossingCi, 7), [0, 8.7])
-  setSquareMaterialIntervals(grid, cellIndex(grid, angularIndexNearest(grid, 42 * Math.PI / 180), 1), [0, 8.8, 9.3])
+  setSquareMaterialIntervals(grid, cellIndex(grid, angularIndexNearest(grid, 42 * Math.PI / 180), 1), [0, 8.8])
 
   const positions = buildAllPositions(grid, options)
   assertConforming(positions, 'axis y multi-chunk fixture')
