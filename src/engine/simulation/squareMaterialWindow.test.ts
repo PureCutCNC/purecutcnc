@@ -38,6 +38,13 @@
  *   3. **It pays.** On a `squareSimulation.test.ts`-style job (side 12, length
  *      30, ball rough, detail 60) the cells searched drop by the factor stated
  *      in `testFixtureCellCountDrop`, with the band count unchanged.
+ *   4. **Float64 precision (C2-P3F).** Three Codex probes are replayed against
+ *      the full loop: a program angle near 1e18° whose index solve loses tens of
+ *      cells to cancellation, a pivot/origin at 1e16 over 0.03 mm cells where
+ *      the kernel's own across coordinate is not linear in the cell index, and
+ *      a 1e19° angle whose periodic index is above 2^53 (run in a child process
+ *      with a time budget, because the failure mode is a hang). A seeded sweep
+ *      covers large |a|, large zero/origin and tiny cells together.
  *
  * Mutations this was checked against, each applied on its own and reverted:
  * - window 2× too narrow (`atan(rt / tipMin / 2)`) → 1 fails;
@@ -46,12 +53,18 @@
  * - the sign of the explicit-angle mapping flipped (`a − materialAngle`) → 1
  *   and 2 fail;
  * - the `tipMin ≤ 0` fallback removed (the guard in `angleWindowBound` always
- *   returns a bound) → 1 fails.
+ *   returns a bound) → 1 fails;
+ * - the `solveError <= step` precision guard removed → 4 fails on the large
+ *   angle probe (3 cells vs 40);
+ * - the safe-integer/copies cap removed → 4's child case never advances the
+ *   wrap loop and the time-budget assertion fails.
  *
  * Run with: node --import tsx src/engine/simulation/squareMaterialWindow.test.ts
  */
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { applySquareMoveToGrid, squareSurfaceRadius } from './squareMaterial'
 import type { TestedCellStats } from './squareMaterial'
 import { createSimulationGrid } from './grid'
@@ -584,8 +597,300 @@ function testFixtureCellCountDrop(): void {
   )
 }
 
-testWindowMatchesFullLoop()
-testBoundIsNecessary()
-testFixtureCellCountDrop()
+// ---------------------------------------------------------------------------
+// 4. Float64 precision regressions (C2-P3F)
+// ---------------------------------------------------------------------------
 
-console.log('square-material angle window tests passed')
+interface ProbeSheetSpec {
+  axis: 'x' | 'y'
+  zero: number
+  originX: number
+  originY: number
+  cols: number
+  rows: number
+  cellSize: number
+}
+
+/**
+ * A square sheet over an arbitrary frame and origin, with the blank's true
+ * cross-section about `zero` as its starting height (exactly what
+ * `createSimulationGrid` would seed). The precision probes need origins and
+ * pivot values the production sheet helper never produces.
+ */
+function makeProbeSheet(spec: ProbeSheetSpec): SimulationGrid {
+  const { axis, zero, originX, originY, cols, rows, cellSize } = spec
+  const frame: AroundFrame = {
+    axis,
+    centre: zero,
+    radius: SIDE / 2,
+    zero,
+    sheetStart: zero - CIRCUMFERENCE / 2,
+    circumference: CIRCUMFERENCE,
+  }
+  const anglePerAcross = TWO_PI / CIRCUMFERENCE
+  const topZ = new Float32Array(cols * rows)
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const across = axis === 'x' ? originY + (row + 0.5) * cellSize : originX + (col + 0.5) * cellSize
+      topZ[row * cols + col] = squareSurfaceRadius(SIDE, (across - zero) * anglePerAcross)
+    }
+  }
+  return {
+    originX,
+    originY,
+    cellSize,
+    cols,
+    rows,
+    stockBottomZ: 0,
+    stockTopZ: STOCK_TOP,
+    squareBar: { side: SIDE, frame },
+    initialTopZ: new Float32Array(topZ),
+    topZ,
+  }
+}
+
+/**
+ * Replay one move both ways and require the same changed count, dirty region,
+ * every stored height and every stored interval. This is the full-loop equality
+ * the window exists to preserve.
+ */
+function assertProbeMatchesFullLoop(
+  label: string,
+  make: () => SimulationGrid,
+  move: ToolpathMove,
+  toolRadius: number,
+  toolType: ToolType,
+): { windowed: SimulationGrid; full: SimulationGrid } {
+  const windowed = make()
+  const full = make()
+  const windowResult = applySquareMoveToGrid(windowed, move, toolRadius, toolType)
+  const fullResult = applySquareMoveToGrid(full, move, toolRadius, toolType, { legacyFullLoop: true })
+  assert.equal(windowResult.changedCount, fullResult.changedCount, `${label}: changedCount`)
+  assert.deepEqual(windowResult.dirtyRegion, fullResult.dirtyRegion, `${label}: dirtyRegion`)
+  assertSameTopZ(windowed, full, label)
+  assertSameMaterial(windowed, full, label)
+  return { windowed, full }
+}
+
+/**
+ * A program angle near 1e18 degrees: the index solve's `TWO_PI * wrap` and
+ * `u0` are both ~1e16 with an ulp of 2, so cancellation loses tens of cells.
+ * The window used to change 3 cells where the full loop changes 40.
+ */
+function testLargeProgramAnglePrecision(): void {
+  console.log('Testing the large finite program angle precision guard...')
+  const cellSize = 0.3
+  const spec: ProbeSheetSpec = {
+    axis: 'x', zero: 0, originX: 0, originY: -6 * Math.PI, cols: 1, rows: 126, cellSize,
+  }
+  const a = 1000000000000007200
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0.15, y: 0, z: 3, a },
+    to: { x: 0.15, y: 0, z: 3, a },
+  }
+  const { full } = assertProbeMatchesFullLoop(
+    'large program angle',
+    () => makeProbeSheet(spec),
+    move,
+    1,
+    'flat_endmill',
+  )
+  assert(full.squareMaterial !== undefined, 'the large-angle probe must cut real cells')
+  assert(full.squareMaterial.size > 30, `the large-angle probe must cut 40 cells, got ${full.squareMaterial.size}`)
+  console.log(`  large angle: ${full.squareMaterial.size} cells changed, window matches the full loop`)
+}
+
+/**
+ * A pivot and origin at 1e16 over 0.03 mm cells: the kernel's own
+ * `origin + (c + 0.5)·cell` rounds to multiples of 2, so the angle is not
+ * linear in the cell index at all. The window used to miss rows 633, 634 and
+ * 766 (131 of 134 changed cells) because it modelled `u0 + c·step`.
+ */
+function testLargeOriginTinyCells(): void {
+  console.log('Testing the large origin / tiny cell precision guard...')
+  const zero = 1e16
+  const cellSize = 0.03
+  const spec: ProbeSheetSpec = {
+    axis: 'x', zero, originX: 0, originY: zero - 6 * Math.PI, cols: 1, rows: 1257, cellSize,
+  }
+  const a = 28.64788975654116
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0.015, y: 0, z: 3, a },
+    to: { x: 0.015, y: 0, z: 3, a },
+  }
+  const { full } = assertProbeMatchesFullLoop(
+    'large origin, tiny cells',
+    () => makeProbeSheet(spec),
+    move,
+    1,
+    'flat_endmill',
+  )
+  assert(full.squareMaterial !== undefined, 'the large-origin probe must cut real cells')
+  assert.equal(full.squareMaterial.size, 134, `the large-origin probe must cut 134 cells, got ${full.squareMaterial.size}`)
+  console.log(`  large origin: ${full.squareMaterial.size} cells changed, window matches the full loop`)
+}
+
+/**
+ * A finite program angle of 1e19 degrees makes the periodic wrap index ~2.8e16,
+ * above 2^53: `wrap += 1` is a no-op and the loop never advances. The
+ * safe-integer fallback must return the full range instead. This runs in a
+ * child process with a wall-clock budget, because a regression here hangs
+ * rather than fails; the parent asserts the child finished in time.
+ */
+const HUGE_ANGLE_BUDGET_MS = 10_000
+const HUGE_ANGLE_CHILD = 'SQUARE_WINDOW_CHILD_CASE'
+
+function testHugeFiniteProgramAngle(): void {
+  const cellSize = 0.3
+  const spec: ProbeSheetSpec = {
+    axis: 'x', zero: 0, originX: 0, originY: -CIRCUMFERENCE / 2, cols: 2, rows: 126, cellSize,
+  }
+  const a = 1e19
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0.15, y: 0, z: 3, a },
+    to: { x: 0.15, y: 0, z: 3, a },
+  }
+  assertProbeMatchesFullLoop('huge finite program angle', () => makeProbeSheet(spec), move, 1, 'flat_endmill')
+
+  // A coarse sheet designed so the precision guard *passes* (the per-cell angle
+  // step is larger than the rounding bound) while the periodic index is still
+  // ~2.8e16, far above 2^53. Only the safe-integer/copies cap returns here; with
+  // it removed, `wrap += 1` cannot advance and this call never returns.
+  const coarseSpec: ProbeSheetSpec = {
+    axis: 'x', zero: 0, originX: 0, originY: -6 * Math.PI, cols: 1, rows: 3, cellSize: 4000,
+  }
+  const coarseMove: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 2000, y: 0, z: 3, a },
+    to: { x: 2000, y: 0, z: 3, a },
+  }
+  assertProbeMatchesFullLoop(
+    'coarse huge finite program angle',
+    () => makeProbeSheet(coarseSpec),
+    coarseMove,
+    1,
+    'flat_endmill',
+  )
+}
+
+function testHugeFiniteProgramAngleInChild(): void {
+  console.log('Testing the huge finite program angle finishes within its time budget...')
+  const started = Date.now()
+  const child = spawnSync(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url)], {
+    env: { ...process.env, [HUGE_ANGLE_CHILD]: 'huge-angle' },
+    timeout: HUGE_ANGLE_BUDGET_MS,
+    encoding: 'utf8',
+  })
+  const elapsed = Date.now() - started
+  assert.equal(
+    child.status,
+    0,
+    `the huge-angle case must finish within ${HUGE_ANGLE_BUDGET_MS} ms ` +
+      `(status ${String(child.status)}, signal ${String(child.signal)})${child.stderr ? `\n${child.stderr}` : ''}`,
+  )
+  assert(
+    elapsed < HUGE_ANGLE_BUDGET_MS,
+    `the huge-angle case must finish within ${HUGE_ANGLE_BUDGET_MS} ms, took ${elapsed} ms`,
+  )
+  console.log(`  huge angle: finished in ${elapsed} ms`)
+}
+
+/**
+ * A deterministic sweep over the three magnitudes the index solve is sensitive
+ * to: a large explicit program angle, a large pivot/origin, and a tiny cell.
+ * Every case is replayed both ways and must match exactly. Moderate cases are
+ * included so the sweep is not all fallback, and the run asserts that at least
+ * some cases still take the narrower window.
+ */
+function testExtremePrecisionSweep(): void {
+  console.log('Testing the seeded large-angle / large-origin / tiny-cell sweep...')
+  const random = mulberry32(0x1016f00d)
+  const zeroExponents = [0, 3, 6, 9, 12, 15, 16]
+  const cellSizes = [0.005, 0.01, 0.02, 0.03, 0.05, 0.1]
+  const angleExponents = [3, 6, 9, 12, 15, 18]
+  let cases = 0
+  let windowed = 0
+  let changed = 0
+
+  for (let index = 0; index < 48; index += 1) {
+    const axis: 'x' | 'y' = random() < 0.5 ? 'x' : 'y'
+    const sign = random() < 0.5 ? -1 : 1
+    const zeroExponent = zeroExponents[Math.floor(random() * zeroExponents.length)]
+    const zero = sign * (zeroExponent === 0 ? 0 : 10 ** zeroExponent) * (1 + random() * 0.01)
+    const cellSize = cellSizes[Math.floor(random() * cellSizes.length)]
+    const acrossCount = 24 + Math.floor(random() * 80)
+    const alongCount = 1 + Math.floor(random() * 3)
+    const alongOrigin = sign * (random() * 30)
+    // Keep the across span within one turn of the pivot so the case is a real
+    // window, not a sheet that spans the whole circumference many times.
+    const acrossOrigin = zero + (random() - 0.5) * CIRCUMFERENCE
+    const originX = axis === 'x' ? alongOrigin : acrossOrigin
+    const originY = axis === 'x' ? acrossOrigin : alongOrigin
+    const spec: ProbeSheetSpec = {
+      axis, zero, originX, originY, cols: axis === 'x' ? alongCount : acrossCount,
+      rows: axis === 'x' ? acrossCount : alongCount, cellSize,
+    }
+
+    const along = alongOrigin + (Math.floor(alongCount / 2) + 0.5) * cellSize
+    const fromAlong = along - (random() - 0.5) * 2
+    const toAlong = fromAlong + (random() < 0.2 ? 0 : (random() - 0.5) * 2)
+    const tipFrom = 0.5 + random() * 3.5
+    const tipTo = Math.max(0.1, tipFrom + (random() - 0.5) * 3)
+    const explicit = random() < 0.7
+    const acrossValue = acrossOrigin + random() * acrossCount * cellSize
+    const angleExponent = angleExponents[Math.floor(random() * angleExponents.length)]
+    const a = sign * 10 ** angleExponent * (0.5 + random())
+    const toolRadius = 1 + random() * 2
+    const point = (alongValue: number, acrossCoord: number, z: number): ToolpathMove['from'] => {
+      const base = axis === 'x'
+        ? { x: alongValue, y: acrossCoord, z }
+        : { x: acrossCoord, y: alongValue, z }
+      return explicit ? { ...base, a } : base
+    }
+    const toAcross = explicit && random() < 0.4 ? acrossValue + (random() - 0.5) * 2 : acrossValue
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: point(fromAlong, acrossValue, tipFrom),
+      to: point(toAlong, toAcross, tipTo),
+    }
+
+    const windowCall = emptyTested()
+    const fullCall = emptyTested()
+    const windowedGrid = makeProbeSheet(spec)
+    const fullGrid = makeProbeSheet(spec)
+    const windowResult = applySquareMoveToGrid(windowedGrid, move, toolRadius, 'flat_endmill', { testedCells: windowCall })
+    const fullResult = applySquareMoveToGrid(fullGrid, move, toolRadius, 'flat_endmill', {
+      legacyFullLoop: true,
+      testedCells: fullCall,
+    })
+    const label = `sweep case ${index} (${axis}, zero ${zero}, cell ${cellSize})`
+    assert.equal(windowResult.changedCount, fullResult.changedCount, `${label}: changedCount`)
+    assert.deepEqual(windowResult.dirtyRegion, fullResult.dirtyRegion, `${label}: dirtyRegion`)
+    assertSameTopZ(windowedGrid, fullGrid, label)
+    assertSameMaterial(windowedGrid, fullGrid, label)
+
+    cases += 1
+    if (windowCall.tested < fullCall.tested) windowed += 1
+    if (fullResult.changedCount > 0) changed += 1
+  }
+  assert(windowed > 0, `the sweep must include cases that still take the window, got ${windowed}`)
+  assert(changed > 0, 'the sweep must include cases that actually cut material')
+  console.log(`  sweep: ${cases} cases, ${windowed} kept the window, ${changed} changed material`)
+}
+
+const childCase = process.env[HUGE_ANGLE_CHILD]
+if (childCase === 'huge-angle') {
+  testHugeFiniteProgramAngle()
+} else {
+  testWindowMatchesFullLoop()
+  testBoundIsNecessary()
+  testFixtureCellCountDrop()
+  testLargeProgramAnglePrecision()
+  testLargeOriginTinyCells()
+  testExtremePrecisionSweep()
+  testHugeFiniteProgramAngleInChild()
+  console.log('square-material angle window tests passed')
+}

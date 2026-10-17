@@ -44,6 +44,17 @@
  * check is what keeps the material stable, and the parameter only bounds the
  * remaining work.
  *
+ * C2-P1F adds the crossing-determined band-high cases. A band's high can be the
+ * wall reach at a domain end that a crossing fixes, so the flat crossing now
+ * lists `reachAt` alongside `floorAt`; the ball's sphere and shank lists already
+ * carry both of their stored values. `testCrossingDeterminedBandHighs` builds
+ * one flat and one ball cell where that happens and compares them with
+ * fixed-96. It also requires every configured endpoint list to be consulted
+ * (`endpointChecks === 2 · endpointCalls`): dropping `reachAt` from the flat
+ * list or `sphereHigh` from the sphere list lowers that count without changing
+ * an iteration count or, in the sampled regimes, a stored value, which is why
+ * the earlier seeded tests could not see the manager mutation.
+ *
  * Run with: npx tsx src/engine/simulation/squareMaterialConvergence.test.ts
  */
 
@@ -322,7 +333,7 @@ interface RunResult {
 function emptyStats(): SearchIterationStats {
   return {
     maximizeCalls: 0, maximizeIterations: 0, bisectCalls: 0, bisectIterations: 0,
-    crossingsOnNegativeSide: 0,
+    crossingsOnNegativeSide: 0, endpointChecks: 0, endpointCalls: 0,
   }
 }
 
@@ -431,6 +442,169 @@ function testCodexRadialRegression(): void {
   console.log(`  fixed 96 ${JSON.stringify(legacy)}; early exit ${JSON.stringify(latest)}`)
 }
 
+/** Replay one cell through one search mode, keeping the iteration accounting. */
+function runCell(
+  along: number,
+  across: number,
+  move: ToolpathMove,
+  toolRadius: number,
+  toolType: ToolType,
+  legacy: boolean,
+): RunResult {
+  const grid = makeCell(along, across)
+  const stats = emptyStats()
+  applySquareMoveToGrid(grid, move, toolRadius, toolType, {
+    ...(legacy ? { legacyFixedSearch: true } : {}),
+    searchIterations: stats,
+  })
+  if (grid.squareMaterial === undefined) throw new Error('assertion failed: the probe move must cut the cell')
+  return { material: grid.squareMaterial, topZ: grid.topZ, stats }
+}
+
+/** The non-negative side of the last sign change of a decreasing-then-crossing function. */
+function bisectProbe(evaluate: (s: number) => number, lo: number, hi: number): number {
+  assert(evaluate(lo) >= 0 && evaluate(hi) < 0, 'the probe needs one crossing, non-negative on the left')
+  let a = lo
+  let b = hi
+  for (let i = 0; i < 200; i += 1) {
+    const mid = (a + b) / 2
+    if (mid === a || mid === b) break
+    if (evaluate(mid) >= 0) a = mid
+    else b = mid
+  }
+  return a
+}
+
+/**
+ * The C2-P1F follow-through: a band's high can be attained at a domain end
+ * that a crossing determines, not only at a fixed move end or an interior
+ * maximum. Both cases below are built so the removed band's high is exactly the
+ * wall reach at a sign change:
+ *
+ *   - flat: `floor = tip/cos` rises faster than the wall reach, so the feasible
+ *     domain is `[0, cross]`, the reach increases across it, and
+ *     `maximizeConcave(reachAt)` returns `reachAt(cross)`;
+ *   - ball: the shank's `inner = (tip+rt)/cos` overtakes the reach at a crossing
+ *     inside the move, the reach increases up to it, so the band high is again
+ *     `reachAt(cross)`; a sphere discriminant crossing is present as well, so
+ *     the sphere's endpoint list is exercised by the same cell.
+ *
+ * The stored values must match fixed-96 after `Math.fround`. The iteration
+ * accounting then proves the crossing actually consulted both ends of every
+ * configured endpoint list: dropping `reachAt` from the flat list or
+ * `sphereHigh` from the sphere list lowers `endpointChecks` while leaving every
+ * iteration count unchanged, so this is the assertion that sees it.
+ */
+function testCrossingDeterminedBandHighs(): void {
+  console.log('Testing band highs attained at crossing-determined domain ends...')
+
+  // flat: side 12, cell at x 0.5, ray 0.5 rad from the tool, flat radius 1,
+  // tip 1.5 → 2.0 over x 0 → 0.4.
+  const flat: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0, y: 3.0, z: 1.5, a: 0 },
+    to: { x: 0.4, y: 3.0, z: 2.0, a: 0 },
+  }
+  const flatCos = Math.cos(0.5)
+  const flatSin = Math.sin(0.5)
+  const flatDx = (s: number): number => 0.5 - 0.4 * s
+  const flatReach = (s: number): number => Math.sqrt(Math.max(0, 1 - flatDx(s) ** 2)) / flatSin
+  const flatFloor = (s: number): number => (1.5 + 0.5 * s) / flatCos
+  const flatCross = bisectProbe((s) => flatReach(s) - flatFloor(s), 0, 1)
+  assert(
+    flatCross > 0 && flatCross < 1,
+    `flat: the feasible domain must end at an interior crossing, got ${flatCross}`,
+  )
+  assert(
+    flatReach(flatCross) > flatReach(0),
+    'flat: the reach must increase up to the crossing so its maximum sits there',
+  )
+
+  const flatLegacy = runCell(0.5, 3.0, flat, 1, 'flat_endmill', true)
+  const flatLatest = runCell(0.5, 3.0, flat, 1, 'flat_endmill', false)
+  compareRuns(flatLegacy, flatLatest)
+  const flatIntervals = flatLatest.material.get(0)!
+  assert(flatIntervals.length === 4, `flat: expected one removed band, got ${JSON.stringify(flatIntervals)}`)
+  assert(
+    Math.abs(flatIntervals[2] - flatReach(flatCross)) < 1e-6,
+    `flat: the band high ${flatIntervals[2]} is not the reach at the crossing ${flatReach(flatCross)}`,
+  )
+  assert(
+    Math.abs(flatIntervals[1] - flatFloor(0)) < 1e-6,
+    `flat: the band low ${flatIntervals[1]} is not the floor at the fixed end ${flatFloor(0)}`,
+  )
+  assert(flatLatest.stats.endpointCalls > 0, 'flat: the crossing must reach the stored-endpoint comparison')
+  assert(
+    flatLatest.stats.endpointChecks === 2 * flatLatest.stats.endpointCalls,
+    `flat: both stored endpoints must be compared at every crossing ` +
+      `(${flatLatest.stats.endpointChecks} checks over ${flatLatest.stats.endpointCalls} calls)`,
+  )
+  console.log(
+    `  flat: crossing ${flatCross.toFixed(6)}, band high ${flatIntervals[2].toFixed(6)} ` +
+      `(reach there), ${flatLatest.stats.endpointChecks} endpoint checks`,
+  )
+
+  // ball: side 12, one cell at x -0.1503, radius 0.5777, tip 0.3164 → 2.8361
+  // over x 0.0516 → -0.1664 (a seeded search result). The shank crossing is the
+  // band high; the sphere discriminant crosses too, so both ball endpoint lists
+  // are exercised by this cell.
+  const ballTheta = 0.179521833525135
+  const ballRadius = 0.5776574408635498
+  const ballTipFrom = 0.31633938564918934
+  const ballTipTo = 2.83612400800921
+  const ballAlongDelta = -0.21795972646214068
+  const ballFromAlong = 0.05160518130287528
+  const ballAlong = -0.15031835686075554
+  const ballAcross = ballTheta * 6
+  const ball: ToolpathMove = {
+    kind: 'cut',
+    from: { x: ballFromAlong, y: ballAcross, z: ballTipFrom, a: 0 },
+    to: { x: ballFromAlong + ballAlongDelta, y: ballAcross, z: ballTipTo, a: 0 },
+  }
+  const ballCos = Math.cos(ballTheta)
+  const ballSin = Math.sin(ballTheta)
+  const ballDx = (s: number): number => ballAlong - ballFromAlong - ballAlongDelta * s
+  const ballCentre = (s: number): number => ballTipFrom + (ballTipTo - ballTipFrom) * s + ballRadius
+  const ballReach = (s: number): number =>
+    Math.sqrt(Math.max(0, ballRadius ** 2 - ballDx(s) ** 2)) / ballSin
+  const ballInner = (s: number): number => ballCentre(s) / ballCos
+  const ballDisc = (s: number): number =>
+    ballRadius ** 2 - ballCentre(s) ** 2 * ballSin ** 2 - ballDx(s) ** 2
+  const shankCross = bisectProbe((s) => ballReach(s) - ballInner(s), 0, 1)
+  assert(
+    shankCross > 0 && shankCross < 1,
+    `ball: the shank domain must end at an interior crossing, got ${shankCross}`,
+  )
+  assert(
+    ballReach(shankCross) > ballReach(0),
+    'ball: the shank reach must increase up to the crossing so its maximum sits there',
+  )
+  assert(
+    ballDisc(0) > 0 && ballDisc(1) < 0,
+    'ball: the sphere discriminant must also cross inside the move',
+  )
+
+  const ballLegacy = runCell(ballAlong, ballAcross, ball, ballRadius, 'ball_endmill', true)
+  const ballLatest = runCell(ballAlong, ballAcross, ball, ballRadius, 'ball_endmill', false)
+  compareRuns(ballLegacy, ballLatest)
+  const ballIntervals = ballLatest.material.get(0)!
+  assert(ballIntervals.length === 4, `ball: expected one removed band, got ${JSON.stringify(ballIntervals)}`)
+  assert(
+    Math.abs(ballIntervals[2] - ballReach(shankCross)) < 1e-6,
+    `ball: the band high ${ballIntervals[2]} is not the shank reach at the crossing ${ballReach(shankCross)}`,
+  )
+  assert(ballLatest.stats.endpointCalls > 0, 'ball: the crossings must reach the stored-endpoint comparison')
+  assert(
+    ballLatest.stats.endpointChecks === 2 * ballLatest.stats.endpointCalls,
+    `ball: both stored endpoints must be compared at every crossing ` +
+      `(${ballLatest.stats.endpointChecks} checks over ${ballLatest.stats.endpointCalls} calls)`,
+  )
+  console.log(
+    `  ball: shank crossing ${shankCross.toFixed(6)}, band high ${ballIntervals[2].toFixed(6)} ` +
+      `(reach there), ${ballLatest.stats.endpointChecks} endpoint checks`,
+  )
+}
+
 function testStoredMaterialDoesNotMove(): void {
   console.log('Testing the early-exit search stores the same square material as fixed 96...')
   for (const axis of ['x', 'y'] as const) {
@@ -520,6 +694,7 @@ function testEarlyExitIsTaken(): void {
 
 function main(): void {
   testCodexRadialRegression()
+  testCrossingDeterminedBandHighs()
   testStoredMaterialDoesNotMove()
   testEarlyExitIsTaken()
   console.log('square-material convergence: PASSED')

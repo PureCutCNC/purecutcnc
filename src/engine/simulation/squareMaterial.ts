@@ -126,6 +126,17 @@ export interface SearchIterationStats {
    * material.
    */
   crossingsOnNegativeSide: number
+  /**
+   * Stored endpoint values compared by `storedEndpointsAgree`, and the number
+   * of times that comparison ran. A crossing search only reaches the comparison
+   * once its parameter bracket has converged, so these count the Float32 work
+   * that actually resolves the stored boundary. The convergence test uses them
+   * to prove each configured endpoint list is consulted: an endpoint silently
+   * dropped from a list lowers `endpointChecks` without changing any iteration
+   * count, which is exactly the C2-P1F manager mutation.
+   */
+  endpointChecks: number
+  endpointCalls: number
 }
 
 /**
@@ -398,6 +409,33 @@ function angleWindowBound(toolRadius: number, tipMin: number): number | null {
 type AcrossRange = [number, number]
 
 /**
+ * The across coordinate of one cell centre, exactly as the apply loop computes
+ * it. The window solves its edges against this same expression: once the sheet
+ * origin is large the kernel's own `origin + (c + 0.5)·cell` rounds per cell,
+ * and a model built from a first-cell angle plus `c·step` is not that value.
+ */
+function acrossCellCentre(acrossOrigin: number, cellSize: number, index: number): number {
+  return acrossOrigin + (index + 0.5) * cellSize
+}
+
+/**
+ * Safety factor on the Float64 rounding bound of the angle-index solve. The
+ * linear model's error is accumulated from two rounded angle evaluations, a
+ * rounded across coordinate, a rounded explicit angle and the rounded step —
+ * roughly a dozen unit roundoffs. `Number.EPSILON` is two unit roundoffs, so
+ * sixteen of them is deliberately generous. The solve may absorb one whole
+ * cell of that error; past that the writer falls back to the full loop.
+ */
+const INDEX_SOLVE_ERROR_FACTOR = 16
+
+/**
+ * Hard cap on the periodic copies the wrap loop may visit. A sheet that spans a
+ * realistic number of circumferences needs a handful; anything larger is a
+ * pathological solve and returns the full range instead of iterating.
+ */
+const MAX_WRAP_COPIES = 4096
+
+/**
  * The across cells whose ray can lie within `bound` of the tool's program
  * angle, as ascending inclusive index ranges. The angle is periodic, so a
  * window that reaches the seam is two ranges (one at each end of the sheet); a
@@ -409,6 +447,14 @@ type AcrossRange = [number, number]
  * Ranges are widened by a whole cell at each end on top of
  * `ANGLE_WINDOW_EPSILON`, so the Float64 solve can never exclude a cell whose
  * angle sits on the bound.
+ *
+ * That padding is only good for one cell of error, so the solve is guarded by
+ * `INDEX_SOLVE_ERROR_FACTOR`: the error of the linear model grows with the
+ * angle and across magnitudes (a program angle near 1e18°, or a sheet origin
+ * near 1e16 over 0.03 cells), and once it could exceed a cell the whole
+ * circumference is searched. The loop itself is also bounded: a finite angle
+ * large enough to make the periodic index non-safe-integer would leave
+ * `wrap += 1` a no-op, so that falls back as well.
  */
 function acrossWindow(
   geometry: MoveGeometry,
@@ -423,20 +469,54 @@ function acrossWindow(
   const widened = bound + ANGLE_WINDOW_EPSILON * Math.max(1, bound)
   if (!Number.isFinite(widened) || widened >= Math.PI) return full
 
-  // The unwrapped angle at the first cell centre, and its step per cell.
-  const u0 = rawThetaAt(geometry, acrossOrigin + 0.5 * cellSize, 0)
+  // The unwrapped angle at the first and last cell centres, both computed with
+  // the kernel's own across expression rather than by stepping from the first
+  // cell, because the kernel rounds that coordinate per cell.
+  const u0 = rawThetaAt(geometry, acrossCellCentre(acrossOrigin, cellSize, 0), 0)
   if (!Number.isFinite(u0)) return full
-  const lastAngle = u0 + step * (acrossCount - 1)
+  const lastAngle = rawThetaAt(geometry, acrossCellCentre(acrossOrigin, cellSize, acrossCount - 1), 0)
   if (!Number.isFinite(lastAngle)) return full
+
+  // The error of `angle(c) ≈ u0 + c·step`, in angle units. Every term is a
+  // magnitude whose Float64 representation can be off by about one ulp: the
+  // angles themselves (which include the explicit program angle), and the
+  // across coordinates fed through `anglePerAcross` (which include the sheet
+  // origin and the pivot `zero`). Four ulps of their sum, divided by the angle
+  // per cell, is the worst-case index error; the solve may absorb one cell.
+  const acrossScale = Math.max(
+    Math.abs(acrossOrigin),
+    Math.abs(geometry.zero),
+    Math.abs(acrossCellCentre(acrossOrigin, cellSize, 0)),
+    Math.abs(acrossCellCentre(acrossOrigin, cellSize, acrossCount - 1)),
+    Math.abs(geometry.fromAcross),
+    Math.abs(geometry.toAcross),
+    cellSize,
+  )
+  const angleScale = Math.max(
+    Math.abs(u0),
+    Math.abs(lastAngle),
+    Math.abs(geometry.angleFrom ?? 0),
+    Math.abs(geometry.angleTo ?? 0),
+    Math.abs(step) * Math.max(1, acrossCount),
+  )
+  const solveError = Number.EPSILON * INDEX_SOLVE_ERROR_FACTOR
+    * (angleScale + Math.abs(geometry.anglePerAcross) * acrossScale)
+  if (!(solveError <= step)) return full
 
   // One interval per periodic copy of the window that the grid can reach. The
   // reach carries a whole cell on top of the widened bound, because the ±1
   // index widening below can pull in a cell whose angle lies up to one cell
   // outside the span.
   const reach = widened + step
-  const first = Math.floor((u0 - reach) / TWO_PI)
-  const last = Math.ceil((lastAngle + reach) / TWO_PI)
-  if (!Number.isFinite(first) || !Number.isFinite(last) || last - first > acrossCount + 4) return full
+  const first = Math.floor((Math.min(u0, lastAngle) - reach) / TWO_PI)
+  const last = Math.ceil((Math.max(u0, lastAngle) + reach) / TWO_PI)
+  // `wrap += 1` must actually advance: above the safe-integer range it does
+  // not, and the loop would run forever on a finite but enormous program angle.
+  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last)) return full
+  const copies = last - first
+  if (!(copies >= 0) || !Number.isSafeInteger(copies) || copies > MAX_WRAP_COPIES || copies > acrossCount + 4) {
+    return full
+  }
 
   const ranges: AcrossRange[] = []
   for (let wrap = first; wrap <= last; wrap += 1) {
@@ -620,11 +700,13 @@ function bisectCrossing(
   let b = positive
   let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
-    if (
-      earlyExit
-      && Math.abs(b - a) <= tolerance
-      && storedEndpointsAgree(endpoints, a, b)
-    ) break
+    if (earlyExit && Math.abs(b - a) <= tolerance) {
+      if (search.stats) {
+        search.stats.endpointCalls += 1
+        search.stats.endpointChecks += endpoints.length
+      }
+      if (storedEndpointsAgree(endpoints, a, b)) break
+    }
     const mid = (a + b) / 2
     // A tangential endpoint changes like √(s − s*), so the value check can sit
     // just above tolerance when the bracket is already two adjacent doubles.
@@ -746,9 +828,15 @@ function constantAngleBands(
 
   if (!ball) {
     const floorAt = (s: number): number => tipAt(s) / cos
+    // The band is `[min floor, max reach]` over this feasible domain. Its low
+    // end is `floorAt` at the domain ends; its high end is the maximum of
+    // `reachAt`, which can be attained *at* a crossing-determined end (reach
+    // increasing with the floor rising faster, or the mirror image). Both
+    // stored quantities are therefore pinned at the crossing, not just the
+    // floor.
     const domain = axial
       ? [loS, hiS] as [number, number]
-      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search, [floorAt])
+      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search, [floorAt, reachAt])
     if (!domain) return null
     const low = Math.min(floorAt(domain[0]), floorAt(domain[1]))
     const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1], search).value
@@ -773,9 +861,12 @@ function constantAngleBands(
     return centre * cos + Math.sqrt(Math.max(0, discFrom(centre, dxAt(s))))
   }
 
-  // The sphere's boundary values are both ray intersections (they meet at a
-  // tangential crossing), so both are checked. The shank's boundary value is
-  // its inner wall and its reach, which also meet there.
+  // The sphere's two ray intersections are its stored low and high, and at a
+  // discriminant crossing they coincide at `centre·cos`. The non-negative-side
+  // endpoint the bisection returns sits just inside the domain, and the sign of
+  // the centre's slope decides which of the two intersections is the one that
+  // settles in Float32, so both are checked. The shank's boundary values are
+  // its inner wall and its reach, which also meet at its crossing.
   const shankInnerAt = (s: number): number => centreAt(s) / cos
   const sphereDomain = concaveDomain(discAt, loS, hiS, search, [sphereLow, sphereHigh])
   const shankDomain: [number, number] | null = axial
@@ -1067,7 +1158,7 @@ export function applySquareMoveToGrid(
     const along = alongOrigin + (a + 0.5) * cellSize
     for (const [rangeStart, rangeEnd] of acrossRanges) {
       for (let c = rangeStart; c <= rangeEnd; c += 1) {
-        const across = acrossOrigin + (c + 0.5) * cellSize
+        const across = acrossCellCentre(acrossOrigin, cellSize, c)
         const col = xAxis ? a : c
         const row = xAxis ? c : a
         const idx = row * grid.cols + col
