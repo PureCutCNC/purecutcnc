@@ -81,10 +81,13 @@ import type { DirtyRegion, SimulationGrid } from './types'
 const TWO_PI = Math.PI * 2
 
 /**
- * Iterations for the golden-section extrema and the bisected feasible-window
- * crossings. A bracket shrinks by the golden ratio (~0.618) per step, so this
- * reaches Float64 resolution long before the budget runs out; the result is
- * independent of the count.
+ * Hard upper bound on the golden-section extrema and the bisected
+ * feasible-window crossings. A bracket shrinks by the golden ratio (~0.618) per
+ * step, so 96 reaches Float64 resolution long before the budget runs out. The
+ * loops now stop as soon as the bracket is below `searchTolerance`, which is
+ * where both the concave maximum and the crossings are already resolved past
+ * one Float32 ulp of the stored material (see that function); this stays as a
+ * safety net so a pathological bracket can never loop without end.
  */
 const CONVERGE_ITERATIONS = 96
 
@@ -93,6 +96,41 @@ const AXIAL_EPSILON = 1e-12
 
 /** Relative tolerance of one Float32 ulp, for "did the stored value move". */
 const ULP = 2 ** -23
+
+/** Test-only iteration accounting for the fixed-count searches. */
+export interface SearchIterationStats {
+  maximizeCalls: number
+  maximizeIterations: number
+  bisectCalls: number
+  bisectIterations: number
+  /**
+   * Bisected feasible-window endpoints that came back on the infeasible side.
+   * The search contract is the last known non-negative point, so this must stay
+   * zero; it is recorded here because the tolerance is far below a stored ulp
+   * and only a direct invariant check can see a sign-side regression.
+   */
+  crossingsOnNegativeSide: number
+}
+
+/**
+ * Test-only control over the fixed-count searches (issue #1016 C2-P1).
+ *
+ * Production callers never pass this: the early exit is the default. The
+ * convergence test supplies it to replay the pre-P1 fixed-96 search through
+ * exactly the same code, so any difference in stored material comes from the
+ * tolerance and not from a re-implementation.
+ */
+export interface SquareSearchOptions {
+  /** Run the legacy fixed-count search with no early exit. */
+  legacyFixedSearch?: boolean
+  /** Accumulate the iterations each search actually took. */
+  searchIterations?: SearchIterationStats
+}
+
+interface SearchControl {
+  legacy: boolean
+  stats?: SearchIterationStats
+}
 
 export interface SquareApplyResult {
   changedCount: number
@@ -262,23 +300,64 @@ function angleIsConstant(geometry: MoveGeometry): boolean {
 }
 
 /**
+ * The move-parameter bracket width below which another search step cannot
+ * change the stored result. Kept next to its only use so the derivation stays
+ * with the code.
+ *
+ * The parameter is the fraction along the move, so the bracket's own scale is
+ * its bounds, about one; one Float32 ulp of the parameter is `ULP`. A stored
+ * radial endpoint is a closed-form function of `s` (a tip plane over `cos θ`, a
+ * ball centre, a cylinder reach), so its error is the bracket width times that
+ * slope, and the band is then clipped against the Float32 cell heights. One
+ * ulp of the parameter still leaves a few clipped endpoints on the other side
+ * of that Float32 boundary — a one-ulp move in the stored material, which is
+ * the most the grid can express but is not "resolved past one ulp". The extra
+ * 1/64 keeps the boundary error far below the height's ulp, so the clamped
+ * endpoint is stable and the seeded replay stores bit-identical Float32
+ * values. A concave maximum needs far less: its value error is quadratic in the
+ * argument error, so the same bracket resolves it far past one ulp. Both loops
+ * keep `CONVERGE_ITERATIONS` as the hard ceiling; the old fixed 96 drove the
+ * bracket to ~1e-20, twenty orders below anything the grid can hold.
+ */
+const SEARCH_TOLERANCE_ULPS = ULP / 64
+
+function searchTolerance(lo: number, hi: number): number {
+  return SEARCH_TOLERANCE_ULPS * Math.max(1, Math.abs(lo), Math.abs(hi))
+}
+
+/**
  * The converged maximum of a concave function on `[lo, hi]`, by golden section
  * with the endpoints also compared. Concavity is what makes the sweep exact: a
  * uniform scan can step over a narrow window, a converged maximum cannot.
+ *
+ * The loop stops once the bracket is below `searchTolerance`, because another
+ * step cannot move the stored value; `CONVERGE_ITERATIONS` remains the hard
+ * upper bound.
  */
 function maximizeConcave(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
+  search: SearchControl,
+  // Callers that already have the endpoint values (the feasible-domain search
+  // does) pass them in, so the maximum evaluates each endpoint once instead of
+  // once for the sign check and again for the final comparison.
+  loValue: number = evaluate(lo),
+  hiValue: number = evaluate(hi),
 ): { s: number; value: number } {
   const invPhi = (Math.sqrt(5) - 1) / 2
+  const tolerance = searchTolerance(lo, hi)
+  const earlyExit = !search.legacy
   let a = lo
   let b = hi
   let c = b - (b - a) * invPhi
   let d = a + (b - a) * invPhi
   let fc = evaluate(c)
   let fd = evaluate(d)
+  let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
+    if (earlyExit && b - a <= tolerance) break
+    iterations += 1
     if (fc > fd) {
       b = d
       d = c
@@ -293,15 +372,20 @@ function maximizeConcave(
       fd = evaluate(d)
     }
   }
+  if (search.stats) {
+    search.stats.maximizeCalls += 1
+    search.stats.maximizeIterations += iterations
+  }
   const mid = (a + b) / 2
   let bestS = mid
   let bestValue = evaluate(mid)
-  for (const candidate of [lo, hi]) {
-    const value = evaluate(candidate)
-    if (value > bestValue) {
-      bestValue = value
-      bestS = candidate
-    }
+  if (loValue > bestValue) {
+    bestValue = loValue
+    bestS = lo
+  }
+  if (hiValue > bestValue) {
+    bestValue = hiValue
+    bestS = hi
   }
   return { s: bestS, value: bestValue }
 }
@@ -311,19 +395,39 @@ function minimizeConvex(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
+  search: SearchControl,
 ): { s: number; value: number } {
-  const peak = maximizeConcave((s) => -evaluate(s), lo, hi)
+  const peak = maximizeConcave((s) => -evaluate(s), lo, hi, search)
   return { s: peak.s, value: -peak.value }
 }
 
-/** The non-negative side of a sign change of `evaluate` on `[negative, positive]`. */
-function bisectCrossing(evaluate: (s: number) => number, negative: number, positive: number): number {
+/**
+ * The non-negative side of a sign change of `evaluate` on `[negative, positive]`.
+ * The bracket is halved until it is below `searchTolerance`, then the last
+ * known non-negative point is returned; another halving cannot move the stored
+ * endpoint by a Float32 ulp.
+ */
+function bisectCrossing(
+  evaluate: (s: number) => number,
+  negative: number,
+  positive: number,
+  search: SearchControl,
+): number {
+  const tolerance = searchTolerance(negative, positive)
+  const earlyExit = !search.legacy
   let a = negative
   let b = positive
+  let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
+    if (earlyExit && Math.abs(b - a) <= tolerance) break
+    iterations += 1
     const mid = (a + b) / 2
     if (evaluate(mid) >= 0) b = mid
     else a = mid
+  }
+  if (search.stats) {
+    search.stats.bisectCalls += 1
+    search.stats.bisectIterations += iterations
   }
   return b
 }
@@ -333,13 +437,29 @@ function bisectCrossing(evaluate: (s: number) => number, negative: number, posit
  * or null when it never is. A concave function's non-negative set is a single
  * interval, so the maximum is converged and each side's crossing is bisected —
  * a narrow feasible window between any two scan nodes is still found exactly.
+ * The endpoint values are computed once here and passed into the maximum, so
+ * the feasible-domain search never evaluates the same endpoint twice.
  */
-function concaveDomain(evaluate: (s: number) => number, lo: number, hi: number): [number, number] | null {
+function concaveDomain(
+  evaluate: (s: number) => number,
+  lo: number,
+  hi: number,
+  search: SearchControl,
+): [number, number] | null {
   if (!(hi > lo)) return evaluate(lo) >= 0 ? [lo, hi] : null
-  const peak = maximizeConcave(evaluate, lo, hi)
+  const loValue = evaluate(lo)
+  const hiValue = evaluate(hi)
+  const peak = maximizeConcave(evaluate, lo, hi, search, loValue, hiValue)
   if (!(peak.value >= 0)) return null
-  const left = evaluate(lo) >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s)
-  const right = evaluate(hi) >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s)
+  const left = loValue >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s, search)
+  const right = hiValue >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s, search)
+  if (search.stats) {
+    // Test-only invariant: a crossing must be the non-negative side. The
+    // tolerance is far below one stored ulp, so an off-by-one-side return
+    // cannot be seen in the stored values; this check is what catches it.
+    if (!(evaluate(left) >= 0)) search.stats.crossingsOnNegativeSide += 1
+    if (!(evaluate(right) >= 0)) search.stats.crossingsOnNegativeSide += 1
+  }
   return [left, right]
 }
 
@@ -389,6 +509,7 @@ function constantAngleBands(
   ball: boolean,
   loS: number,
   hiS: number,
+  search: SearchControl,
 ): Array<[number, number]> | null {
   const theta = thetaAt(geometry, cellAcross, loS)
   const cos = Math.cos(theta)
@@ -411,27 +532,37 @@ function constantAngleBands(
 
   if (!ball) {
     const floorAt = (s: number): number => tipAt(s) / cos
-    const domain = axial ? [loS, hiS] as [number, number] : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS)
+    const domain = axial
+      ? [loS, hiS] as [number, number]
+      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search)
     if (!domain) return null
     const low = Math.min(floorAt(domain[0]), floorAt(domain[1]))
-    const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1]).value
+    const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1], search).value
     return high > low ? [[low, high]] : null
   }
 
   const centreAt = (s: number): number => tipAt(s) + rt
+  /** The ball's ray discriminant from its centre and axial offset at `s`. */
+  const discFrom = (centre: number, dx: number): number =>
+    rt * rt - centre * centre * sinAbs * sinAbs - dx * dx
   /** The ball's ray discriminant; concave, so its non-negative set is one interval. */
-  const discAt = (s: number): number => {
+  const discAt = (s: number): number => discFrom(centreAt(s), dxAt(s))
+  // Each of these needs the centre, the axial offset and the discriminant; the
+  // discriminant is built from the same two values instead of recomputing them,
+  // which halves the closure work on the hot ball path.
+  const sphereLow = (s: number): number => {
     const centre = centreAt(s)
-    const dx = dxAt(s)
-    return rt * rt - centre * centre * sinAbs * sinAbs - dx * dx
+    return centre * cos - Math.sqrt(Math.max(0, discFrom(centre, dxAt(s))))
   }
-  const sphereLow = (s: number): number => centreAt(s) * cos - Math.sqrt(Math.max(0, discAt(s)))
-  const sphereHigh = (s: number): number => centreAt(s) * cos + Math.sqrt(Math.max(0, discAt(s)))
+  const sphereHigh = (s: number): number => {
+    const centre = centreAt(s)
+    return centre * cos + Math.sqrt(Math.max(0, discFrom(centre, dxAt(s))))
+  }
 
-  const sphereDomain = concaveDomain(discAt, loS, hiS)
+  const sphereDomain = concaveDomain(discAt, loS, hiS, search)
   const shankDomain: [number, number] | null = axial
     ? [loS, hiS]
-    : concaveDomain((s) => reachAt(s) - centreAt(s) / cos, loS, hiS)
+    : concaveDomain((s) => reachAt(s) - centreAt(s) / cos, loS, hiS, search)
 
   const domains = [sphereDomain, shankDomain].filter((domain): domain is [number, number] => domain !== null)
   if (domains.length === 0) return null
@@ -455,14 +586,14 @@ function constantAngleBands(
     if (sphereDomain && overlaps(sphereDomain, [componentLow, componentHigh])) {
       const from = Math.max(componentLow, sphereDomain[0])
       const to = Math.min(componentHigh, sphereDomain[1])
-      low = Math.min(low, minimizeConvex(sphereLow, from, to).value)
-      high = Math.max(high, maximizeConcave(sphereHigh, from, to).value)
+      low = Math.min(low, minimizeConvex(sphereLow, from, to, search).value)
+      high = Math.max(high, maximizeConcave(sphereHigh, from, to, search).value)
     }
     if (shankDomain && overlaps(shankDomain, [componentLow, componentHigh])) {
       const from = Math.max(componentLow, shankDomain[0])
       const to = Math.min(componentHigh, shankDomain[1])
       low = Math.min(low, centreAt(from) / cos, centreAt(to) / cos)
-      high = Math.max(high, axial ? Infinity : maximizeConcave(reachAt, from, to).value)
+      high = Math.max(high, axial ? Infinity : maximizeConcave(reachAt, from, to, search).value)
     }
     if (high > low) bands.push([low, high])
   }
@@ -488,10 +619,11 @@ function removedBandsForCell(
   geometry: MoveGeometry,
   rt: number,
   ball: boolean,
+  search: SearchControl,
 ): Array<[number, number]> | null {
   const window = reachableWindow(cellAlong, geometry, rt)
   if (!window) return null
-  return constantAngleBands(cellAlong, cellAcross, geometry, rt, ball, window[0], window[1])
+  return constantAngleBands(cellAlong, cellAcross, geometry, rt, ball, window[0], window[1], search)
 }
 
 /** Merge overlapping and touching intervals into a canonical ascending order. */
@@ -590,12 +722,17 @@ function finitePoint(point: ToolpathPoint): boolean {
  * A cell counts as changed whenever its remaining intervals lose material —
  * including an interior interval whose outer `topZ` is unchanged, which the
  * envelope-only representation could not report at all.
+ *
+ * `options` exists only for the #1016-P1 convergence test: it can replay the
+ * pre-P1 fixed-96 search and collect iteration counts. Every production caller
+ * omits it and gets the early-exit search, so the public call shape is unchanged.
  */
 export function applySquareMoveToGrid(
   grid: SimulationGrid,
   move: ToolpathMove,
   toolRadius: number,
   toolType: ToolType,
+  options?: SquareSearchOptions,
 ): SquareApplyResult {
   const bar = grid.squareBar
   if (!bar) return ZERO_RESULT
@@ -613,6 +750,11 @@ export function applySquareMoveToGrid(
   }
 
   const frame = bar.frame
+  // The test-only options are read once; production takes the early-exit path.
+  const search: SearchControl = {
+    legacy: options?.legacyFixedSearch === true,
+    stats: options?.searchIterations,
+  }
   const xAxis = frame.axis === 'x'
   const ball = toolType === 'ball_endmill'
   const rt = toolRadius
@@ -693,7 +835,7 @@ export function applySquareMoveToGrid(
       const height = topZ[idx]
       if (!(height > bottom + 1e-12)) continue
 
-      const bands = removedBandsForCell(along, across, geometry, rt, ball)
+      const bands = removedBandsForCell(along, across, geometry, rt, ball, search)
       if (!bands) continue
 
       const material = squareMaterialIntervals(grid, idx)
