@@ -704,6 +704,67 @@ for (const units of ['mm', 'inch'] as const) {
   assert.ok(!codes(plungeResult).includes('postRotarySquareTurnBelowEnvelope'), `${units}: and does not trip this guard`)
 }
 
+// ── 3d. a program starts at A0, not at its first move's angle ─
+
+console.log('Testing the controller start angle at the start of a program...')
+for (const units of ['mm', 'inch'] as const) {
+  const { project, operation, stock } = fixture({ axis: 'x', units, kind: 'rotary_finish' })
+  const definition = machine('own', 'x')
+  const centre = barCentre(stock)
+  // Written out independently of the shared helper, as in 3b/3c.
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', units)
+  const below = convertLength(12, 'mm', units)
+  const along = convertLength(15, 'mm', units)
+  const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+  // The first angle-bearing move of the program, with nothing before it, so the
+  // controller has not been turned yet and starts at A0. Equal endpoints do not
+  // make the move a no-op: the block it writes still commands its own angle
+  // from the controller's A0, so it turns the blank.
+  const firstMove = (kind: 'rapid' | 'cut', angle: number, z: number): ToolpathMove[] => [
+    { kind, from: { x: along, y: centre, z, a: angle }, to: { x: along, y: centre, z, a: angle } },
+  ]
+  assert.ok(below < travelZ - convertLength(0.5, 'mm', units), `${units}: fixture: Z12 is below the travel height`)
+
+  // (a) A first move labelled A45 -> A45 turns the blank from the controller's
+  // A0, and at Z12 that turn sweeps the standing corner into the cutter. The
+  // move's own equal endpoints must not be read as "already there".
+  for (const kind of ['rapid', 'cut'] as const) {
+    const refused = post(project, definition, operation, toolpathOf(operation, firstMove(kind, 45, below)))
+    assert.deepEqual(
+      codes(refused),
+      ['postRotarySquareTurnBelowEnvelope'],
+      `${units}: the first ${kind} of the program labelled A45 -> A45 at Z12 is refused`,
+    )
+    assert.ok(!postsAngle(refused.gcode, 'A'), `${units}: the too-low first ${kind} posts no A45`)
+  }
+
+  // (b) A0 -> A0 commands no turn at all, so this height guard must not fire.
+  // The feed is still refused for the older reason — a feed cannot start before
+  // the controller is at its angle — and that is a different rule, not this one.
+  const flatRapid = post(project, definition, operation, toolpathOf(operation, firstMove('rapid', 0, below)))
+  assert.deepEqual(flatRapid.warnings, [], `${units}: the first rapid of the program at A0 -> A0 Z12 posts`)
+  const flatFeed = post(project, definition, operation, toolpathOf(operation, firstMove('cut', 0, below)))
+  assert.ok(
+    !codes(flatFeed).includes('postRotarySquareTurnBelowEnvelope'),
+    `${units}: the first feed of the program at A0 -> A0 Z12 is not this guard's refusal`,
+  )
+  assert.deepEqual(codes(flatFeed), ['postRotaryAngleNotEstablished'], `${units}: it is still an unestablished feed`)
+
+  // (c) The guard judges height, not angle: the same A45 first move at the
+  // generator's travel height is admitted. A rapid establishes A45 for the
+  // program; a feed that starts at A45 before any turn has happened is still
+  // the older unestablished-feed refusal, so it is only checked against this
+  // guard.
+  const highRapid = post(project, definition, operation, toolpathOf(operation, firstMove('rapid', 45, travelZ)))
+  assert.deepEqual(highRapid.warnings, [], `${units}: the first rapid labelled A45 -> A45 at the travel height is accepted`)
+  assert.match(highRapid.gcode, /A45/, `${units}: and posts its A45`)
+  const highFeed = post(project, definition, operation, toolpathOf(operation, firstMove('cut', 45, travelZ)))
+  assert.ok(
+    !codes(highFeed).includes('postRotarySquareTurnBelowEnvelope'),
+    `${units}: the first feed labelled A45 -> A45 at the travel height is not refused by this guard`,
+  )
+}
+
 // ── 4. the physical workholding guard, generation and output ──
 
 console.log('Testing the physical square workholding guard...')
