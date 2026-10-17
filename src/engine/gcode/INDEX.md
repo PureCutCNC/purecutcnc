@@ -110,8 +110,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   valid row or carrying a foreign unit label is refused even when its shape and
   numbers were spoofed to match; a removed, unusable, differently shaped or
   differently sized cutter fails closed too, rather than letting the guard prove
-  one tool clear and the emitter write another), a non-rotary kind or a stale
-  wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
+  one tool clear and the emitter write another), an A-changing square move whose
+  cutter's lowest point is below the corner envelope `barPivotZ + barMaxRadius`
+  is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1; the generators
+  keep every A-changing move above that envelope, and a turn placed exactly on
+  it is within the generator's own 0.001 mm tolerance), a non-rotary kind or a
+  stale wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
   the true pivot (`barPivotZ = side / 2`) whichever bar shape the stock is;
   `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
@@ -233,10 +237,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   real posted program (#1016 C2-S4): both axes, both units, rough/finish and
   own / borrowed / reversed machines post nonempty angle-bearing inverse-time
   motion from the true pivot with no refusal; the round bar is byte-identical
-  across the same 24-cell matrix to a fingerprint captured from the base commit;
-  axis mismatch, a machine with no rotary, borrowed-axis travel, a split-angle
-  feed, a non-rotary square Around path and stale wholly-angle-free motion all
-  refuse; a manual too-small chuck is preserved but refuses generation (no
+  across the same 24-cell matrix to a fingerprint captured from the base commit,
+  with the generated-date comment pinned exactly as `legacyMachineParity.test.ts`
+  pins it; axis mismatch, a machine with no rotary, borrowed-axis travel, a
+  split-angle feed, a non-rotary square Around path and stale wholly-angle-free
+  motion all refuse; the Z12 `A0 -> A45` probe is refused at export by
+  `postRotarySquareTurnBelowEnvelope` with no angle posted, a turn just above
+  the corner envelope is accepted and posts under `G93`, and the same low turn
+  on the round bar of the same box still posts; a manual too-small chuck is
+  preserved but refuses generation (no
   motion, `postSetupOperationRefused`) and output (no motion posted), hidden
   workholding still counts, axial-disjoint and end-face-touching supports are
   clear, off-centre / wrong-height / invalid clamp rows fail closed, an ordinary

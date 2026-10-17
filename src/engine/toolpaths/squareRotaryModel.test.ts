@@ -774,4 +774,45 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   console.log('square count: refined-count and shoulder-cap refusals happen before allocation; the cap bound is proven')
 }
 
+// ── 9. an unusable radial allowance refuses instead of cutting to the axis ──
+//
+// The correction's exact repro (#1016 C2 M1): a 4 mm ball (2 mm radius) with a
+// -2 mm radial
+// allowance gives the sampler a zero radius, every sample reads "no model",
+// and the rough maps that empty space to radius 0, posting thousands of moves
+// down to the pivot. The allowance and the derived sampling radius are
+// validated before sampling, and the sampler itself reports invalid tool
+// geometry as "no rows", never as a NaN row that means "no model here".
+{
+  const mesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
+  const params = { ...PARAMS, stepover: 3, stepdown: 2 }
+  const valid = generateRotaryRough('valid-allowance', mesh, SQUARE, BALL, params, {})
+  assert.ok(valid.moves.length > 0, 'the fixture generates with a valid allowance')
+  const validLeave = generateRotaryRough('valid-allowance-leave', mesh, SQUARE, BALL, { ...params, stockToLeave: 0.5 }, {})
+  assert.ok(validLeave.moves.length > 0, 'a valid positive allowance still generates')
+  assert.deepEqual(validLeave.warnings, [], 'a valid allowance raises no warning')
+
+  // -2 gives a zero sampling radius on this 2 mm radius ball, -3 a negative one; both
+  // also fail the non-negative allowance rule. NaN and Infinity fail finiteness.
+  for (const allow of [-2, -3, NaN, Infinity]) {
+    for (const generate of [generateRotaryRough, generateRotaryFinish]) {
+      const result = generate(`invalid-${String(allow)}`, mesh, SQUARE, BALL, { ...params, stockToLeave: allow }, {})
+      assert.deepEqual(result.moves, [], `allowance ${String(allow)}: ${generate.name} emits no moves`)
+      assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryStockToLeaveInvalid'],
+        `allowance ${String(allow)}: ${generate.name} says why`)
+      assert.equal(result.bounds, null, `allowance ${String(allow)}: ${generate.name} has no bounds`)
+    }
+  }
+
+  // The sampler distinguishes invalid geometry from empty space: no angle rows
+  // at all and `valid: false`, rather than rows of NaN that the rough would
+  // map to a cut down the axis.
+  const invalidSampling = sampleRotaryModel(mesh, SQUARE, { ...BALL, radius: -1, diameter: -2 }, {
+    anglesDeg: [0, 45], along: [BAND_START, BAND_END], requestedCellSize: PARAMS.requestedCellSize,
+  }, [])
+  assert.equal(invalidSampling.valid, false, 'the sampler reports invalid tool geometry')
+  assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid geometry produced no angle rows')
+  assert.deepEqual(invalidSampling.tipRadius, [], 'invalid geometry cannot look like empty space')
+}
+
 console.log('engine/toolpaths/squareRotaryModel.test.ts: all assertions passed')

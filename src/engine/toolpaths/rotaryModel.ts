@@ -57,6 +57,15 @@ export interface RotarySampling {
    */
   readonly tipRadius: readonly Float32Array[]
   readonly stopped: boolean
+  /**
+   * False when the tool geometry handed to the sampler cannot describe a
+   * cutter at all (`radius` not finite or not positive). Such a result carries
+   * no angle rows, so an invalid radius can never be mistaken for the
+   * legitimate "no model under the tool" sample, which is a `NaN` inside a
+   * row. The rotary generators refuse before sampling; this keeps a direct
+   * caller from turning a meaningless sample into motion.
+   */
+  readonly valid: boolean
 }
 
 /** The turned X/Y bounds of a mesh, accumulated by `turnModelInto`. */
@@ -528,6 +537,14 @@ export function sampleRotaryModel(
   const anglesDeg: number[] = []
   const along = [...options.along]
   const tipRadius: Float32Array[] = []
+  // A tool radius that is not finite and positive cannot sample a surface: the
+  // window arithmetic would silently read no cells and every row would be
+  // `NaN`, which is indistinguishable from "no model under the tool". Return
+  // no rows and an explicit invalid verdict instead, so no caller can turn
+  // that failure into a cut along the axis (issue #1016 C2 correction M1).
+  if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
+    return { anglesDeg, along, tipRadius, stopped: false, valid: false }
+  }
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
   // One turned buffer for the whole operation: the mesh is the same size at
@@ -596,7 +613,7 @@ export function sampleRotaryModel(
     tipRadius.push(row)
     options.onAngle?.(anglesDeg.length, options.anglesDeg.length)
   }
-  return { anglesDeg, along, tipRadius, stopped }
+  return { anglesDeg, along, tipRadius, stopped, valid: true }
 }
 
 export interface RotaryFinishParams {
@@ -1157,6 +1174,21 @@ function rotaryTargets(
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
   warnings: ToolpathWarning[],
 ): { angles: number[]; along: number[]; tips: number[][]; stopped: boolean; refusal: ToolpathWarningCode | null } {
+  // The tool and its radial allowance are validated before any grid work: an
+  // invalid radius makes every sample read "no model", which the rough would
+  // turn into a cut down to the axis. The allowance must be finite and
+  // non-negative, and the radius it derives for the sampler must still be
+  // positive, or the operation refuses with no motion (issue #1016 C2
+  // correction M1).
+  const stockToLeave = params.stockToLeave
+  if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
+    return { angles: [], along: [], tips: [], stopped: false, refusal: 'toolDiameterPositive' }
+  }
+  const samplingRadius = tool.radius + stockToLeave
+  if (!Number.isFinite(stockToLeave) || stockToLeave < 0
+    || !(samplingRadius > 0) || !Number.isFinite(samplingRadius)) {
+    return { angles: [], along: [], tips: [], stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
+  }
   // The radius the samples are capped at and the angular step is derived from
   // is the blank's *largest* radius, not the inscribed one (#1016 C2-S3): a
   // square blank stands material out to its corners at every angle, so passes
@@ -1164,7 +1196,6 @@ function rotaryTargets(
   // therefore conservative for a square and exactly the old one for a round
   // bar (where the two radii are equal).
   const maxRadius = barMaxRadius(stock)
-  const stockToLeave = params.stockToLeave
   const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
   const along = rotaryAlongPositions(mesh, stock, tool, params)
   if (along === null) {
@@ -1211,6 +1242,9 @@ function rotaryTargets(
     },
     warnings,
   )
+  if (!sampling.valid) {
+    return { angles: [], along: [], tips: [], stopped: false, refusal: 'toolDiameterPositive' }
+  }
   if (sampling.stopped) return { angles, along, tips: [], stopped: true, refusal: null }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that

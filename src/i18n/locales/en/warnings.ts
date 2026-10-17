@@ -244,6 +244,7 @@ export const warningsEn = {
   'warnings.rotaryToolUnsupported': '{operation}: rotary machining needs a ball nose or flat end mill.',
   'warnings.rotaryBelowCentreline': "{operation}: the model reaches below the bar's centreline near {along} along the bar, at {angle}°. The tool stops at the centreline there.",
   'warnings.rotaryModelOutsideBar': '{operation}: part of the model lies outside the bar. Those parts are not machined.',
+  'warnings.rotaryStockToLeaveInvalid': '{operation}: the radial stock to leave must be a finite value of zero or more and must leave a usable sampling radius. No motion is generated.',
   'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',
   'warnings.postSetupOperationRefused': 'Operation "{operation}" has no toolpath because its setup cannot cut it. Fix or remove the operation before exporting.',
   'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
@@ -269,6 +270,7 @@ export const warningsEn = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis}, the word that turns the rotary on this machine. Remove it from the machine's templates before exporting.",
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
+  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope, so the standing corners would sweep into the cutter.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',
