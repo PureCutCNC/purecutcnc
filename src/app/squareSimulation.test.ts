@@ -65,8 +65,9 @@ import {
   type Operation,
   type Project,
   type SketchFeature,
+  type SquareStock,
 } from '../types/project'
-import { squareStock, type SquareStock } from '../types/barStock'
+import { squareStock } from '../types/barStock'
 import { computeMeshBounds, serializeImportedMesh } from '../engine/importedMesh'
 import { generateRotaryOperation } from '../engine/toolpaths/rotaryOperation'
 import type { ToolpathResult } from '../engine/toolpaths/types'

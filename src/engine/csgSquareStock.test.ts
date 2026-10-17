@@ -34,8 +34,8 @@
  */
 
 import * as THREE from 'three'
-import { rectProfile, roundStock, type Clamp, type Stock } from '../types/project'
-import { barCentre, barPivotZ, squareStock, type SquareStock } from '../types/barStock'
+import { rectProfile, roundStock, type Clamp, type SquareStock, type Stock } from '../types/project'
+import { barCentre, barPivotZ, squareStock } from '../types/barStock'
 import type { Units } from '../utils/units'
 import { buildClampMesh, minRenderHeight, profileToShape } from './csg'
 import { THEME_PALETTES } from '../theme/palette'

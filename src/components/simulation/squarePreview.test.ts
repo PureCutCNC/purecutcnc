@@ -45,8 +45,8 @@ import { aroundBounds } from '../../engine/simulation/aroundWrap'
 import { createSimulationGrid } from '../../engine/simulation/grid'
 import { squareMaterialChunkIndicesForDirtyRegion, resolveSquareMaterialLayout } from '../../engine/simulation/squareMaterialGeometry'
 import type { SimulationGrid } from '../../engine/simulation/types'
-import { newProject, getStockBounds, roundStock, type Project } from '../../types/project'
-import { squareStock, type SquareStock } from '../../types/barStock'
+import { newProject, getStockBounds, roundStock, type Project, type SquareStock } from '../../types/project'
+import { squareStock } from '../../types/barStock'
 import { aroundFrameKey } from './aroundView'
 import {
   createSquarePreviewSurface,
