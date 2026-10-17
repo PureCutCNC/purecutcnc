@@ -69,7 +69,7 @@ import { inverseTimeFeedValue, rotaryCentreline } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
 import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
-import { convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { convertLength, convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -473,6 +473,74 @@ console.log('Testing square turning height against the corner envelope...')
   const roundResult = post(round.project, definition, round.operation, toolpathOf(round.operation, turnAt(12)))
   assert.deepEqual(roundResult.warnings, [], 'the round bar is not given the square envelope guard')
   assert.ok(postsAngle(roundResult.gcode, 'A'), 'the round turn is still posted')
+}
+
+// ── 3c. a turn is judged by its lower end, in project units ───
+
+console.log('Testing square turning height on both endpoints and in both unit systems...')
+for (const units of ['mm', 'inch'] as const) {
+  const { project, operation, stock } = fixture({ axis: 'x', units, kind: 'rotary_finish' })
+  const definition = machine('own', 'x')
+  const centre = barCentre(stock)
+  const envelope = barPivotZ(stock) + barMaxRadius(stock)
+  const tolerance = convertLength(0.001, 'mm', units)
+  const below = convertLength(12, 'mm', units)
+  const wellAbove = envelope + convertLength(2, 'mm', units)
+  const along = convertLength(15, 'mm', units)
+  const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+
+  // A rapid establishes A0 clear of the blank, then the A-changing cut runs
+  // between the two heights under test. Every coordinate is in the project's
+  // own unit system, the way the generators and the guard both read it.
+  const turn = (fromZ: number, toZ: number): ToolpathMove[] => [
+    { kind: 'rapid', from: { x: along, y: centre, z: wellAbove, a: 0 }, to: { x: along, y: centre, z: wellAbove, a: 0 } },
+    { kind: 'cut', from: { x: along, y: centre, z: fromZ, a: 0 }, to: { x: along, y: centre, z: toZ, a: 45 } },
+  ]
+  const refusedTurn = (fromZ: number, toZ: number, label: string) => {
+    const result = post(project, definition, operation, toolpathOf(operation, turn(fromZ, toZ)))
+    assert.deepEqual(codes(result), ['postRotarySquareTurnBelowEnvelope'], `${units}: ${label} is refused`)
+    assert.ok(!postsAngle(result.gcode, 'A'), `${units}: ${label} posts no angle`)
+  }
+  const acceptedTurn = (fromZ: number, toZ: number, label: string) => {
+    const result = post(project, definition, operation, toolpathOf(operation, turn(fromZ, toZ)))
+    assert.deepEqual(result.warnings, [], `${units}: ${label} is accepted`)
+    assert.ok(postsAngle(result.gcode, 'A'), `${units}: ${label} posts its angle`)
+    assert.match(result.gcode, /G93/, `${units}: ${label} uses inverse time`)
+  }
+
+  assert.ok(below < envelope - tolerance, `${units}: fixture: Z12 is below the corner envelope`)
+  assert.ok(wellAbove > envelope + tolerance, `${units}: fixture: 2 mm above is above the corner envelope`)
+
+  // (a)/(b) Either endpoint below the envelope makes the turn too low: a
+  // descending turn is not waved through because its *upper* end is clear, and
+  // neither is the reverse ascent.
+  refusedTurn(wellAbove, below, 'a descending turn from above the envelope to Z12')
+  refusedTurn(below, wellAbove, 'an ascending turn from Z12 to above the envelope')
+
+  // (c) A turn that starts and ends above the envelope is accepted, including
+  // one exactly on it (the envelope itself is not "below").
+  acceptedTurn(wellAbove, wellAbove, 'a turn at 2 mm above the envelope')
+  acceptedTurn(envelope, envelope, 'a turn exactly on the envelope')
+  acceptedTurn(envelope + tolerance / 2, envelope + tolerance / 2, 'a turn within one tolerance above the envelope')
+
+  // The tolerance is a length in the project's own units, not a bare 0.001:
+  // 0.01 mm below the envelope is below it in an inch project too. A tolerance
+  // left unconverted (0.001 in) is 0.0254 mm and would admit this turn.
+  refusedTurn(
+    envelope - convertLength(0.01, 'mm', units),
+    envelope - convertLength(0.01, 'mm', units),
+    'a turn 0.01 mm below the envelope',
+  )
+
+  // (d) The guard is about turning only. A straight plunge from the same clear
+  // height to Z12 at a constant A is not this guard's refusal.
+  const plunge: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: along, y: centre, z: wellAbove, a: 0 }, to: { x: along, y: centre, z: wellAbove, a: 0 } },
+    { kind: 'cut', from: { x: along, y: centre, z: wellAbove, a: 0 }, to: { x: along, y: centre, z: below, a: 0 } },
+  ]
+  const plungeResult = post(project, definition, operation, toolpathOf(operation, plunge))
+  assert.deepEqual(plungeResult.warnings, [], `${units}: a non-turning descent below the envelope posts`)
+  assert.ok(!codes(plungeResult).includes('postRotarySquareTurnBelowEnvelope'), `${units}: and does not trip this guard`)
 }
 
 // ── 4. the physical workholding guard, generation and output ──
