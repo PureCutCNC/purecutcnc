@@ -36,6 +36,7 @@ import {
   type Clamp,
   type Project,
   type ProjectMeta,
+  type Stock,
 } from '../../types/project'
 import {
   barCentre,
@@ -97,6 +98,67 @@ export function defaultRoundWorkholding(
   return stock.axis === 'x'
     ? { type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
     : { type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
+}
+
+/**
+ * Re-aiming a bar on the other axis turns its workholding with it (#1016 C2).
+ * On an axis change the clamp values are still expressed in the previous axis,
+ * so without this a Y write would only re-centre the old X footprint and lose
+ * the along position.
+ *
+ * `defaultRoundWorkholding` treats the start end as `minX` on X and `maxY` on Y
+ * — the end a chuck grips from — so the direction the bar runs is +X there and
+ * −Y here. A chuck or tailstock keeps its signed distance from that start end,
+ * its size along the bar, and its own diameter; the diameter crosses over to
+ * the new across dimension (`w` and `h` swap). The existing centring and height
+ * rule then applies as usual.
+ *
+ * Returns `next` unchanged when there is no bar-to-bar axis change, so a
+ * same-axis write is byte-identical to before. A block, step, toe or vacuum
+ * clamp is never touched.
+ */
+export function transposeRoundWorkholding(previous: Stock, next: Project): Project {
+  const nextStock = next.stock
+  if (!isBarStock(previous) || !isBarStock(nextStock) || previous.axis === nextStock.axis) {
+    return next
+  }
+  const fromBounds = getStockBounds(previous)
+  const toBounds = getStockBounds(nextStock)
+  const fromStart = previous.axis === 'x' ? fromBounds.minX : fromBounds.maxY
+  const toStart = nextStock.axis === 'x' ? toBounds.minX : toBounds.maxY
+  const centre = barCentre(nextStock)
+  let changed = false
+
+  const clamps = next.clamps.map((clamp) => {
+    if (!isRoundWorkholding(clamp)) return clamp
+    const along = previous.axis === 'x' ? clamp.x : clamp.y
+    const alongSize = previous.axis === 'x' ? clamp.w : clamp.h
+    const diameter = roundWorkholdingDiameter(clamp, previous)
+    // The low edge of the clamp measured from the start end in the direction
+    // the bar runs: +X from minX, −Y from maxY.
+    const fromStartLow = previous.axis === 'x'
+      ? along - fromStart
+      : fromStart - (along + alongSize)
+    changed = true
+    if (nextStock.axis === 'x') {
+      return {
+        ...clamp,
+        x: toStart + fromStartLow,
+        w: alongSize,
+        y: centre - diameter / 2,
+        h: diameter,
+      }
+    }
+    return {
+      ...clamp,
+      y: toStart - fromStartLow - alongSize,
+      h: alongSize,
+      x: centre - diameter / 2,
+      w: diameter,
+    }
+  })
+
+  return changed ? { ...next, clamps } : next
 }
 
 /**
