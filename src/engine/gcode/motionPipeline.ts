@@ -45,10 +45,11 @@
 
 import type { Operation, Project } from '../../types/project'
 import { isRotaryOperationKind } from '../../types/project'
-import { barCentre, barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
+import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { convertLength, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
+import { convertLength, exportGeometryTolerance, MM_PER_INCH, type Units } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
@@ -780,12 +781,6 @@ function sameAngle(a: number | undefined, b: number | undefined): boolean {
   return a === b
 }
 
-/** True when a move changes the stock's angle over its span (rule 2). A move
- *  that breaks the two-ends rule is not a turn: it is refused before planning. */
-function turns(move: ToolpathMove): boolean {
-  return !feedAngleIsSplit(move) && !sameAngle(move.from.a, move.to.a)
-}
-
 /**
  * The angle a project move ends at in the program's own direction, or
  * `undefined` when it has none. `projectToMachinePoint` already multiplied the
@@ -926,6 +921,21 @@ export function suppressBorrowedAxisInSteps(
     })
 }
 
+interface TrackedOperationAngle {
+  /** False when a feed move starts before the controller is at its start angle. */
+  established: boolean
+  /** The controller angle after the operation, in the program's direction. */
+  trackedAngle: number | null
+  /**
+   * The lowest Z of any move that actually commands a new controller angle, or
+   * `null` when no move turns. For a rapid this is judged by the angle the
+   * emitted block will command, not by the stale `from.a` a toolpath may carry.
+   */
+  lowestTurnZ: number | null
+  /** True when a feed move (not a rapid) changes its own start/end angle. */
+  turningFeed: boolean
+}
+
 /**
  * The angle the program is at after an operation, in the program's own
  * direction, or `established: false` when a feed move starts before the
@@ -934,31 +944,70 @@ export function suppressBorrowedAxisInSteps(
  * A rapid establishes the angle; a feed move or arc may only begin at the
  * angle the controller is already at, and unknown at program start counts as
  * not established. A move with no angle anywhere leaves the bar where it is.
+ *
+ * The turn itself is judged against the **tracked controller angle**, which is
+ * what the emitter will command from — never against the move's own endpoints.
+ * A rapid labelled `from.a = to.a = 45` while the controller sits at A0 still
+ * writes `A45` and turns the blank, so it is a turn here (#1016 C2). At program
+ * start the controller is at zero, and a rapid, feed, arc or lead move is
+ * treated the same way; the lowest Z of a turning move is reported so the
+ * square-blank guard can refuse a turn below the generator's travel height.
+ * `turningFeed` keeps the inverse-time rule's original question — does a feed
+ * move itself change angle — so that refusal does not move for supplied paths.
  */
 function trackOperationAngle(
   moves: readonly ToolpathMove[],
   direction: 1 | -1,
   tracked: number | null,
-): { established: boolean; trackedAngle: number | null } {
+): TrackedOperationAngle {
   let current = tracked
+  let lowestTurnZ: number | null = null
+  let turningFeed = false
+  const noteTurn = (move: ToolpathMove) => {
+    const low = Math.min(move.from.z, move.to.z)
+    if (lowestTurnZ === null || low < lowestTurnZ) lowestTurnZ = low
+  }
   for (const move of moves) {
     const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
     if (!carriesAngle) continue
     // A feed move with an angle on one end only is broken, not trackable: say
     // the angle is not established so the operation is refused.
-    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current }
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ, turningFeed }
     const start = move.from.a === undefined ? undefined : move.from.a * direction
     const end = move.to.a === undefined ? undefined : move.to.a * direction
+    // A feed move that changes its own angle needs inverse time whether or not
+    // the controller was at its start; keep that rule's original test.
+    if (move.kind !== 'rapid' && start !== end) turningFeed = true
+    // The emitter's modal angle is unknown before the first angle word, and a
+    // program starts on the machine's zero. A rapid's endpoint is what the
+    // emitted block commands; the controller goes there from here.
+    const controller = current ?? 0
     if (move.kind === 'rapid') {
+      if (end !== undefined && end !== controller) noteTurn(move)
       if (end !== undefined) current = end
       continue
     }
     if (current === null || start !== current) {
-      return { established: false, trackedAngle: current }
+      // The move will be refused as unestablished, but it still commands its
+      // end angle from the controller's actual angle; report the turn so the
+      // square guard sees the physical motion the emitter would write.
+      if (end !== undefined && end !== controller) noteTurn(move)
+      return { established: false, trackedAngle: current, lowestTurnZ, turningFeed }
     }
+    if (end !== undefined && end !== controller) noteTurn(move)
     if (end !== undefined) current = end
   }
-  return { established: true, trackedAngle: current }
+  return { established: true, trackedAngle: current, lowestTurnZ, turningFeed }
+}
+
+/**
+ * Half of the last decimal an emitted coordinate carries for this machine and
+ * unit system. `formatGCodeNumber` writes Z with `toFixed(decimalPlaces)`, so a
+ * height within half a step of the generated travel height is emitted as that
+ * height; the guard must not refuse it for the sub-step difference.
+ */
+function emittedCoordinateHalfStep(definition: MachineDefinition, units: Units): number {
+  return 0.5 * 10 ** -definition.numberFormat.decimalPlaces[units]
 }
 
 function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): ToolpathWarning {
@@ -992,6 +1041,10 @@ function inspectRotaryOperation(args: {
   const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
+  // Track the controller angle once, from the angle the program handed in
+  // (#1016 C2). Every turn decision below reads the angle the emitter will
+  // actually command from, not a move's own endpoints.
+  const tracked = trackOperationAngle(toolpath.moves, rotaryDirection(definition), trackedAngle)
   // The bar and the machine must agree (issue #395, rule 3): a stored angle is
   // a turn about the bar's own axis, so a machine set up about the other
   // horizontal axis would turn the stock the wrong way. Checked before the
@@ -1066,18 +1119,18 @@ function inspectRotaryOperation(args: {
     if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
       return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
     }
-    // A square blank's corners stand `barMaxRadius` out from the turning pivot
-    // at every angle, so a move that changes A below that corner envelope
-    // drives the standing corner through the cutter. The generators keep every
-    // A-changing move at `pivot + barMaxRadius + a clearance`; a supplied or
-    // stale path is asked the same question here. A turn placed exactly on the
-    // envelope is not below it, so the comparison uses the tolerance the
-    // generators use for heights. This runs only for square stock: a round
-    // bar's output stays frozen.
-    const turnEnvelope = barPivotZ(project.stock) + barMaxRadius(project.stock)
-    const turnTolerance = convertLength(0.001, 'mm', project.meta.units)
-    if (toolpath.moves.some((move) => turns(move)
-      && Math.min(move.from.z, move.to.z) < turnEnvelope - turnTolerance)) {
+    // A move that commands a new controller angle below the generators' travel
+    // height drives the blank through the cutter: the blank reaches its corner
+    // radius at some angle, and a turning move under that height sweeps the
+    // standing corner. The generators turn at `rotaryTravelZ` — the blank's
+    // largest radius plus 1 mm (#1016 C2) — and a supplied or stale path is
+    // asked the same question here. The emitted Z is written with the machine's
+    // decimal places, so a path within half of the last decimal of that height
+    // is emitted *at* the height and is not refused for the sub-step. This runs
+    // only for square stock: a round bar's output stays frozen.
+    const travelZ = rotaryTravelZ(project.stock, project.meta.units)
+    const roundingAllowance = emittedCoordinateHalfStep(definition, project.meta.units)
+    if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
       return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
     }
   }
@@ -1095,8 +1148,7 @@ function inspectRotaryOperation(args: {
   if (toolpath.moves.some(feedAngleIsSplit)) {
     return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
   }
-  if (rotary.inverseTimeFeed === null
-    && toolpath.moves.some((move) => turns(move) && move.kind !== 'rapid')) {
+  if (rotary.inverseTimeFeed === null && tracked.turningFeed) {
     return { refused: { code: 'postRotaryNoInverseTime', params: { operation: operationName } } }
   }
   if (!isBarStock(project.stock)) {
@@ -1104,7 +1156,6 @@ function inspectRotaryOperation(args: {
   }
   // Rule 2: cut only at an angle the program has actually turned to. The
   // tracked angle spans the whole program and is unknown at its start.
-  const tracked = trackOperationAngle(toolpath.moves, rotaryDirection(definition), trackedAngle)
   if (!tracked.established) {
     return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
   }

@@ -60,6 +60,7 @@ import { defaultOperationForTarget } from '../../store/helpers/operationDefaults
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { computeOperationToolpath } from '../toolpaths/generateOperation'
+import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import { setupGenerationBlock } from '../setupTargets'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { warningSeverity } from '../toolpaths/warningCodes'
@@ -195,6 +196,24 @@ function post(
   })
 }
 
+/** Post several prepared operations as one program, preserving the entry angle. */
+function postSequence(
+  project: Project,
+  definition: MachineDefinition,
+  sequence: Array<{ operation: Operation; moves: ToolpathMove[] }>,
+): PostProcessorResult {
+  return runPostProcessor({
+    project,
+    definition,
+    operations: sequence.map(({ operation, moves }) => ({
+      operation,
+      tool: normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project),
+      toolpath: toolpathOf(operation, moves),
+    })),
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+}
+
 /** Generate through the production dispatch, then post the real result. */
 function generateAndPost(project: Project, definition: MachineDefinition, operation: Operation): PostProcessorResult {
   const envelope = computeOperationToolpath(project, operation)
@@ -289,6 +308,53 @@ if (process.env.SQUARE_ROTARY_PRINT_ROUND === '1') {
   process.exit(0)
 }
 
+/** Every generated square rough/finish fixture: both axes, units and cutters. */
+const SQUARE_SHAPE_CELLS: Array<{ axis: Axis; units: Units; kind: OperationKind; toolType: SupportedCutter }> = []
+for (const axis of ['x', 'y'] as const) {
+  for (const units of ['mm', 'inch'] as const) {
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+        SQUARE_SHAPE_CELLS.push({ axis, units, kind, toolType })
+      }
+    }
+  }
+}
+
+/**
+ * The square blank's generated rough/finish programs, pinned when the
+ * modal-rapid and travel-clearance guard was added (#1016 C2). The new guard
+ * must accept every one of them unchanged: the generators' travel height and
+ * every posted coordinate must not move, so any drift here is a real change,
+ * not a normalisation.
+ */
+const SQUARE_BASELINE: Record<string, string> = {
+  'x/mm/rotary_rough/flat_endmill': 'moves=5c0a7b32a878fc55|warnings=|gcode=5026e02dbd1c8860|post=',
+  'x/mm/rotary_rough/ball_endmill': 'moves=5a8e8d837c18fa66|warnings=|gcode=b6dd4274e85fc5c6|post=',
+  'x/mm/rotary_finish/flat_endmill': 'moves=c6d112cbd725f6f8|warnings=|gcode=d87cbbe7bd18867d|post=',
+  'x/mm/rotary_finish/ball_endmill': 'moves=985de93a32ef6830|warnings=|gcode=d2f5ae10c319bb69|post=',
+  'x/inch/rotary_rough/flat_endmill': 'moves=f0d852cc5bfa7eff|warnings=|gcode=cdf90639b8a2d634|post=',
+  'x/inch/rotary_rough/ball_endmill': 'moves=39135d8e980d6ac7|warnings=|gcode=020171b9a9704f40|post=',
+  'x/inch/rotary_finish/flat_endmill': 'moves=d101d2d4ae6e4e01|warnings=|gcode=32d2b7068cfca6ef|post=',
+  'x/inch/rotary_finish/ball_endmill': 'moves=c0a9dd8decdbaa1c|warnings=|gcode=55707987f7f3c53e|post=',
+  'y/mm/rotary_rough/flat_endmill': 'moves=dc3b6d3e9d70ac88|warnings=|gcode=530a317392e10e96|post=',
+  'y/mm/rotary_rough/ball_endmill': 'moves=4054d047166a239e|warnings=|gcode=be870c1164690378|post=',
+  'y/mm/rotary_finish/flat_endmill': 'moves=98fd634aae2dd471|warnings=|gcode=e43e22351d7cc70d|post=',
+  'y/mm/rotary_finish/ball_endmill': 'moves=0f84472529351581|warnings=|gcode=3d7b326175e5d716|post=',
+  'y/inch/rotary_rough/flat_endmill': 'moves=db466be9e8484220|warnings=|gcode=fc38b983f07253e8|post=',
+  'y/inch/rotary_rough/ball_endmill': 'moves=4fc32ff2d4b35f93|warnings=|gcode=3d85095ce9db6302|post=',
+  'y/inch/rotary_finish/flat_endmill': 'moves=7844d07e5321f54f|warnings=|gcode=91055b8ea7f41ab6|post=',
+  'y/inch/rotary_finish/ball_endmill': 'moves=ca5532de9007a129|warnings=|gcode=f599182322a2bde1|post=',
+}
+
+if (process.env.SQUARE_ROTARY_PRINT_SQUARE === '1') {
+  for (const cell of SQUARE_SHAPE_CELLS) {
+    const { project, operation } = fixture(cell)
+    const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.toolType}`
+    console.log(`${key} ${fingerprint(project, machine('own', cell.axis), operation)}`)
+  }
+  process.exit(0)
+}
+
 // ── 1. the output matrix admits the square blank ──────────────
 
 console.log('Testing square generation and posted output across axes, units and machines...')
@@ -342,6 +408,21 @@ for (const cell of MATRIX_CELLS) {
   const expected = ROUND_BASELINE[key]
   assert.ok(expected, `fixture: a captured round baseline for ${key}`)
   assert.equal(fingerprint(project, machine(cell.machine, cell.axis), operation), expected, `${key}: the round bar is unchanged`)
+}
+
+// ── 2b. every generated square fixture still posts unchanged ──
+
+console.log('Testing the generated square baseline across axes, units and cutters...')
+for (const cell of SQUARE_SHAPE_CELLS) {
+  const { project, operation } = fixture(cell)
+  const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.toolType}`
+  const expected = SQUARE_BASELINE[key]
+  assert.ok(expected, `fixture: a captured square baseline for ${key}`)
+  assert.equal(
+    fingerprint(project, machine('own', cell.axis), operation),
+    expected,
+    `${key}: the generated square program is unchanged`,
+  )
 }
 
 // ── 3. output refusals ────────────────────────────────────────
@@ -434,44 +515,108 @@ console.log('Testing square output refusals...')
   )
 }
 
-// ── 3b. a square turn must clear the corner envelope ─────────
+// ── 3b. a square turn must clear the generator's travel height ─
 
-console.log('Testing square turning height against the corner envelope...')
+console.log('Testing square turning height against the generator travel clearance...')
 {
   const { project, operation, stock } = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish' })
   const definition = machine('own', 'x')
   const centre = barCentre(stock)
-  const pivot = barPivotZ(stock)
-  const envelope = pivot + barMaxRadius(stock)
-  // A rapid establishes A0, then a feed turns the blank from A0 to A45 at the
-  // probe height. The cut is the operation's real turning move, so it is the
-  // one that reaches the program under G93.
+  const envelope = barPivotZ(stock) + barMaxRadius(stock)
+  // The generator's height, written out independently of the shared helper so
+  // a wrong helper cannot move both the guard and its witness together.
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', 'mm')
+  assert.equal(rotaryTravelZ(stock, 'mm'), travelZ, 'fixture: the shared travel helper matches the generator height')
+  const halfStep = 0.5 * 10 ** -definition.numberFormat.decimalPlaces.mm
+  const high = travelZ + 5
+  // A rapid establishes A0 clear of the blank, then a feed turns the blank from
+  // A0 to A45 at the probe height. The cut is the operation's real turning move,
+  // so it is the one that reaches the program under G93.
   const turnAt = (z: number): ToolpathMove[] => [
-    { kind: 'rapid', from: { x: 15, y: centre, z: 25, a: 0 }, to: { x: 15, y: centre, z: 25, a: 0 } },
+    { kind: 'rapid', from: { x: 15, y: centre, z: high, a: 0 }, to: { x: 15, y: centre, z: high, a: 0 } },
     { kind: 'cut', from: { x: 15, y: centre, z, a: 0 }, to: { x: 15, y: centre, z, a: 45 } },
   ]
-  assert.ok(12 < envelope - 0.5, 'fixture: Z12 is below the corner envelope')
+  const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
+  assert.ok(12 < travelZ - 0.5, 'fixture: Z12 is below the generator travel height')
+  assert.ok(envelope < travelZ, 'fixture: the bare corner envelope is below the travel height')
 
   const refused = post(project, definition, operation, toolpathOf(operation, turnAt(12)))
-  assert.deepEqual(
-    refused.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'],
-    'the Z12 A0 -> A45 probe is refused at export',
-  )
+  assert.deepEqual(codes(refused), ['postRotarySquareTurnBelowEnvelope'], 'the Z12 A0 -> A45 probe is refused at export')
   assert.ok(!postsAngle(refused.gcode, 'A'), 'none of the too-low turn is posted')
   assert.equal(warningSeverity('postRotarySquareTurnBelowEnvelope'), 'error', 'the refusal blocks a save')
 
-  const accepted = post(project, definition, operation, toolpathOf(operation, turnAt(envelope + 0.5)))
-  assert.deepEqual(accepted.warnings, [], 'a turn just above the envelope is accepted')
+  const accepted = post(project, definition, operation, toolpathOf(operation, turnAt(travelZ)))
+  assert.deepEqual(accepted.warnings, [], 'a turn at the generator travel height is accepted')
   assert.ok(postsAngle(accepted.gcode, 'A'), 'and the accepted turn is posted')
   assert.match(accepted.gcode, /G93/, 'the accepted turning cut uses inverse time')
-  assert.equal(warningSeverity('postRotarySquareTurnBelowEnvelope'), 'error', 'the accepted path is not refused')
 
-  // Round output is frozen: a round bar has no square corner envelope, so the
+  // The emitted Z is written with the machine's decimal places: a turn within
+  // half of the last decimal is emitted *at* the travel height, not below it.
+  const rounded = post(project, definition, operation, toolpathOf(operation, turnAt(travelZ - halfStep / 2)))
+  assert.deepEqual(rounded.warnings, [], 'a turn within half the last emitted Z decimal rounds to the travel height')
+
+  // Modal rapid bypass: the controller is at A0 and the tool at Z12, but the
+  // rapid is labelled `from.a = to.a = 45`. Equal endpoints do not make it a
+  // no-op — the emitter writes A45 from A0 — so it turns the blank at Z12.
+  for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+    const probe = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish', toolType })
+    const modal: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 15, y: centre, z: high, a: 0 }, to: { x: 15, y: centre, z: high, a: 0 } },
+      { kind: 'rapid', from: { x: 15, y: centre, z: high, a: 0 }, to: { x: 15, y: centre, z: 12, a: 0 } },
+      { kind: 'rapid', from: { x: 15, y: centre, z: 12, a: 45 }, to: { x: 16, y: centre, z: 12, a: 45 } },
+    ]
+    const result = post(probe.project, definition, probe.operation, toolpathOf(probe.operation, modal))
+    assert.deepEqual(
+      codes(result),
+      ['postRotarySquareTurnBelowEnvelope'],
+      `${toolType}: a same-endpoint rapid from A0 to A45 at Z12 is a turn and is refused`,
+    )
+    assert.ok(!postsAngle(result.gcode, 'A'), `${toolType}: the unsafe rapid posts no A45`)
+  }
+
+  // A same-angle rapid is genuinely stale once the controller is already at
+  // that angle: it commands no new angle, so it stays accepted at Z12.
+  const staleSameAngle: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 15, y: centre, z: high, a: 0 }, to: { x: 15, y: centre, z: high, a: 45 } },
+    { kind: 'rapid', from: { x: 15, y: centre, z: high, a: 45 }, to: { x: 15, y: centre, z: 12, a: 45 } },
+    { kind: 'rapid', from: { x: 15, y: centre, z: 12, a: 45 }, to: { x: 16, y: centre, z: 12, a: 45 } },
+  ]
+  const staleResult = post(project, definition, operation, toolpathOf(operation, staleSameAngle))
+  assert.deepEqual(staleResult.warnings, [], 'a rapid already at the controller angle is not a turn')
+  assert.equal((staleResult.gcode.match(/A45/g) ?? []).length, 1, 'the stale same-angle rapid writes no second A45')
+
+  // The entry angle is the one the previous operation handed in (`trackedAngle`),
+  // not a fresh tracker per operation: a prior A45 makes the next same-angle
+  // rapid stale, while a prior A0 leaves the identical move a real turn.
+  const prior: Operation = { ...operation, id: 'prior-angle', name: 'Prior angle' }
+  const next: Operation = { ...operation, id: 'next-angle', name: 'Next angle' }
+  const atHigh = (a: number): ToolpathPoint => ({ x: 15, y: centre, z: high, a })
+  const from45 = postSequence(project, definition, [
+    { operation: prior, moves: [{ kind: 'rapid', from: atHigh(0), to: atHigh(45) }] },
+    { operation: next, moves: staleSameAngle.slice(1) },
+  ])
+  assert.deepEqual(from45.warnings, [], 'the entry angle A45 makes the next same-angle rapid stale')
+  const from0 = postSequence(project, definition, [
+    { operation: prior, moves: [{ kind: 'rapid', from: atHigh(0), to: atHigh(0) }] },
+    {
+      operation: next,
+      moves: [
+        { kind: 'rapid', from: atHigh(0), to: { ...atHigh(0), z: 12 } },
+        { kind: 'rapid', from: { ...atHigh(45), z: 12 }, to: { ...atHigh(45), z: 12, x: 16 } },
+      ],
+    },
+  ])
+  assert.deepEqual(
+    codes(from0),
+    ['postRotarySquareTurnBelowEnvelope'],
+    'the entry angle A0 leaves the same 45/45 rapid a real turn at Z12',
+  )
+
+  // Round output is frozen: a round bar has no square clearance guard, so the
   // same low turn on the same box still posts exactly as before.
   const round = fixture({ axis: 'x', units: 'mm', kind: 'rotary_finish', round: true })
   const roundResult = post(round.project, definition, round.operation, toolpathOf(round.operation, turnAt(12)))
-  assert.deepEqual(roundResult.warnings, [], 'the round bar is not given the square envelope guard')
+  assert.deepEqual(roundResult.warnings, [], 'the round bar is not given the square clearance guard')
   assert.ok(postsAngle(roundResult.gcode, 'A'), 'the round turn is still posted')
 }
 
@@ -483,9 +628,13 @@ for (const units of ['mm', 'inch'] as const) {
   const definition = machine('own', 'x')
   const centre = barCentre(stock)
   const envelope = barPivotZ(stock) + barMaxRadius(stock)
-  const tolerance = convertLength(0.001, 'mm', units)
+  // Written out independently of the shared helper: a helper with the unit
+  // conversion missing must not also move the test's expected height.
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', units)
+  assert.equal(rotaryTravelZ(stock, units), travelZ, `${units}: the shared travel helper matches the generator height`)
+  const halfStep = 0.5 * 10 ** -definition.numberFormat.decimalPlaces[units]
   const below = convertLength(12, 'mm', units)
-  const wellAbove = envelope + convertLength(2, 'mm', units)
+  const wellAbove = travelZ + convertLength(2, 'mm', units)
   const along = convertLength(15, 'mm', units)
   const codes = (result: PostProcessorResult) => result.warnings.map((warning) => warning.code)
 
@@ -508,38 +657,50 @@ for (const units of ['mm', 'inch'] as const) {
     assert.match(result.gcode, /G93/, `${units}: ${label} uses inverse time`)
   }
 
-  assert.ok(below < envelope - tolerance, `${units}: fixture: Z12 is below the corner envelope`)
-  assert.ok(wellAbove > envelope + tolerance, `${units}: fixture: 2 mm above is above the corner envelope`)
+  assert.ok(below < travelZ - convertLength(0.5, 'mm', units), `${units}: fixture: Z12 is below the travel height`)
+  assert.ok(wellAbove > travelZ, `${units}: fixture: 2 mm above is above the travel height`)
 
-  // (a)/(b) Either endpoint below the envelope makes the turn too low: a
+  // (a)/(b) Either endpoint below the travel height makes the turn too low: a
   // descending turn is not waved through because its *upper* end is clear, and
   // neither is the reverse ascent.
-  refusedTurn(wellAbove, below, 'a descending turn from above the envelope to Z12')
-  refusedTurn(below, wellAbove, 'an ascending turn from Z12 to above the envelope')
+  refusedTurn(wellAbove, below, 'a descending turn from above the travel height to Z12')
+  refusedTurn(below, wellAbove, 'an ascending turn from Z12 to above the travel height')
 
-  // (c) A turn that starts and ends above the envelope is accepted, including
-  // one exactly on it (the envelope itself is not "below").
-  acceptedTurn(wellAbove, wellAbove, 'a turn at 2 mm above the envelope')
-  acceptedTurn(envelope, envelope, 'a turn exactly on the envelope')
-  acceptedTurn(envelope + tolerance / 2, envelope + tolerance / 2, 'a turn within one tolerance above the envelope')
+  // (c) A turn at or above the travel height is accepted. A value within half
+  // of the last emitted Z decimal rounds to the travel height and is accepted
+  // too; the allowance is a length in the project's own units.
+  acceptedTurn(travelZ, travelZ, 'a turn at the travel height')
+  acceptedTurn(travelZ + convertLength(0.01, 'mm', units), travelZ + convertLength(0.01, 'mm', units), 'a turn 0.01 mm above the travel height')
+  acceptedTurn(travelZ - halfStep / 2, travelZ - halfStep / 2, 'a turn within half the last emitted Z decimal')
 
-  // The tolerance is a length in the project's own units, not a bare 0.001:
-  // 0.01 mm below the envelope is below it in an inch project too. A tolerance
-  // left unconverted (0.001 in) is 0.0254 mm and would admit this turn.
+  // (d) Just below the travel height is refused. 0.01 mm is well under the
+  // height but still above the bare corner envelope, so a guard that only
+  // checked the envelope would wrongly admit it.
   refusedTurn(
-    envelope - convertLength(0.01, 'mm', units),
-    envelope - convertLength(0.01, 'mm', units),
-    'a turn 0.01 mm below the envelope',
+    travelZ - convertLength(0.01, 'mm', units),
+    travelZ - convertLength(0.01, 'mm', units),
+    'a turn 0.01 mm below the travel height',
   )
 
-  // (d) The guard is about turning only. A straight plunge from the same clear
+  // (e) The bare corner envelope is not a safe turning height: half a
+  // thousandth of a millimetre below it is refused, even though that is inside
+  // the old bare-envelope tolerance.
+  const bareBelow = envelope - convertLength(0.0005, 'mm', units)
+  assert.ok(
+    bareBelow > envelope - convertLength(0.001, 'mm', units),
+    `${units}: fixture: the probe is within the old bare-envelope tolerance`,
+  )
+  refusedTurn(bareBelow, bareBelow, 'a turn 0.0005 mm below the bare corner envelope')
+  refusedTurn(envelope, envelope, 'a turn exactly on the bare corner envelope')
+
+  // (f) The guard is about turning only. A straight plunge from the same clear
   // height to Z12 at a constant A is not this guard's refusal.
   const plunge: ToolpathMove[] = [
     { kind: 'rapid', from: { x: along, y: centre, z: wellAbove, a: 0 }, to: { x: along, y: centre, z: wellAbove, a: 0 } },
     { kind: 'cut', from: { x: along, y: centre, z: wellAbove, a: 0 }, to: { x: along, y: centre, z: below, a: 0 } },
   ]
   const plungeResult = post(project, definition, operation, toolpathOf(operation, plunge))
-  assert.deepEqual(plungeResult.warnings, [], `${units}: a non-turning descent below the envelope posts`)
+  assert.deepEqual(plungeResult.warnings, [], `${units}: a non-turning descent below the travel height posts`)
   assert.ok(!codes(plungeResult).includes('postRotarySquareTurnBelowEnvelope'), `${units}: and does not trip this guard`)
 }
 

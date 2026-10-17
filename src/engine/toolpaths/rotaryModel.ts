@@ -21,7 +21,7 @@ import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
-import { squareBlankRetainedStub, squareBlankSectionExit } from './squareRotaryStock'
+import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -1326,7 +1326,6 @@ export function generateRotaryFinish(
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
   }
   const pivot = barPivotZ(stock)
-  const maxRadius = barMaxRadius(stock)
   const centre = barCentre(stock)
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
@@ -1341,15 +1340,15 @@ export function generateRotaryFinish(
   // Every move between runs -- a turning link, the retract off a run, or the
   // traverse to the next run -- travels at the blank's largest surface plus a
   // clearance, so it always clears the model and the standing stock between two
-  // pass angles. The blank's turning envelope reaches `maxRadius` from the
-  // pivot at some angle, so that -- not the inscribed radius -- is the height
+  // pass angles. The blank's turning envelope reaches its corner radius from
+  // the pivot at some angle, so that -- not the inscribed radius -- is the height
   // nothing may travel below; on a round bar the two are equal. `safeRadius`
   // does not cap it: a rapid height only a fifth of a millimetre above the bar
   // would otherwise replace the clearance, and the clearance is the whole
   // reason the between-run moves are safe. The operation's first positioning
   // move and its final retract go to the higher of `safeRadius` and that travel
   // height.
-  const travelZ = pivot + maxRadius + convertLength(1, 'mm', tool.units)
+  const travelZ = rotaryTravelZ(stock, tool.units)
   const safeZ = Math.max(pivot + params.safeRadius, travelZ)
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
@@ -1488,7 +1487,7 @@ export function generateRotaryRough(
   // `safeRadius` on every gap dominates a many-layer rough. `safeRadius` is
   // never allowed to cap it down towards the bar; the first positioning move
   // and the final retract go to the higher of the two heights.
-  const travelZ = pivot + maxRadius + convertLength(1, 'mm', tool.units)
+  const travelZ = rotaryTravelZ(stock, tool.units)
   const safeZ = Math.max(pivot + params.safeRadius, travelZ)
   // Every angle starts its stock at the blank's largest radius, so a square
   // blank's corners are standing material at layer 1 on every pass (#1016
