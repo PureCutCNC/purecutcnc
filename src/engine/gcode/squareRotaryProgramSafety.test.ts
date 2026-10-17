@@ -20,8 +20,11 @@
  * The planner's turn guard (`trackOperationAngle` + `rotaryTravelZ`) sees only
  * the operation's moves. Two other A words reach a program: the closing unwind,
  * and any A a supplied path carries after a machine template has moved Z behind
- * the emitter's back. This file proves, on the **emitted text**, that neither
- * can turn a square blank below the generators' travel height.
+ * the emitter's back. That second one is written by *two* emitters — a rapid
+ * and a turning feed — so the generator places a turning feed on a G1 as the
+ * first rotary motion of an operation a template has just moved Z in front of,
+ * not only a rapid. This file proves, on the **emitted text**, that neither can
+ * turn a square blank below the generators' travel height.
  *
  * A seeded property test generates a few hundred square programs and posts each
  * whole program through the real postprocessor. An independent modal
@@ -358,9 +361,12 @@ interface Generated {
   project: Project
   stock: SquareStock
   units: Units
+  kind: MachineKind
   unsafe: boolean
   endsLow: boolean
   template: TemplateVariant
+  /** True when some operation after a Z-moving template starts by turning on a G1. */
+  feedFirst: boolean
   emitToolChanges: boolean
 }
 
@@ -417,6 +423,7 @@ function generate(rand: () => number, index: number): Generated {
   let carryA = 0
   let carryAlong = alongMin + rand() * (alongMax - alongMin)
   let endsLow = false
+  let feedFirst = false
 
   for (let opIndex = 0; opIndex < operationsCount; opIndex += 1) {
     const op: Operation = opIndex === 0
@@ -446,12 +453,22 @@ function generate(rand: () => number, index: number): Generated {
       current = to
     }
 
-    // Operation entry: a rapid at travel height establishes the carried angle.
-    // With a Z-moving template before the second operation's moves, the first
-    // block that turns must not depend on the stale tracked Z.
+    // Operation entry at travel height establishes the carried angle. With a
+    // Z-moving template before the second operation's moves, the first block
+    // that turns must not depend on the stale tracked Z. Half of those entries
+    // turn on a feed instead of a rapid, so the *feed* emitter's own unknown-Z
+    // repair is exercised too: the cut starts at the angle the previous
+    // operation ended on and changes it at travel height, which the planner
+    // admits because the turn itself is at the travel height.
     if (opIndex > 0 && (template === 'operationHeader' || template === 'toolChange' || template === 'all')) {
       const angle = current.a + 17
-      push('rapid', point(current.x === centre ? nextAlong() : current.x, travelZ, angle))
+      const along = current.x === centre ? nextAlong() : current.x
+      if (rand() < 0.5) {
+        push('cut', point(nextAlong(), travelZ, angle))
+        feedFirst = true
+      } else {
+        push('rapid', point(along, travelZ, angle))
+      }
     } else {
       push('rapid', point(current.x === centre ? nextAlong() : current.x, travelZ, current.a))
     }
@@ -512,9 +529,11 @@ function generate(rand: () => number, index: number): Generated {
     project,
     stock,
     units,
+    kind,
     unsafe,
     endsLow,
     template,
+    feedFirst,
     emitToolChanges: multiOperation && entries.length > 1,
   }
 }
@@ -530,6 +549,8 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
   let lowEndings = 0
   let templated = 0
   let unsafePrograms = 0
+  let feedFirstAccepted = 0
+  const feedFirstCoverage = new Set<string>()
 
   for (let index = 0; index < PROGRAM_COUNT; index += 1) {
     const program = generate(rand, index)
@@ -547,6 +568,10 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
     }
 
     audited += 1
+    if (program.feedFirst) {
+      feedFirstAccepted += 1
+      feedFirstCoverage.add(`${program.kind}/${program.units}`)
+    }
     const letter = rotaryWord(definition)
     assert.ok(letter !== null, `${program.label}: an accepted program has a rotary word`)
     if (letter === null) throw new Error('unreachable')
@@ -565,7 +590,18 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
   assert.ok(lowEndings > 50, `fixture: many accepted programs finish below travel height (${lowEndings})`)
   assert.ok(templated > 80, `fixture: Z-moving templates are generated (${templated})`)
   assert.ok(turns > 500, `fixture: the interpreter proves many rotary changes (${turns})`)
+  // The feed emitter's own repair is only load-bearing if accepted programs
+  // reach it: a turning feed that is the first motion after a template. Cover
+  // every drive/unit pair so a mutation of that call cannot pass on one
+  // machine configuration alone.
+  assert.ok(feedFirstAccepted > 20, `fixture: accepted programs turn on a feed first after a template (${feedFirstAccepted})`)
+  assert.equal(
+    feedFirstCoverage.size,
+    6,
+    `fixture: feed-first entries cover own/borrowed/reversed in mm and inch (${[...feedFirstCoverage].sort().join(', ')})`,
+  )
   console.log(`   ${audited} accepted, ${refused} refused, ${turns} rotary changes proven, ${lowEndings} low endings, ${templated} templated`)
+  console.log(`   ${feedFirstAccepted} accepted feed-first turns (${[...feedFirstCoverage].sort().join(', ')})`)
 }
 
 // ── 2. the closing unwind retracts a square blank ─────────────
