@@ -18,19 +18,20 @@
  * The app wiring of a real square-blank Around simulation (issue #1016
  * C2-R2V).
  *
- * The path is the accepted S3 engine output — `generateRotaryOperation` on an
- * ordinary rotary rough with an imported prism model — replayed through the
- * shipped `buildSimulationSetupInput` and the shipped `computeSimulationResult`
- * / `useSimulationModel` entry points. The round and flat paths are untouched;
- * a square blank carries its transient descriptor into every grid the app
- * builds, and the material model removes the real corners while the untouched
- * ends stay square.
+ * The path is the accepted S3 engine output — the production
+ * `computeOperationToolpath` dispatch on an ordinary rotary rough with an
+ * imported prism model, on a blank held by the real default chuck — replayed
+ * through the shipped `buildSimulationSetupInput` and the shipped
+ * `computeSimulationResult` / `useSimulationModel` entry points. The round and
+ * flat paths are untouched; a square blank carries its transient descriptor
+ * into every grid the app builds, and the material model removes the real
+ * corners while the untouched ends stay square.
  *
- * `generateRotaryOperation` is called directly because this base's post-setup
- * policy still refuses square production dispatch (the reviewed U1 policy is
- * not in this base). The simulation consumes the generated stock-space path
- * exactly as it will once that policy lands; this file reports that dependency
- * rather than reimplementing or editing the policy.
+ * The fixture uses the same default round workholding the app mints on a square
+ * blank: a chuck centred on the true pivot whose diameter clears the corner
+ * envelope. A hand-written round-sized chuck is physically invalid on a square
+ * and the production dispatch refuses it, so the fixture must not substitute
+ * one.
  *
  * Mutations these assertions were checked against, each applied on its own and
  * reverted:
@@ -54,6 +55,7 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
+import { defaultRoundWorkholding } from '../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../test/projectFixtures'
 import {
   defaultTool,
@@ -69,7 +71,7 @@ import {
 } from '../types/project'
 import { squareStock } from '../types/barStock'
 import { computeMeshBounds, serializeImportedMesh } from '../engine/importedMesh'
-import { generateRotaryOperation } from '../engine/toolpaths/rotaryOperation'
+import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { squareMaterialIntervals } from '../engine/simulation/squareReplay'
 import { PlaybackController } from '../engine/simulation/playback'
@@ -104,7 +106,8 @@ function squareRotaryProject(
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
   base.meta.maxTravelZ = 25
   base.meta.projectType = 'rotary'
-  base.stock = squareStock(SIDE, LENGTH, axis, at)
+  const stock = squareStock(SIDE, LENGTH, axis, at)
+  base.stock = stock
   base.tools = [{
     ...defaultTool(units, 1),
     id: 't1',
@@ -158,13 +161,13 @@ function squareRotaryProject(
     id: 'around', name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
   })
   project.activeSetupId = 'around'
+  // The real default chuck, exactly as the app mints one on a square blank:
+  // centred at the true pivot and sized past the corner envelope. The
+  // production dispatch's physical guard refuses anything less.
   project.clamps = [{
-    id: 'chuck', name: 'Chuck', type: 'chuck',
-    x: at.x,
-    y: at.y,
-    w: axis === 'x' ? 2 : 12,
-    h: axis === 'x' ? 12 : 2,
-    height: 14,
+    ...defaultRoundWorkholding('chuck', stock, units),
+    id: 'chuck',
+    name: 'Chuck',
     visible: true,
   }]
   const operation: Operation = {
@@ -177,13 +180,20 @@ function squareRotaryProject(
 }
 
 /**
- * The accepted generated path. `computeOperationToolpath` is deliberately not
- * used: this base's post-setup policy refuses square production dispatch until
- * the reviewed U1 policy lands; the generator itself is the accepted S3 seam.
+ * The accepted generated path, through the production dispatch every app
+ * consumer uses. `computeOperationToolpath` admits the square blank and runs
+ * the rotary generator itself; a refused setup comes back as an empty path
+ * carrying `postSetupOperationRefused`, so the assertions below reject it.
  */
 function generated(project: Project, operation: Operation): ToolpathResult {
-  const result = generateRotaryOperation(project, operation)
+  const envelope = computeOperationToolpath(project, operation)
+  assert(envelope, 'fixture: the production dispatch handles the square rotary rough')
+  const result = envelope.result
   assert(result.moves.length > 0, 'fixture: the generated square rough is nonempty')
+  assert(
+    !result.warnings.some((warning) => warning.code === 'postSetupOperationRefused'),
+    'fixture: production admits the square setup instead of refusing it',
+  )
   assert(result.warnings.length === 0, `fixture: the generated square rough warns (${JSON.stringify(result.warnings)})`)
   return result
 }
