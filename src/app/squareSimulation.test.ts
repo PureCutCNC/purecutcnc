@@ -33,11 +33,16 @@
  * and the production dispatch refuses it, so the fixture must not substitute
  * one.
  *
+ * Issue #1016 C2 P2 moved a square blank's replay into a worker. Node has no
+ * `Worker`, so the hook's in-thread fallback runs the same job; it still runs
+ * in an effect, so the hook path below renders into a real DOM and awaits that
+ * job instead of reading a server render, which never runs effects.
+ *
  * Mutations these assertions were checked against, each applied on its own and
  * reverted:
  * - `computeSimulationResult`'s visible branch dropping `squareBar` → "the
  *   visible replay is a square grid" and the actual-band test fail;
- * - `getBaseGrid` dropping `squareBar` → "a playback base grid is a square
+ * - the square job dropping `squareBar` → "a playback base grid is a square
  *   grid" fails;
  * - the empty-stats baseline reading `stockTopZ` (the corner maximum) or the
  *   unrolled bar's thickness → "the empty result reports the true material
@@ -53,173 +58,25 @@
 
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
-import { defaultRoundWorkholding } from '../store/helpers/roundWorkholding'
-import { projectWithFeatures } from '../test/projectFixtures'
-import {
-  defaultTool,
-  getStockBounds,
-  newProject,
-  rectProfile,
-  roundStock,
-  type MachiningSetup,
-  type Operation,
-  type Project,
-  type SketchFeature,
-  type SquareStock,
-} from '../types/project'
-import { squareStock } from '../types/barStock'
-import { computeMeshBounds, serializeImportedMesh } from '../engine/importedMesh'
-import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
-import type { ToolpathResult } from '../engine/toolpaths/types'
+import { getStockBounds, newProject, roundStock, type MachiningSetup, type SquareStock } from '../types/project'
 import { squareMaterialIntervals } from '../engine/simulation/squareReplay'
 import { PlaybackController } from '../engine/simulation/playback'
 import type { SimulationGrid } from '../engine/simulation'
-import { buildSimulationSetupInput, type SimulationSetupInput } from './simulationSetup'
+import { buildSimulationSetupInput } from './simulationSetup'
+import { computeSimulationResult, useSimulationModel } from './useSimulationModel'
 import {
-  computeSimulationResult,
-  useSimulationModel,
-  type SimulationResultInput,
-} from './useSimulationModel'
-
-const SIDE = 12
-const LENGTH = 30
-/** Coarse enough for a focused test; the kernel-resolution parity is #1016 R1's. */
-const DETAIL = 60
+  DETAIL,
+  LENGTH,
+  SIDE,
+  generated,
+  inputFor,
+  resultArgs,
+  squareRotaryProject,
+} from '../test/squareSimulationFixture'
+import { mountReact } from '../test/reactClientRender'
 
 function near(actual: number, expected: number, label: string, epsilon = 1e-6): void {
   assert(Math.abs(actual - expected) <= epsilon, `${label}: expected ${expected}, got ${actual}`)
-}
-
-/**
- * A rotary project on a square blank with one imported prism model and one real
- * rotary rough. `at` places the blank (and the model with it), so a nonzero
- * value exercises a grid origin away from zero; `axis` swaps along/across.
- */
-function squareRotaryProject(
-  axis: 'x' | 'y',
-  at: { x: number; y: number } = { x: 0, y: 0 },
-  units: 'mm' | 'inch' = 'mm',
-): { project: Project; operation: Operation; setup: MachiningSetup } {
-  const base = newProject('square simulation', units)
-  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
-  base.meta.maxTravelZ = 25
-  base.meta.projectType = 'rotary'
-  const stock = squareStock(SIDE, LENGTH, axis, at)
-  base.stock = stock
-  base.tools = [{
-    ...defaultTool(units, 1),
-    id: 't1',
-    type: 'ball_endmill',
-    diameter: 2,
-    defaultStepover: 0.8,
-    defaultStepdown: 1,
-  }]
-
-  // The accepted fixture's small closed asymmetric prism: along 3..27, across
-  // -2..2 about the bar centre, top 9 / bottom 4. Placed inside the blank.
-  const raw = new Float32Array([
-    3, -2, 4, 27, -2, 4, 27, 2, 4, 3, 2, 4,
-    3, -2, 8, 27, -2, 9, 27, 2, 9, 3, 2, 8,
-  ])
-  const alongAt = axis === 'x' ? at.x : at.y
-  const acrossAt = axis === 'x' ? at.y : at.x
-  const positions = new Float32Array(raw.length)
-  for (let i = 0; i < raw.length; i += 3) {
-    const along = alongAt + raw[i]
-    const across = acrossAt + SIDE / 2 + raw[i + 1]
-    const z = raw[i + 2]
-    if (axis === 'x') {
-      positions[i] = along
-      positions[i + 1] = across
-    } else {
-      positions[i] = across
-      positions[i + 1] = along
-    }
-    positions[i + 2] = z
-  }
-  const index = new Uint32Array([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7])
-  base.modelAssets = { asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl') }
-
-  const model: SketchFeature = {
-    id: 'model', name: 'Model', kind: 'stl', operation: 'model', authoringFace: 'top', folderId: null,
-    sketch: {
-      profile: axis === 'x' ? rectProfile(at.x + 3, at.y + 4, 24, 4) : rectProfile(at.x + 4, at.y + 3, 4, 24),
-      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
-    },
-    stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
-    z_top: 9, z_bottom: 4, visible: true, locked: false,
-  }
-  const around: SketchFeature = {
-    ...model, id: 'sketch', name: 'Sketch', kind: 'rect', operation: 'subtract',
-    stl: null, authoringFace: 'around', z_top: 12, z_bottom: 10,
-  }
-  const project = projectWithFeatures(base, [model, around])
-  project.setups.push({
-    ...project.setups[0],
-    id: 'around', name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
-  })
-  project.activeSetupId = 'around'
-  // The real default chuck, exactly as the app mints one on a square blank:
-  // centred at the true pivot and sized past the corner envelope. The
-  // production dispatch's physical guard refuses anything less.
-  project.clamps = [{
-    ...defaultRoundWorkholding('chuck', stock, units),
-    id: 'chuck',
-    name: 'Chuck',
-    visible: true,
-  }]
-  const operation: Operation = {
-    ...defaultOperationForTarget(project, 'rotary_rough', 'rough', { source: 'features', featureIds: ['model'] }, 0),
-    setupId: 'around',
-    stockToLeaveRadial: 0.4,
-  }
-  project.operations = [operation]
-  return { project, operation, setup: project.setups.find((entry) => entry.id === 'around')! }
-}
-
-/**
- * The accepted generated path, through the production dispatch every app
- * consumer uses. `computeOperationToolpath` admits the square blank and runs
- * the rotary generator itself; a refused setup comes back as an empty path
- * carrying `postSetupOperationRefused`, so the assertions below reject it.
- */
-function generated(project: Project, operation: Operation): ToolpathResult {
-  const envelope = computeOperationToolpath(project, operation)
-  assert(envelope, 'fixture: the production dispatch handles the square rotary rough')
-  const result = envelope.result
-  assert(result.moves.length > 0, 'fixture: the generated square rough is nonempty')
-  assert(
-    !result.warnings.some((warning) => warning.code === 'postSetupOperationRefused'),
-    'fixture: production admits the square setup instead of refusing it',
-  )
-  assert(result.warnings.length === 0, `fixture: the generated square rough warns (${JSON.stringify(result.warnings)})`)
-  return result
-}
-
-function inputFor(project: Project, operation: Operation, toolpath: ToolpathResult): SimulationSetupInput {
-  const input = buildSimulationSetupInput(project, project.setups.find((entry) => entry.id === 'around')!, new Map([[operation.id, toolpath]]))
-  assert(input, 'fixture: the around setup yields a simulation input')
-  return input
-}
-
-function resultArgs(
-  project: Project,
-  operation: Operation,
-  input: SimulationSetupInput,
-  mode: 'selected' | 'visible',
-  withOperation = true,
-): SimulationResultInput {
-  const paths = new Map([[operation.id, input.toolpaths.get(operation.id)!]])
-  return {
-    setupInput: input,
-    project,
-    simulationMode: mode,
-    simulationDetailCells: DETAIL,
-    selectedInSetup: withOperation ? operation : null,
-    paths,
-  }
 }
 
 function minBaseline(grid: SimulationGrid): number {
@@ -251,14 +108,20 @@ function cellAtSheetPoint(grid: SimulationGrid, along: number, angleDeg: number)
 type HookArgs = Parameters<typeof useSimulationModel>[0]
 type HookResult = ReturnType<typeof useSimulationModel>
 
-function renderModel(args: HookArgs): HookResult {
+/**
+ * Render the hook as the app does and wait for its square job to settle. The
+ * in-thread fallback runs the replay inside the effect, so this is where the
+ * result and the playback starting stock appear.
+ */
+async function renderModel(args: HookArgs): Promise<HookResult> {
   let captured: HookResult | null = null
   function Capture() {
     // eslint-disable-next-line react-hooks/globals
     captured = useSimulationModel(args)
     return null
   }
-  renderToStaticMarkup(createElement(Capture))
+  const mounted = await mountReact(createElement(Capture))
+  await mounted.unmount()
   assert(captured, 'useSimulationModel rendered')
   return captured
 }
@@ -320,7 +183,7 @@ function testSetupInputDescriptor(): void {
 // 2. Every app grid entry point gets the descriptor
 // ---------------------------------------------------------------------------
 
-function testEveryEntryPoint(): void {
+async function testEveryEntryPoint(): Promise<void> {
   console.log('Testing every app grid entry point builds a square grid...')
   const { project, operation, setup } = squareRotaryProject('x')
   const toolpath = generated(project, operation)
@@ -352,7 +215,7 @@ function testEveryEntryPoint(): void {
   assert.equal(visible.stats.processedMoveCount, selected.stats.processedMoveCount, 'and process the same moves')
 
   // prior-operation playback base grid, through the real hook
-  const hook = renderModel({
+  const hook = await renderModel({
     project,
     centerTab: 'simulation',
     simulationMode: 'selected',
@@ -361,10 +224,12 @@ function testEveryEntryPoint(): void {
     selectedToolpath: toolpath,
     requestToolpath: () => Promise.resolve(null),
   })
+  assert(!hook.simulationInputPending, 'the hook has delivered the square job')
   assert(hook.simulationResult?.grid.squareBar, 'the hook result is a square grid')
   const playback = hook.simulationPlaybackInput
   assert(playback, 'playback is available for a first square operation')
   const base = playback!.getBaseGrid()
+  assert(base === playback!.getBaseGrid(), 'repeated playback calls return the same starting stock')
   assert(base.squareBar, 'a playback base grid is a square grid')
   assert(base.initialTopZ, 'with its immutable baseline')
   assert.equal(base.squareMaterial?.size, 0, 'a base grid starts as virgin square material')
@@ -436,13 +301,13 @@ function testActualGeneratedBand(): void {
 // 4. Playback advances, back-seeks and resets on the same square material
 // ---------------------------------------------------------------------------
 
-function testPlaybackParity(): void {
+async function testPlaybackParity(): Promise<void> {
   console.log('Testing square playback advance, back-seek and reset parity...')
   const { project, operation } = squareRotaryProject('x')
   const toolpath = generated(project, operation)
   const input = inputFor(project, operation, toolpath)
   const selected = computeSimulationResult(resultArgs(project, operation, input, 'selected'))
-  const hook = renderModel({
+  const hook = await renderModel({
     project,
     centerTab: 'simulation',
     simulationMode: 'selected',
@@ -541,10 +406,16 @@ function testAxesUnitsOffOrigin(): void {
   }
 }
 
-testSetupInputDescriptor()
-testEveryEntryPoint()
-testActualGeneratedBand()
-testPlaybackParity()
-testAxesUnitsOffOrigin()
+async function main(): Promise<void> {
+  testSetupInputDescriptor()
+  await testEveryEntryPoint()
+  testActualGeneratedBand()
+  await testPlaybackParity()
+  testAxesUnitsOffOrigin()
+  console.log('square simulation wiring tests passed')
+}
 
-console.log('square simulation wiring tests passed')
+void main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error)
+  throw error
+})

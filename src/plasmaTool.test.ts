@@ -410,10 +410,12 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
     const normalizedTools = []
     const exportsFor = (namespace) => Object.fromEntries(Object.entries(namespace)
       .filter(([name]) => name !== 'default' && name !== 'module.exports'))
-    // Assume the two outer selected-operation preflights already passed. The
-    // selected-tool lookup must still independently refuse the incompatible
+    // Assume the selected operation's static-simulation preflight already
+    // passed. Since #1016 C2 P2 that preflight runs in simulationCompute.ts,
+    // which keeps the real policy lookup; only the hook's remaining lookup is
+    // mocked here, and it must still independently refuse the incompatible
     // plasma record for a milling operation.
-    let preflightPasses = boundary === 'selected' ? 2 : 0
+    let preflightPasses = boundary === 'selected' ? 1 : 0
     mock.module(aliases.policy, { cache: true, namedExports: { ...exportsFor(policy),
       findOperationTool(project, operation) {
         if (operation.id === selected.id && preflightPasses > 0) {
@@ -445,6 +447,18 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
         return geometry.normalizeToolForProject(tool, project)
       },
     } })
+    // The pure computation the hook used to hold inline now lives in
+    // simulationCompute.ts (issue #1016 C2 P2). Transpile it too, with the
+    // same instrumented geometry, so the deferred prior-operation replay is
+    // observed across the moved boundary exactly as it was when the replay was
+    // inline. Its own policy lookup stays real, as the hook's static result did.
+    const computeUrl = new URL('src/app/simulationCompute.ts', root)
+    const computePath = join(directory, 'simulationCompute.mjs')
+    writeFileSync(computePath, ts.transpileModule(readFileSync(computeUrl, 'utf8'), { compilerOptions: {
+      target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext,
+    } }).outputText
+      .replace("'../engine/toolpaths/geometry'", JSON.stringify(aliases.geometry))
+      .replace(/from '(\\.\\.?\\/[^']+)'/g, (_, specifier) => 'from ' + JSON.stringify(new URL(specifier + '.ts', computeUrl).href)))
     const hookUrl = new URL('src/app/useSimulationModel.ts', root)
     const source = ts.transpileModule(readFileSync(hookUrl, 'utf8'), { compilerOptions: {
       target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext,
@@ -453,6 +467,7 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
       .replace("'react'", JSON.stringify(aliases.react))
       .replace("'../engine/simulation'", JSON.stringify(new URL('src/engine/simulation/index.ts', root).href))
       .replace("'../engine/toolpaths/geometry'", JSON.stringify(aliases.geometry))
+      .replace("'./simulationCompute'", JSON.stringify(pathToFileURL(computePath).href))
       // Any other relative import resolves where the hook really lives.
       .replace(/from '(\\.\\.?\\/[^']+)'/g, (_, specifier) => 'from ' + JSON.stringify(new URL(specifier + '.ts', hookUrl).href))
     const hookPath = join(directory, 'hook.mjs')
@@ -468,7 +483,7 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
       }
       renderToString(React.createElement(Probe))
       if (boundary === 'selected') {
-        assert.equal(preflightPasses, 0, 'selected boundary probe must pass both outer preflights')
+        assert.equal(preflightPasses, 0, 'selected boundary probe must consume the outer preflight')
         assert.equal(result.simulationPlaybackInput, null, 'selected lookup rejects plasma even after a passed preflight')
         assert.deepEqual(normalizedTools, [], 'rejected selected tool never reaches cutter normalization')
       } else {
