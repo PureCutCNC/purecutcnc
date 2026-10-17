@@ -19,23 +19,30 @@
  *
  * `maximizeConcave` (golden section) and `bisectCrossing` (bisection) used to
  * run a fixed 96 iterations for every cell of every move. They now stop as soon
- * as the bracket is below one Float32 ulp of the move parameter, because
- * another step cannot move a stored interval endpoint.
+ * as the bracket is below one Float32 ulp of the move parameter and — for a
+ * crossing — the stored radial endpoint has stopped moving in value space. The
+ * parameter alone is not enough: a tangential feasibility boundary changes the
+ * endpoint like `√(s − s*)`, so a bracket far below one parameter ulp can still
+ * move the stored material by a whole Float32 ulp and change the interval
+ * topology. The Codex regression below is exactly that case.
  *
  * This test replays a seeded, asymmetric move set through the kernel twice —
  * once with the pre-P1 fixed-96 search, once with the early exit — and requires
- * every stored interval endpoint to be equal after `Math.fround`, or to differ
- * by at most one Float32 ulp (one-ulp differences are counted and printed; zero
- * is the target). It also requires the early exit to actually be taken: the
- * legacy run must spend exactly 96 iterations per call, and the new run's mean
- * must be below the stated bounds below those counts.
+ * every stored interval endpoint and every stored top to be equal after
+ * `Math.fround`, with identical interval counts. It also requires the early
+ * exit to actually be taken: the legacy run must spend exactly 96 iterations
+ * per call, and the new run's mean must stay below the stated bounds.
  *
  * Mutations this was checked against, each applied on its own and reverted:
- * - tolerance 1000x looser → the endpoint equality assertion fails;
- * - early exit removed from `maximizeConcave` only → endpoints still agree, but
- *   the mean-iteration assertion fails;
- * - `bisectCrossing` returning the negative side → the endpoint equality
- *   assertion fails here and the physical assertions in `squareReplay.test.ts`.
+ * - revert the crossing stop to parameter-only tolerance → the Codex
+ *   regression fails (an extra `[0, 1.1921845e-7]` interval appears);
+ * - disable the early exit in `maximizeConcave` only → endpoints still agree,
+ *   but the mean-iteration assertion fails;
+ * - `bisectCrossing` returning the negative side → the non-negative-side
+ *   invariant fails (15,356 crossings).
+ * Loosening the parameter tolerance alone no longer fails: the stored-endpoint
+ * check is what keeps the material stable, and the parameter only bounds the
+ * remaining work.
  *
  * Run with: npx tsx src/engine/simulation/squareMaterialConvergence.test.ts
  */
@@ -102,6 +109,34 @@ function makeSheet(axis: 'x' | 'y'): Sheet {
   return { grid }
 }
 
+/**
+ * One cell whose centre is exactly `(along, across)` on the test sheet, so the
+ * Codex reproduction can pin the ray angle without grid-rounding noise.
+ */
+function makeCell(along: number, across: number): SimulationGrid {
+  const frame: AroundFrame = {
+    axis: 'x',
+    centre: 0,
+    radius: SIDE / 2,
+    zero: 0,
+    sheetStart: -CIRCUMFERENCE / 2,
+    circumference: CIRCUMFERENCE,
+  }
+  const topZ = new Float32Array([squareSurfaceRadius(SIDE, across / (SIDE / 2))])
+  return {
+    originX: along - CELL_SIZE / 2,
+    originY: across - CELL_SIZE / 2,
+    cellSize: CELL_SIZE,
+    cols: 1,
+    rows: 1,
+    stockBottomZ: 0,
+    stockTopZ: SIDE * Math.SQRT1_2,
+    squareBar: { side: SIDE, frame },
+    initialTopZ: new Float32Array(topZ),
+    topZ,
+  }
+}
+
 /** One unrolled-sheet point at `along` and `angleDeg` on the nominal cylinder. */
 function sheetPoint(along: number, angleDeg: number): { x: number; y: number } {
   const across = angleDeg * CIRCUMFERENCE / 360
@@ -129,6 +164,10 @@ interface SeededMove {
 function seededMoves(axis: 'x' | 'y'): SeededMove[] {
   const flat = 'flat_endmill' as const
   const ball = 'ball_endmill' as const
+  // The exact angle-window edges for the two edge-ray moves below:
+  // |θ| ≤ atan(rt / tipMin), expressed in the sheet's degrees.
+  const flatWindowDeg = Math.atan(1.5 / 3.0) * 180 / Math.PI
+  const ballWindowDeg = Math.atan(1.8 / 3.2) * 180 / Math.PI
   const moves: SeededMove[] = [
     {
       label: 'flat axial pass',
@@ -222,6 +261,54 @@ function seededMoves(axis: 'x' | 'y'): SeededMove[] {
       toolRadius: 1.4,
       toolType: ball,
     },
+    {
+      label: 'flat near-axis tip to zero',
+      move: { kind: 'cut', from: pointOn(axis, 6, 14, 6.5), to: pointOn(axis, 22, 14, 0) },
+      toolRadius: 1.5,
+      toolType: flat,
+    },
+    {
+      label: 'ball near-axis tip to zero',
+      move: { kind: 'cut', from: pointOn(axis, 7, -11, 6.0), to: pointOn(axis, 21, -11, 0) },
+      toolRadius: 1.4,
+      toolType: ball,
+    },
+    {
+      label: 'flat shallow tip slope',
+      move: { kind: 'cut', from: pointOn(axis, 4, 8, 4.50), to: pointOn(axis, 26, 8, 4.49) },
+      toolRadius: 1.2,
+      toolType: flat,
+    },
+    {
+      label: 'ball steep tip slope',
+      move: { kind: 'cut', from: pointOn(axis, 5, -33, 6.0), to: pointOn(axis, 24, -33, 1.2) },
+      toolRadius: 1.6,
+      toolType: ball,
+    },
+    {
+      label: 'flat tiny tool radius',
+      move: { kind: 'cut', from: pointOn(axis, 7, 18, 5.0), to: pointOn(axis, 23, 18, 3.6) },
+      toolRadius: 0.05,
+      toolType: flat,
+    },
+    {
+      label: 'ball large tool radius',
+      move: { kind: 'cut', from: pointOn(axis, 3.5, -52, 4.8), to: pointOn(axis, 26.5, -52, 4.0) },
+      toolRadius: 4.0,
+      toolType: ball,
+    },
+    {
+      label: 'flat ray on the angle-window edge',
+      move: { kind: 'cut', from: pointOn(axis, 4, flatWindowDeg, 4.6), to: pointOn(axis, 26, flatWindowDeg, 3.0) },
+      toolRadius: 1.5,
+      toolType: flat,
+    },
+    {
+      label: 'ball ray on the angle-window edge',
+      move: { kind: 'cut', from: pointOn(axis, 4.5, -ballWindowDeg, 5.0), to: pointOn(axis, 25.5, -ballWindowDeg, 3.2) },
+      toolRadius: 1.8,
+      toolType: ball,
+    },
   ]
   return moves
 }
@@ -251,61 +338,42 @@ function runMoves(axis: 'x' | 'y', legacy: boolean): RunResult {
   return { material: grid.squareMaterial, topZ: grid.topZ, stats }
 }
 
-/** One Float32 ulp of `value`'s magnitude, from the IEEE exponent. */
-const ULP_VIEW = new DataView(new ArrayBuffer(4))
-function ulp32(value: number): number {
-  const magnitude = Math.abs(Math.fround(value))
-  if (magnitude === 0) return 2 ** -149
-  ULP_VIEW.setFloat32(0, magnitude)
-  const exponent = (ULP_VIEW.getUint32(0) >>> 23) & 0xff
-  if (exponent === 0) return 2 ** -149
-  return 2 ** (exponent - 127 - 23)
-}
-
 interface DifferenceReport {
   compared: number
-  froundEqual: number
-  withinOneUlp: number
   endpointCompared: number
-  endpointWithinOneUlp: number
-  worstUlps: number
+  intervalCounts: number
   worst: string
 }
 
 /**
  * Compare every stored interval endpoint and every stored top height after
- * Float32 rounding. Any pair that rounds to the same Float32 value is equal for
- * the renderer; a pair one ulp apart is reported and must be at most one.
+ * Float32 rounding. A pair that rounds to the same Float32 value is identical
+ * to the stored grid; a pair that does not is a regression, not a tolerated
+ * one-ulp difference. Interval counts must match cell for cell: that is the
+ * interval topology, and a single split is exactly the Codex sliver.
  */
 function compareRuns(legacy: RunResult, latest: RunResult): DifferenceReport {
   const report: DifferenceReport = {
-    compared: 0, froundEqual: 0, withinOneUlp: 0,
-    endpointCompared: 0, endpointWithinOneUlp: 0, worstUlps: 0, worst: '',
+    compared: 0, endpointCompared: 0, intervalCounts: 0, worst: '',
   }
   const keys = new Set([...legacy.material.keys(), ...latest.material.keys()])
   for (const key of [...keys].sort((a, b) => a - b)) {
     const before = legacy.material.get(key)
     const after = latest.material.get(key)
     assert(before !== undefined && after !== undefined, `cell ${key} must be stored in both runs`)
-    assert(before!.length === after!.length, `cell ${key}: interval count ${before!.length} vs ${after!.length}`)
+    assert(
+      before!.length === after!.length,
+      `cell ${key}: interval count ${before!.length / 2} vs ${after!.length / 2} ` +
+        `(${JSON.stringify(before)} vs ${JSON.stringify(after)})`,
+    )
+    report.intervalCounts += 1
     for (let i = 0; i < before!.length; i += 1) {
       const a = Math.fround(before![i])
       const b = Math.fround(after![i])
       report.compared += 1
       report.endpointCompared += 1
-      if (a === b) {
-        report.froundEqual += 1
-        continue
-      }
-      const scale = Math.max(Math.abs(a), Math.abs(b))
-      const ulps = Math.abs(before![i] - after![i]) / ulp32(scale)
-      if (ulps > report.worstUlps) {
-        report.worstUlps = ulps
-        report.worst = `cell ${key} endpoint ${i}: ${before![i]} vs ${after![i]} (${ulps.toFixed(3)} ulp)`
-      }
-      assert(ulps <= 1, `cell ${key} endpoint ${i} moved ${ulps.toFixed(3)} Float32 ulp: ${before![i]} vs ${after![i]}`)
-      report.withinOneUlp += 1
-      report.endpointWithinOneUlp += 1
+      if (a !== b) report.worst = report.worst || `cell ${key} endpoint ${i}: ${before![i]} vs ${after![i]}`
+      assert(a === b, `cell ${key} endpoint ${i} differs after Math.fround: ${before![i]} vs ${after![i]}`)
     }
   }
   assert(legacy.topZ.length === latest.topZ.length, 'both runs share the grid shape')
@@ -313,18 +381,8 @@ function compareRuns(legacy: RunResult, latest: RunResult): DifferenceReport {
     const a = Math.fround(legacy.topZ[i])
     const b = Math.fround(latest.topZ[i])
     report.compared += 1
-    if (a === b) {
-      report.froundEqual += 1
-      continue
-    }
-    const scale = Math.max(Math.abs(a), Math.abs(b))
-    const ulps = Math.abs(legacy.topZ[i] - latest.topZ[i]) / ulp32(scale)
-    if (ulps > report.worstUlps) {
-      report.worstUlps = ulps
-      report.worst = `cell ${i} top: ${legacy.topZ[i]} vs ${latest.topZ[i]} (${ulps.toFixed(3)} ulp)`
-    }
-    assert(ulps <= 1, `cell ${i} top moved ${ulps.toFixed(3)} Float32 ulp: ${legacy.topZ[i]} vs ${latest.topZ[i]}`)
-    report.withinOneUlp += 1
+    if (a !== b) report.worst = report.worst || `cell ${i} top: ${legacy.topZ[i]} vs ${latest.topZ[i]}`
+    assert(a === b, `cell ${i} top differs after Math.fround: ${legacy.topZ[i]} vs ${latest.topZ[i]}`)
   }
   return report
 }
@@ -332,6 +390,45 @@ function compareRuns(legacy: RunResult, latest: RunResult): DifferenceReport {
 function mean(stats: SearchIterationStats, calls: 'maximizeCalls' | 'bisectCalls', iterations: 'maximizeIterations' | 'bisectIterations'): number {
   assert(stats[calls] > 0, `${calls} must have run at least once`)
   return stats[iterations] / stats[calls]
+}
+
+/**
+ * The Codex reproduction, pinned to one cell: side 12, cell along 0.5, the
+ * cell's ray 0.6 rad from the tool, flat endmill radius 2.4, constant A=0, and
+ * a `(0, 4.6)` → `(2.9000000572999998, 0)` move. Fixed-96 stores one surviving
+ * interval; the parameter-only early stop left an extra `[0, 1.1921845e-7]`
+ * one because the crossing's radial endpoint moved across the compaction
+ * threshold. The regression is the interval count and the stored endpoints.
+ */
+function testCodexRadialRegression(): void {
+  console.log('Testing the Codex side-12 radial-endpoint regression...')
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 0, y: 0, z: 4.6, a: 0 },
+    to: { x: 2.9000000572999998, y: 0, z: 0, a: 0 },
+  }
+  const legacyGrid = makeCell(0.5, 3.6)
+  const latestGrid = makeCell(0.5, 3.6)
+  applySquareMoveToGrid(legacyGrid, move, 2.4, 'flat_endmill', { legacyFixedSearch: true })
+  applySquareMoveToGrid(latestGrid, move, 2.4, 'flat_endmill')
+  const legacy = legacyGrid.squareMaterial?.get(0)
+  const latest = latestGrid.squareMaterial?.get(0)
+  if (legacy === undefined || latest === undefined) throw new Error('assertion failed: the Codex move must cut the cell')
+  assert(
+    legacy.length === 2,
+    `fixed-96 must store one surviving interval, got ${JSON.stringify(legacy)}`,
+  )
+  assert(
+    latest.length === legacy.length,
+    `the early exit must keep the fixed-96 interval count: ${JSON.stringify(latest)} vs ${JSON.stringify(legacy)}`,
+  )
+  for (let i = 0; i < legacy.length; i += 1) {
+    assert(
+      Math.fround(latest[i]) === Math.fround(legacy[i]),
+      `endpoint ${i} differs after Math.fround: ${latest[i]} vs ${legacy[i]}`,
+    )
+  }
+  console.log(`  fixed 96 ${JSON.stringify(legacy)}; early exit ${JSON.stringify(latest)}`)
 }
 
 function testStoredMaterialDoesNotMove(): void {
@@ -348,16 +445,10 @@ function testStoredMaterialDoesNotMove(): void {
 
     const report = compareRuns(legacy, latest)
     console.log(
-      `${axis}: ${report.compared} stored values compared, ${report.froundEqual} equal after Math.fround, ` +
-        `${report.withinOneUlp} within one ulp (${report.endpointWithinOneUlp} of ${report.endpointCompared} interval endpoints, ` +
-        `worst ${report.worstUlps.toFixed(3)} ulp)` +
-        (report.worst ? ` — ${report.worst}` : ''),
-    )
-    // At most one Float32 ulp is the contract; zero is the target and the
-    // printed counts make a regression toward the tolerance visible.
-    assert(
-      report.worstUlps <= 1,
-      `${axis}: ${report.withinOneUlp} stored values moved by up to ${report.worstUlps.toFixed(3)} Float32 ulp`,
+      `${axis}: ${report.compared} stored values compared, all equal after Math.fround; ` +
+        `${report.intervalCounts} cells with identical interval counts ` +
+        `(${report.endpointCompared} interval endpoints)` +
+        (report.worst ? ` — first difference: ${report.worst}` : ''),
     )
     assert(report.compared > 1000, `${axis}: the comparison must cover real endpoints, got ${report.compared}`)
   }
@@ -365,12 +456,15 @@ function testStoredMaterialDoesNotMove(): void {
 
 function testEarlyExitIsTaken(): void {
   console.log('Testing the early exit is actually taken and bounded...')
-  // Derived from the tolerance: a unit bracket needs ~42 golden steps (0.618
-  // shrink each) and ~29 bisections to reach one Float32 ulp over 64. The
-  // seeded windows usually start narrower than one, so the measured means sit
-  // below these ceiling figures; the bounds still fail the fixed 96 outright.
+  // Derived from the tolerances: a unit bracket needs ~42 golden steps (0.618
+  // shrink each) and ~29 bisections just to reach the parameter tolerance; the
+  // tangential crossings add a few more until the stored endpoint rounds to one
+  // Float32 value. The seeded windows usually start narrower than one, so the
+  // measured means sit below these ceiling figures; the bounds still fail the
+  // fixed 96 outright and they are tight enough to catch a regression that
+  // removes either half of the stop rule.
   const MAXIMIZE_MEAN_BOUND = 45
-  const BISECT_MEAN_BOUND = 32
+  const BISECT_MEAN_BOUND = 40
   for (const axis of ['x', 'y'] as const) {
     const legacy = runMoves(axis, true)
     const latest = runMoves(axis, false)
@@ -425,6 +519,7 @@ function testEarlyExitIsTaken(): void {
 }
 
 function main(): void {
+  testCodexRadialRegression()
   testStoredMaterialDoesNotMove()
   testEarlyExitIsTaken()
   console.log('square-material convergence: PASSED')

@@ -99,10 +99,10 @@ const TWO_PI = Math.PI * 2
  * Hard upper bound on the golden-section extrema and the bisected
  * feasible-window crossings. A bracket shrinks by the golden ratio (~0.618) per
  * step, so 96 reaches Float64 resolution long before the budget runs out. The
- * loops now stop as soon as the bracket is below `searchTolerance`, which is
- * where both the concave maximum and the crossings are already resolved past
- * one Float32 ulp of the stored material (see that function); this stays as a
- * safety net so a pathological bracket can never loop without end.
+ * loops stop as soon as the bracket is below `searchTolerance` and, for a
+ * crossing, the stored radial endpoint has stopped moving (see
+ * `storedEndpointsAgree`); this stays as a safety net so a pathological
+ * bracket can never loop without end.
  */
 const CONVERGE_ITERATIONS = 96
 
@@ -121,8 +121,9 @@ export interface SearchIterationStats {
   /**
    * Bisected feasible-window endpoints that came back on the infeasible side.
    * The search contract is the last known non-negative point, so this must stay
-   * zero; it is recorded here because the tolerance is far below a stored ulp
-   * and only a direct invariant check can see a sign-side regression.
+   * zero; it is recorded here because a sign-side regression can still land
+   * within the Float32 endpoint tolerance and be invisible in the stored
+   * material.
    */
   crossingsOnNegativeSide: number
 }
@@ -464,29 +465,61 @@ function acrossWindow(
 }
 
 /**
- * The move-parameter bracket width below which another search step cannot
- * change the stored result. Kept next to its only use so the derivation stays
- * with the code.
+ * The move-parameter bracket width below which another golden-section step
+ * cannot change the stored result. Kept next to its only use so the derivation
+ * stays with the code.
  *
  * The parameter is the fraction along the move, so the bracket's own scale is
- * its bounds, about one; one Float32 ulp of the parameter is `ULP`. A stored
- * radial endpoint is a closed-form function of `s` (a tip plane over `cos θ`, a
- * ball centre, a cylinder reach), so its error is the bracket width times that
- * slope, and the band is then clipped against the Float32 cell heights. One
- * ulp of the parameter still leaves a few clipped endpoints on the other side
- * of that Float32 boundary — a one-ulp move in the stored material, which is
- * the most the grid can express but is not "resolved past one ulp". The extra
- * 1/64 keeps the boundary error far below the height's ulp, so the clamped
- * endpoint is stable and the seeded replay stores bit-identical Float32
- * values. A concave maximum needs far less: its value error is quadratic in the
- * argument error, so the same bracket resolves it far past one ulp. Both loops
- * keep `CONVERGE_ITERATIONS` as the hard ceiling; the old fixed 96 drove the
- * bracket to ~1e-20, twenty orders below anything the grid can hold.
+ * its bounds, about one; one Float32 ulp of the parameter is `ULP`. A concave
+ * maximum is value-stable at this width: the returned value is the maximum of
+ * the sampled points, and near an interior maximum the value error is
+ * quadratic in the argument error, so the bracket already resolves it far past
+ * one ulp. A maximum that lands on a domain endpoint is returned exactly. Both
+ * loops keep `CONVERGE_ITERATIONS` as the hard ceiling; the old fixed 96 drove
+ * the bracket to ~1e-20, twenty orders below anything the grid can hold.
  */
 const SEARCH_TOLERANCE_ULPS = ULP / 64
 
 function searchTolerance(lo: number, hi: number): number {
   return SEARCH_TOLERANCE_ULPS * Math.max(1, Math.abs(lo), Math.abs(hi))
+}
+
+/**
+ * Whether every stored radial quantity a crossing determines has stopped
+ * moving across its bracket in the space the grid actually stores.
+ *
+ * The parameter tolerance alone is not enough for a *crossing*. Its stored
+ * endpoint is a closed-form function of `s` (a tip plane, a ball centre, a
+ * cylinder reach) whose slope can be arbitrarily large where the feasibility
+ * margin touches zero: at a tangential boundary the reach changes like
+ * `√(s − s*)`, so a bracket a thousand times below one parameter ulp can still
+ * move the endpoint by a whole Float32 ulp. That is not academic: side 12, a
+ * cell at along 0.5 whose ray is 0.6 rad from the tool, a flat 2.4 cutter and a
+ * (0, 4.6) → (2.9000000572999998, 0) move leave a `[0, 1.1921845e-7]` sliver
+ * under the parameter-only stop (the endpoint moved just across the
+ * compaction threshold) where fixed-96 stores one interval.
+ *
+ * So the crossing also has to settle the endpoint at Float32 resolution, which
+ * is what `Math.fround` equality across the bracket means: `a` is the
+ * infeasible side and `b` the non-negative side, so the exact crossing value
+ * lies between them, and if both ends round to the same Float32 value the whole
+ * bracket stores one endpoint — well inside one Float32 ulp. Each closure is a
+ * quantity the band will store (a flat floor, a shank's inner wall or reach, a
+ * ball's lower or upper ray intersection), so this is the stored material, not
+ * a proxy scaled from the parameter. Floating point floors the achievable
+ * width, so `CONVERGE_ITERATIONS` remains the hard ceiling.
+ */
+type EndpointValue = (s: number) => number
+
+function storedEndpointsAgree(
+  endpoints: readonly EndpointValue[],
+  a: number,
+  b: number,
+): boolean {
+  for (const endpoint of endpoints) {
+    if (Math.fround(endpoint(a)) !== Math.fround(endpoint(b))) return false
+  }
+  return true
 }
 
 /**
@@ -567,15 +600,19 @@ function minimizeConvex(
 
 /**
  * The non-negative side of a sign change of `evaluate` on `[negative, positive]`.
- * The bracket is halved until it is below `searchTolerance`, then the last
- * known non-negative point is returned; another halving cannot move the stored
- * endpoint by a Float32 ulp.
+ * The bracket is halved until it is below `searchTolerance` **and** the stored
+ * radial quantities the crossing determines have stopped moving
+ * (`storedEndpointsAgree`), then the last known non-negative point is returned.
+ * The value check is the part that guarantees a Float32-stable endpoint: the
+ * parameter tolerance alone is not enough where the endpoint's slope is large
+ * (see `storedEndpointsAgree`).
  */
 function bisectCrossing(
   evaluate: (s: number) => number,
   negative: number,
   positive: number,
   search: SearchControl,
+  endpoints: readonly EndpointValue[],
 ): number {
   const tolerance = searchTolerance(negative, positive)
   const earlyExit = !search.legacy
@@ -583,9 +620,18 @@ function bisectCrossing(
   let b = positive
   let iterations = 0
   for (let i = 0; i < CONVERGE_ITERATIONS; i += 1) {
-    if (earlyExit && Math.abs(b - a) <= tolerance) break
-    iterations += 1
+    if (
+      earlyExit
+      && Math.abs(b - a) <= tolerance
+      && storedEndpointsAgree(endpoints, a, b)
+    ) break
     const mid = (a + b) / 2
+    // A tangential endpoint changes like √(s − s*), so the value check can sit
+    // just above tolerance when the bracket is already two adjacent doubles.
+    // No further halving can move either end, and legacy's 96 iterations would
+    // return this same `b`, so stop here rather than spin to the hard cap.
+    if (earlyExit && (mid === a || mid === b)) break
+    iterations += 1
     if (evaluate(mid) >= 0) b = mid
     else a = mid
   }
@@ -602,25 +648,29 @@ function bisectCrossing(
  * interval, so the maximum is converged and each side's crossing is bisected —
  * a narrow feasible window between any two scan nodes is still found exactly.
  * The endpoint values are computed once here and passed into the maximum, so
- * the feasible-domain search never evaluates the same endpoint twice.
+ * the feasible-domain search never evaluates the same endpoint twice, and the
+ * `endpoints` closures let each crossing settle in stored-value space as well
+ * as in the parameter (see `bisectCrossing`).
  */
 function concaveDomain(
   evaluate: (s: number) => number,
   lo: number,
   hi: number,
   search: SearchControl,
+  endpoints: readonly EndpointValue[],
 ): [number, number] | null {
   if (!(hi > lo)) return evaluate(lo) >= 0 ? [lo, hi] : null
   const loValue = evaluate(lo)
   const hiValue = evaluate(hi)
   const peak = maximizeConcave(evaluate, lo, hi, search, loValue, hiValue)
   if (!(peak.value >= 0)) return null
-  const left = loValue >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s, search)
-  const right = hiValue >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s, search)
+  const left = loValue >= 0 ? lo : bisectCrossing(evaluate, lo, peak.s, search, endpoints)
+  const right = hiValue >= 0 ? hi : bisectCrossing(evaluate, hi, peak.s, search, endpoints)
   if (search.stats) {
     // Test-only invariant: a crossing must be the non-negative side. The
-    // tolerance is far below one stored ulp, so an off-by-one-side return
-    // cannot be seen in the stored values; this check is what catches it.
+    // stored endpoint is resolved to Float32, so an off-by-one-side return can
+    // still be inside the tolerance and invisible in the stored values; this
+    // check is what catches it.
     if (!(evaluate(left) >= 0)) search.stats.crossingsOnNegativeSide += 1
     if (!(evaluate(right) >= 0)) search.stats.crossingsOnNegativeSide += 1
   }
@@ -698,7 +748,7 @@ function constantAngleBands(
     const floorAt = (s: number): number => tipAt(s) / cos
     const domain = axial
       ? [loS, hiS] as [number, number]
-      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search)
+      : concaveDomain((s) => reachAt(s) - floorAt(s), loS, hiS, search, [floorAt])
     if (!domain) return null
     const low = Math.min(floorAt(domain[0]), floorAt(domain[1]))
     const high = axial ? Infinity : maximizeConcave(reachAt, domain[0], domain[1], search).value
@@ -723,10 +773,14 @@ function constantAngleBands(
     return centre * cos + Math.sqrt(Math.max(0, discFrom(centre, dxAt(s))))
   }
 
-  const sphereDomain = concaveDomain(discAt, loS, hiS, search)
+  // The sphere's boundary values are both ray intersections (they meet at a
+  // tangential crossing), so both are checked. The shank's boundary value is
+  // its inner wall and its reach, which also meet there.
+  const shankInnerAt = (s: number): number => centreAt(s) / cos
+  const sphereDomain = concaveDomain(discAt, loS, hiS, search, [sphereLow, sphereHigh])
   const shankDomain: [number, number] | null = axial
     ? [loS, hiS]
-    : concaveDomain((s) => reachAt(s) - centreAt(s) / cos, loS, hiS, search)
+    : concaveDomain((s) => reachAt(s) - shankInnerAt(s), loS, hiS, search, [shankInnerAt, reachAt])
 
   const domains = [sphereDomain, shankDomain].filter((domain): domain is [number, number] => domain !== null)
   if (domains.length === 0) return null
