@@ -244,7 +244,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryToolUnsupported': '{operation}: Die Rotationsbearbeitung benötigt einen Kugel- oder Schaftfräser.',
   'warnings.rotaryBelowCentreline': '{operation}: Das Modell reicht nahe {along} entlang der Stange, bei {angle}°, unter die Mittellinie der Stange. Das Werkzeug hält dort an der Mittellinie an.',
   'warnings.rotaryModelOutsideBar': '{operation}: Ein Teil des Modells liegt außerhalb der Stange. Diese Teile werden nicht bearbeitet.',
-  'warnings.rotaryStockToLeaveInvalid': '{operation}: Der radiale Aufmaß muss ein endlicher Wert von null oder mehr sein und einen brauchbaren Abtastradius übrig lassen. Es wird keine Bewegung erzeugt.',
+  'warnings.rotaryStockToLeaveInvalid': '{operation}: Das radiale Aufmaß muss ein endlicher Wert von null oder mehr sein und einen brauchbaren Abtastradius übrig lassen. Es wird keine Bewegung erzeugt.',
   'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',
   'warnings.postSetupOperationRefused': 'Operation „{operation}" hat keine Werkzeugbahn, weil ihre Aufspannung sie nicht schneiden kann. Korrigieren oder entfernen Sie die Operation vor dem Export.',
   'warnings.postSetupNoRegistration': 'Aufspannung „{setup}" hat keine Ausrichtreferenz, daher ist nicht festgehalten, wie das Teil nach dem Wenden positioniert wird. Fügen Sie in den Aufspannungseinstellungen eine Passstift-, Anschlag- oder Eckreferenz hinzu.',
