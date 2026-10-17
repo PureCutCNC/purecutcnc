@@ -15,7 +15,7 @@
  */
 
 /**
- * Boundary geometry for the remaining square material (issue #1016 C2-R2M).
+ * Boundary geometry for the remaining square material (issue #1016 C2-R2MF).
  *
  * The material model is the frozen transient one from `squareMaterial.ts`: a
  * sparse map of per-cell, remaining canonical radial intervals. Rendering it
@@ -40,6 +40,11 @@
  * baseline is the blank surface, so its outer boundary is `blankRadius(theta)`
  * across the whole wedge. A cut interval is capped at `min(hi, blankRadius)`.
  *
+ * An interval whose outer endpoint *is* the blank surface can leave the wedge
+ * through the blank: where `blankRadius(theta) <= lo` there is no material at
+ * all, and the exposed wall shrinks to a point. That collapsed endpoint is a
+ * legitimate triangular wall and is emitted as a triangle, never dropped.
+ *
  * ## Clipping and splitting
  *
  * `blankRadius(theta)` is piecewise (`R/cos(theta - phi)` on the flat whose
@@ -48,6 +53,29 @@
  * wherever an interval endpoint crosses the blank. Within one sub-wedge the
  * outer surface is either a constant-radius arc or one planar flat, and no
  * face ever spans a removed radial interval.
+ *
+ * ## Conforming angular partition
+ *
+ * Every face that shares an edge must subdivide that edge the same way. The
+ * angular partition is therefore **row-transitive**: column `ci` has one
+ * partition, the union of every along-cell's breaks in that column, including
+ * crossings introduced by a cell several positions away. The radial faces,
+ * the axial end/interface walls and their tessellation knots all use that one
+ * partition, so a crossing added by one cell can never leave a T-junction in a
+ * neighbour. The chunk selection in `squareMaterialMesh.ts` still covers this:
+ * a column's partition only depends on that column, and the corner refinement
+ * below only reaches the two columns on either side of an angular edge, i.e.
+ * the touched chunk and its angular neighbours (plus the periodic seam).
+ *
+ * Within an axial or angular wall the radial (`u`) direction is refined at the
+ * **corner line** where the wall meets the two perpendicular interfaces. The
+ * corner's knot set is the union of the four adjacent cells' clipped interval
+ * endpoints, so both walls split the shared radial line at the same values.
+ * An unchanged cell therefore keeps its geometry byte-for-byte, and a null
+ * dirty region stays an unconditional no-op; callers pass `undefined` (not
+ * `null`) whenever the frame, topology or material generation is reset,
+ * because a non-null region still forces a full rebuild when the layout
+ * signature changes.
  *
  * ## Coordinates
  *
@@ -160,7 +188,6 @@ interface CellInfo {
   baseline: number
   intervals: readonly number[]
   intact: boolean
-  breaks: number[]
 }
 
 interface MeshAccumulator {
@@ -169,6 +196,21 @@ interface MeshAccumulator {
   min: [number, number, number]
   max: [number, number, number]
 }
+
+/** Read-only state shared by one chunk build; every lookup is deterministic. */
+interface BuildContext {
+  readonly grid: SimulationGrid
+  readonly layout: SquareMaterialLayout
+  readonly eps: number
+  readonly segmentRadians: number
+  readonly maxSegments: number
+  /** One row-transitive angular partition per built angular column. */
+  readonly partitions: Map<number, readonly number[]>
+  /** Corner-line radial knots, keyed by `angularEdge:alongEdge`. */
+  readonly cornerKnots: Map<string, readonly number[]>
+}
+
+const NO_KNOTS: readonly number[] = []
 
 /**
  * Resolve the render layout from the accepted square grid. Throws a
@@ -292,8 +334,8 @@ export function squareMaterialChunkAngularRange(
 
 /**
  * Chunks a dirty grid rectangle can change: every touched angular chunk, one
- * neighbour on each side (its shared-edge walls changed too), and the periodic
- * opposite chunk when the region meets either seam.
+ * neighbour on each side (its shared-edge walls and corner refinement changed
+ * too), and the periodic opposite chunk when the region meets either seam.
  */
 export function squareMaterialChunkIndicesForDirtyRegion(
   layout: SquareMaterialLayout,
@@ -336,18 +378,27 @@ export function buildSquareMaterialChunk(
   const maxSegments = options.maxAngularSegmentsPerEdge && options.maxAngularSegmentsPerEdge > 0
     ? Math.floor(options.maxAngularSegmentsPerEdge)
     : DEFAULT_SQUARE_MAX_ANGULAR_SEGMENTS
-  const eps = layout.epsilon
+  const ctx: BuildContext = {
+    grid,
+    layout,
+    eps: layout.epsilon,
+    segmentRadians,
+    maxSegments,
+    partitions: new Map<number, readonly number[]>(),
+    cornerKnots: new Map<string, readonly number[]>(),
+  }
   const acc = createAccumulator()
   const first = Math.max(0, angularStart)
   const last = Math.min(layout.angularCount - 1, angularEnd)
 
   for (let ci = first; ci <= last; ci += 1) {
+    const partition = columnPartition(ctx, ci)
     for (let ai = 0; ai < layout.alongCount; ai += 1) {
-      const cell = readCell(grid, layout, ci, ai, eps)
+      const cell = readCell(grid, layout, ci, ai, ctx.eps)
       if (!cell) continue
-      emitRadialFaces(acc, layout, cell, eps, segmentRadians, maxSegments)
-      emitAngularFaces(acc, grid, layout, cell, eps)
-      emitAxialFaces(acc, grid, layout, cell, eps, segmentRadians, maxSegments)
+      emitRadialFaces(ctx, acc, cell, partition)
+      emitAngularFaces(ctx, acc, cell)
+      emitAxialFaces(ctx, acc, cell, partition)
     }
   }
   return finishChunk(acc, first, last)
@@ -430,8 +481,9 @@ function pushVertex(acc: MeshAccumulator, point: Vec3, nx: number, ny: number, n
  * Emit one quad as up to two triangles, oriented so its face normal agrees with
  * `expected` (the outward direction at that face). Winding is therefore derived
  * from the geometry, not from an axis-dependent guess. A degenerate half (which
- * happens at the pivot, where every radius-0 corner is the same world point) is
- * dropped, so no zero-area triangle and no zero-length edge reaches the GPU.
+ * happens at the pivot, where every radius-0 corner is the same world point, or
+ * where one edge collapses against the blank) is dropped, so no zero-area
+ * triangle and no zero-length edge reaches the GPU.
  */
 function emitQuad(acc: MeshAccumulator, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, expected: Vec3): void {
   const normal = cross(sub(p2, p0), sub(p3, p1))
@@ -458,11 +510,37 @@ function emitQuad(acc: MeshAccumulator, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, 
 }
 
 function emitTriangle(acc: MeshAccumulator, a: Vec3, b: Vec3, c: Vec3, nx: number, ny: number, nz: number): void {
-  const area = cross(sub(b, a), sub(c, a))
-  if (!(Math.hypot(area[0], area[1], area[2]) > 1e-18)) return
+  const edge1 = sub(b, a)
+  const edge2 = sub(c, a)
+  const area = cross(edge1, edge2)
+  // A relative test, not an absolute area: three exactly collinear points still
+  // produce a rounding-noise cross product (~1e-16 of the edge product), and
+  // emitting that sliver would give the surface a random winding.
+  const scale = Math.hypot(edge1[0], edge1[1], edge1[2]) * Math.hypot(edge2[0], edge2[1], edge2[2])
+  if (!(Math.hypot(area[0], area[1], area[2]) > scale * 1e-12)) return
   pushVertex(acc, a, nx, ny, nz)
   pushVertex(acc, b, nx, ny, nz)
   pushVertex(acc, c, nx, ny, nz)
+}
+
+/** Emit one triangle, deriving its outward normal from `expected`. */
+function emitOrientedTriangle(acc: MeshAccumulator, a: Vec3, b: Vec3, c: Vec3, expected: Vec3): void {
+  const normal = cross(sub(b, a), sub(c, a))
+  const length = Math.hypot(normal[0], normal[1], normal[2])
+  if (!(length > 1e-20)) return
+  let nx = normal[0] / length
+  let ny = normal[1] / length
+  let nz = normal[2] / length
+  let first = b
+  let second = c
+  if (nx * expected[0] + ny * expected[1] + nz * expected[2] < 0) {
+    first = c
+    second = b
+    nx = -nx
+    ny = -ny
+    nz = -nz
+  }
+  emitTriangle(acc, a, first, second, nx, ny, nz)
 }
 
 function finishChunk(acc: MeshAccumulator, angularStart: number, angularEnd: number): SquareMaterialChunkBuffer {
@@ -503,13 +581,10 @@ function readCell(
   const baseline = grid.initialTopZ
     ? grid.initialTopZ[index]
     : blankRadius(layout, (thetaLo + thetaHi) / 2)
-  // A fully removed cell is still a real cell: it emits no material faces, but
-  // it must run its +edge interfaces so a material neighbour's exposed wall is
-  // emitted exactly once (by the lower-index / lower-along side).
   const hasMaterial = intervals.length > 0
   const topHi = hasMaterial ? intervals[intervals.length - 1] : Number.NaN
   const intact = hasMaterial && topHi >= baseline - Math.max(1, Math.abs(baseline)) * BASELINE_TOLERANCE
-  const cell: CellInfo = {
+  return {
     ci,
     ai,
     index,
@@ -520,15 +595,12 @@ function readCell(
     baseline,
     intervals,
     intact,
-    breaks: [],
   }
-  cell.breaks = cellBreakPoints(layout, cell, eps)
-  return cell
 }
 
 /**
- * The cell's angular partition: its own edges, every blank corner and flat
- * normal inside it, and every angle where an interval endpoint meets the
+ * One cell's angular breakpoints: its own edges, every blank corner and flat
+ * normal inside it, and every angle where an interval endpoint crosses the
  * blank. Inside one sub-wedge the outer surface is a single arc or flat and no
  * interval appears or disappears.
  */
@@ -583,6 +655,57 @@ function solveBlankCrossing(
   else if (d1 <= eps) candidate = phi - delta
   else return null
   return candidate > s0 + ANGLE_EPSILON && candidate < s1 - ANGLE_EPSILON ? candidate : null
+}
+
+/**
+ * The row-transitive partition of one angular column: every along cell's own
+ * breaks, unioned. All faces of every cell in that column use this one set, so
+ * a crossing introduced by one cell (or several cells away) cannot leave a
+ * T-junction on a shared edge.
+ */
+function columnPartition(ctx: BuildContext, ci: number): readonly number[] {
+  const cached = ctx.partitions.get(ci)
+  if (cached) return cached
+  const points: number[] = []
+  for (let ai = 0; ai < ctx.layout.alongCount; ai += 1) {
+    const cell = readCell(ctx.grid, ctx.layout, ci, ai, ctx.eps)
+    if (!cell) continue
+    for (const point of cellBreakPoints(ctx.layout, cell, ctx.eps)) points.push(point)
+  }
+  const partition = sortUnique(points, ANGLE_EPSILON)
+  ctx.partitions.set(ci, partition)
+  return partition
+}
+
+/**
+ * Radial knots on the corner line where an angular edge meets an axial edge:
+ * the union of the four adjacent cells' clipped interval endpoints. Splitting
+ * both perpendicular walls at these values is what makes their shared radial
+ * line conform (the axial wall's bands and the angular wall's bands generally
+ * differ, so without this one introduces a vertex the other lacks).
+ */
+function cornerKnots(ctx: BuildContext, angularEdgeIndex: number, alongEdgeIndex: number): readonly number[] {
+  const count = ctx.layout.angularCount
+  const edge = ((angularEdgeIndex % count) + count) % count
+  const key = `${edge}:${alongEdgeIndex}`
+  const cached = ctx.cornerKnots.get(key)
+  if (cached) return cached
+  const theta = ctx.layout.angularEdges[edge]
+  const blank = blankRadius(ctx.layout, theta)
+  const leftColumn = edge === 0 ? count - 1 : edge - 1
+  const points: number[] = []
+  for (const column of [leftColumn, edge]) {
+    for (const row of [alongEdgeIndex - 1, alongEdgeIndex]) {
+      const cell = readCell(ctx.grid, ctx.layout, column, row, ctx.eps)
+      if (!cell) continue
+      for (const band of clipBands(cell.intervals, cell.intact, blank, ctx.eps)) {
+        points.push(band.lo, band.hi)
+      }
+    }
+  }
+  const knots = sortUnique(points, ANGLE_EPSILON)
+  ctx.cornerKnots.set(key, knots)
+  return knots
 }
 
 /** Clip a cell's canonical intervals to the blank at one angle. */
@@ -649,17 +772,17 @@ function differenceBands(a: RadialBand[], b: RadialBand[], eps: number): DiffBan
 }
 
 function emitRadialFaces(
+  ctx: BuildContext,
   acc: MeshAccumulator,
-  layout: SquareMaterialLayout,
   cell: CellInfo,
-  eps: number,
-  segmentRadians: number,
-  maxSegments: number,
+  partition: readonly number[],
 ): void {
-  for (let i = 0; i + 1 < cell.breaks.length; i += 1) {
-    const t0 = cell.breaks[i]
-    const t1 = cell.breaks[i + 1]
+  const { layout, eps, segmentRadians, maxSegments } = ctx
+  for (let i = 0; i + 1 < partition.length; i += 1) {
+    const t0 = partition[i]
+    const t1 = partition[i + 1]
     if (!(t1 - t0 > ANGLE_EPSILON)) continue
+    if (t0 < cell.thetaLo - ANGLE_EPSILON || t1 > cell.thetaHi + ANGLE_EPSILON) continue
     const blank = blankRadius(layout, (t0 + t1) / 2)
     const bands = clipBands(cell.intervals, cell.intact, blank, eps)
     for (const band of bands) {
@@ -743,144 +866,202 @@ function emitFlatOuter(
   }
 }
 
-function emitAngularFaces(
-  acc: MeshAccumulator,
-  grid: SimulationGrid,
-  layout: SquareMaterialLayout,
-  cell: CellInfo,
-  eps: number,
-): void {
+function emitAngularFaces(ctx: BuildContext, acc: MeshAccumulator, cell: CellInfo): void {
   // Every angular interface is emitted exactly once, by the lower-index cell's
   // +theta edge; the top cell's +theta edge is the periodic seam to index 0.
   // Emitting it from the wrap-neighbour too would duplicate the seam plane,
   // because theta = -pi and theta = +pi are the same physical angle.
-  const neighbourCi = cell.ci + 1 < layout.angularCount ? cell.ci + 1 : 0
-  emitAngularEdge(acc, grid, layout, cell, neighbourCi, layout.angularEdges[cell.ci + 1], 1, eps)
+  const neighbourCi = cell.ci + 1 < ctx.layout.angularCount ? cell.ci + 1 : 0
+  emitAngularEdge(ctx, acc, cell, neighbourCi, ctx.layout.angularEdges[cell.ci + 1], cell.ci + 1, 1)
 }
 
 /**
  * The exposed wall at one angular edge, emitted once for the interface. The
  * bands this cell holds and its neighbour does not face toward the neighbour,
  * and the neighbour-only bands face back the other way; together they are the
- * whole interface.
+ * whole interface. Its along edges sit on the corner lines where it meets the
+ * axial walls, so they carry that corner's radial knots.
  */
 function emitAngularEdge(
+  ctx: BuildContext,
   acc: MeshAccumulator,
-  grid: SimulationGrid,
-  layout: SquareMaterialLayout,
   cell: CellInfo,
   neighbourCi: number,
   theta: number,
+  angularEdgeIndex: number,
   direction: 1 | -1,
-  eps: number,
 ): void {
+  const { grid, layout, eps } = ctx
   const blank = blankRadius(layout, theta)
   const aBands = clipBands(cell.intervals, cell.intact, blank, eps)
   const neighbour = readCell(grid, layout, neighbourCi, cell.ai, eps)
   const bBands = neighbour ? clipBands(neighbour.intervals, neighbour.intact, blank, eps) : []
   const diff = differenceBands(aBands, bBands, eps)
+  if (diff.length === 0) return
   const dir = thetaDirection(layout, theta)
+  const startKnots = cornerKnots(ctx, angularEdgeIndex, cell.ai)
+  const endKnots = cornerKnots(ctx, angularEdgeIndex, cell.ai + 1)
   for (const band of diff) {
+    if (!(band.hi - band.lo > eps)) continue
     const sign = band.side === 'a' ? direction : -direction
     const expected: Vec3 = [sign * dir[0], sign * dir[1], sign * dir[2]]
-    emitQuad(
-      acc,
-      world(layout, cell.alongLo, theta, band.lo),
-      world(layout, cell.alongHi, theta, band.lo),
-      world(layout, cell.alongHi, theta, band.hi),
-      world(layout, cell.alongLo, theta, band.hi),
-      expected,
-    )
+    const startU = edgeKnots(startKnots, band.lo, band.hi, layout.epsilon)
+    const endU = edgeKnots(endKnots, band.lo, band.hi, layout.epsilon)
+    const startPoints = startU.map((u) => world(layout, cell.alongLo, theta, u))
+    const endPoints = endU.map((u) => world(layout, cell.alongHi, theta, u))
+    emitStrip(acc, startPoints, endPoints, startU, endU, band.lo, band.hi, band.hi, expected)
   }
 }
 
-function emitAxialFaces(
-  acc: MeshAccumulator,
-  grid: SimulationGrid,
-  layout: SquareMaterialLayout,
-  cell: CellInfo,
-  eps: number,
-  segmentRadians: number,
-  maxSegments: number,
-): void {
+function emitAxialFaces(ctx: BuildContext, acc: MeshAccumulator, cell: CellInfo, partition: readonly number[]): void {
   // Axial neighbours do not wrap. Each interface is emitted once, by the lower
   // cell's +along edge; the +along edge of the last existing cell and the
   // -along edge of the first existing cell are the stock endcaps. The lower
   // cell is located by extent, not by material, so an air cell still emits its
   // material neighbour's exposed wall.
-  const lowerExtent = cell.ai > 0 ? layout.alongEdges[cell.ai] - layout.alongEdges[cell.ai - 1] : 0
-  if (!(lowerExtent > eps)) {
-    emitAxialEdge(acc, layout, cell, null, cell.alongLo, -1, eps, segmentRadians, maxSegments)
+  const lowerExtent = cell.ai > 0 ? ctx.layout.alongEdges[cell.ai] - ctx.layout.alongEdges[cell.ai - 1] : 0
+  if (!(lowerExtent > ctx.eps)) {
+    emitAxialEdge(ctx, acc, cell, null, cell.alongLo, cell.ai, -1, partition)
   }
-  const upper = cell.ai + 1 < layout.alongCount ? readCell(grid, layout, cell.ci, cell.ai + 1, eps) : null
-  emitAxialEdge(acc, layout, cell, upper, cell.alongHi, 1, eps, segmentRadians, maxSegments)
+  const upper = cell.ai + 1 < ctx.layout.alongCount
+    ? readCell(ctx.grid, ctx.layout, cell.ci, cell.ai + 1, ctx.eps)
+    : null
+  emitAxialEdge(ctx, acc, cell, upper, cell.alongHi, cell.ai + 1, 1, partition)
 }
 
 /**
  * The exposed wall at one axial end, emitted once for the interface. A missing
  * neighbour (stock end) exposes the whole profile as the endcap. The angular
- * partition is the union of both cells' breaks, so the difference structure is
- * constant across every emitted sub-range.
+ * partition is the column's shared partition, so the wall's theta knots match
+ * the radial faces on both sides; its radial edges are refined at the corner
+ * lines where it meets the angular interfaces.
  */
 function emitAxialEdge(
+  ctx: BuildContext,
   acc: MeshAccumulator,
-  layout: SquareMaterialLayout,
   cell: CellInfo,
   neighbour: CellInfo | null,
   along: number,
+  alongEdgeIndex: number,
   direction: 1 | -1,
-  eps: number,
-  segmentRadians: number,
-  maxSegments: number,
+  partition: readonly number[],
 ): void {
-  const breaks = neighbour ? sortUnique([...cell.breaks, ...neighbour.breaks], ANGLE_EPSILON) : cell.breaks
+  const { layout, eps, segmentRadians, maxSegments } = ctx
   const alongVec = alongDirection(layout)
-  for (let i = 0; i + 1 < breaks.length; i += 1) {
-    const t0 = breaks[i]
-    const t1 = breaks[i + 1]
+  for (let i = 0; i + 1 < partition.length; i += 1) {
+    const t0 = partition[i]
+    const t1 = partition[i + 1]
     if (!(t1 - t0 > ANGLE_EPSILON)) continue
+    if (t0 < cell.thetaLo - ANGLE_EPSILON || t1 > cell.thetaHi + ANGLE_EPSILON) continue
     const blank = blankRadius(layout, (t0 + t1) / 2)
     const aBands = clipBands(cell.intervals, cell.intact, blank, eps)
     const bBands = neighbour ? clipBands(neighbour.intervals, neighbour.intact, blank, eps) : []
     const diff = differenceBands(aBands, bBands, eps)
-    for (const band of diff) {
-      const sign = band.side === 'a' ? direction : -direction
-      const expected: Vec3 = [sign * alongVec[0], sign * alongVec[1], sign * alongVec[2]]
-      emitAxialBand(acc, layout, along, t0, t1, band.lo, band.hi, band.hiBlank, expected, segmentRadians, maxSegments)
+    if (diff.length === 0) continue
+    const atThetaLo = Math.abs(t0 - cell.thetaLo) <= ANGLE_EPSILON
+    const atThetaHi = Math.abs(t1 - cell.thetaHi) <= ANGLE_EPSILON
+    const knotsAtLo = atThetaLo ? cornerKnots(ctx, cell.ci, alongEdgeIndex) : NO_KNOTS
+    const knotsAtHi = atThetaHi ? cornerKnots(ctx, cell.ci + 1, alongEdgeIndex) : NO_KNOTS
+    const segments = segmentCount(t1 - t0, segmentRadians, maxSegments)
+    for (let s = 0; s < segments; s += 1) {
+      const ta = t0 + (t1 - t0) * (s / segments)
+      const tb = t0 + (t1 - t0) * ((s + 1) / segments)
+      const knotsA = s === 0 ? knotsAtLo : NO_KNOTS
+      const knotsB = s === segments - 1 ? knotsAtHi : NO_KNOTS
+      for (const band of diff) {
+        if (!(band.hi - band.lo > eps)) continue
+        const sign = band.side === 'a' ? direction : -direction
+        const expected: Vec3 = [sign * alongVec[0], sign * alongVec[1], sign * alongVec[2]]
+        const topA = band.hiBlank ? blankRadius(layout, ta) : band.hi
+        const topB = band.hiBlank ? blankRadius(layout, tb) : band.hi
+        // A collapsed end (the interval endpoint meets the blank at this angle)
+        // is a real triangular wall: emit it instead of dropping the segment.
+        if (!(topA > band.lo) && !(topB > band.lo)) continue
+        const leftU = edgeKnots(knotsA, band.lo, topA, layout.epsilon)
+        const rightU = edgeKnots(knotsB, band.lo, topB, layout.epsilon)
+        const leftPoints = leftU.map((u) => world(layout, along, ta, u))
+        const rightPoints = rightU.map((u) => world(layout, along, tb, u))
+        emitStrip(acc, leftPoints, rightPoints, leftU, rightU, band.lo, topA, topB, expected)
+      }
     }
   }
 }
 
-function emitAxialBand(
-  acc: MeshAccumulator,
-  layout: SquareMaterialLayout,
-  along: number,
-  t0: number,
-  t1: number,
-  lo: number,
-  hi: number,
-  hiBlank: boolean,
-  expected: Vec3,
-  segmentRadians: number,
-  maxSegments: number,
-): void {
-  if (!(hi > lo)) return
-  const segments = segmentCount(t1 - t0, segmentRadians, maxSegments)
-  for (let s = 0; s < segments; s += 1) {
-    const ta = t0 + (t1 - t0) * (s / segments)
-    const tb = t0 + (t1 - t0) * ((s + 1) / segments)
-    const ua = hiBlank ? blankRadius(layout, ta) : hi
-    const ub = hiBlank ? blankRadius(layout, tb) : hi
-    if (!(ua > lo) || !(ub > lo)) continue
-    emitQuad(
-      acc,
-      world(layout, along, ta, lo),
-      world(layout, along, tb, lo),
-      world(layout, along, tb, ub),
-      world(layout, along, ta, ua),
-      expected,
-    )
+/**
+ * A patch's edge knot list from `lo` to `top`: the endpoints plus every corner
+ * knot strictly inside. A collapsed edge (`top <= lo`) stays a single point.
+ */
+function edgeKnots(knots: readonly number[], lo: number, top: number, eps: number): number[] {
+  const values = [lo]
+  if (top > lo + eps) {
+    for (const knot of knots) {
+      if (knot > lo + eps && knot < top - eps) values.push(knot)
+    }
+    values.push(top)
   }
+  return values
+}
+
+/**
+ * Triangulate a planar patch whose two opposite edges carry their own radial
+ * knot lists. The zipper advances whichever edge's next knot is nearer (as a
+ * fraction of that edge's radial span), so every boundary segment is used by
+ * exactly one triangle and no edge gains a vertex the neighbouring face lacks.
+ * A collapsed edge (a single point) fans from that point.
+ */
+function emitStrip(
+  acc: MeshAccumulator,
+  leftPoints: readonly Vec3[],
+  rightPoints: readonly Vec3[],
+  leftU: readonly number[],
+  rightU: readonly number[],
+  lo: number,
+  leftTop: number,
+  rightTop: number,
+  expected: Vec3,
+): void {
+  if (leftPoints.length === 0 || rightPoints.length === 0) return
+  if (leftPoints.length === 1 && rightPoints.length === 1) return
+  if (leftPoints.length === 1) {
+    for (let j = 0; j + 1 < rightPoints.length; j += 1) {
+      emitOrientedTriangle(acc, leftPoints[0], rightPoints[j], rightPoints[j + 1], expected)
+    }
+    return
+  }
+  if (rightPoints.length === 1) {
+    for (let i = 0; i + 1 < leftPoints.length; i += 1) {
+      emitOrientedTriangle(acc, leftPoints[i], rightPoints[0], leftPoints[i + 1], expected)
+    }
+    return
+  }
+  const leftSpan = leftTop - lo
+  const rightSpan = rightTop - lo
+  let i = 0
+  let j = 0
+  // Both edges start at the same radius. At u = 0 that start is the pivot, the
+  // same world point on both edges, so the first triangle advances both edges
+  // at once and carries their first boundary segments.
+  if (samePoint(leftPoints[0], rightPoints[0])) {
+    if (leftPoints.length < 2 || rightPoints.length < 2) return
+    emitOrientedTriangle(acc, leftPoints[0], leftPoints[1], rightPoints[1], expected)
+    i = 1
+    j = 1
+  }
+  while (i < leftPoints.length - 1 || j < rightPoints.length - 1) {
+    const nextLeft = i < leftPoints.length - 1 ? (leftU[i + 1] - lo) / leftSpan : Infinity
+    const nextRight = j < rightPoints.length - 1 ? (rightU[j + 1] - lo) / rightSpan : Infinity
+    if (nextLeft <= nextRight) {
+      emitOrientedTriangle(acc, leftPoints[i], rightPoints[j], leftPoints[i + 1], expected)
+      i += 1
+    } else {
+      emitOrientedTriangle(acc, leftPoints[i], rightPoints[j], rightPoints[j + 1], expected)
+      j += 1
+    }
+  }
+}
+
+function samePoint(a: Vec3, b: Vec3): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
 }
 
 function sortUnique(values: number[], eps: number): number[] {

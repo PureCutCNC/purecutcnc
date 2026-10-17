@@ -713,6 +713,273 @@ function testKernelProducedGroove(): void {
   console.log('kernel-produced groove: PASSED')
 }
 
+/**
+ * Directed-edge incidence: every undirected non-zero edge must be used exactly
+ * once in each direction. A T-junction shows up as an unmatched long edge, an
+ * over-used edge as two triangles sharing the same directed edge.
+ */
+function assertConforming(positions: Float32Array, label: string): void {
+  const directed = new Map<string, number>()
+  const vertexKey = (point: Vec3): string => `${point[0].toFixed(6)},${point[1].toFixed(6)},${point[2].toFixed(6)}`
+  const count = positions.length / 9
+  for (let t = 0; t < count; t += 1) {
+    const [a, b, c] = triangleAt(positions, t)
+    for (const [p, q] of [[a, b], [b, c], [c, a]] as const) {
+      const from = vertexKey(p)
+      const to = vertexKey(q)
+      if (from === to) continue
+      const key = `${from}>${to}`
+      directed.set(key, (directed.get(key) ?? 0) + 1)
+    }
+  }
+  let open = 0
+  let overused = 0
+  for (const [key, uses] of directed) {
+    if (uses !== 1) {
+      overused += 1
+      continue
+    }
+    const [from, to] = key.split('>')
+    if ((directed.get(`${to}>${from}`) ?? 0) !== 1) open += 1
+  }
+  assert(overused === 0, `${label}: no directed edge may repeat, found ${overused}`)
+  assert(open === 0, `${label}: every edge must have one opposite partner, found ${open} unmatched`)
+}
+
+/** Möller–Trumbore returning the ray distance, for axial-cap ray checks. */
+function rayHitDistance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3): number | null {
+  const edge1 = sub(b, a)
+  const edge2 = sub(c, a)
+  const pvec = cross(direction, edge2)
+  const det = dot(edge1, pvec)
+  if (Math.abs(det) < 1e-12) return null
+  const inv = 1 / det
+  const tvec = sub(origin, a)
+  const u = dot(tvec, pvec) * inv
+  if (u < 0 || u > 1) return null
+  const qvec = cross(tvec, edge1)
+  const v = dot(direction, qvec) * inv
+  if (v < 0 || u + v > 1) return null
+  const distance = dot(edge2, qvec) * inv
+  return distance > 1e-9 ? distance : null
+}
+
+/** All hit distances of one ray, sorted and de-duplicated across shared edges. */
+function rayCrossings(positions: Float32Array, origin: Vec3, direction: Vec3): number[] {
+  const hits: number[] = []
+  const count = positions.length / 9
+  for (let t = 0; t < count; t += 1) {
+    const [a, b, c] = triangleAt(positions, t)
+    const distance = rayHitDistance(origin, direction, a, b, c)
+    if (distance !== null) hits.push(distance)
+  }
+  hits.sort((x, y) => x - y)
+  return hits.filter((value, index) => index === 0 || Math.abs(value - hits[index - 1]) > 1e-6)
+}
+
+/**
+ * Independent volume: integrate the accepted interval profile over every cell
+ * footprint. The mesh is compared against this, not against itself.
+ */
+function referenceVolume(grid: SimulationGrid, layout: ReturnType<typeof resolveSquareMaterialLayout>): number {
+  const samples = 64
+  const xAxis = layout.axis === 'x'
+  let volume = 0
+  for (let ci = 0; ci < layout.angularCount; ci += 1) {
+    const thetaLo = layout.angularEdges[ci]
+    const thetaHi = layout.angularEdges[ci + 1]
+    if (!(thetaHi - thetaLo > 0)) continue
+    const step = (thetaHi - thetaLo) / samples
+    for (let ai = 0; ai < layout.alongCount; ai += 1) {
+      const alongLo = layout.alongEdges[ai]
+      const alongHi = layout.alongEdges[ai + 1]
+      if (!(alongHi - alongLo > 0)) continue
+      const index = xAxis ? ci * grid.cols + ai : ai * grid.cols + ci
+      const intervals = squareMaterialIntervals(grid, index)
+      if (intervals.length === 0) continue
+      const baseline = grid.initialTopZ
+        ? grid.initialTopZ[index]
+        : squareSurfaceRadius(layout.side, (thetaLo + thetaHi) / 2)
+      const intact = intervals[intervals.length - 1] >= baseline - Math.max(1, Math.abs(baseline)) * 1e-6
+      let section = 0
+      for (let s = 0; s < samples; s += 1) {
+        const theta = thetaLo + (s + 0.5) * step
+        const blank = squareSurfaceRadius(layout.side, theta)
+        for (let i = 0; i < intervals.length; i += 2) {
+          const lo = intervals[i]
+          let hi = intervals[i + 1]
+          if (intact && i === intervals.length - 2) hi = blank
+          if (hi > blank) hi = blank
+          if (hi > lo) section += (hi * hi - lo * lo) / 2
+        }
+      }
+      volume += section * step * (alongHi - alongLo)
+    }
+  }
+  return volume
+}
+
+/**
+ * An intact outer band that collapses against the blank inside its own wedge
+ * leaves a triangular exposed wall at each stock end. Both must be emitted —
+ * the old guard dropped a segment whenever either clipped endpoint collapsed.
+ */
+function testTriangularBlankCrossingCaps(): void {
+  console.log('Testing triangular endcaps where a band collapses against the blank...')
+  const side = 20
+  const cutRadius = 10.7
+  const grid = squareSheetGrid({ side, axis: 'x', angularCells: 40, alongCells: 15, zero: 30 })
+  for (let ci = 0; ci < grid.rows; ci += 1) {
+    for (let ai = 0; ai < grid.cols; ai += 1) {
+      const index = cellIndex(grid, ci, ai)
+      const baseline = grid.initialTopZ![index]
+      setSquareMaterialIntervals(grid, index, baseline > cutRadius ? [cutRadius, baseline] : [])
+      grid.topZ[index] = baseline
+    }
+  }
+  const options = optionsFor(grid)
+  const layout = resolveSquareMaterialLayout(grid, options)
+  const positions = buildAllPositions(grid, options)
+  // The crossing cell is 18deg..27deg; its own baseline is ~10.8239, so it owns
+  // the band [10.7, blank] and the blank crosses 10.7 at ~20.85deg inside it.
+  const crossing = Math.acos((layout.side / 2) / cutRadius)
+  const theta = crossing + 0.001
+  const blank = squareSurfaceRadius(side, theta)
+  const radius = (cutRadius + blank) / 2
+  const alongMin = layout.alongBounds.min
+  const alongMax = layout.alongBounds.max
+  const pointAt = (along: number, angle: number): Vec3 => [
+    along,
+    layout.pivot + radius * Math.cos(angle),
+    layout.centre + radius * Math.sin(angle),
+  ]
+  const middle = pointAt((alongMin + alongMax) / 2, theta)
+  assert(referenceMaterial(grid, middle, 0), 'the crossing-ray point must be inside the accepted material')
+  assert(pointInMesh(middle, positions), 'the crossing-ray point must be inside the mesh')
+  const axial = rayCrossings(positions, pointAt(alongMin - 1, theta), [1, 0, 0])
+  assert(axial.length === 2, `the collapsed band must keep both axial caps, got ${JSON.stringify(axial)}`)
+  const hitX = axial.map((distance) => alongMin - 1 + distance)
+  assert(Math.abs(hitX[0] - alongMin) < 1e-4, `the first cap must sit on the stock start, got ${hitX[0]}`)
+  assert(Math.abs(hitX[1] - alongMax) < 1e-4, `the second cap must sit on the stock end, got ${hitX[1]}`)
+  const below = pointAt((alongMin + alongMax) / 2, crossing - 0.01)
+  assert(!referenceMaterial(grid, below, 0), 'below the crossing the blank is inside the cut radius')
+  assert(!pointInMesh(below, positions), 'below the crossing the mesh must be air')
+  console.log('triangular blank-crossing caps: PASSED')
+}
+
+/**
+ * A crossing introduced by a single cell, axial neighbours with different
+ * interval endpoints inside `(side/2, side/sqrt 2)`, an empty neighbour and a
+ * disconnected band must all stay a closed 2-manifold, and the tessellated
+ * volume must agree with an independent interval integral.
+ */
+function testConformingCrossingsAndCorners(): void {
+  console.log('Testing conforming crossings, corners and axial endpoint differences...')
+  const side = 20
+  const grid = squareSheetGrid({ side, axis: 'x', angularCells: 64, alongCells: 8, zero: 30 })
+  const options = optionsFor(grid)
+  const ci = angularIndexNearest(grid, 36 * Math.PI / 180)
+  const ai = 4
+  // Along neighbours expose different cut radii, both between the inscribed
+  // radius and the blank; the corner walls must split the shared line alike.
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci, ai), [0, 11.15])
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci, ai + 1), [0, 11.5])
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci + 1, ai), [0, 11.35])
+  // One cell only introduces a blank crossing inside its own wedge.
+  const crossingCi = angularIndexNearest(grid, 25 * Math.PI / 180)
+  setSquareMaterialIntervals(grid, cellIndex(grid, crossingCi, 2), [0, 11.0])
+  // An empty neighbour and a disconnected two-piece cell.
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci - 1, ai), [])
+  const piecesCi = angularIndexNearest(grid, 47 * Math.PI / 180)
+  const piecesIndex = cellIndex(grid, piecesCi, 0)
+  setSquareMaterialIntervals(grid, piecesIndex, [0, 6, 12, grid.initialTopZ![piecesIndex]])
+  grid.topZ[piecesIndex] = grid.initialTopZ![piecesIndex]
+
+  const positions = buildAllPositions(grid, options)
+  assertConforming(positions, 'axis x crossing/corner fixture')
+  const layout = resolveSquareMaterialLayout(grid, options)
+  const expected = referenceVolume(grid, layout)
+  const volume = signedVolume(positions)
+  assert(volume > 0, `outward winding must give a positive volume, got ${volume}`)
+  assert(approx(volume, expected, expected * 3e-3), `mesh volume ${volume} must match the interval integral ${expected}`)
+
+  // Radial classification: core, removed outer band, empty cell and gap.
+  assert(pointInMesh(cellRayWorld(grid, ci, ai, 5), positions), 'the cut core at 5 must stay material')
+  assert(!pointInMesh(cellRayWorld(grid, ci, ai, 11.3), positions), 'the cut band 11.15..blank must be air')
+  assert(pointInMesh(cellRayWorld(grid, ci, ai + 1, 11.3), positions), 'the deeper neighbour must keep 11.3')
+  assert(!pointInMesh(cellRayWorld(grid, ci - 1, ai, 5), positions), 'the fully removed cell must be air')
+  assert(!pointInMesh(cellRayWorld(grid, piecesCi, 0, 9), positions), 'the disconnected gap must be air')
+  assert(pointInMesh(cellRayWorld(grid, piecesCi, 0, 3), positions), 'the disconnected core must be material')
+  assert(pointInMesh(cellRayWorld(grid, piecesCi, 0, 13), positions), 'the disconnected shell must be material')
+  console.log('conforming crossings and corners: PASSED')
+}
+
+/**
+ * The minimal stepped wedge the manager's conforming probe isolates: one
+ * angular cell with two axial pieces of different radii, everything else air.
+ * The angular side walls must split their radial edge at the step (0..8 meets
+ * 0..4 and 4..8) so the closed solid has exactly two opposite uses per edge.
+ */
+function testSteppedWedgeConformance(): void {
+  console.log('Testing the stepped single-wedge radial conformance...')
+  const side = 20
+  const grid = squareSheetGrid({ side, axis: 'x', angularCells: 48, alongCells: 8, zero: 30 })
+  const options = optionsFor(grid)
+  for (let ci = 0; ci < grid.rows; ci += 1) {
+    for (let ai = 0; ai < grid.cols; ai += 1) {
+      const index = cellIndex(grid, ci, ai)
+      setSquareMaterialIntervals(grid, index, [])
+      grid.topZ[index] = 0
+    }
+  }
+  const ci = angularIndexNearest(grid, 0)
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci, 5), [0, 8])
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci, 6), [0, 4])
+  const positions = buildAllPositions(grid, options)
+  assertConforming(positions, 'stepped wedge fixture')
+  const layout = resolveSquareMaterialLayout(grid, options)
+  const expected = referenceVolume(grid, layout)
+  const volume = signedVolume(positions)
+  assert(volume > 0, `the stepped wedge volume must be positive, got ${volume}`)
+  assert(approx(volume, expected, expected * 1e-3), `stepped wedge volume ${volume} must match ${expected}`)
+  assert(pointInMesh(cellRayWorld(grid, ci, 5, 4), positions), 'the wide step must be material')
+  assert(!pointInMesh(cellRayWorld(grid, ci, 6, 6), positions), 'the narrow step must end at radius 4')
+  assert(pointInMesh(cellRayWorld(grid, ci, 6, 2), positions), 'the narrow step must keep its core')
+  console.log('stepped wedge conformance: PASSED')
+}
+
+/** Multiple chunks, a Y bar and off-origin stock must stay conforming. */
+function testMultiChunkAxisYConformance(): void {
+  console.log('Testing multi-chunk axis-Y conformance, volume and rays...')
+  const side = 16
+  const grid = squareSheetGrid({ side, axis: 'y', angularCells: 48, alongCells: 9, zero: -7, alongStart: 3 })
+  const options = optionsFor(grid)
+  const layout = resolveSquareMaterialLayout(grid, options)
+  const ci = angularIndexNearest(grid, 38 * Math.PI / 180)
+  const ai = 4
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci, ai), [0, 8.6, 9.4, grid.initialTopZ![cellIndex(grid, ci, ai)]])
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci + 1, ai), [0, 9.1])
+  setSquareMaterialIntervals(grid, cellIndex(grid, ci - 2, 6), [])
+  // A crossing cell plus a cut band in the chunk on the other side.
+  const crossingCi = angularIndexNearest(grid, 24 * Math.PI / 180)
+  setSquareMaterialIntervals(grid, cellIndex(grid, crossingCi, 7), [0, 8.7])
+  setSquareMaterialIntervals(grid, cellIndex(grid, angularIndexNearest(grid, 42 * Math.PI / 180), 1), [0, 8.8, 9.3])
+
+  const positions = buildAllPositions(grid, options)
+  assertConforming(positions, 'axis y multi-chunk fixture')
+  const expected = referenceVolume(grid, layout)
+  const volume = signedVolume(positions)
+  assert(volume > 0, `axis Y winding must give a positive volume, got ${volume}`)
+  assert(approx(volume, expected, expected * 3e-3), `axis Y mesh volume ${volume} must match ${expected}`)
+  assert(pointInMesh(cellRayWorld(grid, ci, ai, 4), positions), 'the axis Y core must be material')
+  assert(!pointInMesh(cellRayWorld(grid, ci, ai, 9), positions), 'the axis Y gap must be air')
+  assert(pointInMesh(cellRayWorld(grid, ci, ai, 9.7), positions), 'the axis Y shell must be material')
+  assert(!pointInMesh(cellRayWorld(grid, ci - 2, 6, 4), positions), 'the axis Y empty cell must be air')
+  assert(pointInMesh(cellRayWorld(grid, crossingCi, 7, 4), positions), 'the axis Y crossing core must be material')
+  assert(!pointInMesh(cellRayWorld(grid, crossingCi, 7, 8.8), positions), 'the axis Y crossing cut must be air')
+  console.log('multi-chunk axis-Y conformance: PASSED')
+}
+
 try {
   testVirginBoundaryIsTheActualSquare()
   testInteriorGapHasFloorCeilingAndNoBridge()
@@ -724,6 +991,10 @@ try {
   testSeamInterfaceEmittedOnce()
   testClosedMeshIsManifold()
   testKernelProducedGroove()
+  testTriangularBlankCrossingCaps()
+  testConformingCrossingsAndCorners()
+  testSteppedWedgeConformance()
+  testMultiChunkAxisYConformance()
   console.log('\nAll square material geometry tests PASSED.')
 } catch (error) {
   console.error(error)

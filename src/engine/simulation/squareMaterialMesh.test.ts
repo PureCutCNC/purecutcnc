@@ -177,6 +177,38 @@ function testDirtyRegionRebuildsTouchedChunksOnly(): void {
   console.log('dirty region chunk selection: PASSED')
 }
 
+function testAngularNeighbourGeometryDependency(): void {
+  console.log('Testing an angular change reaches the neighbour chunk geometry...')
+  const grid = squareSheetGrid({ side: 20, axis: 'x', angularCells: 32, alongCells: 16, zero: 30 })
+  const resource = createSquareMaterialMesh(grid, 0x888888, optionsFor(grid, 4))
+  const before = chunkGeometries(resource)
+  const neighbourBefore = Float32Array.from(before[3].getAttribute('position').array as Float32Array)
+  const farBefore = before[2]
+
+  const ci = 16
+  const ai = 8
+  const index = gridCellIndex(grid, ci, ai)
+  setSquareMaterialIntervals(grid, index, [0, 6, 12, grid.initialTopZ![index]])
+  grid.topZ[index] = grid.initialTopZ![index]
+  resource.update(grid, regionForCell(grid, ci, ai))
+
+  const after = chunkGeometries(resource)
+  const neighbourAfter = after[3].getAttribute('position').array as Float32Array
+  let neighbourChanged = neighbourAfter.length !== neighbourBefore.length
+  if (!neighbourChanged) {
+    for (let i = 0; i < neighbourAfter.length; i += 1) {
+      if (neighbourAfter[i] !== neighbourBefore[i]) {
+        neighbourChanged = true
+        break
+      }
+    }
+  }
+  assert(neighbourChanged, 'the shared angular wall must change the neighbour chunk geometry, not just its identity')
+  assert(after[2] === farBefore, 'a chunk two angular steps away must keep its geometry identity')
+  resource.dispose()
+  console.log('angular neighbour geometry dependency: PASSED')
+}
+
 function testSeamAndNeighbourRebuild(): void {
   console.log('Testing the periodic seam chunk rebuilds with its neighbour...')
   const grid = squareSheetGrid({ side: 20, axis: 'x', angularCells: 32, alongCells: 8, zero: 30 })
@@ -332,6 +364,7 @@ try {
   testResourceStructure()
   testNullUpdateIsNoOp()
   testDirtyRegionRebuildsTouchedChunksOnly()
+  testAngularNeighbourGeometryDependency()
   testSeamAndNeighbourRebuild()
   testFullRebuildPaths()
   testEmptyChunkAndBounds()
