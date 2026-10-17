@@ -51,10 +51,28 @@ invoking dispatch — and do not silently skip the dispatch step.** If the
 sandbox/approval blocks it, surface the blocker and ask; never quietly fall back
 to implementing the slice yourself or abandoning the delegation.
 
-- `claude-deepseek` (the default) reads `.env.agent`, connects to the DeepSeek
+- `claude-deepseek` reads `.env.agent`, connects to the DeepSeek
   endpoint, and spawns a `bypassPermissions` Claude worker. It is the legacy
   credential-backed path.
-- `dsh` runs `dsh --profile headless` using DSH's configured credential store.
+- `claude` runs the Claude Code CLI with its **own configured login**, so it
+  draws on that account's plan and its weekly limit. It never reads or forwards
+  `.env.agent` and scrubs inherited DeepSeek/Anthropic endpoint variables.
+  The worker is instructed to review only in review mode and to edit only
+  inside the supplied worktree in implement mode, leaving edits uncommitted for
+  the manager; review passes `--permission-mode plan` with a tool allowlist,
+  implementation `--permission-mode acceptEdits` with a repository build/test
+  allowlist. That allowlist is not a sandbox — in both modes its build/test
+  commands execute repository code and can still write files or spawn
+  subprocesses — so confinement is permission-based, not an OS boundary (unlike
+  the DSH and Codex modes). The direct git/gh write path is denied with
+  `--disallowedTools`; the manager's review of the actual diff is the
+  acceptance gate. A `claude`
+  implementation worker must leave edits uncommitted and report `COMMIT: none`;
+  after a zero-exit run with changes, `dispatch-task.sh` creates exactly one
+  manager-owned commit. Failed and no-change runs are never auto-committed.
+  `--model MODEL` (or `CLAUDE_AGENT_MODEL`) selects the model; otherwise the
+  CLI's own default is used.
+- `dsh` (the default) runs `dsh --profile headless` using DSH's configured credential store.
   It does not read or forward `.env.agent`; DSH persists normal profile/session
   state under `~/.dsh`. Review workers use DSH `read-only`; implementation
   workers use DSH `workspace-write` rooted at the task worktree. Any DSH
@@ -99,6 +117,13 @@ progress log, and saves its final message at `SLUG.progress.log.final.md` with
 `-o`. Its `[heartbeat]` indicates process liveness only; inspect the final
 message and worktree diff before accepting the result. With a custom
 `--progress-log FILE`, the final message is at `FILE.final.md`.
+
+The `claude` leaf streams observed Claude activity into the same per-slice
+progress log and writes the result text to `FILE.final.md` and the session id to
+`FILE.session` (so a later `claude --resume` can continue the session); the raw
+stream-json events stay at `FILE.ndjson`. Its `[heartbeat]` indicates process
+liveness only, so inspect the final message and worktree diff before accepting
+the result.
 
 - Dispatch in the background with output redirected to a file; do not block a
   foreground shell call (with its own timeout) on the whole slice.
@@ -227,7 +252,7 @@ single — so match the file, not the sibling.
 # stdin holds only a short manager instruction.
 printf '%s\n' 'Implement the assigned slice and report results.' | \
   scripts/dispatch-task.sh --issue NN --task-slug SLUG \
-  [--base BRANCH] [--provider claude-deepseek|dsh|codex] --handoff REPO_PATH
+  [--base BRANCH] [--provider claude-deepseek|claude|dsh|codex] --handoff REPO_PATH
 #   default --base: feat/core-arch-simplification
 #   creates worktree at $PURECUT_WORKTREE_BASE/SLUG on feat/issue-NN-SLUG
 #   runs the worker, then `npm run build` as an independent gate; never merges.
@@ -235,7 +260,7 @@ printf '%s\n' 'Implement the assigned slice and report results.' | \
 # Read-only review of an existing worktree (optional helper).
 printf '%s\n' 'Review the assigned diff and report findings.' | \
   scripts/dispatch-task.sh --mode review --worktree DIR \
-  [--provider claude-deepseek|dsh|codex] --handoff REPO_PATH
+  [--provider claude-deepseek|claude|dsh|codex] --handoff REPO_PATH
 
 # Poll a running dispatch (instant; see "Watching a dispatched worker").
 scripts/worker-status.sh --slug SLUG
@@ -248,7 +273,9 @@ scripts/finish-task.sh --slug SLUG [--base BRANCH]
 
 The provider leaf launchers own provider-specific credential handling,
 worktree confinement, and permission mapping. `run-claude-deepseek-agent.sh`
-remains the trusted Claude/DeepSeek primitive; `run-dsh-agent.sh` keeps DSH
+remains the trusted Claude/DeepSeek primitive; `run-claude-agent.sh` runs the
+Claude Code CLI on its own login with read-only/acceptEdits permission modes and
+a `--model`/`CLAUDE_AGENT_MODEL` pass-through; `run-dsh-agent.sh` keeps DSH
 within its own read-only/workspace-write modes. `run-codex-agent.sh` uses
 Codex's own login and equivalent sandbox modes, leaving commits to the manager.
 
