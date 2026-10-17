@@ -23,6 +23,7 @@ import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedB
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
 import { barReadout, createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
+import { createSquarePreviewSurface, type SquarePreviewSurface } from './squarePreview'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -298,8 +299,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // The frame's values, not its identity, key the viewport's Around effects.
   // `bar` and its `frame` are new objects on every recompute of the setup
   // input (selecting another operation, any project edit), which must not
-  // tear the turn group down or re-frame the camera.
-  const frameKey = aroundFrameKey(wrappedFrame)
+  // tear the turn group down or re-frame the camera. The bar's shape and
+  // thickness are part of the key (#1016 C2-R2V): a square blank and the round
+  // bar of the same box share the nominal frame numbers but not their
+  // material, and a side change must replace the preview.
+  const frameKey = aroundFrameKey(wrappedFrame, bar?.stock)
   const simulationView = bar ? 'bar' : 'flat'
   const viewOrigin = bar ? bar.origin : origin
   // Latest values for callbacks and effects that must not re-run on identity.
@@ -374,6 +378,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
+  // The static and playback square-material resources (#1016 C2-R2V). They own
+  // their geometry and material, so they are released through their own
+  // idempotent disposal and never through `disposeSceneObject`.
+  const squareStaticRef = useRef<SquarePreviewSurface | null>(null)
+  const squarePlaybackRef = useRef<SquarePreviewSurface | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
@@ -421,6 +430,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowBoxRef.current = zoomWindowBox
 
   const disposeCurrentMesh = useCallback(() => {
+    // The square resource owns its geometry and material; removing its object
+    // and calling `dispose()` exactly once is the whole disposal.
+    squareStaticRef.current?.dispose()
+    squareStaticRef.current = null
     if (objectRef.current) {
       objectRef.current.removeFromParent()
       disposeSceneObject(objectRef.current)
@@ -470,13 +483,24 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const zoomToModel = useCallback(() => {
     const controls = controlsRef.current
     const isBar = barRef.current !== undefined
-    const object = objectRef.current ?? (isBar ? playbackMaterialMeshRef.current : null)
+    const square = squareStaticRef.current ?? squarePlaybackRef.current
+    const object = objectRef.current
+      ?? square?.object
+      ?? (isBar ? playbackMaterialMeshRef.current : null)
     if (!controls || !object) {
       return
     }
 
-    if (isBar) object.updateWorldMatrix(true, false)
-    const bounds = new THREE.Box3().setFromObject(object)
+    // A square blank's enclosing box is the resource's own corner envelope
+    // about the true pivot. The object's angle-0 bounds would hold only the
+    // flats, so a turned corner could leave the framed view.
+    let bounds: THREE.Box3
+    if (square) {
+      bounds = square.resource.bounds.clone()
+    } else {
+      if (isBar) object.updateWorldMatrix(true, false)
+      bounds = new THREE.Box3().setFromObject(object)
+    }
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
         bounds.expandByObject(clamp)
@@ -658,12 +682,38 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     const grid = simulation.grid
-    const heightfieldTexture = createHeightfieldTexture(grid)
     const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
     const frame = wrappedFrameRef.current
+    const parent = barTurnRef.current?.content ?? scene
+
+    // A square blank draws its actual material, not a top heightfield: the
+    // old surface and its instanced boundary would bridge the real air gaps
+    // between surviving intervals (#1016 C2-R2V). The resource is allocated
+    // before any heightfield texture exists.
+    if (grid.squareBar) {
+      const currentBar = barRef.current
+      if (!currentBar) {
+        throw new RangeError('square simulation: the bar view requires its real square stock')
+      }
+      const surface = createSquarePreviewSurface(grid, currentBar.stock, color)
+      parent.add(surface.object)
+      squareStaticRef.current = surface
+      needsRenderRef.current = true
+      if (!hasAutoFramedRef.current) {
+        // The resource's envelope already spans the corner rotation about the
+        // true pivot, so the framed view holds the blank at any A angle.
+        const bounds = surface.resource.bounds.clone()
+        if (!bounds.isEmpty()) {
+          controls.fitToBounds(bounds, true)
+          hasAutoFramedRef.current = true
+        }
+      }
+      return
+    }
+
+    const heightfieldTexture = createHeightfieldTexture(grid)
     const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
     const surface = buildHeightfieldSurfaceObject(grid, material, frame)
-    const parent = barTurnRef.current?.content ?? scene
     parent.add(surface)
     objectRef.current = surface
 
@@ -693,14 +743,30 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // into the texture. Falls back to a full re-upload until the texture has
   // been rendered once (no GL handle yet) or when partial upload is
   // unavailable. No-ops when nothing changed since the last flush.
+  //
+  // A square playback has no texture at all: its dirty region rebuilds the
+  // touched boundary chunks, and that happens *before* the texture-dependent
+  // round branch (#1016 C2-R2V). The controller's dirty marker is cleared only
+  // after the geometry update succeeds, so a refused cut cannot be mistaken
+  // for one already drawn.
   const flushPlaybackGridToGpu = useCallback(() => {
-    const texture = playbackHeightfieldTextureRef.current
     const controller = playbackControllerRef.current
-    if (!texture || !controller) {
+    if (!controller) {
       return
     }
     const region = controller.getDirtyRegion()
     if (!region) {
+      return
+    }
+    const square = squarePlaybackRef.current
+    if (square) {
+      square.update(controller.liveGrid, region)
+      controller.clearDirtyRegion()
+      needsRenderRef.current = true
+      return
+    }
+    const texture = playbackHeightfieldTextureRef.current
+    if (!texture) {
       return
     }
     const renderer = rendererRef.current
@@ -777,6 +843,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
       }
+      // A square playback resource owns its geometry and material: release it
+      // through its own idempotent disposal, never `disposeSceneObject`.
+      squarePlaybackRef.current?.dispose()
+      squarePlaybackRef.current = null
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -818,21 +888,38 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = controller
 
       const grid = controller.liveGrid
-      const heightfieldTexture = createHeightfieldTexture(grid)
-      playbackHeightfieldTextureRef.current = heightfieldTexture
       const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
       const frame = wrappedFrameRef.current
-      const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
-      const surface = buildHeightfieldSurfaceObject(grid, material, frame)
       const parent = barTurnRef.current?.content ?? scene
-      parent.add(surface)
-      playbackMaterialMeshRef.current = surface
+      // A square blank has no heightfield surface or instanced boundary at
+      // all: its actual interval material is one owned chunked resource, and
+      // the per-tick flush rebuilds the dirty chunks instead (#1016 C2-R2V).
+      let fitBounds: THREE.Box3 | null = null
+      if (grid.squareBar) {
+        const currentBar = barRef.current
+        if (!currentBar) {
+          throw new RangeError('square playback: the bar view requires its real square stock')
+        }
+        const square = createSquarePreviewSurface(grid, currentBar.stock, color)
+        parent.add(square.object)
+        squarePlaybackRef.current = square
+        fitBounds = square.resource.bounds.clone()
+      } else {
+        const heightfieldTexture = createHeightfieldTexture(grid)
+        playbackHeightfieldTextureRef.current = heightfieldTexture
+        const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
+        const surface = buildHeightfieldSurfaceObject(grid, material, frame)
+        parent.add(surface)
+        playbackMaterialMeshRef.current = surface
+        surface.updateWorldMatrix(true, false)
+        fitBounds = new THREE.Box3().setFromObject(surface)
 
-      // Instanced walls: no per-cell attributes, so any detail level builds
-      // instantly and stays within memory — no cell cap needed.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
-      parent.add(boundary)
-      playbackBoundaryMeshRef.current = boundary
+        // Instanced walls: no per-cell attributes, so any detail level builds
+        // instantly and stays within memory — no cell cap needed.
+        const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
+        parent.add(boundary)
+        playbackBoundaryMeshRef.current = boundary
+      }
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,
@@ -848,10 +935,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       latestProgressRef.current = controller.totalPathLength > 0 ? controller.getDistanceTraveled() / controller.totalPathLength : 0
       setPlaybackProgress(latestProgressRef.current)
       updateToolMeshPose()
-      if (barRef.current && !hasAutoFramedRef.current) {
-        surface.updateWorldMatrix(true, false)
-        const bounds = new THREE.Box3().setFromObject(surface)
-        controlsRef.current?.fitToBounds(bounds, true)
+      if (barRef.current && !hasAutoFramedRef.current && fitBounds && !fitBounds.isEmpty()) {
+        controlsRef.current?.fitToBounds(fitBounds, true)
         hasAutoFramedRef.current = true
       }
       setIsPlaybackReady(true)
@@ -875,6 +960,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
       }
+      // Covers the deferred-build cancellation and the playback-effect
+      // cleanup; the surface's own disposal is idempotent, so a path that also
+      // ran the disabled branch cannot double-free.
+      squarePlaybackRef.current?.dispose()
+      squarePlaybackRef.current = null
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -1142,10 +1232,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Wait for any pending simulation build (debounced 150ms) to complete,
     // then auto-frame if a mesh exists.
     const timer = setTimeout(() => {
-      const object = objectRef.current
+      const square = squareStaticRef.current
+      const object = objectRef.current ?? square?.object ?? null
       if (object) {
-        object.updateWorldMatrix(true, false)
-        const bounds = new THREE.Box3().setFromObject(object)
+        let bounds: THREE.Box3
+        if (square) {
+          bounds = square.resource.bounds.clone()
+        } else {
+          object.updateWorldMatrix(true, false)
+          bounds = new THREE.Box3().setFromObject(object)
+        }
         if (!bounds.isEmpty()) {
           controls.fitToBounds(bounds, true)
           hasAutoFramedRef.current = true
@@ -1189,6 +1285,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Read by the setup simulation e2e (issue #947): which setup is shown
       // and what the heightfield removed, without sampling WebGL pixels.
       data-simulation-setup={setupPicker?.selectedId}
+      // The actual square-blank material path (#1016 C2-R2V), read by the
+      // manager's browser verification without sampling WebGL pixels.
+      data-simulation-square={simulation?.grid.squareBar ? '1' : undefined}
       data-simulation-removed-cells={simulation?.stats.removedCellCount}
       data-simulation-min-z={simulation?.stats.minTopZ}
     >

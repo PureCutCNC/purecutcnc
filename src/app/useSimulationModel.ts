@@ -21,6 +21,7 @@ import {
   createSimulationGrid,
   simulateOperationHeightfield,
   simulateReplayItemsHeightfield,
+  type SimulationBuildOptions,
   type SimulationGrid,
   type SimulationReplayItem,
   type SimulationResult,
@@ -29,6 +30,7 @@ import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { setupFace } from '../engine/setupOrientation'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
+import { isSquareStock } from '../types/barStock'
 import {
   buildSimulationSetupInput,
   resolveSimulationSetup,
@@ -40,6 +42,41 @@ import {
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
 const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
+
+/**
+ * The one grid/build option set every simulation entry point uses (issue
+ * #1016 C2-R2V): the same periodic sheet and the same transient square
+ * descriptor, so the static grid, the selected cut, the visible replay and the
+ * playback base grid cannot disagree about what blank is being cut.
+ */
+function simulationBuildOptions(setupInput: SimulationSetupInput | null, detailCells: number): SimulationBuildOptions {
+  const bar = setupInput?.bar
+  const squareBar = setupInput?.squareBar
+  return {
+    targetLongAxisCells: detailCells,
+    ...(bar
+      ? { wrap: { axis: bar.frame.axis === 'x' ? 'y' as const : 'x' as const, period: bar.frame.circumference } }
+      : {}),
+    ...(squareBar ? { squareBar } : {}),
+  }
+}
+
+/**
+ * The empty result's statistics. A square blank's virgin surface is its true
+ * cross section, whose lowest top is the inscribed radius over the grid's own
+ * cells; `stockTopZ` there is the corner maximum. Flat and round grids keep the
+ * exact stock-thickness value they always reported.
+ */
+function emptySimulationStats(grid: SimulationGrid): SimulationResult['stats'] {
+  let minTopZ = grid.stockTopZ
+  if (grid.squareBar && grid.initialTopZ) {
+    const baseline = grid.initialTopZ
+    for (let index = 0; index < baseline.length; index += 1) {
+      if (baseline[index] < minTopZ) minTopZ = baseline[index]
+    }
+  }
+  return { removedCellCount: 0, minTopZ, maxRemovedDepth: 0, processedMoveCount: 0 }
+}
 
 /** Defer a computation to first call and cache the result for later calls. */
 function lazyOnce<T>(compute: () => T): () => T {
@@ -63,6 +100,82 @@ function scopedOperations(project: Project, setup: Parameters<typeof setupOperat
   } catch {
     return []
   }
+}
+
+/**
+ * One simulation result in the selected or visible mode (issue #1016 C2-R2V
+ * keeps this the single place the result modes are dispatched, so every mode
+ * receives the same square descriptor and periodic sheet). Exported for the
+ * focused wiring test: the hook calls this very function, so a mode that drops
+ * the descriptor fails there and cannot pass behind a test-only copy.
+ */
+export interface SimulationResultInput {
+  setupInput: SimulationSetupInput | null
+  project: Project
+  simulationMode: 'selected' | 'visible'
+  simulationDetailCells: number
+  selectedInSetup: Operation | null
+  /** `null` while the acquired paths are still pending. */
+  paths: ReadonlyMap<string, ToolpathResult> | null
+}
+
+export function computeSimulationResult({
+  setupInput,
+  project,
+  simulationMode,
+  simulationDetailCells,
+  selectedInSetup,
+  paths,
+}: SimulationResultInput): SimulationResult {
+  // The simulated setup's frame: for Top, the project and paths as they are.
+  const localProject = setupInput?.project ?? project
+  const localPaths = setupInput?.toolpaths ?? NO_PATHS
+  const options = simulationBuildOptions(setupInput, simulationDetailCells)
+
+  const emptyGrid = createSimulationGrid(localProject, options)
+  const emptySimulationResult = {
+    grid: emptyGrid,
+    stats: emptySimulationStats(emptyGrid),
+    warnings: [],
+  }
+
+  if (simulationMode === 'selected') {
+    const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
+    if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
+      return emptySimulationResult
+    }
+
+    return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, options)
+  }
+
+  const replayItems = (setupInput?.operations ?? [])
+    .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
+    .map((operation) => {
+      const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
+      const toolRecord = findOperationTool(localProject, operation)
+
+      if (!toolpath || !toolRecord) {
+        return null
+      }
+
+      const normalizedTool = normalizeToolForProject(toolRecord, localProject)
+      return {
+        operationId: operation.id,
+        operationName: operation.name,
+        toolRef: toolRecord.id,
+        toolType: toolRecord.type,
+        toolRadius: normalizedTool.radius,
+        vBitAngle: normalizedTool.vBitAngle,
+        toolpath,
+      }
+    })
+    .filter((item) => item !== null)
+
+  if (replayItems.length === 0) {
+    return emptySimulationResult
+  }
+
+  return simulateReplayItemsHeightfield(localProject, replayItems, options)
 }
 
 interface UseSimulationModelArgs {
@@ -223,7 +336,11 @@ export function useSimulationModel({
     }
     try {
       return buildSimulationSetupInput(project, simulationSetup, canonical)
-    } catch {
+    } catch (error) {
+      // A square blank's actual material has no flat fallback: propagating
+      // here reaches the app's existing error surface instead of drawing a
+      // successful uncut sheet. Round keeps its established null result.
+      if (isSquareStock(project.stock)) throw error
       return null
     }
   }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
@@ -232,66 +349,13 @@ export function useSimulationModel({
     if (centerTab !== 'simulation') {
       return null
     }
-    // The simulated setup's frame: for Top, the project and paths as they are.
-    const localProject = setupInput?.project ?? project
-    const localPaths = setupInput?.toolpaths ?? NO_PATHS
-
-    const emptySimulationResult = {
-      grid: createSimulationGrid(localProject, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      }),
-      stats: {
-        removedCellCount: 0,
-        minTopZ: localProject.stock.thickness,
-        maxRemovedDepth: 0,
-        processedMoveCount: 0,
-      },
-      warnings: [],
-    }
-
-    if (simulationMode === 'selected') {
-      const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
-      if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
-        return emptySimulationResult
-      }
-
-      return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      })
-    }
-
-    const replayItems = (setupInput?.operations ?? [])
-      .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
-      .map((operation) => {
-        const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
-        const toolRecord = findOperationTool(localProject, operation)
-
-        if (!toolpath || !toolRecord) {
-          return null
-        }
-
-        const normalizedTool = normalizeToolForProject(toolRecord, localProject)
-        return {
-          operationId: operation.id,
-          operationName: operation.name,
-          toolRef: toolRecord.id,
-          toolType: toolRecord.type,
-          toolRadius: normalizedTool.radius,
-          vBitAngle: normalizedTool.vBitAngle,
-          toolpath,
-        }
-      })
-      .filter((item) => item !== null)
-
-    if (replayItems.length === 0) {
-      return emptySimulationResult
-    }
-
-    return simulateReplayItemsHeightfield(localProject, replayItems, {
-      targetLongAxisCells: simulationDetailCells,
-      wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
+    return computeSimulationResult({
+      setupInput,
+      project,
+      simulationMode,
+      simulationDetailCells,
+      selectedInSetup,
+      paths,
     })
   }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
@@ -368,10 +432,11 @@ export function useSimulationModel({
         })
         .filter((item): item is SimulationReplayItem => item !== null)
 
-      return simulateReplayItemsHeightfield(localProject, priorItems, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      }).grid
+      return simulateReplayItemsHeightfield(
+        localProject,
+        priorItems,
+        simulationBuildOptions(setupInput, simulationDetailCells),
+      ).grid
     })
 
     const diameter = normalizedSelectedTool.radius * 2

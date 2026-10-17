@@ -20,6 +20,7 @@ import * as THREE from 'three'
 import { aroundFrame, wrapPoint } from '../aroundFrame'
 import { stockSpacePoint, toolSpacePoint } from '../rotaryFrame'
 import { newProject, roundStock } from '../../types/project'
+import { squareStock } from '../../types/barStock'
 import { unrolledProject } from '../aroundFrame'
 import { createBarTurnGroup, sameAroundFrame, simulationBarAngle, simulationToolPoint, turnSimulationBar, aroundFrameKey } from '../../components/simulation/aroundView'
 import { AROUND_CELL_INDEX_GLSL, AROUND_WRAP_GLSL, aroundBounds } from './aroundWrap'
@@ -121,6 +122,64 @@ for (const axis of ['x', 'y'] as const) {
     const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>
     mesh.geometry.dispose()
     mesh.material.dispose()
+  }
+}
+
+// ── Square blanks: the actual radial envelope about the true pivot (#1016) ──
+
+{
+  for (const axis of ['x', 'y'] as const) {
+    const stock = squareStock(20, 85, axis, { x: 13, y: -17 })
+    const frame = aroundFrame(stock)
+    const project = { ...newProject(), stock }
+    const grid = createSimulationGrid(unrolledProject(project, frame), {
+      targetLongAxisCells: 123,
+      squareBar: { side: stock.thickness, frame },
+    })
+    const maxRadius = stock.thickness * Math.SQRT1_2
+    const bounds = aroundBounds(grid, frame, maxRadius)
+    const nominal = aroundBounds(grid, frame)
+
+    // About the same pivot: the world height is pivot +- maxRadius, never
+    // 0..2maxRadius, which would lift the blank off its own axis.
+    close(bounds.min.y, frame.radius - maxRadius, `${axis}: square bounds bottom is pivot - maxRadius`)
+    close(bounds.max.y, frame.radius + maxRadius, `${axis}: square bounds top is pivot + maxRadius`)
+    const acrossMin = axis === 'x' ? bounds.min.z : bounds.min.x
+    const acrossMax = axis === 'x' ? bounds.max.z : bounds.max.x
+    close(acrossMin, frame.centre - maxRadius, `${axis}: across bounds reach the corners on the low side`)
+    close(acrossMax, frame.centre + maxRadius, `${axis}: and on the high side`)
+    const alongMin = axis === 'x' ? bounds.min.x : bounds.min.z
+    const alongMax = axis === 'x' ? bounds.max.x : bounds.max.z
+    close(alongMin, axis === 'x' ? grid.originX : grid.originY, `${axis}: along bounds keep the grid origin`)
+    close(
+      alongMax,
+      (axis === 'x' ? grid.originX + grid.cols * grid.cellSize : grid.originY + grid.rows * grid.cellSize),
+      `${axis}: and the grid extent`,
+    )
+
+    // The nominal (inscribed) box is a subset; its own values are unchanged.
+    close(nominal.min.y, 0, `${axis}: the nominal round box still spans 0..2r`)
+    close(nominal.max.y, 2 * frame.radius, `${axis}: the nominal round box is byte-identical`)
+    assert(bounds.containsBox(nominal), `${axis}: the square envelope contains the nominal cylinder`)
+
+    // 0/45/90 rays: half the side on a flat, the full corner radius at 45.
+    for (const [angle, radius] of [[0, stock.thickness / 2], [45, maxRadius], [90, stock.thickness / 2]] as const) {
+      const radians = angle * Math.PI / 180
+      const point = new THREE.Vector3(
+        axis === 'x' ? (grid.originX + grid.cols * grid.cellSize) / 2 : frame.centre + radius * Math.sin(radians),
+        frame.radius + radius * Math.cos(radians),
+        axis === 'x' ? frame.centre + radius * Math.sin(radians) : (grid.originY + grid.rows * grid.cellSize) / 2,
+      )
+      assert(bounds.containsPoint(point), `${axis}: the ${angle}° surface point is inside the square envelope`)
+    }
+    assert(
+      !nominal.containsPoint(new THREE.Vector3(
+        axis === 'x' ? grid.originX : frame.centre + maxRadius,
+        frame.radius + maxRadius,
+        axis === 'x' ? frame.centre + maxRadius : grid.originY,
+      )),
+      `${axis}: a corner falls outside the old nominal bounds, so the guarantee is not vacuous`,
+    )
   }
 }
 
