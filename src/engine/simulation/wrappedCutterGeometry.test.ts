@@ -57,19 +57,20 @@ import type {
   BarStock, Operation, Project, SketchFeature, ToolType,
 } from '../../types/project'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
-import { bestCpuMs } from '../../test/cpuRatio'
+import { cpuRatio } from '../../test/cpuRatio'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { buildSimulationSetupInput } from '../../app/simulationSetup'
-import { computeSimulationResult } from '../../app/simulationCompute'
+import type { SimulationSetupInput } from '../../app/simulationSetup'
+import { computeSimulationResult, simulationBuildOptions } from '../../app/simulationCompute'
 import { generateRotaryOperation } from '../toolpaths/rotaryOperation'
 import { rotaryAlongRange } from '../toolpaths/rotaryModel'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { resolveFinishModelSurface } from '../toolpaths/finishModelSurface'
 import { createSimulationGrid } from './grid'
 import { PlaybackController, cloneSimulationGrid } from './playback'
-import { applyMoveToGrid } from './replay'
+import { applyMoveToGrid, moveIsMaterialRemoving } from './replay'
 import type { SimulationGrid } from './types'
 import type { AroundFrame } from '../aroundFrame'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
@@ -606,7 +607,9 @@ interface StubFixture {
   moves: ToolpathMove[]
   along: { start: number; end: number }
   simulation: ReturnType<typeof computeSimulationResult>
-  /** Re-runs the same fixture's simulation (used by the timing assertion). */
+  /** The setup's exact replay input, so the timing test can rebuild its grid and moves. */
+  setupInput: SimulationSetupInput
+  /** Re-runs the same fixture's simulation (used by the retained-end checks). */
   runSimulation: () => ReturnType<typeof computeSimulationResult>
   /** Time spent building and replaying the simulation grid, milliseconds. */
   simulationMs: number
@@ -692,7 +695,7 @@ function stubFixture(toolType: ToolType, detailCells: number): StubFixture {
   const simulation = runSimulation()
   const simulationMs = performance.now() - started
   return {
-    project, operation, tool, moves: toolpath.moves, along, simulation, runSimulation, simulationMs,
+    project, operation, tool, moves: toolpath.moves, along, simulation, setupInput, runSimulation, simulationMs,
   }
 }
 
@@ -990,31 +993,84 @@ function testPartialPlaybackClipsElapsedFootprint(): void {
 
 // ── 10. wrapped ball replay timing (F8b fix 3) ───────────────────────
 //
-// Measured with `bestCpuMs` (CPU time, minimum of 3), so the number is the
-// replay's own work rather than time the process spends descheduled. The bound
-// is deliberately loose enough for a loaded `npm test` pool; the full flat
-// `π/2 · R0` reach is several times slower and must trip it (verified by
-// mutation). The fixture is the 25 mm square-to-round case.
+// Ratio against an invariant reference, never an absolute budget. The subject
+// is the wrapped ball replay of the 25 mm square-to-round program: the exact
+// moves the simulator applies, on the grid `computeSimulationResult` builds,
+// with the grid reset from the pristine baseline between runs. The reference
+// does the same replay on the same moves and grid through the flat, non-wrapped
+// kernel, which never enters the wrapped across box — so only the wrapped
+// kernel's own search box can move the ratio. Both details land on the same
+// baseline ratio (2.4–2.7), so this measures the kernel's constant factor, not
+// the fixture size.
 //
-// Measured on the development machine (2026-10-18, bestCpuMs, min of 3):
-//   detail 280  ball replay ~22 ms; bound 80 ms
-//   detail 1120 ball replay ~300 ms; bound 700 ms
-// The reviewer measured 85–142 ms and 1.47–1.65 s before F8b. Restoring the
-// full flat `π/2 · R0` reach on this machine reproduced 106 ms and 1518 ms, so
-// the tighter ball reach and the entry-radius skip are what remove the stall;
-// the bounds leave headroom above the fixed measurement.
-const BALL_REPLAY_BOUND_MS = { 280: 80, 1120: 700 } as const
+// The old full flat `π/2 · R0` across reach is the regression this guards: it
+// widens the wrapped box to the whole half sheet, so the wrapped column grows
+// while the flat reference stays fixed. Repeated runs on this machine
+// (2026-10-18, `cpuRatio`, subject 5 reps / reference 3):
+//   tight ball reach:       ratio 2.44–2.74 (wrapped 19–323 ms, flat 7.7–123 ms)
+//   full flat box mutation: ratio 11.98–14.39 (wrapped 94–1,634 ms, flat 7.2–121 ms)
+// The flat reference stayed put across the mutation, so it is not contaminated.
+// Limit 5.7 is the geometric midpoint of the worst pair,
+// sqrt(2.74 × 11.98) = 5.73: about 2.1x headroom either side.
+const BALL_REPLAY_RATIO_LIMIT = 5.7
+
+function ballReplayLanes(fixture: StubFixture, detail: number): {
+  wrapped: { setup: () => void; run: () => void }
+  flat: { setup: () => void; run: () => void }
+} {
+  const pristine = createSimulationGrid(
+    fixture.setupInput.project,
+    simulationBuildOptions(fixture.setupInput, detail),
+  )
+  const wrapped = cloneSimulationGrid(pristine)
+  const flat = cloneSimulationGrid(pristine)
+  // No wrap means `applyMoveToGrid` takes the untouched flat kernel.
+  delete flat.wrap
+
+  const moves: ToolpathMove[] = []
+  for (const operation of fixture.setupInput.operations) {
+    if (!operation.enabled || !operation.showToolpath || !operation.toolRef) continue
+    const toolpath = fixture.setupInput.toolpaths.get(operation.id)
+    if (!toolpath) continue
+    for (const move of toolpath.moves) {
+      if (moveIsMaterialRemoving(move)) moves.push(move)
+    }
+  }
+  assert(moves.length > 0, 'fixture: the replay has cutting moves')
+
+  const reset = (grid: SimulationGrid) => (): void => { grid.topZ.set(pristine.topZ) }
+  const replay = (grid: SimulationGrid) => (): void => {
+    for (const move of moves) {
+      applyMoveToGrid(grid, move, fixture.tool.radius, 'ball_endmill', null)
+    }
+  }
+  return {
+    wrapped: { setup: reset(wrapped), run: replay(wrapped) },
+    flat: { setup: reset(flat), run: replay(flat) },
+  }
+}
 
 function testBallReplayTiming(): void {
   console.log('Testing wrapped ball replay timing on the square-to-round fixture...')
   for (const detail of [280, 1120] as const) {
     const fixture = stubFixture('ball_endmill', detail)
+    const lanes = ballReplayLanes(fixture, detail)
     // Warm the JIT outside the measured region.
-    fixture.runSimulation()
-    const ms = bestCpuMs({ run: () => { fixture.runSimulation() } }, 3)
-    const bound = BALL_REPLAY_BOUND_MS[detail]
-    console.log(`  ball ${detail}: ${ms.toFixed(1)} ms (bound ${bound} ms)`)
-    assert(ms < bound, `ball replay at detail ${detail} took ${ms.toFixed(1)} ms, budget ${bound} ms`)
+    lanes.wrapped.run()
+    lanes.flat.run()
+    const { ratio, subjectMs, referenceMs } = cpuRatio(lanes.wrapped, lanes.flat)
+    console.log(
+      `  ball ${detail}: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
+      + `${referenceMs.toFixed(1)} ms (ratio ${ratio.toFixed(2)})`,
+    )
+    assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
+    assert(
+      ratio < BALL_REPLAY_RATIO_LIMIT,
+      `wrapped ball replay at detail ${detail} cost ${ratio.toFixed(2)}x the flat-kernel `
+      + `reference (limit ${BALL_REPLAY_RATIO_LIMIT}x; ${subjectMs.toFixed(1)} ms vs `
+      + `${referenceMs.toFixed(1)} ms CPU) — check that the wrapped across box still uses `
+      + 'the profile-specific reach instead of the full flat π/2 · R0 bound',
+    )
   }
 }
 
