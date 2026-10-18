@@ -78,8 +78,8 @@ import {
   barPivotZ,
   isSquareStock,
 } from '../types/barStock'
-import { getStockBounds } from '../types/project'
-import type { Clamp, Operation, Project, SquareStock, ToolType } from '../types/project'
+import { getStockBounds, roundStockDiameter } from '../types/project'
+import type { BarStock, Clamp, Operation, Project, SquareStock, ToolType } from '../types/project'
 import { convertToolUnits, exportGeometryTolerance } from '../utils/units'
 import type { Units } from '../utils/units'
 
@@ -121,6 +121,19 @@ export interface SquareRotarySafetyRefusal {
 /** True for the two round workholding types (`store/helpers/roundWorkholding.ts`). */
 function isWorkholding(clamp: Clamp): boolean {
   return clamp.type === 'chuck' || clamp.type === 'tailstock'
+}
+
+/**
+ * The outer diameter a chuck or tailstock must reach to hold this bar, in
+ * project units: the square blank's corner envelope (`2 × barMaxRadius`), or
+ * the round bar's own diameter (#1016 C2 F3b). The guard below refuses a
+ * support whose diameter is below this by more than the export tolerance, and
+ * the round ↔ square stock switch re-mints on exactly the same rule — one
+ * threshold, never a second formula. Exported for that caller; the comparison
+ * itself stays here because the tolerance is the guard's own.
+ */
+export function requiredWorkholdingDiameter(stock: BarStock): number {
+  return isSquareStock(stock) ? 2 * barMaxRadius(stock) : roundStockDiameter(stock)
 }
 
 /** The clamp's size across the bar (`roundWorkholdingDiameter`, inlined: engine never imports the store). */
@@ -235,7 +248,6 @@ function workholdingRefusal(
   stock: SquareStock,
   centre: number,
   pivot: number,
-  cornerRadius: number,
   clamp: Clamp,
   stockAlong: Span,
   tolerance: number,
@@ -246,7 +258,7 @@ function workholdingRefusal(
   const diameter = workholdingDiameter(clamp, stock)
   if (Math.abs(across - centre) > tolerance) return verdict('workholdingPlacement', clamp)
   if (Math.abs(clamp.height - (pivot + diameter / 2)) > tolerance) return verdict('workholdingPlacement', clamp)
-  const required = 2 * cornerRadius
+  const required = requiredWorkholdingDiameter(stock)
   if (diameter < required - tolerance) {
     // The numbers ride the verdict, not just its name: the operation warning
     // names both lengths (#1016 C2 F3), and generation must not have to
@@ -333,7 +345,7 @@ export function squareRotarySafetyRefusal(
   const tolerance = exportGeometryTolerance(project.meta.units)
   for (const clamp of project.clamps) {
     const refusal = isWorkholding(clamp)
-      ? workholdingRefusal(stock, centre, pivot, cornerRadius, clamp, stockAlong, tolerance)
+      ? workholdingRefusal(stock, centre, pivot, clamp, stockAlong, tolerance)
       : ordinaryClampRefusal(stock, centre, pivot, cornerRadius, clamp, stockAlong, expand, clearanceZ, tolerance)
     if (refusal) return refusal
   }

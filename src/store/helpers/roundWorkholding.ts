@@ -104,21 +104,6 @@ export function defaultRoundWorkholding(
 }
 
 /**
- * The across-bar size `defaultRoundWorkholding` mints for this support: twice
- * the round bar's diameter, or twice the square blank's corner-envelope
- * diameter, with the 50 mm floor. The shape switch uses it as the threshold
- * for "the existing clamp no longer fits" (#1016 C2 F3).
- */
-export function defaultWorkholdingDiameter(
-  type: 'chuck' | 'tailstock',
-  stock: BarStock,
-  units: ProjectMeta['units'],
-): number {
-  const defaults = defaultRoundWorkholding(type, stock, units)
-  return stock.axis === 'x' ? defaults.h : defaults.w
-}
-
-/**
  * A chuck or tailstock re-minted for a different bar shape (#1016 C2 F3): its
  * across size and height become the new bar's default, so it clears the new
  * blank's corners, while its identity (`id`, `name`, `visibility`) and its
