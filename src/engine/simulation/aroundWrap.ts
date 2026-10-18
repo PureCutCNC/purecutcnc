@@ -112,13 +112,14 @@ export function aroundUniforms(frame?: AroundFrame): Record<string, THREE.IUnifo
  * Bounds enclose shader-displaced positions, including the back of the bar.
  *
  * The box is centred on the true turning pivot, `frame.radius`, and reaches
- * `maxRadius` in every radial direction. For a round bar the default
- * `maxRadius` is that radius, so the box is the familiar `0..2r` in world
- * height. A square blank's corners reach `side/√2`, so the caller passes that:
- * the box then grows about the same pivot (`pivot ± maxRadius`), never as
+ * `maxRadius` in every radial direction. The default is the grid's own radial
+ * envelope, `grid.stockTopZ`: for a round bar that is the bar radius, so the
+ * box is the familiar `0..2r` in world height; for a square blank it is the
+ * corner radius (`side/√2`), so the same call holds the raised corners. Either
+ * way the box grows about the same pivot (`pivot ± maxRadius`), never as
  * `0..2·maxRadius`, which would lift a raised corner envelope off the bar.
  */
-export function aroundBounds(grid: SimulationGrid, frame: AroundFrame, maxRadius: number = frame.radius): THREE.Box3 {
+export function aroundBounds(grid: SimulationGrid, frame: AroundFrame, maxRadius: number = grid.stockTopZ): THREE.Box3 {
   if (!Number.isFinite(maxRadius) || maxRadius < 0) {
     throw new RangeError(`aroundBounds: maxRadius must be positive and finite, got ${maxRadius}`)
   }
