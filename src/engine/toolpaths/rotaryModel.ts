@@ -666,13 +666,8 @@ function distanceFromLine(
  * this toolpath emits is a command the machine must reach. Runs also stop where
  * the tool reverses along the bar, so a merge can never join two passes that
  * happen to line up in X through the link between them.
- *
- * Exported beside `rotaryTargets` and `emitRotaryRuns` so the F5 entry
- * regression can merge its pre-F5 reference path the same way the generators
- * merge the live one: the merge is not part of F5, so both paths must be
- * produced by the same code.
  */
-export function mergeCollinearCuts(moves: readonly ToolpathMove[], tolerance: number): { moves: ToolpathMove[]; dropped: number } {
+function mergeCollinearCuts(moves: readonly ToolpathMove[], tolerance: number): { moves: ToolpathMove[]; dropped: number } {
   const merged: ToolpathMove[] = []
   let index = 0
   while (index < moves.length) {
@@ -767,63 +762,10 @@ function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
  * model leaves the line over the centreline -- and the shared emitter below is
  * the unit that links two runs or retracts between them.
  */
-export interface RotaryRun {
+interface RotaryRun {
   readonly points: readonly ToolpathPoint[]
   readonly atStart: boolean
   readonly atEnd: boolean
-}
-
-/**
- * Drop the leading and trailing points of every run for which `cutsNothing`
- * holds, and drop a run left empty (#1016 C2-F5). Interior points are never
- * tested: a valley of air *inside* a run is not split, because the only motion
- * the trim is allowed to replace is a ride at the pass's end, and a cut that
- * dips into the blank and back out between two real cuts is not one.
- *
- * `atStart`/`atEnd` become false as soon as a point is removed from that end,
- * so `emitRotaryRuns` never links a shortened run to the previous pass: the
- * pass no longer begins at the bar end the link needs, and the kept run's first
- * point is reached by the existing rapid / straight plunge instead.
- *
- * ## Why dropping a sampled point is safe
- *
- * At a square blank's pass angle {@link squareRotaryTouchRadius} bounds every
- * point of blank material the cutter's footprint can reach. A sample whose tip
- * radius is at or above that bound therefore has its whole cutter footprint
- * above the blank and cuts nothing: removing it removes no material, only the
- * air motion that used to carry the tool along the blank's surface. The kept
- * run then starts at a sample that does cut; the plunge to it descends only
- * through the column of material the cutter occupies there, which the kept cut
- * removes anyway, and never through the retained stub the sampler lifted the
- * trimmed samples over (a kept sample within one cutter radius of that stub
- * would itself have been lifted to the same bound).
- *
- * The one tolerance is the generator's existing `0.001 mm` (in project units,
- * the same bound the collinear merge uses): the height map is Float32 and the
- * bound is double, so a sample exactly on the surface can read a few ulps
- * under it, and without it the trim would miss the very samples it exists for.
- * A sample within that tolerance below the bound can remove at most that much,
- * far under the sampler's own cell.
- *
- * Round bars keep the old path byte for byte: their footprint radius is the bar
- * radius at every angle, so the same test would drop the whole surface pass and
- * this helper is only called on a square blank.
- */
-function trimRunEnds(runs: readonly RotaryRun[], cutsNothing: (point: ToolpathPoint) => boolean): RotaryRun[] {
-  const trimmed: RotaryRun[] = []
-  for (const run of runs) {
-    let first = 0
-    let last = run.points.length - 1
-    while (first <= last && cutsNothing(run.points[first])) first++
-    while (last >= first && cutsNothing(run.points[last])) last--
-    if (first > last) continue
-    trimmed.push({
-      points: run.points.slice(first, last + 1),
-      atStart: run.atStart && first === 0,
-      atEnd: run.atEnd && last === run.points.length - 1,
-    })
-  }
-  return trimmed
 }
 
 /**
@@ -861,7 +803,7 @@ function trimRunEnds(runs: readonly RotaryRun[], cutsNothing: (point: ToolpathPo
  * ordinary between-sample error, about `s^2 / (8r)` for sample spacing `s` and
  * ball radius `r`). Gentler steps keep the single diagonal move.
  */
-export function emitRotaryRuns(
+function emitRotaryRuns(
   moves: ToolpathMove[],
   here: ToolpathPoint | undefined,
   runs: readonly RotaryRun[],
@@ -1222,13 +1164,8 @@ function rotaryAlongPositions(
   return unique
 }
 
-/**
- * Sampling and normal stock offset shared by finishing and every rough layer.
- * Exported so the F5 entry regression can feed the pre-F5 run construction the
- * exact samples the generators use and compare the simulated material: the
- * sampling is not part of F5, so both paths must share it byte for byte.
- */
-export function rotaryTargets(
+/** Sampling and normal stock offset shared by finishing and every rough layer. */
+function rotaryTargets(
   operationId: string,
   mesh: RotaryModelMesh,
   stock: BarStock,
@@ -1400,16 +1337,6 @@ export function generateRotaryFinish(
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
-  // A square blank's retained stub holds the tool up over the cut range's ends
-  // (#1016 C2-F5): those samples ride the blank's own surface and cut nothing.
-  // `squareRotaryTouchRadius` is the blank material the cutter can reach at that
-  // pass angle -- the same contact bound the rough's layer gate uses -- so a
-  // sample whose tip reaches it is provably above all of that material and is
-  // dropped from the run's ends instead of fed as a "cut". The trimmed run
-  // starts and ends at real cuts, so `emitRotaryRuns` reaches them with its
-  // ordinary rapid / straight plunge / straight retract. Round bars do not call
-  // this at all: their old path must stay byte for byte identical.
-  const square = isSquareStock(stock)
   // Every move between runs -- a turning link, the retract off a run, or the
   // traverse to the next run -- travels at the blank's largest surface plus a
   // clearance, so it always clears the model and the standing stock between two
@@ -1443,9 +1370,6 @@ export function generateRotaryFinish(
     // A `NaN` sample has no model under the tool: the finish follows the model,
     // and removing waste is the rough's job, so it is not cut. Each pass is the
     // runs of finite samples; a pass with none emits nothing at all.
-    const blankBound = square
-      ? squareRotaryTouchRadius(stock, angles[k], tool.radius, tool.type) - tolerance
-      : 0
     const runs: RotaryRun[] = []
     let i = 0
     while (i < along.length) {
@@ -1458,8 +1382,7 @@ export function generateRotaryFinish(
       runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
       i++
     }
-    const kept = square ? trimRunEnds(runs, (held) => held.z - pivot >= blankBound) : runs
-    const emitted = emitRotaryRuns(moves, here, kept, safeZ, travelZ, previousEndedAtEnd)
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
     here = emitted.here
     previousEndedAtEnd = emitted.endedAtEnd
   }
@@ -1567,7 +1490,6 @@ export function generateRotaryRough(
   // and the final retract go to the higher of the two heights.
   const travelZ = rotaryTravelZ(stock, tool.units)
   const safeZ = Math.max(pivot + params.safeRadius, travelZ)
-  const tolerance = convertLength(0.001, 'mm', tool.units)
   // The layer count and the band each layer cuts are still counted from the
   // blank's largest radius, so a square blank's corners are covered from the
   // first layer (#1016 C2-S3). What changes for a square is *which* of those
@@ -1593,20 +1515,8 @@ export function generateRotaryRough(
     let previousEndedAtEnd = false
     for (let pass = 0; pass < angles.length; pass++) {
       const angle = angles[pass] + (layer - 1) * 360
-      const touchRadius = square ? squareRotaryTouchRadius(stock, angle, tool.radius, tool.type) : 0
-      const touchesMaterial = !square || layerRadius < touchRadius
-      // A square blank's ride at a pass end is trimmed exactly as the finish's
-      // is (#1016 C2-F5): a sample whose cutter tip reaches the blank's contact
-      // bound, or the top of this layer (which the previous layer already
-      // removed), cuts nothing. Inside a run `needsCut` already keeps the
-      // emitted tip under `previousRadius`, so the second clause only makes the
-      // "cuts nothing" test complete; the blank bound is what trims the ride.
-      const blankBound = touchRadius - tolerance
-      const previousBound = previousRadius - tolerance
-      const cutsNothing = (held: ToolpathPoint): boolean => {
-        const radius = held.z - pivot
-        return radius >= blankBound || radius >= previousBound
-      }
+      const touchesMaterial = !square
+        || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
       const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
       const needsCut = (i: number): boolean =>
         touchesMaterial && tips[pass][indexAt(i)] < previousRadius
@@ -1626,13 +1536,12 @@ export function generateRotaryRough(
         runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
-      const kept = square ? trimRunEnds(runs, cutsNothing) : runs
-      const emitted = emitRotaryRuns(moves, here, kept, safeZ, travelZ, previousEndedAtEnd)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd
     }
   }
   if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
-  const merged = mergeCollinearCuts(moves, tolerance)
+  const merged = mergeCollinearCuts(moves, convertLength(0.001, 'mm', tool.units))
   return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
 }

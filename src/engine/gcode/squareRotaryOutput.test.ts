@@ -334,30 +334,23 @@ for (const axis of ['x', 'y'] as const) {
  * entries were re-captured again for #1016 C2-F2c, whose exact ball contact
  * removes the air layers the flat cylinder bound still spent above the ball;
  * the flat rough and every `rotary_finish` entry did not move.
- *
- * Every square entry with a trimmed end ride was re-captured once more for
- * #1016 C2-F5, which replaces the leading and trailing surface ride with a
- * straight plunge and retract. The inch ball entries are unchanged: on that
- * fixture no end sample reaches the blank's contact bound, so F5 trims nothing
- * there. The round baseline above is untouched, which is the byte-identity
- * guarantee F5 must keep.
  */
 const SQUARE_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/flat_endmill': 'moves=b490acb9e849c936|warnings=|gcode=d7e908e6fdd6813d|post=',
-  'x/mm/rotary_rough/ball_endmill': 'moves=d2f9c3a09db86725|warnings=|gcode=9958f7349e2b4786|post=',
-  'x/mm/rotary_finish/flat_endmill': 'moves=f6a8b95b4820cddc|warnings=|gcode=dd5f38e08aeccb38|post=',
-  'x/mm/rotary_finish/ball_endmill': 'moves=2f7961ae2dc32edd|warnings=|gcode=c1bc42bac2b1f7c4|post=',
-  'x/inch/rotary_rough/flat_endmill': 'moves=73be81b641d94007|warnings=|gcode=e38c6493c19e4aa7|post=',
+  'x/mm/rotary_rough/flat_endmill': 'moves=0392f2f4e2830ee6|warnings=|gcode=c2304ad2ec760cba|post=',
+  'x/mm/rotary_rough/ball_endmill': 'moves=8654a279944a0f34|warnings=|gcode=50a2cbd0c1ae55e8|post=',
+  'x/mm/rotary_finish/flat_endmill': 'moves=c6d112cbd725f6f8|warnings=|gcode=d87cbbe7bd18867d|post=',
+  'x/mm/rotary_finish/ball_endmill': 'moves=985de93a32ef6830|warnings=|gcode=d2f5ae10c319bb69|post=',
+  'x/inch/rotary_rough/flat_endmill': 'moves=dff2e8f5b6b23fbd|warnings=|gcode=ffa366345cbd3910|post=',
   'x/inch/rotary_rough/ball_endmill': 'moves=c30f57f50772f127|warnings=|gcode=d5b43a2a75138e8d|post=',
-  'x/inch/rotary_finish/flat_endmill': 'moves=16d9f0aee2262ab6|warnings=|gcode=c7a4f077a324d530|post=',
+  'x/inch/rotary_finish/flat_endmill': 'moves=d101d2d4ae6e4e01|warnings=|gcode=32d2b7068cfca6ef|post=',
   'x/inch/rotary_finish/ball_endmill': 'moves=c0a9dd8decdbaa1c|warnings=|gcode=55707987f7f3c53e|post=',
-  'y/mm/rotary_rough/flat_endmill': 'moves=31c17d6cf38d978c|warnings=|gcode=592359157623f63a|post=',
-  'y/mm/rotary_rough/ball_endmill': 'moves=21d8e2088fe84edb|warnings=|gcode=3f06a911cb373c5b|post=',
-  'y/mm/rotary_finish/flat_endmill': 'moves=6cb230b3f0d3c067|warnings=|gcode=8e371b56481d3bf0|post=',
-  'y/mm/rotary_finish/ball_endmill': 'moves=9cc0081deba15a5c|warnings=|gcode=8ec147e5ee5d7149|post=',
-  'y/inch/rotary_rough/flat_endmill': 'moves=25a8f6c9cd9a07bc|warnings=|gcode=07181a99851465e5|post=',
+  'y/mm/rotary_rough/flat_endmill': 'moves=b6f21a559f9c27a3|warnings=|gcode=cd8e400ce45821eb|post=',
+  'y/mm/rotary_rough/ball_endmill': 'moves=da1f62c106606ade|warnings=|gcode=34e638a8b0cd1576|post=',
+  'y/mm/rotary_finish/flat_endmill': 'moves=98fd634aae2dd471|warnings=|gcode=e43e22351d7cc70d|post=',
+  'y/mm/rotary_finish/ball_endmill': 'moves=0f84472529351581|warnings=|gcode=3d7b326175e5d716|post=',
+  'y/inch/rotary_rough/flat_endmill': 'moves=fbfc1fe0c6cd7d63|warnings=|gcode=396d8cf41daf775c|post=',
   'y/inch/rotary_rough/ball_endmill': 'moves=820c404d64838cd7|warnings=|gcode=eb1f4ea8d3275373|post=',
-  'y/inch/rotary_finish/flat_endmill': 'moves=00cd4af429f6385e|warnings=|gcode=c352b0172560a226|post=',
+  'y/inch/rotary_finish/flat_endmill': 'moves=7844d07e5321f54f|warnings=|gcode=91055b8ea7f41ab6|post=',
   'y/inch/rotary_finish/ball_endmill': 'moves=ca5532de9007a129|warnings=|gcode=f599182322a2bde1|post=',
 }
 

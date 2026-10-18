@@ -716,14 +716,9 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   }
   assert.equal(cappedRefusals, 32, 'both axes, mm and inch, on and off origin, flat and ball, both ends and both stock values are exercised')
 
-  // The same geometry with a requested cell one step *below* the cap is
-  // admitted -- the guard refuses only the spacing that cannot honour the
-  // effective cell, it is not a blanket refusal of capped jobs. This blank is
-  // 0.4 mm square with a 4 mm cutter, so every sample in the 0.125 mm band is
-  // inside the cutter footprint of a retained shoulder and the sampler lifts
-  // every one of them to the blank's surface. F5 then trims the whole ride
-  // (#1016 C2-F5): the operation is admitted and correctly emits no cut,
-  // because the oversized cutter cannot reach this band without the shoulders.
+  // The same geometry with a requested cell one step *below* the cap still
+  // generates -- the guard refuses only the spacing that cannot honour the
+  // effective cell, it is not a blanket refusal of capped jobs.
   {
     let nearCapCases = 0
     for (const axis of ['x', 'y'] as const) {
@@ -741,12 +736,12 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
           alongStart: start, alongEnd: end, safeRadius: 5 * scale, requestedCellSize: 5e-4 * scale,
         }
         const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.08 * scale, start, end, 32), stock, tool, params, {})
-        assert.deepEqual(near.moves, [], `near-cap (${axis}/${units}) trims the all-ride path`)
+        assert.ok(near.moves.length > 0, `near-cap (${axis}/${units}) still generates`)
         assert.ok(!near.warnings.some((w) => w.code === 'operationStepoverRatioRange'), `near-cap (${axis}/${units}) is not refused`)
         nearCapCases++
       }
     }
-    assert.equal(nearCapCases, 4, 'near-cap jobs are admitted on both axes and in both units')
+    assert.equal(nearCapCases, 4, 'near-cap jobs generate on both axes and in both units')
   }
 
   // (c) The bound is *proven* when the cap binds on a real part: the manager
