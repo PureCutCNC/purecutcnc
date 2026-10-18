@@ -360,13 +360,30 @@ export type ToolpathWarningCode =
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
   | 'postMixedSetups'
-  /** An operation in the program generated nothing because its setup may not
-   *  cut it (`setupTargetNotThrough`), or because a **square** blank's Around
-   *  face was asked for a job it does not support (#1016 C2-S4: a non-rotary
-   *  kind, a target that is not a real model, or a physical workholding /
-   *  ordinary-clamp setup this build cannot hold). The file would be missing a
-   *  pass. */
+  /** A **square** blank's Around face was asked for a job it does not
+   *  support (#1016 C2-S4): a non-rotary kind, a target that is not a real
+   *  model, or a physical workholding / ordinary-clamp setup this build cannot
+   *  hold. The file would be missing a pass.
+   *
+   * The physical workholding verdicts have their own codes below, so the
+   * operation names the actual problem; this one stays the fallback for the
+   * remaining square reasons (an unreadable blank, non-finite project
+   * clearances, a malformed clamp row, a stale cutter) and for
+   * `setupTargetNotThrough`. */
   | 'postSetupOperationRefused'
+  /** A square blank's chuck or tailstock outer diameter is smaller than the
+   *  blank's corner envelope, so its corners would pass through the jaws as
+   *  the blank turns (#1016 C2 F3). Params: operation, clamp, diameter and the
+   *  required corner diameter, both formatted in project units. */
+  | 'workholdingDiameter'
+  /** A square blank's chuck or tailstock is off the true centreline or its
+   *  height is not derived from the pivot (#1016 C2 F3). Params: operation,
+   *  clamp. */
+  | 'workholdingPlacement'
+  /** An ordinary clamp reaches into the region the square blank sweeps as it
+   *  turns, grown by the cutter body and the project's clamp clearance
+   *  (#1016 C2 F3). Params: operation, clamp. */
+  | 'ordinaryClampOverlap'
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */
   | 'postSetupNoRegistration'
@@ -486,6 +503,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postSetupOperationRefused` — an operation in the program has no motion
  *   because its setup may not cut it, so the saved file would quietly lack a
  *   pass the operation list promises (issue #946).
+ * - `workholdingDiameter`, `workholdingPlacement`, `ordinaryClampOverlap` — a
+ *   square blank's physical setup is not one this build can hold: the blank's
+ *   standing corners would pass through a too-small support, the support is not
+ *   at the pivot, or an ordinary clamp reaches into the swept envelope. The
+ *   operation generates no motion, so the same missing-pass reasoning applies
+ *   and each names the actual problem (issue #1016 C2 F3).
  * - `postPlasmaMaterialMissing` — QtPlasmaC would fire the torch with
  *   whatever material happens to be loaded: the wrong cut feed, heights and
  *   pierce delay for the sheet on the table (issue #959).
@@ -516,6 +539,9 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',
+  'workholdingDiameter',
+  'workholdingPlacement',
+  'ordinaryClampOverlap',
   'postPlasmaMaterialMissing',
   'postPlasmaCutFeedMissing',
   'postPlasmaPlungeFeedMissing',

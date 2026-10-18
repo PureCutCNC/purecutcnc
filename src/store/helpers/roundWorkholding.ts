@@ -48,8 +48,11 @@ import {
 } from '../../types/barStock'
 import { convertLength } from '../../utils/units'
 
+/** The two round workholding types: a chuck or a tailstock. */
+export type RoundWorkholding = Clamp & { type: 'chuck' | 'tailstock' }
+
 /** True for the two round workholding types: a chuck or a tailstock. */
-export function isRoundWorkholding(clamp: Clamp): boolean {
+export function isRoundWorkholding(clamp: Clamp): clamp is RoundWorkholding {
   return clamp.type === 'chuck' || clamp.type === 'tailstock'
 }
 
@@ -98,6 +101,61 @@ export function defaultRoundWorkholding(
   return stock.axis === 'x'
     ? { type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
     : { type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
+}
+
+/**
+ * The across-bar size `defaultRoundWorkholding` mints for this support: twice
+ * the round bar's diameter, or twice the square blank's corner-envelope
+ * diameter, with the 50 mm floor. The shape switch uses it as the threshold
+ * for "the existing clamp no longer fits" (#1016 C2 F3).
+ */
+export function defaultWorkholdingDiameter(
+  type: 'chuck' | 'tailstock',
+  stock: BarStock,
+  units: ProjectMeta['units'],
+): number {
+  const defaults = defaultRoundWorkholding(type, stock, units)
+  return stock.axis === 'x' ? defaults.h : defaults.w
+}
+
+/**
+ * A chuck or tailstock re-minted for a different bar shape (#1016 C2 F3): its
+ * across size and height become the new bar's default, so it clears the new
+ * blank's corners, while its identity (`id`, `name`, `visibility`) and its
+ * along-bar placement survive. The along position and size are the ones the
+ * user placed; they are kept when they are finite and positive, and otherwise
+ * the default along placement is the only usable one. The caller decides
+ * *whether* a clamp needs re-minting (only one that no longer clears the new
+ * bar); this function always builds the default body.
+ */
+export function remintRoundWorkholding(
+  clamp: RoundWorkholding,
+  stock: BarStock,
+  units: ProjectMeta['units'],
+): Clamp {
+  const defaults = defaultRoundWorkholding(clamp.type, stock, units)
+  const along = stock.axis === 'x'
+    ? { start: clamp.x, size: clamp.w }
+    : { start: clamp.y, size: clamp.h }
+  const keepAlong = Number.isFinite(along.start) && Number.isFinite(along.size) && along.size > 0
+  return {
+    ...clamp,
+    type: defaults.type,
+    ...(stock.axis === 'x'
+      ? {
+        x: keepAlong ? along.start : defaults.x,
+        w: keepAlong ? along.size : defaults.w,
+        y: defaults.y,
+        h: defaults.h,
+      }
+      : {
+        y: keepAlong ? along.start : defaults.y,
+        h: keepAlong ? along.size : defaults.h,
+        x: defaults.x,
+        w: defaults.w,
+      }),
+    height: defaults.height,
+  }
 }
 
 /**

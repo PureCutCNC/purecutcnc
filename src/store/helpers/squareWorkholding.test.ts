@@ -28,6 +28,7 @@ import assert from 'node:assert/strict'
 import {
   defaultOrigin,
   getStockBounds,
+  isRoundStock,
   newProject,
   roundStock,
   type Clamp,
@@ -221,6 +222,91 @@ test('to square mints a chuck with the corner-clearing default on the blank it m
   const own = 4 * barMaxRadius(next.stock)
   closeTo(next.clamps[0].h, own, 'the default diameter clears the corners')
   closeTo(next.clamps[0].height, barPivotZ(next.stock) + own / 2, 'raised to the true pivot')
+})
+
+// ── Round ↔ square: re-mint what no longer clears (#1016 C2 F3) ─
+
+console.log('\nRe-minting workholding on a round ↔ square switch')
+
+test('round → square re-mints a 50 mm chuck that cannot clear the 2 in blank, keeping identity and along placement', () => {
+  const round = roundStock(2, 6, 'x', { x: 0, y: 0 })
+  const fifty = convertLength(50, 'mm', 'inch')
+  const chuck: Clamp = {
+    id: 'cl0017', name: 'Chuck', type: 'chuck',
+    x: -1.5748, y: barCentre(round) - fifty / 2, w: 2.1654, h: fifty,
+    height: barPivotZ(round) + fifty / 2, visible: false,
+  }
+  const step: Clamp = { id: 'cl-step', name: 'Step', type: 'step_clamp', x: 1, y: 2, w: 3, h: 4, height: 5, visible: true }
+  const project: Project = { ...newProject('switch', 'inch'), stock: round, origin: defaultOrigin(round), clamps: [chuck, step] }
+
+  const next = projectWithStockShape(project, 'square')
+  assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
+  const reminted = next.clamps[0]
+  assert.notEqual(reminted, chuck, 'the too-small chuck is re-minted, not kept')
+  assert.equal(reminted.id, 'cl0017', 'its id survives')
+  assert.equal(reminted.name, 'Chuck', 'its name survives')
+  assert.equal(reminted.visible, false, 'its visibility survives')
+  assert.equal(reminted.x, chuck.x, 'its along position survives')
+  assert.equal(reminted.w, chuck.w, 'its along size survives')
+  assert.ok(reminted.h >= next.stock.thickness * Math.SQRT2,
+    `its diameter clears the corners (${reminted.h} >= ${next.stock.thickness * Math.SQRT2})`)
+  closeTo(reminted.h, 4 * barMaxRadius(next.stock), 'the new diameter is the blank default')
+  closeTo(reminted.y + reminted.h / 2, barCentre(next.stock), 'centred on the true centreline')
+  closeTo(reminted.height, barPivotZ(next.stock) + reminted.h / 2, 'its height is pivot-derived')
+  assert.equal(next.clamps[1], step, 'an ordinary clamp is untouched')
+})
+
+test('round → square leaves a chuck that already clears exactly as it is', () => {
+  const round = roundStock(2, 6, 'x', { x: 0, y: 0 })
+  const wide: Clamp = {
+    id: 'cl-wide', name: 'Wide chuck', type: 'chuck',
+    x: -2, y: barCentre(round) - 3, w: 4, h: 6,
+    height: barPivotZ(round) + 3, visible: true,
+  }
+  assert.ok(wide.h > 4 * barMaxRadius(squareStock(2, 6, 'x')), 'the fixture already clears the blank default')
+  const project: Project = { ...newProject('switch', 'inch'), stock: round, origin: defaultOrigin(round), clamps: [wide] }
+
+  const next = projectWithStockShape(project, 'square')
+  assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
+  assert.equal(next.clamps[0], wide, 'the clearing chuck object is returned unchanged')
+  assert.equal(next.clamps[0].h, 6, 'and its diameter is not enlarged')
+})
+
+test('square → round mirrors the rule: a chuck below the round default is re-minted', () => {
+  const square = squareStock(2, 6, 'x', { x: 0, y: 0 })
+  const three = 3
+  const chuck: Clamp = {
+    id: 'cl-three', name: 'Inch chuck', type: 'chuck',
+    x: -1, y: barCentre(square) - three / 2, w: 2, h: three,
+    height: barPivotZ(square) + three / 2, visible: true,
+  }
+  const project: Project = { ...newProject('switch', 'inch'), stock: square, origin: defaultOrigin(square), clamps: [chuck] }
+
+  const next = projectWithStockShape(project, 'round')
+  assert.ok(isRoundStock(next.stock), 'the stock is a round bar')
+  assert.notEqual(next.clamps[0], chuck, 'a chuck below the round default is re-minted')
+  closeTo(roundWorkholdingDiameter(next.clamps[0], next.stock), 2 * 2,
+    'the new diameter is twice the round bar, the round default')
+  closeTo(next.clamps[0].y + next.clamps[0].h / 2, barCentre(next.stock), 'centred on the round centreline')
+  assert.equal(next.clamps[0].id, 'cl-three', 'its identity survives')
+})
+
+test('the shape switch is one undo step and restores the chuck', () => {
+  const round = roundStock(2, 6, 'x', { x: 0, y: 0 })
+  const fifty = convertLength(50, 'mm', 'inch')
+  const chuck: Clamp = {
+    id: 'cl0017', name: 'Chuck', type: 'chuck',
+    x: -1.5748, y: barCentre(round) - fifty / 2, w: 2.1654, h: fifty,
+    height: barPivotZ(round) + fifty / 2, visible: true,
+  }
+  const project: Project = { ...newProject('switch', 'inch'), stock: round, origin: defaultOrigin(round), clamps: [chuck] }
+  seed(project)
+
+  useProjectStore.getState().setStockShape('square')
+  assert.notEqual(useProjectStore.getState().project.clamps[0]?.h, fifty, 'the switch re-minted the chuck')
+
+  useProjectStore.getState().undo()
+  assert.deepEqual(useProjectStore.getState().project, project, 'undo restores the round project and its chuck exactly')
 })
 
 test('a store resize keeps the manual square chuck diameter and moves it to the new pivot', () => {

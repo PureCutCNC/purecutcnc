@@ -52,7 +52,9 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
+import { decodeProjectFormat } from '../../store/helpers/projectFormat'
 import { defaultTool, getStockBounds, newProject, rectProfile } from '../../types/project'
 import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool, ToolType } from '../../types/project'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
@@ -787,8 +789,8 @@ const tooSmallChuck = (stock: SquareStock): Clamp[] => [{
   assert.ok(6 < 2 * stock.thickness * Math.SQRT1_2, 'fixture: the manual chuck is smaller than the corner envelope')
   const envelope = computeOperationToolpath(project, operation)!
   assert.equal(envelope.result.moves.length, 0, 'generation posts no affected motion')
-  assert.deepEqual(envelope.result.warnings.map((warning) => warning.code), ['postSetupOperationRefused'], 'and says why')
-  assert.equal(warningSeverity('postSetupOperationRefused'), 'error', 'the refusal blocks a save')
+  assert.deepEqual(envelope.result.warnings.map((warning) => warning.code), ['workholdingDiameter'], 'and names the diameter problem')
+  assert.equal(warningSeverity('workholdingDiameter'), 'error', 'the refusal blocks a save')
   assert.equal(warningSeverity('aroundStockMismatch'), 'warning', 'the old round/flat mismatch stays a warning')
   // The clamp itself is preserved: the guard reports, it never repairs.
   assert.equal(project.clamps[0].h, 6, 'the manual chuck diameter is not resized')
@@ -812,6 +814,51 @@ const tooSmallChuck = (stock: SquareStock): Clamp[] => [{
   assert.deepEqual(safeResult.warnings, [], 'the matching default workholding posts')
 }
 
+console.log("Testing Frank's measured C2 F3 project (inch 2 in square, 50 mm chuck)...")
+{
+  // The real project from the UI test, loaded from format 3.3 exactly as the
+  // shape switch left it: the chuck was minted on a round bar and kept its
+  // 50 mm (1.9685 in) diameter across the round→square switch. No synthetic
+  // fixture, and no shape switch here — the file is the measured state.
+  const file = new URL('../test-fixtures/square-to-round-chuck-switch.camj', import.meta.url)
+  const { project } = decodeProjectFormat(JSON.parse(readFileSync(file, 'utf8')))
+  const stock = project.stock as SquareStock
+  assert.equal(stock.shape, 'square', 'the project is on a square blank')
+  assert.equal(stock.thickness, 2, 'the blank is 2 in across')
+  assert.equal(project.meta.units, 'inch', 'in inch units')
+  const chuck = project.clamps[0]
+  assert.equal(chuck.type, 'chuck', 'one chuck')
+  assert.equal(chuck.name, 'Chuck', 'named Chuck')
+  assert.ok(Math.abs(chuck.h - convertLength(50, 'mm', 'inch')) <= 1e-12, 'its 50 mm diameter survived the shape switch')
+
+  for (const operation of project.operations) {
+    assert.equal(operation.kind.startsWith('rotary_'), true, `${operation.name}: a rotary operation`)
+    const envelope = computeOperationToolpath(project, operation)!
+    assert.equal(envelope.result.moves.length, 0, `${operation.name}: no motion for the refused setup`)
+    assert.deepEqual(
+      envelope.result.warnings.map((warning) => warning.code),
+      ['workholdingDiameter'],
+      `${operation.name}: names the diameter problem, not the generic text`,
+    )
+    const warning = envelope.result.warnings[0]
+    assert.equal(warning.params?.operation, operation.name, `${operation.name}: names the operation`)
+    assert.equal(warning.params?.clamp, 'Chuck', `${operation.name}: names the clamp`)
+    assert.equal(warning.params?.diameter, '1.9685', `${operation.name}: the existing diameter, in project units`)
+    assert.equal(warning.params?.required, '2.8284', `${operation.name}: the corner-envelope diameter it must clear`)
+    assert.equal(warningSeverity('workholdingDiameter'), 'error', `${operation.name}: the refusal blocks a save`)
+  }
+
+  // The same measured project with the chuck off the true pivot gets its own
+  // code: a placement problem is not reported as a diameter problem.
+  const moved = {
+    ...project,
+    clamps: [{ ...chuck, y: chuck.y + 0.5 }],
+  }
+  const placed = computeOperationToolpath(moved, project.operations[0])!
+  assert.deepEqual(placed.result.warnings.map((warning) => warning.code), ['workholdingPlacement'], 'a moved chuck names the placement problem')
+  assert.equal(placed.result.warnings[0].params?.clamp, 'Chuck', 'and still names the clamp')
+}
+
 console.log('Testing workholding axial engagement and raw placement...')
 {
   const base = fixture({ axis: 'x', units: 'mm', kind: 'rotary_rough' })
@@ -830,10 +877,10 @@ console.log('Testing workholding axial engagement and raw placement...')
   assert.ok(computeOperationToolpath(withClamps([touching]), base.operation)!.result.moves.length > 0, 'an end-face-touching tailstock is clear')
   // Off the centreline.
   const offCentre: Clamp = { ...small, x: 0, y: centre - 3 + 1 }
-  assert.equal(computeOperationToolpath(withClamps([offCentre]), base.operation)!.result.warnings[0]?.code, 'postSetupOperationRefused', 'an off-centre clamp is refused')
+  assert.equal(computeOperationToolpath(withClamps([offCentre]), base.operation)!.result.warnings[0]?.code, 'workholdingPlacement', 'an off-centre clamp is refused')
   // A height not derived from the true pivot.
   const wrongHeight: Clamp = { ...small, height: barPivotZ(stock) + 3 + 1 }
-  assert.equal(computeOperationToolpath(withClamps([wrongHeight]), base.operation)!.result.warnings[0]?.code, 'postSetupOperationRefused', 'a pivot-derived height is required')
+  assert.equal(computeOperationToolpath(withClamps([wrongHeight]), base.operation)!.result.warnings[0]?.code, 'workholdingPlacement', 'a pivot-derived height is required')
   // Invalid dimensions fail closed.
   for (const bad of [NaN, Infinity, 0, -1]) {
     const invalid: Clamp = { ...small, h: bad }
@@ -855,7 +902,7 @@ console.log('Testing ordinary fixtures in the swept square envelope...')
   // Directly under the bar, inside the corner envelope: refused.
   assert.equal(
     computeOperationToolpath(withClamps([ordinary({})]), base.operation)!.result.warnings[0]?.code,
-    'postSetupOperationRefused',
+    'ordinaryClampOverlap',
     'an ordinary clamp inside the swept envelope is refused',
   )
   // Across the bar, outside the envelope: provably disjoint, allowed.
@@ -973,7 +1020,7 @@ for (const axis of ['x', 'y'] as const) {
     const colliding = pastEnd(reach + radius / 2)
     const blocked = { ...project, clamps: [colliding] }
     assert.equal(computeOperationToolpath(blocked, operation)!.result.moves.length, 0, `${label}: generation refuses a clamp in the overhang`)
-    assert.deepEqual(computeOperationToolpath(blocked, operation)!.result.warnings.map((warning) => warning.code), ['postSetupOperationRefused'], `${label}: and says why`)
+    assert.deepEqual(computeOperationToolpath(blocked, operation)!.result.warnings.map((warning) => warning.code), ['ordinaryClampOverlap'], `${label}: and names the clamp overlap`)
     const stale = postWithTool(blocked, definition, operation, normalizeToolForProject(tool, project), clean.result)
     assert.deepEqual(codes(stale), ['postSetupOperationRefused'], `${label}: stale posted output refuses too`)
     assert.equal(stale.stats.moveCount, 0, `${label}: none of the affected motion is posted`)
