@@ -18,7 +18,6 @@ import type { ToolType } from '../../types/project'
 import type { ToolpathMove } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import { applyMoveToGrid } from './replay'
-import { cloneSquareMaterial } from './squareMaterial'
 import type { DirtyRegion, SimulationGrid } from './types'
 
 export interface PlaybackToolInfo {
@@ -66,20 +65,15 @@ export interface PlaybackPose {
 }
 
 /**
- * A square grid's `squareBar` descriptor and immutable `initialTopZ` baseline
- * ride along by reference through the spread; the mutable material — `topZ`, the
- * derived outer envelope, and the `squareMaterial` interval map — is copied
- * (issue #1016 C2-R1F). The interval arrays themselves are immutable after
- * assignment, so the map is copied shallowly and a cut never mutates one in
- * place; `reset` restores both from the base grid and never touches the
- * baseline.
+ * Copy a grid for playback: the mutable `topZ` is duplicated, while every
+ * immutable field — including a square blank's `initialTopZ` baseline — rides
+ * along by reference. A square grid therefore needs no special state here; its
+ * playback is the round bar's clone, seek and reset (issue #1016 C2).
  */
 export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
-  const squareMaterial = cloneSquareMaterial(source.squareMaterial)
   return {
     ...source,
     topZ: new Float32Array(source.topZ),
-    ...(squareMaterial ? { squareMaterial } : {}),
   }
 }
 
@@ -205,16 +199,6 @@ export class PlaybackController {
 
   reset(): void {
     this.liveGrid.topZ.set(this.baseGrid.topZ)
-    // The square material map must come back with `topZ`; a stale map would
-    // leave grooves and surviving lips from a later pose behind (issue #1016
-    // C2-R1F). The interval arrays are immutable, so a shallow copy cannot
-    // alias a cut back into the base grid.
-    const baseMaterial = this.baseGrid.squareMaterial
-    if (baseMaterial) {
-      this.liveGrid.squareMaterial = new Map(baseMaterial)
-    } else if (this.liveGrid.squareMaterial) {
-      this.liveGrid.squareMaterial.clear()
-    }
     this.moveIndex = 0
     this.moveFraction = 0
     this.distanceTraveled = 0

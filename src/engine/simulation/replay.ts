@@ -20,7 +20,6 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
-import { applySquareMoveToGrid } from './squareMaterial'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
 function clamp(value: number, min: number, max: number): number {
@@ -156,10 +155,10 @@ function applyMoveKernel(
 }
 
 /**
- * A square-blank grid replays through the physical polar kernel: a radial
- * heightfield's flat-sheet distance math would carve grooves that the finite
- * cutter never makes (issue #1016 C2-R1). Every flat/round grid keeps the
- * kernel and seam copies below byte-identical.
+ * The one cutting path, for every blank shape: a square grid is a radial
+ * heightfield whose cells simply start at their true cross-section heights, so
+ * it goes through this kernel and the periodic seam copies with no branch
+ * (issue #1016 C2). Flat/round output is byte-identical to before.
  */
 export function applyMoveToGrid(
   grid: SimulationGrid,
@@ -168,9 +167,6 @@ export function applyMoveToGrid(
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
 ): ApplyMoveResult {
-  if (grid.squareBar) {
-    return applySquareMoveToGrid(grid, move, toolRadius, toolType)
-  }
   const result = applyMoveKernel(grid, move, toolRadius, toolType, vBitAngle)
   if (!grid.wrap) return result
   // Periodic cutter overlap is dispatched outside the unchanged cell kernel.
@@ -203,33 +199,21 @@ export function applyMoveToGrid(
 }
 
 function computeStats(grid: SimulationGrid, processedMoveCount: number): SimulationStats {
-  // A square blank's virgin surface is its true cross section, not a uniform
-  // stock top, so each cell is measured against the immutable baseline (issue
-  // #1016 C2-R1). A physical removal counts even when it only takes an interior
-  // radial band and leaves the cell's outer `topZ` unchanged, which is why the
-  // count reads the remaining canonical intervals rather than `topZ`.
-  if (grid.squareBar && grid.initialTopZ) {
-    const baseline = grid.initialTopZ
+  // A grid that does not start uniformly (a square blank's true cross section)
+  // carries an immutable per-cell baseline, so removal is measured against each
+  // cell's own start (issue #1016 C2). `minTopZ` is the lowest current height,
+  // and the depth is the deepest drop from a cell's baseline — never
+  // `stockTopZ - minTopZ`, which would invent removal on virgin stock.
+  const baseline = grid.initialTopZ
+  if (baseline) {
     let removedCellCount = 0
     let minTopZ = grid.stockTopZ
     let maxRemovedDepth = 0
     for (let index = 0; index < grid.topZ.length; index += 1) {
       const z = grid.topZ[index]
       if (z < minTopZ) minTopZ = z
-      // Only a cell the cutter actually changed is ever written into the map,
-      // so a present key is a physical removal — even when the cell's outer
-      // endpoint did not move.
-      const intervals = grid.squareMaterial?.get(index)
-      if (intervals === undefined) continue
-      removedCellCount += 1
-      // The deepest removed radial point: when the core still reaches the stock
-      // bottom it is the low edge of the first removed band; otherwise the
-      // material below the innermost kept interval was cut to the bottom.
-      let deepestRemoved = grid.stockBottomZ
-      if (intervals.length >= 2 && intervals[0] <= grid.stockBottomZ + 1e-9) {
-        deepestRemoved = intervals[1]
-      }
-      const depth = baseline[index] - deepestRemoved
+      if (z < baseline[index] - 1e-9) removedCellCount += 1
+      const depth = baseline[index] - z
       if (depth > maxRemovedDepth) maxRemovedDepth = depth
     }
     return { removedCellCount, minTopZ, maxRemovedDepth, processedMoveCount }
