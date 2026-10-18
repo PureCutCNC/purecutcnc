@@ -278,7 +278,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   refuses both rotary operations with zero moves and `workholdingDiameter`,
   naming the clamp and both diameters in inches; moving the same chuck off the
   pivot reports `workholdingPlacement`. 40 seeded pure-turn feeds match the
-  analytic true-pivot inverse-time word.
+  analytic true-pivot inverse-time word. All sixteen square rough/finish fingerprints were
+  re-captured for #1016 C2-F7, which shortens every one (the cutter centre now
+  starts and ends one radius inside each stubbed end); the round fingerprints
+  did not move.
 - `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
   **emitted text** (#1016 C2 M1 correction): a seeded property test (300
   programs, seed 1016) generates supplied paths with safe turns, constant-angle

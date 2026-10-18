@@ -335,26 +335,29 @@ for (const axis of ['x', 'y'] as const) {
  * removes the air layers the flat cylinder bound still spent above the ball;
  * the flat rough and every `rotary_finish` entry did not move. All sixteen were
  * re-captured for #1016 C2-F6, whose exact retained-stub floor and stub-adjacent
- * stepped moves add motion the discrete sampler used to miss (the round
- * baselines above did not move).
+ * stepped moves add motion the discrete sampler used to miss. All sixteen moved
+ * again for #1016 C2-F7, which pulls the cutter centre one radius inside each
+ * stubbed end: the band-edge staircase and the stepped stub moves go, so every
+ * program is shorter. The round baselines above did not move in any of these
+ * slices.
  */
 const SQUARE_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/flat_endmill': 'moves=399d51f68c72be76|warnings=|gcode=be3e408f0d9ebb01|post=',
-  'x/mm/rotary_rough/ball_endmill': 'moves=78a917901a57063c|warnings=|gcode=2ad021923587d5a4|post=',
-  'x/mm/rotary_finish/flat_endmill': 'moves=a80cac8b089cb443|warnings=|gcode=5806c4acb93996a5|post=',
-  'x/mm/rotary_finish/ball_endmill': 'moves=fbb811969c738144|warnings=|gcode=3e4a4fa3d60da21b|post=',
-  'x/inch/rotary_rough/flat_endmill': 'moves=2f0845ac28af31d1|warnings=|gcode=d74bee153ed5785a|post=',
-  'x/inch/rotary_rough/ball_endmill': 'moves=8df0a3cdc0fb238d|warnings=|gcode=cece42eaee94568d|post=',
-  'x/inch/rotary_finish/flat_endmill': 'moves=181ba91b11b2b852|warnings=|gcode=7ef3a30ff31636ba|post=',
-  'x/inch/rotary_finish/ball_endmill': 'moves=27555691c2d2687a|warnings=|gcode=cd4a310c205da4cc|post=',
-  'y/mm/rotary_rough/flat_endmill': 'moves=63584b0939b95217|warnings=|gcode=b99875afd6a8e88e|post=',
-  'y/mm/rotary_rough/ball_endmill': 'moves=1d6ff5287ea2b999|warnings=|gcode=3f5acc4b83b45230|post=',
-  'y/mm/rotary_finish/flat_endmill': 'moves=31b05002c96cd7e7|warnings=|gcode=ed5604e9f6f4928b|post=',
-  'y/mm/rotary_finish/ball_endmill': 'moves=3aaa5b8518e8d522|warnings=|gcode=a6e2cad9aa367d34|post=',
-  'y/inch/rotary_rough/flat_endmill': 'moves=b0a66ac0ead5c8cf|warnings=|gcode=4bbac5073461a7e3|post=',
-  'y/inch/rotary_rough/ball_endmill': 'moves=98adefe574cfe79e|warnings=|gcode=b268e348f6ec3afc|post=',
-  'y/inch/rotary_finish/flat_endmill': 'moves=46fb2ca2aa80b397|warnings=|gcode=9ba42c40fac7cf35|post=',
-  'y/inch/rotary_finish/ball_endmill': 'moves=7c8dc601234d1d69|warnings=|gcode=2c77ae62701777dc|post=',
+  'x/mm/rotary_rough/flat_endmill': 'moves=85885a129a715d1f|warnings=|gcode=c8e2e59f0f71c344|post=',
+  'x/mm/rotary_rough/ball_endmill': 'moves=85a7e4cb7e0c5292|warnings=|gcode=bef1eb507ed2fcbf|post=',
+  'x/mm/rotary_finish/flat_endmill': 'moves=053aabc8034b2605|warnings=|gcode=d6f06644f0ce7909|post=',
+  'x/mm/rotary_finish/ball_endmill': 'moves=973d3f1ba714f1fb|warnings=|gcode=3ddbe70ea7fa9c98|post=',
+  'x/inch/rotary_rough/flat_endmill': 'moves=b3c3a9edf656c360|warnings=|gcode=3aa9f04e590b9c59|post=',
+  'x/inch/rotary_rough/ball_endmill': 'moves=72e498046b836ca1|warnings=|gcode=c0f7abbf43d1cbee|post=',
+  'x/inch/rotary_finish/flat_endmill': 'moves=4e502790e6ef4490|warnings=|gcode=6614d9e0cba0cd03|post=',
+  'x/inch/rotary_finish/ball_endmill': 'moves=39b4f48021eed6db|warnings=|gcode=efdbea4ee7f0fe9e|post=',
+  'y/mm/rotary_rough/flat_endmill': 'moves=329f430e883ccdf5|warnings=|gcode=245c0a871dab793a|post=',
+  'y/mm/rotary_rough/ball_endmill': 'moves=4a07dbd9e16cb7b2|warnings=|gcode=9936a3b7e36ce2cc|post=',
+  'y/mm/rotary_finish/flat_endmill': 'moves=16183c8ef9bd5efe|warnings=|gcode=d393919e0a6399d4|post=',
+  'y/mm/rotary_finish/ball_endmill': 'moves=2e51c7ea35f4a585|warnings=|gcode=2aafb7e0aea0717b|post=',
+  'y/inch/rotary_rough/flat_endmill': 'moves=f24a27352cc9c7f4|warnings=|gcode=079230dc1d2ae57f|post=',
+  'y/inch/rotary_rough/ball_endmill': 'moves=503066123961ead4|warnings=|gcode=db611da83e6b0ecc|post=',
+  'y/inch/rotary_finish/flat_endmill': 'moves=c937c8b9c3e1409d|warnings=|gcode=7da1459ec1c3e6ea|post=',
+  'y/inch/rotary_finish/ball_endmill': 'moves=a4f7ec0ec9ec832a|warnings=|gcode=b4b7dff4937862da|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_SQUARE === '1') {

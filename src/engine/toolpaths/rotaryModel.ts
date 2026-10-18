@@ -1068,27 +1068,58 @@ function withRetainedBar(
 }
 
 /**
- * The along positions the sampler reads for one operation.
+ * The span the cutter's **centre** may travel inside a cut range (#1016 C2-F7).
+ *
+ * A square blank keeps the bar beyond the cut range as retained stock, so a cut
+ * range that ends inside the bar ends on a stub face. `rotaryAlongRange` limits
+ * the centre to the model's extent, which puts it exactly on that face, and the
+ * cutter then reaches a full radius into the retained square. Pulling the centre
+ * one cutter radius inside each stubbed end makes the cutter's rim tangent to
+ * the face: the cutter stays wholly inside the band, every sample is at or
+ * beyond the F6 floor's reach (so that exact floor is a net that no longer
+ * binds), and the pass starts and ends with the emitter's own plunge and
+ * retract. The price, approved for this slice, is that the band within one
+ * cutter radius of a stub face keeps the shoulder fillet the cutter's side
+ * leaves there.
+ *
+ * The end of a range that meets the bar's own end has no stub and is unchanged;
+ * round bars are returned unchanged (`radius` 0, byte-identical, and their band
+ * is #1042's).
+ *
+ * `null` when the two pulls cross: the caller refuses with the existing
+ * `rotaryNoRoom`, exactly as for an already-empty range.
+ */
+function rotaryCutterSpan(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): { start: number; end: number } | null {
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const radius = isSquareStock(stock) ? tool.radius : 0
+  const start = params.alongStart > lower ? params.alongStart + radius : params.alongStart
+  const end = upper > params.alongEnd ? params.alongEnd - radius : params.alongEnd
+  return start < end ? { start, end } : null
+}
+
+/**
+ * The along positions the sampler reads for one operation, over the
+ * cutter-centre span `rotaryCutterSpan` returns.
  *
  * On a round bar this is exactly the uniform grid `sampleSpacing` asks for.
  *
- * A square blank's retained stub beyond each cut range (#1016 C2-S3) puts a
- * step in the required tip height one (stock-to-leave-enlarged) cutter footprint
- * inside that range: while the tool's axial rim still reaches the stub the tip
- * is lifted to the blank's surface, and it drops to the target the moment the
- * rim clears. That step is a
- * discontinuity, so a single straight move between two samples that straddle it
- * cuts the chord below the stub and the rim enters the retained square — a
- * finer *uniform* grid does not remove it, because the step still falls between
- * two samples unless one lands on it. The stepped move `emitRotaryRuns` already
- * knows (rise, run at the higher tip, drop) is safe there, but it only fires
- * when the rise exceeds the spacing. Both shoulders are therefore sampled at
- * the height map's own resolution — the requested cell, the bound on the
- * sampler's discretization — across one cutter footprint plus that cell. There
- * either the step makes the rise exceed the spacing and the stepped move is
- * emitted, or the residual chord dip is at most that spacing, the same error
- * every sampled tip already carries. The rest of the range, and every round
- * bar, is untouched.
+ * A square blank's stubbed end starts the required tip at the shoulder height:
+ * the first sample sits one cutter radius inside the band, and while its
+ * footprint still reaches the model at the band's edge the tip is the material
+ * there -- the blank's own surface when the target itself meets the blank at
+ * that edge. It falls to the model as the footprint clears, over the first
+ * cutter footprint plus the height map's cell. Both stubbed ends keep the F6
+ * refinement at that same fine resolution: with the centre one radius off the
+ * stub the exact floor no longer binds, but the along density and the
+ * `MAX_SHOULDER_SAMPLES` cap stay as they were and a steep rise at a band edge
+ * is still resolved. The rest of the span, every unstubbed end and every round
+ * bar are untouched.
  *
  * Returns `null` when `MAX_SHOULDER_SAMPLES` would widen the added spacing past
  * the cell the sampler actually uses: the residual is then larger than the
@@ -1101,9 +1132,10 @@ function rotaryAlongPositions(
   stock: BarStock,
   tool: NormalizedTool,
   params: RotaryFinishParams,
+  span: { readonly start: number; readonly end: number },
 ): number[] | null {
-  const start = params.alongStart
-  const end = params.alongEnd
+  const start = span.start
+  const end = span.end
   const intervals = boundedIntervals(end - start, params.sampleSpacing) ?? 1
   const base: number[] = []
   for (let i = 0; i <= intervals; i++) base.push(start + (end - start) * i / intervals)
@@ -1112,9 +1144,10 @@ function rotaryAlongPositions(
   const meshAlong = alongExtremes(mesh.positions, stock)
   const lower = Math.min(stock.axis === 'x' ? stockBounds.minX : stockBounds.minY, meshAlong.min)
   const upper = Math.max(stock.axis === 'x' ? stockBounds.maxX : stockBounds.maxY, meshAlong.max)
-  // Only a real stub makes a step: `withRetainedBar` leaves one out where the
-  // cut range already meets the bar's end, and then there is no shoulder to
-  // refine and no cap to prove.
+  // Only a real stub makes a shoulder: `withRetainedBar` leaves one out where
+  // the cut range already meets the bar's end, and then there is no shoulder to
+  // refine and no cap to prove. `rotaryCutterSpan` has already pulled the
+  // centre off that stub face, so this compares the *span* with the bar's ends.
   const startShoulder = start > lower
   const endShoulder = end < upper
   if (!startShoulder && !endShoulder) return base
@@ -1133,10 +1166,10 @@ function rotaryAlongPositions(
     : { minX: centre - envelope, maxX: centre + envelope, minY: lower, maxY: upper }
   const cell = chooseHeightMapCellSize(samplingBounds, params.requestedCellSize, [])
   const fine = Math.max(params.requestedCellSize, 1e-6)
-  // A grid already at or below the resolution resolves the step by itself.
+  // A grid already at or below the resolution resolves the shoulder by itself.
   if (!(params.sampleSpacing > fine)) return base
   // The sampler widens the tool by `stockToLeave` (see `rotaryTargets`), so the
-  // step sits one *enlarged* footprint inside the range.
+  // shoulder sits one *enlarged* footprint inside the span.
   const zone = tool.radius + Math.max(0, params.stockToLeave) + cell
   if (!Number.isFinite(zone) || !(zone > 0)) return base
   let step = fine
@@ -1284,9 +1317,18 @@ function rotaryTargets(
   // spaced for the inscribed circle would step past the corners. The step is
   // therefore conservative for a square and exactly the old one for a round
   // bar (where the two radii are equal).
+  // The cutter-centre span (#1016 C2-F7): the cut range pulled one cutter radius
+  // inside a square blank's stubbed ends, so no sample overlaps the retained
+  // stock. `params.alongStart`/`alongEnd` stay the *band*, and so the stub faces
+  // the sampler, the F6 floor and the step predicate read. A span that collapses
+  // has no room for the cutter at all and refuses like an empty range.
+  const span = rotaryCutterSpan(stock, tool, params)
+  if (!span) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryNoRoom' }
+  }
   const maxRadius = barMaxRadius(stock)
   const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
-  const along = rotaryAlongPositions(mesh, stock, tool, params)
+  const along = rotaryAlongPositions(mesh, stock, tool, params, span)
   if (along === null) {
     return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
   }

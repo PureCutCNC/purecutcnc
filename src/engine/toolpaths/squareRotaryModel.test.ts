@@ -37,9 +37,10 @@
  *   (#1016 C2-F2)
  * - pivot shifted to `maxRadius`: the pivot-contract, travel-height and
  *   retained-corner checks fail
- * - retained square replaced by a round stub: the 45° retained-corner check and
- *   the physical sweep's retained-column check fail (a stub built as a cylinder
- *   also fails the direct stub-geometry check)
+ * - retained square replaced by a round stub: the direct stub-geometry and
+ *   sampled-stub checks fail, and the physical sweep's retained-column check
+ *   fails (after #1016 C2-F7 the generator no longer rides the corner, so the
+ *   sweep -- not a lifted pass -- is what measures the corner now)
  * Run with: npx tsx src/engine/toolpaths/squareRotaryModel.test.ts
  */
 
@@ -264,10 +265,10 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       approx(row[i], angle % 90 === 0 ? H : MAX_R, `retained stub ${angle}° along ${along[i]}`, 0.12)
     }
   })
-  // The retainer the generators actually build is square too: a stepover that
-  // puts a pass on exactly 45° must be lifted by the retained corner to the
-  // corner radius near the cut range's end. A round stub would leave it at half
-  // the side (and the cutter in the corner).
+  // The retainer the generators build is square too, but #1016 C2-F7 pulls the
+  // cutter centre one cutter radius inside each stubbed end, so a pass no longer
+  // rides the retained corner: a stepover that puts a pass on exactly 45° cuts
+  // at the model radius and its centre never leaves the band.
   const band = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
   const retained = generateRotaryFinish('retained', band, SQUARE, BALL, { ...PARAMS, stepover: 2 * Math.PI * MAX_R / 8 }, {})
   // The real cutting moves, not the inter-run links that sit one clearance
@@ -275,8 +276,16 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   const at45 = retained.moves.filter((m) => m.kind === 'cut' && m.to.a === 45 && m.to.z < PIVOT + MAX_R + 0.5)
   assert.ok(at45.length > 0, 'the 45° pass cuts')
   const max45 = Math.max(...at45.map((m) => m.to.z)) - PIVOT
-  assert.ok(max45 > H + 1, `the retained corner lifts the 45° pass above the flat (${max45})`)
-  approx(max45, MAX_R, 'the retained corner reads the corner radius', 0.2)
+  assert.ok(max45 < H, `the 45° pass no longer rides the retained corner (${max45} < ${H})`)
+  approx(max45, TARGET_RADIUS, 'the 45° pass cuts the model radius', 0.05)
+  const inset = BALL.radius
+  for (const move of retained.moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      assert.ok(point.x >= BAND_START + inset - 1e-9 && point.x <= BAND_END - inset + 1e-9,
+        `the cutter centre stays one radius inside the band (${point.x})`)
+    }
+  }
   assert.equal(squareBlankRetainedStub(SQUARE, 5, 5), null, 'empty span has no stub')
   assert.equal(squareBlankRetainedStub(SQUARE, 5, 3), null, 'reversed span has no stub')
   console.log('square model: retained ends are closed square prisms at the pivot')
@@ -673,13 +682,15 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       `${label}: refuses with the sampling-ratio code`)
   }
 
-  // (b) The capped-spacing guard. A 0.4 x 0.5 blank with a 4 mm cutter sampled
-  // at a requested cell below `zone / MAX_SHOULDER_SAMPLES` cannot honour the
-  // flat-aligned effective cell once the cap widens the added spacing, so the
-  // job refuses. Both axes, mm and inch, on and off origin, flat and ball, both
-  // ends (a misaligned band) and stock to leave on and off.
+  // (b) The collapsed-span refusal wins. A 0.4 x 0.5 blank with a 4 mm cutter
+  // (radius 2) cannot hold a band longer than the cutter's diameter, so after
+  // #1016 C2-F7 pulls the centre one cutter radius inside each stubbed end the
+  // cutter-centre span is empty: the job refuses with `rotaryNoRoom` before any
+  // grid work, whatever the requested cell would have done. Both axes, mm and
+  // inch, on and off origin, flat and ball, both ends (a misaligned band) and
+  // stock to leave on and off.
   const scaleOf = (units: 'mm' | 'inch'): number => units === 'mm' ? 1 : 0.03937007874015748
-  let cappedRefusals = 0
+  let collapsedRefusals = 0
   for (const axis of ['x', 'y'] as const) {
     for (const units of ['mm', 'inch'] as const) {
       for (const offset of [false, true]) {
@@ -700,48 +711,81 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
             }
             assert.ok(start > lower && end < upper, 'the misaligned band leaves a retained shoulder at both ends')
             const mesh = cylinderMesh(stock, 0.08 * scale, start, end, 32)
-            const label = `capped cell (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave})`
+            const label = `collapsed span (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave})`
             const { result, sampled } = runBeforeSampling(
-              (onAngle) => generateRotaryFinish('capped-cell', mesh, stock, tool, params, { onAngle }),
+              (onAngle) => generateRotaryFinish('collapsed-span', mesh, stock, tool, params, { onAngle }),
               label,
             )
             assert.equal(sampled, false, `${label}: no angle is sampled`)
             assert.deepEqual(result.moves, [], `${label}: emits no motion`)
-            assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'], `${label}: refuses`)
-            cappedRefusals++
+            assert.deepEqual(result.warnings.map((w) => w.code), ['rotaryNoRoom'],
+              `${label}: the empty span wins over the requested sampling density`)
+            collapsedRefusals++
           }
         }
       }
     }
   }
-  assert.equal(cappedRefusals, 32, 'both axes, mm and inch, on and off origin, flat and ball, both ends and both stock values are exercised')
+  assert.equal(collapsedRefusals, 32, 'both axes, mm and inch, on and off origin, flat and ball, both ends and both stock values are exercised')
 
-  // The same geometry with a requested cell one step *below* the cap still
+  // (b2) The capped-spacing guard still refuses a span that survives. A long,
+  // thin 0.1 x 8.5 mm blank with a 4.2 mm radius cutter leaves a 0.05 mm
+  // cutter-centre span, while the requested 1e-3 cell is below
+  // `zone / MAX_SHOULDER_SAMPLES`: the cap widens the added shoulder spacing
+  // past the flat-aligned effective cell (the height-map cell cap does not widen
+  // that one), so the job refuses before sampling instead of accepting a coarser
+  // shoulder resolution. Both axes and both cutter shapes.
+  let cappedRefusals = 0
+  for (const axis of ['x', 'y'] as const) {
+    for (const type of ['flat_endmill', 'ball_endmill'] as const) {
+      const stock = squareStock(0.1, 8.5, axis)
+      const bounds = getStockBounds(stock)
+      const lower = axis === 'x' ? bounds.minX : bounds.minY
+      const upper = axis === 'x' ? bounds.maxX : bounds.maxY
+      const start = lower + 0.02
+      const end = upper - 0.03
+      const tool: NormalizedTool = { ...BALL, type, units: 'mm', radius: 4.2, diameter: 8.4 }
+      const params = {
+        stepover: 0.5, stepdown: 0.2, sampleSpacing: 0.1, stockToLeave: 0,
+        alongStart: start, alongEnd: end, safeRadius: 5, requestedCellSize: 1e-3,
+      }
+      assert.ok(start + tool.radius < end - tool.radius, 'the cap fixture still leaves a cutter-centre span')
+      const label = `capped spacing (${axis}/${type})`
+      const { result, sampled } = runBeforeSampling(
+        (onAngle) => generateRotaryFinish('capped-cell', cylinderMesh(stock, 0.02, start, end, 32), stock, tool, params, { onAngle }),
+        label,
+      )
+      assert.equal(sampled, false, `${label}: no angle is sampled`)
+      assert.deepEqual(result.moves, [], `${label}: emits no motion`)
+      assert.deepEqual(result.warnings.map((w) => w.code), ['operationStepoverRatioRange'], `${label}: refuses`)
+      cappedRefusals++
+    }
+  }
+  assert.equal(cappedRefusals, 4, 'both axes and both cutter shapes exercise the capped-spacing guard')
+
+  // The same geometry with a requested cell one step *above* the cap still
   // generates -- the guard refuses only the spacing that cannot honour the
   // effective cell, it is not a blanket refusal of capped jobs.
   {
     let nearCapCases = 0
     for (const axis of ['x', 'y'] as const) {
-      for (const units of ['mm', 'inch'] as const) {
-        const scale = scaleOf(units)
-        const stock = squareStock(0.4 * scale, 0.5 * scale, axis)
-        const bounds = getStockBounds(stock)
-        const lower = axis === 'x' ? bounds.minX : bounds.minY
-        const length = 0.5 * scale
-        const start = lower + 0.1 * length
-        const end = start + 0.25 * length
-        const tool: NormalizedTool = { ...BALL, type: 'flat_endmill', units, radius: 2 * scale, diameter: 4 * scale }
-        const params = {
-          stepover: 0.5 * scale, stepdown: 0.2 * scale, sampleSpacing: 0.1 * scale, stockToLeave: 0,
-          alongStart: start, alongEnd: end, safeRadius: 5 * scale, requestedCellSize: 5e-4 * scale,
-        }
-        const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.08 * scale, start, end, 32), stock, tool, params, {})
-        assert.ok(near.moves.length > 0, `near-cap (${axis}/${units}) still generates`)
-        assert.ok(!near.warnings.some((w) => w.code === 'operationStepoverRatioRange'), `near-cap (${axis}/${units}) is not refused`)
-        nearCapCases++
+      const stock = squareStock(0.1, 8.5, axis)
+      const bounds = getStockBounds(stock)
+      const lower = axis === 'x' ? bounds.minX : bounds.minY
+      const upper = axis === 'x' ? bounds.maxX : bounds.maxY
+      const start = lower + 0.02
+      const end = upper - 0.03
+      const tool: NormalizedTool = { ...BALL, type: 'flat_endmill', units: 'mm', radius: 4.2, diameter: 8.4 }
+      const params = {
+        stepover: 0.5, stepdown: 0.2, sampleSpacing: 0.1, stockToLeave: 0,
+        alongStart: start, alongEnd: end, safeRadius: 5, requestedCellSize: 1.1e-3,
       }
+      const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.02, start, end, 32), stock, tool, params, {})
+      assert.ok(near.moves.length > 0, `near-cap (${axis}) still generates`)
+      assert.deepEqual(near.warnings, [], `near-cap (${axis}) raises no warning`)
+      nearCapCases++
     }
-    assert.equal(nearCapCases, 4, 'near-cap jobs generate on both axes and in both units')
+    assert.equal(nearCapCases, 2, 'near-cap jobs generate on both axes')
   }
 
   // (c) The bound is *proven* when the cap binds on a real part: the manager

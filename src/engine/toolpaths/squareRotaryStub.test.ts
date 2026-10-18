@@ -16,7 +16,7 @@
 
 /**
  * Exact retained-stub contact for a square blank's rotary rough and finish
- * (#1016 C2-F6).
+ * (#1016 C2-F6), now the safety net under #1016 C2-F7.
  *
  * `withRetainedBar` adds the retained square stubs to the mesh the height-map
  * sampler reads, but the sampler only lifts a sample where its **discrete
@@ -45,6 +45,19 @@
  * never call either: the floor returns `-Infinity` for a round stock and no
  * step predicate is built.
  *
+ * ## F7 turns the floor into a net
+ *
+ * #1016 C2-F7 pulls the cutter centre one cutter radius inside each stubbed
+ * end, so no sample of either fixture is inside a stub's reach any more: the
+ * floor is `-Infinity` everywhere and never binds, and the rough's `NaN`
+ * fallback near a stub is not reached either. This file therefore pins the
+ * closed form **directly** -- the exact values, the near-reach over-lift guard,
+ * the tangency, and synthetic moves at the stub face -- while the seeded sweep
+ * proves through the independent oracle that the emitted motion clears the
+ * retained square with the floor out of the picture. Whether the floor is wired
+ * in at all is no longer observable in F7 output (a mutation this file cannot
+ * bite any more; reported with that slice).
+ *
  * ## The independent oracle
  *
  * `stubPenetration` never reads the floor helper. It takes the **emitted**
@@ -58,18 +71,17 @@
  *
  * ## Mutations this file bites
  *
- *  - **floor removed**: the A0 sample falls back to the mesh's `10` and the
- *    oracle measures the plunge; the A0 exact-tip assertion fails;
- *  - **ball `-(rt - rho)` dropped**: the ball's A0 stub sample lifts to
- *    `12.5` instead of `12.408990`; its exact-tip assertion fails;
+ *  - **ball `-(rt - rho)` dropped**: the ball stub-face contact lifts to `12.5`
+ *    instead of `12.408990`; the exact-value assertion fails;
  *  - **`rho = rt` regardless of the axial gap**: the sample `0.02 mm` inside
  *    the cutter radius lifts to the full `13.025160` instead of `12.663010`;
  *    the near-reach assertions fail;
- *  - **stepped-chord safeguard removed**: the 0.7 mm drop adjacent to the stub
- *    at `A229.787` sags into the retained corner and the segment oracle fails;
- *  - **stub floor not applied to the `NaN` fallback**: the off-axis rough
- *    plunges to 9.677670 at `x = 20.933333, A1080` and the exact oracle
- *    measures the 0.066667 mm intrusion.
+ *  - **a tangency treated as an overlap** (`gap < reach` without the rounding
+ *    allowance): the first sample of every stubbed pass is lifted to the
+ *    blank's height and the F7 span assertions in `squareRotaryBand.test.ts`
+ *    fail;
+ *  - **a feed move placed inside the stub's reach**: the sweep's per-point
+ *    assertion and the penetration oracle fail.
  *
  * Run with: npx tsx src/engine/toolpaths/squareRotaryStub.test.ts
  */
@@ -511,48 +523,27 @@ console.log('Testing the Codex A0 plunge and the stub-face under-read...')
   assert.deepEqual(result.warnings, [], 'the exact repro generates without a warning')
   assert.ok(result.moves.length > 0, 'the exact repro cuts')
 
-  // The A0 sample at x = 20.933333 is the one the mesh under-read as 9.999256.
-  // Its exact contact at A0 is the retained flat, 12.5; with every sample
-  // lifted there the run is one horizontal leg at 12.5 across it (the collinear
-  // merge then keeps only the leg's ends), so the leg itself is the evidence.
-  const target = 20.933333333333334
-  const a0Moves = result.moves.filter((move) => move.kind !== 'rapid'
-    && (move.from.a ?? 0) === 0 && (move.to.a ?? 0) === 0)
-  const leg = a0Moves.find((move) => Math.min(move.from.x, move.to.x) <= target
-    && Math.max(move.from.x, move.to.x) >= target)
-  assert.ok(leg, 'the A0 pass still covers x=20.933333')
-  assert.ok(Math.abs(leg.from.z - leg.to.z) <= 1e-9, 'the A0 coverage of x=20.933333 is horizontal')
-  approx(leg.from.z - pivot, CODEX_SIDE / 2, 'the A0 sample at x=20.933333 is lifted to the stub flat', 1e-9)
-  // Every A0 cut point within the cutter's axial reach of the stub is at or
-  // above the retained flat: the unsafe vertical plunge has moved past it.
-  let reachable = 0
-  for (const move of a0Moves) {
+  // #1016 C2-F7 pulled the cutter centre one radius inside each stubbed end, so
+  // the A0 sample this file was written around (x = 20.933333, 0.066667 mm
+  // inside the stub's reach) is no longer emitted: the real pass now starts at
+  // x = 21 and nothing is cut at the stub face. The F6 floor stays the net it
+  // was, and the sweep below proves the cutter still clears the square.
+  const reach = along.start + tool.radius
+  for (const move of result.moves) {
     for (const point of [move.from, move.to]) {
-      if (point.x < along.start || point.x > along.start + tool.radius) continue
-      reachable++
-      assert.ok(point.z - pivot >= CODEX_SIDE / 2 - 1e-9,
-        `an A0 point within the cutter radius of the stub stays on or above its flat (${point.z - pivot})`)
+      assert.ok(point.x >= reach - 1e-9,
+        `no emitted point reaches the stub (${point.x} >= ${reach})`)
     }
   }
-  assert.ok(reachable > 0, 'the A0 pass still has points within the cutter radius of the stub')
-  const a0Drop = a0Moves
-    .filter((move) => Math.abs(move.from.z - move.to.z) > 1e-9
-      && move.from.z - pivot <= CODEX_SIDE / 2 + 1e-6
-      && move.to.z - pivot <= CODEX_SIDE / 2 + 1e-6)
-    .map((move) => Math.min(move.from.x, move.to.x))
-  assert.ok(a0Drop.length > 0, 'the A0 pass still descends to the model')
-  assert.ok(Math.min(...a0Drop) >= along.start + tool.radius,
-    `the A0 descent starts outside the cutter's axial reach of the stub (${Math.min(...a0Drop)})`)
   const measured = stubPenetration(stock, tool, result.moves, along.start, along.end)
   assert.ok(measured.max <= 1e-6,
     `the whole Codex program clears both retained stubs (${measured.max} at ${measured.where})`)
 
   // The second measured case: the exact contact the review cites at
   // A7.769784 is the helper's value, and the review's under-read 13.001261 is
-  // a real intrusion while the exact value only touches. (The pass angle is
-  // not reachable through the current pass-count rounding; the generated pass
-  // at the nearest angle, A7.659574, exercises the same stub-face under-read
-  // below.)
+  // a real intrusion while the exact value only touches. Both are synthetic
+  // moves at the stub face, so they pin the closed form independently of where
+  // F7 now places the samples.
   const measuredFloor = squareRotaryStubContactFloor(stock, 7.769784, 3, 'flat_endmill', 0)
   approx(measuredFloor, 13.025160, 'the review\'s exact contact at A7.769784', 1e-6)
   const atStubFace = (tip: number): ToolpathMove => ({
@@ -565,14 +556,12 @@ console.log('Testing the Codex A0 plunge and the stub-face under-read...')
   const exact = stubPenetration(stock, tool, [atStubFace(measuredFloor)], along.start, along.end)
   assert.ok(exact.max <= 1e-6, `the exact contact only touches the stub face (${exact.max})`)
 
-  // The reachable stub-face sample is exact, not the mesh's under-read: the
-  // generated pass at A7.659574 read 12.941416 before the floor.
+  // The old stub-face sample (the generated pass at A7.659574, x = 18) is gone
+  // with the pull-in: nothing is cut at the band's edge any more.
   const faceAngle = 360 / 47
-  approx(lowestTipAt(result.moves, along.start, faceAngle, stock),
-    squareRotaryStubContactFloor(stock, faceAngle, 3, 'flat_endmill', 0),
-    'the stub-face sample at the nearest reachable pass is exact', 1e-9)
-  console.log(`  Codex A0: the leg over x=20.933333 sits at tip ${(leg.from.z - pivot).toFixed(6)} `
-    + `(exact ${CODEX_SIDE / 2}); program penetration ${measured.max.toExponential(2)}`)
+  assert.equal(lowestTipAt(result.moves, along.start, faceAngle, stock), Infinity,
+    'no sample is left at the stub face to lift')
+  console.log(`  Codex A0: the pass now starts at x=${reach}, program penetration ${measured.max.toExponential(2)}`)
 }
 
 // ── 2. the ball offset and the near-reach lift are exact ──────────────
@@ -593,6 +582,12 @@ console.log('Testing the ball offset and the near-reach contact...')
   assert.ok(near < full - 0.3, `and not to the full-footprint contact (${near} < ${full - 0.3})`)
   assert.equal(squareRotaryStubContactFloor(stock, angle, 3, 'flat_endmill', 3), Number.NEGATIVE_INFINITY,
     'a sample at the cutter radius is untouched')
+  // The F7 pull-in puts the first sample exactly one cutter radius from the stub
+  // face, and the subtraction that recovers the gap can round a few ulps below
+  // `reach`. A gap that close is still a tangency: it must not jump to the
+  // blank's full height and lift that sample off the model.
+  assert.equal(squareRotaryStubContactFloor(stock, angle, 3, 'flat_endmill', 3 * (1 - 1e-12)),
+    Number.NEGATIVE_INFINITY, 'a gap within rounding distance of the cutter radius is still a tangency')
   // Ball at the Codex A0 stub face: the exact floor for d = 0.733333 is
   // 12.408990. Dropping `-(rt - rho)` would read the flat's 12.5.
   const ballFloor = squareRotaryStubContactFloor(stock, 0, 3, 'ball_endmill', 0.7333333333333333)
@@ -601,11 +596,10 @@ console.log('Testing the ball offset and the near-reach contact...')
 
   const fixture = codexFixture('ball_endmill')
   const result = generateRotaryOperation(fixture.project, fixture.operation)
-  approx(
-    lowestTipAt(result.moves, 18.733333333333334, 0, stock),
-    ballFloor,
-    'the generated ball sample at the stub is lifted to the exact ball contact', 1e-9,
-  )
+  // The ball sample the F6 case measured at x = 18.733333 (0.733 mm inside the
+  // stub) is gone with the F7 pull-in; the floor it pinned is asserted above.
+  assert.equal(lowestTipAt(result.moves, 18.733333333333334, 0, stock), Infinity,
+    'the ball no longer cuts inside the retained stub\'s reach')
   const measured = stubPenetration(stock, fixture.tool, result.moves, CODEX_ALONG.start, CODEX_ALONG.end)
   assert.ok(measured.max <= 1e-6,
     `the ball program clears both retained stubs (${measured.max} at ${measured.where})`)
@@ -643,27 +637,18 @@ for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
   const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
   assert.ok(measured.max <= 1e-6,
     `${toolType}: the off-axis rough clears both retained stubs (${measured.max} at ${measured.where})`)
-  // A720 is still cut at the sample and its floor is above the layer, so the
-  // flat's emitted tip is the floor itself.
-  if (toolType === 'flat_endmill') {
-    approx(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 720, stock), floor,
-      'the flat NaN fallback is lifted to the stub floor', 1e-9)
-  } else {
-    assert.ok(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 720, stock) >= floor - 1e-9,
-      'the ball A720 sample is at or above its floor')
-  }
-  // The A1080 plunge Codex measured: the flat's floor is above that layer, so
-  // the sample is not cut at all; the ball cuts it exactly at its floor.
-  const fourth = cutTipAt(result.moves, CODEX_NAN_SAMPLE, 1080, stock)
-  if (toolType === 'flat_endmill') {
-    assert.equal(fourth, Infinity, 'the flat does not cut the A1080 sample: its floor clears the layer')
-  } else {
-    approx(fourth, floor, 'the ball cuts the A1080 sample at its exact floor', 1e-9)
-  }
+  // #1016 C2-F7 moved every sample at least one cutter radius off the stub, so
+  // the F6b `NaN` fallback near the stub is never reached: nothing is cut at the
+  // old sample positions at either layer. The floor stays a net for any sample
+  // that does reach a stub.
+  assert.equal(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 720, stock), Infinity,
+    `${toolType}: the A720 sample is no longer inside the stub's reach`)
+  assert.equal(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 1080, stock), Infinity,
+    `${toolType}: the A1080 sample is no longer inside the stub's reach`)
   const checked = assertStubFloorsRespected(
     stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, `off-axis rough ${toolType}`,
   )
-  assert.ok(checked > 0, `${toolType}: the off-axis rough has points inside a stub's reach`)
+  assert.equal(checked, 0, `${toolType}: the F6b floor never binds -- no point is inside a stub's reach`)
   console.log(`  off-axis rough ${toolType}: floor ${floor.toFixed(6)}, penetration ${measured.max.toExponential(2)}`)
 }
 
@@ -815,6 +800,7 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     { side: 2, units: 'inch' },
   ]
   let cases = 0
+  let collapsed = 0
   let worst = 0
   let worstLabel = ''
   let movesWalked = 0
@@ -828,6 +814,17 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     const result = generateRotaryOperation(fixture.project, fixture.operation)
     const label = `${spec.axis}/${spec.units}/${spec.toolType}/r${spec.radius.toFixed(3)}/${spec.range}`
       + `${spec.offset ? `/offset${spec.offset.toFixed(3)}` : ''}`
+    // A band shorter than the cutter cannot hold the cutter at all once its
+    // centre is pulled one radius inside each stub (#1016 C2-F7): refusing with
+    // `rotaryNoRoom` and emitting nothing is the correct answer for those
+    // sweep cases, not a failure.
+    if (!(fixture.along.end - fixture.along.start > 2 * fixture.tool.radius)) {
+      collapsed++
+      assert.deepEqual(result.moves, [], `${label}: a band narrower than the cutter emits no motion`)
+      assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryNoRoom'],
+        `${label}: a band narrower than the cutter says there is no room`)
+      return
+    }
     // An off-axis target's lower half really is below the centreline; that is
     // the model's warning, not the retained stub's.
     const unexpected = result.warnings.filter(
@@ -838,9 +835,28 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     const measured = stubPenetration(
       fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end,
     )
-    assertStubFloorsRespected(
+    // #1016 C2-F7: every sample is at least one cutter radius from each stub, so
+    // the exact F6 floor has nothing to lift in any case. That is the property
+    // this call pins; the oracle below still proves the cutter clears the square.
+    const floored = assertStubFloorsRespected(
       fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, label,
     )
+    assert.equal(floored, 0, `${label}: the F6 floor never binds -- no point is inside a stub's reach`)
+    // The pull-in is one cutter radius, and only at an end that has a stub. The
+    // cases that run to the bar's end keep their reach there.
+    const stock = fixture.project.stock as BarStock
+    const bounds = getStockBounds(stock)
+    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    const minAlong = fixture.along.start > lower ? fixture.along.start + fixture.tool.radius : fixture.along.start
+    const maxAlong = upper > fixture.along.end ? fixture.along.end - fixture.tool.radius : fixture.along.end
+    for (const move of result.moves) {
+      for (const point of [move.from, move.to]) {
+        const along = stock.axis === 'x' ? point.x : point.y
+        assert.ok(along >= minAlong - 1e-9 && along <= maxAlong + 1e-9,
+          `${label}: the cutter centre is one radius inside a stubbed end (${along} in ${minAlong}..${maxAlong})`)
+      }
+    }
     movesWalked += result.moves.length
     if (measured.max > worst) {
       worst = measured.max
@@ -907,11 +923,13 @@ console.log('Testing the seeded square sweep against both retained stubs...')
       }
     }
   }
-  assert.ok(cases >= 46, 'the sweep covers every side, axis, shape and retained end, including off-axis targets')
+  assert.ok(cases >= 40, 'the sweep covers every side, axis, shape and retained end, including off-axis targets')
+  assert.equal(cases + collapsed, 46, 'every sweep case either cuts or correctly refuses a band narrower than the cutter')
   assert.ok(smallestRadius <= 0.5 + 1e-9, `the sweep reaches the 0.5 mm cutter (${smallestRadius})`)
   assert.ok(largestRadius >= 6 - 1e-9, `the sweep reaches the 6 mm cutter (${largestRadius})`)
   assert.ok(movesWalked > 0, 'the sweep walks real motion')
-  console.log(`  square sweep: ${cases} cases (cutters ${smallestRadius.toFixed(3)}..${largestRadius.toFixed(3)} mm), `
+  console.log(`  square sweep: ${cases} cases, ${collapsed} narrowed bands refused `
+    + `(cutters ${smallestRadius.toFixed(3)}..${largestRadius.toFixed(3)} mm), `
     + `${movesWalked} moves, worst stub penetration ${worst.toExponential(2)}`
     + `${worstLabel ? ` (${worstLabel})` : ''}`)
 }

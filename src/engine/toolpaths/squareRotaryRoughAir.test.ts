@@ -508,8 +508,10 @@ function ballCutterHitsBlank(
 //
 // 20 mm square, A0, 4 mm flat, 0.1 mm stepdown. The old radial bound emitted
 // layers at Z = 20.1421 and 20.0421; the slab bound first emits at Z = 19.9421.
-// The only A0 material at the face is the retained shoulder on the blank's own
-// surface, never a pass above it.
+// Before #1016 C2-F7 the first A0 sample sat on the blank's face because the
+// cutter centre started at the band's edge; the pass no longer touches the
+// retained shoulder there, so this now also pins that no A0 endpoint is on the
+// face at all.
 {
   const blank = squareStock(20, 60, 'x')
   const pivot = barPivotZ(blank)
@@ -520,24 +522,34 @@ function ballCutterHitsBlank(
     alongStart: 18, alongEnd: 42, safeRadius: 5, requestedCellSize: 0.2,
   }, {})
   let aboveFace = 0
+  let aboveEnvelope = 0
   let atFace = 0
   let belowFace = 0
   let shallowestBulk = -Infinity
+  const envelope = barMaxRadius(blank)
   for (const move of result.moves) {
     if (move.kind !== 'cut') continue
     for (const point of [move.from, move.to]) {
       if (point.a === undefined || baseAngle(point.a) !== 0) continue
       const r = radius(point, pivot)
-      if (r > barInscribedRadius(blank) + 1e-9) aboveFace++
-      if (Math.abs(r - barInscribedRadius(blank)) <= 1e-9) atFace++
-      if (r < barInscribedRadius(blank) - 1e-9) {
+      // The link at a run's end rises to the travel height, which is above the
+      // blank's own envelope and is not a layer. #1016 C2-F7 makes the last
+      // sample of a run finite at the pulled-in span end, so the end link now
+      // appears in this A0 set where it used to be a NaN-truncated run; a point
+      // above the blank cannot be a cut, so it is counted apart rather than as
+      // an air layer.
+      if (r > envelope + 1e-9) aboveEnvelope++
+      else if (r > barInscribedRadius(blank) + 1e-9) aboveFace++
+      else if (Math.abs(r - barInscribedRadius(blank)) <= 1e-9) atFace++
+      else {
         belowFace++
         shallowestBulk = Math.max(shallowestBulk, r)
       }
     }
   }
   assert.equal(aboveFace, 0, `no A0 cut is above the Z${face} face (got ${aboveFace})`)
-  assert.ok(atFace > 0, 'the A0 shoulder still starts on the blank face')
+  assert.ok(aboveEnvelope > 0, 'the ends of a run still rise to the travel height')
+  assert.equal(atFace, 0, 'the A0 pass no longer rides the retained shoulder (#1016 C2-F7)')
   assert.ok(belowFace > 0, 'the A0 pass still cuts the model below the face')
   assert.ok(shallowestBulk > barInscribedRadius(blank) - 0.1 - 1e-9,
     `the first bulk A0 cut is no deeper than one stepdown (r ${shallowestBulk})`)
