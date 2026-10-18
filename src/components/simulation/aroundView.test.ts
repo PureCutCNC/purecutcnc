@@ -25,14 +25,18 @@
  * Mutations these assertions were checked against:
  * - reading the sheet pose instead of the wrapped one → Y stops reading the
  *   centreline and Z loses the radius;
- * - dropping the `a` passthrough → A disappears from the readout.
+ * - dropping the `a` passthrough → A disappears from the readout;
+ * - dropping the bar's shape/thickness from `aroundFrameKey` → a round ↔ square
+ *   conversion, or a side/diameter resize, keeps the stale key and preview.
  *
  * Run with: npx tsx src/components/simulation/aroundView.test.ts
  */
 
 import assert from 'node:assert/strict'
 import { wrapPoint, type AroundFrame } from '../../engine/aroundFrame'
-import { barReadout, simulationBarAngle } from './aroundView'
+import { roundStock } from '../../types/project'
+import { squareStock } from '../../types/barStock'
+import { aroundFrameKey, barReadout, sameAroundFrame, simulationBarAngle } from './aroundView'
 
 function approx(a: number, b: number, epsilon = 1e-9): boolean {
   return Math.abs(a - b) < epsilon
@@ -81,6 +85,22 @@ for (const axis of ['x', 'y'] as const) {
   const origin = { x: 5, y: 6, z: 7 }
   assert.equal(barReadout({ x: 10, y: -7, z: 2, a: 0 }, frame, origin).y, origin.y - frame.centre, 'Y reads the centreline')
   assert.equal(barReadout({ x: 40, y: 33, z: 9, a: 360 }, frame, origin).y, origin.y - frame.centre, 'Y stays on the centreline while the bar turns')
+}
+
+// The key carries the bar's shape and size, so a round ↔ square conversion (or
+// a resize) rebuilds the material even when the nominal frame numbers are the
+// same — a square blank's reference frame is the round bar of side = diameter.
+{
+  const frame: AroundFrame = { axis: 'x', centre: 0, radius: 6, zero: 0, sheetStart: -6, circumference: 12 * Math.PI }
+  const roundKey = aroundFrameKey(frame, roundStock(12, 30, 'x'))
+  const squareKey = aroundFrameKey(frame, squareStock(12, 30, 'x'))
+  assert.notEqual(roundKey, squareKey, 'round and square of the same box key differently')
+  assert.equal(aroundFrameKey(frame, squareStock(12, 30, 'x')), squareKey, 'the same values key the same')
+  assert(sameAroundFrame(frame, { ...frame }), 'a rebuilt frame with the same values compares equal')
+  assert.notEqual(aroundFrameKey(frame, squareStock(20, 30, 'x')), squareKey, 'a square side change keys differently')
+  assert.notEqual(aroundFrameKey(frame, roundStock(20, 30, 'x')), roundKey, 'a round diameter change keys differently')
+  assert.equal(aroundFrameKey(frame), aroundFrameKey(frame, undefined), 'frame-only callers keep the frame value')
+  assert.equal(aroundFrameKey(undefined, squareStock(12, 30, 'x')), '', 'no frame keys as the empty string')
 }
 
 console.log('aroundView tests passed')

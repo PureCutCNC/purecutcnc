@@ -72,6 +72,9 @@ export function createStockPlaneGeometry(grid: SimulationGrid, frame?: AroundFra
     new THREE.Vector3(grid.originX, grid.stockBottomZ, grid.originY),
     new THREE.Vector3(grid.originX + grid.cols * grid.cellSize, grid.stockTopZ, grid.originY + grid.rows * grid.cellSize),
   )
+  // A bar's culling box follows the grid's radial envelope (`stockTopZ`), which
+  // is the bar radius for a round blank and the corner radius for a square one;
+  // the pivot stays `frame.radius`. A flat grid keeps its box above.
   if (frame) geometry.boundingBox = aroundBounds(grid, frame)
   geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere())
   return geometry

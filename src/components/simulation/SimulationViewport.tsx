@@ -23,7 +23,6 @@ import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedB
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
 import { barReadout, createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
-import { createSquarePreviewSurface, type SquarePreviewSurface } from './squarePreview'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -40,15 +39,6 @@ import type { Clamp, MachineOrigin, Operation, SetupFace, Stock, ToolType } from
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
-import type {
-  ObserverLifecycleEvent,
-  SimulationObserverLifecycle,
-  SimulationObserverProvider,
-  SimulationObserverRuntime,
-  SquareMeshStats,
-  SquareResourceBounds,
-  SquareResourceSummary,
-} from './simulationObserver'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -222,13 +212,29 @@ function disposeSceneObject(object: THREE.Object3D): void {
   materials.forEach((material) => material.dispose())
 }
 
-/** Copied resource bounds for the DEV observer; plain arrays survive teardown. */
-function squareResourceBounds(bounds: THREE.Box3): SquareResourceBounds | null {
-  if (bounds.isEmpty()) return null
-  return {
-    min: [bounds.min.x, bounds.min.y, bounds.min.z],
-    max: [bounds.max.x, bounds.max.y, bounds.max.z],
+/**
+ * The removal evidence of a live heightfield grid. A round or flat grid starts
+ * uniformly at `stockTopZ`; a square blank carries the per-cell `initialTopZ`
+ * baseline. These are the shared statistics the playback evidence attributes
+ * read, so a square playback reports removal against its true cross section
+ * exactly as the static result does.
+ */
+interface PlaybackGridStats {
+  removedCells: number
+  minTopZ: number
+}
+
+function playbackGridStats(grid: SimulationGrid): PlaybackGridStats {
+  const baseline = grid.initialTopZ
+  let removedCells = 0
+  let minTopZ = grid.stockTopZ
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    const z = grid.topZ[index]
+    const start = baseline ? baseline[index] : grid.stockTopZ
+    if (z < start - 1e-9) removedCells += 1
+    if (z < minTopZ) minTopZ = z
   }
+  return { removedCells, minTopZ }
 }
 
 function buildHeightfieldSurfaceObject(
@@ -319,8 +325,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // input (selecting another operation, any project edit), which must not
   // tear the turn group down or re-frame the camera. The bar's shape and
   // thickness are part of the key (#1016 C2-R2V): a square blank and the round
-  // bar of the same box share the nominal frame numbers but not their
-  // material, and a side change must replace the preview.
+  // bar of the same box share the nominal frame numbers but not their starting
+  // cross section or radial envelope, and a side change must replace the
+  // preview.
   const frameKey = aroundFrameKey(wrappedFrame, bar?.stock)
   const simulationView = bar ? 'bar' : 'flat'
   const viewOrigin = bar ? bar.origin : origin
@@ -350,6 +357,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // heavy heightfield + shader-driven boundary mesh is allocated.
   const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
   const [isPlaybackReady, setIsPlaybackReady] = useState(false)
+  // What is actually mounted in the scene, as a shared evidence seam for the
+  // browser smoke tests: every bar shape draws the same heightfield surface and
+  // instanced boundary, so a shape that skipped them would leave this unset.
+  const [staticSurfaceMounted, setStaticSurfaceMounted] = useState(false)
+  const [playbackSurfaceMounted, setPlaybackSurfaceMounted] = useState(false)
+  // The playback controller's own removal statistics, measured against the base
+  // grid's baseline. At progress 0 this is the prior operation's material, not
+  // virgin stock, which is what the square playback smoke test pins.
+  const [playbackStats, setPlaybackStats] = useState<PlaybackGridStats | null>(null)
   // Shared with the 3D preview (see WebglStatus). On context loss this view
   // also pauses playback until the browser restores the context.
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
@@ -396,16 +412,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
-  // The static and playback square-material resources (#1016 C2-R2V). They own
-  // their geometry and material, so they are released through their own
-  // idempotent disposal and never through `disposeSceneObject`.
-  const squareStaticRef = useRef<SquarePreviewSurface | null>(null)
-  const squarePlaybackRef = useRef<SquarePreviewSurface | null>(null)
-  // The grids those resources were built from; kept beside the resources so the
-  // DEV witness can compare actual geometry with the authoritative intervals
-  // of the state that produced it. Cleared with the resource.
-  const squareStaticGridRef = useRef<SimulationGrid | null>(null)
-  const squarePlaybackGridRef = useRef<SimulationGrid | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
@@ -431,141 +437,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     setPlaybackMaxStep(defaultStep)
   }, [defaultStep])
 
-  // ── DEV-only square-material observer (issue #1016 C2) ─────────────
-  // The shipped data-* attributes are derived from the static result props, so
-  // they cannot prove the mounted playback geometry, its starting stock, a
-  // reset/back-seek, replacement or disposal. This state is only ever written
-  // under `import.meta.env.DEV`; the observer module that reads it is loaded by
-  // a DEV-only dynamic import below, so production ships no observer at all.
-  const devObserverRef = useRef<SimulationObserverLifecycle | null>(null)
-  const devRuntimeRef = useRef<SimulationObserverRuntime>({
-    view: 'flat',
-    square: false,
-    playbackEnabled: false,
-    playbackReady: false,
-    playing: false,
-    progress: 0,
-    isActive,
-  })
-  if (import.meta.env.DEV) {
-    devRuntimeRef.current = {
-      view: simulationView,
-      square: Boolean(simulation?.grid.squareBar)
-        || squareStaticRef.current !== null
-        || squarePlaybackRef.current !== null,
-      playbackEnabled,
-      playbackReady: isPlaybackReady,
-      playing: isPlaying,
-      progress: latestProgressRef.current,
-      isActive,
-    }
-  }
-
-  const devObserverLifecycle = useCallback((): SimulationObserverLifecycle => {
-    let lifecycle = devObserverRef.current
-    if (!lifecycle) {
-      lifecycle = {
-        nextId: 0,
-        nextSequence: 0,
-        ids: new WeakMap(),
-        createdProgress: new WeakMap(),
-        retired: [],
-        events: [],
-        teardown: false,
-      }
-      devObserverRef.current = lifecycle
-    }
-    return lifecycle
-  }, [])
-
-  const devPushLifecycleEvent = useCallback((event: Omit<ObserverLifecycleEvent, 'sequence'>) => {
-    const lifecycle = devObserverLifecycle()
-    lifecycle.nextSequence += 1
-    lifecycle.events.push({ ...event, sequence: lifecycle.nextSequence })
-    if (lifecycle.events.length > 40) {
-      lifecycle.events.splice(0, lifecycle.events.length - 40)
-    }
-  }, [devObserverLifecycle])
-
-  const devNoteCreated = useCallback((
-    mode: 'static' | 'playback',
-    surface: SquarePreviewSurface,
-  ) => {
-    if (!import.meta.env.DEV) return
-    const lifecycle = devObserverLifecycle()
-    lifecycle.nextId += 1
-    lifecycle.ids.set(surface, lifecycle.nextId)
-    lifecycle.createdProgress.set(surface, latestProgressRef.current)
-    devPushLifecycleEvent({
-      kind: 'create',
-      mode,
-      id: lifecycle.nextId,
-      key: surface.key,
-      progress: latestProgressRef.current,
-      disposed: false,
-    })
-  }, [devObserverLifecycle, devPushLifecycleEvent])
-
-  const devNoteDisposed = useCallback((
-    mode: 'static' | 'playback',
-    surface: SquarePreviewSurface,
-    statsBefore: SquareMeshStats,
-  ) => {
-    if (!import.meta.env.DEV) return
-    const lifecycle = devObserverLifecycle()
-    const id = lifecycle.ids.get(surface) ?? 0
-    const summary: SquareResourceSummary = {
-      id,
-      mode,
-      key: surface.key,
-      uuid: surface.object.uuid,
-      mounted: surface.object.parent !== null,
-      disposed: surface.disposed || surface.resource.disposed,
-      triangles: statsBefore.triangleCount,
-      stats: {
-        ...statsBefore,
-        chunkCount: statsBefore.chunkCount,
-        triangleCount: statsBefore.triangleCount,
-        geometriesCreated: surface.resource.stats.geometriesCreated,
-        geometryDisposals: surface.resource.stats.geometryDisposals,
-        materialDisposals: surface.resource.stats.materialDisposals,
-      },
-      bounds: squareResourceBounds(surface.resource.bounds),
-      grid: null,
-      createdAtProgress: lifecycle.createdProgress.get(surface) ?? 0,
-      retiredAtProgress: latestProgressRef.current,
-    }
-    lifecycle.retired.push(summary)
-    if (lifecycle.retired.length > 12) {
-      lifecycle.retired.splice(0, lifecycle.retired.length - 12)
-    }
-    devPushLifecycleEvent({
-      kind: 'dispose',
-      mode,
-      id,
-      key: surface.key,
-      progress: latestProgressRef.current,
-      disposed: summary.disposed,
-    })
-  }, [devObserverLifecycle, devPushLifecycleEvent])
-
-  /** One release path for both square resources: record, dispose, clear. */
-  const releaseSquareSurface = useCallback((mode: 'static' | 'playback') => {
-    const surface = mode === 'static' ? squareStaticRef.current : squarePlaybackRef.current
-    if (!surface) return
-    const statsBefore = { ...surface.resource.stats }
-    surface.dispose()
-    if (mode === 'static') {
-      squareStaticRef.current = null
-      squareStaticGridRef.current = null
-    } else {
-      squarePlaybackRef.current = null
-      squarePlaybackGridRef.current = null
-    }
-    devNoteDisposed(mode, surface, statsBefore)
-    needsRenderRef.current = true
-  }, [devNoteDisposed])
-
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -588,9 +459,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowBoxRef.current = zoomWindowBox
 
   const disposeCurrentMesh = useCallback(() => {
-    // The square resource owns its geometry and material; removing its object
-    // and calling `dispose()` exactly once is the whole disposal.
-    releaseSquareSurface('static')
     if (objectRef.current) {
       objectRef.current.removeFromParent()
       disposeSceneObject(objectRef.current)
@@ -601,8 +469,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(boundaryMeshRef.current)
       boundaryMeshRef.current = null
     }
+    setStaticSurfaceMounted(false)
     needsRenderRef.current = true
-  }, [releaseSquareSurface])
+  }, [])
 
   const disposeClampMeshes = useCallback(() => {
     for (const mesh of clampObjectsRef.current) {
@@ -640,24 +509,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const zoomToModel = useCallback(() => {
     const controls = controlsRef.current
     const isBar = barRef.current !== undefined
-    const square = squareStaticRef.current ?? squarePlaybackRef.current
     const object = objectRef.current
-      ?? square?.object
       ?? (isBar ? playbackMaterialMeshRef.current : null)
     if (!controls || !object) {
       return
     }
 
-    // A square blank's enclosing box is the resource's own corner envelope
-    // about the true pivot. The object's angle-0 bounds would hold only the
-    // flats, so a turned corner could leave the framed view.
-    let bounds: THREE.Box3
-    if (square) {
-      bounds = square.resource.bounds.clone()
-    } else {
-      if (isBar) object.updateWorldMatrix(true, false)
-      bounds = new THREE.Box3().setFromObject(object)
-    }
+    // The heightfield surface's geometry box already follows the grid's radial
+    // envelope (`aroundBounds` defaults to `grid.stockTopZ`), so the same framing
+    // holds a round bar and a square blank's taller corners.
+    if (isBar) object.updateWorldMatrix(true, false)
+    const bounds = new THREE.Box3().setFromObject(object)
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
         bounds.expandByObject(clamp)
@@ -843,33 +705,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const frame = wrappedFrameRef.current
     const parent = barTurnRef.current?.content ?? scene
 
-    // A square blank draws its actual material, not a top heightfield: the
-    // old surface and its instanced boundary would bridge the real air gaps
-    // between surviving intervals (#1016 C2-R2V). The resource is allocated
-    // before any heightfield texture exists.
-    if (grid.squareBar) {
-      const currentBar = barRef.current
-      if (!currentBar) {
-        throw new RangeError('square simulation: the bar view requires its real square stock')
-      }
-      const surface = createSquarePreviewSurface(grid, currentBar.stock, color)
-      parent.add(surface.object)
-      squareStaticRef.current = surface
-      squareStaticGridRef.current = grid
-      devNoteCreated('static', surface)
-      needsRenderRef.current = true
-      if (!hasAutoFramedRef.current) {
-        // The resource's envelope already spans the corner rotation about the
-        // true pivot, so the framed view holds the blank at any A angle.
-        const bounds = surface.resource.bounds.clone()
-        if (!bounds.isEmpty()) {
-          controls.fitToBounds(bounds, true)
-          hasAutoFramedRef.current = true
-        }
-      }
-      return
-    }
-
     const heightfieldTexture = createHeightfieldTexture(grid)
     const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
     const surface = buildHeightfieldSurfaceObject(grid, material, frame)
@@ -882,6 +717,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
     parent.add(boundary)
     boundaryMeshRef.current = boundary
+    setStaticSurfaceMounted(true)
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
@@ -901,13 +737,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // the cutter actually touched this frame (the controller's dirty region)
   // into the texture. Falls back to a full re-upload until the texture has
   // been rendered once (no GL handle yet) or when partial upload is
-  // unavailable. No-ops when nothing changed since the last flush.
-  //
-  // A square playback has no texture at all: its dirty region rebuilds the
-  // touched boundary chunks, and that happens *before* the texture-dependent
-  // round branch (#1016 C2-R2V). The controller's dirty marker is cleared only
-  // after the geometry update succeeds, so a refused cut cannot be mistaken
-  // for one already drawn.
+  // unavailable. No-ops when nothing changed since the last flush. Every bar
+  // shape follows this one path, round or square.
   const flushPlaybackGridToGpu = useCallback(() => {
     const controller = playbackControllerRef.current
     if (!controller) {
@@ -915,13 +746,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     const region = controller.getDirtyRegion()
     if (!region) {
-      return
-    }
-    const square = squarePlaybackRef.current
-    if (square) {
-      square.update(controller.liveGrid, region)
-      controller.clearDirtyRegion()
-      needsRenderRef.current = true
       return
     }
     const texture = playbackHeightfieldTextureRef.current
@@ -961,6 +785,18 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     needsRenderRef.current = true
   }, [])
 
+  /**
+   * Refresh the playback's removed-cell evidence from its live grid. Progress 0
+   * of a playback opened on an operation is the prior operation's material, so
+   * this is what tells the browser smoke test "prior rough", not virgin stock.
+   * Called on the same ~10 Hz cadence as the readout, and immediately on a
+   * reset/seek so the evidence never lags the visible state.
+   */
+  const syncPlaybackStats = useCallback(() => {
+    const controller = playbackControllerRef.current
+    setPlaybackStats(controller ? playbackGridStats(controller.liveGrid) : null)
+  }, [])
+
   const resetPlaybackRuntime = useCallback((building: boolean) => {
     cancelAnimationFrame(playbackFrameRef.current)
     playbackFrameRef.current = 0
@@ -979,6 +815,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     viewportRef.current?.setAttribute('data-simulation-bar-angle', '0.000')
     setPlaybackProgress(0)
     setDisplayPose(EMPTY_PLAYBACK_POSE)
+    setPlaybackSurfaceMounted(false)
+    setPlaybackStats(null)
   }, [])
 
   useEffect(() => {
@@ -1002,9 +840,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
       }
-      // A square playback resource owns its geometry and material: release it
-      // through its own idempotent disposal, never `disposeSceneObject`.
-      releaseSquareSurface('playback')
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -1049,37 +884,22 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
       const frame = wrappedFrameRef.current
       const parent = barTurnRef.current?.content ?? scene
-      // A square blank has no heightfield surface or instanced boundary at
-      // all: its actual interval material is one owned chunked resource, and
-      // the per-tick flush rebuilds the dirty chunks instead (#1016 C2-R2V).
-      let fitBounds: THREE.Box3 | null = null
-      if (grid.squareBar) {
-        const currentBar = barRef.current
-        if (!currentBar) {
-          throw new RangeError('square playback: the bar view requires its real square stock')
-        }
-        const square = createSquarePreviewSurface(grid, currentBar.stock, color)
-        parent.add(square.object)
-        squarePlaybackRef.current = square
-        squarePlaybackGridRef.current = grid
-        devNoteCreated('playback', square)
-        fitBounds = square.resource.bounds.clone()
-      } else {
-        const heightfieldTexture = createHeightfieldTexture(grid)
-        playbackHeightfieldTextureRef.current = heightfieldTexture
-        const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
-        const surface = buildHeightfieldSurfaceObject(grid, material, frame)
-        parent.add(surface)
-        playbackMaterialMeshRef.current = surface
-        surface.updateWorldMatrix(true, false)
-        fitBounds = new THREE.Box3().setFromObject(surface)
 
-        // Instanced walls: no per-cell attributes, so any detail level builds
-        // instantly and stays within memory — no cell cap needed.
-        const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
-        parent.add(boundary)
-        playbackBoundaryMeshRef.current = boundary
-      }
+      const heightfieldTexture = createHeightfieldTexture(grid)
+      playbackHeightfieldTextureRef.current = heightfieldTexture
+      const material = createHeightfieldMaterial(heightfieldTexture, grid, color, frame)
+      const surface = buildHeightfieldSurfaceObject(grid, material, frame)
+      parent.add(surface)
+      playbackMaterialMeshRef.current = surface
+      surface.updateWorldMatrix(true, false)
+      const fitBounds = new THREE.Box3().setFromObject(surface)
+
+      // Instanced walls: no per-cell attributes, so any detail level builds
+      // instantly and stays within memory — no cell cap needed.
+      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
+      parent.add(boundary)
+      playbackBoundaryMeshRef.current = boundary
+      setPlaybackSurfaceMounted(true)
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,
@@ -1094,6 +914,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
       latestProgressRef.current = controller.totalPathLength > 0 ? controller.getDistanceTraveled() / controller.totalPathLength : 0
       setPlaybackProgress(latestProgressRef.current)
+      setPlaybackStats(playbackGridStats(grid))
       updateToolMeshPose()
       if (barRef.current && !hasAutoFramedRef.current && fitBounds && !fitBounds.isEmpty()) {
         controlsRef.current?.fitToBounds(fitBounds, true)
@@ -1120,10 +941,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
       }
-      // Covers the deferred-build cancellation and the playback-effect
-      // cleanup; the surface's own disposal is idempotent, so a path that also
-      // ran the disabled branch cannot double-free.
-      releaseSquareSurface('playback')
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
         disposeToolMesh(toolMeshRef.current)
@@ -1132,8 +949,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time. The observer callbacks are stable.
-  }, [playbackEnabled, playbackInput, releaseSquareSurface, resetPlaybackRuntime, stockColor, updateToolMeshPose, devNoteCreated, frameKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time.
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -1179,6 +996,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         flushPlaybackGridToGpu()
 
         setPlaybackProgress(latestProgressRef.current)
+        syncPlaybackStats()
         setIsPlaying(false)
         playbackFrameRef.current = 0
         return
@@ -1193,7 +1011,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       cancelAnimationFrame(playbackFrameRef.current)
       playbackFrameRef.current = 0
     }
-  }, [isPlaying, playbackEnabled, flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [isPlaying, playbackEnabled, flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   // Convert a toolpath pose to machine-relative coordinates.
   // X and Z follow the usual origin-relative subtraction.
@@ -1236,10 +1054,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const interval = setInterval(() => {
       setDisplayPose(toReadoutPose(latestPoseRef.current))
       setPlaybackProgress(latestProgressRef.current)
+      syncPlaybackStats()
     }, 100)
 
     return () => clearInterval(interval)
-  }, [playbackEnabled, toReadoutPose])
+  }, [playbackEnabled, toReadoutPose, syncPlaybackStats])
 
   useEffect(() => {
     if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
@@ -1269,10 +1088,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       flushPlaybackGridToGpu()
       latestProgressRef.current = 0
       setPlaybackProgress(0)
+      syncPlaybackStats()
       updateToolMeshPose()
     }
     setIsPlaying((current) => !current)
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   const handleStop = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -1285,7 +1105,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     updateToolMeshPose()
     latestProgressRef.current = 0
     setPlaybackProgress(0)
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+    syncPlaybackStats()
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   // Scrubbing fires a change event per mousemove; each engine seek can replay a
   // large slice of the toolpath. Coalesce to one seek per animation frame: the
@@ -1310,8 +1131,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       controller.seekToFraction(pending)
       flushPlaybackGridToGpu()
       updateToolMeshPose()
+      syncPlaybackStats()
     })
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1391,16 +1213,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Wait for any pending simulation build (debounced 150ms) to complete,
     // then auto-frame if a mesh exists.
     const timer = setTimeout(() => {
-      const square = squareStaticRef.current
-      const object = objectRef.current ?? square?.object ?? null
+      const object = objectRef.current ?? null
       if (object) {
-        let bounds: THREE.Box3
-        if (square) {
-          bounds = square.resource.bounds.clone()
-        } else {
-          object.updateWorldMatrix(true, false)
-          bounds = new THREE.Box3().setFromObject(object)
-        }
+        object.updateWorldMatrix(true, false)
+        const bounds = new THREE.Box3().setFromObject(object)
         if (!bounds.isEmpty()) {
           controls.fitToBounds(bounds, true)
           hasAutoFramedRef.current = true
@@ -1420,51 +1236,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       setZoomWindowBox(null)
     }
   }, [zoomWindowActive])
-
-  // DEV-only observer registration (issue #1016 C2). The dynamic import keeps
-  // the whole observer out of production; the provider reads the live refs, so
-  // nothing is copied or reconstructed while playback runs.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    let cancelled = false
-    let provider: SimulationObserverProvider | null = null
-    let stop: (() => void) | null = null
-    void import('./simulationObserver').then((observer) => {
-      if (cancelled) return
-      provider = observer.createSimulationObserverProvider({
-        readStatic: () => squareStaticRef.current
-          ? { surface: squareStaticRef.current, grid: squareStaticGridRef.current }
-          : null,
-        readPlayback: () => squarePlaybackRef.current
-          ? { surface: squarePlaybackRef.current, grid: squarePlaybackGridRef.current }
-          : null,
-        readController: () => playbackControllerRef.current,
-        readRuntime: () => devRuntimeRef.current,
-        readLifecycle: devObserverLifecycle,
-      })
-      observer.registerSimulationObserver(provider)
-      stop = () => observer.unregisterSimulationObserver(provider ?? undefined)
-    }).catch(() => {
-      // The observer is evidence tooling, never a runtime dependency.
-    })
-    return () => {
-      cancelled = true
-      const lifecycle = devObserverLifecycle()
-      lifecycle.teardown = true
-      devPushLifecycleEvent({
-        kind: 'teardown',
-        mode: null,
-        id: null,
-        key: null,
-        progress: latestProgressRef.current,
-        disposed: false,
-      })
-      // The renderer effect above disposes the resources in this same unmount
-      // commit. A microtask lets that disposal land in the final snapshot
-      // whatever order React runs the two cleanups in.
-      queueMicrotask(() => stop?.())
-    }
-  }, [devObserverLifecycle, devPushLifecycleEvent])
 
   const zoomBoxStyle = zoomWindowBox
     ? {
@@ -1489,11 +1260,22 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Read by the setup simulation e2e (issue #947): which setup is shown
       // and what the heightfield removed, without sampling WebGL pixels.
       data-simulation-setup={setupPicker?.selectedId}
-      // The actual square-blank material path (#1016 C2-R2V), read by the
-      // manager's browser verification without sampling WebGL pixels.
-      data-simulation-square={simulation?.grid.squareBar ? '1' : undefined}
       data-simulation-removed-cells={simulation?.stats.removedCellCount}
       data-simulation-min-z={simulation?.stats.minTopZ}
+      // The mounted surface, shared by every bar shape (#1016 C2). A shape that
+      // skipped the heightfield would leave these unset.
+      data-simulation-surface={staticSurfaceMounted ? 'heightfield' : undefined}
+      data-simulation-playback-surface={playbackSurfaceMounted ? 'heightfield' : undefined}
+      // Playback evidence read by the square playback smoke test: progress 0 on
+      // an operation is its prior operation's material, not virgin stock, and
+      // the end of the path has removed more.
+      data-simulation-playback-progress={playbackEnabled ? playbackProgress.toFixed(6) : undefined}
+      data-simulation-playback-removed-cells={
+        playbackEnabled && playbackStats !== null ? playbackStats.removedCells : undefined
+      }
+      data-simulation-playback-min-z={
+        playbackEnabled && playbackStats !== null ? playbackStats.minTopZ : undefined
+      }
     >
       <div ref={mountRef} className="simulation-viewport__canvas" />
       {(isComputing || isPlaybackBuilding) && (

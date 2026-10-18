@@ -28,10 +28,7 @@ import {
   priorReplayGrid,
   simulationBuildOptions,
   type SimulationResultInput,
-  type SquareSimulationDeliverable,
-  type SquareSimulationJob,
 } from './simulationCompute'
-import { runSquareSimulation, SquareSimulationCancelledError } from './simulationWorker/squareSimulationClient'
 import {
   buildSimulationSetupInput,
   resolveSimulationSetup,
@@ -41,10 +38,10 @@ import {
   type SimulationBar,
 } from './simulationSetup'
 
-// The pure computation lives in `simulationCompute.ts` so the square worker can
-// import it without dragging React and the store into the worker chunk. It is
-// re-exported here because this hook is where every simulation consumer and its
-// focused wiring test already look for it.
+// The pure computation lives in `simulationCompute.ts` so the focused wiring
+// tests can call it without rendering the hook. It is re-exported here because
+// this hook is where every simulation consumer and its test already look for
+// it.
 export { computeSimulationResult }
 export type { SimulationResultInput }
 
@@ -241,69 +238,9 @@ export function useSimulationModel({
     }
   }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
 
-  /**
-   * One square-blank job (issue #1016 C2 P2). Only a square blank's replay is
-   * expensive enough to block the UI for a minute, so only that one goes to
-   * the worker; every other setup keeps the synchronous memo below.
-   *
-   * The job is exactly the input set the synchronous memo used, captured as
-   * one object: a delivered result is matched to the render that asked for it
-   * by identity, so a superseded job can never be shown for other inputs even
-   * for the render before its cancellation arrives.
-   */
-  const squareJob = useMemo<SquareSimulationJob | null>(() => {
-    if (centerTab !== 'simulation' || setupInput?.squareBar === undefined || paths === null) return null
-    return { setupInput, simulationMode, simulationDetailCells, selectedInSetup }
-  // `project` is not listed: `setupInput` is rebuilt whenever the project's
-  // identity changes, so it already carries that input.
-  }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
-
-  const [squareDelivered, setSquareDelivered] = useState<{ job: SquareSimulationJob; result: SquareSimulationDeliverable } | null>(null)
-  const [squareFailure, setSquareFailure] = useState<{ job: SquareSimulationJob; error: unknown } | null>(null)
-
-  const squareDelivery = squareJob !== null && squareDelivered?.job === squareJob ? squareDelivered.result : null
-  const squareError = squareJob !== null && squareFailure?.job === squareJob ? squareFailure.error : null
-
-  /**
-   * One job per input set (issue #1016 C2 P2). The replay is synchronous and
-   * cannot be interrupted from inside, so a superseded job is aborted (which
-   * terminates its worker) and its answer ignored; the grids of a setup
-   * nobody simulates any more are released rather than kept alive in state.
-   */
-  useEffect(() => {
-    if (squareJob === null) {
-      setSquareDelivered(null)
-      setSquareFailure(null)
-      return
-    }
-    const controller = new AbortController()
-    let cancelled = false
-    void runSquareSimulation(squareJob, { signal: controller.signal }).then(
-      (delivered) => {
-        if (cancelled) return
-        setSquareDelivered({ job: squareJob, result: delivered })
-      },
-      (error: unknown) => {
-        // Aborting a superseded job is the normal path, not a failure.
-        if (cancelled || error instanceof SquareSimulationCancelledError) return
-        setSquareFailure({ job: squareJob, error })
-      },
-    )
-    return () => {
-      cancelled = true
-      controller.abort()
-    }
-  }, [squareJob])
-
   const simulationResult = useMemo(() => {
     if (centerTab !== 'simulation') {
       return null
-    }
-    // A square blank's result comes from the job, never from replaying here:
-    // until that job delivers, the render reports pending and no result, so a
-    // stale grid can never stand in for inputs the user has already changed.
-    if (setupInput?.squareBar !== undefined) {
-      return squareDelivery?.result ?? null
     }
     return computeSimulationResult({
       setupInput,
@@ -313,18 +250,11 @@ export function useSimulationModel({
       selectedInSetup,
       paths,
     })
-  }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode, squareDelivery])
+  }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
-  // A square job in flight is the same kind of wait as a path acquisition, and
-  // the viewport's existing pending path already handles a null result.
-  const simulationInputPending = centerTab === 'simulation'
-    && (paths === null || (squareJob !== null && squareDelivery === null && squareError === null))
-
-  if (squareError !== null) {
-    // The worker's failure reaches the app's existing error surface exactly as
-    // a synchronous square failure does — never an uncut "successful" sheet.
-    throw squareError instanceof Error ? squareError : new Error(String(squareError))
-  }
+  // Only a path acquisition is a wait now: every stock shape's result and
+  // playback base grid are computed synchronously from inputs already in hand.
+  const simulationInputPending = centerTab === 'simulation' && paths === null
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {
@@ -363,28 +293,19 @@ export function useSimulationModel({
     // cuts shouldn't appear, and another setup's never do (fresh stock,
     // issue #947).
     //
-    // A square blank's starting stock comes from the same worker job as its
-    // result (issue #1016 C2 P2), so playback appears only once that job has
-    // delivered, and `getBaseGrid` then hands back that one grid — the same
-    // object on every call, exactly as `lazyOnce` did. The square replay
-    // therefore never runs on the UI thread, not even when playback starts.
-    // Flat and round keep the deferred in-thread replay: while the simulation
-    // tab is open this memo re-runs on every project change, and eagerly
-    // replaying prior operations each time made ordinary edits pay for a full
-    // heightfield replay.
-    const squareStartingStock = setupInput.squareBar !== undefined ? squareDelivery?.startingStock ?? null : null
-    if (setupInput.squareBar !== undefined && squareStartingStock === null) {
-      return null
-    }
-    const getBaseGrid: () => SimulationGrid = squareStartingStock !== null
-      ? () => squareStartingStock
-      : lazyOnce((): SimulationGrid => priorReplayGrid(
-        localProject,
-        setupInput.operations,
-        setupInput.toolpaths,
-        selectedInSetup.id,
-        simulationBuildOptions(setupInput, simulationDetailCells),
-      ))
+    // The replay is deferred until the viewport actually starts playback
+    // (`lazyOnce`): while the simulation tab is open this memo re-runs on every
+    // project change, and eagerly replaying prior operations each time made
+    // ordinary edits pay for a full heightfield replay. Every stock shape,
+    // square included, replays through this same deferred in-thread path
+    // (issue #1016 C2).
+    const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => priorReplayGrid(
+      localProject,
+      setupInput.operations,
+      setupInput.toolpaths,
+      selectedInSetup.id,
+      simulationBuildOptions(setupInput, simulationDetailCells),
+    ))
 
     const diameter = normalizedSelectedTool.radius * 2
     // Both maxCutDepth and diameter come from `normalizeToolForProject`, so they're
@@ -425,7 +346,7 @@ export function useSimulationModel({
       feedPerSecond,
       plungeFeedPerSecond,
     }
-  }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode, squareDelivery])
+  }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
   const simulationSetupPicker = useMemo<SimulationSetupPicker>(() => ({
     options: simulationSetups(project).map((setup) => ({ id: setup.id, name: setup.name, face: setupFace(setup) })),

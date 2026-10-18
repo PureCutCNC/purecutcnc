@@ -19,15 +19,20 @@ import type { AroundFrame } from '../aroundFrame'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 
 /**
- * A square blank being simulated (issue #1016 C2-R1). Transient simulation
- * input — it is never persisted in a project and never reaches the `.camj`
- * format.
+ * A square blank being simulated (issue #1016 C2). Transient simulation
+ * initialization input — it is never persisted in a project and never reaches
+ * the `.camj` format.
  *
  * `side` is the blank's physical side. `frame` is the Around unroll frame the
  * unrolled sheet is framed in: its nominal reference cylinder keeps
  * `radius = side/2` and `circumference = π·side`, which is only the coordinate
  * mapping — the blank's real corners reach `side/√2` from the pivot. The true
  * turning axis stays at `frame.radius`, never at the corner radius.
+ *
+ * The descriptor seeds the grid's starting heights in `createSimulationGrid`
+ * and then leaves the picture: a square grid is simulated by the same radial
+ * heightfield as the round bar, so nothing downstream needs to know the blank
+ * was square.
  */
 export interface SquareBarDescriptor {
   side: number
@@ -41,35 +46,22 @@ export interface SimulationGrid {
   cols: number
   rows: number
   stockBottomZ: number
+  /**
+   * The grid's enclosing radial maximum. For a round or flat grid this is the
+   * uniform starting height; for a square blank it is the corner radius
+   * (`side/√2`) while the true turning pivot stays at `frame.radius`. Render
+   * bounds and framing read it; the cutter never does.
+   */
   stockTopZ: number
   wrap?: { axis: 'x' | 'y'; period: number }
   /**
-   * Present only on a square-blank grid. Flat and round grids keep their exact
-   * original keys and values.
-   */
-  squareBar?: SquareBarDescriptor
-  /**
-   * The immutable virgin square baseline, one radial height per cell. Present
-   * only with `squareBar`; the physical cell values are a true square cross
-   * section, so statistics compare each cell against its own baseline rather
-   * than a uniform stock top. Never written after grid creation;
-   * `topZ` is the mutable copy the cutter lowers.
+   * An immutable starting baseline, one height per cell, present only when the
+   * cells do not all start at `stockTopZ` — i.e. a square blank's true cross
+   * section (issue #1016 C2). Used ONLY by removal statistics, which compare
+   * each cell against its own start rather than a uniform top. Never written
+   * after grid creation; `topZ` is the mutable copy the cutter lowers.
    */
   initialTopZ?: Float32Array
-  /**
-   * The square blank's remaining canonical radial intervals (issue #1016
-   * C2-R1F), present only with `squareBar`. Each entry is a cell's ordered,
-   * disjoint `[lo, hi]` endpoint pairs; a missing key is virgin material and
-   * an empty array is fully removed. Values are immutable after assignment: a
-   * cut replaces a cell's canonical array, so a shared array can never alias
-   * two grids. Never persisted — this is transient simulation state.
-   *
-   * `topZ` stays as the derived outermost remaining radial endpoint, for the
-   * render envelope and compatibility only; it is never authoritative square
-   * material and a physical removal that leaves the outer endpoint unchanged
-   * still counts.
-   */
-  squareMaterial?: Map<number, readonly number[]>
   topZ: Float32Array
 }
 
@@ -84,8 +76,9 @@ export interface SimulationBuildOptions {
   wrap?: SimulationGrid['wrap']
   targetLongAxisCells?: number
   /**
-   * Simulate a square blank instead of a round bar (issue #1016 C2-R1).
-   * Transient; validated at grid creation and never persisted.
+   * Seed the grid with a square blank's true cross section instead of a
+   * uniform `stockTopZ` (issue #1016 C2). Initialization only — validated at
+   * grid creation, never persisted, and never carried on the grid.
    */
   squareBar?: SquareBarDescriptor
 }

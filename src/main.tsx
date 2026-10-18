@@ -29,11 +29,6 @@ import { bootstrapTheme } from './theme/bootstrap'
 import { I18nProvider } from './i18n/I18nProvider'
 import { bootstrapI18n } from './i18n/bootstrap'
 import { bootstrapMachineLibrary } from './machine/bootstrap'
-import type {
-  SimulationGeometryWitness,
-  SimulationObserverSnapshot,
-  SimulationWitnessRequest,
-} from './components/simulation/simulationObserver'
 
 bootstrapTheme()
 bootstrapI18n()
@@ -116,20 +111,6 @@ if (import.meta.env.DEV) {
     getProject: async () => {
       const { useProjectStore } = await _pcTestStore()
       return JSON.parse(useProjectStore.getState().saveProject())
-    },
-    /**
-     * The mounted square-material observer (issue #1016 C2). DEV-only and
-     * lazy: it answers from the viewport's live refs when asked, and both this
-     * seam and the observer module are dead-code-eliminated in production.
-     */
-    getSimulationObserver: async () => {
-      const { readSimulationObserverSnapshot } = await import('./components/simulation/simulationObserver')
-      return readSimulationObserverSnapshot()
-    },
-    /** On-demand actual-geometry witness; hashes only when this is called. */
-    getSimulationWitness: async (request?: SimulationWitnessRequest) => {
-      const { readSimulationObserverWitness } = await import('./components/simulation/simulationObserver')
-      return readSimulationObserverWitness(request)
     },
     getHoveredFeatureId: async () => {
       const { useProjectStore } = await _pcTestStore()
@@ -299,8 +280,6 @@ declare global {
     __pcBootWatchdog?: number
     __pcTest?: {
       getProject: () => Promise<Record<string, unknown>>
-      getSimulationObserver: () => Promise<SimulationObserverSnapshot>
-      getSimulationWitness: (request?: SimulationWitnessRequest) => Promise<SimulationGeometryWitness | null>
       getHoveredFeatureId: () => Promise<string | null>
       loadProject: (json: string) => Promise<void>
       getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null>

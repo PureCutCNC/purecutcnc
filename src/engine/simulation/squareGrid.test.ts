@@ -15,17 +15,18 @@
  */
 
 /**
- * Square-blank grid initialization (issue #1016 C2-R1).
+ * Square-blank grid initialization (issue #1016 C2).
  *
  * A square grid seeds the blank's true cross section, keeps an immutable
- * baseline, and validates its transient descriptor. Flat and round grids must
+ * baseline for statistics, and validates its transient initialization
+ * descriptor. The descriptor itself never lands on the grid: downstream the
+ * square blank is the round bar's radial heightfield. Flat and round grids must
  * keep their exact original keys and values.
  *
  * Run with: npx tsx src/engine/simulation/squareGrid.test.ts
  */
 
-import { createSimulationGrid, resolveSimulationGridSpec } from './grid'
-import { squareSurfaceRadius } from './squareReplay'
+import { createSimulationGrid, resolveSimulationGridSpec, squareSurfaceRadius } from './grid'
 import { simulateReplayItemsHeightfield } from './replay'
 import { newProject, rectProfile } from '../../types/project'
 import type { Project } from '../../types/project'
@@ -87,10 +88,19 @@ function testSeedMatchesSquareCrossSection(): void {
   const sheet = sheetProject(20, 'x', 0)
   const grid = createSimulationGrid(sheet.project, squareOptions(sheet))
 
-  assert(grid.squareBar !== undefined, 'a square grid must carry its descriptor')
+  assert(!('squareBar' in grid), 'the initialization descriptor must not land on the grid')
+  assert(!('squareMaterial' in grid), 'a square grid must not carry the discarded interval model')
   assert(grid.initialTopZ !== undefined, 'a square grid must carry an immutable baseline')
   assert(grid.topZ.length === grid.cols * grid.rows, 'the baseline must cover every cell')
   assert(grid.stockBottomZ === 0, `the square pivot must be the radial zero (got ${grid.stockBottomZ})`)
+  const keys = Object.keys(grid).sort()
+  const expectedKeys = [
+    'cellSize', 'cols', 'initialTopZ', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ',
+  ].sort()
+  assert(
+    keys.length === expectedKeys.length && keys.every((key, i) => key === expectedKeys[i]),
+    `square grid keys drifted: ${keys.join(',')}`,
+  )
 
   for (let row = 0; row < grid.rows; row += 1) {
     for (let col = 0; col < grid.cols; col += 1) {
@@ -185,7 +195,7 @@ function testOldGridsKeepExactKeysAndValues(): void {
 }
 
 function testDescriptorValidation(): void {
-  console.log('Testing the square descriptor rejects a bad side or a mismatched frame...')
+  console.log('Testing initialization validation rejects a bad side or a mismatched frame...')
   const sheet = sheetProject(20, 'x', 0)
   const base = squareOptions(sheet)
   const expectThrow = (options: SimulationBuildOptions, label: string): void => {
@@ -220,7 +230,7 @@ function testDescriptorValidation(): void {
     ok = null
   }
   assert(ok !== null, 'a matching square descriptor must be accepted')
-  console.log('square descriptor validation: PASSED')
+  console.log('square initialization validation: PASSED')
 }
 
 try {
