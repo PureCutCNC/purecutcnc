@@ -102,21 +102,30 @@ function isCuttingMove(move: ToolpathMove): boolean {
   return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
+/** A playback piece and the source move it was cut from. */
+interface PlaybackSegment {
+  move: ToolpathMove
+  /** The move a piece of `moves` was subdivided from; the move itself otherwise. */
+  parent: ToolpathMove
+}
+
 /**
- * Split any move longer than `maxSegmentLength` into equal-length sub-segments.
- * Splitting is semantically safe because `applyMoveToGrid` removes material based on
- * distance-to-segment, and the sub-segments' swept volumes union to the original.
+ * Split any move longer than `maxSegmentLength` into equal-length sub-segments,
+ * remembering its source move. Splitting is semantically safe because
+ * `applyMoveToGrid` resolves every cell against the source move (`sweep`): the
+ * cutter's position along the path does not change with the split, so the
+ * sub-segments' cuts union to exactly the source move's cut (F8).
  */
-export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number): ToolpathMove[] {
+function subdivideSegments(moves: ToolpathMove[], maxSegmentLength: number): PlaybackSegment[] {
   if (!(maxSegmentLength > 0) || moves.length === 0) {
-    return moves.slice()
+    return moves.map((move) => ({ move, parent: move }))
   }
 
-  const out: ToolpathMove[] = []
+  const out: PlaybackSegment[] = []
   for (const move of moves) {
     const length = moveLength(move)
     if (length <= maxSegmentLength + 1e-9) {
-      out.push(move)
+      out.push({ move, parent: move })
       continue
     }
     const subdivisions = Math.ceil(length / maxSegmentLength)
@@ -127,13 +136,21 @@ export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number):
       // along to each sub-segment — otherwise the live feed readout loses the
       // reduced slot feed on subdivided cuts.
       out.push({
-        ...move,
-        from: interpolatePoint(move, t0),
-        to: interpolatePoint(move, t1),
+        move: {
+          ...move,
+          from: interpolatePoint(move, t0),
+          to: interpolatePoint(move, t1),
+        },
+        parent: move,
       })
     }
   }
   return out
+}
+
+/** Split any move longer than `maxSegmentLength` into equal-length sub-segments. */
+export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number): ToolpathMove[] {
+  return subdivideSegments(moves, maxSegmentLength).map((segment) => segment.move)
 }
 
 export class PlaybackController {
@@ -143,6 +160,8 @@ export class PlaybackController {
   readonly tool: PlaybackToolInfo
   readonly totalPathLength: number
 
+  /** The source move behind each playback piece, for a split-independent cut. */
+  private readonly parents: ToolpathMove[]
   private moveIndex = 0
   private moveFraction = 0
   private distanceTraveled = 0
@@ -161,7 +180,9 @@ export class PlaybackController {
     this.baseGrid = baseGrid
     this.liveGrid = cloneSimulationGrid(baseGrid)
     const maxSegmentLength = options.maxSegmentLength ?? Math.max(tool.toolRadius * 1.5, 0.5)
-    this.moves = subdivideMoves(moves, maxSegmentLength)
+    const segments = subdivideSegments(moves, maxSegmentLength)
+    this.moves = segments.map((segment) => segment.move)
+    this.parents = segments.map((segment) => segment.parent)
     this.tool = tool
     this.totalPathLength = this.moves.reduce((sum, move) => sum + moveLength(move), 0)
     this.referenceFeedPerSecond = options.referenceFeedPerSecond && options.referenceFeedPerSecond > 0
@@ -320,6 +341,7 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -346,6 +368,7 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -375,6 +398,7 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
           )
           if (result.changedCount > 0) {
             gridChanged = true

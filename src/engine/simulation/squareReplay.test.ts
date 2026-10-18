@@ -250,12 +250,25 @@ function testWrappedSquareGridUsesTheRoundSeamCopies(): void {
   const wrapped = createSimulationGrid(project, { ...options, wrap })
   const plain = createSimulationGrid(project, options)
 
-  // An interior pass is inside the sheet, so the wrap adds nothing: the square
-  // grid replays exactly like the same heightfield without the wrap key.
+  // An interior pass is inside the sheet, so the wrap adds no seam copy. F8
+  // made the wrapped kernel resolve the cutter's true solid, so it is now
+  // deliberately NOT the flat sheet's result any more: the two must differ, and
+  // only the wrapped one is the physical answer.
   const interior: ToolpathMove = { kind: 'cut', from: { x: 10, y: 0, z: 6 }, to: { x: 60, y: 2, z: 6 } }
   applyMoveToGrid(wrapped, interior, 4, 'flat_endmill', null)
   applyMoveToGrid(plain, interior, 4, 'flat_endmill', null)
-  assert(gridsEqual(wrapped, plain), 'an interior pass must replay identically with and without wrap')
+  const interiorDelta = (() => {
+    let max = 0
+    let cells = 0
+    for (let i = 0; i < wrapped.topZ.length; i += 1) {
+      const delta = Math.abs(wrapped.topZ[i] - plain.topZ[i])
+      if (delta > 1e-9) cells += 1
+      max = Math.max(max, delta)
+    }
+    return { max, cells }
+  })()
+  assert(interiorDelta.cells > 20, `the wrapped pass must use the true cutter width (${interiorDelta.cells} cells)`)
+  assert(interiorDelta.max > 1e-3, `the true-width difference must be material (max ${interiorDelta.max})`)
 
   // A pass one period beyond the sheet is the same material via the seam copy.
   const low = wrapped.originY
