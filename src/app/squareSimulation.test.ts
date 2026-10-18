@@ -15,40 +15,37 @@
  */
 
 /**
- * The app wiring of a real square-blank Around simulation (issue #1016
- * C2-R2V).
+ * The app wiring of a real square-blank Around simulation (issue #1016 C2).
  *
- * The path is the accepted S3 engine output — the production
- * `computeOperationToolpath` dispatch on an ordinary rotary rough with an
- * imported prism model, on a blank held by the real default chuck — replayed
- * through the shipped `buildSimulationSetupInput` and the shipped
- * `computeSimulationResult` / `useSimulationModel` entry points. The round and
- * flat paths are untouched; a square blank carries its transient descriptor
- * into every grid the app builds, and the material model removes the real
- * corners while the untouched ends stay square.
+ * A square blank is simulated exactly like the round bar: the same radial
+ * heightfield, the same cutting kernel, the same playback and the same
+ * synchronous app path. Its only square-specific input is the grid
+ * initialization descriptor, which must reach every grid the app builds — the
+ * empty result, the selected cut, the visible replay and the playback starting
+ * stock — through one option builder.
  *
- * The fixture uses the same default round workholding the app mints on a square
- * blank: a chuck centred on the true pivot whose diameter clears the corner
- * envelope. A hand-written round-sized chuck is physically invalid on a square
- * and the production dispatch refuses it, so the fixture must not substitute
- * one.
- *
- * Issue #1016 C2 P2 moved a square blank's replay into a worker. Node has no
- * `Worker`, so the hook's in-thread fallback runs the same job; it still runs
- * in an effect, so the hook path below renders into a real DOM and awaits that
- * job instead of reading a server render, which never runs effects.
+ * The path is the accepted production output — `computeOperationToolpath` on an
+ * ordinary rotary rough with an imported prism model, on a blank held by the
+ * real default chuck — replayed through the shipped `buildSimulationSetupInput`
+ * and `computeSimulationResult` / `useSimulationModel` entry points. The hook is
+ * rendered to static markup, which runs the component body but never an effect:
+ * a square result and its playback base grid appearing there prove the
+ * synchronous path, with no worker or deferred delivery to stand in for it.
  *
  * Mutations these assertions were checked against, each applied on its own and
  * reverted:
- * - `computeSimulationResult`'s visible branch dropping `squareBar` → "the
- *   visible replay is a square grid" and the actual-band test fail;
- * - the square job dropping `squareBar` → "a playback base grid is a square
- *   grid" fails;
- * - the empty-stats baseline reading `stockTopZ` (the corner maximum) or the
- *   unrolled bar's thickness → "the empty result reports the true material
- *   baseline" fails;
+ * - `simulationBuildOptions` dropping `squareBar` → "the input carries the
+ *   square initialization descriptor" / every entry point assertion fails;
+ * - `computeSimulationResult`'s visible branch dropping the options → "the
+ *   visible replay is a square grid" fails;
+ * - the playback base grid built without the shared options → "a playback base
+ *   grid starts at the square baseline" fails;
+ * - `emptySimulationStats` reading `stockTopZ` (the corner maximum) → "the
+ *   empty result reports the true material baseline" fails;
  * - `buildSimulationSetupInput` dropping the descriptor → "the input carries
- *   the square descriptor" fails;
+ *   the square initialization descriptor" fails;
+ * - delivering the square result from an effect/worker again → the static-render
+ *   assertion "the square result is synchronous" fails;
  * - a square mismatched-axis Around setup returning null (the round behaviour)
  *   instead of throwing → "a square mismatch refuses instead of drawing a flat
  *   sheet" fails.
@@ -58,9 +55,10 @@
 
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { getStockBounds, newProject, roundStock, type MachiningSetup, type SquareStock } from '../types/project'
-import { squareMaterialIntervals } from '../engine/simulation/squareReplay'
 import { PlaybackController } from '../engine/simulation/playback'
+import type { AroundFrame } from '../engine/aroundFrame'
 import type { SimulationGrid } from '../engine/simulation'
 import { buildSimulationSetupInput } from './simulationSetup'
 import { computeSimulationResult, useSimulationModel } from './useSimulationModel'
@@ -73,12 +71,12 @@ import {
   resultArgs,
   squareRotaryProject,
 } from '../test/squareSimulationFixture'
-import { mountReact } from '../test/reactClientRender'
 
 function near(actual: number, expected: number, label: string, epsilon = 1e-6): void {
   assert(Math.abs(actual - expected) <= epsilon, `${label}: expected ${expected}, got ${actual}`)
 }
 
+/** The lowest cell of a grid's immutable starting surface. */
 function minBaseline(grid: SimulationGrid): number {
   assert(grid.initialTopZ, 'fixture: a square grid carries its immutable baseline')
   let min = Infinity
@@ -94,14 +92,13 @@ function cellAt(grid: SimulationGrid, x: number, y: number): number {
 }
 
 /** A project-space point at `angleDeg` on the nominal sheet, at along `along`. */
-function sheetPoint(grid: SimulationGrid, along: number, angleDeg: number): { x: number; y: number } {
-  const frame = grid.squareBar!.frame
+function sheetPoint(frame: AroundFrame, along: number, angleDeg: number): { x: number; y: number } {
   const across = frame.zero + angleDeg * frame.circumference / 360
   return frame.axis === 'x' ? { x: along, y: across } : { x: across, y: along }
 }
 
-function cellAtSheetPoint(grid: SimulationGrid, along: number, angleDeg: number): number {
-  const point = sheetPoint(grid, along, angleDeg)
+function cellAtSheetPoint(grid: SimulationGrid, frame: AroundFrame, along: number, angleDeg: number): number {
+  const point = sheetPoint(frame, along, angleDeg)
   return cellAt(grid, point.x, point.y)
 }
 
@@ -109,21 +106,30 @@ type HookArgs = Parameters<typeof useSimulationModel>[0]
 type HookResult = ReturnType<typeof useSimulationModel>
 
 /**
- * Render the hook as the app does and wait for its square job to settle. The
- * in-thread fallback runs the replay inside the effect, so this is where the
- * result and the playback starting stock appear.
+ * Render the hook as the app does. `renderToStaticMarkup` runs the component
+ * body but no effects, so anything a square blank needs must be computed
+ * synchronously — exactly the path the viewport consumes.
  */
-async function renderModel(args: HookArgs): Promise<HookResult> {
+function renderModel(args: HookArgs): HookResult {
   let captured: HookResult | null = null
   function Capture() {
     // eslint-disable-next-line react-hooks/globals
     captured = useSimulationModel(args)
     return null
   }
-  const mounted = await mountReact(createElement(Capture))
-  await mounted.unmount()
+  renderToStaticMarkup(createElement(Capture))
   assert(captured, 'useSimulationModel rendered')
   return captured
+}
+
+/** Cells whose current height is below the grid's immutable starting surface. */
+function removedCells(grid: SimulationGrid): number {
+  const baseline = grid.initialTopZ!
+  let removed = 0
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    if (grid.topZ[index] < baseline[index] - 1e-9) removed += 1
+  }
+  return removed
 }
 
 // ---------------------------------------------------------------------------
@@ -131,13 +137,13 @@ async function renderModel(args: HookArgs): Promise<HookResult> {
 // ---------------------------------------------------------------------------
 
 function testSetupInputDescriptor(): void {
-  console.log('Testing the setup input carries the actual square descriptor...')
+  console.log('Testing the setup input carries the square initialization descriptor...')
   for (const axis of ['x', 'y'] as const) {
     const { project, operation } = squareRotaryProject(axis, { x: 5, y: 7 })
     const toolpath = generated(project, operation)
     const input = inputFor(project, operation, toolpath)
     const stock = project.stock as SquareStock
-    assert(input.squareBar, `${axis}: the input carries a square descriptor`)
+    assert(input.squareBar, `${axis}: the input carries a square initialization descriptor`)
     near(input.squareBar!.side, SIDE, `${axis}: the side is the physical blank side`)
     assert(input.squareBar!.frame.axis === axis, `${axis}: the descriptor keeps the Around frame`)
     near(input.squareBar!.frame.radius, SIDE / 2, `${axis}: the nominal pivot stays side/2`)
@@ -180,20 +186,20 @@ function testSetupInputDescriptor(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Every app grid entry point gets the descriptor
+// 2. Every app grid entry point gets the same square initialization
 // ---------------------------------------------------------------------------
 
-async function testEveryEntryPoint(): Promise<void> {
-  console.log('Testing every app grid entry point builds a square grid...')
+function testEveryEntryPoint(): void {
+  console.log('Testing every app grid entry point builds the same square grid...')
   const { project, operation, setup } = squareRotaryProject('x')
   const toolpath = generated(project, operation)
   const input = inputFor(project, operation, toolpath)
 
   // empty (no selected operation)
   const empty = computeSimulationResult(resultArgs(project, operation, input, 'selected', false))
-  assert(empty.grid.squareBar, 'the empty result is a square grid')
-  assert(empty.grid.initialTopZ, 'with the immutable square baseline')
-  assert(empty.grid.squareMaterial instanceof Map, 'and the interval map')
+  assert(!('squareBar' in empty.grid), 'the grid carries no runtime square switch')
+  assert(!('squareMaterial' in empty.grid), 'and no interval material map')
+  assert(empty.grid.initialTopZ, 'the empty result keeps the immutable square baseline')
   assert.equal(empty.stats.removedCellCount, 0, 'a virgin square removes nothing')
   assert.equal(empty.stats.processedMoveCount, 0, 'and processes no move')
   near(empty.stats.minTopZ, minBaseline(empty.grid), 'the empty result reports the true material baseline')
@@ -201,21 +207,25 @@ async function testEveryEntryPoint(): Promise<void> {
     empty.stats.minTopZ < empty.grid.stockTopZ - 0.5,
     'the baseline is the inscribed surface, not the corner maximum',
   )
+  for (let index = 0; index < empty.grid.topZ.length; index += 1) {
+    assert.equal(empty.grid.topZ[index], empty.grid.initialTopZ![index], `virgin cell ${index} starts at its baseline`)
+  }
 
   // selected
   const selected = computeSimulationResult(resultArgs(project, operation, input, 'selected'))
-  assert(selected.grid.squareBar, 'the selected cut is a square grid')
+  assert(selected.grid.initialTopZ, 'the selected cut is seeded square')
   assert(selected.stats.removedCellCount > 0, 'the real generated rough removes physical material')
 
   // visible/all
   const visible = computeSimulationResult(resultArgs(project, operation, input, 'visible'))
-  assert(visible.grid.squareBar, 'the visible replay is a square grid')
+  assert(visible.grid.initialTopZ, 'the visible replay is seeded square')
   assert.equal(visible.stats.removedCellCount, selected.stats.removedCellCount, 'selected and visible agree on the removed cells')
   near(visible.stats.minTopZ, selected.stats.minTopZ, 'and on the lowest material', 1e-5)
   assert.equal(visible.stats.processedMoveCount, selected.stats.processedMoveCount, 'and process the same moves')
 
-  // prior-operation playback base grid, through the real hook
-  const hook = await renderModel({
+  // prior-operation playback base grid, through the real hook, rendered without
+  // effects: the square result and the lazy base grid are both synchronous.
+  const hook = renderModel({
     project,
     centerTab: 'simulation',
     simulationMode: 'selected',
@@ -224,21 +234,23 @@ async function testEveryEntryPoint(): Promise<void> {
     selectedToolpath: toolpath,
     requestToolpath: () => Promise.resolve(null),
   })
-  assert(!hook.simulationInputPending, 'the hook has delivered the square job')
-  assert(hook.simulationResult?.grid.squareBar, 'the hook result is a square grid')
+  assert.equal(hook.simulationInputPending, false, 'the square result is synchronous — no worker or effect delivery')
+  assert(hook.simulationResult, 'the hook has a square result on the first render')
+  assert(hook.simulationResult!.grid.initialTopZ, 'the hook result is seeded square')
   const playback = hook.simulationPlaybackInput
   assert(playback, 'playback is available for a first square operation')
   const base = playback!.getBaseGrid()
   assert(base === playback!.getBaseGrid(), 'repeated playback calls return the same starting stock')
-  assert(base.squareBar, 'a playback base grid is a square grid')
-  assert(base.initialTopZ, 'with its immutable baseline')
-  assert.equal(base.squareMaterial?.size, 0, 'a base grid starts as virgin square material')
-  assert.equal(hook.simulationPlaybackInput?.units, 'mm', 'units follow the project')
+  assert(base.initialTopZ, 'a playback base grid starts at the square baseline')
+  for (let index = 0; index < base.topZ.length; index += 1) {
+    assert.equal(base.topZ[index], base.initialTopZ![index], `base cell ${index} is virgin square stock`)
+  }
+  assert.equal(hook.simulationPlaybackInput!.units, 'mm', 'units follow the project')
   assert.equal(setup.kind, 'around', 'fixture setup is Around')
 }
 
 // ---------------------------------------------------------------------------
-// 3. The physical result: corners cleared, gaps kept, ends square
+// 3. The physical result: corners cleared, untouched ends square
 // ---------------------------------------------------------------------------
 
 function testActualGeneratedBand(): void {
@@ -248,66 +260,68 @@ function testActualGeneratedBand(): void {
   const input = inputFor(project, operation, toolpath)
   const visible = computeSimulationResult(resultArgs(project, operation, input, 'visible'))
   const grid = visible.grid
-  const frame = grid.squareBar!.frame
+  const frame = input.squareBar!.frame
+  const baseline = grid.initialTopZ!
   const alongMid = 15
 
-  // A corner ray at 45 degrees loses real material; the flat ray at 0 degrees
-  // starts on the inscribed face, never on a circumscribed cylinder.
-  const cornerIndex = cellAtSheetPoint(grid, alongMid, 45)
-  const cornerBaseline = grid.initialTopZ![cornerIndex]
+  // A corner ray at 45 degrees loses real material, and its baseline stands
+  // above the nominal radius: the shared kernel cuts above the inscribed
+  // surface. The flat ray starts on the inscribed face, never on a
+  // circumscribed cylinder.
+  const cornerIndex = cellAtSheetPoint(grid, frame, alongMid, 45)
+  const cornerBaseline = baseline[cornerIndex]
   assert(
-    grid.topZ[cornerIndex] < cornerBaseline - 2,
-    `a corner is cleared (Z ${grid.topZ[cornerIndex]} vs baseline ${cornerBaseline})`,
+    cornerBaseline > SIDE / 2 + 1,
+    `the corner baseline stands above the nominal radius (${cornerBaseline} vs ${SIDE / 2})`,
   )
-  const flatIndex = cellAtSheetPoint(grid, alongMid, 0)
   assert(
-    Math.abs(grid.initialTopZ![flatIndex] - SIDE / 2) < 0.1,
+    grid.topZ[cornerIndex] < cornerBaseline - 1,
+    `a corner above the nominal radius is cleared (Z ${grid.topZ[cornerIndex]} vs baseline ${cornerBaseline})`,
+  )
+  const flatIndex = cellAtSheetPoint(grid, frame, alongMid, 0)
+  assert(
+    Math.abs(baseline[flatIndex] - SIDE / 2) < 0.1,
     'a flat ray baseline is half the side',
   )
   assert(
-    grid.topZ[flatIndex] < grid.initialTopZ![flatIndex],
+    grid.topZ[flatIndex] < baseline[flatIndex],
     'the flat ray is cut as the round target reaches it',
   )
 
-  // Untouched stock ends stay square: no interval was written there and the
-  // outer surface is still the blank baseline.
+  // Untouched stock ends stay square: no path reached them, so their heights
+  // are still the blank's own cross section.
   for (const along of [0.5, LENGTH - 0.5]) {
-    const endIndex = cellAtSheetPoint(grid, along, 0)
-    assert.equal(grid.squareMaterial!.has(endIndex), false, `the end at ${along} keeps its virgin material`)
-    assert.equal(grid.topZ[endIndex], grid.initialTopZ![endIndex], `the end at ${along} stays square`)
+    const endIndex = cellAtSheetPoint(grid, frame, along, 0)
+    assert.equal(grid.topZ[endIndex], baseline[endIndex], `the end at ${along} stays square`)
   }
 
-  // An interval-only removal keeps the outer top and is still counted: the
-  // stats count every cell with recorded material, not the moved envelope.
-  let interiorOnly = -1
-  for (let index = 0; index < grid.topZ.length && interiorOnly < 0; index += 1) {
-    const intervals = squareMaterialIntervals(grid, index)
-    if (intervals.length >= 4 && grid.topZ[index] === grid.initialTopZ![index]) interiorOnly = index
-  }
-  assert(interiorOnly >= 0, 'the generated rough leaves an interior gap behind an intact outer shell')
-  const intervals = squareMaterialIntervals(grid, interiorOnly)
-  assert.equal(intervals[0], 0, 'the surviving core starts at the stock bottom')
-  assert(intervals[1] > 0 && intervals[2] > intervals[1], 'the interior gap is a real removed band')
-  assert(intervals[3] >= intervals[2], 'and the outer shell survives above it')
+  // Statistics measure every cell against its own starting height, and count
+  // only cells the kernel actually lowered.
   assert.equal(
     visible.stats.removedCellCount,
-    grid.squareMaterial!.size,
-    'a material-writing cell counts once, even when its outer top never moved',
+    removedCells(grid),
+    'the removed-cell count is the cells lowered below their own baseline',
   )
+  let deepest = 0
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    const depth = baseline[index] - grid.topZ[index]
+    if (depth > deepest) deepest = depth
+  }
+  near(visible.stats.maxRemovedDepth, deepest, 'the deepest removal is measured from each cell baseline', 1e-9)
   assert(frame.radius === SIDE / 2, 'every grid point is measured on the true pivot')
 }
 
 // ---------------------------------------------------------------------------
-// 4. Playback advances, back-seeks and resets on the same square material
+// 4. Playback advances, back-seeks and resets on the same square heightfield
 // ---------------------------------------------------------------------------
 
-async function testPlaybackParity(): Promise<void> {
+function testPlaybackParity(): void {
   console.log('Testing square playback advance, back-seek and reset parity...')
   const { project, operation } = squareRotaryProject('x')
   const toolpath = generated(project, operation)
   const input = inputFor(project, operation, toolpath)
   const selected = computeSimulationResult(resultArgs(project, operation, input, 'selected'))
-  const hook = await renderModel({
+  const hook = renderModel({
     project,
     centerTab: 'simulation',
     simulationMode: 'selected',
@@ -321,8 +335,9 @@ async function testPlaybackParity(): Promise<void> {
 
   // Build the controller exactly as the viewport does: the hook's base grid
   // plus the selected operation's local moves.
+  const base = playback!.getBaseGrid()
   const controller = new PlaybackController(
-    playback!.getBaseGrid(),
+    base,
     playback!.moves,
     {
       toolType: playback!.toolType,
@@ -331,46 +346,36 @@ async function testPlaybackParity(): Promise<void> {
     },
     { maxSegmentLength: playback!.maxSegmentLength },
   )
-  assert(controller.liveGrid.squareBar, 'the live playback grid is square')
-  assert.equal(controller.liveGrid.squareMaterial?.size, 0, 'and starts virgin')
+  assert.equal(controller.liveGrid.initialTopZ, base.initialTopZ, 'playback shares the immutable square baseline')
 
-  // Scrub forward to the end, then compare the whole grid with the batch pass.
+  // Scrub forward to the end, then compare the whole heightfield with the
+  // batch pass. Both run the one shared kernel.
   controller.seekToFraction(1)
   const played = controller.liveGrid
   const batch = selected.grid
-  let compared = 0
+  assert.equal(played.topZ.length, batch.topZ.length, 'playback and batch grids have the same size')
+  let maxDifference = 0
   for (let index = 0; index < batch.topZ.length; index += 1) {
-    const left = squareMaterialIntervals(played, index)
-    const right = squareMaterialIntervals(batch, index)
-    assert.equal(left.length, right.length, `cell ${index}: playback keeps the batch's interval count`)
-    for (let i = 0; i < left.length; i += 1) {
-      near(left[i], right[i], `cell ${index} interval ${i}`, 1e-4)
-    }
-    compared += 1
+    const difference = Math.abs(played.topZ[index] - batch.topZ[index])
+    if (difference > maxDifference) maxDifference = difference
   }
-  assert.equal(compared, batch.topZ.length, 'every cell is compared')
+  near(maxDifference, 0, 'subdivided playback matches the batch replay at every cell', 1e-6)
 
-  // Back-seek resets and replays; a reset to zero restores the virgin blank.
-  // The sampled cells include the generated path's interval-only gap.
-  let gapCell = -1
-  for (let index = 0; index < batch.topZ.length && gapCell < 0; index += 1) {
-    if (squareMaterialIntervals(batch, index).length >= 4 && batch.topZ[index] === batch.initialTopZ![index]) gapCell = index
-  }
-  assert(gapCell >= 0, 'the generated path leaves an interval-only gap to re-check after back-seek')
+  // Back-seek resets and replays; the result must still match the batch pass.
   controller.seekToFraction(0.5)
   controller.seekToFraction(1)
   const reseeked = controller.liveGrid
-  for (const index of [0, 1, gapCell, Math.floor(batch.topZ.length / 2), batch.topZ.length - 1]) {
-    const left = squareMaterialIntervals(reseeked, index)
-    const right = squareMaterialIntervals(batch, index)
-    assert.equal(left.length, right.length, `cell ${index}: a back-seek then replay matches the batch`)
-    for (let i = 0; i < left.length; i += 1) near(left[i], right[i], `cell ${index} back-seek interval ${i}`, 1e-4)
+  for (let index = 0; index < batch.topZ.length; index += 1) {
+    near(reseeked.topZ[index], batch.topZ[index], `cell ${index}: a back-seek then replay matches the batch`, 1e-6)
   }
+
+  // Reset restores the prior-operation base grid exactly — the square blank's
+  // own starting heights, not a uniform cylinder.
   controller.reset()
-  assert.equal(controller.liveGrid.squareMaterial?.size, 0, 'reset restores the virgin square material')
   for (let index = 0; index < controller.liveGrid.topZ.length; index += 1) {
-    assert.equal(controller.liveGrid.topZ[index], controller.baseGrid.topZ[index], `cell ${index}: reset restores the square top`)
+    assert.equal(controller.liveGrid.topZ[index], base.topZ[index], `cell ${index}: reset restores the square base top`)
   }
+  assert.equal(controller.liveGrid.initialTopZ, base.initialTopZ, 'reset keeps the immutable square baseline')
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +393,8 @@ function testAxesUnitsOffOrigin(): void {
     const input = inputFor(project, operation, toolpath)
     const result = computeSimulationResult(resultArgs(project, operation, input, 'visible'))
     const label = `${axis}/${units}/at(${at.x},${at.y})`
-    assert(result.grid.squareBar, `${label}: the grid is square`)
+    assert(input.squareBar, `${label}: the input carries the square descriptor`)
+    assert(result.grid.initialTopZ, `${label}: the grid is seeded square`)
     const bounds = getStockBounds(project.stock)
     const grid = result.grid
     // The replay project is the unrolled sheet: along the bar the grid keeps
@@ -397,25 +403,27 @@ function testAxesUnitsOffOrigin(): void {
     const alongOrigin = axis === 'x' ? grid.originX : grid.originY
     const acrossOrigin = axis === 'x' ? grid.originY : grid.originX
     const alongMin = axis === 'x' ? bounds.minX : bounds.minY
-    const frame = grid.squareBar!.frame
+    const frame = input.squareBar!.frame
     near(alongOrigin, alongMin, `${label}: the grid origin follows the real stock end`, 1e-9)
     near(acrossOrigin, frame.sheetStart, `${label}: across spans the nominal sheet`, 1e-9)
     assert(result.stats.removedCellCount > 0, `${label}: the real generated band removes material`)
-    assert(result.grid.squareBar!.side === SIDE, `${label}: the descriptor keeps the side`)
+    assert(input.squareBar!.side === SIDE, `${label}: the descriptor keeps the side`)
     assert(project.meta.units === units, `${label}: the project keeps its units`)
   }
 }
 
-async function main(): Promise<void> {
+function main(): void {
   testSetupInputDescriptor()
-  await testEveryEntryPoint()
+  testEveryEntryPoint()
   testActualGeneratedBand()
-  await testPlaybackParity()
+  testPlaybackParity()
   testAxesUnitsOffOrigin()
   console.log('square simulation wiring tests passed')
 }
 
-void main().catch((error: unknown) => {
+try {
+  main()
+} catch (error: unknown) {
   console.error(error instanceof Error ? error.message : error)
   throw error
-})
+}

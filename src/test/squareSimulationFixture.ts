@@ -16,7 +16,12 @@
 
 /**
  * The accepted square-blank Around fixture (issue #1016 C2-R2V), shared by the
- * app wiring test and the square-simulation worker test (issue #1016 C2 P2).
+ * app wiring tests.
+ *
+ * A square blank is the round bar's radial heightfield whose cells start at the
+ * blank's true cross section; this fixture provides the one square-specific
+ * input — the grid-initialization descriptor — and a real production path, so
+ * the app wiring is exercised end to end rather than against a hand-built grid.
  *
  * The fixture uses the same default round workholding the app mints on a square
  * blank: a chuck centred on the true pivot whose diameter clears the corner

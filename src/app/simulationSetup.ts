@@ -54,15 +54,15 @@ import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameP
 import { aroundFrame, aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
 import { foldToolpath } from '../engine/aroundFold'
 import type { AroundFrame } from '../engine/aroundFrame'
-import { validateSquareBar } from '../engine/simulation/squareReplay'
+import { validateSquareBar } from '../engine/simulation/grid'
 import type { SquareBarDescriptor } from '../engine/simulation/types'
 import { activeSetup } from '../store/helpers/activeFace'
 
 /**
  * Real bar display data alongside the unchanged unrolled replay project. A
  * square blank is a bar too: it unrolls through the same nominal reference
- * cylinder, and the preview draws its actual square cross section (issue
- * #1016 C2-R2V).
+ * cylinder, and the common heightfield renderer draws the blank's own seeded
+ * cross section (issue #1016 C2).
  */
 export interface SimulationBar {
   frame: AroundFrame
@@ -85,11 +85,13 @@ export function buildSimulationBar(project: Project, frame: AroundFrame): Simula
 export interface SimulationSetupInput {
   bar?: SimulationBar
   /**
-   * The actual square blank this setup turns (#1016 C2-R1/R2V), present only
-   * when the real stock is square. `side` is the physical blank side and
+   * The square blank's grid initialization input, present only when the real
+   * stock is square (issue #1016 C2). `side` is the physical blank side and
    * `frame` is the nominal reference cylinder the unrolled sheet is framed in;
    * the true turning pivot stays `frame.radius = side/2`, never the corner
-   * radius. Transient — never persisted.
+   * radius. It seeds each cell's starting radius in `createSimulationGrid` and
+   * then leaves the picture — nothing downstream of initialization needs to
+   * know the blank was square. Transient — never persisted.
    */
   squareBar?: SquareBarDescriptor
   /** The project turned into the setup's frame; the same object for Top. */
@@ -213,10 +215,10 @@ export function buildSimulationSetupInput(
     )
   }
 
-  // The real bar display data and, for a square blank, the transient actual
-  // cross-section descriptor ride beside the unrolled block and its exact
-  // frozen Around frame (issue #1016 C2-R2V). This is the one coordinate
-  // mapping: the descriptor's frame is the sheet's, the pivot is `side/2`.
+  // The real bar display data and, for a square blank, its grid initialization
+  // input ride beside the unrolled block and its exact frozen Around frame
+  // (issue #1016 C2-R2V). This is the one coordinate mapping: the descriptor's
+  // frame is the sheet's, the pivot is `side/2`.
   const bar = around ? buildSimulationBar(project, around) : undefined
   const squareBar = around && bar && isSquareStock(bar.stock) ? squareBarFor(bar.stock, around) : undefined
 
@@ -232,8 +234,9 @@ export function buildSimulationSetupInput(
 }
 
 /**
- * The transient square descriptor for the real blank. It is validated here,
- * before any grid allocation: a frame whose radius is not `side/2` (or a
+ * The transient square grid-initialization descriptor for the real blank. It is
+ * validated here, before any grid allocation, through the same helper
+ * `createSimulationGrid` uses: a frame whose radius is not `side/2` (or a
  * non-finite side) must surface, never be approximated by the round sheet.
  */
 function squareBarFor(stock: BarStock, frame: AroundFrame): SquareBarDescriptor {

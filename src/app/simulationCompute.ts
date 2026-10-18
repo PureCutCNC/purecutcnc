@@ -15,16 +15,14 @@
  */
 
 /**
- * The pure simulation computation behind `useSimulationModel.ts` (issue #1016
- * C2 P2).
+ * The pure simulation computation behind `useSimulationModel.ts`.
  *
- * A square blank's replay can block the UI thread for a minute, so it runs in
- * a worker; but a module a worker imports must not reach React, the store or
- * any browser-only code, and the hook that owns the result is all of those.
- * Everything the computation itself reads therefore lives here: the one
- * definition of "a simulation result for this input", the prior-operation
- * replay the playback starting stock is built from, and the square job the
- * worker and its in-thread fallback both run.
+ * Every stock shape takes the same synchronous path (issue #1016 C2): a square
+ * blank is the round bar's radial heightfield whose cells start at the blank's
+ * true cross section, so there is no separate square job and no worker. This
+ * module stays free of React, the store and browser-only code: it holds the one
+ * definition of "a simulation result for this input" and the prior-operation
+ * replay the playback starting stock is built from.
  */
 
 import { findOperationTool } from '../toolPolicy'
@@ -65,12 +63,14 @@ export function simulationBuildOptions(setupInput: SimulationSetupInput | null, 
 /**
  * The empty result's statistics. A square blank's virgin surface is its true
  * cross section, whose lowest top is the inscribed radius over the grid's own
- * cells; `stockTopZ` there is the corner maximum. Flat and round grids keep the
- * exact stock-thickness value they always reported.
+ * cells; `stockTopZ` there is the corner maximum. The optional immutable
+ * baseline is the only signal for that, so a grid carrying one reports its own
+ * starting surface. Flat and round grids keep the exact stock-thickness value
+ * they always reported.
  */
 function emptySimulationStats(grid: SimulationGrid): SimulationResult['stats'] {
   let minTopZ = grid.stockTopZ
-  if (grid.squareBar && grid.initialTopZ) {
+  if (grid.initialTopZ) {
     const baseline = grid.initialTopZ
     for (let index = 0; index < baseline.length; index += 1) {
       if (baseline[index] < minTopZ) minTopZ = baseline[index]
@@ -82,11 +82,10 @@ function emptySimulationStats(grid: SimulationGrid): SimulationResult['stats'] {
 /**
  * One simulation result in the selected or visible mode (issue #1016 C2-R2V
  * keeps this the single place the result modes are dispatched, so every mode
- * receives the same square descriptor and periodic sheet). Exported from here
- * and re-exported by `useSimulationModel.ts` for the focused wiring test: the
- * hook calls this very function, and the square worker runs its own copy of
- * the input through it, so a mode that drops the descriptor fails there and
- * cannot pass behind a test-only copy.
+ * receives the same square initialization input and periodic sheet). Exported
+ * from here and re-exported by `useSimulationModel.ts` for the focused wiring
+ * test: the hook calls this very function, so a mode that drops the descriptor
+ * fails there and cannot pass behind a test-only copy.
  */
 export interface SimulationResultInput {
   setupInput: SimulationSetupInput | null
@@ -159,8 +158,7 @@ export function computeSimulationResult({
 
 /**
  * The items playback starts from: the simulated setup's operations BEFORE the
- * selected one, in cut order (issue #1016 C2 P2 moved this out of the hook so
- * the worker, its fallback and the flat/round path share one copy).
+ * selected one, in cut order.
  *
  * Operations listed after the selection have not run yet at this point in the
  * cycle, so their cuts must not appear, and another setup's never do (fresh
@@ -216,61 +214,4 @@ export function priorReplayGrid(
     buildPriorReplayItems(project, operations, paths, selectedOperationId),
     options,
   ).grid
-}
-
-/**
- * One square-blank simulation job (issue #1016 C2 P2). The setup input carries
- * everything the computation reads — the setup-local project, that setup's
- * operations in cut order and their folded paths — so the job is plain data
- * and survives structured clone with no functions or class instances.
- *
- * The hook creates a job only once the acquired paths are in hand, so the
- * `paths` gate `computeSimulationResult` applies is always satisfied and the
- * setup input's own map is what the replay reads: sending the acquired map
- * again would clone every toolpath a second time for no extra information.
- */
-export interface SquareSimulationJob {
-  setupInput: SimulationSetupInput
-  simulationMode: 'selected' | 'visible'
-  simulationDetailCells: number
-  selectedInSetup: Operation | null
-}
-
-/** What one square job produces: the result, and playback's starting stock. */
-export interface SquareSimulationDeliverable {
-  result: SimulationResult
-  /**
-   * The prior operations replayed into a fresh grid — the stock playback
-   * starts from (issue #1016 C2 P2). Present in `selected` mode only, which is
-   * the only mode the viewport plays back.
-   */
-  startingStock: SimulationGrid | null
-}
-
-/**
- * The job the worker runs, and the same function the in-thread fallback calls
- * when no Worker is available. One job computes both things the hook needs:
- * the result `computeSimulationResult` already returned, and the playback
- * starting stock `getBaseGrid` used to build lazily.
- */
-export function runSquareSimulationJob(job: SquareSimulationJob): SquareSimulationDeliverable {
-  const { setupInput } = job
-  const result = computeSimulationResult({
-    setupInput,
-    project: setupInput.project,
-    simulationMode: job.simulationMode,
-    simulationDetailCells: job.simulationDetailCells,
-    selectedInSetup: job.selectedInSetup,
-    paths: setupInput.toolpaths,
-  })
-  const startingStock = job.simulationMode === 'selected' && job.selectedInSetup !== null
-    ? priorReplayGrid(
-      setupInput.project,
-      setupInput.operations,
-      setupInput.toolpaths,
-      job.selectedInSetup.id,
-      simulationBuildOptions(setupInput, job.simulationDetailCells),
-    )
-    : null
-  return { result, startingStock }
 }
