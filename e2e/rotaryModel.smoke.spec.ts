@@ -1065,7 +1065,11 @@ test('square playback starts from the prior rough, follows the finish and resets
     return evidence.progress > 0.999 && evidence.minZ < start.minZ ? 'ended' : null
   }, { timeout: 60_000 }).toBe('ended')
   const end = await playbackEvidence(page, ui)
-  expect(end.removedCells, 'the end removes more cells than the prior rough').toBeGreaterThan(startRemoved)
+  // The finish works inside the same band the rough already opened (#1016 C2
+  // F7 keeps both cutters one radius inside it), so it deepens cells rather than
+  // reaching new ones: the count never drops, and the depth check below is what
+  // proves the finish cut.
+  expect(end.removedCells, 'the end never removes fewer cells than the prior rough').toBeGreaterThanOrEqual(startRemoved)
   expect(end.minZ, 'the finish cut deeper than the prior rough').toBeLessThan(start.minZ)
   // The end of the finish playback is the finished static surface.
   expect(end.minZ).toBeCloseTo(staticMinZ, 2)
