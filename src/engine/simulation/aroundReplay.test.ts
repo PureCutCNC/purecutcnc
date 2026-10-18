@@ -23,14 +23,25 @@ import { createSimulationGrid } from './grid'
 import { PlaybackController, cloneSimulationGrid } from './playback'
 import { applyMoveToGrid, simulateReplayItemsHeightfield } from './replay'
 
+/** One circumference of the sheet, and the bar radius it implies. */
+const CIRCUMFERENCE = 40
+const BAR_RADIUS = CIRCUMFERENCE / (2 * Math.PI)
+/** The radius as the heightfield stores it (Float32). */
+const SURFACE = Math.fround(BAR_RADIUS)
+
 for (const axis of ['x', 'y'] as const) {
-  const frame: AroundFrame = { axis, centre: 12, radius: 10, zero: 15, sheetStart: -5, circumference: 40 }
+  // A physically consistent unrolled bar: the sheet is one circumference across
+  // and the material's surface is the frame radius. F8 resolves the cutter's
+  // true solid, so a surface at any other radius is not a round bar at all.
+  const frame: AroundFrame = {
+    axis, centre: 15, radius: BAR_RADIUS, zero: 15, sheetStart: -5, circumference: CIRCUMFERENCE,
+  }
   const across = axis === 'x' ? 'y' : 'x'
   const point = (along: number, offset: number): { x: number; y: number; z: number } => axis === 'x'
     ? { x: along, y: -5 + offset, z: 3 }
     : { x: -5 + offset, y: along, z: 3 }
   const project = newProject()
-  project.stock = { ...project.stock, thickness: 10, profile: axis === 'x' ? rectProfile(0, -5, 60, 40) : rectProfile(-5, 0, 40, 60) }
+  project.stock = { ...project.stock, thickness: BAR_RADIUS, profile: axis === 'x' ? rectProfile(0, -5, 60, 40) : rectProfile(-5, 0, 40, 60) }
   const wrap = { axis: across, period: 40 } as const
   const base = createSimulationGrid(project, { targetLongAxisCells: 120, wrap })
   assert.deepEqual(base.wrap, wrap)
@@ -66,14 +77,17 @@ for (const axis of ['x', 'y'] as const) {
     applyMoveToGrid(flat, move, 1.5, 'flat_endmill', null)
     const index = (along: number, acrossIndex: number): number => axis === 'x' ? acrossIndex * grid.cols + along : along * grid.cols + acrossIndex
     const last = (axis === 'x' ? grid.rows : grid.cols) - 1
-    assert.equal(grid.topZ[index(50, 0)], 3, `${axis}: low seam is cut`)
-    assert.equal(grid.topZ[index(50, last)], 3, `${axis}: high seam is cut by shifted cutter`)
-    assert.equal(flat.topZ[index(50, offset < 20 ? last : 0)], 10, 'unwrapped cutter reaches only one end')
-    const actualChanges = Array.from(grid.topZ).filter((height) => height < 10).length
+    // F8 lowers a cell to the cutter's true surface, so the flat bottom reads
+    // `tip / cos(angle)` rather than exactly the tip; the seam contract is that
+    // both ends are still cut, not that the old exact value survives.
+    assert(grid.topZ[index(50, 0)] < BAR_RADIUS - 1e-6, `${axis}: low seam is cut (${grid.topZ[index(50, 0)]})`)
+    assert(grid.topZ[index(50, last)] < BAR_RADIUS - 1e-6, `${axis}: high seam is cut by the shifted cutter (${grid.topZ[index(50, last)]})`)
+    assert.equal(flat.topZ[index(50, offset < 20 ? last : 0)], SURFACE, 'unwrapped cutter reaches only one end')
+    const actualChanges = Array.from(grid.topZ).filter((height) => height < SURFACE).length
     assert.equal(changed.changedCount, actualChanges, 'both disjoint copies contribute changedCount')
     assert(changed.dirtyRegion)
     for (let row = 0; row < grid.rows; row++) for (let col = 0; col < grid.cols; col++) {
-      if (grid.topZ[row * grid.cols + col] === 10) continue
+      if (grid.topZ[row * grid.cols + col] === SURFACE) continue
       assert(col >= changed.dirtyRegion.colMin && col <= changed.dirtyRegion.colMax && row >= changed.dirtyRegion.rowMin && row <= changed.dirtyRegion.rowMax, 'dirty region unites both ends')
     }
   }
