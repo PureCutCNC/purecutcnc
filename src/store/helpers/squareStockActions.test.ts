@@ -31,9 +31,11 @@ import {
   defaultOrigin,
   defaultStock,
   getStockBounds,
+  isRoundStock,
   newProject,
   rectProfile,
   roundStock,
+  type Clamp,
   type MachineOrigin,
   type Operation,
   type Project,
@@ -43,6 +45,7 @@ import {
   barCentre,
   barLength,
   barMaxRadius,
+  barPivotZ,
   isSquareStock,
   normalizeSquareStock,
   squareStock,
@@ -314,13 +317,23 @@ test('to square adds exactly one chuck and moves the origin to the blank default
 
 test('round → square re-mints a too-small chuck and keeps exactly one', () => {
   const roundProject = projectWithStockShape(newProject('bar', 'mm'), 'round')
+  const bar = roundProject.stock
+  assert.ok(isRoundStock(bar), 'the project holds a round bar')
   const chuck = roundProject.clamps[0]
   assert.equal(chuck.type, 'chuck', 'the round project gained a chuck')
-  const next = projectWithStockShape(roundProject, 'square')
+  // The round default (50 mm) already clears a 20 mm square's 28.284 mm corner
+  // envelope, so make a genuinely too-small support: 25 mm is below the envelope.
+  const small: Clamp = {
+    ...chuck,
+    h: 25,
+    y: barCentre(bar) - 12.5,
+    height: barPivotZ(bar) + 12.5,
+  }
+  const next = projectWithStockShape({ ...roundProject, clamps: [small] }, 'square')
   assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
   assert.equal(next.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'still one chuck')
-  assert.notEqual(next.clamps[0], chuck, 'a chuck that no longer clears the corners is re-minted')
-  assert.equal(next.clamps[0].id, chuck.id, 'the same clamp id is kept')
+  assert.notEqual(next.clamps[0], small, 'a chuck that no longer clears the corners is re-minted')
+  assert.equal(next.clamps[0].id, small.id, 'the same clamp id is kept')
   closeTo(next.clamps[0].h, 4 * barMaxRadius(next.stock), 'the new diameter clears the corner envelope')
   closeTo(next.clamps[0].height, next.stock.thickness / 2 + next.clamps[0].h / 2, 'raised to the true pivot')
 
