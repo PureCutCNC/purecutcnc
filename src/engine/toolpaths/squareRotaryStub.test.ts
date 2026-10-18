@@ -35,8 +35,15 @@
  * closed form at the cutter's real radius (the ball's `-(rt - rho)` term is
  * derived and proved there); `rotaryTargets` floors every finite sample after
  * the normal stock offset, and `retainedStubStepForced` splits the one straight
- * move whose chord could sag below the floor. Round bars never call either: the
- * floor returns `-Infinity` for a round stock and no step predicate is built.
+ * move whose chord could sag below the floor.
+ *
+ * A `NaN` sample -- no model under the tool -- is the finish's "do not cut" and
+ * the rough's "cut to the axis". Off-axis targets leave whole pass rows `NaN`
+ * inside a stub's axial reach, so the rough's fallback is `max(axis, floor)`
+ * there (#1016 C2-F6b); without it a 25 mm blank's fourth layer plunged to
+ * 9.677670 at `x = 20.933333, A1080`, 0.066667 mm into the stub. Round bars
+ * never call either: the floor returns `-Infinity` for a round stock and no
+ * step predicate is built.
  *
  * ## The independent oracle
  *
@@ -59,7 +66,10 @@
  *    the cutter radius lifts to the full `13.025160` instead of `12.663010`;
  *    the near-reach assertions fail;
  *  - **stepped-chord safeguard removed**: the 0.7 mm drop adjacent to the stub
- *    at `A229.787` sags into the retained corner and the segment oracle fails.
+ *    at `A229.787` sags into the retained corner and the segment oracle fails;
+ *  - **stub floor not applied to the `NaN` fallback**: the off-axis rough
+ *    plunges to 9.677670 at `x = 20.933333, A1080` and the exact oracle
+ *    measures the 0.066667 mm intrusion.
  *
  * Run with: npx tsx src/engine/toolpaths/squareRotaryStub.test.ts
  */
@@ -247,6 +257,35 @@ function stubPenetration(
   return { max, where }
 }
 
+/**
+ * The emitted cut tip at one along position and pass angle, interpolated along
+ * the covering straight move. `Infinity` when the sample is not cut at all.
+ */
+function cutTipAt(
+  moves: readonly ToolpathMove[],
+  along: number,
+  angleDeg: number,
+  stock: BarStock,
+): number {
+  const pivot = barPivotZ(stock)
+  let best = Infinity
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    const fromAngle = move.from.a ?? 0
+    const toAngle = move.to.a ?? fromAngle
+    if (Math.abs(fromAngle - toAngle) > 1e-9) continue
+    if (Math.abs(fromAngle - angleDeg) > 1e-9) continue
+    const fromAlong = stock.axis === 'x' ? move.from.x : move.from.y
+    const toAlong = stock.axis === 'x' ? move.to.x : move.to.y
+    const lo = Math.min(fromAlong, toAlong)
+    const hi = Math.max(fromAlong, toAlong)
+    if (along < lo - 1e-9 || along > hi + 1e-9) continue
+    const t = hi > lo ? (along - fromAlong) / (toAlong - fromAlong) : 0
+    best = Math.min(best, move.from.z + t * (move.to.z - move.from.z) - pivot)
+  }
+  return best
+}
+
 /** The lowest emitted tip radius at one along position and pass angle. */
 function lowestTipAt(moves: readonly ToolpathMove[], along: number, angleDeg: number, stock: BarStock): number {
   const pivot = barPivotZ(stock)
@@ -267,6 +306,52 @@ function lowestTipAt(moves: readonly ToolpathMove[], along: number, angleDeg: nu
   return best
 }
 
+/**
+ * Every emitted cut point inside a retained stub's axial reach is at or above
+ * that stub's exact contact floor. `rotaryTargets` floors finite samples, and
+ * the rough floors its `NaN` ("cut to the axis") fallback, so no cut point may
+ * sit below the closed form at its own along position and pass angle -- with
+ * the rough's layer offset taken back out of the angle (#1016 C2-F6b).
+ */
+function assertStubFloorsRespected(
+  stock: BarStock,
+  tool: NormalizedTool,
+  moves: readonly ToolpathMove[],
+  alongStart: number,
+  alongEnd: number,
+  label: string,
+): number {
+  const pivot = barPivotZ(stock)
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const lowerStub = alongStart > lower
+  const upperStub = upper > alongEnd
+  let checked = 0
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      const along = stock.axis === 'x' ? point.x : point.y
+      const angle = ((point.a ?? 0) % 360 + 360) % 360
+      let floor = Number.NEGATIVE_INFINITY
+      if (lowerStub) {
+        floor = Math.max(floor, squareRotaryStubContactFloor(
+          stock, angle, tool.radius, tool.type, along - alongStart))
+      }
+      if (upperStub) {
+        floor = Math.max(floor, squareRotaryStubContactFloor(
+          stock, angle, tool.radius, tool.type, alongEnd - along))
+      }
+      if (!Number.isFinite(floor)) continue
+      checked++
+      const tip = point.z - pivot
+      assert.ok(tip >= floor - 1e-9,
+        `${label}: tip ${tip} at along ${along} a=${point.a} is below the stub floor ${floor}`)
+    }
+  }
+  return checked
+}
+
 // ── the exact Codex reproduction ──────────────────────────────────────
 //
 // 25 mm square, default chuck (`x = -40..15`), a Ø20 square-to-round target
@@ -276,10 +361,24 @@ function lowestTipAt(moves: readonly ToolpathMove[], along: number, angleDeg: nu
 
 const CODEX_SIDE = 25
 const CODEX_LENGTH = 100
-const CODEX_MODEL = { start: 10, end: 40, radius: 10 }
+const CODEX_MODEL = { start: 10, end: 40, radius: 10, offset: 0 }
+/**
+ * The F6b reproduction (#1016 C2-F6b): a Ø4 mm target 8 mm across the bar. At
+ * `A0` the tool axis passes 6 mm from the model's near side, so the whole pass
+ * row reads "no model", `NaN`, right where the `x < 18` stub is in reach.
+ */
+const CODEX_OFFSET_MODEL = { start: 10, end: 40, radius: 2, offset: 8 }
 const CODEX_ALONG = { start: 18, end: 40 }
+const CODEX_NAN_SAMPLE = 20.933333333333334
 
-function coaxialCylinder(stock: BarStock, radius: number, from: number, to: number, segments = 192) {
+function coaxialCylinder(
+  stock: BarStock,
+  radius: number,
+  from: number,
+  to: number,
+  segments = 192,
+  offsetAcross = 0,
+) {
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
   const positions: number[] = []
@@ -287,7 +386,7 @@ function coaxialCylinder(stock: BarStock, radius: number, from: number, to: numb
   for (const along of [from, to]) {
     for (let i = 0; i < segments; i++) {
       const t = (2 * Math.PI * i) / segments
-      const across = centre + radius * Math.cos(t)
+      const across = centre + offsetAcross + radius * Math.cos(t)
       const up = pivot + radius * Math.sin(t)
       if (stock.axis === 'x') positions.push(along, across, up)
       else positions.push(across, along, up)
@@ -327,7 +426,11 @@ interface Fixture {
   targetRadius: number
 }
 
-function codexFixture(toolType: ToolType = 'flat_endmill'): Fixture {
+function codexFixture(
+  toolType: ToolType = 'flat_endmill',
+  kind: 'rotary_finish' | 'rotary_rough' = 'rotary_finish',
+  target: { start: number; end: number; radius: number; offset: number } = CODEX_MODEL,
+): Fixture {
   const stock = squareStock(CODEX_SIDE, CODEX_LENGTH, 'x')
   const base = newProject('stub contact', 'mm')
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
@@ -342,7 +445,9 @@ function codexFixture(toolType: ToolType = 'flat_endmill'): Fixture {
     defaultStepover: 0.4,
     defaultStepdown: 1,
   }]
-  const mesh = coaxialCylinder(stock, CODEX_MODEL.radius, CODEX_MODEL.start, CODEX_MODEL.end)
+  const mesh = coaxialCylinder(
+    stock, target.radius, target.start, target.end, 192, target.offset,
+  )
   base.modelAssets = {
     asset: serializeImportedMesh(
       { positions: mesh.positions, index: mesh.index, bounds: computeMeshBounds(mesh.positions) },
@@ -355,13 +460,13 @@ function codexFixture(toolType: ToolType = 'flat_endmill'): Fixture {
     id: 'model', name: 'Model', kind: 'stl', operation: 'model', authoringFace: 'top', folderId: null,
     sketch: {
       profile: rectProfile(
-        CODEX_MODEL.start, centre - CODEX_MODEL.radius,
-        CODEX_MODEL.end - CODEX_MODEL.start, 2 * CODEX_MODEL.radius,
+        target.start, centre + target.offset - target.radius,
+        target.end - target.start, 2 * target.radius,
       ),
       origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
     },
     stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
-    z_top: pivot + CODEX_MODEL.radius, z_bottom: pivot - CODEX_MODEL.radius,
+    z_top: pivot + target.radius, z_bottom: pivot - target.radius,
     visible: true, locked: false,
   }
   const around: SketchFeature = {
@@ -373,10 +478,14 @@ function codexFixture(toolType: ToolType = 'flat_endmill'): Fixture {
   project.activeSetupId = 'around'
   project.clamps = [{ ...defaultRoundWorkholding('chuck', stock, 'mm'), id: 'chuck', name: 'Chuck', visible: true }]
   const operation: Operation = {
-    ...defaultOperationForTarget(project, 'rotary_finish', 'finish', { source: 'features', featureIds: ['model'] }, 0),
+    ...defaultOperationForTarget(
+      project, kind, kind === 'rotary_rough' ? 'rough' : 'finish',
+      { source: 'features', featureIds: ['model'] }, 0,
+    ),
     setupId: 'around',
     stockToLeaveRadial: 0,
     stepover: 0.4,
+    stepdown: 2,
   }
   project.operations = [operation]
   const tool = normalizeToolForProject(project.tools[0], project)
@@ -385,7 +494,7 @@ function codexFixture(toolType: ToolType = 'flat_endmill'): Fixture {
     tool, { chuckEnd: 0, tailEnd: 0 },
   )
   assert.ok(along, 'the Codex fixture has room between its supports')
-  return { project, operation, tool, along, targetRadius: CODEX_MODEL.radius }
+  return { project, operation, tool, along, targetRadius: target.radius }
 }
 
 // ── 1. the two measured Codex cases ───────────────────────────────────
@@ -504,6 +613,74 @@ console.log('Testing the ball offset and the near-reach contact...')
   console.log(`  ball floor ${ballFloor.toFixed(6)}; near-reach lift ${(near - zero).toFixed(6)} vs full ${full.toFixed(6)}`)
 }
 
+// ── 2b. the off-axis rough floors its NaN fallback ─────────────────────
+//
+// The Ø4 mm target 8 mm across the bar leaves the A0 pass with no model under
+// the tool at all, and the rough reads `NaN` as "remove down to the axis".
+// Its fourth layer (A1080) reached `x = 20.933333`, where the cutter's rim is
+// 0.066667 mm inside the `x < 18` stub, and plunged to 9.677670 -- below the
+// exact contacts 12.5 (flat) and 10.128932 (ball). The fallback must take the
+// floor. The finish must still not cut a `NaN` sample at all.
+
+console.log('Testing the off-axis rough floors its NaN fallback at the retained stub...')
+for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+  const fixture = codexFixture(toolType, 'rotary_rough', CODEX_OFFSET_MODEL)
+  const stock = fixture.project.stock as BarStock
+  approx(fixture.along.start, CODEX_ALONG.start, `${toolType}: the off-axis repro keeps the 18 mm start`)
+  approx(fixture.along.end, CODEX_ALONG.end, `${toolType}: the off-axis repro keeps the 40 mm end`)
+  const result = generateRotaryOperation(fixture.project, fixture.operation)
+  // The 2 mm target sits 8 mm across the bar, so its lower half is genuinely
+  // below the centreline; that warning is the sample's, not the stub floor's.
+  assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryBelowCentreline'],
+    `${toolType}: the off-axis rough reports only the below-centreline warning`)
+  assert.ok(result.moves.length > 0, `${toolType}: the off-axis rough cuts`)
+
+  const floor = squareRotaryStubContactFloor(
+    stock, 0, fixture.tool.radius, toolType, CODEX_NAN_SAMPLE - CODEX_ALONG.start,
+  )
+  approx(floor, toolType === 'flat_endmill' ? 12.5 : 10.128932,
+    `${toolType}: the exact contact at the NaN sample`, 1e-6)
+  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
+  assert.ok(measured.max <= 1e-6,
+    `${toolType}: the off-axis rough clears both retained stubs (${measured.max} at ${measured.where})`)
+  // A720 is still cut at the sample and its floor is above the layer, so the
+  // flat's emitted tip is the floor itself.
+  if (toolType === 'flat_endmill') {
+    approx(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 720, stock), floor,
+      'the flat NaN fallback is lifted to the stub floor', 1e-9)
+  } else {
+    assert.ok(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 720, stock) >= floor - 1e-9,
+      'the ball A720 sample is at or above its floor')
+  }
+  // The A1080 plunge Codex measured: the flat's floor is above that layer, so
+  // the sample is not cut at all; the ball cuts it exactly at its floor.
+  const fourth = cutTipAt(result.moves, CODEX_NAN_SAMPLE, 1080, stock)
+  if (toolType === 'flat_endmill') {
+    assert.equal(fourth, Infinity, 'the flat does not cut the A1080 sample: its floor clears the layer')
+  } else {
+    approx(fourth, floor, 'the ball cuts the A1080 sample at its exact floor', 1e-9)
+  }
+  const checked = assertStubFloorsRespected(
+    stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, `off-axis rough ${toolType}`,
+  )
+  assert.ok(checked > 0, `${toolType}: the off-axis rough has points inside a stub's reach`)
+  console.log(`  off-axis rough ${toolType}: floor ${floor.toFixed(6)}, penetration ${measured.max.toExponential(2)}`)
+}
+
+// The finish takes the opposite `NaN` branch -- it does not cut there -- so the
+// same off-axis program must clear the stubs too.
+for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+  const fixture = codexFixture(toolType, 'rotary_finish', CODEX_OFFSET_MODEL)
+  const stock = fixture.project.stock as BarStock
+  const result = generateRotaryOperation(fixture.project, fixture.operation)
+  assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryBelowCentreline'],
+    `${toolType}: the off-axis finish reports only the below-centreline warning`)
+  assert.ok(result.moves.length > 0, `${toolType}: the off-axis finish still cuts where the model lies under the tool`)
+  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
+  assert.ok(measured.max <= 1e-6,
+    `${toolType}: the off-axis finish clears both retained stubs (${measured.max} at ${measured.where})`)
+}
+
 // ── 3. seeded physical sweep: no intrusion, every shape and range ─────
 //
 // Sides 12 / 25 / 2 in, flat and ball cutters from 0.5 to 6 mm, both axes, both
@@ -521,6 +698,10 @@ interface CaseSpec {
   kind: 'rotary_rough' | 'rotary_finish'
   range: 'chuck-model' | 'model-model' | 'chuck-end' | 'model-end'
   stockToLeave: number
+  /** Across offset of the target's axis, in project units (0 is coaxial). */
+  offset?: number
+  /** Target radius; defaults to `side * 0.35`. */
+  targetRadius?: number
 }
 
 /** A seeded LCG: the case list is fixed between runs. */
@@ -556,7 +737,8 @@ function buildFixture(spec: CaseSpec): Fixture {
   const upper = axis === 'x' ? bounds.maxX : bounds.maxY
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
-  const targetRadius = side * 0.35
+  const targetRadius = spec.targetRadius ?? side * 0.35
+  const offset = spec.offset ?? 0
   const grip = Math.min(convertLength(15, 'mm', units), length / 4)
   const keepOut = grip + spec.radius + side * 0.3
   // `chuck-*` starts near the bar's start so the chuck sets the cut start;
@@ -578,7 +760,7 @@ function buildFixture(spec: CaseSpec): Fixture {
     defaultStepover: 0.4,
     defaultStepdown: side * 0.1,
   }]
-  const mesh = coaxialCylinder(stock, targetRadius, modelStart, modelEnd, 96)
+  const mesh = coaxialCylinder(stock, targetRadius, modelStart, modelEnd, 96, offset)
   base.modelAssets = {
     asset: serializeImportedMesh(
       { positions: mesh.positions, index: mesh.index, bounds: computeMeshBounds(mesh.positions) },
@@ -589,8 +771,8 @@ function buildFixture(spec: CaseSpec): Fixture {
     id: 'model', name: 'Model', kind: 'stl', operation: 'model', authoringFace: 'top', folderId: null,
     sketch: {
       profile: axis === 'x'
-        ? rectProfile(modelStart, centre - targetRadius, modelEnd - modelStart, 2 * targetRadius)
-        : rectProfile(centre - targetRadius, modelStart, 2 * targetRadius, modelEnd - modelStart),
+        ? rectProfile(modelStart, centre + offset - targetRadius, modelEnd - modelStart, 2 * targetRadius)
+        : rectProfile(centre + offset - targetRadius, modelStart, 2 * targetRadius, modelEnd - modelStart),
       origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
     },
     stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
@@ -645,10 +827,19 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     const fixture = buildFixture(spec)
     const result = generateRotaryOperation(fixture.project, fixture.operation)
     const label = `${spec.axis}/${spec.units}/${spec.toolType}/r${spec.radius.toFixed(3)}/${spec.range}`
-    assert.deepEqual(result.warnings, [], `${label}: no warning`)
+      + `${spec.offset ? `/offset${spec.offset.toFixed(3)}` : ''}`
+    // An off-axis target's lower half really is below the centreline; that is
+    // the model's warning, not the retained stub's.
+    const unexpected = result.warnings.filter(
+      (warning) => warning.code !== 'rotaryBelowCentreline' || !spec.offset,
+    )
+    assert.deepEqual(unexpected, [], `${label}: no unexpected warning`)
     assert.ok(result.moves.length > 0, `${label}: cuts`)
     const measured = stubPenetration(
       fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end,
+    )
+    assertStubFloorsRespected(
+      fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, label,
     )
     movesWalked += result.moves.length
     if (measured.max > worst) {
@@ -700,7 +891,23 @@ console.log('Testing the seeded square sweep against both retained stubs...')
       kind: 'rotary_rough', range: 'model-model', stockToLeave: 0,
     })
   }
-  assert.ok(cases >= 34, 'the sweep covers every side, axis, shape and retained end')
+  // Off-axis targets: 0.35 side across the bar with a 0.06 side radius leaves
+  // whole pass rows with no model under the cutter (`NaN`) right where a stub
+  // is in reach. Both cutter shapes and both axes, on every side, must floor
+  // the rough's axis fallback (#1016 C2-F6b).
+  for (const { side, units } of sides) {
+    const perMm = units === 'mm' ? 1 : 1 / 25.4
+    for (const axis of ['x', 'y'] as const) {
+      for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
+        audit({
+          side, units, shape: 'square', axis, toolType, radius: 3 * perMm,
+          kind: 'rotary_rough', range: 'chuck-model', stockToLeave: 0,
+          offset: side * 0.35, targetRadius: side * 0.06,
+        })
+      }
+    }
+  }
+  assert.ok(cases >= 46, 'the sweep covers every side, axis, shape and retained end, including off-axis targets')
   assert.ok(smallestRadius <= 0.5 + 1e-9, `the sweep reaches the 0.5 mm cutter (${smallestRadius})`)
   assert.ok(largestRadius >= 6 - 1e-9, `the sweep reaches the 6 mm cutter (${largestRadius})`)
   assert.ok(movesWalked > 0, 'the sweep walks real motion')

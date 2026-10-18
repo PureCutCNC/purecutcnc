@@ -1248,7 +1248,21 @@ function rotaryTargets(
   params: RotaryFinishParams,
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
   warnings: ToolpathWarning[],
-): { angles: number[]; along: number[]; tips: number[][]; stopped: boolean; refusal: ToolpathWarningCode | null } {
+): {
+  angles: number[]
+  along: number[]
+  tips: number[][]
+  /**
+   * The exact retained-stub contact at every sample (same shape as `tips`,
+   * `-Infinity` where no stub reaches), or `null` when there is no square stub.
+   * Kept apart from `tips` because `NaN` means "do not cut" to the finish and
+   * "cut to the axis" to the rough: the rough replaces its fallback with this
+   * floor where a stub overlaps (#1016 C2-F6b).
+   */
+  stubFloor: number[][] | null
+  stopped: boolean
+  refusal: ToolpathWarningCode | null
+} {
   // The tool and its radial allowance are validated before any grid work: an
   // invalid radius makes every sample read "no model", which the rough would
   // turn into a cut down to the axis. The allowance must be finite and
@@ -1257,12 +1271,12 @@ function rotaryTargets(
   // correction M1).
   const stockToLeave = params.stockToLeave
   if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
-    return { angles: [], along: [], tips: [], stopped: false, refusal: 'toolDiameterPositive' }
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
   }
   const samplingRadius = tool.radius + stockToLeave
   if (!Number.isFinite(stockToLeave) || stockToLeave < 0
     || !(samplingRadius > 0) || !Number.isFinite(samplingRadius)) {
-    return { angles: [], along: [], tips: [], stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
   }
   // The radius the samples are capped at and the angular step is derived from
   // is the blank's *largest* radius, not the inscribed one (#1016 C2-S3): a
@@ -1274,7 +1288,7 @@ function rotaryTargets(
   const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
   const along = rotaryAlongPositions(mesh, stock, tool, params)
   if (along === null) {
-    return { angles: [], along: [], tips: [], stopped: false, refusal: 'operationStepoverRatioRange' }
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
   }
   // The budget is checked against the *refined* along count (#1016 C2-S3
   // correction). `rotaryRefusal` bounds the uniform `passes x (intervals + 1)`
@@ -1285,7 +1299,7 @@ function rotaryTargets(
   // bound at 300,000 samples and then asked for ~8e8; refusing here is what
   // keeps that allocation from happening.
   if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || passes * along.length > MAX_ROTARY_SAMPLES) {
-    return { angles: [], along: [], tips: [], stopped: false, refusal: 'operationStepoverRatioRange' }
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
   }
   // One warning per operation, however many vertices stick out: the user can
   // only move the model or pick a bigger bar, and the sampler's answer is the
@@ -1318,9 +1332,9 @@ function rotaryTargets(
     warnings,
   )
   if (!sampling.valid) {
-    return { angles: [], along: [], tips: [], stopped: false, refusal: 'toolDiameterPositive' }
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
   }
-  if (sampling.stopped) return { angles, along, tips: [], stopped: true, refusal: null }
+  if (sampling.stopped) return { angles, along, tips: [], stubFloor: null, stopped: true, refusal: null }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
   // decides it carries the stock offset, so leaving stock does not hide a model
@@ -1358,12 +1372,18 @@ function rotaryTargets(
   // stock-to-leave-enlarged sampling tool) at this pass angle and along
   // position, so flooring the final tips -- after the normal stock offset has
   // been added back -- makes the stub contact exact instead of one cell
-  // approximate. Both generators read `tips`, and the rough re-uses one row for
-  // every layer, so this is the one shared place. A `NaN` sample is left alone:
-  // it means no model under the tool, and the stub, when it is within reach,
-  // is material the sampler does see. Round bars take the old path byte for
-  // byte (`withRetainedBar` still meshes their stub, but the floor is only
-  // square, and `squareRotaryStubContactFloor` never lifts a round sample).
+  // approximate. The finish reads `tips`; the rough reads `tips` and
+  // `stubFloor`, and re-uses one row for every layer, so this is the one shared
+  // place. A `NaN` sample stays `NaN` in `tips` -- the finish must not cut
+  // there -- but its floor is still recorded in `stubFloor`, because the rough
+  // turns `NaN` into "cut to the axis" and an off-axis model leaves `NaN`
+  // samples inside a stub's axial reach (#1016 C2-F6b). The rough takes
+  // `max(axis, floor)` from that row, so a stub that does not reach the sample
+  // leaves the axis fallback exactly as it was. Round bars take the old path
+  // byte for byte (`withRetainedBar` still meshes their stub, but the floor is
+  // only square, and `squareRotaryStubContactFloor` never lifts a round
+  // sample).
+  let stubFloor: number[][] | null = null
   if (isSquareStock(stock)) {
     const bounds = getStockBounds(stock)
     const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
@@ -1373,11 +1393,12 @@ function rotaryTargets(
     const lowerStub = params.alongStart > lower
     const upperStub = upper > params.alongEnd
     if (lowerStub || upperStub) {
+      stubFloor = tips.map((row) => new Array<number>(row.length).fill(Number.NEGATIVE_INFINITY))
       for (let k = 0; k < tips.length; k++) {
         const angle = angles[k]
         const row = tips[k]
+        const floors = stubFloor[k]
         for (let i = 0; i < row.length; i++) {
-          if (!Number.isFinite(row[i])) continue
           let floor = Number.NEGATIVE_INFINITY
           if (lowerStub) {
             floor = Math.max(floor, squareRotaryStubContactFloor(
@@ -1387,12 +1408,13 @@ function rotaryTargets(
             floor = Math.max(floor, squareRotaryStubContactFloor(
               stock, angle, tool.radius, tool.type, params.alongEnd - along[i]))
           }
-          if (floor > row[i]) row[i] = floor
+          floors[i] = floor
+          if (Number.isFinite(row[i]) && floor > row[i]) row[i] = floor
         }
       }
     }
   }
-  return { angles, along, tips, stopped: false, refusal: null }
+  return { angles, along, tips, stubFloor, stopped: false, refusal: null }
 }
 
 /**
@@ -1594,8 +1616,14 @@ export function generateRotaryRough(
   // A `NaN` sample means "no model under the tool", which for the rough is the
   // pivot: it removes the layer down to the axis there. The finish does
   // the opposite -- a `NaN` sample is not cut -- because only the rough exists
-  // to take waste off.
-  const tips = sampling.tips.map((row) => row.map((tip) => Number.isFinite(tip) ? tip : 0))
+  // to take waste off. Where a square blank's retained stub reaches the sample
+  // the axis fallback is not allowed -- the cutter's side would enter the stub --
+  // so the effective tip is the higher of the fallback and the exact contact
+  // (#1016 C2-F6b). `stubFloor` is `null` on a round bar and `-Infinity`
+  // wherever no stub reaches, which leaves the old fallback byte for byte.
+  const stubFloor = sampling.stubFloor
+  const tips = sampling.tips.map((row, k) => row.map((tip, i) =>
+    Number.isFinite(tip) ? tip : Math.max(0, stubFloor ? stubFloor[k][i] : Number.NEGATIVE_INFINITY)))
   const { angles, along } = sampling
   const pivot = barPivotZ(stock)
   const maxRadius = barMaxRadius(stock)
