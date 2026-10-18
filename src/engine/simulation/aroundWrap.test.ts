@@ -74,6 +74,12 @@ for (const axis of ['x', 'y'] as const) {
   assert((barBoundary.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>).material.vertexShader.includes('aroundSurfaceNormal(direction * edgePerp'), 'wall normals turn with the circumference')
   const geometry = createStockPlaneGeometry(grid, frame)
   const bounds = aroundBounds(grid, frame)
+  // A round grid's radial envelope is the bar radius, so the default bounds are
+  // exactly the nominal cylinder box (`0..2r`) this path always produced.
+  assert.equal(grid.stockTopZ, frame.radius, `${axis}: a round grid's envelope is the bar radius`)
+  assert(aroundBounds(grid, frame).equals(aroundBounds(grid, frame, frame.radius)), `${axis}: the default bounds stay the round bar's nominal box`)
+  close(bounds.min.y, 0, `${axis}: round bounds still start at the stock bottom`)
+  close(bounds.max.y, 2 * frame.radius, `${axis}: round bounds still top out at 2r`)
   assert(geometry.boundingBox?.equals(bounds), 'surface bounds enclose the cylinder')
   for (const child of barBoundary.children) assert((child as THREE.Mesh).geometry.boundingBox?.equals(bounds), 'each boundary uses cylinder bounds')
   const seam = frame.sheetStart + frame.circumference
@@ -138,7 +144,13 @@ for (const axis of ['x', 'y'] as const) {
     })
     const maxRadius = stock.thickness * Math.SQRT1_2
     const bounds = aroundBounds(grid, frame, maxRadius)
-    const nominal = aroundBounds(grid, frame)
+    const nominal = aroundBounds(grid, frame, frame.radius)
+
+    // The shared renderers pass no radius: `stockTopZ` must already be the
+    // square-capable corner envelope, never the nominal inscribed cylinder.
+    assert(Math.abs(grid.stockTopZ - maxRadius) < 1e-9, `${axis}: square stock top is the corner radius`)
+    const shared = aroundBounds(grid, frame)
+    assert(shared.equals(bounds), `${axis}: the default bounds use the grid's corner envelope`)
 
     // About the same pivot: the world height is pivot +- maxRadius, never
     // 0..2maxRadius, which would lift the blank off its own axis.
@@ -180,6 +192,25 @@ for (const axis of ['x', 'y'] as const) {
       )),
       `${axis}: a corner falls outside the old nominal bounds, so the guarantee is not vacuous`,
     )
+
+    // The actual GPU builders, given only the grid: their culling volume must
+    // hold the corners too, or a raised corner is clipped while it is cut.
+    const texture = createHeightfieldTexture(grid)
+    const surface = createStockPlaneGeometry(grid, frame)
+    assert(surface.boundingBox?.equals(bounds), `${axis}: the surface sheet's bounds hold the corners`)
+    surface.dispose()
+    const boundary = createInstancedBoundaryGroup(texture, grid, new THREE.Color('gray'), frame)
+    for (const child of boundary.children) {
+      const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>
+      assert(mesh.geometry.boundingBox?.equals(bounds), `${axis}: every boundary part's bounds hold the corners`)
+    }
+    boundary.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose()
+        ;(object.material as THREE.Material).dispose()
+      }
+    })
+    texture.dispose()
   }
 }
 
