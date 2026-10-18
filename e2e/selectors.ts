@@ -491,7 +491,7 @@ export const properties = {
     properties.stockAxis(page).getByRole('option', { name: label, exact: true }),
 
   // ── Clamp type and diameter (#392 slice C) ──
-  /** The Type select for a single clamp, present only on a round bar. */
+  /** The Type select for a single clamp, present on either bar shape (#1016 C2 F1). */
   clampType: (page: Page) => page.getByTestId('clamp-type'),
 
   /** An option in the open clamp Type select. */

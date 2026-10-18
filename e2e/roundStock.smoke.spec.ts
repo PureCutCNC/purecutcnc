@@ -29,7 +29,7 @@
 import { test, expect } from './fixtures'
 import { getProject, seedProject, setProjectType } from './helpers'
 import { roundStockCentre, type Project, type RoundStock, type SquareStock } from '../src/types/project'
-import { squareStock } from '../src/types/barStock'
+import { barCentre, barPivotZ, squareStock } from '../src/types/barStock'
 
 const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -209,6 +209,63 @@ test('selecting the chuck shows Type and Diameter and no Z control', async ({ ap
   await expect(ui.properties.clampDiameter(page)).toBeVisible()
   // The height is derived from the bar, so there is no Z control to set it.
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
+})
+
+test('a square blank gets the same chuck Type and Diameter as a round bar', async ({ app, ui }) => {
+  const page = app.page
+  // The reported repro (#1016 C2 F1): a rotary project, its bar made square,
+  // with the Around face — where a bar's workholding is edited — in view.
+  await setProjectType(page, ui, 'Rotary')
+  await ui.tree.stockRow(page).click()
+  await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
+  await ui.properties.stockShapeOption(page, 'Square blank').click()
+  await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Square blank')
+  await ui.face.segment(page, 'Around').click()
+
+  const project = await getProject(page) as unknown as Project
+  const blank = project.stock as SquareStock
+  expect(blank.shape).toBe('square')
+  const chuckId = project.clamps.find((clamp) => clamp.type === 'chuck')!.id
+  const side = blank.thickness
+  const centre = barCentre(blank)
+  const pivotZ = barPivotZ(blank)
+
+  // The same controls a round bar shows: a Type select and a Diameter field,
+  // and no Z control because the height follows the blank.
+  await ui.tree.clampRows(page).filter({ hasText: 'Chuck' }).click()
+  await expect(ui.properties.clampType(page)).toBeVisible()
+  await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
+  await expect(ui.properties.clampDiameter(page)).toBeVisible()
+  await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
+
+  // A plain clamp gives up the Diameter field, and choosing Chuck mints one
+  // sized for the square blank: its diameter clears the corner envelope, and
+  // it sits at the blank's true pivot.
+  await ui.properties.clampType(page).locator('.ui-select__trigger').click()
+  await ui.properties.clampTypeOption(page, 'Clamp').click()
+  await expect(ui.properties.clampDiameter(page)).toHaveCount(0)
+  await expect(ui.properties.zRangeSlider(page)).toHaveCount(1)
+  await ui.properties.clampType(page).locator('.ui-select__trigger').click()
+  await ui.properties.clampTypeOption(page, 'Chuck').click()
+
+  const minted = ((await getProject(page)) as unknown as Project).clamps.find((clamp) => clamp.id === chuckId)!
+  expect(minted.type).toBe('chuck')
+  const mintedDiameter = blank.axis === 'x' ? minted.h : minted.w
+  expect(mintedDiameter).toBeGreaterThanOrEqual(side * Math.SQRT2)
+  expect(blank.axis === 'x' ? minted.y : minted.x).toBeCloseTo(centre - mintedDiameter / 2, 6)
+  expect(minted.height).toBeCloseTo(pivotZ + mintedDiameter / 2, 6)
+
+  // Editing Diameter resizes the clamp, recentres it on the pivot and derives
+  // its height — exactly the round bar's rule, using the square's own pivot.
+  const diameter = ui.properties.clampDiameter(page)
+  await diameter.fill('2')
+  await diameter.press('Enter')
+  const edited = ((await getProject(page)) as unknown as Project).clamps.find((clamp) => clamp.id === chuckId)!
+  expect(blank.axis === 'x' ? edited.h : edited.w).toBeCloseTo(2, 6)
+  expect(blank.axis === 'x' ? edited.y : edited.x).toBeCloseTo(centre - 1, 6)
+  expect(edited.height).toBeCloseTo(pivotZ + 1, 6)
+  await expect(ui.properties.clampDiameter(page)).toHaveValue('2')
+  await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
 })
 
 test('a plasma project offers only a block, as a disabled control', async ({ app, ui }) => {
