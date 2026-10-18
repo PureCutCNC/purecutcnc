@@ -37,8 +37,9 @@
  *
  * None of them reads the sampled height map. `squareRotaryTouchRadius` is the
  * blank's material bound inside a finite cutter's cross-sectional footprint
- * (#1016 C2-F2, corrected by C2-F2b); the ray radius alone is still never a
- * tool-support or safe-height function.
+ * (#1016 C2-F2, corrected by C2-F2b for the flat footprint and made exact for
+ * a ball in C2-F2c); the ray radius alone is still never a tool-support or
+ * safe-height function.
  */
 
 import {
@@ -48,7 +49,7 @@ import {
   barPivotZ,
   isSquareStock,
 } from '../../types/barStock'
-import type { BarStock, SquareStock } from '../../types/project'
+import type { BarStock, SquareStock, Tool } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 
 /**
@@ -149,11 +150,12 @@ export function squareBlankRetainedStub(
 
 /**
  * The highest blank material a rough layer's cutter can reach at one program
- * angle: the largest tool-space `Y` of the square cross-section inside the
- * cutter's across-slab. The rough emits a layer when its tip radius is still
- * below this value and skips it otherwise (#1016 C2-F2, corrected by C2-F2b).
+ * angle, for the cutter shape that cuts the layer. The rough emits a layer
+ * when its tip radius is still below this value and skips it otherwise
+ * (#1016 C2-F2, corrected by C2-F2b for the flat footprint; the ball's exact
+ * contact is C2-F2c).
  *
- * ## The cutter is a cylinder, not a disc in the cross-section
+ * ## The cutter at a pass
  *
  * The generator turns the stock by `+angle` (`toolSpacePoint` in
  * `rotaryFrame.ts`) and keeps the tool over the centreline. At program angle
@@ -164,59 +166,93 @@ export function squareBlankRetainedStub(
  *     Y = u sin theta + v cos theta
  *
  * in the tool's own frame, where the pass ray is the `+Y` axis and a layer's
- * tip is at `(0, R)`. The cutter's axis lies along that ray with its flat (or
- * ball) bottom at the tip, so in this cross-section it occupies
- * `|X| <= rt` (across) and `Y >= R`. A ball nose's lower surface is contained
- * in that cylinder, so the same footprint is a valid upper bound for it.
+ * tip is at `(0, R)`. A flat end mill's bottom is a disc at the tip, so in this
+ * cross-section the cutter occupies `|X| <= rt` and `Y >= R`, and the deepest
+ * material it can touch is the square's largest `Y` inside that slab.
  *
- * The earlier bound took the largest *radial* distance `r(phi)` over an
- * angular window. That is not where the cutter is: at a fixed pass angle the
- * cutter spans a slab across the ray, and the material that matters is its
- * extent **along the cutter axis** inside that slab. On a 20 mm blank at `A0`
- * with a 4 mm flat and a 0.1 mm stepdown the old bound emitted layers at
+ * A ball end mill is **not** that cylinder. Its tip is the lowest point of a
+ * ball of radius `rt` whose centre is at `(0, R + rt)`, with the shank above
+ * the centre. A blank point `(X, Y)` in the slab is inside the cutter exactly
+ * when
+ *
+ *     Y >= R + rt - sqrt(rt^2 - X^2)      (the ball, below its centre)
+ *     Y >= R + rt                          (the shank, above it)
+ *
+ * and the second is contained in the first because the root is non-negative.
+ * So the layer touches the blank iff `R <= g(X, Y)` for some point of the
+ * cross-section inside the slab, where
+ *
+ *     g(X, Y) = Y - rt + sqrt(rt^2 - X^2).
+ *
+ * `g <= Y`, with equality only on the pass ray, which is why the old cylinder
+ * bound `max Y` is only an upper bound: it keeps whole air layers. Codex's
+ * reproduction (20 mm square, 4 mm ball, A30) began cutting at
+ * `Z = 22.642136` while the ball first meets the blank at `Z = 21.856406`.
+ *
+ * The earlier C2-F2 bound took the largest *radial* distance `r(phi)` over an
+ * angular window. That is not where the cutter is either: at a fixed pass
+ * angle the cutter spans a slab across the ray, and the material that matters
+ * is its extent **along the cutter axis** inside that slab. On a 20 mm blank
+ * at `A0` with a 4 mm flat and a 0.1 mm stepdown that bound emitted layers at
  * `Z = 20.1421` and `20.0421` above the `Z = 20` face — pure air.
  *
  * ## The bound
  *
  * The blank cross-section is the square `|u| <= side / 2`, `|v| <= side / 2`.
- * The deepest material the layer can touch is
+ * The deepest material the layer can touch is the maximum of the cutter's
+ * contact function over the square inside `|X| <= rt` — `Y` for a flat bottom,
+ * `g` for a ball. It does **not** depend on `R`: moving the tip only moves the
+ * cutter's bottom, not how high the blank reaches inside the slab.
  *
- *     S = max{ Y : |u|, |v| <= side / 2, |X| <= rt }.
+ * ## Computing the maximum exactly
  *
- * This does **not** depend on `R`: the slab is unbounded above, so moving the
- * tip changes only where the cutter's bottom is, not how high the blank
- * reaches inside the slab.
+ * The flat maximum is the largest `Y` over the convex square ∩ slab, so it is
+ * attained at a vertex of that intersection: a rotated square vertex whose
+ * `|X| <= rt`, or a crossing of a square edge with `X = ±rt`. Both are
+ * enumerated exactly — no sampling and no angular window.
  *
- * ## Computing S exactly
+ * For a ball, `g` is concave on the slab (`Y` is linear and `sqrt(rt^2 - X^2)`
+ * is concave) and has no stationary point in the polygon's interior (its `Y`
+ * derivative is `1`), so its maximum is on the boundary. The boundary is made
+ * of pieces of square edges and pieces of `X = ±rt`:
  *
- * The rotated square is convex and `Y` is linear, so the maximum over the
- * square ∩ slab is attained at a vertex of that intersection: either a rotated
- * square vertex whose `|X| <= rt`, or a crossing of a square edge with
- * `X = ±rt`. Both are enumerated exactly — no sampling and no angular window.
+ * - on a piece of `X = ±rt` the root is zero and `g = Y - rt` is linear, so
+ *   its maximum is at an endpoint: a square vertex or an edge crossing;
+ * - on a square edge `Y = m X + c`, `dg/dX = m - X / sqrt(rt^2 - X^2) = 0`
+ *   gives the interior tangency `X* = m rt / sqrt(1 + m^2)` (the sign follows
+ *   the edge slope), evaluated only when it lies on the edge segment. A
+ *   vertical edge is covered by its endpoints, since `g` is linear in `Y`
+ *   there.
+ *
+ * The flat path evaluates exactly the C2-F2b candidates, with `heightAt`
+ * returning `Y`, so its result is byte for byte unchanged.
  *
  * ## The layer gate
  *
  * The rough emits a layer when `R < S` and skips it when `R >= S`.
- * - If `R >= S`, no blank point in the slab is above the tip, so the layer
- *   would cut nothing and skipping it cannot change what is left.
- * - If `R < S`, the blank point attaining `S` is inside the cutter's footprint
- *   and above the tip, so the layer cuts material. The layer above it was
- *   skipped (`barMaxRadius` is the "above" layer for the first one), so
- *   `R > S - stepdown`: the first bite at that angle is less than one stepdown
- *   deep. The generator's `tips < previousRadius` test decides which along
- *   positions still need cutting.
+ * - If `R >= S`, no blank point in the slab is inside the cutter at that tip,
+ *   so the layer would cut nothing and skipping it cannot change what is left.
+ * - If `R < S`, the blank point attaining `S` is inside the cutter and cuts
+ *   material. The layer above it was skipped (`barMaxRadius` is the "above"
+ *   layer for the first one), so `R > S - stepdown`: the first bite at that
+ *   angle is less than one stepdown deep. The generator's
+ *   `tips < previousRadius` test decides which along positions still need
+ *   cutting.
  *
  * `S` is the blank material's upper bound, never the model: an emitted layer
  * may still cut less than the full blank because the model may already stand
  * below it, but a skipped layer can never leave model material behind.
  *
- * Round bars: the maximum over a disc is the bar radius at every angle, and
- * callers short-circuit them, so their output stays byte for byte identical.
+ * Round bars: the maximum over a disc is the bar radius at every angle for the
+ * flat cutter, and callers short-circuit them, so their output stays byte for
+ * byte identical. The ball short circuit is never reached by the gate (a round
+ * bar skips it) and stays the flat bound, which is conservative for a ball.
  */
 export function squareRotaryTouchRadius(
   stock: BarStock,
   angleDeg: number,
   toolRadius: number,
+  toolType: Tool['type'] = 'flat_endmill',
 ): number {
   if (!Number.isFinite(angleDeg) || !Number.isFinite(toolRadius)) {
     throw new RangeError(
@@ -240,10 +276,16 @@ export function squareRotaryTouchRadius(
     ys.push(u * sin + v * cos)
   }
   const tolerance = 1e-12 * Math.max(1, reach, halfSide)
+  // The blank height the cutter's lower surface reaches at a candidate point:
+  // `Y` for a flat bottom, the ball's exact `g` otherwise (C2-F2c).
+  const ball = toolType === 'ball_endmill'
+  const heightAt = ball
+    ? (x: number, y: number): number => y - reach + Math.sqrt(Math.max(0, reach * reach - x * x))
+    : (_x: number, y: number): number => y
   let best = Number.NEGATIVE_INFINITY
   // A vertex inside the slab.
   for (let i = 0; i < CORNERS.length; i++) {
-    if (Math.abs(xs[i]) <= reach + tolerance) best = Math.max(best, ys[i])
+    if (Math.abs(xs[i]) <= reach + tolerance) best = Math.max(best, heightAt(xs[i], ys[i]))
   }
   // A maximum on the slab's boundary: an edge crossing X = ±reach.
   for (let i = 0; i < CORNERS.length; i++) {
@@ -254,8 +296,18 @@ export function squareRotaryTouchRadius(
       const t = (boundary - xs[i]) / dx
       if (t < -tolerance || t > 1 + tolerance) continue
       const clamped = Math.min(1, Math.max(0, t))
-      best = Math.max(best, ys[i] + clamped * (ys[j] - ys[i]))
+      best = Math.max(best, heightAt(boundary, ys[i] + clamped * (ys[j] - ys[i])))
     }
+    if (!ball) continue
+    // The interior tangency of `g` on this edge, `X* = m rt / sqrt(1 + m^2)`.
+    // It is a maximum only when it lies on the edge segment; `g` is linear in
+    // `Y` on a vertical edge, which the endpoints already cover.
+    const slope = (ys[j] - ys[i]) / dx
+    const tangentX = (slope * reach) / Math.sqrt(1 + slope * slope)
+    const tangentT = (tangentX - xs[i]) / dx
+    if (tangentT < -tolerance || tangentT > 1 + tolerance) continue
+    const tangent = Math.min(1, Math.max(0, tangentT))
+    best = Math.max(best, heightAt(tangentX, ys[i] + tangent * (ys[j] - ys[i])))
   }
   return best
 }

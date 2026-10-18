@@ -1493,11 +1493,13 @@ export function generateRotaryRough(
   // The layer count and the band each layer cuts are still counted from the
   // blank's largest radius, so a square blank's corners are covered from the
   // first layer (#1016 C2-S3). What changes for a square is *which* of those
-  // bands a pass actually cuts: the cutter is a cylinder along the pass ray, so
-  // a pass skips a band whose tip is at or above the inside-slab material
-  // height the blank reaches at that angle (#1016 C2-F2, C2-F2b). A round
-  // bar's footprint radius is constant, so it keeps the old output byte for
-  // byte and the helper is not even called.
+  // bands a pass actually cuts: a flat's bottom is a disc at the tip, so a pass
+  // skips a band whose tip is at or above the inside-slab material height the
+  // blank reaches at that angle (#1016 C2-F2, C2-F2b); a ball's lower surface
+  // is a sphere, so the same call returns its exact contact height instead of
+  // that upper bound (#1016 C2-F2c). A round bar's footprint radius is
+  // constant, so it keeps the old output byte for byte and the helper is not
+  // even called.
   let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
@@ -1514,7 +1516,7 @@ export function generateRotaryRough(
     for (let pass = 0; pass < angles.length; pass++) {
       const angle = angles[pass] + (layer - 1) * 360
       const touchesMaterial = !square
-        || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius)
+        || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
       const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
       const needsCut = (i: number): boolean =>
         touchesMaterial && tips[pass][indexAt(i)] < previousRadius

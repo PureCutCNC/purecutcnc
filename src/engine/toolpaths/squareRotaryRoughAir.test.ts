@@ -17,7 +17,8 @@
 /**
  * The square rough must not start every pass at the blank's corner (#1016
  * C2-F2, Frank's UI test: "the rect rounding does lots of air cutting
- * initially"; corrected by C2-F2b).
+ * initially"; corrected by C2-F2b for the flat footprint, and made exact for a
+ * ball by C2-F2c).
  *
  * The old rough set `previousRadius = barMaxRadius` at every angle and emitted
  * the first layers there. On a square that is above the blank on all but the
@@ -32,12 +33,23 @@
  * 4 mm flat, 0.1 mm stepdown emitted full passes at `Z = 20.1421` and
  * `20.0421` above the `Z = 20` face — pure air.
  *
- * This test's reference is the vertical-contact model, computed from the
+ * A flat end mill's `S` is the blank's largest height `Y` inside the slab
+ * (C2-F2b). A ball end mill is not a cylinder: its centre is at `tip + rt`, so
+ * a blank point `(X, Y)` in the slab is cut iff
+ * `Y >= tip + rt - sqrt(rt^2 - X^2)`, and the exact bound is
+ * `S_ball = max(Y - rt + sqrt(rt^2 - X^2))` over the square inside the slab
+ * (C2-F2c). Codex's reproduction is what this pins: 20 mm square, 4 mm ball,
+ * A30, where the cylinder bound started at `Z = 22.642136` while the ball first
+ * meets the blank at `Z = 21.856406`.
+ *
+ * This test's reference is the cutter's own contact model, computed from the
  * frozen rotary frame and the analytic square, never the helper the generator
- * calls: a cut at tip radius `R` and program angle `a` touches the blank iff
- * the slab `|x| <= rt` above the tip intersects the rotated square
- * cross-section. The layer gate is `R < S` with `S` the square's maximum height
- * inside that slab.
+ * calls: a flat cut at tip radius `R` touches the blank iff the slab
+ * `|X| <= rt` above the tip intersects the rotated square cross-section; a ball
+ * cut touches iff the ball's disc (centre `tip + rt`) or the shank slab above
+ * it meets the blank. The ball bound is also checked against an independent
+ * numerical maximisation of the rotated boundary, which contains no closed-form
+ * tangency.
  *
  * Mutations that must fail:
  * - the old C2-F2 radial `r(phi)` bound over an angular window: the generated
@@ -49,6 +61,16 @@
  * - vertices only, without the edge crossings at `x = ±rt`: at 30° no rotated
  *   vertex is inside a 2 mm slab, so the helper returns no maximum at all (the
  *   helper contract and the first-cut assertions fail).
+ * - a ball using the flat cylinder bound (the old C2-F2b code): it emits air
+ *   layers above the ball's contact at A30 (Codex's ball case and the
+ *   disc+shank skip check fail).
+ * - dropping the ball's interior tangency candidate
+ *   (`X* = m rt / sqrt(1 + m^2)`) and using vertices/crossings only: the 30°
+ *   maximum is interior to the top edge, so the helper disagrees with the
+ *   ball reference and skips material.
+ * - flipping the sign of `X*`: the candidate lands on the wrong side of the
+ *   edge and returns the crossing value instead of the maximum, so the same
+ *   two checks fail.
  *
  * Run with: npx tsx src/engine/toolpaths/squareRotaryRoughAir.test.ts
  */
@@ -80,6 +102,8 @@ const BALL: NormalizedTool = {
 const FLAT: NormalizedTool = { ...BALL, id: 'flat', name: '2 mm flat end mill', type: 'flat_endmill' }
 /** Codex's cutter: the 4 mm flat of the reproduced air-cut case. */
 const FLAT_4MM: NormalizedTool = { ...FLAT, id: 'flat-4', name: '4 mm flat end mill', diameter: 4, radius: 2 }
+/** The same 4 mm cutter as a ball: the second half of the reproduction (C2-F2c). */
+const BALL_4MM: NormalizedTool = { ...BALL, id: 'ball-4', name: '4 mm ball nose', diameter: 4, radius: 2 }
 
 function approx(actual: number, expected: number, label: string, tolerance = 1e-9): void {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: got ${actual}, expected ${expected}`)
@@ -218,6 +242,125 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
   return best
 }
 
+/**
+ * The independent **ball** contact reference (C2-F2c). The cutter with its tip
+ * at `(0, t)` is the solid ball `x^2 + (y - (t + rt))^2 <= rt^2` plus the shank
+ * slab `|x| <= rt, y >= t + rt`; it touches a blank point `(x, y)` exactly when
+ * `t <= g(x, y) = y - rt + sqrt(rt^2 - x^2)`. `g` is concave and its `y`
+ * derivative is 1, so it has no stationary point inside the square; the maximum
+ * over the square inside the slab is therefore on the boundary. This clips each
+ * rotated edge to the slab and maximises the concave `g` on it by ternary
+ * search, with no closed-form tangency in it, so a dropped or sign-flipped
+ * candidate in the helper is visible here.
+ */
+function referenceBallTouchHeight(
+  stock: BarStock,
+  angleDeg: number,
+  toolRadius: number,
+): number {
+  if (!isSquareStock(stock)) return barInscribedRadius(stock)
+  const halfSide = barInscribedRadius(stock)
+  if (!(halfSide > 0)) return 0
+  const reach = Math.abs(toolRadius)
+  const corners: ReadonlyArray<readonly [number, number]> = [
+    [-halfSide, -halfSide], [halfSide, -halfSide], [halfSide, halfSide], [-halfSide, halfSide],
+  ]
+  const rotated = corners.map(([across, up]) => toToolFrame(stock, across, up, angleDeg))
+  const at = (from: { x: number; y: number }, to: { x: number; y: number }, t: number): number => {
+    const x = from.x + t * (to.x - from.x)
+    const y = from.y + t * (to.y - from.y)
+    return y - reach + Math.sqrt(Math.max(0, reach * reach - x * x))
+  }
+  let best = Number.NEGATIVE_INFINITY
+  for (let i = 0; i < rotated.length; i++) {
+    const from = rotated[i]
+    const to = rotated[(i + 1) % rotated.length]
+    const dx = to.x - from.x
+    let lo = 0
+    let hi = 1
+    if (dx === 0) {
+      // A vertical edge: either wholly inside the slab or wholly outside it.
+      if (Math.abs(from.x) > reach) continue
+    } else {
+      const a = (-reach - from.x) / dx
+      const b = (reach - from.x) / dx
+      lo = Math.max(lo, Math.min(a, b))
+      hi = Math.min(hi, Math.max(a, b))
+      if (lo > hi) continue
+    }
+    // Concave on the clipped edge, so a ternary search finds its maximum.
+    best = Math.max(best, at(from, to, lo), at(from, to, hi))
+    let a = lo
+    let b = hi
+    for (let k = 0; k < 120; k++) {
+      const third = (b - a) / 3
+      const left = a + third
+      const right = b - third
+      if (at(from, to, left) < at(from, to, right)) a = left
+      else b = right
+    }
+    best = Math.max(best, at(from, to, (a + b) / 2))
+  }
+  return best
+}
+
+/**
+ * The exact contact height for one tool shape at one program angle. The ball
+ * reference is numerical, so it is cached per angle and radius instead of
+ * being rebuilt for every cut endpoint.
+ */
+function contactHeight(
+  stock: BarStock,
+  angleDeg: number,
+  tool: NormalizedTool,
+  cache: Map<string, number>,
+): number {
+  if (tool.type !== 'ball_endmill' || !isSquareStock(stock)) {
+    return referenceTouchHeight(stock, angleDeg, tool.radius)
+  }
+  const key = `${baseAngle(angleDeg)}|${tool.radius}`
+  const cached = cache.get(key)
+  if (cached !== undefined) return cached
+  const value = referenceBallTouchHeight(stock, angleDeg, tool.radius)
+  cache.set(key, value)
+  return value
+}
+
+/**
+ * True when the solid cutter at `tip` — the ball `x^2 + (y - (tip + rt))^2 <=
+ * rt^2` plus the shank slab `|x| <= rt, y >= tip + rt` — contains any point of
+ * the blank cross-section at `angleDeg`. This samples the rotated square's
+ * interior directly; it never calls the helper, so it is a second, geometric
+ * reading of "a skipped layer touches no blank material".
+ */
+function ballCutterHitsBlank(
+  stock: BarStock,
+  angleDeg: number,
+  toolRadius: number,
+  tip: number,
+  steps = 64,
+): boolean {
+  const halfSide = barInscribedRadius(stock)
+  const reach = Math.abs(toolRadius)
+  const radians = (angleDeg * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const centreY = tip + reach
+  for (let i = 0; i <= steps; i++) {
+    const u = -halfSide + (2 * halfSide * i) / steps
+    for (let j = 0; j <= steps; j++) {
+      const v = -halfSide + (2 * halfSide * j) / steps
+      const x = u * cos - v * sin
+      const y = u * sin + v * cos
+      const dx = x
+      const dy = y - centreY
+      if (dx * dx + dy * dy <= reach * reach) return true
+      if (Math.abs(x) <= reach && y >= centreY) return true
+    }
+  }
+  return false
+}
+
 // ── 1. The helper's bound, including the round short circuit ───────────
 {
   const blank = squareStock(20, 60, 'x')
@@ -251,6 +394,28 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
         `helper vs vertical reference at ${angle}° rt=${toolRadius}`, 1e-12)
     }
   }
+  // The ball's exact contact is `g`, not the cylinder slab. At A30 the maximum
+  // is interior to the top edge at `X* = rt sin 30 = 1`, and
+  // `g = (h + rt) / cos 30 - rt = 11.856406`; the slab says 12.701705 and the
+  // earlier air passes sat between the two.
+  const ballEdgeMaximum = (10 + rt) / Math.cos(Math.PI / 6) - rt
+  approx(squareRotaryTouchRadius(blank, 30, rt, 'ball_endmill'), ballEdgeMaximum,
+    'ball interior tangency at 30°', 1e-12)
+  assert.ok(ballEdgeMaximum < squareRotaryTouchRadius(blank, 30, rt) - 0.8,
+    'the ball contacts lower than the flat cylinder slab')
+  approx(squareRotaryTouchRadius(blank, 0, rt, 'ball_endmill'), 10, 'ball on a flat face', 1e-12)
+  approx(squareRotaryTouchRadius(blank, 45, rt, 'ball_endmill'), barMaxRadius(blank),
+    'ball at the corner (the corner is on the pass ray)', 1e-12)
+  // The helper agrees with the independent ball reference at every angle and
+  // cutter width. The reference has no closed-form tangency, so this is what
+  // fails when the candidate is dropped or its sign is flipped.
+  for (let angle = -180; angle <= 180; angle += 5) {
+    for (const toolRadius of [0.5, 2, 7]) {
+      approx(squareRotaryTouchRadius(blank, angle, toolRadius, 'ball_endmill'),
+        referenceBallTouchHeight(blank, angle, toolRadius),
+        `ball helper vs ball reference at ${angle}° rt=${toolRadius}`, 1e-9)
+    }
+  }
   // Round bars get the old constant radius, so the layer gate is the old one.
   approx(squareRotaryTouchRadius(round, 0, 2), 10, 'round radius at a flat', 1e-12)
   approx(squareRotaryTouchRadius(round, 37, 2), 10, 'round radius away from a flat', 1e-12)
@@ -262,10 +427,11 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
 // ── 2. Every cut touches the blank; the first cut is one stepdown ──────
 //
 // Side 12 and 25, flat and ball, both bar axes, mm and inch, on the
-// asymmetric prism. The reference is the vertical-contact model: a cut at tip
-// radius R and angle a is above the blank iff R exceeds the slab maximum S at
-// that angle. The first-cut assertion measures the shallowest cut at every
-// pass against S, so a deeper first bite fails it.
+// asymmetric prism. The reference is each cutter's contact model: a flat cut
+// at tip radius R is above the blank iff R exceeds the slab maximum S, and a
+// ball cut is above it iff R exceeds the disc+shank contact g. The first-cut
+// assertion measures the shallowest cut at every pass against that contact, so
+// a deeper first bite fails it.
 {
   const SIDES = [12, 25] as const
   const SCALES = [['mm', 1], ['inch', 0.03937007874015748]] as const
@@ -287,6 +453,8 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
           // surface (6.6e-9 on the inch fixtures); this is the tangent case,
           // not an air cut.
           const tolerance = 1e-6 * Math.max(1, side * scale)
+          const ballCache = new Map<string, number>()
+          const contactAt = (angle: number): number => contactHeight(blank, angle, scaledTool, ballCache)
           const params = {
             stepover: 0.8 * scale, stepdown: 1 * scale, sampleSpacing: 1 * scale, stockToLeave: 0,
             alongStart: 0.5 * side * scale, alongEnd: 1.5 * side * scale,
@@ -301,23 +469,23 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
             for (const point of [move.from, move.to]) {
               if (point.a === undefined || !usableCut(point, pivot, maxRadius)) continue
               const r = radius(point, pivot)
-              const slab = referenceTouchHeight(blank, point.a, scaledTool.radius)
+              const contact = contactAt(baseAngle(point.a))
               checked++
-              worstSlab = Math.max(worstSlab, r - slab)
-              assert.ok(r <= slab + tolerance,
+              worstSlab = Math.max(worstSlab, r - contact)
+              assert.ok(r <= contact + tolerance,
                 `${side}/${units}/${axis}/${tool.type}: cut at ${point.a}° r=${r} is above the blank `
-                + `inside the cutter slab (S=${slab})`)
-              // Only cuts below the slab maximum count as the first bite; the
-              // shoulder-refined ends start on the blank's own surface.
-              if (r < slab - tolerance) {
+                + `inside the cutter contact (S=${contact})`)
+              // Only cuts below the contact height count as the first bite;
+              // the shoulder-refined ends start on the blank's own surface.
+              if (r < contact - tolerance) {
                 shallowest.set(baseAngle(point.a), Math.max(shallowest.get(baseAngle(point.a)) ?? -Infinity, r))
               }
             }
           }
           assert.ok(shallowest.size > 0, `${side}/${units}/${axis}/${tool.type} cuts`)
           for (const [base, first] of shallowest) {
-            const slab = referenceTouchHeight(blank, base, scaledTool.radius)
-            const depth = slab - first
+            const contact = contactAt(base)
+            const depth = contact - first
             worstDepth = Math.max(worstDepth, depth)
             if (depth > tolerance) materialCuts++
             assert.ok(depth <= params.stepdown + tolerance,
@@ -328,12 +496,12 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
       }
     }
   }
-  assert.ok(checked > 0, 'the vertical-contact assertion walks real cuts')
+  assert.ok(checked > 0, 'the cutter-contact assertion walks real cuts')
   assert.ok(materialCuts > 0, 'some first cuts remove material')
-  assert.ok(worstSlab <= 1e-6, `no cut is above the slab material (worst margin ${worstSlab.toExponential(2)})`)
+  assert.ok(worstSlab <= 1e-6, `no cut is above the blank contact (worst margin ${worstSlab.toExponential(2)})`)
   assert.ok(worstDepth <= 1 + 1e-6, `the first cut is never deeper than one stepdown (worst ${worstDepth.toFixed(6)})`)
   console.log(`square air: ${cases} asymmetric fixtures, ${checked} endpoints checked, `
-    + `worst slab margin ${worstSlab.toExponential(2)}, worst first cut ${worstDepth.toFixed(6)} <= 1`)
+    + `worst contact margin ${worstSlab.toExponential(2)}, worst first cut ${worstDepth.toFixed(6)} <= 1`)
 }
 
 // ── 3. Codex's reproduction: no A0 pass above the Z20 face ────────────
@@ -378,17 +546,78 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
     + `${atFace} shoulder endpoints on the face, ${aboveFace} above it`)
 }
 
+// ── 3b. Codex's ball reproduction: the ball's exact contact, not the slab ──
+//
+// 20 mm square, 12 angular passes (A30 is one), 4 mm ball, 0.1 mm stepdown,
+// r6 target along 18..42. The old cylinder bound started A30 at Z = 22.642136;
+// the ball first meets the blank at Z = 21.856406. No emitted A30 layer may
+// sit above that, and the top one must be within one stepdown of it.
+{
+  const blank = squareStock(20, 60, 'x')
+  const pivot = barPivotZ(blank)
+  const maxRadius = barMaxRadius(blank)
+  const stepdown = 0.1
+  const passes = 12
+  // 11.5 passes of spacing lands exactly on 12, so A30 is `k = 1`.
+  const stepover = (2 * Math.PI * maxRadius) / (passes - 0.5)
+  const mesh = cylinderMesh(blank, 6, 18, 42)
+  const result = generateRotaryRough('codex-air-ball', mesh, blank, BALL_4MM, {
+    stepover, stepdown, sampleSpacing: 1, stockToLeave: 0,
+    alongStart: 18, alongEnd: 42, safeRadius: 5, requestedCellSize: 0.2,
+  }, {})
+  // The analytic 30° tangency: h / cos 30 + rt (1 / cos 30 - 1).
+  const contact = (10 + BALL_4MM.radius) / Math.cos(Math.PI / 6) - BALL_4MM.radius
+  approx(referenceBallTouchHeight(blank, 30, BALL_4MM.radius), contact,
+    'the ball reference finds the 30° tangency', 1e-9)
+  approx(pivot + contact, 21.856406460551018, 'the ball contact at A30 is Z21.856406', 1e-9)
+  // Prove the direct disc+shank grid used on skipped layers is not vacuous:
+  // half a millimetre below the contact it must see the ball, half a
+  // millimetre above it must see air.
+  assert.ok(ballCutterHitsBlank(blank, 30, BALL_4MM.radius, contact - 0.5),
+    'the disc+shank grid sees a layer 0.5 mm inside the ball contact')
+  assert.ok(!ballCutterHitsBlank(blank, 30, BALL_4MM.radius, contact + 0.5),
+    'the disc+shank grid sees air 0.5 mm above the ball contact')
+  let aboveContact = 0
+  let highest = -Infinity
+  let checked = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    for (const point of [move.from, move.to]) {
+      if (point.a === undefined || baseAngle(point.a) !== 30) continue
+      if (!usableCut(point, pivot, maxRadius)) continue
+      const r = radius(point, pivot)
+      checked++
+      highest = Math.max(highest, r)
+      if (r > contact + 1e-9) aboveContact++
+    }
+  }
+  assert.ok(checked > 0, 'the A30 ball pass cuts')
+  assert.equal(aboveContact, 0,
+    `no A30 ball layer is above the ball contact Z${(pivot + contact).toFixed(6)} (got ${aboveContact})`)
+  assert.ok(highest <= contact + 1e-9, `the top A30 ball layer is under the contact (r ${highest})`)
+  assert.ok(contact - highest <= stepdown + 1e-9,
+    `the first A30 ball cut bites ${(contact - highest).toFixed(6)} <= one stepdown`)
+  assert.ok(highest < 12.642135623730951,
+    'the old cylinder bound\'s Z22.642136 air layer is gone')
+  console.log(`square air: Codex ball case ${result.moves.length} moves / `
+    + `${result.moves.filter((move) => move.kind === 'cut').length} cuts, A30 top layer `
+    + `Z${(pivot + highest).toFixed(6)} <= contact Z${(pivot + contact).toFixed(6)}`)
+}
+
 // ── 4. Skipping a layer removes nothing, so the final material is the old one
 //
 // The generator emits the present layers from the first material layer to the
 // final `lowest` layer; the skipped prefix is re-derived here against the
-// vertical-contact `S`. A skipped layer at radius R must have no blank point
-// inside the cutter slab at or above R (`R >= S`), so the old cut there was
-// wholly air and removing it cannot change what is left. The final layer is
-// present at every pass, which is the old algorithm's final per-angle depth.
+// cutter's contact height. A skipped layer at radius R must have no blank point
+// inside the cutter at or above R (`R >= S`), so the old cut there was wholly
+// air and removing it cannot change what is left. The final layer is present at
+// every pass, which is the old algorithm's final per-angle depth. For a ball the
+// disc+shank test below samples the blank cross-section directly, never the
+// helper.
 {
   let skippedLayers = 0
   let finalLayers = 0
+  let discChecks = 0
   for (const side of [12, 25] as const) {
     for (const axis of ['x', 'y'] as const) {
       for (const tool of [FLAT, BALL]) {
@@ -396,6 +625,7 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
         const pivot = barPivotZ(blank)
         const maxRadius = barMaxRadius(blank)
         const tolerance = 1e-9 * side
+        const ballCache = new Map<string, number>()
         const params = {
           stepover: 0.8, stepdown: 1, sampleSpacing: 1, stockToLeave: 0,
           alongStart: 0.5 * side, alongEnd: 1.5 * side, safeRadius: 0.5 * side, requestedCellSize: 0.2,
@@ -435,10 +665,18 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
           if (indexes[indexes.length - 1] === layers - 1) finalLayers++
           for (let layer = 0; layer < first; layer++) {
             const layerRadius = Math.max(lowest, maxRadius - (layer + 1) * params.stepdown)
-            const slab = referenceTouchHeight(blank, base, tool.radius)
-            assert.ok(layerRadius >= slab - tolerance,
+            const contact = contactHeight(blank, base, tool, ballCache)
+            assert.ok(layerRadius >= contact - tolerance,
               `${side}/${axis}/${tool.type}: skipped layer ${layer} at ${base}° (r ${layerRadius.toFixed(6)}) is still inside `
-              + `material out to ${slab.toFixed(6)}`)
+              + `material out to ${contact.toFixed(6)}`)
+            if (tool.type === 'ball_endmill') {
+              // The direct disc+shank reading: no point of the blank
+              // cross-section may be inside the solid cutter at this tip.
+              assert.ok(!ballCutterHitsBlank(blank, base, tool.radius, layerRadius),
+                `${side}/${axis}/${tool.type}: skipped layer ${layer} at ${base}° (r ${layerRadius.toFixed(6)}) `
+                + 'puts the ball or shank into the blank')
+              discChecks++
+            }
             skippedLayers++
           }
         }
@@ -446,8 +684,10 @@ function referenceTouchHeight(stock: BarStock, angleDeg: number, toolRadius: num
     }
   }
   assert.ok(skippedLayers > 0, 'the asymmetric fixtures actually skip air layers')
+  assert.ok(discChecks > 0, 'the ball disc+shank check walks skipped ball layers')
   assert.ok(finalLayers > 0, 'the reachable final layer survives on passes that cut to the lowest tip')
-  console.log(`square air: ${skippedLayers} air layers skipped across ${finalLayers} final-layer passes; every skipped layer is air`)
+  console.log(`square air: ${skippedLayers} air layers skipped across ${finalLayers} final-layer passes `
+    + `(${discChecks} checked with the ball disc+shank grid); every skipped layer is air`)
 }
 
 // ── 5. The side-12 fixture loses moves, with a measured margin ─────────
