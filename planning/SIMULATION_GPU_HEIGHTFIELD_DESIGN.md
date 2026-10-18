@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: GPU heightfield simulation rendering and playback update design
-last-verified: 2026-10-08
+last-verified: 2026-10-17
 ---
 
 # Simulation GPU Heightfield Design
@@ -67,8 +67,31 @@ The shipped implementation plan and playback experiments are preserved in
 Implementation is centered in `src/engine/simulation/` and
 `src/components/simulation/SimulationViewport.tsx`.
 
+## Square blanks
+
+A square blank is simulated exactly like the round bar: the same radial
+heightfield (one radius per cell), the same cutting kernel (`applyMoveToGrid`),
+the same playback controller and GPU renderer, and the same synchronous app
+path. There is no separate square material model or simulation worker.
+
+The only difference is the starting radius per cell. `createSimulationGrid`
+fills `topZ` from `seedSquareTopZ` in `src/engine/simulation/grid.ts`
+(`halfSide / max(|sin θ|, |cos θ|)`, constant along the bar) instead of a
+uniform `stockTopZ`, and snapshots that as the immutable `initialTopZ`.
+Removal statistics compare each cell with its own `initialTopZ`, so a virgin
+square reports zero removed. `grid.stockTopZ` remains the radial envelope — the
+corner radius `side/√2` about the true pivot at `side/2` — and is used only for
+render bounds and camera framing. Cutting, playback, reset, dirty uploads,
+shaders and framing are the round bar's.
+
+Decision: Frank, 2026-10-17, #1016 amendment — the exact square model was
+removed in favour of this shared path.
+
 ## Invariants
 
+- A stock shape never selects a different grid, cutting kernel, playback or
+  renderer. A square blank changes only the per-cell starting heights
+  (`seedSquareTopZ`) and the radial bounding envelope (`grid.stockTopZ`).
 - GPU data is derived render state; it never becomes the simulation source of
   truth.
 - Texture updates use the smallest valid dirty rectangle when practical.
