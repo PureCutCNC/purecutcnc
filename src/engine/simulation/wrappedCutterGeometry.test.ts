@@ -57,6 +57,7 @@ import type {
   BarStock, Operation, Project, SketchFeature, ToolType,
 } from '../../types/project'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
+import { bestCpuMs } from '../../test/cpuRatio'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
@@ -528,6 +529,31 @@ function testDeepVBitShank(): void {
   console.log(`deep v-bit shank: PASSED (${cleared} cells cleared, max delta ${worst.toExponential(2)})`)
 }
 
+/**
+ * A ball whose nose sits below the pivot: the sphere is entirely under the bar
+ * and only the shank (a cylinder of the cutter radius above the sphere centre)
+ * reaches material. This also exercises the ball entry-radius skip's guard: the
+ * cheap lower bound is only valid for a tip above the pivot.
+ */
+function testDeepBallShank(): void {
+  console.log('Testing a ball whose nose sits below the pivot cuts through its shank...')
+  const grid = roundGrid(ROUND_PERIOD, ALONG_LENGTH, ALONG_CELLS, 'x')
+  const toolRadius = 1.5
+  const tip = -4
+  const move: ToolpathMove = {
+    kind: 'plunge',
+    from: { x: ALONG_LENGTH / 2, y: 0, z: tip + 1 },
+    to: { x: ALONG_LENGTH / 2, y: 0, z: tip },
+  }
+  const worst = assertMatchesOracle(grid, [move], toolRadius, 'ball_endmill', null, 'deep ball shank')
+  const cut = cloneSimulationGrid(grid)
+  applyMoveToGrid(cut, move, toolRadius, 'ball_endmill', null)
+  let cleared = 0
+  for (let i = 0; i < cut.topZ.length; i += 1) if (cut.topZ[i] < 1e-6) cleared += 1
+  assert(cleared > 0, 'the deep ball shank must clear material to the pivot')
+  console.log(`deep ball shank: PASSED (${cleared} cells cleared, max delta ${worst.toExponential(2)})`)
+}
+
 // ── 4. the 25 mm square-to-round case ────────────────────────────────
 //
 // The measured case: a 25 mm square blank (default chuck), a Ø20 × 30 mm target
@@ -580,6 +606,8 @@ interface StubFixture {
   moves: ToolpathMove[]
   along: { start: number; end: number }
   simulation: ReturnType<typeof computeSimulationResult>
+  /** Re-runs the same fixture's simulation (used by the timing assertion). */
+  runSimulation: () => ReturnType<typeof computeSimulationResult>
   /** Time spent building and replaying the simulation grid, milliseconds. */
   simulationMs: number
 }
@@ -652,8 +680,7 @@ function stubFixture(toolType: ToolType, detailCells: number): StubFixture {
   const paths = new Map([[operation.id, toolpath]])
   const setupInput = buildSimulationSetupInput(project, setup, paths)
   assert(setupInput, 'fixture: the Around setup yields a simulation input')
-  const started = performance.now()
-  const simulation = computeSimulationResult({
+  const runSimulation = (): ReturnType<typeof computeSimulationResult> => computeSimulationResult({
     setupInput,
     project,
     simulationMode: 'visible',
@@ -661,8 +688,12 @@ function stubFixture(toolType: ToolType, detailCells: number): StubFixture {
     selectedInSetup: null,
     paths,
   })
+  const started = performance.now()
+  const simulation = runSimulation()
   const simulationMs = performance.now() - started
-  return { project, operation, tool, moves: toolpath.moves, along, simulation, simulationMs }
+  return {
+    project, operation, tool, moves: toolpath.moves, along, simulation, runSimulation, simulationMs,
+  }
 }
 
 function testSquareToRoundRetainedEnds(): void {
@@ -842,12 +873,161 @@ function testSeamCopies(): void {
   console.log(`seam copies: PASSED (max delta ${worst})`)
 }
 
+// ── 8. finished playback at an overlapping seam (F8b repro 1) ────────
+
+/**
+ * The reviewer's case: a wrapped move whose own across span crosses the whole
+ * sheet, so its periodic images overlap the same cells. The batch used to apply
+ * every original cell first and every shifted copy afterwards, while playback
+ * applied them per piece; the two orders left two cells 0.30558 mm apart.
+ */
+function testFinishedPlaybackMatchesBatchAtSeamOverlap(): void {
+  console.log('Testing finished playback == batch where seam copies overlap...')
+  const grid = roundGrid(ROUND_PERIOD, 18, 30, 'x')
+  assert(Math.abs(grid.cellSize - 0.6) < 1e-12, `fixture: cell ${grid.cellSize}`)
+  const move: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 5.6, y: -15.35, z: 2.34 },
+    to: { x: 7.2, y: 13.84, z: 2.72 },
+  }
+  const tool = { toolType: 'flat_endmill' as const, toolRadius: 3.3, vBitAngle: null }
+  const batch = cloneSimulationGrid(grid)
+  applyMoveToGrid(batch, move, tool.toolRadius, tool.toolType, tool.vBitAngle)
+
+  // The cell the reviewer reported: x = 8.7, y = 14.592036…, batch 2.44548.
+  const col = Math.round((8.7 - grid.originX) / grid.cellSize - 0.5)
+  const row = Math.round((14.592036732051032 - grid.originY) / grid.cellSize - 0.5)
+  const idx = row * grid.cols + col
+  assert(
+    Math.abs(batch.topZ[idx] - 2.445481777191162) < 1e-4,
+    `fixture: the batch cell is at ${batch.topZ[idx]} (expected ~2.44548)`,
+  )
+
+  const cases: Array<[string, { maxSegmentLength?: number }]> = [
+    ['default', {}],
+    ['fine', { maxSegmentLength: 0.1 }],
+    ['whole', { maxSegmentLength: 0 }],
+  ]
+  for (const [label, options] of cases) {
+    const playback = new PlaybackController(grid, [move], tool, options)
+    playback.seekToFraction(1)
+    const finished = gridDistance(playback.liveGrid, batch)
+    assert(
+      finished.max === 0,
+      `${label}: finished playback must equal the batch exactly (max ${finished.max} at ${finished.cells} cells; `
+      + `batch ${batch.topZ[idx]} vs playback ${playback.liveGrid.topZ[idx]})`,
+    )
+    assert(playback.liveGrid.topZ[idx] === batch.topZ[idx], `${label}: the reported cell must agree`)
+
+    const chained = new PlaybackController(grid, [move], tool, options)
+    chained.seekToFraction(0.37)
+    chained.seekToFraction(1)
+    const partial = gridDistance(chained.liveGrid, batch)
+    assert(partial.max === 0, `${label}: a partial seek then a full replay must equal the batch (max ${partial.max})`)
+  }
+  console.log(`seam-overlap playback: PASSED (${batch.topZ[idx]} everywhere, 3 subdivisions)`)
+}
+
+// ── 9. partial playback clips the elapsed footprint (F8b repro 2) ────
+
+/** A wrapped test grid with an explicit origin, so a cell centre can sit at 0. */
+function explicitWrappedGrid(
+  period: number, cols: number, rows: number, cellSize: number,
+  originX: number, originY: number, stockTopZ: number,
+): SimulationGrid {
+  return {
+    cols,
+    rows,
+    cellSize,
+    originX,
+    originY,
+    stockBottomZ: 0,
+    stockTopZ,
+    wrap: { axis: 'y', period },
+    topZ: new Float32Array(cols * rows).fill(stockTopZ),
+  }
+}
+
+/**
+ * The reviewer's second case: the cutter reaches a cell before that cell's
+ * projected parent parameter. At X = 4.5 the r = 1 cutter already contains the
+ * cell centred at (5, 0) (it is 0.5 mm away), so it must be at 2 there; a cell
+ * at (7, 0) is still 2.5 mm ahead and must stay at the stock radius.
+ */
+function testPartialPlaybackClipsElapsedFootprint(): void {
+  console.log('Testing partial playback cuts only the elapsed footprint...')
+  const cellSize = 0.5
+  const grid = explicitWrappedGrid(ROUND_PERIOD, 30, 63, cellSize, -0.25, -15.75, ROUND_RADIUS)
+  const targetIdx = 31 * 30 + 10
+  const aheadIdx = 31 * 30 + 14
+  assert(Math.abs(grid.originX + 10.5 * cellSize - 5) < 1e-12, 'fixture: the target cell is centred at x = 5')
+  assert(Math.abs(grid.originY + 31.5 * cellSize) < 1e-12, 'fixture: the target cell is centred at y = 0')
+
+  const move: ToolpathMove = { kind: 'cut', from: { x: 0, y: 0, z: 2 }, to: { x: 10, y: 0, z: 2 } }
+  const tool = { toolType: 'flat_endmill' as const, toolRadius: 1, vBitAngle: null }
+  const batch = cloneSimulationGrid(grid)
+  applyMoveToGrid(batch, move, tool.toolRadius, tool.toolType, tool.vBitAngle)
+  assert(Math.abs(batch.topZ[targetIdx] - 2) < 1e-6, `fixture: the batch cuts the target to ${batch.topZ[targetIdx]}`)
+  assert(Math.abs(batch.topZ[aheadIdx] - 2) < 1e-6, `fixture: the batch cuts the ahead cell to ${batch.topZ[aheadIdx]}`)
+
+  const playback = new PlaybackController(grid, [move], tool)
+  playback.advance(4.5)
+  assert(Math.abs(playback.getPose().x - 4.5) < 1e-9, `fixture: the cutter is at ${playback.getPose().x}`)
+  assert(
+    Math.abs(playback.liveGrid.topZ[targetIdx] - 2) < 1e-6,
+    `the elapsed footprint must cut the cell at (5, 0) to 2, got ${playback.liveGrid.topZ[targetIdx]}`,
+  )
+  assert(
+    playback.liveGrid.topZ[aheadIdx] === ROUND_RADIUS,
+    `a cell beyond the elapsed footprint must not be cut yet, got ${playback.liveGrid.topZ[aheadIdx]}`,
+  )
+
+  playback.advance(1e9)
+  const finished = gridDistance(playback.liveGrid, batch)
+  assert(finished.max === 0, `finishing the move must equal the batch (max ${finished.max})`)
+  console.log('elapsed footprint: PASSED (cell at (5,0) is 2 at X = 4.5; (7,0) still 5)')
+}
+
+// ── 10. wrapped ball replay timing (F8b fix 3) ───────────────────────
+//
+// Measured with `bestCpuMs` (CPU time, minimum of 3), so the number is the
+// replay's own work rather than time the process spends descheduled. The bound
+// is deliberately loose enough for a loaded `npm test` pool; the full flat
+// `π/2 · R0` reach is several times slower and must trip it (verified by
+// mutation). The fixture is the 25 mm square-to-round case.
+//
+// Measured on the development machine (2026-10-18, bestCpuMs, min of 3):
+//   detail 280  ball replay ~22 ms; bound 80 ms
+//   detail 1120 ball replay ~300 ms; bound 700 ms
+// The reviewer measured 85–142 ms and 1.47–1.65 s before F8b. Restoring the
+// full flat `π/2 · R0` reach on this machine reproduced 106 ms and 1518 ms, so
+// the tighter ball reach and the entry-radius skip are what remove the stall;
+// the bounds leave headroom above the fixed measurement.
+const BALL_REPLAY_BOUND_MS = { 280: 80, 1120: 700 } as const
+
+function testBallReplayTiming(): void {
+  console.log('Testing wrapped ball replay timing on the square-to-round fixture...')
+  for (const detail of [280, 1120] as const) {
+    const fixture = stubFixture('ball_endmill', detail)
+    // Warm the JIT outside the measured region.
+    fixture.runSimulation()
+    const ms = bestCpuMs({ run: () => { fixture.runSimulation() } }, 3)
+    const bound = BALL_REPLAY_BOUND_MS[detail]
+    console.log(`  ball ${detail}: ${ms.toFixed(1)} ms (bound ${bound} ms)`)
+    assert(ms < bound, `ball replay at detail ${detail} took ${ms.toFixed(1)} ms, budget ${bound} ms`)
+  }
+}
+
 testRandomMovesMatchTheOracle()
 testRayMiddleKeepsTheOuterShell()
 testBallShank()
 testDeepVBitShank()
+testDeepBallShank()
 testSquareToRoundRetainedEnds()
 testRoundGrooveMatchesOracle()
 testPlaybackParityAndReset()
 testSeamCopies()
+testFinishedPlaybackMatchesBatchAtSeamOverlap()
+testPartialPlaybackClipsElapsedFootprint()
+testBallReplayTiming()
 console.log('\nAll wrapped cutter geometry tests PASSED.')
