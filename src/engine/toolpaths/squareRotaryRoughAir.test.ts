@@ -690,13 +690,16 @@ function ballCutterHitsBlank(
     + `(${discChecks} checked with the ball disc+shank grid); every skipped layer is air`)
 }
 
-// ── 5. The side-12 fixture loses moves, with a measured margin ─────────
+// ── 5. The side-12 fixture's move count is pinned ──────────────────────
 //
 // Before C2-F2 this fixture (12 × 30 blank, r3 target band 8..22, r1 flat,
 // stepover 0.8, stepdown 1) generated 2,231 moves, 1,397 of them `cut`; C2-F2's
 // pin required at most 2,031 moves and 1,307 cuts. The slab bound (C2-F2b)
-// measures 1,959 moves and 1,107 cuts. The pin keeps the pre-F2 regression
-// loud; the correction's own regression is Codex's case above.
+// measured 1,959 moves and 1,107 cuts. C2-F6's exact retained-stub contact adds
+// the stepped moves that keep each chord above the stub floor at the band's two
+// retained ends (the 1 mm cutter against the 1 mm sample spacing steps on
+// every layer there), so the pinned counts moved to 2,524 / 1,672. The pin
+// stays loud for a real regression in either direction.
 {
   const blank = squareStock(12, 30, 'x')
   const mesh = cylinderMesh(blank, 3, 8, 22)
@@ -705,9 +708,9 @@ function ballCutterHitsBlank(
     alongStart: 8, alongEnd: 22, safeRadius: 6, requestedCellSize: 0.2,
   }, {})
   const cuts = result.moves.filter((move) => move.kind === 'cut').length
-  assert.ok(result.moves.length <= 1959,
-    `the side-12 rough drops to the slab-bound count (${result.moves.length} <= 1959)`)
-  assert.ok(cuts <= 1107, `the side-12 rough drops to the slab-bound count (${cuts} <= 1107)`)
+  assert.ok(result.moves.length <= 2560,
+    `the side-12 rough keeps its C2-F6 stub-step count (${result.moves.length} <= 2560)`)
+  assert.ok(cuts <= 1700, `the side-12 rough keeps its C2-F6 stub-step count (${cuts} <= 1700)`)
   console.log(`square air: side-12 fixture ${result.moves.length} moves / ${cuts} cuts, pre-F2 2231 / 1397`)
 }
 

@@ -21,7 +21,7 @@ import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
-import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryTouchRadius } from './squareRotaryStock'
+import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -810,6 +810,7 @@ function emitRotaryRuns(
   safeZ: number,
   travelZ: number,
   previousEndedAtEnd: boolean,
+  forceStep?: (from: ToolpathPoint, to: ToolpathPoint) => boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
   let endedAtEnd = false
@@ -842,7 +843,13 @@ function emitRotaryRuns(
       // centreline, so only one of x and y changes, and this is the spacing.
       const spacing = Math.hypot(to.x - from.x, to.y - from.y)
       const rise = to.z - from.z
-      if (Math.abs(rise) > spacing) {
+      // A square blank's retained-stub zone forces the step regardless of the
+      // 45-degree rule: the exact contact chord can sag below the floor over a
+      // shallower-looking drop. A horizontal move is already safe and is left
+      // alone, so a forced segment only splits when it actually changes height.
+      const stepped = Math.abs(rise) > spacing
+        || (Math.abs(rise) > 1e-9 && forceStep?.(from, to) === true)
+      if (stepped) {
         if (rise > 0) {
           // Rising: straight up at the first (lower) sample, then along at the
           // higher tip.
@@ -1164,6 +1171,74 @@ function rotaryAlongPositions(
   return unique
 }
 
+/**
+ * The between-sample safety net for a square blank's exact retained-stub floor
+ * (#1016 C2-F6): a predicate that forces the emitter's stepped move on a
+ * segment whose straight chord would sag below the stub contact.
+ *
+ * `rotaryTargets` floors each sample at its own exact stub contact, but two
+ * neighbouring samples are joined by a straight move. The contact height falls
+ * away steeply just outside a square corner, so the chord between the exact
+ * values can dip below the floor in between -- on Codex's 25 mm case a 0.7 mm
+ * drop over the 0.733 mm sample spacing sagged 0.12 mm into the stub. The
+ * emitter's existing stepped move (run along at the higher tip, then drop
+ * straight down) removes that sag, but it only fires when the rise exceeds the
+ * spacing, which is a 45-degree test, not the stub's own geometry.
+ *
+ * The exact test is one comparison per segment. The contact floor is
+ * non-increasing with distance from the stub, so the largest material height
+ * anywhere on a segment is at the endpoint **nearer** the stub. Call that
+ * floor `F` and the farther endpoint's tip `far`. The chord's lowest point is
+ * `min(tipNear, far)`, and the near endpoint was floored, so `tipNear >= F`:
+ * the chord clears the whole interval exactly when `far >= F`. When `far < F`
+ * the near endpoint is also the higher tip and the stepped move's horizontal
+ * leg runs at `tipNear >= F` over the whole segment, while its vertical leg
+ * ends on the (also floored) far sample -- so the step is safe and no other
+ * segment needs one. A horizontal segment is already safe and is not split.
+ *
+ * `undefined` on a round bar and when an end has no retained stub, so their
+ * motion is untouched. A stub's floor is `-Infinity` beyond its cutter radius,
+ * so the predicate is false everywhere the stub cannot reach.
+ */
+function retainedStubStepForced(
+  stock: BarStock,
+  params: RotaryFinishParams,
+  tool: NormalizedTool,
+): ((from: ToolpathPoint, to: ToolpathPoint) => boolean) | undefined {
+  if (!isSquareStock(stock)) return undefined
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const lowerStub = params.alongStart > lower
+  const upperStub = upper > params.alongEnd
+  if (!lowerStub && !upperStub) return undefined
+  const pivot = barPivotZ(stock)
+  const alongOf = (point: ToolpathPoint): number => stock.axis === 'x' ? point.x : point.y
+  const tipOf = (point: ToolpathPoint): number => point.z - pivot
+  // The floor at `along` for the stub whose end face is at `face`.
+  const floorAt = (angle: number, face: number, along: number): number =>
+    squareRotaryStubContactFloor(stock, angle, tool.radius, tool.type, Math.abs(along - face))
+  return (fromPoint, toPoint) => {
+    const fromAlong = alongOf(fromPoint)
+    const toAlong = alongOf(toPoint)
+    if (fromAlong === toAlong) return false
+    const angle = fromPoint.a ?? toPoint.a ?? 0
+    const fromTip = tipOf(fromPoint)
+    const toTip = tipOf(toPoint)
+    if (lowerStub) {
+      const nearAlong = Math.min(fromAlong, toAlong)
+      const farTip = fromAlong <= toAlong ? toTip : fromTip
+      if (farTip < floorAt(angle, params.alongStart, nearAlong)) return true
+    }
+    if (upperStub) {
+      const nearAlong = Math.max(fromAlong, toAlong)
+      const farTip = fromAlong >= toAlong ? toTip : fromTip
+      if (farTip < floorAt(angle, params.alongEnd, nearAlong)) return true
+    }
+    return false
+  }
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -1273,6 +1348,50 @@ function rotaryTargets(
   // on a round bar the cap is the surface it always was.
   const tips = sampling.tipRadius.map((row) => Array.from(row, (raw) =>
     Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN))
+  // The retained end stubs are stock the cutter's side must never enter, and
+  // the sampler's discrete footprint can miss a thin axial overlap between the
+  // cutter's rim and a stub's end face (#1016 C2-F6): Codex's 25 mm repro read
+  // the model's 9.999256 at `x = 20.933333` while the retained `x < 18` stub's
+  // flat stands at 12.5, and the vertical plunge there put the rim 0.066667 mm
+  // into the stub. `squareRotaryStubContactFloor` is the exact closed-form
+  // contact height for the **real** cutter (radius `tool.radius`, not the
+  // stock-to-leave-enlarged sampling tool) at this pass angle and along
+  // position, so flooring the final tips -- after the normal stock offset has
+  // been added back -- makes the stub contact exact instead of one cell
+  // approximate. Both generators read `tips`, and the rough re-uses one row for
+  // every layer, so this is the one shared place. A `NaN` sample is left alone:
+  // it means no model under the tool, and the stub, when it is within reach,
+  // is material the sampler does see. Round bars take the old path byte for
+  // byte (`withRetainedBar` still meshes their stub, but the floor is only
+  // square, and `squareRotaryStubContactFloor` never lifts a round sample).
+  if (isSquareStock(stock)) {
+    const bounds = getStockBounds(stock)
+    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    // No stub exists at an end the cut range already meets; `rotaryAlongPositions`
+    // draws the same line before it refines a shoulder.
+    const lowerStub = params.alongStart > lower
+    const upperStub = upper > params.alongEnd
+    if (lowerStub || upperStub) {
+      for (let k = 0; k < tips.length; k++) {
+        const angle = angles[k]
+        const row = tips[k]
+        for (let i = 0; i < row.length; i++) {
+          if (!Number.isFinite(row[i])) continue
+          let floor = Number.NEGATIVE_INFINITY
+          if (lowerStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, angle, tool.radius, tool.type, along[i] - params.alongStart))
+          }
+          if (upperStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, angle, tool.radius, tool.type, params.alongEnd - along[i]))
+          }
+          if (floor > row[i]) row[i] = floor
+        }
+      }
+    }
+  }
   return { angles, along, tips, stopped: false, refusal: null }
 }
 
@@ -1363,6 +1482,7 @@ export function generateRotaryFinish(
     ? { x: alongPosition, y: centre, z: pivot + tip, a: angle }
     : { x: centre, y: alongPosition, z: pivot + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
+  const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
@@ -1382,7 +1502,7 @@ export function generateRotaryFinish(
       runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
       i++
     }
-    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
     here = emitted.here
     previousEndedAtEnd = emitted.endedAtEnd
   }
@@ -1503,6 +1623,7 @@ export function generateRotaryRough(
   let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
+  const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
@@ -1536,7 +1657,7 @@ export function generateRotaryRough(
         runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd
     }

@@ -149,6 +149,75 @@ export function squareBlankRetainedStub(
 }
 
 /**
+ * The exact tip height a retained end stub forces on one sample of a square
+ * blank (#1016 C2-F6), for the cutter shape that makes the sample: the lowest
+ * tip radius from the turning pivot at which the **real** cutter clears that
+ * stub at this pass angle and along position.
+ *
+ * The mesh stub in `withRetainedBar` bounds the model elsewhere, but the
+ * sampler only lifts a sample when its discrete footprint cells land on the
+ * stub, so a thin axial overlap between the cutter's rim and the stub's end
+ * face can slip between two cell centres (Codex's 25 mm repro: the sample at
+ * `x = 20.933333` in the retained `x < 18` material read the Ø20 model's
+ * 9.999256 instead of the stub's 12.5). This is the closed-form floor that
+ * catches every such sample, with no sampling.
+ *
+ * ## Why `axialGap` is all the along geometry that is needed
+ *
+ * A retained stub is the blank's own cross-section prism, so in the tool frame
+ * at program angle `theta` its material is the square of
+ * {@link squareRotaryTouchRadius} rotated by `theta`. The cutter's axis is the
+ * pass ray, perpendicular to the bar, and its body reaches one cutter radius
+ * either side of that axis along the bar. The closest plane of the stub is
+ * therefore `axialGap` away, where `axialGap = max(0, c - alongStart)` at the
+ * lower stub and `max(0, alongEnd - c)` at the upper one; a gap at or beyond
+ * the radius has no overlap at all. At that plane the cutter's cross-section is a slab of
+ * half-width `rho = sqrt(rt^2 - axialGap^2)`, and the deepest blank material
+ * inside it is the closed form the existing helper already computes.
+ *
+ * ## Flat and ball
+ *
+ * A flat end mill's bottom is a disc at the tip, so at that plane the cutter
+ * occupies `|X| <= rho` for every height above the tip: the floor is simply
+ * the square's largest `Y` inside the slab, `squareRotaryTouchRadius(..., 'flat_endmill')`.
+ *
+ * A ball end mill's lower surface at that plane is a **disc of radius `rho`
+ * centred at `(0, tip + rt)`** (the ball's centre on the cutter axis), with
+ * the shank above it. Tip `R` touches blank point `(X, Y)` exactly when
+ *
+ *     R + rt <= Y + sqrt(rho^2 - X^2),
+ *
+ * so the floor is `max[Y + sqrt(rho^2 - X^2)] - rt`. The helper's ball closed
+ * form for reach `rho` returns exactly that maximum minus `rho`, so subtracting
+ * `rt - rho` turns it into this floor. The shank is the strip `|X| <= rho`,
+ * `Y >= R + rt`, which would only ask `R + rt <= max Y`; the ball's condition
+ * is stronger because `max[Y + sqrt(...)] >= max Y`, so **the shank adds
+ * nothing above the ball's bound** and needs no second term.
+ *
+ * Returns `-Infinity` where there is nothing to lift: a round bar (the whole
+ * helper is square-only, so a caller that forgets the guard cannot move a round
+ * bar), a non-positive radius, or an axial gap at or beyond the cutter radius.
+ */
+export function squareRotaryStubContactFloor(
+  stock: BarStock,
+  angleDeg: number,
+  cutterRadius: number,
+  toolType: Tool['type'],
+  axialGap: number,
+): number {
+  if (!isSquareStock(stock)) return Number.NEGATIVE_INFINITY
+  const reach = Math.abs(cutterRadius)
+  if (!(reach > 0) || !Number.isFinite(reach) || !Number.isFinite(axialGap)) {
+    return Number.NEGATIVE_INFINITY
+  }
+  const gap = Math.max(0, axialGap)
+  if (!(gap < reach)) return Number.NEGATIVE_INFINITY
+  const rho = Math.sqrt(Math.max(0, reach * reach - gap * gap))
+  const material = squareRotaryTouchRadius(stock, angleDeg, rho, toolType)
+  return toolType === 'ball_endmill' ? material - (reach - rho) : material
+}
+
+/**
  * The highest blank material a rough layer's cutter can reach at one program
  * angle, for the cutter shape that cuts the layer. The rough emits a layer
  * when its tip radius is still below this value and skips it otherwise
