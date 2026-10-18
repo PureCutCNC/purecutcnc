@@ -197,8 +197,8 @@ export function squareBlankRetainedStub(
  * Returns `-Infinity` where there is nothing to lift: a round bar (the whole
  * helper is square-only, so a caller that forgets the guard cannot move a round
  * bar), a non-positive radius, or an axial gap at or beyond the cutter radius
- * (a tangency, with the `1e-9`-relative rounding allowance the implementation
- * documents).
+ * (an exact tangency: the cutter's rim touches the face and no point of it is
+ * inside the blank).
  */
 export function squareRotaryStubContactFloor(
   stock: BarStock,
@@ -213,15 +213,16 @@ export function squareRotaryStubContactFloor(
     return Number.NEGATIVE_INFINITY
   }
   const gap = Math.max(0, axialGap)
-  // A tangency is not an overlap, and it must stay one (#1016 C2-F7):
-  // `rotaryCutterSpan` places the first sample of a stubbed end exactly one
-  // cutter radius from the stub face, and `(face + reach) - face` can round a
-  // few ulps below `reach`. The closed form jumps from `-Infinity` to the
-  // blank's full height at that boundary, so an ulp would lift that sample off
-  // the model and leave a false shoulder tick on every pass. The tolerance is
-  // relative and far below any real overlap (1e-9 of the cutter radius), so a
-  // sample that genuinely reaches the stub is still floored.
-  if (!(gap < reach * (1 - 1e-9))) return Number.NEGATIVE_INFINITY
+  // A tangency is not an overlap, and the test is strict (#1016 C2-F7,
+  // corrected by C2-F7b): the closed form jumps from `-Infinity` to the blank's
+  // full height at exactly one cutter radius, so a sample that is a tangency
+  // must not be lifted off the model. The rounding is the caller's job --
+  // `rotaryCutterSpan` rounds the cutter-centre range outward until the
+  // **computed** gap is at least the reach, so the ulp of `(face + reach) -
+  // face` can never leave a real sample below this boundary. Any gap that is
+  // genuinely short of the reach, however small, is a real overlap and is
+  // floored.
+  if (!(gap < reach)) return Number.NEGATIVE_INFINITY
   const rho = Math.sqrt(Math.max(0, reach * reach - gap * gap))
   const material = squareRotaryTouchRadius(stock, angleDeg, rho, toolType)
   return toolType === 'ball_endmill' ? material - (reach - rho) : material

@@ -52,11 +52,21 @@
  * floor is `-Infinity` everywhere and never binds, and the rough's `NaN`
  * fallback near a stub is not reached either. This file therefore pins the
  * closed form **directly** -- the exact values, the near-reach over-lift guard,
- * the tangency, and synthetic moves at the stub face -- while the seeded sweep
- * proves through the independent oracle that the emitted motion clears the
- * retained square with the floor out of the picture. Whether the floor is wired
- * in at all is no longer observable in F7 output (a mutation this file cannot
- * bite any more; reported with that slice).
+ * the strict tangency boundary, and synthetic moves at the stub face -- while
+ * the seeded sweep proves through the independent oracle that the emitted
+ * motion clears the retained square with the floor out of the picture. Whether
+ * the floor is wired in at all is no longer observable in F7 output (a mutation
+ * this file cannot bite any more; reported with that slice).
+ *
+ * ## F7b: the strict boundary belongs to the floor, the rounding to the span
+ *
+ * The F7 slice first softened the tangency test with a `1e-9`-relative allowance,
+ * which also excused a real overlap of `1.5e-9 mm` (radius 3, gap
+ * `2.9999999985`). C2-F7b restores the strict `gap < reach` test -- any real
+ * overlap is floored -- and moves the rounding to `rotaryCutterSpan`, which
+ * rounds the cutter-centre range outward until the *computed* gap is at least
+ * the radius. `squareRotaryBand.test.ts` pins that: the first/last samples keep
+ * the target tip instead of the blank's height.
  *
  * ## The independent oracle
  *
@@ -76,10 +86,9 @@
  *  - **`rho = rt` regardless of the axial gap**: the sample `0.02 mm` inside
  *    the cutter radius lifts to the full `13.025160` instead of `12.663010`;
  *    the near-reach assertions fail;
- *  - **a tangency treated as an overlap** (`gap < reach` without the rounding
- *    allowance): the first sample of every stubbed pass is lifted to the
- *    blank's height and the F7 span assertions in `squareRotaryBand.test.ts`
- *    fail;
+ *  - **a `1e-9`-relative rounding allowance reintroduced** (the F7 form):
+ *    the `1.5e-9 mm` overlap at radius 3 is excused and returns `-Infinity`;
+ *    that assertion fails (#1016 C2-F7b);
  *  - **a feed move placed inside the stub's reach**: the sweep's per-point
  *    assertion and the penetration oracle fail.
  *
@@ -581,13 +590,21 @@ console.log('Testing the ball offset and the near-reach contact...')
     + `(${(near - zero).toFixed(6)} above the centreline contact)`)
   assert.ok(near < full - 0.3, `and not to the full-footprint contact (${near} < ${full - 0.3})`)
   assert.equal(squareRotaryStubContactFloor(stock, angle, 3, 'flat_endmill', 3), Number.NEGATIVE_INFINITY,
-    'a sample at the cutter radius is untouched')
-  // The F7 pull-in puts the first sample exactly one cutter radius from the stub
-  // face, and the subtraction that recovers the gap can round a few ulps below
-  // `reach`. A gap that close is still a tangency: it must not jump to the
-  // blank's full height and lift that sample off the model.
-  assert.equal(squareRotaryStubContactFloor(stock, angle, 3, 'flat_endmill', 3 * (1 - 1e-12)),
-    Number.NEGATIVE_INFINITY, 'a gap within rounding distance of the cutter radius is still a tangency')
+    'a sample exactly at the cutter radius is a tangency and is untouched')
+  // #1016 C2-F7b: the tangency boundary is strict, with no rounding allowance.
+  // A gap of `2.9999999985` at radius 3 is a real `1.5e-9 mm` overlap -- the F7
+  // allowance excused it -- and the closed form jumps from `-Infinity` to nearly
+  // the centreline contact across it. It must be floored. `rotaryCutterSpan`
+  // rounds the cutter-centre range outward so no sample lands on the unsafe side
+  // of this boundary (`squareRotaryBand.test.ts` pins that).
+  const overlap = squareRotaryStubContactFloor(stock, angle, 3, 'flat_endmill', 2.9999999985)
+  assert.ok(Number.isFinite(overlap),
+    `a 1.5e-9 mm overlap is a real overlap, so the floor is finite (${overlap})`)
+  // `rho = sqrt(rt^2 - gap^2)` is only about `9.5e-5` mm at that gap, so the
+  // floor sits on the centreline contact (the slab's edge slope moves it by
+  // ~1e-5), nowhere near `-Infinity`.
+  assert.ok(overlap >= zero - 1e-9 && overlap - zero < 1e-3,
+    `and it is the centreline contact, not the blank's full height (${overlap} vs ${zero})`)
   // Ball at the Codex A0 stub face: the exact floor for d = 0.733333 is
   // 12.408990. Dropping `-(rt - rho)` would read the flat's 12.5.
   const ballFloor = squareRotaryStubContactFloor(stock, 0, 3, 'ball_endmill', 0.7333333333333333)

@@ -47,6 +47,11 @@
  *  - **range not pulled in at a stubbed end**: the finish's first/last sample is
  *    at `bandStart`/`bandEnd` instead of one radius inside, so the exact span
  *    assertions fail;
+ *  - **the pull not rounded outward (#1016 C2-F7b)**: `alongStart + rt` and
+ *    `alongEnd - rt` can round an ulp inside the stub, and the strict F6 floor
+ *    then lifts that first/last sample to the blank's height. The `21.3..38.7`
+ *    mm fixture is chosen so both naive sums round short; the exact-gap and
+ *    tangency-tip assertions fail;
  *  - **pulled in by the cutter diameter**: the span starts `2 * rt` inside and
  *    the "still one radius inside" assertions and the simulated band check fail;
  *  - **pulled in at an end with no stub**: the model-to-bar-end fixture's last
@@ -386,6 +391,40 @@ function alongOf(stock: BarStock, point: { x: number; y: number }): number {
   return stock.axis === 'x' ? point.x : point.y
 }
 
+/**
+ * Every non-rapid point at a span end cuts the model's target tip, not the
+ * blank's height (#1016 C2-F7b). The F6 floor jumps from `-Infinity` to the
+ * blank's full height across the exact tangency, so a first/last sample that is
+ * one ulp inside the stub shows up here as a shoulder tick.
+ */
+function assertTangencyTips(
+  fixture: BandFixture,
+  moves: readonly ToolpathMove[],
+  label: string,
+): void {
+  const spanStart = fixture.band.start + fixture.tool.radius
+  const spanEnd = fixture.band.end - fixture.tool.radius
+  const pivot = barPivotZ(fixture.stock)
+  let lowest = Infinity
+  let checked = 0
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      const along = alongOf(fixture.stock, point)
+      if (Math.abs(along - spanStart) > 1e-9 && Math.abs(along - spanEnd) > 1e-9) continue
+      lowest = Math.min(lowest, point.z - pivot)
+      checked++
+    }
+  }
+  assert.ok(checked > 0, `${label}: the program cuts at a span end`)
+  // A shoulder tick would lift these samples by the blank's height -- 2.5 mm on
+  // the 25 mm fixtures, more elsewhere. The sampler's own discretization reads
+  // up to ~0.1 mm low here, so a quarter millimetre still tells them apart.
+  approx(lowest, fixture.targetRadius,
+    `${label}: the tangency samples cut the target, not the blank's shoulder`,
+    convertLength(0.25, 'mm', fixture.project.meta.units))
+}
+
 const TOOL_TYPES: ReadonlyArray<Extract<ToolType, 'flat_endmill' | 'ball_endmill'>> = ['flat_endmill', 'ball_endmill']
 
 // ── 1. the exact cutter-centre span on Frank's own case ───────────────
@@ -406,6 +445,13 @@ console.log('Testing the cutter centre starts and ends one radius inside Frank\'
   const alongs = result.moves.flatMap((move) => [alongOf(finish.stock, move.from), alongOf(finish.stock, move.to)])
   approx(Math.min(...alongs), spanStart, 'the first sample is one cutter radius inside the band')
   approx(Math.max(...alongs), spanEnd, 'the last sample is one cutter radius inside the band')
+  // #1016 C2-F7b: the pull is rounded outward, so the gap the strict F6 floor
+  // computes at each end sample is at least the radius -- no ulp short.
+  assert.ok(Math.min(...alongs) - finish.band.start >= rt,
+    `the first sample is a tangency, not inside the stub (${Math.min(...alongs) - finish.band.start} >= ${rt})`)
+  assert.ok(finish.band.end - Math.max(...alongs) >= rt,
+    `the last sample is a tangency, not inside the stub (${finish.band.end - Math.max(...alongs)} >= ${rt})`)
+  assertTangencyTips(finish, result.moves, 'Frank finish')
   for (const move of result.moves) {
     for (const point of [move.from, move.to]) {
       const along = alongOf(finish.stock, point)
@@ -482,6 +528,13 @@ console.log('Testing the 25 mm case on both cutter shapes and both pass kinds...
       }
       assert.ok(min >= spanStart - 1e-9, `${toolType}/${kind}: no sample reaches the lower stub (${min})`)
       assert.ok(max <= spanEnd + 1e-9, `${toolType}/${kind}: no sample reaches the upper stub (${max})`)
+      // #1016 C2-F7b: the computed gap from each stub face is at least the
+      // radius, so the strict F6 floor is `-Infinity` at the first/last sample.
+      assert.ok(min - fixture.band.start >= rt,
+        `${toolType}/${kind}: the lower end sample is a tangency (${min - fixture.band.start} >= ${rt})`)
+      assert.ok(fixture.band.end - max >= rt,
+        `${toolType}/${kind}: the upper end sample is a tangency (${fixture.band.end - max} >= ${rt})`)
+      if (kind === 'rotary_finish') assertTangencyTips(fixture, result.moves, `${toolType}/${kind}`)
       const measured = stubPenetration(fixture.stock, fixture.tool, result.moves, fixture.band.start, fixture.band.end)
       assert.ok(measured.max <= 1e-6,
         `${toolType}/${kind}: zero retained-stub intrusion (${measured.max} at ${measured.where})`)
@@ -508,7 +561,7 @@ console.log('Testing the F6 floor is a net that never binds and an unstubbed end
         closest = Math.min(closest, along - fixture.band.start, fixture.band.end - along)
       }
     }
-    assert.ok(closest >= fixture.tool.radius - 1e-9,
+    assert.ok(closest >= fixture.tool.radius,
       `${toolType}: no sample is inside the retained stub's reach (${closest} >= ${fixture.tool.radius})`)
   }
 
@@ -526,6 +579,49 @@ console.log('Testing the F6 floor is a net that never binds and an unstubbed end
   approx(Math.min(...alongs), open.band.start + open.tool.radius, 'the stubbed start is still pulled in')
   approx(Math.max(...alongs), open.band.end, 'the bar end is not pulled in')
   console.log('  floor net: every sample at least one radius from a stub; open end keeps its full reach')
+}
+
+// ── 3b. the outward rounding of the pull (#1016 C2-F7b) ───────────────
+
+console.log('Testing the cutter-centre pull is rounded outward past the stub tangency...')
+{
+  // On this fixture both naive ends round an ulp *inside* the stub:
+  // `21.299999237060547 + 2.4` and `38.70000076293945 - 2.4` each recover a gap
+  // short of 2.4. The along grid can also round a few ulps past the span end
+  // (`start + (end - start) * i / intervals`), so a one-ulp nudge is not enough;
+  // the span is nudged by a relative margin and verified.
+  const fixture = bandFixture({
+    side: 25, length: 100, units: 'mm', radius: 10, modelStart: 21.3, modelEnd: 38.7,
+    toolRadius: 2.4, toolType: 'flat_endmill', kind: 'rotary_finish', stepover: 0.4, stepdown: 2,
+  })
+  const rt = fixture.tool.radius
+  approx(fixture.band.start, 21.3, 'the hostile band starts at the model', 1e-6)
+  approx(fixture.band.end, 38.7, 'the hostile band ends at the model', 1e-6)
+  assert.ok(fixture.band.start + rt - fixture.band.start < rt,
+    'the naive start sum rounds inside the stub (the fixture is rounding-hostile)')
+  assert.ok(fixture.band.end - (fixture.band.end - rt) < rt,
+    'the naive end difference rounds inside the stub')
+  const result = generateRotaryOperation(fixture.project, fixture.operation)
+  assert.deepEqual(result.warnings, [], 'the hostile fixture generates without a warning')
+  assert.ok(result.moves.length > 0, 'the hostile fixture cuts')
+  let min = Infinity
+  let max = -Infinity
+  for (const move of result.moves) {
+    for (const point of [move.from, move.to]) {
+      const along = alongOf(fixture.stock, point)
+      min = Math.min(min, along)
+      max = Math.max(max, along)
+    }
+  }
+  // The shoulder tick: the strict floor without the outward rounding lifts these
+  // samples from the Ø20 target (10) to the 25 mm blank's height (12.5 at A0 and
+  // more elsewhere).
+  assertTangencyTips(fixture, result.moves, 'hostile rounding')
+  assert.ok(min - fixture.band.start >= rt,
+    `the first sample keeps the rounded-out tangency (${min - fixture.band.start} >= ${rt})`)
+  assert.ok(fixture.band.end - max >= rt,
+    `the last sample keeps the rounded-out tangency (${fixture.band.end - max} >= ${rt})`)
+  console.log(`  rounded-out span ${min}..${max} on band ${fixture.band.start}..${fixture.band.end}`)
 }
 
 // ── 4. a collapsed span refuses with rotaryNoRoom ─────────────────────

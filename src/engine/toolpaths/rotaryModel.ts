@@ -1082,6 +1082,17 @@ function withRetainedBar(
  * cutter radius of a stub face keeps the shoulder fillet the cutter's side
  * leaves there.
  *
+ * The pull is rounded **outward** (#1016 C2-F7b): each end is placed a tiny
+ * relative margin (`1e-12` of the coordinate) beyond `face +/- radius`, and the
+ * computed gap is verified to be at least the radius, so `start - alongStart >=
+ * radius` and `alongEnd - end >= radius` hold. `face + radius` can round one ulp
+ * below `radius`, and the along grid's last sample can round a few ulps past the
+ * span end; the F6 floor's strict `gap < reach` test would then lift that
+ * first/last sample to the blank's height -- a shoulder tick on every pass. The
+ * margin is thousands of ulps and about `1e-10 mm` on a 100 mm bar: far below
+ * any real overlap, and enough that neither rounding can cross the tangency. The
+ * floor stays strict; this span is what keeps every real sample at or beyond it.
+ *
  * The end of a range that meets the bar's own end has no stub and is unchanged;
  * round bars are returned unchanged (`radius` 0, byte-identical, and their band
  * is #1042's).
@@ -1098,8 +1109,32 @@ function rotaryCutterSpan(
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
   const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
   const radius = isSquareStock(stock) ? tool.radius : 0
-  const start = params.alongStart > lower ? params.alongStart + radius : params.alongStart
-  const end = upper > params.alongEnd ? params.alongEnd - radius : params.alongEnd
+  // `Math.nextUp`/`Math.nextDown` are only proposals, so step the raw bits: one
+  // unit in the last place. The verification loops below rarely need it.
+  const ulpStep = (value: number, direction: 1 | -1): number => {
+    const view = new DataView(new ArrayBuffer(8))
+    view.setFloat64(0, value)
+    view.setBigUint64(0, view.getBigUint64(0) + BigInt(value >= 0 ? direction : -direction))
+    return view.getFloat64(0)
+  }
+  let start = params.alongStart
+  if (radius > 0 && params.alongStart > lower) {
+    // The exact sum can round below the radius, and the along grid's last
+    // sample (`start + (end - start) * i / intervals` in `rotaryAlongPositions`)
+    // can round a few ulps past the span end, so a one-ulp pull is not enough
+    // (#1016 C2-F7b). A nudge of `1e-12` of the coordinate is thousands of ulps
+    // -- about `1e-10 mm` on a 100 mm bar -- and orders of magnitude below any
+    // real overlap, so the strict F6 floor sees a tangency at every sampled end.
+    const margin = Math.max(Math.abs(params.alongStart), radius) * 1e-12
+    start = params.alongStart + radius + margin
+    for (let i = 0; i < 8 && start - params.alongStart < radius; i++) start = ulpStep(start, 1)
+  }
+  let end = params.alongEnd
+  if (radius > 0 && upper > params.alongEnd) {
+    const margin = Math.max(Math.abs(params.alongEnd), radius) * 1e-12
+    end = params.alongEnd - radius - margin
+    for (let i = 0; i < 8 && params.alongEnd - end < radius; i++) end = ulpStep(end, -1)
+  }
   return start < end ? { start, end } : null
 }
 
