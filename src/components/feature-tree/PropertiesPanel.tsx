@@ -28,7 +28,7 @@ import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
 import type { ProjectType, StockAxis, TabShape } from '../../types/project'
-import { barLength, isSquareStock } from '../../types/barStock'
+import { barLength, isBarStock, isSquareStock } from '../../types/barStock'
 import { useProjectStore } from '../../store/projectStore'
 import { originAfterStockEdit, resizeRoundStock, resizeSquareStock } from '../../store/helpers/stockShape'
 import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
@@ -1151,8 +1151,12 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   if (selectedClamp) {
-    const round = isRoundStock(project.stock) ? project.stock : null
-    const roundWorkholding = round && isRoundWorkholding(selectedClamp) ? round : null
+    // A chuck and a tailstock are round about the bar's axis, so both bar
+    // shapes get the same workholding controls (issue #1016 C2 F1): on a
+    // square blank the helpers use the true pivot and a diameter that clears
+    // the corners, exactly as they do on a round bar.
+    const bar = isBarStock(project.stock) ? project.stock : null
+    const barWorkholding = bar && isRoundWorkholding(selectedClamp) ? bar : null
     const clampDomain = clampDomainMax(
       [selectedClamp.height],
       convertLength(5, 'mm', units),
@@ -1171,8 +1175,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         updateClamp(selectedClamp.id, { type: 'step_clamp' })
         return
       }
-      if (round) {
-        updateClamp(selectedClamp.id, defaultRoundWorkholding(value, round, units))
+      if (bar) {
+        updateClamp(selectedClamp.id, defaultRoundWorkholding(value, bar, units))
       }
     }
     return (
@@ -1186,7 +1190,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
             />
           </label>
-          {round ? (
+          {bar ? (
             <label className="properties-field">
               <span>{t('featureTree.properties.clampType')}</span>
               <div data-testid="clamp-type">
@@ -1202,17 +1206,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </label>
           ) : null}
-          {roundWorkholding ? (
+          {barWorkholding ? (
             <label className="properties-field">
               <span>{t('featureTree.properties.diameter')}</span>
               <div data-testid="clamp-diameter">
                 <DraftNumberInput
-                  key={`clamp-diameter-${selectedClamp.id}-${roundWorkholdingDiameter(selectedClamp, roundWorkholding)}`}
-                  value={roundWorkholdingDiameter(selectedClamp, roundWorkholding)}
+                  key={`clamp-diameter-${selectedClamp.id}-${roundWorkholdingDiameter(selectedClamp, barWorkholding)}`}
+                  value={roundWorkholdingDiameter(selectedClamp, barWorkholding)}
                   units={units}
                   min={minimumLength}
                   // The store derives the height from whatever size is set here.
-                  onCommit={(next) => updateClamp(selectedClamp.id, roundWorkholding.axis === 'x' ? { h: next } : { w: next })}
+                  onCommit={(next) => updateClamp(selectedClamp.id, barWorkholding.axis === 'x' ? { h: next } : { w: next })}
                 />
               </div>
             </label>
