@@ -27,10 +27,11 @@ import type { BarStock } from '../../types/project'
  *
  * The bar's own `shape` and `thickness` are part of the key (#1016 C2-R2V): a
  * round bar and a square blank of the same physical box produce the same
- * nominal reference-frame numbers, but they draw different material, so the
- * key must still tell them apart. A side (or diameter) change is a different
- * key as well, which is what stops a stale preview surviving a conversion or
- * resize. Callers that only have a frame keep the original value.
+ * nominal reference-frame numbers, but they seed different starting heights and
+ * a different radial envelope, so the key must still tell them apart. A side
+ * (or diameter) change is a different key as well, which is what stops a stale
+ * preview surviving a conversion or resize. Callers that only have a frame keep
+ * the original value.
  */
 export function aroundFrameKey(frame: AroundFrame | undefined, stock?: BarStock): string {
   if (!frame) return ''
