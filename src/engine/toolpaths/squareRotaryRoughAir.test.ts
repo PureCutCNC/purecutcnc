@@ -508,8 +508,10 @@ function ballCutterHitsBlank(
 //
 // 20 mm square, A0, 4 mm flat, 0.1 mm stepdown. The old radial bound emitted
 // layers at Z = 20.1421 and 20.0421; the slab bound first emits at Z = 19.9421.
-// The only A0 material at the face is the retained shoulder on the blank's own
-// surface, never a pass above it.
+// No A0 cut may sit above the face. F5 then removes the shoulder's own ride at
+// the face (#1016 C2-F5): the first A0 material point is the real one stepdown
+// below it, reached by a straight plunge, so no cut endpoint remains *on* the
+// face either.
 {
   const blank = squareStock(20, 60, 'x')
   const pivot = barPivotZ(blank)
@@ -537,13 +539,13 @@ function ballCutterHitsBlank(
     }
   }
   assert.equal(aboveFace, 0, `no A0 cut is above the Z${face} face (got ${aboveFace})`)
-  assert.ok(atFace > 0, 'the A0 shoulder still starts on the blank face')
+  assert.equal(atFace, 0, 'F5 trims the A0 shoulder ride: no cut endpoint stays on the blank face')
   assert.ok(belowFace > 0, 'the A0 pass still cuts the model below the face')
   assert.ok(shallowestBulk > barInscribedRadius(blank) - 0.1 - 1e-9,
     `the first bulk A0 cut is no deeper than one stepdown (r ${shallowestBulk})`)
   assert.ok(shallowestBulk < barInscribedRadius(blank) - 1e-9, 'the first bulk cut is below the face')
   console.log(`square air: Codex case ${result.moves.length} moves, A0 first bulk cut r=${shallowestBulk.toFixed(6)}, `
-    + `${atFace} shoulder endpoints on the face, ${aboveFace} above it`)
+    + `${atFace} shoulder endpoints left on the face (F5), ${aboveFace} above it`)
 }
 
 // ── 3b. Codex's ball reproduction: the ball's exact contact, not the slab ──
