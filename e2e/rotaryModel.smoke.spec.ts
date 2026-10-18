@@ -403,7 +403,11 @@ async function seedSquareBlankProject(page: Page): Promise<Project> {
   base.stock = blank
   base.tools = [{
     ...defaultTool('mm', 1), id: 't1', name: 'Flat 6', type: 'flat_endmill',
-    diameter: 6, defaultStepover: 3, defaultStepdown: 2,
+    // A rotary stepover is a *fraction of the tool diameter* (0.4 × 6 = 2.4 mm),
+    // not a distance: the old 3 stepped 18 mm and left ridges the simulated
+    // band showed as un-cut cells. 0.4 is the value whose coverage the tests
+    // below pin (issue #1016 C2 correction D2).
+    diameter: 6, defaultStepover: 0.4, defaultStepdown: 2,
   }]
   base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', blank, 'mm') }]
   base.setups = [
@@ -802,6 +806,133 @@ async function staticSquareSimulation(page: Page, detailCells: number): Promise<
   }, detailCells)
 }
 
+interface SquareCutCoverage {
+  /** Along extents of the finish cuts that actually sit at the target radius. */
+  cutMinAlong: number
+  cutMaxAlong: number
+  /** Grid cells inside the cut range, one tool radius in from each end. */
+  reachableCells: number
+  /** Those at or below the target radius plus the 0.05 mm allowance. */
+  coveredCells: number
+  /** Cells the cutter cannot reach beyond the requested band. */
+  outsideCells: number
+  /** Those that still sit exactly on the square blank's immutable baseline. */
+  keptOutsideCells: number
+}
+
+interface SquareCutCoverageRequest {
+  detailCells: number
+  targetRadius: number
+  bandStart: number
+  bandEnd: number
+}
+
+/**
+ * The finished surface's coverage, computed in the page exactly as the panel
+ * computes the visible replay: the same generated paths,
+ * `buildSimulationSetupInput` and `computeSimulationResult` in `visible` mode
+ * (rough + finish) on the app's own detail value. This is the surface the user
+ * sees, not a second simulation beside it.
+ *
+ * The cut range is read from the finish moves that actually sit at the target
+ * radius, shrunk by one tool radius each side: the cells a correct pass pattern
+ * must have reached. A too-coarse stepover leaves ridges inside that range,
+ * which is the #1016 C2-D2 regression. Cells farther than the cutter's reach
+ * outside the requested band must still be the square blank's baseline.
+ */
+async function squareCutCoverage(
+  page: Page,
+  request: SquareCutCoverageRequest,
+): Promise<SquareCutCoverage> {
+  return page.evaluate(async ({ detailCells, targetRadius, bandStart, bandEnd }) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const { buildSimulationSetupInput } = await import('/src/app/simulationSetup.ts') as typeof import('../src/app/simulationSetup')
+    const { computeSimulationResult } = await import('/src/app/simulationCompute.ts') as typeof import('../src/app/simulationCompute')
+    const { normalizeToolForProject } = await import('/src/engine/toolpaths/geometry.ts') as typeof import('../src/engine/toolpaths/geometry')
+    const { barPivotZ } = await import('/src/types/barStock.ts') as typeof import('../src/types/barStock')
+    const project = useProjectStore.getState().project
+    const around = project.setups.find((setup) => setup.kind === 'around')
+    const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')
+    if (!around || !finish) throw new Error('e2e: the square fixture has no Around finish')
+    const toolRecord = project.tools.find((tool) => tool.id === finish.toolRef)
+    if (!toolRecord) throw new Error('e2e: the square finish has no tool')
+    // The same radius the replay kernel uses, so the shrink matches the cut.
+    const toolRadius = normalizeToolForProject(toolRecord, project).radius
+
+    const paths = new Map<string, import('../src/engine/toolpaths/types').ToolpathResult>()
+    for (const operation of project.operations) {
+      if (operation.setupId !== around.id) continue
+      const envelope = computeOperationToolpath(project, operation)
+      if (envelope) paths.set(operation.id, envelope.result)
+    }
+    const finishPath = paths.get(finish.id)
+    if (!finishPath) throw new Error('e2e: the square finish did not generate')
+
+    // The finished radius is the tool-tip radius above the turning pivot. A
+    // 0.05 mm window absorbs the sampler's own discretization; only cuts that
+    // reach the finished surface bound the stretch a correct pattern covers.
+    const pivot = barPivotZ(project.stock)
+    const targetZ = pivot + targetRadius
+    const xAxis = project.stock.axis === 'x'
+    let cutMinAlong = Number.POSITIVE_INFINITY
+    let cutMaxAlong = Number.NEGATIVE_INFINITY
+    for (const move of finishPath.moves) {
+      if (move.kind !== 'cut') continue
+      for (const point of [move.from, move.to]) {
+        if (Math.abs(point.z - targetZ) > 0.05) continue
+        const along = xAxis ? point.x : point.y
+        cutMinAlong = Math.min(cutMinAlong, along)
+        cutMaxAlong = Math.max(cutMaxAlong, along)
+      }
+    }
+    if (!(cutMaxAlong > cutMinAlong)) throw new Error('e2e: the finish has no cut at the target radius')
+
+    const setupInput = buildSimulationSetupInput(project, around, paths)
+    if (!setupInput) throw new Error('e2e: the square fixture yields no simulation input')
+    const result = computeSimulationResult({
+      setupInput,
+      project,
+      simulationMode: 'visible',
+      simulationDetailCells: detailCells,
+      selectedInSetup: finish,
+      paths,
+    })
+    const grid = result.grid
+    const baseline = grid.initialTopZ
+    if (!baseline) throw new Error('e2e: the square simulation has no per-cell baseline')
+
+    const reachMin = cutMinAlong + toolRadius
+    const reachMax = cutMaxAlong - toolRadius
+    if (!(reachMax > reachMin)) throw new Error('e2e: the finish cut range is shorter than the tool')
+    // The cutter's footprint reaches a tool radius past the requested band, and
+    // one cell absorbs the grid arithmetic — the same reach the square replay
+    // engine test allows before an end cell must still be virgin.
+    const outsideReach = toolRadius + grid.cellSize
+    let reachableCells = 0
+    let coveredCells = 0
+    let outsideCells = 0
+    let keptOutsideCells = 0
+    for (let row = 0; row < grid.rows; row += 1) {
+      for (let col = 0; col < grid.cols; col += 1) {
+        const along = xAxis
+          ? grid.originX + (col + 0.5) * grid.cellSize
+          : grid.originY + (row + 0.5) * grid.cellSize
+        const index = row * grid.cols + col
+        if (along >= reachMin && along <= reachMax) {
+          reachableCells += 1
+          if (grid.topZ[index] <= targetRadius + 0.05) coveredCells += 1
+        }
+        if (along < bandStart - outsideReach || along > bandEnd + outsideReach) {
+          outsideCells += 1
+          if (Math.abs(grid.topZ[index] - baseline[index]) < 1e-9) keptOutsideCells += 1
+        }
+      }
+    }
+    return { cutMinAlong, cutMaxAlong, reachableCells, coveredCells, outsideCells, keptOutsideCells }
+  }, request)
+}
+
 test('square playback starts from the prior rough, follows the finish and resets to it', async ({ app, ui }) => {
   test.setTimeout(300_000)
   const { page } = app
@@ -885,6 +1016,25 @@ test('square playback starts from the prior rough, follows the finish and resets
   expect(independent.minTopZ).toBeCloseTo(staticMinZ, 6)
   expect(independent.endCells, 'the fixture has end cells to check').toBeGreaterThan(0)
   expect(independent.keptEndCells, 'the square blank keeps both ends').toBe(independent.endCells)
+
+  // ── The finished band is reached across its width, not just "some material
+  // removed" ──
+  // The dialog asks for a 20 mm round target inside the 25 mm square, so the
+  // target radius is 10. The finish's target-depth moves bound the stretch a
+  // correct pass pattern must reach; one tool radius in from each end, every
+  // cell has to sit at the target radius (within 0.05 mm). With the old 18 mm
+  // stepover the band was cut at only seven angles and the ridges left most of
+  // these cells high (issue #1016 C2 correction D2). Cells farther than the
+  // cutter's reach outside the requested 10..40 band must stay virgin.
+  const coverage = await squareCutCoverage(page, { detailCells, targetRadius: 10, bandStart: 10, bandEnd: 40 })
+  expect(coverage.reachableCells, 'the finish leaves cells inside its cut range to check').toBeGreaterThan(0)
+  expect(
+    coverage.coveredCells / coverage.reachableCells,
+    `only ${coverage.coveredCells}/${coverage.reachableCells} cells inside `
+      + `${coverage.cutMinAlong.toFixed(2)}..${coverage.cutMaxAlong.toFixed(2)} reached the target radius`,
+  ).toBeGreaterThanOrEqual(0.99)
+  expect(coverage.outsideCells, 'the blank leaves cells beyond the requested band').toBeGreaterThan(0)
+  expect(coverage.keptOutsideCells, 'the cut never reaches the blank beyond the requested band').toBe(coverage.outsideCells)
 
   // ── Playback starts from the prior rough, not virgin stock ──
   await expect(ui.simSetup.playTool(page)).toBeEnabled({ timeout: 60_000 })
