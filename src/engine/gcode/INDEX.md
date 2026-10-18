@@ -273,7 +273,7 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   radius is not half its diameter (with the flat/ball surface difference
   witnessed analytically), while a genuinely converted same-id row still posts;
   Frank's measured UI-test project
-  (`test-fixtures/square-to-round-chuck-switch.camj`: inch, 2 in square, the
+  (`squareRotaryChuckSwitch.fixture.camj`, kept out of `test-fixtures/` because the parity corpus requires every fixture there to generate: inch, 2 in square, the
   50 mm round-bar chuck loaded from format 3.3 **without** the shape switch)
   refuses both rotary operations with zero moves and `workholdingDiameter`,
   naming the clamp and both diameters in inches; moving the same chuck off the

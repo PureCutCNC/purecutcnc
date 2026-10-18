@@ -822,7 +822,7 @@ console.log("Testing Frank's measured C2 F3 project (inch 2 in square, 50 mm chu
   // shape switch left it: the chuck was minted on a round bar and kept its
   // 50 mm (1.9685 in) diameter across the round→square switch. No synthetic
   // fixture, and no shape switch here — the file is the measured state.
-  const file = new URL('../test-fixtures/square-to-round-chuck-switch.camj', import.meta.url)
+  const file = new URL('./squareRotaryChuckSwitch.fixture.camj', import.meta.url)
   const { project } = decodeProjectFormat(JSON.parse(readFileSync(file, 'utf8')))
   const stock = project.stock as SquareStock
   assert.equal(stock.shape, 'square', 'the project is on a square blank')
