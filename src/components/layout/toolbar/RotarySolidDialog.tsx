@@ -33,6 +33,12 @@
  * disabled with an explanation before the store is asked, while the store stays
  * the authority on every rule.
  *
+ * A live informational note (not a refusal) reports where the generator will
+ * actually start or stop cutting when the requested band runs into the chuck or
+ * tailstock (`rotarySolidChuckNote.ts`). It reads the effective boundary from
+ * the generator's own `rotaryAlongRange`, so Create stays enabled and the note
+ * can never disagree with the toolpath.
+ *
  * A polygon's default across-flats is 0.75 × the bar diameter and its inline
  * ceiling is the bar's own across-corners limit: `acrossFlats <= diameter ×
  * cos(π / sides)`. A square-to-round finished diameter defaults to the blank
@@ -58,6 +64,7 @@ import { convertLength, formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Select } from '../../Select'
+import { rotarySolidChuckNotes } from './rotarySolidChuckNote'
 
 export type RotarySolidKind = 'polygon' | 'square-to-round'
 
@@ -299,6 +306,20 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
 
   const problem = kind === 'polygon' ? polygonProblem() : squareProblem()
 
+  // The note is informational, so it is computed from the same absolute band
+  // Create would post. The engine function decides where cutting really starts
+  // and ends; this form only supplies its fields, never a clearance formula.
+  const startValue = parseNumber(start)
+  const lengthValue = parseNumber(length)
+  const requestedBand = Number.isFinite(startValue) && startValue >= 0
+    && Number.isFinite(lengthValue) && lengthValue > 0
+    && startValue + lengthValue <= barLength + RANGE_SLACK
+    ? alongEndpoints(axis, bounds, startValue, lengthValue)
+    : null
+  const chuckNotes = requestedBand !== null && selectedToolId !== ''
+    ? rotarySolidChuckNotes(project, selectedToolId, requestedBand.alongStart, requestedBand.alongEnd)
+    : []
+
   function buildInput(): RotarySolidInput {
     const startValue = parseNumber(start)
     const lengthValue = parseNumber(length)
@@ -493,6 +514,27 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
             </div>
 
             <p className="rotary-dialog__note">{t('dialogs.rotarySolid.note')}</p>
+
+            {chuckNotes.map((note) => (
+              <p key={note.kind} className="rotary-dialog__chuck-note" role="status">
+                {note.kind === 'all'
+                  ? t('dialogs.rotarySolid.chuckNote.noneCut')
+                  : t(
+                    note.kind === 'start'
+                      ? 'dialogs.rotarySolid.chuckNote.start'
+                      : 'dialogs.rotarySolid.chuckNote.end',
+                    {
+                      support: t(note.support === 'chuck'
+                        ? 'featureTree.properties.clampType.chuck'
+                        : 'featureTree.properties.clampType.tailstock'),
+                      held: formatLength(note.held, units),
+                      start: formatLength(note.effective, units),
+                      end: formatLength(note.effective, units),
+                      units: unitLabel,
+                    },
+                  )}
+              </p>
+            ))}
 
             {problem !== null ? (
               <div className="cam-field-message rotary-dialog__error" role="alert">{problem}</div>

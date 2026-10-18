@@ -932,5 +932,7 @@ export const rotarySolid = {
   cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
+  /** The live "the chuck keeps this clear" note, separate from the static note. */
+  chuckNote: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__chuck-note'),
 }
 

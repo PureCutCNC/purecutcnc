@@ -3439,7 +3439,8 @@
   overflow-y: auto;
 }
 
-.rotary-dialog__note {
+.rotary-dialog__note,
+.rotary-dialog__chuck-note {
   margin: 0;
   color: var(--text-dim);
   font-size: 11px;

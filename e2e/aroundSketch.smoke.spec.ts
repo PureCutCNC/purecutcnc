@@ -42,6 +42,7 @@ import {
 import { getProfileBounds, defaultTool, newProject, roundStock } from '../src/types/project'
 import type { Project, RoundStock, SketchProfile } from '../src/types/project'
 import { squareStock } from '../src/types/barStock'
+import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 
 /** The bundled GRBL controller with a fourth axis bolted on. */
 const ROTARY_MACHINE = {
@@ -1129,6 +1130,25 @@ async function prepareMmSquareBlankWithRotary(page: Page): Promise<{ side: numbe
   return { side: blank.thickness, length: 120 }
 }
 
+/**
+ * The same blank with the app's default 15 mm-grip chuck and a Ø12 cutter, so
+ * the generator's kept-clear region starts at 21 mm (#1016 C2 F4).
+ */
+async function prepareMmSquareBlankWithChuck(page: Page): Promise<{ side: number; length: number }> {
+  const project = await getProject(page)
+  const meta = project.meta as Record<string, unknown>
+  const blank = squareStock(25, 120, 'x')
+  const chuck = defaultRoundWorkholding('chuck', blank, 'mm')
+  await seedProject(page, JSON.stringify({
+    ...project,
+    stock: blank,
+    clamps: [{ ...chuck, id: 'chuck', name: 'Chuck', visible: true }],
+    tools: [{ ...defaultTool('mm', 1), id: 't-flat', name: 'Flat 12', type: 'flat_endmill', diameter: 12 }],
+    meta: { ...meta, units: 'mm', projectType: 'rotary', machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
+  }))
+  return { side: blank.thickness, length: 120 }
+}
+
 /** The live bar after an edit, read from the store rather than from a field. */
 async function liveBar(page: Page): Promise<{
   shape: string
@@ -1545,6 +1565,39 @@ test('square to round creates the finished round target inside the real blank', 
   const project = await getProject(page) as unknown as Project
   expect((project.stock as { shape?: string; thickness: number }).shape).toBe('square')
   expect((project.stock as { shape?: string; thickness: number }).thickness).toBeCloseTo(25, 6)
+})
+
+test('square to round notes the chuck clearance, follows Start, and still creates', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmSquareBlankWithChuck(page)
+  await switchToAround(page)
+  const baseline = await solidSnapshot(page)
+
+  await ui.rotarySolid.squareToRoundButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'start').fill('10')
+
+  // The default chuck holds the first 15 mm and the Ø12 cutter adds its 6 mm
+  // radius, so the generator starts at 21 mm. The note carries that number,
+  // not the chuck body alone.
+  await expect(ui.rotarySolid.chuckNote(page)).toContainText('holds the first 15 mm')
+  await expect(ui.rotarySolid.chuckNote(page)).toContainText('cutting starts at 21 mm')
+  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
+
+  // A start past the kept-clear region needs no note, and the form is still
+  // creatable: the note was informational, never a refusal.
+  await ui.rotarySolid.field(page, 'start').fill('30')
+  await expect(ui.rotarySolid.chuckNote(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  const snapshot = await solidSnapshot(page)
+  expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
+  expect(snapshot.operationCount).toBe(baseline.operationCount + 2)
+  expect(snapshot.historyPast).toBe(baseline.historyPast + 1)
 })
 
 // ── C2-U2F: review corrections (#1016) ───────────────────────────────
