@@ -31,7 +31,10 @@
  * **analytic** target cylinder and the **analytic** retained box — never the
  * height map the generator used. Mutations checked against these assertions:
  * - corner envelope replaced by `side / 2` (`barMaxRadius` → inscribed): the
- *   pass-count, layer-start and travel-height assertions fail
+ *   pass-count and travel-height assertions fail
+ * - the rough's layer-skip radius widened back to the corner (`S` = max
+ *   radius): the flat-direction above-surface air-cut assertion fails
+ *   (#1016 C2-F2)
  * - pivot shifted to `maxRadius`: the pivot-contract, travel-height and
  *   retained-corner checks fail
  * - retained square replaced by a round stub: the 45° retained-corner check and
@@ -294,22 +297,37 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   console.log(`square model: ${squarePasses} conservative passes vs ${roundPasses} round`)
 }
 
-// ── 4. Rough layers start at the corner radius; travel clears it ──────
+// ── 4. Layers are numbered from the corner but start at the material ──
 {
   const mesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
   const result = generateRotaryRough('rough', mesh, SQUARE, FLAT, PARAMS, {})
   assert.ok(result.moves.length > 0, 'the square rough produces motion')
   const layers = Math.ceil((MAX_R - TARGET_RADIUS) / PARAMS.stepdown)
-  assert.equal(layers, 3, 'layers are counted from the corner radius')
+  assert.equal(layers, 3, 'layers are still counted from the corner radius')
   const usedLayers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
-  assert.deepEqual([...usedLayers].sort((a, b) => a - b), [0, 1, 2], 'every layer from the corner radius is cut')
-  // Layer 0's flat-direction cut reaches exactly corner − stepdown, not
-  // surface − stepdown.
-  const flatPass = result.moves.filter((m) => m.kind === 'cut' && m.to.a === 0)
-  assert.ok(flatPass.length > 0, 'layer 0 cuts')
-  const firstTip = Math.min(...flatPass.map((m) => m.to.z)) - PIVOT
-  approx(firstTip, MAX_R - PARAMS.stepdown, 'the first layer starts one stepdown below the corner', 1e-6)
-  assert.ok(Math.abs(firstTip - (H - PARAMS.stepdown)) > 1, 'the layer start is not the inscribed radius')
+  assert.deepEqual([...usedLayers].sort((a, b) => a - b), [0, 1, 2], 'the corner passes still cut from the first layer')
+  // A flat's blank surface is half the side, not the corner. The old rough
+  // emitted two flat-direction layers wholly above it (corner − stepdown and
+  // corner − 2·stepdown); the first layer that reaches the material is now the
+  // first one below the flat surface, and it bites less than one stepdown.
+  const baseAngle = (a: number): number => ((a % 360) + 360) % 360
+  // The shoulder-refined ends start at the blank's own surface (10); the layer
+  // cuts are the ones below it.
+  const flatCuts = result.moves.filter((m) => m.kind === 'cut'
+    && baseAngle(m.to.a ?? 0) === 0 && m.to.z - PIVOT < H - 1e-9
+    && m.to.x >= BAND_START + 2 - 1e-9 && m.to.x <= BAND_END - 2 + 1e-9)
+  assert.ok(flatCuts.length > 0, 'the flat direction still cuts')
+  // Nothing may cut above the flat at all: the old layer 0 did, one stepdown
+  // below the corner (11.142 on this blank).
+  const aboveSurface = result.moves.filter((m) => m.kind === 'cut'
+    && baseAngle(m.to.a ?? 0) === 0 && m.to.z - PIVOT > H + 1e-9 && m.to.z - PIVOT <= MAX_R + 1e-9)
+  assert.deepEqual(aboveSurface, [], 'no flat-direction cut is emitted above the blank surface')
+  const firstTip = Math.max(...flatCuts.map((m) => m.to.z)) - PIVOT
+  approx(firstTip, MAX_R - 2 * PARAMS.stepdown, 'the first flat cut is the first layer below the surface', 1e-6)
+  assert.ok(H - firstTip <= PARAMS.stepdown + 1e-9,
+    `the first flat cut is no deeper than one stepdown (${(H - firstTip).toFixed(4)})`)
+  assert.ok(flatCuts.every((m) => m.to.z - PIVOT < MAX_R - PARAMS.stepdown - 1e-9),
+    'no flat-direction cut is emitted at the corner-radius layer')
   // Every between-run move clears the corner envelope plus the 1 mm clearance.
   const travelZ = PIVOT + MAX_R + 1
   let checked = 0

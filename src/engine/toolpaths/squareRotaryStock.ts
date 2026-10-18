@@ -35,12 +35,20 @@
  * rotary generators turn at and the square output guard judges a supplied
  * turning move against, so the emitted paths and the guard cannot drift.
  *
- * Neither geometry function reads the sampled height map or the ray surface radius:
- * `barSurfaceRadius` is raw blank geometry and can never stand in for a
- * finite cutter's support.
+ * None of them reads the sampled height map. `squareRotaryTouchRadius` reads
+ * `barSurfaceRadius` only as the blank's material bound inside a finite
+ * cutter's angular footprint; the ray radius alone is still never a
+ * tool-support or safe-height function (#1016 C2-F2).
  */
 
-import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ } from '../../types/barStock'
+import {
+  barCentre,
+  barInscribedRadius,
+  barMaxRadius,
+  barPivotZ,
+  barSurfaceRadius,
+  isSquareStock,
+} from '../../types/barStock'
 import type { BarStock, SquareStock } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 
@@ -138,4 +146,86 @@ export function squareBlankRetainedStub(
     index.push(n, n + i, n + i + 1)
   }
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * The largest square-blank surface radius the cutter can touch at one program
+ * angle, for a rough layer whose tip sits at `layerRadius`. A layer is skipped
+ * when `layerRadius` is at or above this value; the rough generator uses it to
+ * stop starting every angle at the corner radius (#1016 C2-F2).
+ *
+ * ## The blank's surface
+ *
+ * The generator turns the stock by `+angle` (`toolSpacePoint` in
+ * `rotaryFrame.ts`) and keeps the tool over the centreline, so at program angle
+ * `theta` the point under the tool tip has stock angle `90° - theta`. The
+ * square is symmetric under that swap, so the radial surface is
+ *
+ *     r(phi) = (side / 2) / max(|cos phi|, |sin phi|)
+ *
+ * evaluated at `phi = theta`: half the side on a flat, `side / √2` at a
+ * corner, and 45°-periodic in between. At `A = 0` the flats are horizontal and
+ * vertical, exactly the blank's own orientation.
+ *
+ * ## The footprint bound
+ *
+ * A flat end mill's cutting edge at tip radius `R` is a disc of radius `rt`
+ * around the tip; a ball nose's horizontal reach is never wider than `rt`. Put
+ * that disc's centre at radius `R` on the pass's ray. A blank point at radius
+ * `S` and angle `phi = theta + delta` can be inside the disc only when
+ * `R |sin delta| <= rt`. Hence every direction with `|delta| > deltaMax =
+ * asin(min(1, rt / R))` is outside the cutter's horizontal reach at **every**
+ * radius `>= R`: widening the window past `deltaMax` can only add material
+ * this pass cannot cut. `S` is therefore the largest `r` over
+ * `[theta - deltaMax, theta + deltaMax]`. The half angular stepover is not
+ * added for that reason; the material between two passes belongs to the
+ * neighbouring pass, whose own window covers it.
+ *
+ * ## Why skipping at `R >= S` removes nothing
+ *
+ * If `R >= S`, no blank surface inside the window reaches `R`, and outside the
+ * window nothing at or above `R` is within the cutter's horizontal reach. So
+ * the layer would cut no material, and skipping it cannot change what is left.
+ *
+ * ## Why the first cut is not deeper than one stepdown
+ *
+ * If `R < S`, take the surface point at radius `S` in the window. The
+ * perpendicular from the tip to the pivot-to-point segment has length
+ * `R sin|delta| <= rt`, and its foot lies on that segment — inside the blank,
+ * which is convex — because `R cos|delta| <= S`. The cutter disc therefore
+ * intersects the blank, so an emitted layer is never wholly in air. The first
+ * layer that emits has `R > S - stepdown` (the layer above it was skipped) and
+ * the surface under the pass is `r(theta) <= S`, so the first cut there is less
+ * than one stepdown deep.
+ *
+ * `r` reaches its maxima at `45° + k*90°`, so the window maximum is one of its
+ * two endpoints or a corner it contains; no sampling is needed.
+ *
+ * Round bars: `barSurfaceRadius` is the bar radius at every angle, so `S` is
+ * that radius. Callers short-circuit round bars and keep their old output byte
+ * for byte.
+ */
+export function squareRotaryTouchRadius(
+  stock: BarStock,
+  angleDeg: number,
+  layerRadius: number,
+  toolRadius: number,
+): number {
+  if (!Number.isFinite(angleDeg) || !Number.isFinite(layerRadius) || !Number.isFinite(toolRadius)) {
+    throw new RangeError(
+      `squareRotaryTouchRadius: angle, layer radius and tool radius must be finite, got (${angleDeg}, ${layerRadius}, ${toolRadius})`,
+    )
+  }
+  if (!isSquareStock(stock)) return barInscribedRadius(stock)
+  if (!(layerRadius > 0)) return barMaxRadius(stock)
+  const reach = Math.abs(toolRadius)
+  const delta = layerRadius <= reach ? Math.PI / 2 : Math.asin(reach / layerRadius)
+  const start = angleDeg - (delta * 180) / Math.PI
+  const end = angleDeg + (delta * 180) / Math.PI
+  // A corner inside the window is the maximum; otherwise r is monotone on the
+  // interval and an endpoint is.
+  const firstCorner = Math.ceil((start - 45) / 90)
+  const lastCorner = Math.floor((end - 45) / 90)
+  if (lastCorner >= firstCorner) return barMaxRadius(stock)
+  return Math.max(barSurfaceRadius(stock, start), barSurfaceRadius(stock, end))
 }

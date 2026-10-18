@@ -21,7 +21,7 @@ import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
-import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit } from './squareRotaryStock'
+import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -1480,6 +1480,7 @@ export function generateRotaryRough(
   const pivot = barPivotZ(stock)
   const maxRadius = barMaxRadius(stock)
   const centre = barCentre(stock)
+  const square = isSquareStock(stock)
   // Every move between runs at every layer -- a turning link, the retract off a
   // run, or the traverse to the next run -- travels at the blank's largest
   // surface plus a clearance, for the same reason the finish does: the model
@@ -1489,10 +1490,15 @@ export function generateRotaryRough(
   // and the final retract go to the higher of the two heights.
   const travelZ = rotaryTravelZ(stock, tool.units)
   const safeZ = Math.max(pivot + params.safeRadius, travelZ)
-  // Every angle starts its stock at the blank's largest radius, so a square
-  // blank's corners are standing material at layer 1 on every pass (#1016
-  // C2-S3) and each later layer only removes what is still above it. On a
-  // round bar this is the surface, exactly as before.
+  // The layer count and the band each layer cuts are still counted from the
+  // blank's largest radius, so a square blank's corners are covered from the
+  // first layer (#1016 C2-S3). What changes for a square is *which* of those
+  // bands a pass actually cuts: a flat's surface is only half the side, so the
+  // first bands there lie wholly above the blank and would cut nothing. Each
+  // pass skips a band whose lower radius is at or above the square material
+  // within that pass's cutter footprint (#1016 C2-F2). A round bar's footprint
+  // radius is constant, so it keeps the old output byte for byte and the
+  // helper is not even called.
   let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
@@ -1508,8 +1514,11 @@ export function generateRotaryRough(
     let previousEndedAtEnd = false
     for (let pass = 0; pass < angles.length; pass++) {
       const angle = angles[pass] + (layer - 1) * 360
+      const touchesMaterial = !square
+        || layerRadius < squareRotaryTouchRadius(stock, angle, layerRadius, tool.radius)
       const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
-      const needsCut = (i: number): boolean => tips[pass][indexAt(i)] < previousRadius
+      const needsCut = (i: number): boolean =>
+        touchesMaterial && tips[pass][indexAt(i)] < previousRadius
       const at = (i: number): ToolpathPoint => {
         const index = indexAt(i)
         return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
