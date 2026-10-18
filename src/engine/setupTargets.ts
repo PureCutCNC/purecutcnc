@@ -57,6 +57,7 @@ import type {
 import { depthFromFace, setupFace, setupForOperation } from './setupOrientation'
 import type { FaceDepthSpan, StockZSpan } from './setupOrientation'
 import { squareRotarySafetyRefusal } from './squareRotarySafety'
+import type { SquareRotarySafetyRefusal } from './squareRotarySafety'
 
 /**
  * How close to a stock face a span must come to count as reaching it, in
@@ -273,6 +274,15 @@ export interface SetupGenerationBlock {
   reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline' | 'squareRotaryUnsupported'
   face: SetupFace
   features: TargetFaceVerdict[]
+  /**
+   * `squareRotaryUnsupported` only, and only when the physical guard is the
+   * refuser: the verdict's own reason plus the clamp it names, so generation can
+   * report the actual problem (a too-small diameter, a placement error, an
+   * ordinary clamp in the swept envelope) instead of one generic refusal. The
+   * semantic square refusals (a wrapped 2D path, a non-model target) carry no
+   * verdict and keep the generic message (#1016 C2 F3).
+   */
+  refusal?: SquareRotarySafetyRefusal
 }
 
 /**
@@ -345,12 +355,19 @@ export function setupGenerationBlock(project: Project, operation: Operation): Se
     // Judged here, before any motion, so the same verdict refuses at generation
     // and at output (`motionPipeline.ts` asks this function again).
     if (isSquareStock(project.stock)) {
-      if (!squareRotaryWorkAdmitted(project, operation) || squareRotarySafetyRefusal(project, operation)) {
-        // A **square**-only refusal gets its own reason, reported as
-        // `postSetupOperationRefused` (an error): the old `aroundStockMismatch`
-        // code keeps the warning severity it has always had for round/flat
-        // mismatches (#1016 C2-S4 compatibility).
-        return { reason: 'squareRotaryUnsupported', face, features: [] }
+      // The physical verdict is only the *reason* once the job is admitted at
+      // all. A wrapped 2D path or a non-model target is refused for its own
+      // semantic reason, and a clamp that also happens to be too small must not
+      // relabel that refusal (the generic code stays the fallback).
+      const admitted = squareRotaryWorkAdmitted(project, operation)
+      const refusal = admitted ? squareRotarySafetyRefusal(project, operation) : null
+      if (!admitted || refusal) {
+        // A **square**-only refusal gets its own reason, reported as an error:
+        // the old `aroundStockMismatch` code keeps the warning severity it has
+        // always had for round/flat mismatches (#1016 C2-S4 compatibility).
+        // The physical verdict (when it is the refuser) rides along, so the
+        // warning can name the clamp and the actual problem (#1016 C2 F3).
+        return { reason: 'squareRotaryUnsupported', face, features: [], refusal: refusal ?? undefined }
       }
     }
     // A rejected target is reported as the face mismatch it is: it is not a

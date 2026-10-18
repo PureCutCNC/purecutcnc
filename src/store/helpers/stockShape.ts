@@ -54,7 +54,13 @@ import {
   normalizeSquareStock,
   squareStock,
 } from '../../types/barStock'
-import { defaultRoundWorkholding, isRoundWorkholding } from './roundWorkholding'
+import {
+  defaultRoundWorkholding,
+  defaultWorkholdingDiameter,
+  isRoundWorkholding,
+  remintRoundWorkholding,
+  roundWorkholdingDiameter,
+} from './roundWorkholding'
 
 /** A block turned into a bar: the long side becomes the length, the thickness the diameter. */
 export function toRoundStock(stock: Stock): RoundStock {
@@ -235,20 +241,37 @@ function newChuck(project: Project, stock: BarStock): Clamp {
  * slice C, square blank #1016 C2-S2). Choosing a bar moves the origin to the
  * bar's default and guarantees exactly one chuck; choosing a block moves the
  * origin the same way and removes every chuck and tailstock, which cannot exist
- * on a block. Switching between the two bar shapes keeps a chuck already there
- * — with whatever diameter it has — rather than adding a second or resizing it.
- * Any other clamp is kept on either shape. The same shape returns the same
- * project object.
+ * on a block. Switching between the two bar shapes re-mints a chuck or
+ * tailstock that no longer clears the new bar (#1016 C2 F3): a round bar's
+ * 50 mm default is smaller than a square blank's corner envelope, so keeping it
+ * would leave a setup this build refuses. A support that already clears is
+ * kept exactly as it is, with its own diameter; ordinary clamps are never
+ * touched. Any other clamp is kept on either shape. The same shape returns the
+ * same project object.
  */
 export function projectWithStockShape(project: Project, shape: 'block' | 'round' | 'square'): Project {
   if (shape === 'round' || shape === 'square') {
     if (shape === 'round' ? isRoundStock(project.stock) : isSquareStock(project.stock)) return project
     const stock = shape === 'round' ? toRoundStock(project.stock) : toSquareStock(project.stock)
     const origin = originForShape(project.origin, stock)
-    if (project.clamps.some((clamp) => clamp.type === 'chuck')) {
-      return { ...project, stock, origin }
+    // Only a switch between the two bar shapes compares an existing support
+    // with a previous bar. A block entering a bar shape has no workholding yet,
+    // so the add-or-keep path below is unchanged for it.
+    const previous = isBarStock(project.stock) ? project.stock : null
+    const clamps = previous && previous.shape !== stock.shape
+      ? project.clamps.map((clamp) => {
+        if (!isRoundWorkholding(clamp)) return clamp
+        const existingDiameter = roundWorkholdingDiameter(clamp, previous)
+        const required = defaultWorkholdingDiameter(clamp.type, stock, project.meta.units)
+        return existingDiameter < required
+          ? remintRoundWorkholding(clamp, stock, project.meta.units)
+          : clamp
+      })
+      : project.clamps
+    if (clamps.some((clamp) => clamp.type === 'chuck')) {
+      return { ...project, stock, origin, clamps }
     }
-    return { ...project, stock, origin, clamps: [...project.clamps, newChuck(project, stock)] }
+    return { ...project, stock, origin, clamps: [...clamps, newChuck(project, stock)] }
   }
 
   if (!isBarStock(project.stock)) return project

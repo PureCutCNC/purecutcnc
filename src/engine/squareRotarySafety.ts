@@ -109,6 +109,13 @@ export interface SquareRotarySafetyRefusal {
   reason: SquareRotarySafetyReason
   clampId: string
   clampName: string
+  /**
+   * `workholdingDiameter` only: the clamp's outer diameter, in project units —
+   * the number the operation warning names (never re-formatted here).
+   */
+  diameter?: number
+  /** `workholdingDiameter` only: the corner-envelope diameter it must clear, in project units. */
+  required?: number
 }
 
 /** True for the two round workholding types (`store/helpers/roundWorkholding.ts`). */
@@ -239,7 +246,13 @@ function workholdingRefusal(
   const diameter = workholdingDiameter(clamp, stock)
   if (Math.abs(across - centre) > tolerance) return verdict('workholdingPlacement', clamp)
   if (Math.abs(clamp.height - (pivot + diameter / 2)) > tolerance) return verdict('workholdingPlacement', clamp)
-  if (diameter < 2 * cornerRadius - tolerance) return verdict('workholdingDiameter', clamp)
+  const required = 2 * cornerRadius
+  if (diameter < required - tolerance) {
+    // The numbers ride the verdict, not just its name: the operation warning
+    // names both lengths (#1016 C2 F3), and generation must not have to
+    // re-derive them from a project that may have moved on.
+    return { ...verdict('workholdingDiameter', clamp), diameter, required }
+  }
   return null
 }
 

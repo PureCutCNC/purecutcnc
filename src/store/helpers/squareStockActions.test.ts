@@ -42,6 +42,7 @@ import {
 import {
   barCentre,
   barLength,
+  barMaxRadius,
   isSquareStock,
   normalizeSquareStock,
   squareStock,
@@ -311,18 +312,21 @@ test('to square adds exactly one chuck and moves the origin to the blank default
     'the default is the centreline origin')
 })
 
-test('round → square keeps the one chuck and does not enlarge it', () => {
+test('round → square re-mints a too-small chuck and keeps exactly one', () => {
   const roundProject = projectWithStockShape(newProject('bar', 'mm'), 'round')
   const chuck = roundProject.clamps[0]
   assert.equal(chuck.type, 'chuck', 'the round project gained a chuck')
   const next = projectWithStockShape(roundProject, 'square')
-  assert.equal(isSquareStock(next.stock), true, 'the stock is a square blank')
+  assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
   assert.equal(next.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'still one chuck')
-  assert.equal(next.clamps[0], chuck, 'the existing chuck object is kept as-is, not enlarged')
+  assert.notEqual(next.clamps[0], chuck, 'a chuck that no longer clears the corners is re-minted')
+  assert.equal(next.clamps[0].id, chuck.id, 'the same clamp id is kept')
+  closeTo(next.clamps[0].h, 4 * barMaxRadius(next.stock), 'the new diameter clears the corner envelope')
+  closeTo(next.clamps[0].height, next.stock.thickness / 2 + next.clamps[0].h / 2, 'raised to the true pivot')
 
   const back = projectWithStockShape(next, 'round')
   assert.equal(back.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'returning to round adds no second chuck')
-  assert.equal(back.clamps[0], chuck, 'and keeps the same one')
+  assert.equal(back.clamps[0], next.clamps[0], 'the square-sized chuck already clears the round bar, so it is kept as-is')
 })
 
 test('square → block removes every chuck and tailstock, keeps other clamps and follows the origin', () => {

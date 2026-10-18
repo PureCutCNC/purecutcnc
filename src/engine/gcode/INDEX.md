@@ -255,10 +255,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the corner envelope is accepted and posts under `G93`, and the same low turn
   on the round bar of the same box still posts; a manual too-small chuck is
   preserved but refuses generation (no
-  motion, `postSetupOperationRefused`) and output (no motion posted), hidden
-  workholding still counts, axial-disjoint and end-face-touching supports are
-  clear, off-centre / wrong-height / invalid clamp rows fail closed, an ordinary
-  clamp in the swept envelope refuses while a provably disjoint one passes, and
+  motion, `workholdingDiameter` naming the clamp and both diameters in project
+  units) and output (no motion posted), hidden workholding still counts,
+  axial-disjoint and end-face-touching supports are clear, off-centre and
+  wrong-height rows refuse with `workholdingPlacement`, an invalid clamp row
+  keeps the generic `postSetupOperationRefused` fallback, an ordinary
+  clamp in the swept envelope refuses with `ordinaryClampOverlap` while a
+  provably disjoint one passes, and
   a clamp past the blank end but inside the finite cutter-body overhang refuses
   — with an independent analytic cutter-body-vs-clamp witness — while one past
   that overhang is provably clear and passes; a clamp row with a non-positive
@@ -269,7 +272,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   refused), a normalized row labelled in another unit system, and a body whose
   radius is not half its diameter (with the flat/ball surface difference
   witnessed analytically), while a genuinely converted same-id row still posts;
-  40 seeded pure-turn feeds match the analytic true-pivot inverse-time word.
+  Frank's measured UI-test project
+  (`test-fixtures/square-to-round-chuck-switch.camj`: inch, 2 in square, the
+  50 mm round-bar chuck loaded from format 3.3 **without** the shape switch)
+  refuses both rotary operations with zero moves and `workholdingDiameter`,
+  naming the clamp and both diameters in inches; moving the same chuck off the
+  pivot reports `workholdingPlacement`. 40 seeded pure-turn feeds match the
+  analytic true-pivot inverse-time word.
 - `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
   **emitted text** (#1016 C2 M1 correction): a seeded property test (300
   programs, seed 1016) generates supplied paths with safe turns, constant-angle
