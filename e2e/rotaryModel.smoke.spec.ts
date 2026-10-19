@@ -397,8 +397,8 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   expect(along.warningCodes).toEqual([])
 
   // The Passes control lives in the collapsed Strategy group. Add selected the
-  // operation, so its properties are already on screen.
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  // operation, so its properties are already on screen; clicking its row again
+  // would deselect it and close them.
   await ui.cam.operationGroup(page, 'Strategy').click()
   const passes = ui.cam.operationField(page, 'Passes')
   await expect(passes).toBeVisible()
