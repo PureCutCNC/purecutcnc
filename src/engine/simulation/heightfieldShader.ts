@@ -17,7 +17,7 @@
 import * as THREE from 'three'
 import type { AroundFrame } from '../aroundFrame'
 import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundShader, aroundUniforms } from './aroundWrap'
-import type { SimulationGrid } from './types'
+import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 
 // theme-exempt: scene lighting reference — matches SimulationViewport light rig
 // Shared lighting code matching the scene lights in SimulationViewport:
@@ -235,6 +235,40 @@ export const CELL_HEIGHT_GLSL = /* glsl */ `
 `
 
 /**
+ * The slight darkening of deeper cuts, shared by every stock surface so a
+ * riser inside a slope, the heightfield tops and the round bar's static lower
+ * half all shade depth the same way. Needs `uStockBottomZ`.
+ */
+export const DEPTH_DARKEN_GLSL = /* glsl */ `  // The slight darkening of deeper cuts, shared so a riser inside a slope
+  // matches the tops on either side of it.
+  float depthDarken(float height, float stockTopZ) {
+    float depthRatio = clamp((stockTopZ - height) / max(stockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
+    return 1.0 - depthRatio * 0.12;
+  }
+`
+
+/**
+ * A flat round bar's silhouette (issue #1049): the material ends on the circle
+ * of the bar's own radius, whatever the grid spacing. A grid whose across
+ * extent is not exactly the diameter puts the outermost material cell's
+ * boundary a little inside or outside that circle (a Ø41 mm bar at 96 cells
+ * overshoots by 0.667 mm). The wall mesh pulls an overshooting boundary back
+ * onto the silhouette and the surface sheet discards whatever lies beyond it,
+ * so both meet the static lower half on the same circle instead of leaving an
+ * open equator gap. Written in the scalar subset the tests can run.
+ */
+export const ROUND_BAR_SILHOUETTE_GLSL = /* glsl */ `
+  // The bar's silhouette: the across coordinate clamped to [centre - radius, centre + radius].
+  float roundBarSilhouetteAcross(float across, float centre, float radius) {
+    return clamp(across, centre - radius, centre + radius);
+  }
+
+  bool roundBarOutsideSilhouette(float across, float centre, float radius) {
+    return abs(across - centre) > radius;
+  }
+`
+
+/**
  * The smoothed surface normal at any point inside a cell, shared by the surface
  * sheet and by the wall mesh (which fills the small risers inside a slope with
  * the surface's own shading). Fragment-stage only (it reads screen
@@ -308,19 +342,15 @@ export const SURFACE_NORMAL_GLSL = /* glsl */ `
     return smoothstep(0.5, 1.0, cellsPerPixel);
   }
 
-  // The slight darkening of deeper cuts, shared so a riser inside a slope
-  // matches the tops on either side of it.
-  float depthDarken(float height, float stockTopZ) {
-    float depthRatio = clamp((stockTopZ - height) / max(stockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
-    return 1.0 - depthRatio * 0.12;
-  }
-`
+${DEPTH_DARKEN_GLSL}`
 
-const vertexShader = /* glsl */ `
+const vertexShader = (flatRoundBar: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec2 uOrigin;
   uniform float uCellSize;
-
+${flatRoundBar ? `  // Which world axis runs across the bar (0 = X, 1 = Z).
+  uniform float uBarAxis;
+` : ''}
   ${AROUND_FRAME_GLSL}
 #ifdef AROUND_WRAP
   out float vAcross;
@@ -329,7 +359,9 @@ const vertexShader = /* glsl */ `
   // Position inside the cell, 0..1 on both axes.
   out vec2 vLocal;
   out float vHeight;
-
+${flatRoundBar ? `  // World coordinate across the bar, so the top can stop on its silhouette.
+  out float vAcrossWorld;
+` : ''}
   void main() {
     vCell = ivec2(int(position.x + 0.5), gl_InstanceID);
     vLocal = position.yz;
@@ -347,11 +379,12 @@ const vertexShader = /* glsl */ `
     vAcross = uAroundX ? displaced.z : displaced.x;
     displaced = aroundPosition(displaced);
 #endif
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+${flatRoundBar ? `    vAcrossWorld = uBarAxis < 0.5 ? displaced.z : displaced.x;
+` : ''}    gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
 `
 
-const fragmentShader = /* glsl */ `
+const fragmentShader = (flatRoundBar: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec3 uColor;
   uniform float uStockBottomZ;
@@ -367,7 +400,10 @@ const fragmentShader = /* glsl */ `
   flat in ivec2 vCell;
   in vec2 vLocal;
   in float vHeight;
-  out vec4 fragColor;
+${flatRoundBar ? `  in float vAcrossWorld;
+  uniform float uBarCentre;
+  uniform float uBarRadius;
+` : ''}  out vec4 fragColor;
 
   ${LIGHTING_GLSL}
 
@@ -376,13 +412,20 @@ const fragmentShader = /* glsl */ `
   ${SLOPE_GRADIENT_GLSL}
 
   ${SURFACE_NORMAL_GLSL}
-
+${flatRoundBar ? `  ${ROUND_BAR_SILHOUETTE_GLSL}
+` : ''}
   void main() {
     float threshold = uStockBottomZ + 0.000001;
     if (vHeight <= threshold) {
       discard;
     }
-
+${flatRoundBar ? `    // The flat top is part of the bar's silhouette: an outermost cell that
+    // reaches past the radius is clipped back onto the circle, where the wall
+    // mesh and the static lower half meet it (issue #1049).
+    if (roundBarOutsideSilhouette(vAcrossWorld, uBarCentre, uBarRadius)) {
+      discard;
+    }
+` : ''}
     // This cell is a flat tread, lit by the smoothed surface it samples. A step
     // takes no part in that: the wall mesh draws the riser, and borrowing its
     // normal is what painted a dark band along every tab.
@@ -401,7 +444,9 @@ export function createHeightfieldMaterial(
   grid: SimulationGrid,
   stockColor: THREE.Color,
   frame?: AroundFrame,
+  flatRoundBar?: FlatRoundBarDescriptor,
 ): THREE.ShaderMaterial {
+  const roundBar = flatRoundBar !== undefined
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
@@ -412,9 +457,16 @@ export function createHeightfieldMaterial(
       uStockTopZ: { value: grid.stockTopZ },
       uOrigin: { value: new THREE.Vector2(grid.originX, grid.originY) },
       uCellSize: { value: grid.cellSize },
+      ...(flatRoundBar
+        ? {
+            uBarAxis: { value: flatRoundBar.axis === 'x' ? 0 : 1 },
+            uBarCentre: { value: flatRoundBar.centre },
+            uBarRadius: { value: flatRoundBar.radius },
+          }
+        : {}),
     },
-    vertexShader: aroundShader(vertexShader, frame),
-    fragmentShader: aroundShader(fragmentShader, frame),
+    vertexShader: aroundShader(vertexShader(roundBar), frame),
+    fragmentShader: aroundShader(fragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })

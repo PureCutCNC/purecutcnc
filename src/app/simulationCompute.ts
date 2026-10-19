@@ -44,29 +44,36 @@ const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
 
 /**
  * The one grid/build option set every simulation entry point uses (issue
- * #1016 C2-R2V): the same periodic sheet and the same transient square
- * descriptor, so the static grid, the selected cut, the visible replay and the
- * playback base grid cannot disagree about what blank is being cut.
+ * #1016 C2-R2V): the same periodic sheet and the same transient bar
+ * descriptors, so the static grid, the selected cut, the visible replay and
+ * the playback base grid cannot disagree about what blank is being cut. A flat
+ * round bar's profile (issue #1049) rides here with the same contract as the
+ * square blank's.
  */
 export function simulationBuildOptions(setupInput: SimulationSetupInput | null, detailCells: number): SimulationBuildOptions {
   const bar = setupInput?.bar
   const squareBar = setupInput?.squareBar
+  const flatRoundBar = setupInput?.flatRoundBar
   return {
     targetLongAxisCells: detailCells,
     ...(bar
       ? { wrap: { axis: bar.frame.axis === 'x' ? 'y' as const : 'x' as const, period: bar.frame.circumference } }
       : {}),
     ...(squareBar ? { squareBar } : {}),
+    ...(flatRoundBar ? { flatRoundBar } : {}),
   }
 }
 
 /**
  * The empty result's statistics. A square blank's virgin surface is its true
  * cross section, whose lowest top is the inscribed radius over the grid's own
- * cells; `stockTopZ` there is the corner maximum. The optional immutable
- * baseline is the only signal for that, so a grid carrying one reports its own
- * starting surface. Flat and round grids keep the exact stock-thickness value
- * they always reported.
+ * cells; `stockTopZ` there is the corner maximum. A flat round bar's virgin
+ * surface is its curved upper half (issue #1049), and its empty cells outside
+ * the bar start at the stock bottom, so the uniform top is wrong for it too.
+ * The optional immutable baseline is the signal for both: the lowest of a
+ * grid's own starting heights is what it reports (the replay's minimum over
+ * `topZ` includes the same empty cells, so the two agree). Flat and round grids
+ * without one keep the exact stock-thickness value they always reported.
  */
 function emptySimulationStats(grid: SimulationGrid): SimulationResult['stats'] {
   let minTopZ = grid.stockTopZ

@@ -44,6 +44,7 @@ const BUILTINS = {
   abs: Math.abs,
   sin: Math.sin,
   cos: Math.cos,
+  sqrt: Math.sqrt,
   min: Math.min,
   max: Math.max,
   mix: (a: number, b: number, t: number): number => a * (1 - t) + b * t,

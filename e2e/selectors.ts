@@ -881,6 +881,7 @@ export const simSetup = {
   viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),
   picker: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('combobox', { name: 'Setup' }),
   note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-note'),
+  modeSelected: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Selected', exact: true }),
   modeVisible: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Visible', exact: true }),
   playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),
   /** Detail slider: the grid resolution both the app and its witness build at. */
