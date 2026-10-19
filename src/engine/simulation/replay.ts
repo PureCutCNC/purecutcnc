@@ -309,6 +309,64 @@ function wrappedRayInterval(
 }
 
 /**
+ * Whether a move needs the swept ramp path (issue #1048 review). A move whose Z
+ * changes by no more than one cell across the cutter's diameter cannot
+ * under-cut by more than the grid's height resolution, so the exact nearest-pose
+ * path handles it. The threshold is absolute, so a truncated replay and every
+ * playback piece agree on it.
+ */
+export function wrappedNeedsSweep(
+  grid: SimulationGrid,
+  sweep: ToolpathMove,
+  toolRadius: number,
+): boolean {
+  const pathLength = Math.hypot(sweep.to.x - sweep.from.x, sweep.to.y - sweep.from.y)
+  const dz = sweep.to.z - sweep.from.z
+  if (!(pathLength > 1e-6) || dz === 0) return false
+  const slope = Math.abs(dz) / pathLength
+  return slope * 2 * toolRadius > grid.cellSize
+}
+
+/**
+ * The fraction of a source move between adjacent ramp sweep poses. It is
+ * absolute — derived only from the move's slope and the grid's cell height — so
+ * a truncated replay and every playback piece sample exactly the same poses.
+ * Returns 0 for a move the nearest pose is accurate enough for.
+ */
+export function wrappedSweepStep(
+  grid: SimulationGrid,
+  sweep: ToolpathMove,
+  toolRadius: number,
+): number {
+  if (!wrappedNeedsSweep(grid, sweep, toolRadius)) return 0
+  const pathLength = Math.hypot(sweep.to.x - sweep.from.x, sweep.to.y - sweep.from.y)
+  const dz = sweep.to.z - sweep.from.z
+  // Half a cell of Z per sample keeps the swept depth well inside the grid's
+  // height resolution; the sample's along position follows from the slope.
+  const step = (grid.cellSize * 0.5) / (Math.abs(dz) / pathLength)
+  return step / pathLength
+}
+
+/** Every absolute ramp sample fraction of `sweep`, endpoint included. */
+export function wrappedSweepSampleFractions(
+  grid: SimulationGrid,
+  sweep: ToolpathMove,
+  toolRadius: number,
+): number[] {
+  const tStep = wrappedSweepStep(grid, sweep, toolRadius)
+  if (!(tStep > 0)) return []
+  const out: number[] = []
+  for (let k = 0; ; k += 1) {
+    const t = k * tStep
+    if (t > 1 + 1e-12) break
+    out.push(t >= 1 - 1e-12 ? 1 : t)
+    if (t >= 1 - 1e-12) break
+  }
+  if (out[out.length - 1] < 1 - 1e-12) out.push(1)
+  return out
+}
+
+/**
  * The wrapped (Around) cut kernel (issues #1016 C2-F8 and F8b): the same
  * per-move parameterization as {@link applyMoveKernel}, but each cell is
  * resolved against the cutter's true solid instead of the flat-sheet circle.
@@ -326,9 +384,9 @@ function wrappedRayInterval(
  * replay, one elapsed piece (or partial piece) for playback. `sweep` is the
  * source move the cutter is resolved against, so a split path uses the same
  * cutter parameters as the unsplit one, and `elapsed` is the fraction of
- * `sweep` the playback has reached (1 for a batch replay). Every cell inside
- * the applied piece's swept footprint is evaluated against *all* the source
- * move's periodic cutter images at once, and the intervals are applied until
+ * `sweep` that this application starts from (1 for a batch replay). Every cell
+ * inside the applied piece's swept footprint is evaluated against *all* the
+ * source move's periodic cutter images, and the intervals are applied until
  * their cut reaches a fixed point (F8b):
  *
  *  - The fixed point depends only on the set of intervals and the incoming top,
@@ -336,24 +394,35 @@ function wrappedRayInterval(
  *    leave finished playback different from a batch replay. It also makes
  *    repeated application idempotent, which is what lets a playback piece cut a
  *    cell early and a later piece touch it again without changing the result.
- *  - The footprint, not each cell's projected sweep parameter, decides *when*
- *    some material is eligible: a cell the cutter has reached is considered in
- *    that frame, even though its closest approach lies further along the move.
- *    What it is cut *to* is the point of `elapsed` (issue #1048): a part-played
- *    move resolves every image at `min(t, elapsed)`, so a thread's next turn or
- *    a ring's far seam image cannot remove a slot the cutter has not reached.
- *    The source move's true nearest pose is still computed, but only as a
- *    ceiling — a partial frame may never show more removed than the batch
- *    eventually does. That is what keeps the finished playback exactly equal to
- *    the batch (at `elapsed = 1` both poses coincide), and it is monotone: as
- *    the piece advances the reached pose approaches its true one, so the
- *    ceiling is only ever touched, never raised.
+ *  - A **ramp** (a move whose Z changes while it moves) is swept, not resolved
+ *    at each cell's nearest pose. The cutter is a disk whose edge can reach a
+ *    cell before or after the cell's closest approach, and on an ascending move
+ *    that earlier pose is *lower* (issue #1048 review): a flat cutter at
+ *    (4.95, -0.258) of the 3 mm rise from (2,0,1) to (10,0,4) is reached at
+ *    x ≈ 3.95 with its bottom at 1.731, while the nearest pose is x = 4.95 at
+ *    2.106. A later pose cannot put material back, so the batch must cut at the
+ *    swept minimum too. The sweep is sampled at absolute poses `halfCell /
+ *    |dZ/dS|` apart: the Z difference between samples is at most half a cell,
+ *    which is the grid's height resolution. Each cell also evaluates its own
+ *    nearest pose, so a cell between two samples is still cut to the closest
+ *    approach. The sample positions depend only on the source move's slope, so
+ *    a truncated replay and every playback piece evaluate the same prefix set,
+ *    and the finished playback is exactly the batch. The source move's sample
+ *    grid ends at the move end, included only at `elapsed = 1`; a partial piece
+ *    adds the pose it has reached, which for a monotone-Z move cannot cut below
+ *    the batch's swept minimum. A move whose Z
+ *    changes by less than one cell across the cutter's diameter uses the exact
+ *    single-pose path (the nearest pose is then within the grid's resolution);
+ *    a part-played *horizontal* move keeps that path clamped to
+ *    `min(t, elapsed)`, so a thread's next turn or a ring's far seam image
+ *    cannot cut a slot the cutter has not reached.
  *  - A cell at or below the deepest tip this move can reach (`tipFloor`) can
  *    never be lowered, so it is rejected before the trigonometric work. The
  *    across box uses the tight profile-specific reach from
  *    {@link wrappedAcrossReachAngle}, which is exact for the ball and V-bit and
  *    much narrower than the old flat bound.
  */
+
 function applyWrappedMoveKernel(
   grid: SimulationGrid,
   move: ToolpathMove,
@@ -419,24 +488,45 @@ function applyWrappedMoveKernel(
   const gridMaxX = originX + grid.cols * cellSize
   const gridMaxY = originY + grid.rows * cellSize
 
-  // A part-played move resolves its images at the pose the cutter has reached
+  // A part-played move only cuts the part of the source move it has reached
   // (issue #1048). Fractions within a rounding step of the finish are the full
   // move, so the finished playback takes the batch path bit for bit.
   const partial = elapsed < 1
   const reached = partial ? (elapsed > 0 ? elapsed : 0) : 1
 
-  // Reused per cell (at most three images), so the hot loop stays allocation-free.
-  // `image*` is this cell's per-image pose and interval; `reached*` is the cut
-  // from the pose the piece has reached, and `cap*` the batch ceiling's set.
+  // Ramps are swept at sample poses (see the doc comment). The poses are an
+  // absolute property of the source move, so a truncated replay and every
+  // playback piece evaluate the same set. Every piece applies the *whole*
+  // prefix: an interval that was inactive at the incoming top can become active
+  // after another pose lowers the cell, and the fixed point must see it.
+  const ramp = wrappedNeedsSweep(grid, sweep, toolRadius)
+  const rampPrefix: number[] = []
+  if (ramp) {
+    for (const t of wrappedSweepSampleFractions(grid, sweep, toolRadius)) {
+      if (t > reached + 1e-12) continue
+      rampPrefix.push(t)
+    }
+    // The cutter is at `reached` right now, so the partial piece must cut that
+    // pose even when it falls between two samples. A monotone-Z move makes it
+    // no deeper than the batch's swept minimum, so the finish stays exact.
+    if (partial && reached > 0 && (rampPrefix.length === 0 || reached > rampPrefix[rampPrefix.length - 1] + 1e-12)) {
+      rampPrefix.push(reached)
+    }
+  }
+
+  // Reused per cell, so the hot loop stays allocation-free. `pose*` holds every
+  // interval of the reached prefix; `cap*` is the horizontal batch ceiling.
+  const reachedLo = [0, 0, 0]
+  const reachedHi = [0, 0, 0]
+  const capLo = [0, 0, 0]
+  const capHi = [0, 0, 0]
   const imageT = [0, 0, 0]
   const imageFuture = [false, false, false]
   const imageReached = [false, false, false]
   const imageLo = [0, 0, 0]
   const imageHi = [0, 0, 0]
-  const reachedLo = [0, 0, 0]
-  const reachedHi = [0, 0, 0]
-  const capLo = [0, 0, 0]
-  const capHi = [0, 0, 0]
+  const poseLo: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 1)) : []
+  const poseHi: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 1)) : []
 
   let changed = 0
   let dirtyColMin = grid.cols
@@ -475,89 +565,159 @@ function applyWrappedMoveKernel(
         const x = originX + (col + 0.5) * cellSize
         const alongCell = acrossIsX ? y : x
         const acrossCell = acrossIsX ? x : y
+        let nextTop = top
+
         let tBase = 0
         if (!sweepStationary) {
           tBase = ((x - sweepX) * sweepDx + (y - sweepY) * sweepDy) * invSweepLengthSq
         }
 
-        // First resolve the pose the cutter has reached (the true one for a
-        // batch replay, and for any image this piece has already passed). Most
-        // cells in the bounding box miss it, and those pay exactly what they
-        // paid before: one lookup per image and nothing else.
-        let reachedCount = 0
-        let anyFuture = false
-        for (let image = 0; image < imageCount; image += 1) {
-          const imageShift = shifts[image]
-          // Translating the sweep across the sheet shifts the cell's projected
-          // parameter by exactly `shift · (across direction) / |sweep|²`.
-          let t = 0
-          if (!sweepStationary) {
-            t = tBase - imageShift * acrossDelta * invSweepLengthSq
+        if (ramp) {
+          // The reached prefix's whole interval set, in one fixed point. The
+          // sweep samples carry the Z variation; each image's closest approach
+          // covers the along/across geometry between samples. Both are absolute
+          // poses of the source move, so a truncated replay and every piece here
+          // are prefix subsets of the one batch set.
+          let poseCount = 0
+          // Only the samples whose axial position is within the cutter radius
+          // can reach this ray; skipping the rest is exact and keeps the hot
+          // loop proportional to the cutter's footprint, not the move's length.
+          let firstSample = 0
+          let lastSample = rampPrefix.length - 1
+          if (alongDelta !== 0) {
+            const tA = (alongCell - toolRadius - alongFrom) / alongDelta
+            const tB = (alongCell + toolRadius - alongFrom) / alongDelta
+            const tLow = Math.min(tA, tB)
+            const tHigh = Math.max(tA, tB)
+            // Binary search the prefix by value: the last entry can be the move
+            // end (1), which is not a multiple of the step.
+            let low = 0
+            let high = rampPrefix.length
+            while (low < high) {
+              const mid = (low + high) >>> 1
+              if (rampPrefix[mid] < tLow - 1e-12) low = mid + 1
+              else high = mid
+            }
+            firstSample = low
+            low = 0
+            high = rampPrefix.length
+            while (low < high) {
+              const mid = (low + high) >>> 1
+              if (rampPrefix[mid] <= tHigh + 1e-12) low = mid + 1
+              else high = mid
+            }
+            lastSample = low - 1
+          } else if (Math.abs(alongCell - alongFrom) > toolRadius) {
+            continue
+          }
+          for (let sample = firstSample; sample <= lastSample; sample += 1) {
+            const t = rampPrefix[sample]
+            for (let image = 0; image < imageCount; image += 1) {
+              if (wrappedRayInterval(
+                isBall, toolType, toolRadius, vBitAngle,
+                top, alongCell, acrossCell,
+                alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
+                t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+              )) {
+                poseLo[poseCount] = wrappedRayScratch.lo
+                poseHi[poseCount] = wrappedRayScratch.hi
+                poseCount += 1
+              }
+            }
+          }
+          for (let image = 0; image < imageCount; image += 1) {
+            let t = tBase - shifts[image] * acrossDelta * invSweepLengthSq
             if (t < 0) t = 0
             else if (t > 1) t = 1
-          }
-          // A future nearest pose is clamped to this piece's elapsed end, so it
-          // cannot cut a slot the cutter has not reached (issue #1048).
-          const future = partial && t > reached
-          if (partial) {
-            imageT[image] = t
-            imageFuture[image] = future
-            if (future) anyFuture = true
-          }
-          const valid = wrappedRayInterval(
-            isBall, toolType, toolRadius, vBitAngle,
-            top, alongCell, acrossCell,
-            alongFrom, alongDelta, acrossFrom, acrossDelta, imageShift,
-            future ? reached : t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
-          )
-          if (valid) {
-            const intervalLo = wrappedRayScratch.lo
-            const intervalHi = wrappedRayScratch.hi
-            reachedLo[reachedCount] = intervalLo
-            reachedHi[reachedCount] = intervalHi
-            reachedCount += 1
-            if (partial) {
-              imageReached[image] = true
-              imageLo[image] = intervalLo
-              imageHi[image] = intervalHi
-            }
-          } else if (partial) {
-            imageReached[image] = false
-          }
-        }
-        if (reachedCount === 0) continue
-        const reachedTop = fixedPointTop(reachedLo, reachedHi, reachedCount, top, stockBottomZ)
-        let nextTop = reachedTop
-        if (anyFuture && reachedTop < top - 1e-9) {
-          // The reached pose removes something, so the batch ceiling matters: a
-          // partial frame may never cut past what the whole move eventually
-          // leaves. The ceiling is the fixed point over the true poses — the
-          // reached intervals already in hand for every image the piece has
-          // passed, plus the true pose of each future image. At the finish the
-          // two poses coincide, so this is exactly the batch.
-          let capCount = 0
-          for (let image = 0; image < imageCount; image += 1) {
-            if (!imageFuture[image]) {
-              if (imageReached[image]) {
-                capLo[capCount] = imageLo[image]
-                capHi[capCount] = imageHi[image]
-                capCount += 1
-              }
-              continue
-            }
+            // A pose beyond the reached fraction is a future cut, not this
+            // piece's; it belongs to the piece that reaches it.
+            if (t > reached + 1e-12) continue
             if (wrappedRayInterval(
               isBall, toolType, toolRadius, vBitAngle,
               top, alongCell, acrossCell,
               alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
-              imageT[image], sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+              t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
             )) {
-              capLo[capCount] = wrappedRayScratch.lo
-              capHi[capCount] = wrappedRayScratch.hi
-              capCount += 1
+              poseLo[poseCount] = wrappedRayScratch.lo
+              poseHi[poseCount] = wrappedRayScratch.hi
+              poseCount += 1
             }
           }
-          const capTop = fixedPointTop(capLo, capHi, capCount, top, stockBottomZ)
-          if (capTop > nextTop) nextTop = capTop
+          if (poseCount > 0) {
+            nextTop = fixedPointTop(poseLo, poseHi, poseCount, top, stockBottomZ)
+          }
+        } else {
+          // The nearest pose is the deepest one for a horizontal move. It is
+          // clamped to the elapsed end so a future turn or seam image cannot cut
+          // a slot the cutter has not reached (issue #1048). A horizontal move
+          // keeps the batch as its ceiling: the projection is the deepest pose,
+          // and the ceiling only absorbs its sub-cell rounding, never a swept
+          // cut (the ramp path above has no ceiling).
+          let reachedCount = 0
+          let anyFuture = false
+          for (let image = 0; image < imageCount; image += 1) {
+            const imageShift = shifts[image]
+            // Translating the sweep across the sheet shifts the cell's projected
+            // parameter by exactly `shift · (across direction) / |sweep|²`.
+            let t = 0
+            if (!sweepStationary) {
+              t = tBase - imageShift * acrossDelta * invSweepLengthSq
+              if (t < 0) t = 0
+              else if (t > 1) t = 1
+            }
+            const future = partial && t > reached
+            if (partial) {
+              imageT[image] = t
+              imageFuture[image] = future
+              if (future) anyFuture = true
+            }
+            if (wrappedRayInterval(
+              isBall, toolType, toolRadius, vBitAngle,
+              top, alongCell, acrossCell,
+              alongFrom, alongDelta, acrossFrom, acrossDelta, imageShift,
+              future ? reached : t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+            )) {
+              const intervalLo = wrappedRayScratch.lo
+              const intervalHi = wrappedRayScratch.hi
+              reachedLo[reachedCount] = intervalLo
+              reachedHi[reachedCount] = intervalHi
+              reachedCount += 1
+              if (partial) {
+                imageReached[image] = true
+                imageLo[image] = intervalLo
+                imageHi[image] = intervalHi
+              }
+            } else if (partial) {
+              imageReached[image] = false
+            }
+          }
+          if (reachedCount === 0) continue
+          nextTop = fixedPointTop(reachedLo, reachedHi, reachedCount, top, stockBottomZ)
+          if (anyFuture && nextTop < top - 1e-9) {
+            let capCount = 0
+            for (let image = 0; image < imageCount; image += 1) {
+              if (!imageFuture[image]) {
+                if (imageReached[image]) {
+                  capLo[capCount] = imageLo[image]
+                  capHi[capCount] = imageHi[image]
+                  capCount += 1
+                }
+                continue
+              }
+              if (wrappedRayInterval(
+                isBall, toolType, toolRadius, vBitAngle,
+                top, alongCell, acrossCell,
+                alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
+                imageT[image], sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+              )) {
+                capLo[capCount] = wrappedRayScratch.lo
+                capHi[capCount] = wrappedRayScratch.hi
+                capCount += 1
+              }
+            }
+            const capTop = fixedPointTop(capLo, capHi, capCount, top, stockBottomZ)
+            if (capTop > nextTop) nextTop = capTop
+          }
         }
 
         if (nextTop < top - 1e-9) {
