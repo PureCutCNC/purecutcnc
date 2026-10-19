@@ -1,0 +1,18 @@
+# #1045 slice G — square blanks: retained-end overcut, export-check speed, fewer moves
+
+Base: the #1045 feature branch (slices A–F). Read `scripts/issue-1045-e-handoff.md` and `scripts/issue-1045-f-handoff.md`, then the around-mode rough in `src/engine/toolpaths/rotaryModel.ts` and `src/engine/gcode/squareSweepGuard.ts`. Frank decided (2026-10-19): "Keep going on square blanks in #1045: fix the retained-end overcut and make the export check fast, then one more Codex pass." Off limits: `src/components/**`, `src/app/**` except tests.
+
+## 1. Retained-end overcut (generator bug the guard found)
+Slice F's report: "20×1000 with 100 mm retained ends → guard refuses the rough (engagement 2.32 vs bound 2.14) because the generator raises the stub-grazing tip above the layer radius and the next layer takes > stepdown." Near a retained square end the stub floor lifts a sample's tip above its layer radius; the next layer then cuts more than `stepdown` below what is actually standing there. Fix in the generator: a sample's cut at layer L must never be more than `stepdown` below the material left at that sample by layers < L (track what each sample actually left, not the nominal layer radius). Test: the 20×1000 / 100 mm retained-ends case and a seeded variant set generate rough+finish that the guard admits, and an independent check that per-sample engagement ≤ stepdown. Mutation: use the nominal previous layer radius again → fails.
+
+## 2. Fewer moves, exactly the same motion
+Around-mode rings emit one move per angle sample, and `mergeCollinearCuts` never merges moves whose A changes, so a 60×200 rough with retained ends produced 2.28 M moves. Consecutive cut moves inside one ring are linear in (along, A, Z) on the controller (A and Z interpolate linearly, inverse-time feed). Drop an interior point only when it lies on the straight segment between its neighbours **in (along, A, Z) space** within the existing merge tolerance (A converted to surface distance at the current tip radius for the tolerance), keeping both ends of each run. A flat floor at constant layer radius collapses to one move per run. Keep along-mode and round-bar along output byte-identical (do not touch the along merge). Report move counts before/after on the slice-F timing inputs. Tests: the merged program equals the unmerged one at every original sample (A and Z linear) within tolerance; the guard verdict is unchanged; mutation: merge on (along, Z) only, ignoring A → fails.
+
+## 3. Export check speed
+Slice F timings: 60×200 Ø4 flat rough 6.3 s guard; with 20 mm stubs 2.28 M moves, guard 21–28 s. Target: under 2 s for the 60×200 stubbed rough and under 3 s for the 20×1000 Ø3 rough+finish, on this machine, after step 2. Profile first (report where the time goes), then optimise without weakening conservativeness: e.g. visit only the grid cells a sample's cutter footprint covers, skip samples whose footprint has nothing standing above the tip, typed arrays, no per-sample allocation. The property test from slice F must still pass unchanged, with the same or more seeds.
+
+## Checks
+`npx tsx` on `squareSweepGuard.property.test.ts`, `squareSweepGuard.test.ts`, both around suites, `rotaryModel.test.ts`, the square rotary tests, `squareRotaryOutput`, `squareRotaryProgramSafety`, `exportRotarySafety`, every `src/engine/gcode/*.test.ts`; `npx tsc -p tsconfig.app.json --noEmit`; `npm run lint`; exit codes. Do not run the whole test suite in parallel with anything else.
+
+## Report
+`STATUS`, `COMMIT: none`, `CHANGED_FILES`, per item what changed, the profile and timings before/after, move counts before/after, mutations and results, commands with exit codes, `RISKS`.
