@@ -742,12 +742,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // mount a bar without the half below its equator (issue #1049).
     const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current)
     parent.add(built.group)
+    // The viewport attributes report what is actually in the scene, not only
+    // what the builder returned, so a dropped mount cannot read as mounted.
+    const sceneMounted = built.group.parent === parent
     staticSceneGroupRef.current = built.group
     objectRef.current = built.surface
     boundaryMeshRef.current = built.boundary
     flatRoundBarLowerHalfRef.current = built.lowerHalf
-    setStaticSurfaceMounted(true)
-    setStaticLowerHalfMounted(built.lowerHalf !== null)
+    setStaticSurfaceMounted(sceneMounted)
+    setStaticLowerHalfMounted(sceneMounted && built.lowerHalf !== null)
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
@@ -914,6 +917,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // during playback (issue #1049).
       const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current)
       parent.add(built.group)
+      // Same mounted-scene truth as the static view (issue #1049): the
+      // playback attributes follow the group's real parent.
+      const sceneMounted = built.group.parent === parent
       playbackSceneGroupRef.current = built.group
       playbackHeightfieldTextureRef.current = built.heightfieldTexture
       playbackMaterialMeshRef.current = built.surface
@@ -921,8 +927,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackFlatRoundBarLowerHalfRef.current = built.lowerHalf
       built.surface.updateWorldMatrix(true, false)
       const fitBounds = new THREE.Box3().setFromObject(built.surface)
-      setPlaybackSurfaceMounted(true)
-      setPlaybackLowerHalfMounted(built.lowerHalf !== null)
+      setPlaybackSurfaceMounted(sceneMounted)
+      setPlaybackLowerHalfMounted(sceneMounted && built.lowerHalf !== null)
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,

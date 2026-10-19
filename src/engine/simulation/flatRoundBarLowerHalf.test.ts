@@ -21,10 +21,11 @@
  *
  * The scene test builds the real setup input, the real grid and then the same
  * `buildSimulationStockScene` the static and playback views mount, so a
- * descriptor that stops reaching the renderer, a builder that stops returning
- * the half-cylinder, or a view that stops mounting it fails here. Every
- * expected dimension is derived from the bar's own geometry, written out in
- * this file.
+ * descriptor that stops reaching the renderer or a builder that stops
+ * returning the half-cylinder fails here. The two viewport mounts themselves
+ * are exercised in the browser spec `e2e/flatRoundBarLowerHalf.smoke.spec.ts`.
+ * Every expected dimension is derived from the bar's own geometry, written out
+ * in this file.
  *
  * It also pins the join the next screenshot found (issue #1049 follow-up): a
  * flat round bar draws no stock-underside quad, its walls land on the static
@@ -48,16 +49,13 @@
  * - dropping the silhouette clamp from the wall shader → `the wall shader joins
  *   the silhouette with the tested rule`;
  * - not adding the lower half to the built scene group → `the scene builder
- *   mounts the static lower half`;
- * - removing both `parent.add(built.group)` viewport mounts → `the static and
- *   playback effects both mount the built scene group, got 0`.
+ *   mounts the static lower half`.
  *
  * Run with: npx tsx src/engine/simulation/flatRoundBarLowerHalf.test.ts
  */
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import * as THREE from 'three'
 import {
   getStockBounds,
@@ -978,28 +976,6 @@ function testSceneBuilderMountsLowerHalf(): void {
   assert(
     wallMaterial.vertexShader.includes('roundBarSilhouetteAcross(across, uBarCentre, uBarRadius)'),
     'the round-bar wall joins the silhouette, not the overshooting cell boundary',
-  )
-
-  // Both mounted views call this one builder. Removing either call — the
-  // static or the playback mount — is what the source count catches; removing
-  // the lower-half mount itself fails the group assertions above.
-  const viewportSource = readFileSync(
-    new URL('../../components/simulation/SimulationViewport.tsx', import.meta.url),
-    'utf8',
-  )
-  const builderCalls = viewportSource.match(/buildSimulationStockScene\(/g) ?? []
-  assert(
-    builderCalls.length === 2,
-    `the static and playback effects both build through the shared builder, got ${builderCalls.length}`,
-  )
-  const groupMounts = viewportSource.match(/parent\.add\(built\.group\)/g) ?? []
-  assert(
-    groupMounts.length === 2,
-    `the static and playback effects both mount the built scene group, got ${groupMounts.length}`,
-  )
-  assert(
-    !viewportSource.includes('createFlatRoundBarLowerHalf'),
-    'the viewport cannot bypass the shared builder to mount a lower half',
   )
 
   // A block scene builds the same group without the round-bar lower half.
