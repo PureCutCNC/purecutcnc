@@ -60,13 +60,14 @@ async function drawRect(page: Page, x1: number, y1: number, x2: number, y2: numb
  * menu, then select the operation so the simulation runs it in Selected mode.
  */
 async function addPocketRoughAndSelect(page: Page, ui: Ui): Promise<void> {
-  await ui.setupCam.add(page).click()
+  // One setup shows a bare 'Add'; several show 'Add to <face>'.
+  await page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: /^Add( to (Top|Bottom|Around))?$/ }).click()
   const pocket = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
   await pocket.getByRole('button', { name: 'Rough', exact: true }).click()
+  // Add selects the new operation; clicking its row again would deselect it.
   await expect(ui.operations.rowByName(page, 'Pocket Rough')).toBeVisible()
-  await ui.operations.rowByName(page, 'Pocket Rough').click()
 }
 
 /** The simulation viewport's mounted-scene evidence (issue #1049). */
