@@ -87,6 +87,10 @@ test.describe('the project type is chosen when the project is created (#1046)', 
       expect(stock.axis).toBe(entry.axis.toLowerCase())
       expect(lengthAlong(stock, entry.axis.toLowerCase() as 'x' | 'y')).toBeCloseTo(Number(entry.length), 6)
 
+      // A created bar starts with the one chuck a block→bar conversion mints.
+      expect(project.clamps).toHaveLength(1)
+      expect(project.clamps[0].type).toBe('chuck')
+
       // The status bar reads the bar, with the shape's own symbol.
       const symbol = entry.barShape === 'round' ? 'Ø' : '▢'
       await expect(ui.statusBar.stockDimensions(app.page)).toContainText(`${symbol}${entry.size} × ${entry.length}`)
@@ -127,6 +131,8 @@ test.describe('the project type is chosen when the project is created (#1046)', 
       const project = await getProject(app.page) as unknown as Project
       expect(project.meta.projectType).toBe(type === 'Plasma' ? 'plasma' : 'milling')
       expect('shape' in project.stock).toBe(false)
+      // Milling and plasma machine a block, which has no workholding.
+      expect(project.clamps).toHaveLength(0)
       await expect(ui.statusBar.stockDimensions(app.page)).toContainText('100 × 80 × 20')
 
       // The rotary-only bar fields are not offered.

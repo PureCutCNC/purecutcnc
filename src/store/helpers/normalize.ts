@@ -42,6 +42,7 @@ import { isSolid } from './featureRoles'
 import { isImportedModelFeature } from './modelAssets'
 import { fallbackOperationTarget, defaultOperationForTarget, isOperationTargetValid } from './operationDefaults'
 import { resolveFeatureRow } from './resolveFeatures'
+import { newChuck } from './stockShape'
 
 export function normalizeAngleDegrees(angle: number): number {
   const normalized = angle % 360
@@ -561,7 +562,7 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
   }
 
   const cloned = cloneProject(template)
-  return {
+  const instantiated: Project = {
     ...cloned,
     meta: {
       ...cloned.meta,
@@ -582,6 +583,22 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
     clamps: [],
     ai_history: [],
   }
+  return withDefaultChuck(instantiated)
+}
+
+/**
+ * A template's clamps are not carried into the new project, but a bar cannot
+ * exist without its workholding: every block→bar conversion mints a chuck
+ * (`projectWithStockShape`), and a project created already on a bar — the New
+ * project dialog's rotary blank, or a template whose stock is one — would
+ * otherwise start without it (#1046). The same `newChuck` helper sizes it, so a
+ * square blank clears its corner envelope exactly as a conversion's chuck does.
+ * A block (milling/plasma) has no workholding and gets none.
+ */
+function withDefaultChuck(project: Project): Project {
+  const stock = project.stock
+  if (!isBarStock(stock)) return project
+  return { ...project, clamps: [newChuck(project, stock)] }
 }
 
 export function clearProjectMemoryCaches(): void {

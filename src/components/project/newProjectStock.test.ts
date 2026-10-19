@@ -33,18 +33,23 @@ import {
   isRoundStock,
   newProject,
   normalizeRoundStock,
+  roundStock,
+  type Clamp,
   type Project,
   type ProjectType,
   type Stock,
 } from '../../types/project'
 import { isSquareStock, normalizeSquareStock } from '../../types/barStock'
 import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
+import { instantiateProjectTemplate } from '../../store/helpers/normalize'
+import { projectWithStockShape } from '../../store/helpers/stockShape'
 import {
   blankBarStock,
   blankTemplateProject,
   blankTemplateStock,
   defaultBlankStockDraft,
   type BlankStockDraft,
+  type BlankStockShape,
   type BlockStockDraft,
 } from './newProjectStock'
 
@@ -86,6 +91,33 @@ function barBox(stock: Stock): { length: number; across: number } {
 
 function assertOrigin(stock: Stock, project: Project, label: string): void {
   assert.deepEqual(project.origin, defaultOrigin(stock), `${label}: the origin is the stock's own default`)
+}
+
+/** A clamp without its generated id, which differs between two separate mints. */
+function withoutId(clamp: Clamp): Omit<Clamp, 'id'> {
+  const { id: _id, ...rest } = clamp
+  return rest
+}
+
+/**
+ * The chuck the old block→bar path mints for the same bar: a block whose long
+ * side is the length and whose thickness is the diameter or side, converted by
+ * `projectWithStockShape` — the helper #1046's bar stock replaced.
+ */
+function convertedChuck(template: Project, shape: BlankStockShape, draft: BlankStockDraft): Clamp {
+  const size = Number(draft.size)
+  const length = Number(draft.length)
+  const block = defaultStock(
+    draft.axis === 'x' ? length : size,
+    draft.axis === 'x' ? size : length,
+    size,
+  )
+  const converted = projectWithStockShape(
+    { ...template, stock: block, origin: defaultOrigin(block), clamps: [] },
+    shape,
+  )
+  assert.equal(converted.clamps.length, 1, 'the block→bar conversion mints exactly one chuck')
+  return converted.clamps[0]
 }
 
 console.log('\nBlank template stock (issue #1046)')
@@ -206,6 +238,52 @@ test('the type, not the draft, decides whether the blank is a bar or a block', (
   const rotary = blankTemplateStock('rotary', BLOCK_MM, { ...BAR_MM, shape: 'square' })
   assert.ok(rotary, 'rotary reads the bar draft')
   assert.equal(isSquareStock(rotary), true, 'as a square blank')
+})
+
+test('a created rotary blank starts with the one chuck its block→bar conversion gives it', () => {
+  const cases: ReadonlyArray<{ label: string; template: Project; shape: BlankStockShape; draft: BlankStockDraft }> = [
+    { label: 'round mm X', template: METRIC, shape: 'round', draft: { shape: 'round', size: '37.5', length: '123.25', axis: 'x' } },
+    { label: 'round mm Y', template: METRIC, shape: 'round', draft: { shape: 'round', size: '18', length: '90', axis: 'y' } },
+    { label: 'square mm X', template: METRIC, shape: 'square', draft: { shape: 'square', size: '30', length: '160', axis: 'x' } },
+    { label: 'square mm Y', template: METRIC, shape: 'square', draft: { shape: 'square', size: '22', length: '110', axis: 'y' } },
+    { label: 'round inch X', template: IMPERIAL, shape: 'round', draft: { shape: 'round', size: '1.25', length: '7', axis: 'x' } },
+    { label: 'round inch Y', template: IMPERIAL, shape: 'round', draft: { shape: 'round', size: '0.75', length: '5', axis: 'y' } },
+    { label: 'square inch X', template: IMPERIAL, shape: 'square', draft: { shape: 'square', size: '1', length: '9', axis: 'x' } },
+    { label: 'square inch Y', template: IMPERIAL, shape: 'square', draft: { shape: 'square', size: '2', length: '4', axis: 'y' } },
+  ]
+
+  for (const entry of cases) {
+    const template = blankTemplateProject(entry.template, 'rotary', [], BLOCK_MM, entry.draft)
+    assert.ok(template, `${entry.label}: the draft creates a project`)
+    const created = instantiateProjectTemplate(template)
+    assert.equal(created.clamps.length, 1, `${entry.label}: exactly one clamp, not none and not two`)
+    const chuck = created.clamps[0]
+    assert.equal(chuck.type, 'chuck', `${entry.label}: the clamp is a chuck`)
+    assert.equal(chuck.name, 'Chuck', `${entry.label}: named as the conversion names it`)
+    assert.deepEqual(
+      withoutId(chuck),
+      withoutId(convertedChuck(entry.template, entry.shape, entry.draft)),
+      `${entry.label}: the same chuck the block→bar conversion mints for that bar`,
+    )
+  }
+})
+
+test('a created milling or plasma blank has no clamps', () => {
+  for (const type of ['milling', 'plasma'] as ProjectType[]) {
+    const template = blankTemplateProject(METRIC, type, [], BLOCK_MM, BAR_MM)
+    assert.ok(template, `${type}: the block draft creates a project`)
+    assert.equal(instantiateProjectTemplate(template).clamps.length, 0, `${type}: a block has no workholding`)
+  }
+})
+
+test('an instantiated template already on a bar gets one chuck; a block gets none', () => {
+  const bar = roundStock(25, 140, 'y')
+  const fromBar = instantiateProjectTemplate({ ...METRIC, stock: bar, origin: defaultOrigin(bar), clamps: [] })
+  assert.equal(fromBar.clamps.length, 1, 'a bar template cannot start without its chuck')
+  assert.equal(fromBar.clamps[0].type, 'chuck', 'the minted clamp is a chuck')
+
+  const fromBlock = instantiateProjectTemplate({ ...METRIC, stock: defaultStock(80, 60, 12), clamps: [] })
+  assert.equal(fromBlock.clamps.length, 0, 'a block template gets no clamps')
 })
 
 console.log(`\nBlank template stock: ${passed} passed, ${failed} failed`)

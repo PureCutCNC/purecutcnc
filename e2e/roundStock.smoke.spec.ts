@@ -28,31 +28,13 @@
 import { test, expect } from './fixtures'
 import { createNewProject, getProject, seedProject, seedProjectType } from './helpers'
 import {
-  roundStockCentre,
-  type BarStock,
   type Project,
   type RoundStock,
   type SquareStock,
 } from '../src/types/project'
 import { barCentre, barPivotZ, squareStock } from '../src/types/barStock'
-import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 
 const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
-
-/**
- * The created project with the chuck the app gives a bar. Used by the clamp
- * tests, which are about the workholding controls rather than about creating
- * the project; the bar itself stays exactly as the dialog made it.
- */
-function withChuck(project: Project): Project {
-  const stock = project.stock as BarStock
-  return {
-    ...project,
-    clamps: [
-      { id: 'e2e-chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', stock, project.meta.units) },
-    ],
-  }
-}
 
 test('a rotary project is created as a bar, which is sized and re-aimed', async ({ app, ui }) => {
   const page = app.page
@@ -188,7 +170,6 @@ test('a square blank keeps a manual origin across a side edit and a reload', asy
 test('selecting the chuck shows Type and Diameter and no Z control', async ({ app, ui }) => {
   const page = app.page
   await createNewProject(page, ui, { type: 'Rotary' })
-  await seedProject(page, JSON.stringify(withChuck(await getProject(page) as unknown as Project)))
   await ui.tree.clampRows(page).filter({ hasText: 'Chuck' }).click()
 
   await expect(ui.properties.clampType(page)).toBeVisible()
@@ -203,7 +184,6 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   // The reported repro (#1016 C2 F1): a rotary project on a square blank, with
   // the Around face — where a bar's workholding is edited — in view.
   await createNewProject(page, ui, { type: 'Rotary', shape: 'Square blank' })
-  await seedProject(page, JSON.stringify(withChuck(await getProject(page) as unknown as Project)))
   await ui.tree.stockRow(page).click()
   await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Square blank')
   await ui.face.segment(page, 'Around').click()

@@ -107,6 +107,33 @@ function stockDimensionsDraft(template: Project): BlockStockDraft {
   }
 }
 
+interface StockNumberInputProps {
+  id: string
+  value: string
+  onChange: (value: string) => void
+}
+
+/**
+ * One length in the blank template's stock fields, typed as text: the same
+ * field the Properties panel uses for a length, with a decimal keyboard on
+ * touch and no native number spinner. Every numeric stock field in the dialog
+ * renders through it, so a block's width/height/thickness and a bar's
+ * size/length look and behave alike (#1046).
+ */
+function StockNumberInput({ id, value, onChange }: StockNumberInputProps) {
+  return (
+    <input
+      id={id}
+      type="text"
+      inputMode="decimal"
+      spellCheck={false}
+      data-numeric-entry="true"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  )
+}
+
 export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) {
   useRestoreCanvasFocus()
   const { project, createNewProject } = useProjectStore()
@@ -389,26 +416,18 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                                   ? td('dialogs.newProject.stockDiameter')
                                   : td('dialogs.newProject.stockSide')}
                               </span>
-                              <input
+                              <StockNumberInput
                                 id="new-project-stock-size"
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                step="any"
                                 value={barDraft.size}
-                                onChange={(event) => setBarDraft((draft) => ({ ...draft, size: event.target.value }))}
+                                onChange={(size) => setBarDraft((draft) => ({ ...draft, size }))}
                               />
                             </label>
                             <label className="properties-field">
                               <span>{td('dialogs.newProject.stockLength')}</span>
-                              <input
+                              <StockNumberInput
                                 id="new-project-stock-length"
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                step="any"
                                 value={barDraft.length}
-                                onChange={(event) => setBarDraft((draft) => ({ ...draft, length: event.target.value }))}
+                                onChange={(length) => setBarDraft((draft) => ({ ...draft, length }))}
                               />
                             </label>
                             <label className="properties-field properties-field--stock-axis">
@@ -427,38 +446,26 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                           <>
                             <label className="properties-field">
                               <span>{td('dialogs.newProject.stockWidth')}</span>
-                              <input
+                              <StockNumberInput
                                 id="new-project-stock-width"
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                step="any"
                                 value={stockDraft.width}
-                                onChange={(event) => setStockDraft((draft) => ({ ...draft, width: event.target.value }))}
+                                onChange={(width) => setStockDraft((draft) => ({ ...draft, width }))}
                               />
                             </label>
                             <label className="properties-field">
                               <span>{td('dialogs.newProject.stockHeight')}</span>
-                              <input
+                              <StockNumberInput
                                 id="new-project-stock-height"
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                step="any"
                                 value={stockDraft.height}
-                                onChange={(event) => setStockDraft((draft) => ({ ...draft, height: event.target.value }))}
+                                onChange={(height) => setStockDraft((draft) => ({ ...draft, height }))}
                               />
                             </label>
                             <label className="properties-field">
                               <span>{td('dialogs.newProject.stockThickness')}</span>
-                              <input
+                              <StockNumberInput
                                 id="new-project-stock-thickness"
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                step="any"
                                 value={stockDraft.thickness}
-                                onChange={(event) => setStockDraft((draft) => ({ ...draft, thickness: event.target.value }))}
+                                onChange={(thickness) => setStockDraft((draft) => ({ ...draft, thickness }))}
                               />
                             </label>
                           </>
