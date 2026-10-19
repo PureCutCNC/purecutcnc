@@ -48,7 +48,7 @@
 
 import type { BarStock, Clamp, MachineOrigin, MachiningSetup, Operation, Project, RoundStock } from '../types/project'
 import { isAroundSetup, isRoundStock } from '../types/project'
-import { barCentre, barInscribedRadius, barPivotZ, isBarStock, isSquareStock } from '../types/barStock'
+import { barCentre, barInscribedRadius, barLength, barPivotZ, isBarStock, isSquareStock } from '../types/barStock'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
@@ -99,11 +99,11 @@ export interface SimulationSetupInput {
   /**
    * The round bar's real profile seen from a flat (Top or Bottom) setup
    * (issue #1049), present only when this setup is not an Around setup and the
-   * setup-local stock is a round bar. `pivot`/`radius`/`centre` are the bar's
-   * own geometry in that setup's frame; the descriptor seeds each cell's
-   * starting height in `createSimulationGrid` and then leaves the picture —
-   * nothing downstream of initialization needs to know the stock was round.
-   * Transient — never persisted.
+   * setup-local stock is a round bar. `pivot`/`radius`/`centre`/`length` are
+   * the bar's own geometry in that setup's frame; the descriptor seeds each
+   * cell's starting height in `createSimulationGrid`, and the renderer reads the
+   * same values to mount the static lower half below the equator. Transient —
+   * never persisted.
    */
   flatRoundBar?: FlatRoundBarDescriptor
   /** The project turned into the setup's frame; the same object for Top. */
@@ -285,6 +285,7 @@ function flatRoundBarFor(stock: RoundStock): FlatRoundBarDescriptor {
     pivot: barPivotZ(stock),
     radius: barInscribedRadius(stock),
     centre: barCentre(stock),
+    length: barLength(stock),
   }
   validateFlatRoundBar(descriptor)
   return descriptor

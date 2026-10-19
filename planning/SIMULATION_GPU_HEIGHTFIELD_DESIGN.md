@@ -93,7 +93,7 @@ A rotary project keeps Top and Bottom setups, and those simulate on the same
 top-down heightfield as a block (issue #1049). Seeding every cell from the
 stock's bounding box drew the round bar as a square block, so
 `buildSimulationSetupInput` also hands the grid the bar's real profile for a
-flat setup (`flatRoundBar: { axis, pivot, radius, centre }`), and
+flat setup (`flatRoundBar: { axis, pivot, radius, centre, length }`), and
 `seedFlatRoundBarTopZ` fills each across cell with `pivot + sqrt(radius² − d²)`
 — `d` is the cell centre's distance across the bar from its centreline — with
 the grid's empty value where `|d| ≥ radius`. The result is snapshotted as
@@ -104,16 +104,27 @@ A Bottom setup needs no special case: `projectInSetupFrame` has already turned
 the setup-local stock, and a round bar is symmetric about its axis, so Top and
 Bottom describe the same profile. The limit is inherent to the heightfield — it
 shows the bar's upper half only, and nothing below the equator is represented
-(a cutter from above cannot reach it). Block and square blanks are unchanged,
-and cutting, playback, reset, uploads, shaders and framing stay the shared
-ones.
+(a cutter from above cannot reach it).
+
+The lower half is drawn as a fixed surface instead (#1049 follow-up):
+`createFlatRoundBarLowerHalf` builds a static half-cylinder of the bar's own
+radius and length from the same descriptor — colour and light rig shared with
+the heightfield — and the boundary walls stop at the equator
+(`uWallFloorZ = pivot`) rather than running straight down to the stock bottom.
+The lower half is cut by nothing: it is the surface the Top cutter cannot
+reach. The machinable upper half remains the heightfield exactly as before.
+Block and square blanks have no descriptor, so their boundary floor stays the
+stock bottom and their scenes are unchanged; cutting, playback, reset and
+uploads stay the shared ones.
 
 ## Invariants
 
-- A stock shape never selects a different grid, cutting kernel, playback or
-  renderer. A square blank or a flat round bar changes only the per-cell
-  starting heights (`seedSquareTopZ` / `seedFlatRoundBarTopZ`) and, for a
-  square blank, the radial bounding envelope (`grid.stockTopZ`).
+- A stock shape never selects a different grid, cutting kernel or playback. A
+  square blank or a flat round bar changes only the per-cell starting heights
+  (`seedSquareTopZ` / `seedFlatRoundBarTopZ`); a square blank also changes the
+  radial bounding envelope (`grid.stockTopZ`), and a flat round bar adds one
+  static render-only mesh for the lower half the heightfield cannot represent,
+  with the shared surface shader and no effect on simulation state.
 - GPU data is derived render state; it never becomes the simulation source of
   truth.
 - Texture updates use the smallest valid dirty rectangle when practical.

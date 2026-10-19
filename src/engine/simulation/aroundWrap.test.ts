@@ -31,10 +31,14 @@ import { createSimulationGrid } from './grid'
 import { createHeightfieldTexture, createStockPlaneGeometry } from './gpuMesh'
 
 // Frozen flat shader sources at 1a68980f: Around must add no flat GPU work.
+// The two wall vertex rows moved in #1049: the wall mesh can now stop at a
+// flat round bar's equator (`uWallFloorZ`). With that uniform at the stock
+// bottom — every block, square and Around grid — the clipped result is the
+// source it replaced; the surface and floor stages are still byte-identical.
 const flatShaderHashes = [
   ['303fe7c8aefe844b80ee688b2d0556e50d1f5e3ca134c87f1d104bb4ba0c2f72', '511ba49d58ec5a0ad1eeb83a2f96f4d3acf389768b0c2bc4c4d8cb338fa0e8e4'],
-  ['3d149f26ddd48d221e4648b188cd96a168f08d7eaf94d0447bedd44af4d7c878', 'b46a1ee312cfc6814ecaa77f9042d99d652ed5074f43b0e512f5e4a292bbbe39'],
-  ['3d149f26ddd48d221e4648b188cd96a168f08d7eaf94d0447bedd44af4d7c878', 'b46a1ee312cfc6814ecaa77f9042d99d652ed5074f43b0e512f5e4a292bbbe39'],
+  ['3af0e4628fac76beb5f9283cf6fc383e1a9d4ed2e000b12e674e69cbf4c053cb', 'b46a1ee312cfc6814ecaa77f9042d99d652ed5074f43b0e512f5e4a292bbbe39'],
+  ['3af0e4628fac76beb5f9283cf6fc383e1a9d4ed2e000b12e674e69cbf4c053cb', 'b46a1ee312cfc6814ecaa77f9042d99d652ed5074f43b0e512f5e4a292bbbe39'],
   ['bb338c5aac5eb8fa279ba129dc52b3ea2766a48da0d083c89875bcfe5dcd043b', '5906875a207cbda8e8d0719747363ec96f4a40216b2689e9b67fbdc4f5029a2b'],
 ]
 const shader = compileScalarGlsl(AROUND_WRAP_GLSL)

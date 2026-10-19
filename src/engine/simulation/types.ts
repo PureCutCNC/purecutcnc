@@ -50,18 +50,22 @@ export interface SquareBarDescriptor {
  * seen from that face — the upper half of the cylinder — so the grid starts
  * curved instead.
  *
- * `pivot` is the turning axis height (`barPivotZ`) and `radius` is the bar
- * radius (`barInscribedRadius`), both in project units. `centre` is the
- * centreline coordinate across the bar: a Y value for axis `'x'`, an X value
- * for axis `'y'`, in the setup-local frame the grid is built in. A Bottom setup
- * sees the same profile as Top, because a round bar is symmetric about its
- * axis.
+ * `pivot` is the turning axis height (`barPivotZ`), `radius` is the bar radius
+ * (`barInscribedRadius`) and `length` is the bar's extent along `axis`
+ * (`barLength`), all in project units. `centre` is the centreline coordinate
+ * across the bar: a Y value for axis `'x'`, an X value for axis `'y'`, in the
+ * setup-local frame the grid is built in. A Bottom setup sees the same profile
+ * as Top, because a round bar is symmetric about its axis.
+ *
+ * The grid seeds only from `pivot`/`radius`/`centre`; `length` is what the
+ * static lower half (the half a cutter from above cannot reach) has to span.
  */
 export interface FlatRoundBarDescriptor {
   axis: 'x' | 'y'
   pivot: number
   radius: number
   centre: number
+  length: number
 }
 
 export interface SimulationGrid {

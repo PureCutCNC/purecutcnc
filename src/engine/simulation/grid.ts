@@ -154,7 +154,7 @@ export function seedSquareTopZ(
  * non-positive radius or a non-finite centre/pivot is a caller bug.
  */
 export function validateFlatRoundBar(descriptor: FlatRoundBarDescriptor): void {
-  const { axis, pivot, radius, centre } = descriptor
+  const { axis, pivot, radius, centre, length } = descriptor
   if (axis !== 'x' && axis !== 'y') {
     throw new RangeError(`flatRoundBar: axis must be 'x' or 'y', got ${String(axis)}`)
   }
@@ -166,6 +166,9 @@ export function validateFlatRoundBar(descriptor: FlatRoundBarDescriptor): void {
   }
   if (!Number.isFinite(centre)) {
     throw new RangeError(`flatRoundBar: centre must be a finite number, got ${centre}`)
+  }
+  if (!Number.isFinite(length) || length <= 0) {
+    throw new RangeError(`flatRoundBar: length must be a positive finite number, got ${length}`)
   }
 }
 

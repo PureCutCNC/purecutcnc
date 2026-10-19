@@ -17,7 +17,7 @@
 import { findOperationTool } from '../toolPolicy'
 import { useEffect, useMemo, useState } from 'react'
 import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
-import type { SimulationGrid, SimulationResult } from '../engine/simulation'
+import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { setupFace } from '../engine/setupOrientation'
@@ -112,6 +112,12 @@ export function useSimulationModel({
    */
   simulationStock: Stock
   simulationBar?: SimulationBar
+  /**
+   * A flat Top/Bottom setup's round-bar profile (issue #1049). The viewport
+   * mounts its static lower half below the heightfield's machinable upper
+   * half. Absent for a block, a square blank and an Around setup.
+   */
+  simulationFlatRoundBar?: FlatRoundBarDescriptor
 } {
   /**
    * The simulated setup (issue #947). A pick from the panel holds while the
@@ -372,5 +378,6 @@ export function useSimulationModel({
     simulationClamps,
     simulationStock,
     simulationBar: setupInput?.bar,
+    simulationFlatRoundBar: setupInput?.flatRoundBar,
   }
 }

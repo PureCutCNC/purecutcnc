@@ -20,6 +20,7 @@ import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { createHeightfieldTexture, createStockPlaneGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
 import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
 import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
+import { createFlatRoundBarLowerHalf } from '../../engine/simulation/flatRoundBarLowerHalf'
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
 import { barReadout, createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
@@ -32,7 +33,7 @@ import { createOrbitControls, type OrbitControls } from '../viewport3d/orbitCont
 import type { ViewPreset } from '../viewport3d/viewPresets'
 import { ViewPresetMenu } from '../viewport3d/ViewPresetMenu'
 import type { PlaybackPose } from '../../engine/simulation/playback'
-import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
+import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
 import type { Clamp, MachineOrigin, Operation, SetupFace, Stock, ToolType } from '../../types/project'
@@ -116,6 +117,14 @@ interface SimulationViewportProps {
    */
   stock: Stock
   bar?: SimulationBar
+  /**
+   * The flat (Top/Bottom) setup's round-bar profile (issue #1049). The
+   * heightfield carries the machinable upper half only; this descriptor builds
+   * the static lower half the cutter cannot reach, so the bar is not read as a
+   * block with vertical sides. Absent for a block, a square blank and an
+   * Around setup.
+   */
+  flatRoundBar?: FlatRoundBarDescriptor
   stockColor?: string
   stockHasProfile?: boolean
   zoomWindowActive?: boolean
@@ -304,6 +313,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   units,
   stock,
   bar,
+  flatRoundBar,
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
@@ -336,6 +346,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   wrappedFrameRef.current = wrappedFrame
   const barRef = useRef<SimulationBar | undefined>(undefined)
   barRef.current = bar
+  // The flat round-bar descriptor is rebuilt with the setup input too, so its
+  // values — not its identity — key the renderer effects, exactly as
+  // `frameKey` does for the Around frame. A block, a square blank and an Around
+  // setup have none: the key stays empty and their scenes are unchanged.
+  const flatRoundBarKey = flatRoundBar
+    ? `${flatRoundBar.axis}:${flatRoundBar.pivot}:${flatRoundBar.radius}:${flatRoundBar.centre}:${flatRoundBar.length}`
+    : ''
+  const flatRoundBarRef = useRef<FlatRoundBarDescriptor | undefined>(undefined)
+  flatRoundBarRef.current = flatRoundBar
   const barTurnRef = useRef<ReturnType<typeof createBarTurnGroup> | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
@@ -412,6 +431,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
+  // The static lower half of a flat round bar (issue #1049). Fixed geometry:
+  // built with the grid, disposed with it, never touched while cutting.
+  const flatRoundBarLowerHalfRef = useRef<THREE.Object3D | null>(null)
+  const playbackFlatRoundBarLowerHalfRef = useRef<THREE.Object3D | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
@@ -469,6 +492,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(boundaryMeshRef.current)
       boundaryMeshRef.current = null
     }
+    if (flatRoundBarLowerHalfRef.current) {
+      flatRoundBarLowerHalfRef.current.removeFromParent()
+      disposeSceneObject(flatRoundBarLowerHalfRef.current)
+      flatRoundBarLowerHalfRef.current = null
+    }
     setStaticSurfaceMounted(false)
     needsRenderRef.current = true
   }, [])
@@ -520,6 +548,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // holds a round bar and a square blank's taller corners.
     if (isBar) object.updateWorldMatrix(true, false)
     const bounds = new THREE.Box3().setFromObject(object)
+    // A flat round bar's static lower half is a separate mesh; the surface box
+    // alone would frame only the upper half (issue #1049).
+    if (!isBar && flatRoundBarLowerHalfRef.current) {
+      bounds.expandByObject(flatRoundBarLowerHalfRef.current)
+    }
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
         bounds.expandByObject(clamp)
@@ -714,23 +747,44 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Walls at every height step + underside, all shader-driven: nothing to
     // rebuild on the CPU when the simulation result changes, and interior
     // pocket walls render as true verticals instead of one-cell-wide slants.
-    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
+    // A flat round bar's walls stop at its equator; the static lower half
+    // occupies everything below it (issue #1049).
+    const flatRoundBarDescriptor = flatRoundBarRef.current
+    const boundary = createInstancedBoundaryGroup(
+      heightfieldTexture,
+      grid,
+      color,
+      frame,
+      flatRoundBarDescriptor?.pivot,
+    )
     parent.add(boundary)
     boundaryMeshRef.current = boundary
+
+    // The half of the bar the top-down heightfield cannot represent: a fixed
+    // half-cylinder at the bar's own radius, so the sides read round instead of
+    // dropping straight to the stock bottom. Null for every other stock shape.
+    const lowerHalf = createFlatRoundBarLowerHalf(grid, flatRoundBarDescriptor, color)
+    if (lowerHalf) {
+      parent.add(lowerHalf)
+      flatRoundBarLowerHalfRef.current = lowerHalf
+    }
     setStaticSurfaceMounted(true)
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
       surface.updateWorldMatrix(true, false)
       const bounds = new THREE.Box3().setFromObject(surface)
+      // The upper half alone would frame the camera above the equator and crop
+      // the lower half; the bar is framed whole.
+      if (lowerHalf) bounds.expandByObject(lowerHalf)
       if (!bounds.isEmpty()) {
         controls.fitToBounds(bounds, true)
         hasAutoFramedRef.current = true
       }
     }
     return () => heightfieldTexture.dispose()
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` stands in for the frame object (read through its ref) so a rebuilt identical frame does not rebuild the mesh.
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs, so a rebuilt identical input does not rebuild the mesh.
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey, flatRoundBarKey])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
@@ -836,6 +890,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         disposeSceneObject(playbackBoundaryMeshRef.current)
         playbackBoundaryMeshRef.current = null
       }
+      if (playbackFlatRoundBarLowerHalfRef.current) {
+        playbackFlatRoundBarLowerHalfRef.current.removeFromParent()
+        disposeSceneObject(playbackFlatRoundBarLowerHalfRef.current)
+        playbackFlatRoundBarLowerHalfRef.current = null
+      }
       if (playbackHeightfieldTextureRef.current) {
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
@@ -895,10 +954,26 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const fitBounds = new THREE.Box3().setFromObject(surface)
 
       // Instanced walls: no per-cell attributes, so any detail level builds
-      // instantly and stays within memory — no cell cap needed.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color, frame)
+      // instantly and stays within memory — no cell cap needed. A flat round
+      // bar's walls stop at the equator (issue #1049).
+      const flatRoundBarDescriptor = flatRoundBarRef.current
+      const boundary = createInstancedBoundaryGroup(
+        heightfieldTexture,
+        grid,
+        color,
+        frame,
+        flatRoundBarDescriptor?.pivot,
+      )
       parent.add(boundary)
       playbackBoundaryMeshRef.current = boundary
+
+      // The fixed lower half of a flat round bar, static through playback: the
+      // cutter cannot reach it, so only the upper heightfield changes.
+      const lowerHalf = createFlatRoundBarLowerHalf(grid, flatRoundBarDescriptor, color)
+      if (lowerHalf) {
+        parent.add(lowerHalf)
+        playbackFlatRoundBarLowerHalfRef.current = lowerHalf
+      }
       setPlaybackSurfaceMounted(true)
 
       const tool = buildToolMesh({
@@ -937,6 +1012,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         disposeSceneObject(playbackBoundaryMeshRef.current)
         playbackBoundaryMeshRef.current = null
       }
+      if (playbackFlatRoundBarLowerHalfRef.current) {
+        playbackFlatRoundBarLowerHalfRef.current.removeFromParent()
+        disposeSceneObject(playbackFlatRoundBarLowerHalfRef.current)
+        playbackFlatRoundBarLowerHalfRef.current = null
+      }
       if (playbackHeightfieldTextureRef.current) {
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
@@ -949,8 +1029,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref); `barRef` is read at build time.
-  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs; `barRef` is read at build time.
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey, flatRoundBarKey])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -1217,6 +1297,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       if (object) {
         object.updateWorldMatrix(true, false)
         const bounds = new THREE.Box3().setFromObject(object)
+        // The flat round bar's lower half is its own mesh (#1049); frame it too.
+        if (!barRef.current && flatRoundBarLowerHalfRef.current) {
+          bounds.expandByObject(flatRoundBarLowerHalfRef.current)
+        }
         if (!bounds.isEmpty()) {
           controls.fitToBounds(bounds, true)
           hasAutoFramedRef.current = true
@@ -1266,6 +1350,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // skipped the heightfield would leave these unset.
       data-simulation-surface={staticSurfaceMounted ? 'heightfield' : undefined}
       data-simulation-playback-surface={playbackSurfaceMounted ? 'heightfield' : undefined}
+      // A flat round bar's static lower half (issue #1049). A block, square
+      // blank or Around setup leaves this unset.
+      data-simulation-lower-half={flatRoundBar ? 'round-bar' : undefined}
       // Playback evidence read by the square playback smoke test: progress 0 on
       // an operation is its prior operation's material, not virgin stock, and
       // the end of the path has removed more.

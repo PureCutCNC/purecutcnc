@@ -377,11 +377,16 @@ function testPocketCutsOnlyReachableMaterial(): void {
 function testDescriptorValidation(): void {
   console.log('Testing the flat round-bar descriptor is validated before seeding...')
   const fixture = barFixture('x', 40)
-  const descriptor = { axis: 'x' as const, pivot: 20, radius: 20, centre: fixture.centre }
+  const descriptor = { axis: 'x' as const, pivot: 20, radius: 20, centre: fixture.centre, length: 200 }
   assert.throws(
     () => createSimulationGrid(fixture.project, { flatRoundBar: { ...descriptor, radius: 0 } }),
     RangeError,
     'a zero radius is refused',
+  )
+  assert.throws(
+    () => createSimulationGrid(fixture.project, { flatRoundBar: { ...descriptor, length: 0 } }),
+    RangeError,
+    'a zero length is refused',
   )
   assert.throws(
     () => createSimulationGrid(fixture.project, { flatRoundBar: { ...descriptor, centre: Number.NaN } }),

@@ -235,6 +235,19 @@ export const CELL_HEIGHT_GLSL = /* glsl */ `
 `
 
 /**
+ * The slight darkening of deeper cuts, shared by every stock surface so a
+ * riser inside a slope, the heightfield tops and the round bar's static lower
+ * half all shade depth the same way. Needs `uStockBottomZ`.
+ */
+export const DEPTH_DARKEN_GLSL = /* glsl */ `  // The slight darkening of deeper cuts, shared so a riser inside a slope
+  // matches the tops on either side of it.
+  float depthDarken(float height, float stockTopZ) {
+    float depthRatio = clamp((stockTopZ - height) / max(stockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
+    return 1.0 - depthRatio * 0.12;
+  }
+`
+
+/**
  * The smoothed surface normal at any point inside a cell, shared by the surface
  * sheet and by the wall mesh (which fills the small risers inside a slope with
  * the surface's own shading). Fragment-stage only (it reads screen
@@ -308,13 +321,7 @@ export const SURFACE_NORMAL_GLSL = /* glsl */ `
     return smoothstep(0.5, 1.0, cellsPerPixel);
   }
 
-  // The slight darkening of deeper cuts, shared so a riser inside a slope
-  // matches the tops on either side of it.
-  float depthDarken(float height, float stockTopZ) {
-    float depthRatio = clamp((stockTopZ - height) / max(stockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
-    return 1.0 - depthRatio * 0.12;
-  }
-`
+${DEPTH_DARKEN_GLSL}`
 
 const vertexShader = /* glsl */ `
   uniform sampler2D uHeightfield;

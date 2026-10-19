@@ -66,6 +66,10 @@ export function wallInstanceCount(grid: Pick<SimulationGrid, 'cols' | 'rows'>): 
 const wallVertexShader = /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform float uStockBottomZ;
+  // The lowest Y a heightfield wall may reach. The stock bottom for every
+  // block, square and Around grid; for a flat round bar it is the equator,
+  // where the static lower half takes over (issue #1049).
+  uniform float uWallFloorZ;
   uniform vec2 uOrigin;
   uniform float uCellSize;
   // 1.0 → vertical edges (wall plane ⊥ X), 0.0 → horizontal edges (⊥ Z).
@@ -122,6 +126,13 @@ const wallVertexShader = /* glsl */ `
     float hFar = cellHeight(farCell);
     float top = max(hNear, hFar);
     float bottom = max(min(hNear, hFar), uStockBottomZ);
+    // A flat round bar's heightfield carries only the machinable upper half;
+    // nothing below its equator is represented, so its walls stop there and
+    // the static half-cylinder draws the rest. Edges entirely below the floor
+    // still exist in the strip template — collapse them so they discard.
+    bottom = max(bottom, uWallFloorZ);
+    bool collapsed = top <= bottom + 0.000001;
+    if (collapsed) bottom = top;
 
     // Risers inside a machined slope: a V-flank, a ball roundover or a finished
     // 3D surface crosses many cells, so every edge inside it has a small height
@@ -149,7 +160,7 @@ const wallVertexShader = /* glsl */ `
     vNormal = normalize(normalMatrix * (direction * edgePerp));
     vWallHeight = top - bottom;
     vHeight = pos.y;
-    vSlope = isStep ? 0.0 : 1.0;
+    vSlope = collapsed || isStep ? 0.0 : 1.0;
     vCell = farCell;
     vLocal = uVertical > 0.5 ? vec2(0.0, position.y) : vec2(position.y, 0.0);
     vPositionInCells = pos / uCellSize;
@@ -379,6 +390,7 @@ export function createInstancedWallMaterial(
   stockColor: THREE.Color,
   vertical: boolean,
   frame?: AroundFrame,
+  wallFloorZ?: number,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
@@ -386,6 +398,7 @@ export function createInstancedWallMaterial(
       ...sharedUniforms(heightfieldTexture, grid, stockColor),
       ...aroundUniforms(frame),
       uVertical: { value: vertical ? 1 : 0 },
+      uWallFloorZ: { value: wallFloorZ ?? grid.stockBottomZ },
     },
     vertexShader: aroundShader(wallVertexShader, frame),
     fragmentShader: aroundShader(wallFragmentShader, frame),
@@ -414,13 +427,16 @@ export function createFloorMaterial(
  * Build the complete boundary as one group: two instanced wall-strip meshes
  * (vertical + horizontal edges) and the stock underside quad. All track the
  * heightfield texture, so the group is built once per grid and never rebuilt
- * while cutting.
+ * while cutting. `wallFloorZ` defaults to the stock bottom; a flat round bar
+ * passes its equator so the walls stop where the static lower half starts
+ * (issue #1049).
  */
 export function createInstancedBoundaryGroup(
   heightfieldTexture: THREE.DataTexture,
   grid: SimulationGrid,
   stockColor: THREE.Color,
   frame?: AroundFrame,
+  wallFloorZ?: number,
 ): THREE.Group {
   const group = new THREE.Group()
   group.name = 'instancedBoundary'
@@ -428,7 +444,7 @@ export function createInstancedBoundaryGroup(
   // Vertical edges: (cols+1) per row × rows instances.
   const verticalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols + 1, grid.rows),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ),
   )
   verticalWalls.frustumCulled = false
   group.add(verticalWalls)
@@ -436,7 +452,7 @@ export function createInstancedBoundaryGroup(
   // Horizontal edges: cols per row boundary × (rows+1) instances.
   const horizontalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols, grid.rows + 1),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ),
   )
   horizontalWalls.frustumCulled = false
   group.add(horizontalWalls)
