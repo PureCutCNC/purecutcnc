@@ -1,0 +1,149 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: var(--shadow-strong);
+  backdrop-filter: blur(3px);
+}
+
+.command-palette {
+  width: min(640px, 100%);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-popover);
+  box-shadow: 0 24px 60px var(--shadow-strong);
+  color: var(--text);
+}
+
+.command-palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.command-palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.command-palette-search input::placeholder {
+  color: var(--text-dim);
+}
+
+.command-palette-search kbd,
+.command-palette-meta kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-input);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.command-palette-list {
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.command-palette-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.command-palette-option:hover,
+.command-palette-option.is-active {
+  background: var(--accent-soft);
+}
+
+.command-palette-option.is-active {
+  outline: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.command-palette-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.command-palette-empty {
+  padding: 26px 16px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.command-palette-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .command-palette-backdrop {
+    padding-top: 8vh;
+  }
+
+  .command-palette-meta {
+    display: none;
+  }
+}

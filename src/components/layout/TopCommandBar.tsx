@@ -23,6 +23,7 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { SnapPopover } from './SnapPopover'
 import { DimensionPopover } from './DimensionPopover'
 import { useFileCommands } from '../../commands/fileCommands'
+import { useToolbarPaletteEvents } from './toolbar/useToolbarPaletteEvents'
 import { useI18n } from '../../i18n/i18nContext'
 import { AppearanceControl } from './AppearanceControl'
 import { LanguageControl } from './LanguageControl'
@@ -76,6 +77,9 @@ export function TopCommandBar({
     onImportGeometry: () => setShowImportDialog(true),
     onExportModel,
     onPrintDesign: onPrintDesign ?? (() => undefined),
+  })
+  useToolbarPaletteEvents({
+    onImportGeometry: () => setShowImportDialog(true),
   })
 
   // Sync the edit field with the project name when it changes externally
