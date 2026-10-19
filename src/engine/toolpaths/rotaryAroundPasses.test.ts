@@ -26,13 +26,29 @@
  *
  * The around pass is a ring per along position: one angle every `sampleSpacing`
  * of surface distance, both 0 and 360 present, rings alternating direction so A
- * stays in [0, 360] and no `(layer - 1) * 360` is added in the rough. The
- * independent reference for the seeded property block does not call
+ * stays in [0, 360] and no `(layer - 1) * 360` is added in the rough. The angle
+ * step is capped so the straight move between two samples stays within the
+ * stated 0.005 mm of a convex section (#1045 slice D, finding 2): the cap's
+ * arithmetic is `barMaxRadius * dTheta^2 / 8 <= 0.005 mm`, and the hex block
+ * below walks every cutting move at eight interior points against an
+ * independent drop-cutter support of the extruded hex, not just its endpoints.
+ *
+ * The independent reference for the seeded property block does not call
  * `sampleRotaryModel` or any other sampler code: it is the analytic drop-cutter
  * tip of a solid of revolution, `max` over the tool footprint of
  * `sqrt(max(0, r(x+dx)^2 - dy^2)) - lift(dx, dy)`, reduced to its dy = 0
  * maximum (a revolved surface is highest over the axis) and evaluated on a
- * 2000-step grid.
+ * 2000-step grid. The property block now walks **every** move -- cuts, links,
+ * rapids and plunges -- at eight interior points plus both endpoints, and
+ * checks each against that reference; a non-cut move that turns the stock must
+ * also stay at or above the travel height.
+ *
+ * A round bar keeps material beyond the cut band (#1045 slice D, finding 1).
+ * The along positions start and end one cutter radius inside a stubbed end --
+ * the C2-F7 rule the square blank already used -- so no move's cutter body can
+ * enter the retained end even when the overlap is thinner than a height-map
+ * cell. Both around and along mode are checked, because along mode gouged too
+ * at unfavourable sample spacings (see the retained-end block).
  *
  * Mutations checked (each must fail here):
  *  - the arc term dropped from the steep-step spacing -> the hex prism gains
@@ -46,7 +62,17 @@
  *    layering block: the cylinder is cut to its model radius on the first
  *    layer and that full-depth cut is repeated at every layer;
  *  - the around pass silently falling back to along -> the differing-outputs and
- *    ring-shape blocks.
+ *    ring-shape blocks;
+ *  - the link / retract / traverse height set to the pivot instead of the
+ *    travel height -> the property block (the swept reference check and the
+ *    non-cut turning-move check) and the all-move walk;
+ *  - the rough's `NaN` fallback leaving the blank untouched -> the missing-model
+ *    block: no move reaches the axis fallback;
+ *  - the new angle-step cap removed -> the ring-count assertion, and
+ *    independently the hex block's cap and sweep assertions (the pre-cap
+ *    A325.7143 -> 330 move gouges 0.0396 mm);
+ *  - the retained-end pull-in removed for round bars -> the retained-end block:
+ *    the first centre is on the stub face and the cutter body crosses it.
  *
  * A square blank now generates around passes; #1045 slice C owns those
  * (`rotarySquareAroundPasses.test.ts`), so the square block here only proves
@@ -296,6 +322,17 @@ const RING_PARAMS = {
   safeRadius: 30, requestedCellSize: CELL,
 }
 
+/**
+ * The around grid's angular interval count under the slice-D cap (#1045 slice
+ * D): one sample every `min(sampleSpacing, sqrt(8 R tolerance))` of arc, with
+ * `R = barMaxRadius` and the stated 0.005 mm tolerance (these fixtures are mm).
+ * Restated here rather than read from the generator, so a cap that changes
+ * silently moves the expected ring length.
+ */
+function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance = 0.005): number {
+  return Math.ceil((2 * Math.PI * radius) / Math.min(sampleSpacing, Math.sqrt(8 * radius * tolerance)))
+}
+
 {
   const result = generateRotaryFinish('rings', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around' }, {})
   assert.deepEqual(result.warnings, [], 'the around finish has no warning')
@@ -311,11 +348,13 @@ const RING_PARAMS = {
   }
   const rings = cutRings(result.moves)
   // `stepover` is the along step: 20 mm over 2 mm makes 11 rings. The angular
-  // step is `sampleSpacing` round the bar's own circumference: 127 samples.
+  // step is `sampleSpacing` round the bar's circumference, capped by slice D.
   assert.equal(rings.length, 11, 'one ring per along position, `stepover` apart')
-  // 127 samples per ring (both ends of the turn), so 126 moves between them.
-  const angularIntervals = Math.ceil(2 * Math.PI * 20 / RING_PARAMS.sampleSpacing)
-  assert.equal(rings[0].angles.length, angularIntervals * 2, 'a ring sweeps `ceil(2 pi R / sampleSpacing) + 1` angles')
+  // 141 samples per ring under the slice-D angle cap (both ends of the turn),
+  // so 140 moves between them; without the cap the count would be `ceil(2 pi
+  // R / sampleSpacing)` = 126.
+  const angularIntervals = aroundAngleIntervals(20, RING_PARAMS.sampleSpacing)
+  assert.equal(rings[0].angles.length, angularIntervals * 2, 'a ring sweeps the capped angle count, both ends included')
   for (let i = 0; i < rings.length; i++) {
     const direction = ringDirection(rings[i])
     assert.equal(direction, i % 2 === 0 ? 1 : -1, `ring ${i} runs ${i % 2 === 0 ? 'forward' : 'reversed'}`)
@@ -507,30 +546,53 @@ function propertyAllowance(tool: NormalizedTool): number {
     const allowance = propertyAllowance(tool)
     assert.ok(allowance <= 0.02, `seed ${seed}: the derived allowance ${allowance} stays at or below 0.02 mm`)
     const referenceByAlong = new Map<number, number>()
+    const referenceAt = (along: number): number => {
+      let reference = referenceByAlong.get(along)
+      if (reference === undefined) {
+        reference = referenceTip(profile, along, tool, 0)
+        referenceByAlong.set(along, reference)
+      }
+      return reference
+    }
+    // The travel height the emitter uses between runs: the bar's surface plus
+    // the 1 mm clearance (`rotaryTravelZ`). A non-cut move that turns the stock
+    // must never leave it -- the link at travel height is the whole reason the
+    // A sweep between two surface samples is in air.
+    const travel = barMaxRadius(PROP_STOCK) + 1
+    const pivot = barPivotZ(PROP_STOCK)
     let seedCut = 0
+    let seedSamples = 0
     for (const move of result.moves) {
-      if (move.kind !== 'cut') continue
-      for (const point of [move.from, move.to]) {
-        const along = alongOf(point)
-        let reference = referenceByAlong.get(along)
-        if (reference === undefined) {
-          reference = referenceTip(profile, along, tool, 0)
-          referenceByAlong.set(along, reference)
+      if (move.kind !== 'cut' && move.from.a !== move.to.a) {
+        for (const point of [move.from, move.to]) {
+          assert.ok(
+            point.z - pivot >= travel - 1e-9,
+            `seed ${seed}: a non-cut turning move at A ${angleOf(point).toFixed(2)} travels at tip ${(point.z - pivot).toFixed(4)}, below the travel height ${travel}`,
+          )
         }
+      }
+      // Walk the move itself, not only its endpoints (#1045 slice D): a link
+      // lowered to the pivot, or a mid-move dip, is invisible to an endpoint
+      // check.
+      for (let step = 0; step <= 9; step++) {
+        const fraction = step / 9
+        const along = alongOf(move.from) + (alongOf(move.to) - alongOf(move.from)) * fraction
+        const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
+        const reference = referenceAt(along)
         assert.ok(Number.isFinite(reference), `seed ${seed}: reference at ${along} is finite`)
-        const tip = point.z - barPivotZ(PROP_STOCK)
         assert.ok(
           tip >= reference - allowance,
-          `seed ${seed} ${tool.type} r=${tool.radius.toFixed(3)} along ${along.toFixed(3)}: tip ${tip.toFixed(4)} is below the reference ${reference.toFixed(4)} by more than ${allowance.toFixed(4)}`,
+          `seed ${seed} ${tool.type} r=${tool.radius.toFixed(3)} ${move.kind} along ${along.toFixed(3)} f=${fraction}: tip ${tip.toFixed(4)} is below the reference ${reference.toFixed(4)} by more than ${allowance.toFixed(4)}`,
         )
-        seedCut++
+        seedSamples++
       }
+      if (move.kind === 'cut') seedCut += 2
     }
     assert.ok(seedCut > 0, `seed ${seed}: the finish cuts something`)
-    checked += seedCut
+    checked += seedSamples
   }
-  assert.ok(checked > 0, 'the property block checked cut points')
-  console.log(`rotary around property: ${PROP_SEEDS} seeds, ${checked} cut endpoints at or above the reference`)
+  assert.ok(checked > 0, 'the property block walked every move')
+  console.log(`rotary around property: ${PROP_SEEDS} seeds, ${checked} move samples (cuts, links, rapids, plunges) at or above the reference`)
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +914,250 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
     layer: Math.floor(angleOf(point) / 360) + 1,
     tip: point.z - pivot,
   })))
+}
+
+// ---------------------------------------------------------------------------
+// 10. Retained round ends (#1045 slice D, finding 1).
+//
+//     Codex's repro: a Ø40 x 60 bar, cut band X18..42, Ø6 flat cutter, 2.7
+//     stepover and 0.75 sample spacing. The around grid used to start on the
+//     band edge, so the ring at X20.6667 had the cutter's rim 0.3333 mm inside
+//     the retained X<18 end -- an overlap thinner than the height-map cell --
+//     and still cut at tip 4.97 against the stub's 20 mm surface. The C2-F7
+//     pull-in now starts and ends the grid one cutter radius inside each
+//     stubbed face, in both modes. The assertion is the cutter body itself: no
+//     cutting centre may sit closer to a stubbed face than its own radius.
+// ---------------------------------------------------------------------------
+
+console.log('Testing the retained round ends on around and along passes...')
+{
+  const stock = roundStock(40, 60, 'x', { x: 0, y: 0 })
+  const pivot = barPivotZ(stock)
+  const tool: NormalizedTool = { ...BALL, id: 'flat-6', name: '6 mm flat end mill', type: 'flat_endmill', radius: 3, diameter: 6 }
+  const model = revolved(stock, [{ along: 18, radius: 5 }, { along: 42, radius: 5 }], 64)
+  const params = {
+    stepover: 2.7, sampleSpacing: 0.75, stockToLeave: 0, alongStart: 18, alongEnd: 42,
+    safeRadius: 30, requestedCellSize: 1,
+  }
+  const travel = barMaxRadius(stock) + 1
+  // Along mode at 0.75 happens to sample the stub before the rim reaches it, so
+  // it did not gouge on the review's exact input; 2.9 does (the along position
+  // lands at 20.6667, the same 0.3333 mm overlap). Both are checked so the
+  // along half of the fix is not carried by the around half.
+  const cases = [
+    { label: 'around', passDirection: 'around' as const, sampleSpacing: 0.75 },
+    { label: 'along', passDirection: undefined, sampleSpacing: 0.75 },
+    { label: 'along at 2.9', passDirection: undefined, sampleSpacing: 2.9 },
+  ]
+  for (const { label, passDirection, sampleSpacing } of cases) {
+    const result = passDirection
+      ? generateRotaryFinish('round-stub', model, stock, tool, { ...params, sampleSpacing, passDirection }, {})
+      : generateRotaryFinish('round-stub', model, stock, tool, { ...params, sampleSpacing }, {})
+    assert.deepEqual(result.warnings, [], `${label}: the stubbed finish has no warning`)
+    let first = Infinity
+    let last = -Infinity
+    let cutting = 0
+    for (const move of result.moves) {
+      if (move.kind !== 'cut') continue
+      for (const point of [move.from, move.to]) {
+        // A link at the travel height is in air; only a surface cut carries the
+        // cutter body into the band's ends.
+        if (point.z - pivot >= travel - 1e-9) continue
+        const along = alongOf(point)
+        assert.ok(along - tool.radius >= params.alongStart - 1e-9,
+          `${label}: the cutter body at along ${along.toFixed(4)} (rim ${(along - tool.radius).toFixed(4)}) enters the retained lower end at ${params.alongStart}`)
+        assert.ok(along + tool.radius <= params.alongEnd + 1e-9,
+          `${label}: the cutter body at along ${along.toFixed(4)} (rim ${(along + tool.radius).toFixed(4)}) enters the retained upper end at ${params.alongEnd}`)
+        first = Math.min(first, along)
+        last = Math.max(last, along)
+        cutting++
+      }
+    }
+    assert.ok(cutting > 0, `${label}: the stubbed finish cuts`)
+    // The grid still covers the band up to the tangency, so the pull is the
+    // only change: both ends sit exactly one cutter radius inside.
+    approx(first, params.alongStart + tool.radius, `${label}: the first centre is one radius inside the lower stub`, 1e-9)
+    approx(last, params.alongEnd - tool.radius, `${label}: the last centre is one radius inside the upper stub`, 1e-9)
+    console.log(`  ${label}: first centre ${first.toFixed(4)}, last centre ${last.toFixed(4)}, ${cutting} cut endpoints`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 11. Missing model under the tool (#1045 slice D, finding 3).
+//
+//     Part of the band has no model under the tool. The finish does not cut
+//     there, but the rough must remove the blank down to the axis fallback --
+//     the same thing the along rough does -- or a mutation that leaves the
+//     stock in place would look safe. The band is inside the bar, so its ends
+//     are retained; the pull-in keeps the check away from the stub floor.
+// ---------------------------------------------------------------------------
+
+console.log('Testing the around rough on a band with no model under the tool...')
+{
+  const stock = roundStock(40, 40, 'x', { x: 0, y: 0 })
+  const pivot = barPivotZ(stock)
+  const model = revolved(stock, [{ along: 12, radius: 5 }, { along: 28, radius: 5 }], 64)
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 5, alongEnd: 35,
+    safeRadius: 30, requestedCellSize: 0.1, stepdown: 2,
+  }
+  for (const direction of ['around', 'along'] as const) {
+    const result = direction === 'around'
+      ? generateRotaryRough('nan-fallback', model, stock, FLAT, { ...params, passDirection: 'around' }, {})
+      : generateRotaryRough('nan-fallback', model, stock, FLAT, params, {})
+    assert.deepEqual(result.warnings, [], `${direction}: the missing-model rough has no warning`)
+    const cuts = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
+    // The lower empty band starts one cutter radius inside the retained stub
+    // (7 mm) and ends at the model's own start (12 mm).
+    const empty = cuts.filter((point) => alongOf(point) > 7 + 1e-9 && alongOf(point) < 12 - 1e-9)
+    assert.ok(empty.length > 0, `${direction}: the empty band is cut`)
+    const lowest = Math.min(...empty.map((point) => point.z - pivot))
+    assert.ok(lowest <= 1e-6,
+      `${direction}: the rough removes the blank to the axis fallback in the empty band (lowest ${lowest.toFixed(4)})`)
+    // It still follows the model where the model exists: the cylinder is 5 mm,
+    // so nothing in the solid band is cut below it.
+    for (const point of cuts) {
+      const along = alongOf(point)
+      if (along < 12 - 1e-9 || along > 28 + 1e-9) continue
+      assert.ok(point.z - pivot >= 5 - 0.11,
+        `${direction}: the modelled band is not cut below its 5 mm radius (tip ${(point.z - pivot).toFixed(4)})`)
+    }
+    console.log(`  ${direction}: ${empty.length} cut endpoints in the empty band, lowest tip ${lowest.toFixed(4)}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 12. A safe pair of endpoints is a safe sweep (#1045 slice D, finding 2).
+//
+//     An around move interpolates the tip radius linearly between two angle
+//     samples. On the radius-8 hex prism with the 1.5 mm ball and 1.5 mm
+//     spacing, the A325.7143 -> 330 move reached 7.9247 at its midpoint while
+//     the independent cutter contact required 7.9643: 0.0396 mm of gouge. The
+//     generator now caps the angle step at `barMaxRadius * dTheta^2 / 8 <=
+//     0.005 mm`. The reference below is the exact drop-cutter support of the
+//     extruded hex -- the highest material a cutter can touch at one bar
+//     rotation, sampled on the section's own edges. It never calls the sampler.
+//
+//     The check is the *sweep* error: the reference at the interpolated angle
+//     against the linear interpolation of the reference at the move's two
+//     endpoint angles. That isolates the between-sample error the cap controls
+//     from the sampler's own height-map-cell error, which the property block
+//     above already bounds.
+// ---------------------------------------------------------------------------
+
+console.log('Testing the capped around angle step and the hex sweep...')
+{
+  const section = HEX_SECTION
+  const samplesPerEdge = 4000
+  const supportCache = new Map<number, number>()
+  /** Highest material a `tool` can touch at bar rotation `angleDeg`, from the section alone. */
+  const sectionSupport = (angleDeg: number, tool: NormalizedTool): number => {
+    const cached = supportCache.get(angleDeg)
+    if (cached !== undefined) return cached
+    const radians = angleDeg * Math.PI / 180
+    const cos = Math.cos(radians)
+    const sin = Math.sin(radians)
+    let best = Number.NEGATIVE_INFINITY
+    for (let e = 0; e < section.length; e++) {
+      const [au, av] = section[e]
+      const [bu, bv] = section[(e + 1) % section.length]
+      for (let s = 0; s < samplesPerEdge; s++) {
+        const f = s / samplesPerEdge
+        const across = au + (bu - au) * f
+        const up = av + (bv - av) * f
+        // The bar's rotation maps the model point to (turned across, turned up)
+        // = (across cos - up sin, across sin + up cos); the cutter sits over the
+        // centreline, so `t` is its horizontal distance from the tool axis.
+        const t = across * cos - up * sin
+        const h = across * sin + up * cos
+        if (Math.abs(t) > tool.radius) continue
+        const candidate = tool.type === 'ball_endmill'
+          ? h - tool.radius + Math.sqrt(Math.max(0, tool.radius * tool.radius - t * t))
+          : h
+        if (candidate > best) best = candidate
+      }
+    }
+    supportCache.set(angleDeg, best)
+    return best
+  }
+
+  const mesh = prism(HEX_STOCK, section, [10, 30])
+  const reference = generateRotaryFinish('hex-cap', mesh, HEX_STOCK, BALL, {
+    stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+  }, {})
+  assert.deepEqual(reference.warnings, [], 'the capped hex finish has no warning')
+
+  // The emitted angular step honours the cap. The smallest positive difference
+  // between any two emitted angles is one sample step.
+  const angles = [...new Set(reference.moves.flatMap((move) => [angleOf(move.from), angleOf(move.to)]))].sort((a, b) => a - b)
+  let step = Infinity
+  for (let i = 1; i < angles.length; i++) step = Math.min(step, angles[i] - angles[i - 1])
+  const capError = barMaxRadius(HEX_STOCK) * (step * Math.PI / 180) ** 2 / 8
+  assert.ok(step < 360 / 84,
+    `the angle step ${step.toFixed(4)} deg is finer than the uncapped 4.2857 deg`)
+  assert.ok(capError <= 0.005 * (1 + 1e-9),
+    `the cap keeps barRadius * dTheta^2 / 8 = ${capError.toFixed(6)} mm at or below the stated 0.005 mm`)
+
+  const travel = barMaxRadius(HEX_STOCK) + 1
+  const pivot = barPivotZ(HEX_STOCK)
+  let worst = { error: Number.NEGATIVE_INFINITY, angle: 0 }
+  for (const move of reference.moves) {
+    if (move.kind !== 'cut') continue
+    // A link at the travel height is in air; the sweep error there is not a
+    // surface gouge and its endpoints are not surface samples.
+    if (move.from.z - pivot >= travel - 1e-9 || move.to.z - pivot >= travel - 1e-9) continue
+    const a0 = angleOf(move.from)
+    const a1 = angleOf(move.to)
+    const r0 = sectionSupport(a0, BALL)
+    const r1 = sectionSupport(a1, BALL)
+    for (let s = 0; s <= 9; s++) {
+      const f = s / 9
+      const angle = a0 + (a1 - a0) * f
+      const error = sectionSupport(angle, BALL) - (r0 + (r1 - r0) * f)
+      if (error > worst.error) worst = { error, angle }
+    }
+  }
+  // The isolated sweep tolerance: the 0.005 mm chord bound plus the ball's own
+  // between-sample lift at the hex's sharp corner, `rho^2 (dTheta/2)^2 / (2r)`
+  // with rho = 8 mm and r = 1.5 mm, is 0.0156 mm at the capped step. 0.02 mm is
+  // that derived bound rounded up; the review's pre-cap sweep was 0.0396 mm, so
+  // removing the cap cannot pass.
+  assert.ok(worst.error <= 0.02,
+    `the hex sweep gouge ${worst.error.toFixed(5)} mm at A ${worst.angle.toFixed(3)} stays at or below 0.02 mm`)
+  console.log(`  hex step ${step.toFixed(4)} deg, cap error ${capError.toFixed(5)} mm, worst sweep gouge ${worst.error.toFixed(5)} mm at A ${worst.angle.toFixed(3)}`)
+}
+
+// ---------------------------------------------------------------------------
+// 12b. The cap converts into the operation's units (#1045 slice D).
+//
+//      The stated 0.005 mm is a physical surface error, so an inch operation's
+//      cap is that many inches (0.005 / 25.4). The emitted step is checked in
+//      the bar's own units, which is what an inch project's `sampleSpacing` and
+//      `barMaxRadius` are in.
+// ---------------------------------------------------------------------------
+
+console.log('Testing the angle cap in inch units...')
+{
+  const stock = roundStock(1.5, 4, 'x', { x: 0, y: 0 })
+  const barRadius = barMaxRadius(stock)
+  const mesh = revolved(stock, [{ along: 0, radius: 0.5 }, { along: 4, radius: 0.5 }], 64)
+  const tool: NormalizedTool = {
+    ...BALL, id: 'inch-ball', name: '0.12 in ball', sourceUnits: 'inch', units: 'inch', radius: 0.06, diameter: 0.12,
+  }
+  const result = generateRotaryFinish('inch-cap', mesh, stock, tool, {
+    stepover: 1, sampleSpacing: 0.06, stockToLeave: 0, alongStart: 0, alongEnd: 4,
+    safeRadius: 2, requestedCellSize: 0.005, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the inch around finish has no warning')
+  const angles = [...new Set(result.moves.flatMap((move) => [angleOf(move.from), angleOf(move.to)]))].sort((a, b) => a - b)
+  let step = Infinity
+  for (let i = 1; i < angles.length; i++) step = Math.min(step, angles[i] - angles[i - 1])
+  const arc = barRadius * step * Math.PI / 180
+  const cap = Math.sqrt(8 * barRadius * (0.005 / 25.4))
+  assert.ok(arc <= cap * (1 + 1e-9),
+    `the inch angle step ${arc.toFixed(5)} in of arc is at or below the converted cap ${cap.toFixed(5)} in`)
+  console.log(`  inch step ${step.toFixed(4)} deg = ${arc.toFixed(5)} in of arc, cap ${cap.toFixed(5)} in`)
 }
 
 console.log('rotary around passes tests passed')

@@ -619,7 +619,11 @@ export function sampleRotaryModel(
 export interface RotaryFinishParams {
   /** Distance between passes, measured round the bar's surface. */
   readonly stepover: number
-  /** Distance between samples along a pass. */
+  /**
+   * Distance between samples along a pass. In around mode it is the angular
+   * step round the blank, capped so the straight move between two samples stays
+   * within 0.005 mm of a convex section (#1045 slice D).
+   */
   readonly sampleSpacing: number
   /** Material left on the model, measured normal to its surface. */
   readonly stockToLeave: number
@@ -936,6 +940,42 @@ function ringRuns(samples: readonly (ToolpathPoint | null)[]): RotaryRun[] {
 }
 
 /**
+ * The largest surface error an around pass accepts between two angle samples,
+ * in millimetres (#1045 slice D). A move between two angle samples interpolates
+ * the tip radius linearly while the blank turns. Over a convex section the
+ * material between the samples stands above that chord by about `R dTheta^2/8`
+ * (bar radius `R`, angle step `dTheta` in radians), and the tool's rim then
+ * cuts that much into the surface: on the radius-8 hex prism in a Ø40 bar with
+ * a 1.5 mm ball and 1.5 mm sample spacing, the A325.7143 -> 330 move reached
+ * radius 7.9247 at its midpoint against an independent contact of 7.9643 --
+ * 0.0396 mm of gouge. 0.005 mm is the finer of the two tolerances the review
+ * named: the along path's collinear-merge tolerance is 0.001 mm, while its
+ * between-sample ball error is `s^2 / (8r)`, which is 0.02 mm at 0.5 mm spacing
+ * and a 1.5 mm ball -- so a fixed 0.005 mm is a real tightening rather than a
+ * re-statement of the along path's own allowance.
+ */
+const AROUND_ANGLE_TOLERANCE_MM = 0.005
+
+/**
+ * The angle step of an around grid, as an arc length on the blank's surface
+ * (#1045 slice D): `params.sampleSpacing`, capped so the straight move between
+ * two angle samples stays within {@link AROUND_ANGLE_TOLERANCE_MM} of a convex
+ * surface. `R dTheta^2 / 8 = arc^2 / (8R) <= tolerance` gives
+ * `arc <= sqrt(8 R tolerance)`; `R` is `barMaxRadius` -- the largest radius the
+ * blank reaches at any angle -- so a square blank's corners are covered by the
+ * same bound. The tolerance is converted from millimetres into the operation's
+ * units before the square root. A non-finite or non-positive cap (which a
+ * caller that slipped past `rotaryRefusal` could produce) leaves the requested
+ * spacing in place, so the old grid is the fallback rather than no grid at all.
+ */
+function aroundArcStep(stock: BarStock, params: RotaryFinishParams, units: Units): number {
+  const radius = barMaxRadius(stock)
+  const tolerance = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
+  const cap = Math.sqrt(8 * radius * tolerance)
+  return Number.isFinite(cap) && cap > 0 ? Math.min(params.sampleSpacing, cap) : params.sampleSpacing
+}
+
+/**
  * The around-mode sampling grid (#1045 slice A): one along position every
  * `stepover` over the cutter span, and one angle every `sampleSpacing` of
  * surface distance round the blank, both endpoints included so a ring closes at
@@ -943,14 +983,17 @@ function ringRuns(samples: readonly (ToolpathPoint | null)[]): RotaryRun[] {
  * the sample budget, which the caller refuses with the existing
  * `operationStepoverRatioRange`. The angle count is derived from the blank's
  * largest radius -- the conservative radius the along pass's pass count already
- * uses, and the surface a square blank's corners stand at.
+ * uses, and the surface a square blank's corners stand at. The angle step is
+ * capped by `aroundArcStep` (#1045 slice D), so a safe pair of endpoints is
+ * also a safe sweep between them.
  */
 function aroundGrid(
   stock: BarStock,
   span: { readonly start: number; readonly end: number },
   params: RotaryFinishParams,
+  units: Units,
 ): { along: number[]; angles: number[] } | null {
-  const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), params.sampleSpacing)
+  const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), aroundArcStep(stock, params, units))
   const axial = boundedIntervals(span.end - span.start, params.stepover)
   if (angular === null || axial === null) return null
   if ((angular + 1) * (axial + 1) > MAX_ROTARY_SAMPLES) return null
@@ -1008,7 +1051,7 @@ function boundedIntervals(span: number, spacing: number): number | null {
  * check as well stops a huge uniform grid from being materialised just to be
  * refused there.
  */
-function rotaryRefusal(stock: BarStock, params: RotaryFinishParams): ToolpathWarningCode | null {
+function rotaryRefusal(stock: BarStock, params: RotaryFinishParams, units: Units): ToolpathWarningCode | null {
   const radius = barInscribedRadius(stock)
   if (!(radius > 0) || !Number.isFinite(radius)) return 'aroundStockMismatch'
   if (!(params.stepover > 0) || !Number.isFinite(params.stepover)) return 'operationStepoverRatioRange'
@@ -1020,9 +1063,11 @@ function rotaryRefusal(stock: BarStock, params: RotaryFinishParams): ToolpathWar
   // Around mode swaps the two roles: `sampleSpacing` is the angular step round
   // the blank and `stepover` the step along it (#1045 slice A). The along
   // counts checked here are the mode's own, so an around job is neither refused
-  // for a pass count it does not have nor allowed an unbounded one.
+  // for a pass count it does not have nor allowed an unbounded one. The angle
+  // step is the capped one `aroundGrid` builds (#1045 slice D), so this check
+  // bounds exactly the grid that is about to be allocated.
   if (params.passDirection === 'around') {
-    const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), params.sampleSpacing)
+    const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), aroundArcStep(stock, params, units))
     const axial = boundedIntervals(params.alongEnd - params.alongStart, params.stepover)
     if (angular === null || axial === null) return 'operationStepoverRatioRange'
     if ((angular + 1) * (axial + 1) > MAX_ROTARY_SAMPLES) return 'operationStepoverRatioRange'
@@ -1192,9 +1237,22 @@ function withRetainedBar(
  * any real overlap, and enough that neither rounding can cross the tangency. The
  * floor stays strict; this span is what keeps every real sample at or beyond it.
  *
- * The end of a range that meets the bar's own end has no stub and is unchanged;
- * round bars are returned unchanged (`radius` 0, byte-identical, and their band
- * is #1042's).
+ * The end of a range that meets the bar's own end has no stub and is unchanged.
+ * The pull is **not** square-only (#1045 slice D): a round bar keeps its own
+ * retained cylinder beyond the cut range (`retainedRoundStub`), and the cutter
+ * body reaches the same one-radius distance into it. On Codex's repro (Ø40 x 60
+ * bar, band X18..42, Ø6 flat, 2.7 stepover, 0.75 sample spacing) the round
+ * ring at X20.6667 overlapped the retained end by 0.3333 mm and still cut at
+ * Z24.97 against the stub's Z40 surface -- the overlap was thinner than the
+ * height-map cell, so the sampler's discrete footprint missed the sliver
+ * entirely. Both around and along mode gouged at that along position (the
+ * along pass at sample spacing 2.9 and at 0.5 measured the same 0.3333 mm
+ * overlap below the stub). Pulling the centre in on a round bar too removes the
+ * overlap exactly, and the price is the square's: the band within one cutter
+ * radius of a stubbed end keeps the shoulder fillet the cutter's side leaves
+ * there. Every round fixture whose band meets the bar's ends is untouched, and
+ * every saved along path whose band does not loses that last radius at each
+ * stubbed end -- a safety fix, so byte-identity yields.
  *
  * `null` when the two pulls cross: the caller refuses with the existing
  * `rotaryNoRoom`, exactly as for an already-empty range.
@@ -1207,7 +1265,9 @@ function rotaryCutterSpan(
   const bounds = getStockBounds(stock)
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
   const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-  const radius = isSquareStock(stock) ? tool.radius : 0
+  // Both bar shapes keep stock beyond the cut range, so both need the pull;
+  // only an end that meets the bar's own end has no stub to stay out of.
+  const radius = tool.radius
   // `Math.nextUp`/`Math.nextDown` are only proposals, so step the raw bits: one
   // unit in the last place. The verification loops below rarely need it.
   const ulpStep = (value: number, direction: 1 | -1): number => {
@@ -1241,7 +1301,10 @@ function rotaryCutterSpan(
  * The along positions the sampler reads for one operation, over the
  * cutter-centre span `rotaryCutterSpan` returns.
  *
- * On a round bar this is exactly the uniform grid `sampleSpacing` asks for.
+ * On a round bar this is the uniform grid `sampleSpacing` asks for, over the
+ * span the pull-in leaves: the run starts and ends one cutter radius inside a
+ * stubbed end (#1045 slice D) and reaches the bar's own ends where there is no
+ * stub.
  *
  * A square blank's stubbed end starts the required tip at the shoulder height:
  * the first sample sits one cutter radius inside the band, and while its
@@ -1252,8 +1315,8 @@ function rotaryCutterSpan(
  * refinement at that same fine resolution: with the centre one radius off the
  * stub the exact floor no longer binds, but the along density and the
  * `MAX_SHOULDER_SAMPLES` cap stay as they were and a steep rise at a band edge
- * is still resolved. The rest of the span, every unstubbed end and every round
- * bar are untouched.
+ * is still resolved. The rest of the span and every unstubbed end are
+ * untouched; the shoulder refinement itself stays square-only.
  *
  * Returns `null` when `MAX_SHOULDER_SAMPLES` would widen the added spacing past
  * the cell the sampler actually uses: the residual is then larger than the
@@ -1452,10 +1515,11 @@ function rotaryTargets(
   // therefore conservative for a square and exactly the old one for a round
   // bar (where the two radii are equal).
   // The cutter-centre span (#1016 C2-F7): the cut range pulled one cutter radius
-  // inside a square blank's stubbed ends, so no sample overlaps the retained
-  // stock. `params.alongStart`/`alongEnd` stay the *band*, and so the stub faces
-  // the sampler, the F6 floor and the step predicate read. A span that collapses
-  // has no room for the cutter at all and refuses like an empty range.
+  // inside a stubbed end -- a square blank's or, since #1045 slice D, a round
+  // bar's -- so no sample overlaps the retained stock. `params.alongStart`/
+  // `alongEnd` stay the *band*, and so the stub faces the sampler, the F6 floor
+  // and the step predicate read. A span that collapses has no room for the
+  // cutter at all and refuses like an empty range.
   const span = rotaryCutterSpan(stock, tool, params)
   if (!span) {
     return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryNoRoom' }
@@ -1468,7 +1532,7 @@ function rotaryTargets(
   let angles: number[]
   let along: number[]
   if (params.passDirection === 'around') {
-    const grid = aroundGrid(stock, span, params)
+    const grid = aroundGrid(stock, span, params, tool.units)
     if (grid === null) {
       return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
     }
@@ -1685,7 +1749,9 @@ function squareAroundFinishNeedsRough(
  * each ring starts where the previous one ended. A `NaN` sample is still not
  * cut, the layer links are the same emitter's, and the steep-step rule measures
  * their surface distance along the arc rather than across X/Y. A saved operation
- * without the field keeps the along motion above byte for byte.
+ * without the field keeps the along motion above byte for byte -- the shape of
+ * the motion, not its band: the slice-D retained-end pull applies to both modes
+ * and is a safety fix.
  *
  * A **square** blank supports around mode too (#1045 slice C). Each sample is
  * already floored at its own exact retained-stub contact by `rotaryTargets`
@@ -1715,7 +1781,7 @@ export function generateRotaryFinish(
       bounds: null,
     }
   }
-  const refusal = rotaryRefusal(stock, params)
+  const refusal = rotaryRefusal(stock, params, tool.units)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
   }
@@ -1875,7 +1941,9 @@ export interface RotaryRoughParams extends RotaryFinishParams {
  * along position (#1045 slice A): the per-sample `needsCut`/layer rule is the
  * along pass's, the direction alternation continues across layers (no
  * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and every sample
- * reads its own angle row. Missing keeps the along motion byte for byte.
+ * reads its own angle row. Missing keeps the along motion byte for byte -- the
+ * shape of the motion, not its band: the slice-D retained-end pull applies to
+ * both modes and is a safety fix.
  *
  * A **square** blank supports around mode too (#1045 slice C): a sample is cut
  * only when the layer radius is below `squareRotaryTouchRadius` at that
@@ -1898,7 +1966,7 @@ export function generateRotaryRough(
   if (tool.type !== 'ball_endmill' && tool.type !== 'flat_endmill') {
     return { operationId, moves: [], warnings: [{ code: 'rotaryToolUnsupported', params: { operation: operationId } }], bounds: null }
   }
-  const refusal = rotaryRefusal(stock, params)
+  const refusal = rotaryRefusal(stock, params, tool.units)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
   }

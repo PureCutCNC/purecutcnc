@@ -258,14 +258,19 @@ function postOperations(
  * generated program of a consistent fixture fails here. The projects are made
  * coherent first: the machine and the stock are what the type implies, exactly
  * as the load migration reads them.
+ *
+ * `around` and `aroundMoves` were re-captured for #1045 slice D: the fixture's
+ * cut band ends inside the bar, so the engine's C2-F7 cutter-centre pull-in --
+ * now applied to a round bar's retained ends too -- starts and ends the along
+ * grid one cutter radius in. The program's structure is unchanged.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: 'ea243dcd26bac24e',
-  aroundMoves: '1ae454fc6597c367',
+  around: '175dd0a360d07235',
+  aroundMoves: 'e7248422dcef1683',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

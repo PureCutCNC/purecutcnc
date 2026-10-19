@@ -49,6 +49,10 @@
  * angle, and the emitted rough is asserted never to cut above that standing
  * material or take more than one `stepdown` out of it. The slope of every
  * random profile is bounded, so the height-map cell allowance is stated once.
+ * Since #1045 slice D the block also walks **every** move -- cuts, links,
+ * rapids and plunges -- at eight interior points plus both endpoints against
+ * the model's independent safe tip, and requires every non-cut move that turns
+ * the stock to stay at or above the travel height.
  *
  * Run with: npx tsx src/engine/toolpaths/rotarySquareAroundPasses.test.ts
  */
@@ -405,6 +409,7 @@ const supportStep = (4 * 2 * 4.5) / SUPPORT_SAMPLES * Math.SQRT2
 console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
 {
   let checkedCuts = 0
+  let checkedSamples = 0
   let checkedSeeds = 0
   let worstEngagement = -Infinity
   for (let seed = 0; seed < PROP_SEEDS; seed++) {
@@ -451,8 +456,46 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
       return value
     }
     const referenceByAlong = new Map<number, number>()
+    const referenceAt = (along: number): number => {
+      let reference = referenceByAlong.get(along)
+      if (reference === undefined) {
+        reference = referenceTip(profile, along, tool)
+        referenceByAlong.set(along, reference)
+      }
+      return reference
+    }
+    const allowance = SLOPE_BOUND * (cell + (2 * tool.radius) / REFERENCE_STEPS)
+      + (tool.type === 'ball_endmill'
+        ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - (cell * Math.SQRT2 / 2) ** 2))
+        : 0)
+      + supportStep
+      + 1e-4
     let seedCuts = 0
+    let seedSamples = 0
     for (const move of result.moves) {
+      // A non-cut move that turns the stock must do it above the blank: the
+      // link, retract and traverse heights are the whole reason a turning rapid
+      // is safe, and lowering them to the pivot is the mutation this catches.
+      if (move.kind !== 'cut' && move.from.a !== move.to.a) {
+        for (const point of [move.from, move.to]) {
+          assert.ok(point.z - pivot >= travel - 1e-9,
+            `seed ${seed}: a non-cut turning move at A ${angleOf(point).toFixed(2)} travels at tip ${(point.z - pivot).toFixed(4)}, below the travel height ${travel}`)
+        }
+      }
+      // Walk the move itself, not only its endpoints (#1045 slice D): a link
+      // lowered to the pivot, or a dip between two safe samples, is invisible
+      // to an endpoint-only check.
+      for (let step = 0; step <= 9; step++) {
+        const f = step / 9
+        const x = (stock.axis === 'x' ? move.from.x : move.from.y)
+          + ((stock.axis === 'x' ? move.to.x : move.to.y) - (stock.axis === 'x' ? move.from.x : move.from.y)) * f
+        const tip = move.from.z + (move.to.z - move.from.z) * f - pivot
+        const reference = referenceAt(x)
+        assert.ok(Number.isFinite(reference), `seed ${seed}: the model reference at x ${x.toFixed(3)} is finite`)
+        assert.ok(tip >= reference - allowance,
+          `seed ${seed} ${tool.type} ${move.kind}: tip ${tip.toFixed(4)} at x ${x.toFixed(3)} f=${f} is below the model reference ${reference.toFixed(4)} by more than ${allowance.toFixed(4)}`)
+        seedSamples++
+      }
       if (move.kind !== 'cut') continue
       for (const point of [move.from, move.to]) {
         const tip = point.z - pivot
@@ -469,30 +512,16 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
           `seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at A ${angle.toFixed(2)} exceeds stepdown ${stepdown.toFixed(4)}`)
         worstEngagement = Math.max(worstEngagement, engagement)
         standing.set(angle, Math.min(material, tip))
-        // The absolute safe tip of the revolved model.
-        const x = stock.axis === 'x' ? point.x : point.y
-        let reference = referenceByAlong.get(x)
-        if (reference === undefined) {
-          reference = referenceTip(profile, x, tool)
-          referenceByAlong.set(x, reference)
-        }
-        const allowance = SLOPE_BOUND * (cell + (2 * tool.radius) / REFERENCE_STEPS)
-          + (tool.type === 'ball_endmill'
-            ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - (cell * Math.SQRT2 / 2) ** 2))
-            : 0)
-          + supportStep
-          + 1e-4
-        assert.ok(tip >= reference - allowance,
-          `seed ${seed}: tip ${tip.toFixed(4)} at x ${x.toFixed(3)} is below the model reference ${reference.toFixed(4)} by more than ${allowance.toFixed(4)}`)
         seedCuts++
       }
     }
     assert.ok(seedCuts > 0, `seed ${seed}: the rough cuts something`)
     checkedCuts += seedCuts
+    checkedSamples += seedSamples
     checkedSeeds++
   }
   assert.ok(checkedSeeds === PROP_SEEDS, `the property ran all ${PROP_SEEDS} seeds`)
-  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut endpoints; worst engagement ${worstEngagement.toFixed(4)}`)
+  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut endpoints and ${checkedSamples} move samples; worst engagement ${worstEngagement.toFixed(4)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -550,6 +579,44 @@ console.log('Testing the retained-square shoulders on both ring directions...')
   assert.ok(forwardRings > 0, 'forward rings were measured')
   assert.ok(reversedRings > 0, 'reversed rings were measured')
   console.log(`  forward rings ${forwardRings}, reversed rings ${reversedRings}`)
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Missing model under the tool (#1045 slice D, finding 3).
+//
+//     Part of the band has no model under the tool. A square blank's rough
+//     still removes the standing blank there, down to the axis fallback -- or
+//     the retained-stub floor where one reaches -- exactly as the along rough
+//     does. A mutation that leaves the blank untouched in that band would
+//     otherwise still pass every cut-point check, because the empty band emits
+//     nothing to check.
+// ---------------------------------------------------------------------------
+
+console.log('Testing the square around rough on a band with no model under the tool...')
+{
+  const stock = squareStock(20, 40, 'x', { x: 0, y: 0 })
+  const pivot = barPivotZ(stock)
+  const model = cylinder(stock, 5, 12, 28)
+  const result = generateRotaryRough('square-nan', model, stock, FLAT, {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 5, alongEnd: 35,
+    safeRadius: 30, requestedCellSize: 0.1, stepdown: 2, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the missing-model square rough has no warning')
+  const cuts = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
+  // The cutter centre is pulled one radius inside the lower stub face (5 + 2 =
+  // 7); the model starts at 12. Sample the empty band away from the pull's own
+  // tangency so the stub floor (if any) is not what is being measured.
+  const empty = cuts.filter((point) => point.x > 7.2 && point.x < 11.8)
+  assert.ok(empty.length > 0, 'the empty band is cut')
+  const lowest = Math.min(...empty.map((point) => point.z - pivot))
+  assert.ok(lowest <= 1e-6,
+    `the rough removes the blank to the axis fallback in the empty band (lowest ${lowest.toFixed(4)})`)
+  for (const point of cuts) {
+    if (point.x < 12 - 1e-9 || point.x > 28 + 1e-9) continue
+    assert.ok(point.z - pivot >= 5 - 0.15,
+      `the modelled band is not cut below its 5 mm radius (tip ${(point.z - pivot).toFixed(4)})`)
+  }
+  console.log(`  ${empty.length} cut endpoints in the empty band, lowest tip ${lowest.toFixed(4)}`)
 }
 
 // ---------------------------------------------------------------------------

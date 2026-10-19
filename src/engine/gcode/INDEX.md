@@ -281,7 +281,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   analytic true-pivot inverse-time word. All sixteen square rough/finish fingerprints were
   re-captured for #1016 C2-F7, which shortens every one (the cutter centre now
   starts and ends one radius inside each stubbed end); the round fingerprints
-  did not move.
+  did not move then. #1045 slice D re-captures all 24 round fingerprints: the same pull-in now applies to a
+  round bar's stubbed ends (a ring or pass on the band edge cut into the retained end), so every fixture's grid
+  starts and ends one cutter radius in; the arithmetic, layers and posted words are otherwise unchanged.
 - `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
   **emitted text** (#1016 C2 M1 correction): a seeded property test (300
   programs, seed 1016) generates supplied paths with safe turns, constant-angle

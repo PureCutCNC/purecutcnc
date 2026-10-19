@@ -1012,6 +1012,11 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 //
 // Captured from `HEAD` before this slice (`git show HEAD:...`): the round path
 // never calls the floor or the step predicate, so these hashes must not move.
+//
+// Re-captured for #1045 slice D: the round path does share the C2-F7
+// cutter-centre pull-in now -- a round pass on the band edge gouged its
+// retained end -- so each fixture that ends inside the bar starts and ends one
+// cutter radius in. The floor and the step predicate are still square-only.
 
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
@@ -1021,10 +1026,10 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 }
 
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/flat_endmill/finish/chuck-model': '865aefcecc768b62|',
-  'x/mm/ball_endmill/rough/model-model': 'c4e71162193ae7eb|',
-  'y/mm/flat_endmill/finish/chuck-model': '862dc5617a9b5e58|',
-  'y/inch/ball_endmill/rough/model-model': 'f260175bba58561f|',
+  'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|',
+  'x/mm/ball_endmill/rough/model-model': '9361d06fdb459cd8|',
+  'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|',
+  'y/inch/ball_endmill/rough/model-model': '795c6fdd5fa34d27|',
 }
 
 console.log('Testing the round fixtures are byte-identical to the base commit...')
