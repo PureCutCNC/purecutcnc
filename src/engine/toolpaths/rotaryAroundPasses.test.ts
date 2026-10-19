@@ -42,6 +42,9 @@
  *    index check;
  *  - `stepover` used for the angular step -> the ring length / A range;
  *  - `(layer - 1) * 360` added back in the around rough -> the A range;
+ *  - the `max(tip, layerRadius)` clamp dropped in the around rough -> the
+ *    layering block: the cylinder is cut to its model radius on the first
+ *    layer and that full-depth cut is repeated at every layer;
  *  - the around pass silently falling back to along -> the differing-outputs and
  *    ring-shape blocks;
  *  - the square refusal removed -> the square block.
@@ -695,6 +698,154 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const aWords = lines.flatMap((line) => [...line.matchAll(/A(-?\d+(?:\.\d+)?)/g)].map((match) => Number(match[1])))
   assert.ok(aWords.length > 0, 'the posted program carries A words')
   for (const a of aWords) assert.ok(a >= 0 && a <= 360, `posted A ${a} is inside [0, 360]`)
+}
+
+// ---------------------------------------------------------------------------
+// 9. Layering: a rough steps down, it never cuts the model in the first layer.
+//    The mutation this block exists for drops the `Math.max(tip, layerRadius)`
+//    clamp in the around branch: every layer would then cut straight to the
+//    model radius, a full-depth cut with a roughing tool. A 5 mm cylinder in a
+//    20 mm bar with a 3 mm stepdown needs several layers, so the first layer
+//    must cut at or above 17, the next at 14, 11, ... and the model radius is
+//    not reached before the last layer.
+//
+//    Along mode's stepdown is already asserted by the cone-rough block in
+//    `rotaryModel.test.ts` (both axes, ball and flat, `tip == max(target,
+//    layerRadius)` at every layer), so the same walk is repeated here on this
+//    fixture only to hold both directions to one explicit check.
+// ---------------------------------------------------------------------------
+
+const LAYER_DIAMETER = 40
+const LAYER_BAR_RADIUS = LAYER_DIAMETER / 2
+const LAYER_MODEL_RADIUS = 5
+const LAYER_STEPDOWN = 3
+// The bar is exactly the cut band (10..30), so `withRetainedBar` adds no end
+// stub and the sampled tips are the cylinder's own radius along the whole pass.
+const LAYER_STOCK = roundStock(LAYER_DIAMETER, 20, 'x', { x: 10, y: 0 })
+const LAYER_MESH = revolved(LAYER_STOCK, [
+  { along: 10, radius: LAYER_MODEL_RADIUS },
+  { along: 30, radius: LAYER_MODEL_RADIUS },
+], 64)
+const LAYER_PARAMS = {
+  stepover: 10, sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30,
+  safeRadius: 30, requestedCellSize: CELL,
+}
+
+function samePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
+  return a.x === b.x && a.y === b.y && a.z === b.z && a.a === b.a
+}
+
+/** Every cut endpoint once, in emission order. */
+function orderedCutPoints(moves: readonly ToolpathMove[]): ToolpathPoint[] {
+  const points: ToolpathPoint[] = []
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const from = points[points.length - 1]
+    if (!from || !samePoint(from, move.from)) points.push(move.from)
+    const tail = points[points.length - 1]
+    if (!samePoint(tail, move.to)) points.push(move.to)
+  }
+  return points
+}
+
+interface LayeredPoint {
+  readonly layer: number
+  readonly tip: number
+}
+
+/**
+ * Around-mode cut points with their layer. A ring is one along coordinate and
+ * the rings visit every along position in order once per layer, so the ring
+ * index divided by the along count is the layer. Every ring must carry the same
+ * number of samples, otherwise a ring that cut nothing would shift the layers
+ * and this block would check the wrong thing.
+ */
+function aroundLayers(moves: readonly ToolpathMove[], pivot: number): LayeredPoint[] {
+  const points = orderedCutPoints(moves)
+  const alongCount = new Set(points.map(alongOf)).size
+  assert.ok(alongCount > 0, 'the around rough cuts an along position')
+  const rings: ToolpathPoint[][] = []
+  let ring: ToolpathPoint[] = []
+  let ringAlong: number | undefined
+  for (const point of points) {
+    const along = alongOf(point)
+    if (ring.length > 0 && along !== ringAlong) {
+      rings.push(ring)
+      ring = []
+    }
+    ring.push(point)
+    ringAlong = along
+  }
+  if (ring.length > 0) rings.push(ring)
+  for (let r = 1; r < rings.length; r++) {
+    assert.equal(rings[r].length, rings[0].length, `around ring ${r} has ring 0's sample count`)
+  }
+  assert.equal(rings.length % alongCount, 0, 'around rings repeat every along position in each layer')
+  return rings.flatMap((ringPoints, r) => ringPoints.map((point) => ({
+    layer: Math.floor(r / alongCount) + 1,
+    tip: point.z - pivot,
+  })))
+}
+
+/**
+ * Walk the cut points layer by layer and assert the stepdown rule: the first
+ * layer cuts at or above `maxRadius - stepdown`, each later layer is at most one
+ * stepdown below the deepest cut of the layers before it, and every unclamped
+ * layer radius `maxRadius - k * stepdown` (k = 1..layers-1) appears among the
+ * cut tip radii. `layers` is read from the emission, so a pass that skipped a
+ * layer cannot hide behind a hard-coded count.
+ */
+function checkLayering(label: string, points: readonly LayeredPoint[]): void {
+  assert.ok(points.length > 0, `${label}: the rough cuts something`)
+  const layers = Math.max(...points.map((point) => point.layer))
+  assert.ok(layers >= 3, `${label}: the rough needs several layers, got ${layers}`)
+  let previousDeepest = LAYER_BAR_RADIUS
+  for (let layer = 1; layer <= layers; layer++) {
+    const tips = points.filter((point) => point.layer === layer).map((point) => point.tip)
+    assert.ok(tips.length > 0, `${label}: layer ${layer} cuts something`)
+    for (const tip of tips) {
+      assert.ok(
+        tip >= previousDeepest - LAYER_STEPDOWN - 1e-9,
+        `${label}: layer ${layer} cuts at ${tip}, more than ${LAYER_STEPDOWN} below the deepest earlier cut ${previousDeepest}`,
+      )
+    }
+    previousDeepest = Math.min(previousDeepest, ...tips)
+  }
+  // The revolved mesh is a 64-gon, so its sampled radius sits a few thousandths
+  // under the nominal 5; the layers still have to reach it.
+  approx(previousDeepest, LAYER_MODEL_RADIUS, `${label}: the layers reach the model's deepest cut`, 0.01)
+  for (let k = 1; k < layers; k++) {
+    const radius = LAYER_BAR_RADIUS - k * LAYER_STEPDOWN
+    assert.ok(
+      points.some((point) => Math.abs(point.tip - radius) <= 1e-9),
+      `${label}: layer radius ${radius} appears among the cut tip radii`,
+    )
+  }
+}
+
+{
+  const pivot = barPivotZ(LAYER_STOCK)
+  const result = generateRotaryRough('layer-around', LAYER_MESH, LAYER_STOCK, FLAT, {
+    ...LAYER_PARAMS, stepdown: LAYER_STEPDOWN, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the around layering rough has no warning')
+  const points = orderedCutPoints(result.moves)
+  // 20 mm of cut span over a 10 mm stepover is three rings a layer.
+  assert.equal(new Set(points.map(alongOf)).size, 3, 'the around grid cuts three along positions')
+  checkLayering('around', aroundLayers(result.moves, pivot))
+}
+
+{
+  const pivot = barPivotZ(LAYER_STOCK)
+  const result = generateRotaryRough('layer-along', LAYER_MESH, LAYER_STOCK, FLAT, {
+    ...LAYER_PARAMS, stepdown: LAYER_STEPDOWN,
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the along layering rough has no warning')
+  // Along mode marks the layers in A: each layer is one more full turn.
+  checkLayering('along', orderedCutPoints(result.moves).map((point) => ({
+    layer: Math.floor(angleOf(point) / 360) + 1,
+    tip: point.z - pivot,
+  })))
 }
 
 console.log('rotary around passes tests passed')
