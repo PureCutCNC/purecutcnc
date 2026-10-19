@@ -568,13 +568,13 @@ console.log('Testing that the guard admits the generator\'s normal square progra
     }
   }
   console.log(`  generator programs: ${admitted}/${cases.length} admitted, ${refused} false refusals`)
-  // The conservative whole-cell guard (#1045 slice H) refuses the **ball**
-  // generator case at the cut range's along boundary: the layer whose footprint
-  // first widens over a cell takes a ball's radial reach at the far edge, about
-  // 0.08 mm over `stepdown + tolerance`, and the old centre-evaluating guard
-  // hid it. The flat cases must still post; the ball case is a generator
-  // boundary refinement, not an admitted overcut.
-  assert.ok(refused <= 1, `the generator programs are admitted apart from the ball along-boundary case (${refused} refused)`)
+  // #1045 slice I: every generator program must post. The slice-H guard's
+  // whole-cell rasterisation charged a partially covered fringe cell its
+  // *blank* corner against the deepest contact, although the cutter body's own
+  // radial span there reaches nowhere near that blank; the guard now caps a
+  // partial cell's charge by the body's span, so the ball boundary case is
+  // admitted (see `cutBand`/`cutSample`).
+  assert.equal(refused, 0, `every generator program is admitted (${refused} refused)`)
 }
 
 console.log('engine/gcode/squareSweepGuard.property.test.ts: all assertions passed')

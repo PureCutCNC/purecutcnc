@@ -1236,7 +1236,11 @@ export function planRotaryRefusals(
     : null
   for (const entry of operations) {
     const snapshot = sweep
-      ? { material: sweep.material.slice(), roughAllowance: new Map(sweep.roughAllowance) }
+      ? {
+        material: sweep.material.slice(),
+        centreMaterial: sweep.centreMaterial.slice(),
+        roughAllowance: new Map(sweep.roughAllowance),
+      }
       : null
     const verdict = inspectRotaryOperation({
       definition,
@@ -1258,6 +1262,7 @@ export function planRotaryRefusals(
     if (verdict.refused !== null) {
       if (sweep && snapshot) {
         sweep.material.set(snapshot.material)
+        sweep.centreMaterial.set(snapshot.centreMaterial)
         sweep.roughAllowance.clear()
         for (const [key, value] of snapshot.roughAllowance) sweep.roughAllowance.set(key, value)
       }

@@ -58,7 +58,15 @@
  * - refuses a **turning cut** below the blank's travel height whose engagement
  *   exceeds the operation's own bound (a rough's `stepdown`; a finish's
  *   `stockToLeave` plus the scallop a rough that actually covered that spot
- *   would leave).
+ *   would leave);
+ * - **caps every charge by the cutter body's own radial span** at the ray it is
+ *   measured on (#1045 slice I): a cut cannot remove more material than the
+ *   body's `exit - contact` thickness there. That is the fix for slice H's
+ *   false refusals: the whole-cell maximum could charge a blank corner standing
+ *   far above a ball whose entire sphere was buried, although the body's own
+ *   span at that ray reached nowhere near the corner. The cap is a conservative
+ *   upper bound, keeps the existing tolerance, and is what admits the
+ *   generator's own ball around and retained-end programs.
  *
  * Resolution is conservative by construction, never widened to fit a budget.
  * The along bin is at most a quarter of the smallest cutter radius in the
@@ -476,7 +484,9 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
         const lowTip = Math.min(move.from.z, move.to.z) - pivot
         const highTip = Math.max(move.from.z, move.to.z) - pivot
         const engagement = cutBand(state, alongFrom, controller, end, lowTip, highTip, cutterRadius, ball)
-        if (engagement > bound) return { admitted: false, reason: 'turn' }
+        if (engagement > bound) {
+          return { admitted: false, reason: 'turn' }
+        }
       } else {
         for (let step = 0; step <= steps; step++) {
           const fraction = step / steps
@@ -486,7 +496,9 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
           const angle = controller + (end - controller) * fraction
           const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
           const engagement = cutSample(state, along, angle, tip, cutterRadius, ball)
-          if (engagement > bound) return { admitted: false, reason: 'turn' }
+          if (engagement > bound) {
+            return { admitted: false, reason: 'turn' }
+          }
         }
       }
     } else {
@@ -714,11 +726,26 @@ function cutSample(
       const sinFar = Math.sqrt(sinSqFar)
       if (!fullAlong) {
         const centreMaterial = state.centreMaterial[cellIndex]
-        const engagementHere = centreMaterial - contactNear
+        // Only a body that reaches the material's top removes it: the near
+        // ray's far root must be at or beyond the standing radius.
+        // The most material a cutter can take from one ray is the body's own
+        // radial span there: `exit - contact`. Capping the charge by that span
+        // (instead of skipping a cell the body does not reach the top of) keeps
+        // the guard conservative -- no cut can remove more than the body's
+        // thickness -- while a buried ball, whose whole span is far below a
+        // blank corner, is charged its span, not the blank's full depth.
+        let exitNear = Number.POSITIVE_INFINITY
+        if (ball) {
+          const disc = reachNearSq - centreSq * sinSqNear
+          const sphereExit = disc >= 0 ? centre * cosNear + Math.sqrt(disc) : Number.NEGATIVE_INFINITY
+          const shankExit = sinSqNear > 1e-24 ? reachNear / Math.sqrt(sinSqNear) : Number.POSITIVE_INFINITY
+          exitNear = centre / cosNear <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+        } else if (sinSqNear > 1e-24) {
+          exitNear = reachNear / Math.sqrt(sinSqNear)
+        }
+        const engagementHere = Math.min(centreMaterial, exitNear) - contactNear
         if (engagementHere > engagement) engagement = engagementHere
-        // (debug) A partial cut still lowers the cell's along centre, where it does
-        // reach; the whole-cell `material` stays so a later full-coverage cut
-        // still sees the far side.
+        // The cell centre is lowered too, where it reaches.
         const centreAlong = (insideLow + insideHigh) * 0.5
         const dxCentre = Math.abs(centreAlong - along)
         if (dxCentre < radius && cosFar > 1e-9) {
@@ -749,10 +776,15 @@ function cutSample(
         continue
       }
       let contactFar: number
+      let exit = Number.POSITIVE_INFINITY
       if (ball) {
         const discriminant = reachFarSq - centreSq * sinSqFar
         if (discriminant < 0) {
-          const engagementHere = materialRadius - contactNear
+          const nearDisc = reachNearSq - centreSq * sinSqNear
+          const nearSphereExit = nearDisc >= 0 ? centre * cosNear + Math.sqrt(nearDisc) : Number.NEGATIVE_INFINITY
+          const nearShankExit = sinSqNear > 1e-24 ? reachNear / Math.sqrt(sinSqNear) : Number.POSITIVE_INFINITY
+          const nearExit = centre / cosNear <= nearShankExit ? Math.max(nearSphereExit, nearShankExit) : nearSphereExit
+          const engagementHere = Math.min(materialRadius, nearExit) - contactNear
           if (engagementHere > engagement) engagement = engagementHere
           continue
         }
@@ -760,31 +792,34 @@ function cutSample(
         const sphereExit = centre * cosFar + root
         contactFar = centre * cosFar - root
         if (contactFar < 0) contactFar = 0
-        // The material's highest remaining point after a whole-cell cut is the
-        // far corner, so the bite is measured there against the same contact.
-        const engagementHere = materialRadius - contactFar
-        if (engagementHere > engagement) engagement = engagementHere
-        if (!(materialRadius > contactFar)) continue
         // The body ends at the farther of the sphere's far root and the shank
-        // above its equator; the cell stands only if that wall is below it.
+        // above its equator; the cell stands -- and is charged -- only if that
+        // wall reaches its standing material.
         const shankExit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
         const shankStart = centre / cosFar
-        const exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+        exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+        // The material's highest remaining point after a whole-cell cut is the
+        // far corner, so the bite is measured there against the same contact,
+        // capped by the body's own radial span (see the partial branch).
+        const engagementHere = Math.min(materialRadius, exit) - contactFar
+        if (engagementHere > engagement) engagement = engagementHere
         if (exit < materialRadius) continue
+        if (!(materialRadius > contactFar)) continue
       } else {
         // The far ray must still be inside the disc; that is the hardest corner
         // of the rectangle, so it also covers the rest of the cell.
         if (tipSq * sinSqFar > reachFarSq * cosFar * cosFar) {
-          const engagementHere = materialRadius - contactNear
+          const exitNear = sinSqNear > 1e-24 ? reachNear / Math.sqrt(sinSqNear) : Number.POSITIVE_INFINITY
+          const engagementHere = Math.min(materialRadius, exitNear) - contactNear
           if (engagementHere > engagement) engagement = engagementHere
           continue
         }
         contactFar = tip > 0 ? tip / cosFar : 0
-        const engagementHere = materialRadius - contactFar
+        exit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
+        const engagementHere = Math.min(materialRadius, exit) - contactFar
         if (engagementHere > engagement) engagement = engagementHere
-        if (!(materialRadius > contactFar)) continue
-        const exit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
         if (exit < materialRadius) continue
+        if (!(materialRadius > contactFar)) continue
       }
       material[cellIndex] = contactFar
       state.centreMaterial[cellIndex] = contactFar
@@ -900,10 +935,37 @@ function cutBand(
     const firstCell = hiDegrees - loDegrees >= 360 ? 0 : Math.ceil(loDegrees / angleBinDegrees) - 1
     const lastCell = hiDegrees - loDegrees >= 360 ? angleBins - 1 : Math.floor(hiDegrees / angleBinDegrees)
     const rowOffset = i * angleBins
+    // Per-row geometry for a **continuous** (swept) cell. It depends only on the
+    // row and the move -- never on the cell -- so hoisting it out of the angle
+    // loop removes a `dxFar < radius` branch and four contact computations from
+    // every cell the common full-turn / arc band visits (#1045 slice I speed).
+    const coveredAlong = dxFar < radius
+    const contactNear = ball
+      ? (lowCentre > 0 ? Math.max(0, lowCentre - reachNear) : Number.NaN)
+      : (tipLow > 0 ? tipLow : 0)
+    const exitNear = ball ? lowCentre + reachNear : Number.POSITIVE_INFINITY
+    const centreAlong = (insideLow + insideHigh) * 0.5
+    const dxCentre = Math.abs(centreAlong - along)
+    const centreContact = dxCentre < radius
+      ? (ball
+        ? (highCentre > 0 ? Math.max(0, highCentre - Math.sqrt(Math.max(0, radiusSq - dxCentre * dxCentre))) : Number.NaN)
+        : (tipHigh > 0 ? tipHigh : 0))
+      : Number.NaN
+    const rowContactLow = coveredAlong
+      ? (ball
+        ? (lowCentre > 0 ? Math.max(0, lowCentre - reachFar) : Number.NaN)
+        : (tipLow > 0 ? tipLow : 0))
+      : Number.NaN
+    const rowContactHigh = coveredAlong
+      ? (ball
+        ? (highCentre > 0 ? Math.max(0, highCentre - reachFar) : Number.NaN)
+        : (tipHigh > 0 ? tipHigh : 0))
+      : Number.NaN
+    // The sweep-relative left edge of the first cell, advanced by one bin per
+    // cell so the hot loop never takes a modulo.
+    let fromStart = ((firstCell * angleBinDegrees - a0) % 360 + 360) % 360
     for (let cell = firstCell; cell <= lastCell; cell++) {
       const k = ((cell % angleBins) + angleBins) % angleBins
-      const leftAngle = k * angleBinDegrees
-      const rightAngle = leftAngle + angleBinDegrees
       const index = rowOffset + k
       const materialRadius = material[index]
       // A cell whose **whole angular span** lies inside the commanded turn is
@@ -913,165 +975,169 @@ function cutBand(
       // deepest contact is on the axis ray (`dTheta = 0`), not at a cell corner.
       // Only cells beyond an endpoint -- outside the sweep, or straddling it --
       // depend on the endpoint's discrete footprint.
-      const fromStart = ((leftAngle - a0) % 360 + 360) % 360
       if (fromStart + angleBinDegrees <= span + 1e-9) {
-        if (!(dxNear < radius)) continue
-        // A continuous ring reaches its own along edge: at `dx = r` the tool
-        // shank covers the axis ray at every angle as the turn passes, but the
-        // material one angular bin away from the axis ray still stands. A cell
-        // whose far edge is only reached at `dx = r` therefore gets the partial
-        // treatment, as in {@link cutSample}, not the cell's whole-cell maximum.
-        const coveredAlong = dxFar < radius
-        if (!coveredAlong) {
-          const edgeNear = state.centreMaterial[index]
-          const contactNear = ball
-            ? (lowCentre > 0 ? Math.max(0, lowCentre - reachNear) : Number.NaN)
-            : (tipLow > 0 ? tipLow : 0)
-          if (!Number.isNaN(contactNear) && edgeNear > contactNear) {
-            const depth = edgeNear - contactNear
+        if (coveredAlong) {
+          if (!Number.isNaN(rowContactLow) && materialRadius > rowContactLow) {
+            const depth = materialRadius - rowContactLow
             if (depth > engagement) engagement = depth
           }
-          // The ring still cuts the covered part: lower the cell's along centre
-          // to the contact there, so the next layer's partial pass sees a
-          // stepdown rather than the blank.
-          const centreAlong = (insideLow + insideHigh) * 0.5
-          const dxCentre = Math.abs(centreAlong - along)
-          if (dxCentre < radius) {
-            const centreContact = ball
-              ? (highCentre > 0 ? Math.max(0, highCentre - Math.sqrt(Math.max(0, radiusSq - dxCentre * dxCentre))) : Number.NaN)
-              : (tipHigh > 0 ? tipHigh : 0)
-            if (!Number.isNaN(centreContact) && edgeNear > centreContact) {
-              state.centreMaterial[index] = Math.min(state.centreMaterial[index], centreContact)
-            }
+          if (!Number.isNaN(rowContactHigh) && materialRadius > rowContactHigh) {
+            material[index] = rowContactHigh
+            state.centreMaterial[index] = rowContactHigh
           }
+        } else {
+          const edgeNear = state.centreMaterial[index]
+          // The body's radial far root at this ray: a ball reaches only to its
+          // sphere's far side, a flat's shank reaches outward without bound. The
+          // charge is capped by that span: a cut cannot take more material than
+          // the body's own thickness, so a buried ball is charged its span, not
+          // the blank corner standing far above it.
+          if (!Number.isNaN(contactNear)) {
+            const depth = Math.min(edgeNear, exitNear) - contactNear
+            if (depth > engagement) engagement = depth
+          }
+          // The ring cuts the covered part: lower the cell's along centre to the
+          // contact there, so the next layer's partial pass sees a stepdown
+          // rather than the blank.
+          if (!Number.isNaN(centreContact) && edgeNear > centreContact) {
+            state.centreMaterial[index] = Math.min(state.centreMaterial[index], centreContact)
+          }
+        }
+      } else {
+        // Each cell edge's signed distance to the nearest commanded sample. The
+        // near edge is the nearer of the two: it is the deepest point the move
+        // reaches in the cell, so it carries the engagement.
+        // `fromStart` is already this cell's left edge measured from the
+        // move's start, so the nearest-sample offset needs no second modulo.
+        const rightFromStart = fromStart + angleBinDegrees >= 360
+          ? fromStart + angleBinDegrees - 360
+          : fromStart + angleBinDegrees
+        const leftOffset = sampleOffsetFromStart(fromStart, span, stepDegrees)
+        const rightOffset = sampleOffsetFromStart(rightFromStart, span, stepDegrees)
+        const nearDegrees = Math.min(Math.abs(leftOffset), Math.abs(rightOffset))
+        if (nearDegrees > rowHalfDegrees + 1e-9) {
+          fromStart += angleBinDegrees
+          if (fromStart >= 360) fromStart -= 360
           continue
         }
+        const nearRadians = nearDegrees * Math.PI / 180
+        const cosNear = Math.cos(nearRadians)
+        if (!(cosNear > 1e-9)) {
+          fromStart += angleBinDegrees
+          if (fromStart >= 360) fromStart -= 360
+          continue
+        }
+        const sinSqNear = Math.max(0, 1 - cosNear * cosNear)
         let contactLow: number
         if (ball) {
-          if (!(lowCentre > 0)) continue
-          contactLow = lowCentre - reachFar
+          if (!(lowCentre > 0)) {
+            fromStart += angleBinDegrees
+            if (fromStart >= 360) fromStart -= 360
+            continue
+          }
+          const discriminant = reachNearSq - lowCentreSq * sinSqNear
+          if (discriminant < 0) {
+            fromStart += angleBinDegrees
+            if (fromStart >= 360) fromStart -= 360
+            continue
+          }
+          contactLow = lowCentre * cosNear - Math.sqrt(discriminant)
           if (contactLow < 0) contactLow = 0
         } else {
-          contactLow = tipLow > 0 ? tipLow : 0
+          if (tipLow * tipLow * sinSqNear > reachNearSq * cosNear * cosNear) {
+            fromStart += angleBinDegrees
+            if (fromStart >= 360) fromStart -= 360
+            continue
+          }
+          contactLow = tipLow > 0 ? tipLow / cosNear : 0
         }
-        if (materialRadius > contactLow) {
-          const depth = materialRadius - contactLow
+        if (!fullAlong) {
+          const centreMaterial = state.centreMaterial[index]
+          let exitNearGeneric = Number.POSITIVE_INFINITY
+          if (ball) {
+            const disc = reachNearSq - lowCentreSq * sinSqNear
+            const sphereExit = disc >= 0 ? lowCentre * cosNear + Math.sqrt(disc) : Number.NEGATIVE_INFINITY
+            const shankExit = sinSqNear > 1e-24 ? reachNear / Math.sqrt(sinSqNear) : Number.POSITIVE_INFINITY
+            exitNearGeneric = lowCentre / cosNear <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+          } else if (sinSqNear > 1e-24) {
+            exitNearGeneric = reachNear / Math.sqrt(sinSqNear)
+          }
+          const depth = Math.min(centreMaterial, exitNearGeneric) - contactLow
           if (depth > engagement) engagement = depth
-        }
-        let contactHigh: number
-        if (ball) {
-          if (!(highCentre > 0)) continue
-          contactHigh = highCentre - reachFar
-          if (contactHigh < 0) contactHigh = 0
-        } else {
-          contactHigh = tipHigh > 0 ? tipHigh : 0
-        }
-        if (materialRadius > contactHigh) {
-          material[index] = contactHigh
-          state.centreMaterial[index] = contactHigh
-        }
-        continue
-      }
-      // Each cell edge's signed distance to the nearest commanded sample. The
-      // near edge is the nearer of the two: it is the deepest point the move
-      // reaches in the cell, so it carries the engagement.
-      const leftOffset = nearestSampleOffset(leftAngle, a0, span, stepDegrees)
-      const rightOffset = nearestSampleOffset(rightAngle, a0, span, stepDegrees)
-      const nearDegrees = Math.min(Math.abs(leftOffset), Math.abs(rightOffset))
-      if (nearDegrees > rowHalfDegrees + 1e-9) continue
-      const nearRadians = nearDegrees * Math.PI / 180
-      const cosNear = Math.cos(nearRadians)
-      if (!(cosNear > 1e-9)) continue
-      const sinSqNear = Math.max(0, 1 - cosNear * cosNear)
-      let contactLow: number
-      if (ball) {
-        if (!(lowCentre > 0)) continue
-        const discriminant = reachNearSq - lowCentreSq * sinSqNear
-        if (discriminant < 0) continue
-        contactLow = lowCentre * cosNear - Math.sqrt(discriminant)
-        if (contactLow < 0) contactLow = 0
-      } else {
-        if (tipLow * tipLow * sinSqNear > reachNearSq * cosNear * cosNear) continue
-        contactLow = tipLow > 0 ? tipLow / cosNear : 0
-      }
-      if (!fullAlong) {
-        const centreMaterial = state.centreMaterial[index]
-        if (centreMaterial > contactLow) {
-          const depth = centreMaterial - contactLow
-          if (depth > engagement) engagement = depth
-        }
-        // The cut still lowers the covered part; record it at the cell's along
-        // centre so the next layer's partial pass sees a stepdown.
-        const centreAlong = (insideLow + insideHigh) * 0.5
-        const dxCentre = Math.abs(centreAlong - along)
-        if (dxCentre < radius) {
-          const centreContact = ball
-            ? (highCentre > 0 ? Math.max(0, highCentre - Math.sqrt(Math.max(0, radiusSq - dxCentre * dxCentre))) : Number.NaN)
-            : (tipHigh > 0 ? tipHigh : 0)
           if (!Number.isNaN(centreContact) && centreMaterial > centreContact) {
-            state.centreMaterial[index] = centreContact
+            state.centreMaterial[index] = Math.min(state.centreMaterial[index], centreContact)
+          }
+        } else {
+          // The sample nearest the cell's centre covers the whole cell only when
+          // its far edge -- centre offset plus half a bin -- is still inside the
+          // footprint. That far edge is also where the material it leaves is
+          // highest.
+          const centreFromStart = fromStart + halfBinDegrees >= 360
+            ? fromStart + halfBinDegrees - 360
+            : fromStart + halfBinDegrees
+          const centreOffset = sampleOffsetFromStart(centreFromStart, span, stepDegrees)
+          const farDegrees = Math.abs(centreOffset) + halfBinDegrees
+          const farRadians = farDegrees * Math.PI / 180
+          const cosFar = Math.cos(farRadians)
+          if (!(cosFar > 1e-9)) {
+            if (materialRadius > contactLow) {
+              const depth = materialRadius - contactLow
+              if (depth > engagement) engagement = depth
+            }
+          } else {
+            const sinSqFar = Math.max(0, 1 - cosFar * cosFar)
+            const sinFar = Math.sqrt(sinSqFar)
+            let contactHigh: number
+            if (ball) {
+              if (highCentre > 0) {
+                const discriminant = reachFarSq - highCentreSq * sinSqFar
+                if (discriminant < 0) {
+                  if (materialRadius > contactLow) {
+                    const depth = materialRadius - contactLow
+                    if (depth > engagement) engagement = depth
+                  }
+                } else {
+                  const root = Math.sqrt(discriminant)
+                  contactHigh = highCentre * cosFar - root
+                  if (contactHigh < 0) contactHigh = 0
+                  const sphereExit = highCentre * cosFar + root
+                  const shankExit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
+                  const shankStart = highCentre / cosFar
+                  const exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+                  const lowContact = lowCentre > 0 ? Math.max(0, lowCentre * cosFar - root) : 0
+                  if (Math.min(materialRadius, exit) > lowContact) {
+                    const depth = Math.min(materialRadius, exit) - lowContact
+                    if (depth > engagement) engagement = depth
+                  }
+                  if (!(exit < materialRadius) && materialRadius > contactHigh) {
+                    material[index] = contactHigh
+                    state.centreMaterial[index] = contactHigh
+                  }
+                }
+              }
+            } else if (highTipSq * sinSqFar > reachFarSq * cosFar * cosFar) {
+              if (materialRadius > contactLow) {
+                const depth = materialRadius - contactLow
+                if (depth > engagement) engagement = depth
+              }
+            } else {
+              contactHigh = highTipSq > 0 ? tipHigh / cosFar : 0
+              const exit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
+              const lowContact = tipLow > 0 ? tipLow / cosFar : 0
+              if (Math.min(materialRadius, exit) > lowContact) {
+                const depth = Math.min(materialRadius, exit) - lowContact
+                if (depth > engagement) engagement = depth
+              }
+              if (!(exit < materialRadius) && materialRadius > contactHigh) {
+                material[index] = contactHigh
+                state.centreMaterial[index] = contactHigh
+              }
+            }
           }
         }
-        continue
       }
-      // The sample nearest the cell's centre covers the whole cell only when its
-      // far edge -- centre offset plus half a bin -- is still inside the
-      // footprint. That far edge is also where the material it leaves is
-      // highest.
-      const centreOffset = nearestSampleOffset(leftAngle + halfBinDegrees, a0, span, stepDegrees)
-      const farDegrees = Math.abs(centreOffset) + halfBinDegrees
-      const farRadians = farDegrees * Math.PI / 180
-      const cosFar = Math.cos(farRadians)
-      if (!(cosFar > 1e-9)) {
-        if (materialRadius > contactLow) {
-          const depth = materialRadius - contactLow
-          if (depth > engagement) engagement = depth
-        }
-        continue
-      }
-      const sinSqFar = Math.max(0, 1 - cosFar * cosFar)
-      const sinFar = Math.sqrt(sinSqFar)
-      let contactHigh: number
-      if (ball) {
-        if (!(highCentre > 0)) continue
-        const discriminant = reachFarSq - highCentreSq * sinSqFar
-        if (discriminant < 0) {
-          if (materialRadius > contactLow) {
-            const depth = materialRadius - contactLow
-            if (depth > engagement) engagement = depth
-          }
-          continue
-        }
-        const root = Math.sqrt(discriminant)
-        contactHigh = highCentre * cosFar - root
-        if (contactHigh < 0) contactHigh = 0
-        const lowContact = lowCentre > 0 ? Math.max(0, lowCentre * cosFar - root) : 0
-        const depth = materialRadius - lowContact
-        if (depth > engagement) engagement = depth
-        if (!(materialRadius > contactHigh)) continue
-        const sphereExit = highCentre * cosFar + root
-        const shankExit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
-        const shankStart = highCentre / cosFar
-        const exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
-        if (exit < materialRadius) continue
-      } else {
-        if (highTipSq * sinSqFar > reachFarSq * cosFar * cosFar) {
-          if (materialRadius > contactLow) {
-            const depth = materialRadius - contactLow
-            if (depth > engagement) engagement = depth
-          }
-          continue
-        }
-        contactHigh = highTipSq > 0 ? tipHigh / cosFar : 0
-        const lowContact = tipLow > 0 ? tipLow / cosFar : 0
-        const depth = materialRadius - lowContact
-        if (depth > engagement) engagement = depth
-        if (!(materialRadius > contactHigh)) continue
-        const exit = sinFar > 1e-12 ? reachFar / sinFar : Number.POSITIVE_INFINITY
-        if (exit < materialRadius) continue
-      }
-      material[index] = contactHigh
-      state.centreMaterial[index] = contactHigh
+      fromStart += angleBinDegrees
+      if (fromStart >= 360) fromStart -= 360
     }
   }
   return engagement
@@ -1084,8 +1150,12 @@ function cutBand(
  * is the nearer endpoint. The same closed-circle arithmetic as the slice-G band
  * pass, kept as a helper because the cell-edge and cell-centre samples differ.
  */
-function nearestSampleOffset(angleDegrees: number, a0: number, span: number, stepDegrees: number): number {
-  const fromStart = ((angleDegrees - a0) % 360 + 360) % 360
+/**
+ * The signed angular distance from a point already measured as `fromStart`
+ * degrees past the move's start to the nearest commanded sample. Split out so
+ * the band pass can feed its running offset rather than recompute the modulo.
+ */
+function sampleOffsetFromStart(fromStart: number, span: number, stepDegrees: number): number {
   if (fromStart <= span) return fromStart - Math.round(fromStart / stepDegrees) * stepDegrees
   const toStart = 360 - fromStart
   const toEnd = fromStart - span

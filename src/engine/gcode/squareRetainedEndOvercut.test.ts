@@ -34,10 +34,11 @@
  * sample the second and later layers may not take more than `stepdown` out of
  * the material the earlier layers left there.
  *
- * Reverting the generator's per-sample material tracking to the nominal
- * previous layer radius breaks the second half on the seeded variants that carry
- * a model protrusion: the raised sample's neighbour then takes the corner in one
- * pass.
+ * #1045 slice I: every seeded variant, ball included, is admitted. The slice-H
+ * guard's whole-cell rasterisation refused the ball variants at a cut-range
+ * boundary fringe; it now caps a partially covered cell's charge by the cutter
+ * body's own radial span, which is an upper bound on what any cut can remove
+ * there (see `cutBand`).
  *
  * Run with: npx tsx src/engine/gcode/squareRetainedEndOvercut.test.ts
  */
@@ -350,18 +351,7 @@ function runCase(entry: Case): void {
     operation: roughOp, moves: rough.moves, cutter, entryAngle: 0, direction: 1,
     travelZ: travel, roundingAllowance: 0.0005,
   })
-  if (!roughVerdict.admitted) {
-    // A ball's footprint widens over a cut-range boundary cell by a little more
-    // than `stepdown + tolerance` (the property test's generator note). The
-    // conservative guard refuses those ball variants; a flat's contact does not
-    // vary along, so a flat refusal is a failure.
-    assert.ok(entry.type === 'ball_endmill',
-      `${entry.label}: only a ball boundary case may be refused, got ${JSON.stringify(roughVerdict)}`)
-    assert.deepEqual(roughVerdict, { admitted: false, reason: 'turn' },
-      `${entry.label}: the refusal is the engagement bound`)
-    console.log(`  ${entry.label}: rough ${rough.moves.length} moves, refused at the ball cut-range boundary`)
-    return
-  }
+  assert.deepEqual(roughVerdict, { admitted: true }, `${entry.label}: the guard admits the rough`)
   const finishVerdict = guardSquareOperation(state, {
     operation: finishOp, moves: finish.moves, cutter, entryAngle: 360, direction: 1,
     travelZ: travel, roundingAllowance: 0.0005,

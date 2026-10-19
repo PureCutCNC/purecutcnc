@@ -130,6 +130,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the retained shoulder beyond the outermost cuts is not charged. The stated
   tolerance is one angular bin of the blank, one along cell of the ball's own
   rise, and the emitted-Z rounding.
+  #1045 slice I removes the false refusals slice H's whole-cell rule produced on
+  the generator's own programs. A partially covered cell is charged the
+  near **along cell boundary**'s material (`edgeMaterial`, a sub-cell sample the
+  preceding pass lowers where it actually reaches), not the cell centre the pass
+  may never cover; and every charge is capped by the cutter body's own radial
+  span at that ray (`min(material, exit) - contact`), which is an upper bound on
+  what any cut can remove and keeps a buried ball from being charged a blank
+  corner far above its sphere. The hot loop is also tightened: the sweep-relative
+  angle offset advances by one bin per cell instead of a modulo, and the
+  per-row contact/boundary terms are hoisted, which takes the 20 × 1,000 mm Ø3
+  ball rough + finish guard from 4.08 s to about 2.4 s.
 - `squareSweepGuard.test.ts` — boundary and review-reproduction tests for that
   guard on the 20 mm square blank: a hand-built around-mode rough cut taking
   1.25 × `stepdown` is refused while 0.9 × is admitted, and a finish taking
@@ -158,8 +169,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   commanded motion at its own cell resolution; every program the guard admits
   must have no turning cut deeper than its tolerance-inclusive bound. It also
   reports the false-refusal rate on the generator's own normal square-to-round
-  rough + finish for flat/ball and around/along (3 of 4; the ball around case
-  is a real cut-range-boundary overcut the conservative guard refuses).
+  rough + finish for flat/ball and around/along (4 of 4 admitted since slice I).
+- `squareGeneratedPrograms.test.ts` — #1045 slice I, the false-refusal contract:
+  54 seeded generator-emitted square programs (flat and ball, around rough +
+  finish and along rough + around finish, with and without retained ends) must
+  all be admitted by the guard, and every turning cut must be within its bound
+  by an independent fine reference (0.33° × `min(0.1, r/6)`, finer than the
+  guard on both axes) that lowers the blank through the exact cutter body. The
+  seeded set is the regression for the four slice-H refusals: the ball around
+  case, the ball retained-end variants, the mixed along-rough + around-finish
+  program and the merge's ball fixture.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change

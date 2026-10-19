@@ -335,16 +335,14 @@ console.log('Testing that a generated around ring merges and still posts...')
   const finishVerdict = guardSquareOperation(state, {
     operation: finishOp, moves: finish.moves, cutter, entryAngle: 360, direction: 1, travelZ, roundingAllowance: 0.0005,
   })
-  // The conservative guard (#1045 slice H) refuses the ball generator at the
-  // cut range's along boundary (the same ~0.08 mm over `stepdown + tolerance`
-  // the property test documents). The merge's job is the motion, not the
-  // verdict: assert the refusal and that the merged rings are still short.
-  assert.deepEqual(roughVerdict, { admitted: false, reason: 'turn' },
-    'the conservative guard refuses the ball rough at its cut-range boundary')
-  assert.deepEqual(finishVerdict, { admitted: false, reason: 'turn' },
-    'the finish over the refused rough is refused too')
+  // #1045 slice I: the ball generator posts. Slice H's whole-cell guard refused
+  // it at a cut-range boundary cell whose blank corner the cutter body never
+  // reached; the guard now caps a partial cell's charge by the body's radial
+  // span, so the merged rings are admitted as they are.
+  assert.deepEqual(roughVerdict, { admitted: true }, 'the guard admits the ball rough')
+  assert.deepEqual(finishVerdict, { admitted: true }, 'the guard admits the finish over it')
   console.log(`  generated rough ${rough.moves.length} moves (${turningCuts(rough.moves)} turning cuts), `
-    + `finish ${finish.moves.length} moves; guard refuses the ball boundary`)
+    + `finish ${finish.moves.length} moves; guard admits both`)
 }
 
 console.log('engine/toolpaths/rotaryMerge.test.ts: all assertions passed')
