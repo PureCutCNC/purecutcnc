@@ -23,7 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
-import { activeFace } from '../helpers/activeFace'
+import { activeFace, aroundSketchAuthoringRefused } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -51,6 +51,7 @@ import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
 import { createAddRotaryPatternAction } from '../helpers/rotaryPatterns'
+import { createAddRotarySolidAction } from '../helpers/rotarySolids'
 import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
@@ -101,6 +102,7 @@ export type FeatureSlice = Pick<
   | 'addNgonFeature'
   | 'addGearFeature'
   | 'addRotaryPattern'
+  | 'addRotarySolid'
   | 'addRoundRectFeature'
   | 'addChamferRectFeature'
   | 'alignFeatures'
@@ -110,6 +112,20 @@ export type FeatureSlice = Pick<
   | 'offsetSelectedFeatures'
   | 'expandTextFeature'
 >
+
+/**
+ * Whether a derived-creation result would author new geometry on a round-only
+ * Around sheet (issue #1016 C2-U1F). A derived feature keeps its source's
+ * {@link SketchFeature.authoringFace} (`derivedFeatures.ts`), and these paths
+ * insert it directly rather than through `addFeature`, so the resulting faces
+ * — not the current workspace face — are what the square blank's policy must
+ * judge. An unset face means Top, so it is never refused here.
+ *
+ * Returns true before any project, selection, history or pending mutation.
+ */
+function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
+  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+}
 
 function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature | null {
   const raw = feature as unknown as Record<string, unknown>
@@ -486,6 +502,12 @@ export function createFeatureSlice(
         // face is known before the base-solid rule runs: an Around feature is
         // never the base solid, so it must not be forced to Add (#395).
         const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
+        // The Around face is workflow-available on a real square blank, but its
+        // unrolled sheet is round-only (issue #1016 C2-U1): a feature that would
+        // be authored there is refused before any id, asset, tree, history or
+        // selection work. A generated solid (C2-B) lands as an ordinary Top
+        // model through its own action and never comes through here.
+        if (aroundSketchAuthoringRefused(s.project, authoringFace)) return {}
         const isFirstSolidFeature = isSolid({ ...featureForInsert, authoringFace })
           && !resolvedProjectFeatures(s.project).some(isSolid)
         const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)
@@ -766,6 +788,12 @@ export function createFeatureSlice(
         })
         .filter((result): result is NonNullable<typeof result> => result !== null)
       const createdFeatures = createdResults.map((result) => result.feature)
+      // A join preserves the anchor's authoring face, so a union of Around
+      // features would land as new Around rows even though the workspace may
+      // have moved Top (issue #1016 C2-U1F). Refuse before any state write.
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const newDefinitions = createdResults.map((result) => result.definition)
       const createdInstances = createdResults.map((result) =>
         createFeatureInstance(result.feature, result.definition.id),
@@ -836,6 +864,11 @@ export function createFeatureSlice(
       const cutResult = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
       const createdGroups = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
+      // A cut preserves each target's authoring face; direct insertion would
+      // bypass `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       let definitionIndex = 0
       const createdInstanceGroups: Array<DerivedFeatureGroup<FeatureInstance>> = createdGroups.map((group) => ({
         sourceId: group.sourceId,
@@ -898,6 +931,11 @@ export function createFeatureSlice(
       const state = get()
       const offsetResult = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
       const createdFeatures = offsetResult.features
+      // An offset preserves its base feature's authoring face and is inserted
+      // directly, bypassing `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const createdInstances = createdFeatures.map((feature, index) => {
         const definition = offsetResult.definitions[index]
         if (!definition) {
@@ -1161,6 +1199,8 @@ export function createFeatureSlice(
 
     addRotaryPattern: createAddRotaryPatternAction(set, get),
 
+    addRotarySolid: createAddRotarySolidAction(set, get),
+
     addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
     },
@@ -1180,6 +1220,17 @@ export function createFeatureSlice(
       const { folders, features, definitions } = expandTextFeature(state.project, textFeature)
 
       if (features.length === 0) {
+        return
+      }
+
+      // Every generated glyph instance copies the text feature's authoring
+      // face (`textExpansion.ts`) and is inserted directly, so a Square blank's
+      // round-only Around sheet must refuse the expansion atomically — before
+      // the folders, definitions, rows, selection and history are written, and
+      // judged by the rows about to be created rather than the workspace face.
+      // Ordinary Top and round-bar Around text expansion is unaffected
+      // (issue #1016 C2-U1G).
+      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
         return
       }
 

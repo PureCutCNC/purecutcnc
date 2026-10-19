@@ -403,7 +403,8 @@ async function main(): Promise<void> {
   await test('stock shapes offered per type', () => {
     assertEqual([...stockShapesForProjectType('milling')], ['block'], 'milling cuts a block')
     assertEqual([...stockShapesForProjectType('plasma')], ['block'], 'plasma cuts a block')
-    assertEqual([...stockShapesForProjectType('rotary')], ['round'], 'rotary turns a round bar')
+    assertEqual([...stockShapesForProjectType('rotary')], ['round', 'square'], 'rotary turns either bar, round first')
+    assertEqual(stockShapesForProjectType('rotary')[0], 'round', 'a new rotary project still starts on a round bar')
   })
 
   await test('generated and exported programs are byte-identical to the base commit', () => {

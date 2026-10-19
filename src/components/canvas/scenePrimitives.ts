@@ -15,8 +15,9 @@
  */
 
 import type { SketchControlRef } from '../../store/types'
-import { getProfileBounds, getStockBounds, isRoundStock, profileVertices, rectProfile, roundStockCentre } from '../../types/project'
-import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
+import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
+import type { BackdropImage, BarStock, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
+import { barCentre, isBarStock } from '../../types/barStock'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
@@ -327,6 +328,44 @@ export interface StockLabelRect {
   halfH: number
 }
 
+/** The stock fields a dimension label reads. */
+type DimensionLabelStock = Pick<Stock, 'shape'> & Partial<Pick<BarStock, 'axis'>>
+
+/**
+ * The stock's two dimension labels. A round bar's dimension **across** its
+ * axis is a diameter and carries the Ø on that side only; the along dimension
+ * is a plain length. A square blank's cross dimension is its side, never a
+ * diameter, so it carries no Ø (#1016 C2-U1V); a block, which has no bar axis,
+ * is plain on both sides.
+ */
+export function barDimensionLabels(
+  stock: DimensionLabelStock,
+  width: number,
+  height: number,
+  units: Units,
+): { width: string; height: string } {
+  const unitSuffix = units === 'inch' ? 'in' : 'mm'
+  const barAxis = stock.shape === 'round' ? stock.axis : null
+  return {
+    width: `${barAxis === 'y' ? 'Ø' : ''}${formatLength(width, units)} ${unitSuffix}`,
+    height: `${barAxis === 'x' ? 'Ø' : ''}${formatLength(height, units)} ${unitSuffix}`,
+  }
+}
+
+/**
+ * The line a bar turns about, down its whole length, or null for a block. A
+ * round bar and a square blank turn about the same true pivot — the box centre
+ * — so both answer the same centreline (#1016 C2-U1V).
+ */
+export function barCentreline(stock: Stock): { from: Point; to: Point } | null {
+  if (!isBarStock(stock)) return null
+  const bounds = getStockBounds(stock)
+  const centre = barCentre(stock)
+  return stock.axis === 'x'
+    ? { from: { x: bounds.minX, y: centre }, to: { x: bounds.maxX, y: centre } }
+    : { from: { x: centre, y: bounds.minY }, to: { x: centre, y: bounds.maxY } }
+}
+
 function drawStockDimensionLabel(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -368,13 +407,13 @@ export function drawStockOutline(
 
   const bounds = getStockBounds(stock)
 
-  if (isRoundStock(stock)) {
-    // The centreline the bar turns about, dash-dot down its whole length.
-    const centre = roundStockCentre(stock)
-    const start = stock.axis === 'x' ? { x: bounds.minX, y: centre } : { x: centre, y: bounds.minY }
-    const end = stock.axis === 'x' ? { x: bounds.maxX, y: centre } : { x: centre, y: bounds.maxY }
-    const from = worldToCanvas(start, vt)
-    const to = worldToCanvas(end, vt)
+  const centreline = barCentreline(stock)
+  if (centreline) {
+    // The centreline the bar turns about, dash-dot down its whole length: the
+    // same line for a round bar and a square blank, both turning about their
+    // box centre at the true pivot (#1016 C2-U1V).
+    const from = worldToCanvas(centreline.from, vt)
+    const to = worldToCanvas(centreline.to, vt)
     ctx.strokeStyle = exceeded ? stockExceededStroke() : hexToRgba(stock.color, 0.7)
     ctx.lineWidth = 1
     ctx.setLineDash([8, 3, 2, 3])
@@ -397,13 +436,11 @@ export function drawStockOutline(
   const maxCx = Math.max(cornerA.cx, cornerB.cx)
   const minCy = Math.min(cornerA.cy, cornerB.cy)
   const maxCy = Math.max(cornerA.cy, cornerB.cy)
-  const unitSuffix = units === 'inch' ? 'in' : 'mm'
+  const labels = barDimensionLabels(stock, widthWorld, heightWorld, units)
+  const widthLabelText = labels.width
+  const heightLabelText = labels.height
 
   ctx.save()
-  // A bar's dimension across its axis is a diameter, so it carries the Ø.
-  const barAxis = isRoundStock(stock) ? stock.axis : null
-  const widthLabelText = `${barAxis === 'y' ? 'Ø' : ''}${formatLength(widthWorld, units)} ${unitSuffix}`
-  const heightLabelText = `${barAxis === 'x' ? 'Ø' : ''}${formatLength(heightWorld, units)} ${unitSuffix}`
   const widthCx = (minCx + maxCx) / 2
   const widthCy = minCy - 12
   drawStockDimensionLabel(

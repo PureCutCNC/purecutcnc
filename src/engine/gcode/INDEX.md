@@ -60,9 +60,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rotary word, judged on the rendered lines the program actually writes
   (`postRotaryTemplateUsesBorrowedAxis`).
   A program that turned the bar and ends at a non-zero angle gets one closing
-  unwind rapid to 0 (#395, rule 5), written at the height the last operation
-  retracted to and before the footer; never between operations, and none for a
-  program that ends at 0 or that never carried an angle.
+  unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
+  and none for a program that ends at 0 or that never carried an angle. On a
+  square blank it first rapids to the generators' travel height whenever the
+  last emitted Z is below it or unknown, because the last operation may have
+  descended at a constant angle. A template that can move Z (a Z word, a
+  canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
+  A word is preceded by a validated retract to that height — a header or
+  tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -94,11 +99,34 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   corner — and the reasons an
   operation cannot run on this machine's rotary axis: no axis, no inverse-time
   feed, travel on the borrowed motor's axis beyond the one value the program
-  may use across all its operations, a non-round bar, canned-cycle drill holes
+  may use across all its operations, a non-bar stock, canned-cycle drill holes
   with no expanded moves, a feed move or arc that carries an angle on one end
   only, a feed move that starts before the program has turned
   the bar to its angle, and the bar lying along the other horizontal axis than
-  the machine's rotary (`postRotaryAxisMismatch`, #395); `planStepFeeds` throws
+  the machine's rotary (`postRotaryAxisMismatch`, #395); a **square** blank
+  (#1016 C2-S4) is judged by the generation guard again before the angle gate:
+  only a legitimate rotary rough/finish against a real model on a matching
+  Around setup with a supported physical workholding / ordinary-clamp setup may
+  post, every angle-bearing square path must be that operation whatever face it
+  claims (a synthetic `A` path from a Top/Bottom or wrapped 2D kind is refused),
+  the emitted cutter must be the project's own referenced row — the row's `id`
+  is what `planProgramSequence` selects the program's tool number from, and its
+  normalized `units` label must be the project's, so an entry naming another
+  valid row or carrying a foreign unit label is refused even when its shape and
+  numbers were spoofed to match; a removed, unusable, differently shaped or
+  differently sized cutter fails closed too, rather than letting the guard prove
+  one tool clear and the emitter write another), an A-changing square move whose
+  cutter's lowest point is below the corner envelope `barPivotZ + barMaxRadius`
+  is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1; the generators
+  keep every A-changing move above that envelope, and a turn placed exactly on
+  it is within the generator's own tolerance — the emitted Z's half-step), and
+  the inverse-time refusal keeps its own whole-operation turning-feed test,
+  independent of the angle tracker, so an unestablished constant-angle feed
+  cannot hide a later turning feed and change which refusal a round bar reports
+  (#1016 C2 M1 P2), a non-rotary kind or a
+  stale wholly-angle-free rotary toolpath is refused, and `rotaryCentreline` returns
+  the true pivot (`barPivotZ = side / 2`) whichever bar shape the stock is;
+  `planStepFeeds` throws
   when an emitted step no longer pairs with the project move its feed comes
   from), and the emitted-number
   helpers arc validation judges
@@ -214,6 +242,58 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
   angle and the single closing unwind, `postRotaryAxisMismatch`, and the
   program read back through `parseGcodeMotion` onto the flat toolpath).
+- `squareRotaryOutput.test.ts` — the square blank through generation and the
+  real posted program (#1016 C2-S4): both axes, both units, rough/finish and
+  own / borrowed / reversed machines post nonempty angle-bearing inverse-time
+  motion from the true pivot with no refusal; the round bar is byte-identical
+  across the same 24-cell matrix to a fingerprint captured from the base commit,
+  with the generated-date comment pinned exactly as `legacyMachineParity.test.ts`
+  pins it; axis mismatch, a machine with no rotary, borrowed-axis travel, a
+  split-angle feed, a non-rotary square Around path and stale wholly-angle-free
+  motion all refuse; the Z12 `A0 -> A45` probe is refused at export by
+  `postRotarySquareTurnBelowEnvelope` with no angle posted, a turn just above
+  the corner envelope is accepted and posts under `G93`, and the same low turn
+  on the round bar of the same box still posts; a manual too-small chuck is
+  preserved but refuses generation (no
+  motion, `workholdingDiameter` naming the clamp and both diameters in project
+  units) and output (no motion posted), hidden workholding still counts,
+  axial-disjoint and end-face-touching supports are clear, off-centre and
+  wrong-height rows refuse with `workholdingPlacement`, an invalid clamp row
+  keeps the generic `postSetupOperationRefused` fallback, an ordinary
+  clamp in the swept envelope refuses with `ordinaryClampOverlap` while a
+  provably disjoint one passes, and
+  a clamp past the blank end but inside the finite cutter-body overhang refuses
+  — with an independent analytic cutter-body-vs-clamp witness — while one past
+  that overhang is provably clear and passes; a clamp row with a non-positive
+  height, a non-finite clearance and a degenerate blank all fail closed, as do a
+  missing / empty-ref emitted cutter, a stale larger cutter, a same-radius
+  cutter of the other supported shape, an unsupported `v_bit` on either side, an
+  emitted row naming another valid tool row (a real tool-change program is
+  refused), a normalized row labelled in another unit system, and a body whose
+  radius is not half its diameter (with the flat/ball surface difference
+  witnessed analytically), while a genuinely converted same-id row still posts;
+  Frank's measured UI-test project
+  (`squareRotaryChuckSwitch.fixture.camj`, kept out of `test-fixtures/` because the parity corpus requires every fixture there to generate: inch, 2 in square, the
+  50 mm round-bar chuck loaded from format 3.3 **without** the shape switch)
+  refuses both rotary operations with zero moves and `workholdingDiameter`,
+  naming the clamp and both diameters in inches; moving the same chuck off the
+  pivot reports `workholdingPlacement`. 40 seeded pure-turn feeds match the
+  analytic true-pivot inverse-time word. All sixteen square rough/finish fingerprints were
+  re-captured for #1016 C2-F7, which shortens every one (the cutter centre now
+  starts and ends one radius inside each stubbed end); the round fingerprints
+  did not move.
+- `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
+  **emitted text** (#1016 C2 M1 correction): a seeded property test (300
+  programs, seed 1016) generates supplied paths with safe turns, constant-angle
+  descents, A-only rapids whose endpoints agree while the controller is
+  elsewhere, multiple operations, own/borrowed/reversed machines, mm/inch and
+  header/operation-header/tool-change/footer templates that move Z. Each whole
+  program is posted, then replayed by an independent modal interpreter written
+  in the test (G0/G1/G2/G3, the machine's rotary word, Z, G20/G21, G90/G91):
+  every accepted program's rotary changes must execute at or above the emitted
+  travel height, and every refused program must carry a refusal code. Focused
+  cases pin the closing-unwind retract, the template Z-unknown rule, and the
+  restored whole-operation turning-feed precedence on a round bar.
 
 ## Adding a dialect
 

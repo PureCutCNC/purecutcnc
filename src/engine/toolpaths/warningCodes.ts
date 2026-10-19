@@ -317,7 +317,13 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
-  /** Around needs the original round-bar axis. */
+  /** Around needs a bar — round or square — lying along the setup's axis for
+   *  the operation to cut. A warning, as it always was: the operation produces
+   *  no motion, but the code's severity is part of the frozen round/flat
+   *  contract. The **square** blank's own new refusals (#1016 C2-S4: a wrapped
+   *  2D operation, a non-model target, or a physical workholding/clamp setup
+   *  the guard refuses) report `postSetupOperationRefused` instead, so only
+   *  they block a save. */
   | 'aroundStockMismatch'
   /** A radial cut must stop above the bar centreline. */
   | 'aroundCentreline'
@@ -344,13 +350,40 @@ export type ToolpathWarningCode =
    *  own surface there, so those parts are machined as air; the operation still
    *  runs and says so (issue #1015). */
   | 'rotaryModelOutsideBar'
+  /** The operation's radial stock to leave is not a usable allowance: it is
+   *  not finite, it is negative, or it makes the sampler's tool radius zero or
+   *  negative. Sampling with that radius would read "no model" everywhere, and
+   *  the rough would cut the whole pass down to the axis, so it refuses with
+   *  no motion instead (issue #1016 C2 correction M1). */
+  | 'rotaryStockToLeaveInvalid'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
   | 'postMixedSetups'
-  /** An operation in the program generated nothing because its setup may not
-   *  cut it (`setupTargetNotThrough`). The file would be missing a pass. */
+  /** A **square** blank's Around face was asked for a job it does not
+   *  support (#1016 C2-S4): a non-rotary kind, a target that is not a real
+   *  model, or a physical workholding / ordinary-clamp setup this build cannot
+   *  hold. The file would be missing a pass.
+   *
+   * The physical workholding verdicts have their own codes below, so the
+   * operation names the actual problem; this one stays the fallback for the
+   * remaining square reasons (an unreadable blank, non-finite project
+   * clearances, a malformed clamp row, a stale cutter) and for
+   * `setupTargetNotThrough`. */
   | 'postSetupOperationRefused'
+  /** A square blank's chuck or tailstock outer diameter is smaller than the
+   *  blank's corner envelope, so its corners would pass through the jaws as
+   *  the blank turns (#1016 C2 F3). Params: operation, clamp, diameter and the
+   *  required corner diameter, both formatted in project units. */
+  | 'workholdingDiameter'
+  /** A square blank's chuck or tailstock is off the true centreline or its
+   *  height is not derived from the pivot (#1016 C2 F3). Params: operation,
+   *  clamp. */
+  | 'workholdingPlacement'
+  /** An ordinary clamp reaches into the region the square blank sweeps as it
+   *  turns, grown by the cutter body and the project's clamp clearance
+   *  (#1016 C2 F3). Params: operation, clamp. */
+  | 'ordinaryClampOverlap'
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */
   | 'postSetupNoRegistration'
@@ -423,6 +456,12 @@ export type ToolpathWarningCode =
    *  different motion on this machine, so the operation is not exported
    *  (issue #395). */
   | 'postRotaryAxisMismatch'
+  /** A square blank's corners sweep `barMaxRadius` about the true pivot as the
+   *  blank turns. A supplied or stale path that changes A while the cutter's
+   *  lowest point is below that corner envelope would drive the standing
+   *  corners through the cutter, so the operation is refused rather than
+   *  posted (issue #1016 C2 correction M1). */
+  | 'postRotarySquareTurnBelowEnvelope'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -464,6 +503,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postSetupOperationRefused` — an operation in the program has no motion
  *   because its setup may not cut it, so the saved file would quietly lack a
  *   pass the operation list promises (issue #946).
+ * - `workholdingDiameter`, `workholdingPlacement`, `ordinaryClampOverlap` — a
+ *   square blank's physical setup is not one this build can hold: the blank's
+ *   standing corners would pass through a too-small support, the support is not
+ *   at the pivot, or an ordinary clamp reaches into the swept envelope. The
+ *   operation generates no motion, so the same missing-pass reasoning applies
+ *   and each names the actual problem (issue #1016 C2 F3).
  * - `postPlasmaMaterialMissing` — QtPlasmaC would fire the torch with
  *   whatever material happens to be loaded: the wrong cut feed, heights and
  *   pierce delay for the sheet on the table (issue #959).
@@ -475,17 +520,28 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   would quietly lack that operation's cuts (issue #983).
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
- *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded` and
- *   `postRotaryAxisMismatch` — a rotary operation the machine cannot run is
- *   left out of the program (issue #393). The file would otherwise be saved
- *   without that pass, and approximating any of them would cut the stock at
- *   the wrong angle or the wrong feed.
+ *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
+ *   `postRotaryAxisMismatch` and `postRotarySquareTurnBelowEnvelope` — a rotary
+ *   operation the machine cannot run is left out of the program (issues #393,
+ *   #1016 C2 M1). The file would otherwise be saved without that pass, and
+ *   approximating any of them would cut the stock at the wrong angle, the
+ *   wrong feed, or through the square blank's standing corners.
+ *
+ * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
+ * round bar or a block in an Around setup is a note about a job the setup does
+ * not describe, and promoting the code globally would have changed existing
+ * round/flat programs' severity (a frozen contract). The square blank's own
+ * new refusals do not reuse it — they report `postSetupOperationRefused`
+ * (already an error), so only the square case blocks a save.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',
+  'workholdingDiameter',
+  'workholdingPlacement',
+  'ordinaryClampOverlap',
   'postPlasmaMaterialMissing',
   'postPlasmaCutFeedMissing',
   'postPlasmaPlungeFeedMissing',
@@ -498,6 +554,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryTemplateUsesBorrowedAxis',
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
+  'postRotarySquareTurnBelowEnvelope',
 ])
 
 /**

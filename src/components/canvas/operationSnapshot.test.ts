@@ -17,7 +17,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
+import { aroundFrame, wrapToolpath } from '../../engine/aroundFrame'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { squareStock } from '../../types/barStock'
 import { newProject, roundStock } from '../../types/project'
 import type { MachiningSetup, Operation, Project } from '../../types/project'
 import { drawOperationSnapshot } from './operationSnapshot'
@@ -129,4 +131,41 @@ test('an Around operation snapshot frames the unrolled sheet, not the bar (#395)
   // tells which one was framed.
   assert(aspect < 3, `the snapshot frames the sheet (${aspect.toFixed(2)}:1), not the bar's rectangle`)
   assert(sheet.width() > 0 && sheet.height() > 0, 'the snapshot draws the stock outline')
+})
+
+test('an Around operation snapshot of a square blank frames the nominal sheet (#1016 C2-U1V)', () => {
+  const base = newProject('Square Around snapshot', 'mm')
+  // A 12 x 30 square blank: radius 6, nominal circumference pi * 12.
+  const stock = squareStock(12, 30, 'x', { x: 0, y: 0 })
+  const setup: MachiningSetup = {
+    id: 'setup-around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+  }
+  const project: Project = { ...base, stock, setups: [...base.setups, setup], activeSetupId: setup.id }
+  const operation: Operation = {
+    ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'stock' }, 0),
+    setupId: setup.id,
+  }
+  const frame = aroundFrame(stock)
+  const wrapped = wrapToolpath({
+    operationId: operation.id,
+    moves: [{ kind: 'cut', from: { x: 4, y: frame.zero, z: 10, a: 0 }, to: { x: 26, y: frame.zero, z: 10, a: 180 } }],
+    warnings: [],
+    bounds: null,
+  }, frame)
+
+  const sheet = recordingContext()
+  drawOperationSnapshot(sheet.ctx, 1200, 760, 1, project, operation, wrapped)
+  const aspect = sheet.width() / sheet.height()
+  // The nominal sheet is 30 long and pi * 12 (about 37.7) across, so it is
+  // taller than it is wide. The blank's own rectangle is 30 x 12 (2.5:1 the
+  // other way), so the ratio tells which one was framed.
+  assert(aspect < 1, `the square snapshot frames the nominal sheet (${aspect.toFixed(2)}:1), not the blank's rectangle`)
+  assert(sheet.width() > 0 && sheet.height() > 0, 'the square snapshot draws the stock outline and the path')
 })

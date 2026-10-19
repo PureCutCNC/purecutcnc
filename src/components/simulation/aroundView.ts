@@ -16,6 +16,7 @@
 
 import * as THREE from 'three'
 import { wrapPoint, type AroundFrame } from '../../engine/aroundFrame'
+import type { BarStock } from '../../types/project'
 
 /**
  * A stable key of a frame's values (issue #395 G3). `SimulationBar` and its
@@ -23,10 +24,19 @@ import { wrapPoint, type AroundFrame } from '../../engine/aroundFrame'
  * viewport keys its Around effects on this string and never on the object's
  * identity: an unrelated project edit must not tear the turn group down or
  * re-frame the camera. `undefined` (a flat setup) keys as `''`.
+ *
+ * The bar's own `shape` and `thickness` are part of the key (#1016 C2-R2V): a
+ * round bar and a square blank of the same physical box produce the same
+ * nominal reference-frame numbers, but they seed different starting heights and
+ * a different radial envelope, so the key must still tell them apart. A side
+ * (or diameter) change is a different key as well, which is what stops a stale
+ * preview surviving a conversion or resize. Callers that only have a frame keep
+ * the original value.
  */
-export function aroundFrameKey(frame: AroundFrame | undefined): string {
+export function aroundFrameKey(frame: AroundFrame | undefined, stock?: BarStock): string {
   if (!frame) return ''
-  return `${frame.axis}:${frame.centre}:${frame.radius}:${frame.zero}:${frame.sheetStart}:${frame.circumference}`
+  const shape = stock ? `:${stock.shape}:${stock.thickness}` : ''
+  return `${frame.axis}:${frame.centre}:${frame.radius}:${frame.zero}:${frame.sheetStart}:${frame.circumference}${shape}`
 }
 
 /** Two frames are the same setup when every value the viewport draws with matches. */

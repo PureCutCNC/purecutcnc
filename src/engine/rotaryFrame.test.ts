@@ -28,6 +28,7 @@
 
 import assert from 'node:assert/strict'
 import { roundStock } from '../types/project'
+import { squareStock } from '../types/barStock'
 import { stockSpacePoint, toolSpacePoint } from './rotaryFrame'
 
 const BAR_X = roundStock(20, 100, 'x')
@@ -135,6 +136,60 @@ for (const stock of [BAR_X, BAR_Y]) {
   // pivot, so it does not move.
   const onCentre = { x: 7, y: 10, z: 10, a: 123 }
   approxPoint(stockSpacePoint(onCentre, BAR_X), { x: 7, y: 10, z: 10 }, 'a point on the centreline is fixed')
+}
+
+// ── 6. The square blank turns about the true pivot (#1016 C2-S3) ─
+//
+// A square blank's frame is the *box's* rigid rotation: across centre = the
+// box centre, up pivot = side / 2. It is not the corner radius, and it is not
+// a different map from the round bar of the same box. The landmark is 45°: a
+// tip straight above the centreline at the corner radius `side / √2` puts the
+// blank's own top corner (side / 2 across, side / 2 up) under the tool.
+
+for (const [side, length, at] of [
+  [20, 100, { x: 0, y: 0 }],
+  [2, 8, { x: 1.5, y: 2.25 }],
+] as const) {
+  for (const axis of ['x', 'y'] as const) {
+    const square = squareStock(side, length, axis, at)
+    const sameBoxRound = roundStock(side, length, axis, at)
+    const bounds = { min: axis === 'x' ? at.y : at.x, max: (axis === 'x' ? at.y : at.x) + side }
+    const pivot = side / 2
+    const centre = (bounds.min + bounds.max) / 2
+    const points = [
+      { x: at.x, y: at.y, z: 0 },
+      { x: at.x + length / 2, y: centre + side / 4, z: pivot - side / 4 },
+      { x: at.x + length, y: centre - side / 3, z: pivot + side / 5 },
+    ]
+    for (const point of points) {
+      for (const a of [-197.25, 0, 33.5, 90, 450]) {
+        const p = { ...point, a }
+        // The blank's shape is the box's; the rotation is the round bar's on
+        // the same box, exactly. A pivot moved to the corner radius fails here.
+        assert.deepEqual(stockSpacePoint(p, square), stockSpacePoint(p, sameBoxRound), `${axis} square ≡ round frame at ${a}°`)
+        assert.deepEqual(toolSpacePoint(point, a, square), toolSpacePoint(point, a, sameBoxRound), `${axis} inverse ≡ round`)
+        // The exact inverse, and the angle is carried.
+        approxPoint(toolSpacePoint(stockSpacePoint(p, square), a, square), point, `${axis} square round trip ${a}°`)
+      }
+      assert.deepEqual(stockSpacePoint(point, square), stockSpacePoint(point, sameBoxRound), `${axis} no-angle passthrough ≡ round`)
+    }
+    // 45° corners: the tip at radius `side / √2` over the centreline meets the
+    // box corner `side / 2` across and `side / 2` above the pivot. All four
+    // quadrants, computed from the square's own side, never from the module.
+    const cornerRadius = side / Math.SQRT2
+    for (const [angle, signAcross, signUp] of [[45, 1, 1], [135, 1, -1], [225, -1, -1], [315, -1, 1]] as const) {
+      const tip = axis === 'x'
+        ? { x: at.x + length / 2, y: centre, z: pivot + cornerRadius, a: angle }
+        : { x: centre, y: at.y + length / 2, z: pivot + cornerRadius, a: angle }
+      const stockPoint = stockSpacePoint(tip, square)
+      const across = axis === 'x' ? stockPoint.y : stockPoint.x
+      approx(across, centre + signAcross * side / 2, `${axis} ${angle}° corner across`, 1e-9)
+      approx(stockPoint.z, pivot + signUp * side / 2, `${axis} ${angle}° corner up`, 1e-9)
+      // And it is a real corner of the box, not a point beyond it.
+      assert.ok(Math.abs(across - centre) <= side / 2 + 1e-9 && Math.abs(stockPoint.z - pivot) <= side / 2 + 1e-9,
+        `${axis} ${angle}° corner lies on the blank's box`)
+    }
+  }
 }
 
 console.log('engine/rotaryFrame.test.ts: all assertions passed')

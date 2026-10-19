@@ -20,6 +20,7 @@ import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import { getStockBounds, isRoundStock, roundStockDiameter, roundStockLength } from '../../types/project'
+import { barLength, isSquareStock } from '../../types/barStock'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { platform } from '../../platform'
@@ -394,12 +395,18 @@ export function AppShell({
         length: formatLength(roundStockLength(project.stock), project.meta.units),
         units: project.meta.units,
       })
-    : t('appShell.status.stockDim', {
-        width: formatLength(stockWidth, project.meta.units),
-        height: formatLength(stockHeight, project.meta.units),
-        thickness: formatLength(project.stock.thickness, project.meta.units),
-        units: project.meta.units,
-      })
+    : isSquareStock(project.stock)
+      ? t('appShell.status.stockDimSquare', {
+          side: formatLength(project.stock.thickness, project.meta.units),
+          length: formatLength(barLength(project.stock), project.meta.units),
+          units: project.meta.units,
+        })
+      : t('appShell.status.stockDim', {
+          width: formatLength(stockWidth, project.meta.units),
+          height: formatLength(stockHeight, project.meta.units),
+          thickness: formatLength(project.stock.thickness, project.meta.units),
+          units: project.meta.units,
+        })
 
   return (
     <UnitConversionContext.Provider value={requestUnitConversion}>

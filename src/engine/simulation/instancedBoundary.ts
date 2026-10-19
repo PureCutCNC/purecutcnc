@@ -448,6 +448,9 @@ export function createInstancedBoundaryGroup(
   group.add(floor)
 
   if (frame) {
+    // The bar's culling bounds reach the grid's radial envelope (the corner
+    // radius on a square blank, the bar radius on a round one) so no raised
+    // corner is clipped; the pivot stays `frame.radius`.
     const bounds = aroundBounds(grid, frame)
     for (const child of group.children) {
       if (!(child instanceof THREE.Mesh)) continue

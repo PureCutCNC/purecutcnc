@@ -53,6 +53,7 @@ import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
 import type { ApplyNestInput } from './helpers/nestApply'
 import type { RotaryPatternInput, RotaryPatternResult } from './helpers/rotaryPatterns'
+import type { RotarySolidInput, RotarySolidResult } from './helpers/rotarySolids'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -415,11 +416,11 @@ export interface ProjectStore {
   /** Set the stock and the machine origin in one undo step (a block↔bar switch moves both). */
   setStockAndOrigin: (stock: Stock, origin: Project['origin']) => void
   /**
-   * Switch the stock between a block and a round bar in one undo step: the
-   * origin follows, a bar gains a chuck, a block loses every chuck and
-   * tailstock (#392 slice C).
+   * Switch the stock between a block, a round bar and a square blank in one
+   * undo step: the origin follows, a bar gains a chuck, a block loses every
+   * chuck and tailstock (#392 slice C, square blank #1016 C2-S2).
    */
-  setStockShape: (shape: 'block' | 'round') => void
+  setStockShape: (shape: 'block' | 'round' | 'square') => void
   /**
    * Choose the project type (issue #1028) in one undo step: the stock takes a
    * shape the new type offers, and — when the selected machine no longer suits
@@ -687,6 +688,14 @@ export interface ProjectStore {
    * Returns the created ids, or a typed refusal that changed nothing.
    */
   addRotaryPattern: (input: RotaryPatternInput, libraryTools?: ToolLibraryEntry[]) => RotaryPatternResult
+  /**
+   * Ordinary generated solids on the Around face (issue #1016 C2-B): a polygon
+   * prism from a round bar, or the round finished target of a square-to-round
+   * job from a real square blank. One undo step creates a folder, an ordinary
+   * `model` feature with its mesh asset, and one rotary rough plus one rotary
+   * finish operation targeting it. A typed refusal changes nothing.
+   */
+  addRotarySolid: (input: RotarySolidInput) => RotarySolidResult
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
   addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 

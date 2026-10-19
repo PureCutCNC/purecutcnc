@@ -64,6 +64,8 @@ import { generateVCarveToolpath } from './vcarve'
 import type { ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project } from '../../types/project'
+import { formatLength } from '../../utils/units'
+import type { Units } from '../../utils/units'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
 import { aroundFrameForOperation, flatFaceProject, unrolledProject, wrapToolpath } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
@@ -97,8 +99,51 @@ export interface OperationToolpathEnvelope {
   raw: ToolpathResult | null
 }
 
-function setupBlockWarning(block: SetupGenerationBlock, operation: Operation): ToolpathWarning {
+/**
+ * The warning for a square blank's unsupported setup (#1016 C2-S4). Its own
+ * refusals are errors, so they block a save; the round/flat mismatch above
+ * keeps its historical warning severity.
+ *
+ * When the physical workholding guard is what refused, the verdict's reason is
+ * carried into the block (`SetupGenerationBlock.refusal`) and the message names
+ * the actual problem rather than saying the setup "cannot cut it". Lengths are
+ * formatted in the project's units. Anything else — a wrapped 2D path, a
+ * non-model target, an unreadable blank or a stale cutter — keeps the generic
+ * code as the fallback (#1016 C2 F3).
+ */
+function squareRotaryBlockWarning(
+  block: SetupGenerationBlock,
+  operation: Operation,
+  units: Units,
+): ToolpathWarning {
+  const refusal = block.refusal
+  const diameter = refusal?.diameter
+  const required = refusal?.required
+  if (refusal?.reason === 'workholdingDiameter'
+    && typeof diameter === 'number' && Number.isFinite(diameter)
+    && typeof required === 'number' && Number.isFinite(required)) {
+    return {
+      code: 'workholdingDiameter',
+      params: {
+        operation: operation.name,
+        clamp: refusal.clampName,
+        diameter: formatLength(diameter, units),
+        required: formatLength(required, units),
+      },
+    }
+  }
+  if (refusal?.reason === 'workholdingPlacement') {
+    return { code: 'workholdingPlacement', params: { operation: operation.name, clamp: refusal.clampName } }
+  }
+  if (refusal?.reason === 'ordinaryClampOverlap') {
+    return { code: 'ordinaryClampOverlap', params: { operation: operation.name, clamp: refusal.clampName } }
+  }
+  return { code: 'postSetupOperationRefused', params: { operation: operation.name } }
+}
+
+function setupBlockWarning(block: SetupGenerationBlock, operation: Operation, units: Units): ToolpathWarning {
   if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
+  if (block.reason === 'squareRotaryUnsupported') return squareRotaryBlockWarning(block, operation, units)
   if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
   return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
 }
@@ -143,7 +188,7 @@ export function computeOperationToolpath(
   const block = setupGenerationBlock(project, operation)
   if (block) {
     return {
-      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation)], bounds: null },
+      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation, project.meta.units)], bounds: null },
       raw: null,
     }
   }

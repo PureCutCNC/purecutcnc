@@ -53,10 +53,12 @@ import { uniqueFolderName } from '../helpers/naming'
 import {
   commitResolvedInstances,
   resolveFeatureInstance,
+  resolveFeatureInstances,
   resolvedProjectFeatures,
   restoreResolvedFeatureMetadata,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
+import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
@@ -91,6 +93,31 @@ function instanceFromReferencedDraft(feature: ReferencedSketchFeature): FeatureI
     feature.definitionId,
     feature.transform,
   )
+}
+
+/**
+ * Whether a derived-creation result would author new geometry on a round-only
+ * Around sheet (issue #1016 C2-U1F, extended by C2-U1G). Offset and cut keep
+ * their source's {@link SketchFeature.authoringFace}, and copies spread their
+ * source row (`copyFeatures.ts`), so the resulting faces are what the policy
+ * judges — not the current workspace face. All of these insert directly rather
+ * than through `addFeature`. An unset face means Top and is never refused.
+ */
+function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
+  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+}
+
+/**
+ * Whether completion of a pending Join would create an Around-derived row on a
+ * square blank (issue #1016 C2-U1F). `mergeSelectedFeatures` derives from its
+ * anchor, so the anchor's face is the resulting face; this pre-check runs
+ * before the join branch's `selectFeatures` and pending clear, which happen
+ * ahead of the merge itself.
+ */
+function pendingJoinWouldAuthorRefusedAround(project: Project, entityIds: string[]): boolean {
+  const features = resolveFeatureInstances(project, entityIds)
+    .filter((feature) => feature.sketch.profile.closed)
+  return features.length >= 2 && aroundSketchAuthoringRefused(project, features[0].authoringFace)
 }
 
 export function createPendingCompletionSlice(
@@ -178,6 +205,17 @@ export function createPendingCompletionSlice(
                 return rest
               })
             : []
+
+          // A copy preserves its source's authoring face (`copyFeatures.ts`
+          // spreads the source row) and is inserted directly, so a Square
+          // blank's round-only Around sheet must refuse the whole completion.
+          // Judged by the rows about to be created, never the workspace face,
+          // so moving the workspace to Top cannot bypass it. In-place moves and
+          // the clamp/tab/backdrop branches create no rows and stay allowed
+          // (issue #1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, cleanedCreatedFeatures)) {
+            return {}
+          }
 
           // Detect group copy: the sources are the ENTIRE membership of one
           // grouped folder. Only then do the copies get their own new grouped
@@ -499,6 +537,13 @@ export function createPendingCompletionSlice(
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
           }
+          // Rotated copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // rotation before any write. In-place rotate stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
+          }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
             ...s.project,
@@ -542,6 +587,13 @@ export function createPendingCompletionSlice(
           )
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
+          }
+          // Mirrored copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // mirror before any write. In-place mirror stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
           }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
@@ -651,6 +703,13 @@ export function createPendingCompletionSlice(
 
       const offsetResult = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
       const createdFeatures = offsetResult.features
+      // A stale request started on a round bar may complete after the blank
+      // became square: its derived features keep the source's Around face and
+      // are inserted directly, so refuse atomically and leave the pending
+      // request, selection, project and history untouched (#1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const createdInstances = createdFeatures.map((feature, index) => {
         const definition = offsetResult.definitions[index]
         if (!definition) {
@@ -710,6 +769,14 @@ export function createPendingCompletionSlice(
           return []
         }
 
+        // Refuse before `selectFeatures` or clearing the pending request: a
+        // Join whose anchor is Around-authored would insert new Around rows on
+        // a square blank (issue #1016 C2-U1F), and the atomic contract leaves
+        // selection and the pending request unchanged.
+        if (pendingJoinWouldAuthorRefusedAround(state.project, pendingShapeAction.entityIds)) {
+          return []
+        }
+
         state.selectFeatures(pendingShapeAction.entityIds)
         const result = get().mergeSelectedFeatures(pendingShapeAction.keepOriginals)
         set({ pendingShapeAction: null })
@@ -738,6 +805,12 @@ export function createPendingCompletionSlice(
       )
       const createdGroups: DerivedFeatureGroup[] = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
+      // A cut keeps each target's Around face and is inserted directly; refuse
+      // before the direct set and leave the pending request unchanged
+      // (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       let definitionIndex = 0
       const createdInstanceGroups: Array<DerivedFeatureGroup<FeatureInstance>> = createdGroups.map((group) => ({
         sourceId: group.sourceId,

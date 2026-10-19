@@ -17,7 +17,8 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
-import type { Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import { barCentre, barPivotZ, isBarStock } from '../types/barStock'
+import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { aroundFeaturesActive } from '../store/helpers/projectType'
@@ -656,14 +657,17 @@ export function applyTabHighlight(mesh: THREE.Mesh, selected: boolean, threePale
 }
 
 /**
- * A chuck or tailstock on a round bar, as a cylinder about the bar's axis. Its
+ * A chuck or tailstock on a bar, as a cylinder about the bar's axis. Its
  * diameter is the clamp's own — the clamp's size across the axis (`h` for axis
  * `'x'`, `w` for axis `'y'`) — its length is the clamp rectangle's extent along
- * the axis, and its centre sits on the bar's centreline at Z = bar diameter / 2.
+ * the axis, and its centre sits on the bar's centreline at the **true turning
+ * pivot**, `barPivotZ` = half the thickness. On a round bar that is the old
+ * radius; on a square blank it must stay `side/2`, never the corner radius
+ * `side/√2`, or the physical chuck would float off the blank (#1016 C2-R2V).
  * `src/store/helpers/roundWorkholding.ts` is what keeps that rectangle centred
  * on the centreline and `height` = bar radius + own radius.
  */
-function roundWorkholdingGeometry(clamp: Clamp, stock: RoundStock): THREE.CylinderGeometry {
+function roundWorkholdingGeometry(clamp: Clamp, stock: BarStock): THREE.CylinderGeometry {
   const diameter = stock.axis === 'x' ? clamp.h : clamp.w
   const length = stock.axis === 'x' ? clamp.w : clamp.h
   const geometry = new THREE.CylinderGeometry(
@@ -672,13 +676,13 @@ function roundWorkholdingGeometry(clamp: Clamp, stock: RoundStock): THREE.Cylind
     length,
     ROUND_BAR_SEGMENTS,
   )
-  const centre = roundStockCentre(stock)
-  const barRadius = roundStockDiameter(stock) / 2
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
   if (stock.axis === 'x') {
     geometry.rotateZ(-Math.PI / 2)
-    geometry.translate(clamp.x + clamp.w / 2, centre, barRadius)
+    geometry.translate(clamp.x + clamp.w / 2, centre, pivot)
   } else {
-    geometry.translate(centre, clamp.y + clamp.h / 2, barRadius)
+    geometry.translate(centre, clamp.y + clamp.h / 2, pivot)
   }
   return geometry
 }
@@ -689,7 +693,7 @@ function isRoundWorkholdingClamp(clamp: Clamp): boolean {
 }
 
 export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, units: Units, threePalette?: ThreeThemePalette, stock?: Stock): THREE.Mesh {
-  const geometry: THREE.BufferGeometry = stock && isRoundStock(stock) && isRoundWorkholdingClamp(clamp)
+  const geometry: THREE.BufferGeometry = stock && isBarStock(stock) && isRoundWorkholdingClamp(clamp)
     ? roundWorkholdingGeometry(clamp, stock)
     : new THREE.ExtrudeGeometry(profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)), {
         depth: Math.max(clamp.height, minRenderHeight(units)),

@@ -24,7 +24,6 @@ import {
   defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
-  isRoundStock,
   LATEST_PROJECT_VERSION, cloneTextLayout,
   normalizeRoundStock,
 } from '../../types/project'
@@ -46,6 +45,7 @@ import type {
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
+import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -572,14 +572,20 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
 
 /**
  * A loaded stock in canonical form. A round bar is repaired by
- * {@link normalizeRoundStock}; anything else — `shape` absent, `'block'`, or an
- * unknown value — becomes a block with no `shape` and no `axis` key, so files
- * written before round stock existed normalize exactly as they did before.
+ * {@link normalizeRoundStock} and a square blank by
+ * {@link normalizeSquareStock}, each keeping its shape and axis; anything else
+ * — `shape` absent, `'block'`, or an unknown value — becomes a block with no
+ * `shape` and no `axis` key, so files written before round stock existed
+ * normalize exactly as they did before and an old 3.3 file is never read as a
+ * bar.
  */
 function canonicalizeStock(stock: Stock): Stock {
   const profile = { ...stock.profile, closed: stock.profile.closed ?? true }
   if (stock.shape === 'round') {
     return normalizeRoundStock({ ...stock, profile })
+  }
+  if (stock.shape === 'square') {
+    return normalizeSquareStock({ ...stock, profile })
   }
   const { shape: _shape, axis: _axis, ...block } = stock as BlockStock & { axis?: unknown }
   return { ...block, profile }
@@ -741,14 +747,15 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
   // The legacy rule moves an origin that sits on the block's min corner (its
-  // former default). A round bar is never a legacy file, so a bar whose origin
-  // the user put on its min corner reloads unchanged.
+  // former default). A bar — round or square — is never a legacy file, so a
+  // bar whose origin the user put on its min corner reloads unchanged
+  // (#1016 C2-S2: a square blank keeps a custom corner origin too).
   const legacyDefaultOrigin = authoritativeProject.origin
     && authoritativeProject.origin.name === 'Origin'
     && authoritativeProject.origin.x === stockBounds.minX
     && authoritativeProject.origin.y === stockBounds.minY
     && authoritativeProject.origin.z === authoritativeProject.stock.thickness
-    && !isRoundStock(authoritativeProject.stock)
+    && !isBarStock(authoritativeProject.stock)
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,

@@ -32,7 +32,7 @@ import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { aroundUnavailableReason, dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
 import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
-import { syncRoundWorkholding } from '../helpers/roundWorkholding'
+import { syncRoundWorkholding, transposeRoundWorkholding } from '../helpers/roundWorkholding'
 import type { ProjectStore, SelectionState } from '../types'
 
 export type SetupsSlice = Pick<
@@ -58,7 +58,9 @@ type SetFn = Parameters<StateCreator<ProjectStore>>[0]
  *
  * The same pass keeps a round bar's chuck and tailstock centred with the
  * height the bar's diameter implies (#392), so a stock resize, a clamp drag,
- * a duplicate or an undo needs no workholding case of its own. A write that
+ * a duplicate or an undo needs no workholding case of its own. A stock re-aim
+ * turns them with the bar (#1016 C2): the clamps keep their distance from the
+ * bar's start end while the along and across dimensions swap. A write that
  * does not affect them leaves the project's identity alone.
  */
 export function withSetupSync<S extends { project: Project }>(
@@ -67,7 +69,15 @@ export function withSetupSync<S extends { project: Project }>(
   return (update) => set((state) => {
     const patch = typeof update === 'function' ? update(state) : update
     if (!patch.project) return patch
-    const project = syncRoundWorkholding(syncWorkspaceSetups(state.project, patch.project))
+    const previous = state.project
+    const next = syncWorkspaceSetups(previous, patch.project)
+    // Only a write that carried the clamps over is a stock re-aim. Undo and
+    // redo restore a cloned project whose clamps already belong to its axis,
+    // so transposing them there would undo the undo.
+    const transposed = next.clamps === previous.clamps
+      ? transposeRoundWorkholding(previous.stock, next)
+      : next
+    const project = syncRoundWorkholding(transposed)
     return project === patch.project ? patch : { ...patch, project }
   })
 }

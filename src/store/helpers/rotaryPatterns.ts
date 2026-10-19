@@ -75,7 +75,7 @@ import { aroundFrame } from '../../engine/aroundFrame'
 import { targetAllowedInSetup } from '../../engine/setupTargets'
 import { convertLength, convertToolUnits } from '../../utils/units'
 import { uniqueName } from '../../import'
-import { activeFace, activeSetup, aroundUnavailableReason } from './activeFace'
+import { activeFace, activeSetup, aroundSketchAuthoringAvailable, aroundUnavailableReason } from './activeFace'
 import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
 import { nextUniqueGeneratedId } from './ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
@@ -344,8 +344,14 @@ function planRotaryPattern(
   input: RotaryPatternInput,
   libraryTools: readonly ToolLibraryEntry[],
 ): RotaryPatternPlan {
-  const unavailable = aroundUnavailableReason(project)
-  if (unavailable) return { ok: false, reason: 'aroundUnavailable', detail: unavailable }
+  // Thread and Flutes are hand-drawn sheet geometry, so they stay round-bar
+  // authoring (issue #1016 C2-U1) even though the Around face itself is
+  // workflow-available on a square blank. The refusal keeps the C1 reason
+  // strings: `needsRoundBar` for either a block or a square, the project-type
+  // reason otherwise.
+  if (!aroundSketchAuthoringAvailable(project)) {
+    return { ok: false, reason: 'aroundUnavailable', detail: aroundUnavailableReason(project) ?? 'needsRoundBar' }
+  }
   if (activeFace(project) !== 'around') return { ok: false, reason: 'aroundNotActive' }
 
   const frame = rotaryPatternFrame(project)

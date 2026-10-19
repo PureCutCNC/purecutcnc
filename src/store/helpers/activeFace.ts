@@ -31,6 +31,7 @@ import {
   setupToCanonicalPoint,
 } from '../../engine/setupOrientation'
 import { defaultTopSetup, isRoundStock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { isThroughFeature as setupIsThroughFeature } from '../../engine/setupTargets'
 import type {
   DimensionRef,
@@ -564,10 +565,18 @@ export function dropGhostSelection(
  *
  * This is the **authoring** guard, so only the two things that actually define
  * the Around geometry are asked: the project type (issue #1028 — only a rotary
- * project has an Around face at all) and the round bar. `aroundFrame` derives
- * the whole surface from the bar's axis, diameter and centre, so a missing
- * machine, a router without a rotary block or a rotary axis across the bar
- * must not stop the user designing on it (issue #1034).
+ * project has an Around face at all) and a bar. `aroundFrame` derives the whole
+ * surface from the bar's axis, diameter and centre, so a missing machine, a
+ * router without a rotary block or a rotary axis across the bar must not stop
+ * the user designing on it (issue #1034).
+ *
+ * Since #1016 C2 the bar may be **round or square**: a real square blank is a
+ * turning job whose finished round target is generated as an ordinary model
+ * (`rotarySolids.ts`), so the face is workflow-available on either shape. The
+ * `needsRoundBar` string is kept for compatibility with the existing UI and
+ * translations even though it now means "not a bar at all" — a block. The
+ * round-only *sketch* rule is separate: see
+ * {@link aroundSketchAuthoringAvailable}.
  *
  * Machine suitability is enforced where it is real — at the output boundary:
  * `projectMachineMismatch` refuses a machine that does not suit the type, and
@@ -582,6 +591,38 @@ export function aroundUnavailableReason(
   project: Pick<Project, 'stock' | 'meta'>,
 ): null | 'needsRotaryProject' | 'needsRoundBar' {
   if (projectType(project) !== 'rotary') return 'needsRotaryProject'
-  if (!isRoundStock(project.stock)) return 'needsRoundBar'
+  if (!isBarStock(project.stock)) return 'needsRoundBar'
   return null
+}
+
+/**
+ * Whether arbitrary 2D geometry may be drawn on the Around sheet (issue #1016
+ * C2-U1). This is deliberately **narrower** than the Around face's workflow
+ * availability ({@link aroundUnavailableReason}): a square blank can be a
+ * turning job — its generated round target and rotary operations are ordinary
+ * authoring — but the unrolled sheet's raw coordinates only describe a round
+ * bar, so hand-drawn Thread/Flutes and arbitrary 2D profiles are refused there.
+ * A round bar, and a project whose type is not rotary, keep their old answer.
+ *
+ * Free of `aroundUnavailableReason` so the two rules can be read and tested
+ * apart: workflow availability admits a square blank, this predicate does not.
+ */
+export function aroundSketchAuthoringAvailable(project: Pick<Project, 'stock' | 'meta'>): boolean {
+  return projectType(project) === 'rotary' && isRoundStock(project.stock)
+}
+
+/**
+ * Whether drawing on `face` is refused because the Around workflow is open but
+ * its sheet is round-only: a square blank in a rotary project. A block is left
+ * to {@link aroundUnavailableReason}'s own refusal (the store discards a write
+ * that would realise its provisional setup), so this answers false there and
+ * the pre-#1016 behavior is untouched.
+ */
+export function aroundSketchAuthoringRefused(
+  project: Pick<Project, 'stock' | 'meta'>,
+  face: SetupFace,
+): boolean {
+  return face === 'around'
+    && aroundUnavailableReason(project) === null
+    && !aroundSketchAuthoringAvailable(project)
 }

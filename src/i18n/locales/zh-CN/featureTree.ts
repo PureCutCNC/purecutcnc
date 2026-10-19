@@ -220,6 +220,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.stock.nameDisabled': '毛坯',
   'featureTree.properties.stock.block': '方块',
   'featureTree.properties.stock.roundBar': '圆棒',
+  'featureTree.properties.stock.squareBlank': '方形毛坯',
+  'featureTree.properties.side': '边长',
   'featureTree.properties.diameter': '直径',
   'featureTree.properties.length': '长度',
   'featureTree.properties.axis': '轴',

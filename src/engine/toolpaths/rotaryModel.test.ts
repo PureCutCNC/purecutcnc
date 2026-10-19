@@ -1566,6 +1566,16 @@ for (const axis of ['x', 'y'] as const) {
   assert.ok(result.moves.length > 0, 'rough fixture generates moves')
   const layers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
   console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${layers.size} layers, ${result.moves.length} moves`)
+  // The rough side of the same frozen matrix as the finish hash below: the
+  // value was captured from the baseline 116f050d module and must not move when
+  // the generators are widened to `BarStock` (#1016 C2-S3). The round bar is
+  // the regression gate for the square work; a square-only change that leaks a
+  // different cap, pass count, layer start or travel height into the round path
+  // fails here.
+  assert.equal(result.moves.length, 2217, 'rough fixture keeps its move count')
+  assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
+    'fac0d7364f3337eabbe95eedc7504e63ef046c642279601d89f4eac55fd2fc24', 'rough fixture keeps its exact points')
+  assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
     // instead of going out to `safeRadius`, so the rough fixture's retract count
@@ -2134,5 +2144,42 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
   }
   assert.ok(compared > 0, 'the strip test compared real samples')
   console.log(`rotary strip: ${compared} tips bit-identical to the full-map reference`)
+}
+// ── invalid radial allowance refuses, on a round bar too ──────
+//
+// The same destructive path exists on a round bar: a negative or non-finite
+// allowance destroys the sampler's radius, every sample reads "no model", and
+// the rough maps that to radius 0 (the pivot). Round output for a valid
+// allowance is unchanged; only an unusable one refuses.
+{
+  const stock = roundStock(40, 60, 'x')
+  const mesh = prism(stock, CIRCLE)
+  const params = { ...FINISH_BASE, stepover: 20, stepdown: 4 }
+  const valid = generateRotaryRough('round-valid', mesh, stock, FINISH_PASS_MM, params, {})
+  assert.ok(valid.moves.length > 0, 'a valid round allowance generates motion')
+  assert.deepEqual(valid.warnings, [], 'a valid round allowance raises no warning')
+  const validLeave = generateRotaryFinish('round-valid-leave', mesh, stock, FINISH_PASS_MM, { ...params, stockToLeave: 0.5 }, {})
+  assert.ok(validLeave.moves.length > 0, 'a valid positive round allowance still generates')
+
+  // -2 gives a zero sampling radius on this 2 mm radius ball, -3 a negative one; both
+  // also fail the non-negative allowance rule. NaN and Infinity fail finiteness.
+  for (const allow of [-2, -3, NaN, Infinity]) {
+    for (const generate of [generateRotaryRough, generateRotaryFinish]) {
+      const result = generate(`round-invalid-${String(allow)}`, mesh, stock, FINISH_PASS_MM, { ...params, stockToLeave: allow }, {})
+      assert.deepEqual(result.moves, [], `round allowance ${String(allow)}: ${generate.name} emits no moves`)
+      assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryStockToLeaveInvalid'],
+        `round allowance ${String(allow)}: ${generate.name} says why`)
+      assert.equal(result.bounds, null, `round allowance ${String(allow)}: ${generate.name} has no bounds`)
+    }
+  }
+  // The sampler distinguishes invalid geometry from empty space: no angle rows
+  // at all and `valid: false`, rather than rows of NaN that the rough would map
+  // to a cut down the axis.
+  const invalidSampling = sampleRotaryModel(mesh, stock, { ...FINISH_PASS_MM, radius: -1, diameter: -4 }, {
+    anglesDeg: [0, 90], along: [FINISH_BASE.alongStart, FINISH_BASE.alongEnd], requestedCellSize: CELL,
+  }, [])
+  assert.equal(invalidSampling.valid, false, 'the round sampler reports invalid tool geometry')
+  assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid round geometry produced no angle rows')
+  assert.deepEqual(invalidSampling.tipRadius, [], 'invalid round geometry cannot look like empty space')
 }
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')

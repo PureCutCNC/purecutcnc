@@ -21,7 +21,15 @@
  * surface unrolled flat, not the bar's own rectangle. `aroundSheet` answers
  * everything that needs to know it — the sheet rectangle, the turn lines for a
  * visible range, the clamp bands and the origin marker — and is null unless the
- * active face is Around on a round bar, so every flat-face path is untouched.
+ * active face is Around on a bar, so every flat-face path is untouched.
+ *
+ * A square blank (#1016 C2-U1V) is a bar too and reads here through the same
+ * nominal reference cylinder `engine/aroundFrame.ts` defines: radius = side / 2
+ * and circumference = π · side. That cylinder is the coordinate mapping of the
+ * unrolled sheet, never a claim that the blank's surface is round — the real
+ * flats and corners are the sampler's and the runout guard's business. Whether
+ * an Around operation may be *authored* on a square blank is the active-face /
+ * operation-validity guard's decision, not this module's.
  *
  * The frame's own numbers live in `engine/aroundFrame.ts`; this module only
  * puts them in canvas terms.
@@ -32,7 +40,8 @@ import type { AroundFrame } from '../../engine/aroundFrame'
 import { isImportedModel } from '../../engine/setupTargets'
 import { activeFace } from '../../store/helpers/activeFace'
 import { resolveSketch } from '../../store/helpers/resolveFeatures'
-import { getProfileBounds, getStockBounds, isAroundSetup, isRoundStock, rectProfile } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
+import { getProfileBounds, getStockBounds, isAroundSetup, rectProfile } from '../../types/project'
 import type { Bounds2D, Clamp, ClampType, MachiningSetup, Operation, Point, Project, SetupFace, Stock } from '../../types/project'
 
 /** The project fields the sheet is read from. */
@@ -111,7 +120,7 @@ export function aroundSheet(
   view?: { acrossMin: number; acrossMax: number },
 ): AroundSheet | null {
   if (activeFace(project) !== 'around') return null
-  if (!isRoundStock(project.stock)) return null
+  if (!isBarStock(project.stock)) return null
   const frame = aroundFrame(project.stock)
   const bounds = getStockBounds(project.stock)
   const rect: Bounds2D = frame.axis === 'x'
@@ -179,7 +188,7 @@ export function aroundSheetForView(
   worldA: Point,
   worldB: Point,
 ): AroundSheet | null {
-  if (!isRoundStock(project.stock)) return null
+  if (!isBarStock(project.stock)) return null
   const range = project.stock.axis === 'x'
     ? { acrossMin: Math.min(worldA.y, worldB.y), acrossMax: Math.max(worldA.y, worldB.y) }
     : { acrossMin: Math.min(worldA.x, worldB.x), acrossMax: Math.max(worldA.x, worldB.x) }
@@ -195,7 +204,7 @@ export function aroundSheetForOperation(
   operation: Pick<Operation, 'id' | 'setupId'>,
 ): AroundSheet | null {
   const setup = setupOfOperation(project, operation)
-  if (!setup || !isAroundSetup(setup) || !isRoundStock(project.stock)) return null
+  if (!setup || !isAroundSetup(setup) || !isBarStock(project.stock)) return null
   return aroundSheet({ ...project, activeSetupId: setup.id }, undefined)
 }
 

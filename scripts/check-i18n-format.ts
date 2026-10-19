@@ -325,6 +325,10 @@ const SENTENCE_CASE_TERMS = new Set([
   // ("cuts it as Rectangular" means the Rectangular setting, not the adjective).
   'Smooth', 'Rectangular', 'Climb', 'Conventional', 'Helix', 'Plunge', 'Direct',
   'Trochoidal', 'Contour', 'Ramp', 'Spiral', 'Parallel', 'Waterline',
+  // The workholding type named as the value to reset to in a refusal
+  // ("reset its type to Chuck" is the clamp-type option, not a style choice,
+  // #1016 C2 F3).
+  'Chuck',
   // The rotary operation family named in prose: "machined by Rotary rough and
   // Rotary finish" names the two operations, not a style choice (issue #1015).
   'Rotary',

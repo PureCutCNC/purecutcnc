@@ -19,6 +19,8 @@ import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { useProjectStore } from '../../store/projectStore'
+import { activeFace, aroundSketchAuthoringRefused } from '../../store/helpers/activeFace'
 import { TextToolDialog } from '../project/TextToolDialog'
 import type { TextToolConfig } from '../../text'
 import { useCreationShapeCommands, type CreationShape } from '../../commands/creationShapes'
@@ -27,6 +29,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { CreationTarget } from '../../store/types'
 import { RotaryPatternActions } from './toolbar/RotaryPatternActions'
+import { RotarySolidActions } from './toolbar/RotarySolidActions'
 
 function RailButton({
   icon,
@@ -145,6 +148,12 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const [showDistributePopover, setShowDistributePopover] = useState(false)
   const [lastCreationShape, setLastCreationShape] = useState<CreationShape>('rect')
   const { t } = useI18n()
+  const project = useProjectStore((state) => state.project)
+  // On a square blank's Around sheet the sheet is round-only, so the drawing
+  // rail is hidden there; the desktop creation block hides the same controls
+  // (issue #1016 C2-U1/U2).
+  const sketchAuthoringRefused = aroundSketchAuthoringRefused(project, activeFace(project))
+  const aroundFace = activeFace(project) === 'around'
   const sketchCommands = useSketchCommands()
   const creationCommands = useCreationShapeCommands({
     onRequestText: () => setShowTextDialog(true),
@@ -200,6 +209,8 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     <>
       <nav className="tool-rail" aria-label={t('appShell.drawer.tools')}>
         {/* Creation target toggle */}
+        {sketchAuthoringRefused ? null : (
+        <>
         <div className="tool-rail__section">
           <div className="tool-rail__target-toggle">
             <button
@@ -273,9 +284,20 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             active={lastCreationOption.active}
             onClick={lastCreationOption.onActivate}
           />
-          {/* Thread and Flutes appear only while the workspace is on Around. */}
-          <RotaryPatternActions variant="rail" />
         </div>
+        </>
+        )}
+
+        {/* Around solids and, on a round bar, Thread and Flutes. The solid
+            entries self-guard on the bar shape, so exactly one of Polygon and
+            Square to round is offered; the group renders only on Around, so no
+            empty rail section is left behind on a flat face. */}
+        {aroundFace && (
+          <div className="tool-rail__section">
+            <RotarySolidActions variant="rail" />
+            <RotaryPatternActions variant="rail" />
+          </div>
+        )}
 
         {/* Edit tools (visible when features selected) */}
         {sketchCommands.predicates.hasSelectedFeatures && (

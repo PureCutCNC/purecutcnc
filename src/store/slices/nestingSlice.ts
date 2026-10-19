@@ -16,6 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import { applyNestToProject, discardNestFromProject } from '../helpers/nestApply'
+import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
@@ -69,6 +70,22 @@ export function createNestingSlice(
       set((s) => {
         const result = applyNestToProject(s.project, input)
         if (!result) return {}
+        // `applyNestToProject` is pure, so the actual copies are inspected in
+        // the resulting project before anything is committed. A nest copy
+        // keeps its source's authoring face (`copyFeatures.ts`), and
+        // `resolveNestParts` can collect an Around row that was never
+        // explicitly selected (a contained member), so a forbidden copy
+        // rejects the ENTIRE result — no partial Top nest and no source
+        // placement move. Move-only nests and Top/STL nests stay allowed
+        // (issue #1016 C2-U1G).
+        if (result.copyIds.length > 0) {
+          const copiedIds = new Set(result.copyIds)
+          const forbidden = result.project.features.some((feature) => (
+            copiedIds.has(feature.id)
+            && aroundSketchAuthoringRefused(result.project, feature.authoringFace)
+          ))
+          if (forbidden) return {}
+        }
         nestId = result.nestId
         const selectedIds = [...input.parts.flatMap((part) => part.featureIds), ...result.copyIds]
         const primaryId = selectedIds.at(-1) ?? null

@@ -17,18 +17,18 @@
 import { findOperationTool } from '../toolPolicy'
 import { useEffect, useMemo, useState } from 'react'
 import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
-import {
-  createSimulationGrid,
-  simulateOperationHeightfield,
-  simulateReplayItemsHeightfield,
-  type SimulationGrid,
-  type SimulationReplayItem,
-  type SimulationResult,
-} from '../engine/simulation'
+import type { SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { setupFace } from '../engine/setupOrientation'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
+import { isSquareStock } from '../types/barStock'
+import {
+  computeSimulationResult,
+  priorReplayGrid,
+  simulationBuildOptions,
+  type SimulationResultInput,
+} from './simulationCompute'
 import {
   buildSimulationSetupInput,
   resolveSimulationSetup,
@@ -37,6 +37,13 @@ import {
   type SimulationSetupInput,
   type SimulationBar,
 } from './simulationSetup'
+
+// The pure computation lives in `simulationCompute.ts` so the focused wiring
+// tests can call it without rendering the hook. It is re-exported here because
+// this hook is where every simulation consumer and its test already look for
+// it.
+export { computeSimulationResult }
+export type { SimulationResultInput }
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
 const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
@@ -206,7 +213,6 @@ export function useSimulationModel({
   const paths: ReadonlyMap<string, ToolpathResult> | null = requiredOperationIds.length === 0
     ? NO_PATHS
     : acquired && acquired.project === project && acquired.requiredKey === requiredKey ? acquired.paths : null
-  const simulationInputPending = centerTab === 'simulation' && paths === null
 
   /**
    * Everything below reads the simulated setup's frame (issue #947): the
@@ -223,7 +229,11 @@ export function useSimulationModel({
     }
     try {
       return buildSimulationSetupInput(project, simulationSetup, canonical)
-    } catch {
+    } catch (error) {
+      // A square blank's actual material has no flat fallback: propagating
+      // here reaches the app's existing error surface instead of drawing a
+      // successful uncut sheet. Round keeps its established null result.
+      if (isSquareStock(project.stock)) throw error
       return null
     }
   }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
@@ -232,68 +242,19 @@ export function useSimulationModel({
     if (centerTab !== 'simulation') {
       return null
     }
-    // The simulated setup's frame: for Top, the project and paths as they are.
-    const localProject = setupInput?.project ?? project
-    const localPaths = setupInput?.toolpaths ?? NO_PATHS
-
-    const emptySimulationResult = {
-      grid: createSimulationGrid(localProject, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      }),
-      stats: {
-        removedCellCount: 0,
-        minTopZ: localProject.stock.thickness,
-        maxRemovedDepth: 0,
-        processedMoveCount: 0,
-      },
-      warnings: [],
-    }
-
-    if (simulationMode === 'selected') {
-      const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
-      if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
-        return emptySimulationResult
-      }
-
-      return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      })
-    }
-
-    const replayItems = (setupInput?.operations ?? [])
-      .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
-      .map((operation) => {
-        const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
-        const toolRecord = findOperationTool(localProject, operation)
-
-        if (!toolpath || !toolRecord) {
-          return null
-        }
-
-        const normalizedTool = normalizeToolForProject(toolRecord, localProject)
-        return {
-          operationId: operation.id,
-          operationName: operation.name,
-          toolRef: toolRecord.id,
-          toolType: toolRecord.type,
-          toolRadius: normalizedTool.radius,
-          vBitAngle: normalizedTool.vBitAngle,
-          toolpath,
-        }
-      })
-      .filter((item) => item !== null)
-
-    if (replayItems.length === 0) {
-      return emptySimulationResult
-    }
-
-    return simulateReplayItemsHeightfield(localProject, replayItems, {
-      targetLongAxisCells: simulationDetailCells,
-      wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
+    return computeSimulationResult({
+      setupInput,
+      project,
+      simulationMode,
+      simulationDetailCells,
+      selectedInSetup,
+      paths,
     })
   }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
+
+  // Only a path acquisition is a wait now: every stock shape's result and
+  // playback base grid are computed synchronously from inputs already in hand.
+  const simulationInputPending = centerTab === 'simulation' && paths === null
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {
@@ -323,8 +284,6 @@ export function useSimulationModel({
     if (paths === null) {
       return null
     }
-    const resolvedPaths = setupInput.toolpaths
-    const setupOperationsInOrder = setupInput.operations
 
     const normalizedSelectedTool = normalizeToolForProject(toolRecord, localProject)
 
@@ -332,47 +291,21 @@ export function useSimulationModel({
     // BEFORE the selected one, replayed into a fresh grid — operations listed
     // after the selection haven't run yet at this point in the cycle, so their
     // cuts shouldn't appear, and another setup's never do (fresh stock,
-    // issue #947). The replay is deferred until the viewport actually
-    // starts playback (lazyOnce): while the simulation tab is open this memo
-    // re-runs on every project change, and eagerly replaying prior operations
-    // each time made ordinary edits pay for a full heightfield replay.
-    const getBaseGrid = lazyOnce((): SimulationGrid => {
-      const selectedIndex = setupOperationsInOrder.findIndex((operation) => operation.id === selectedInSetup.id)
-      const priorOperations = selectedIndex >= 0 ? setupOperationsInOrder.slice(0, selectedIndex) : []
-
-      const priorItems: SimulationReplayItem[] = priorOperations
-        .filter((operation) =>
-          operation.enabled
-          && operation.showToolpath
-          && operation.toolRef,
-        )
-        .map((operation): SimulationReplayItem | null => {
-          // Read, never generate: this runs inside the playback supplier, and a
-          // supplier that could start work would be generation on the playback
-          // path — the thing acquiring these up front exists to prevent.
-          const toolpath = resolvedPaths.get(operation.id) ?? null
-          const operationTool = findOperationTool(localProject, operation)
-          if (!toolpath || !operationTool) {
-            return null
-          }
-          const normalizedTool = normalizeToolForProject(operationTool, localProject)
-          return {
-            operationId: operation.id,
-            operationName: operation.name,
-            toolRef: operationTool.id,
-            toolType: operationTool.type,
-            toolRadius: normalizedTool.radius,
-            vBitAngle: normalizedTool.vBitAngle,
-            toolpath,
-          }
-        })
-        .filter((item): item is SimulationReplayItem => item !== null)
-
-      return simulateReplayItemsHeightfield(localProject, priorItems, {
-        targetLongAxisCells: simulationDetailCells,
-        wrap: setupInput?.bar ? { axis: setupInput.bar.frame.axis === 'x' ? 'y' : 'x', period: setupInput.bar.frame.circumference } : undefined,
-      }).grid
-    })
+    // issue #947).
+    //
+    // The replay is deferred until the viewport actually starts playback
+    // (`lazyOnce`): while the simulation tab is open this memo re-runs on every
+    // project change, and eagerly replaying prior operations each time made
+    // ordinary edits pay for a full heightfield replay. Every stock shape,
+    // square included, replays through this same deferred in-thread path
+    // (issue #1016 C2).
+    const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => priorReplayGrid(
+      localProject,
+      setupInput.operations,
+      setupInput.toolpaths,
+      selectedInSetup.id,
+      simulationBuildOptions(setupInput, simulationDetailCells),
+    ))
 
     const diameter = normalizedSelectedTool.radius * 2
     // Both maxCutDepth and diameter come from `normalizeToolForProject`, so they're

@@ -29,6 +29,7 @@
  */
 
 import { isRotaryOperationKind, isRoundStock } from '../../types/project'
+import { isBarStock, isSquareStock } from '../../types/barStock'
 import { resolveMachineKind } from '../../engine/gcode/types'
 import { setupFace } from '../../engine/setupOrientation'
 import type { MachineDefinition } from '../../engine/gcode/types'
@@ -72,7 +73,8 @@ function inferType(project: {
 }): ProjectType {
   const definition = activeMachine(project)
   if (definition && resolveMachineKind(definition) === 'plasma') return 'plasma'
-  return isRoundStock(project.stock) ? 'rotary' : 'milling'
+  // Either bar shape is a turning job (#1016 C2-S1); a block is milling.
+  return isBarStock(project.stock) ? 'rotary' : 'milling'
 }
 
 /**
@@ -124,10 +126,15 @@ export function projectMachineMismatch(project: Project): null | { expected: Pro
 
 /**
  * Stock shapes a type offers: milling and plasma cut a block, rotary turns a
- * round bar. A type's first entry is the shape it wants.
+ * bar. A type's first entry is the shape it wants.
+ *
+ * Rotary offers both bar shapes (issue #1016 C2-U1): a round bar, and the real
+ * square blank whose finished round target is generated as an ordinary model.
+ * Round stays first, so a project newly switched to rotary gets a round bar
+ * unless it already carries a square blank. No other type offers a square.
  */
-export function stockShapesForProjectType(type: ProjectType): ReadonlyArray<'block' | 'round'> {
-  return type === 'rotary' ? ['round'] : ['block']
+export function stockShapesForProjectType(type: ProjectType): ReadonlyArray<'block' | 'round' | 'square'> {
+  return type === 'rotary' ? ['round', 'square'] : ['block']
 }
 
 /**
@@ -180,18 +187,39 @@ export function operationHiddenByProjectType(
  * Whether an operation is cut in the project as it stands (issue #1028).
  *
  * The kind rule ({@link operationCutsUnderProjectType}) plus the setup's face
- * ({@link operationHiddenByProjectType}). The wider of the two: it answers for
- * "does this operation contribute to the job", so it counts the other family's
- * kind. The export checklist and the export deliberately do **not** use it —
- * they use the narrower hidden-by-type predicate so the other family's
- * operations stay listed and keep their postprocessor warning (issue #960).
+ * ({@link operationHiddenByProjectType}), plus the square blank's Around sheet
+ * (issue #1016 C2-U1): a rotary project on a square blank machines generated
+ * rotary models there, so an operation of another kind sitting in an Around
+ * setup is kept in the project and the tree but is not part of the job. The
+ * wider of the predicates: it answers for "does this operation contribute to
+ * the job", so it counts the other family's kind. The export checklist and the
+ * export deliberately do **not** use it — they use the narrower
+ * hidden-by-type predicate, which the output slice owns.
  */
 export function operationCutsInProject(
   project: Pick<Project, 'meta' | 'stock' | 'setups'>,
   operation: Pick<Operation, 'kind' | 'setupId'>,
 ): boolean {
   if (!operationCutsUnderProjectType(projectType(project), operation.kind)) return false
-  return !operationHiddenByProjectType(project, operation)
+  if (operationHiddenByProjectType(project, operation)) return false
+  return !nonRotaryOperationOnSquareAround(project, operation)
+}
+
+/**
+ * Whether an operation of another kind sits in an Around setup of a rotary
+ * square-blank project (issue #1016 C2-U1). The Around sheet of a square blank
+ * is authored by generated rotary models alone, so a stored 2D operation there
+ * is disabled — it stays exactly where it is, with its geometry and history,
+ * and cuts again if the blank is converted back to round.
+ */
+function nonRotaryOperationOnSquareAround(
+  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
+  operation: Pick<Operation, 'kind' | 'setupId'>,
+): boolean {
+  if (projectType(project) !== 'rotary' || !isSquareStock(project.stock)) return false
+  if (isRotaryOperationKind(operation.kind)) return false
+  const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
+  return setup !== null && setupFace(setup) === 'around'
 }
 
 /** What changing the type would do, for the confirm dialog (slice B). Nothing is deleted. */

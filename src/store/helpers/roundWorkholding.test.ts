@@ -31,12 +31,14 @@ import {
   newProject,
   roundStock,
   roundStockCentre,
+  type BarStock,
   type Clamp,
   type MachineOrigin,
   type Project,
   type RoundStock,
   type Stock,
 } from '../../types/project'
+import { barCentre, barPivotZ, isSquareStock, squareStock } from '../../types/barStock'
 import { convertLength } from '../../utils/units'
 import { applyClampWarnings, expandedClampBounds } from '../../engine/toolpaths/clamps'
 import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
@@ -47,8 +49,9 @@ import {
   isRoundWorkholding,
   roundWorkholdingDiameter,
   syncRoundWorkholding,
+  transposeRoundWorkholding,
 } from './roundWorkholding'
-import { projectWithStockShape } from './stockShape'
+import { projectWithStockShape, resizeRoundStock, resizeSquareStock } from './stockShape'
 
 let passed = 0
 let failed = 0
@@ -96,6 +99,49 @@ function barWithWorkholding(): { project: Project; bar: RoundStock; chuck: Clamp
     ...defaultRoundWorkholding('tailstock', bar, 'mm'),
   }
   return { project: { ...newProject('bar', 'mm'), stock: bar, clamps: [chuck, tailstock] }, bar, chuck }
+}
+
+/** A Y bar with one chuck and one tailstock at their defaults. */
+function yBarWithWorkholding(): { project: Project; bar: RoundStock } {
+  const bar = roundStock(20, 100, 'y', { x: 0, y: 0 })
+  const chuck: Clamp = {
+    id: 'cl-chuck',
+    name: 'Chuck',
+    visible: true,
+    ...defaultRoundWorkholding('chuck', bar, 'mm'),
+  }
+  const tailstock: Clamp = {
+    id: 'cl-tail',
+    name: 'Tailstock',
+    visible: true,
+    ...defaultRoundWorkholding('tailstock', bar, 'mm'),
+  }
+  return { project: { ...newProject('bar-y', 'mm'), stock: bar, clamps: [chuck, tailstock] }, bar }
+}
+
+/** Re-aim the seeded bar through the same store path the Axis control uses. */
+function reaimStock(axis: 'x' | 'y'): void {
+  const state = useProjectStore.getState()
+  const stock = state.project.stock
+  if (isRoundStock(stock)) {
+    state.setStockAndOrigin(resizeRoundStock(stock, { axis }), state.project.origin)
+  } else if (isSquareStock(stock)) {
+    state.setStockAndOrigin(resizeSquareStock(stock, { axis }), state.project.origin)
+  } else {
+    throw new Error('reaimStock: the seed is not a bar')
+  }
+}
+
+/**
+ * A clamp's interval from the bar's start end, in the direction the bar runs:
+ * increasing X from minX, decreasing Y from maxY (the ends
+ * `defaultRoundWorkholding` treats as the start).
+ */
+function alongOf(clamp: Clamp, stock: BarStock): { low: number; size: number; diameter: number } {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x'
+    ? { low: clamp.x - bounds.minX, size: clamp.w, diameter: clamp.h }
+    : { low: bounds.maxY - (clamp.y + clamp.h), size: clamp.h, diameter: clamp.w }
 }
 
 // ── Defaults ──────────────────────────────────────────────────
@@ -227,6 +273,134 @@ test('roundWorkholdingDiameter is the across-axis size', () => {
   assert.equal(roundWorkholdingDiameter(clamp, yBar), 55, 'w across a Y bar')
   assert.equal(isRoundWorkholding(clamp), true, 'a chuck is round workholding')
   assert.equal(isRoundWorkholding({ ...clamp, type: 'toe_clamp' }), false, 'a toe clamp is not')
+})
+
+// ── Re-aiming the bar ─────────────────────────────────────────
+
+console.log('\nRe-aiming the bar turns its workholding')
+
+test('X → Y → X returns the exact original chuck and tailstock', () => {
+  const { project, bar } = barWithWorkholding()
+  const chuck = { ...project.clamps[0], x: 7.25, w: 61.5 }
+  const tailstock = { ...project.clamps[1], x: 104.75, w: 43.25 }
+  seed({ ...project, clamps: [chuck, tailstock] })
+  const original = clampsOf()
+
+  reaimStock('y')
+  reaimStock('x')
+
+  assert.deepEqual(clampsOf(), original, 'the non-default along positions came back exactly')
+  assert.equal((stockOf() as RoundStock).axis, 'x', 'the bar is back on X')
+  assert.notEqual(alongOf(original[0], bar).low, alongOf(project.clamps[0], bar).low,
+    'the chuck really was at a non-default along position')
+})
+
+test('Y → X → Y returns the exact original chuck and tailstock', () => {
+  const { project } = yBarWithWorkholding()
+  const chuck = { ...project.clamps[0], y: 77.5, h: 61.5 }
+  const tailstock = { ...project.clamps[1], y: -47.25, h: 43.25 }
+  seed({ ...project, clamps: [chuck, tailstock] })
+  const original = clampsOf()
+
+  reaimStock('x')
+  reaimStock('y')
+
+  assert.deepEqual(clampsOf(), original, 'the non-default along positions came back exactly')
+  assert.equal((stockOf() as RoundStock).axis, 'y', 'the bar is back on Y')
+})
+
+test('after X → Y the chuck lies along Y, gripping the same distance from the start end', () => {
+  const { project, bar } = barWithWorkholding()
+  const chuck = { ...project.clamps[0], x: 7.25, w: 61.5 }
+  seed({ ...project, clamps: [chuck, project.clamps[1]] })
+
+  reaimStock('y')
+
+  const yBar = stockOf() as BarStock
+  const after = clampsOf()[0]
+  assert.deepEqual(alongOf(after, yBar), alongOf(chuck, bar),
+    'the same along interval from the start end, with its own diameter')
+  assert.equal(after.x + after.w / 2, barCentre(yBar), 'centred across the Y bar')
+  assert.equal(after.w, chuck.h, 'the across dimension became the width')
+  assert.equal(after.h, chuck.w, 'the along dimension became the height')
+  assert.equal(after.height, barPivotZ(yBar) + chuck.h / 2, 'the height follows the new pivot')
+})
+
+test('a block clamp does not turn with the bar', () => {
+  const { project } = barWithWorkholding()
+  const step: Clamp = {
+    id: 'cl-step', name: 'Step', type: 'step_clamp', x: 12.5, y: 3.25, w: 9.75, h: 8.5, height: 4.25, visible: true,
+  }
+  seed({ ...project, clamps: [...project.clamps, step] })
+  const before = clampsOf()[2]
+
+  reaimStock('y')
+
+  const after = clampsOf()[2]
+  assert.equal(after, before, 'the same object came back')
+  assert.deepEqual(after, before, 'an ordinary clamp is untouched')
+})
+
+test('a same-axis resize keeps the clamps byte-for-byte', () => {
+  const { project, bar } = barWithWorkholding()
+  seed(project)
+  const before = clampsOf()
+
+  const longer = resizeRoundStock(bar, { length: 140 })
+  useProjectStore.getState().setStockAndOrigin(longer, project.origin)
+
+  assert.deepEqual(clampsOf(), before, 'a length change is not a re-aim')
+
+  const wider = resizeRoundStock(longer, { diameter: 30 })
+  useProjectStore.getState().setStockAndOrigin(wider, project.origin)
+  const afterDiameter = clampsOf()
+  assert.equal(afterDiameter[0].x, before[0].x, 'the along position is untouched')
+  assert.equal(afterDiameter[0].w, before[0].w, 'the along size is untouched')
+  assert.equal(afterDiameter[0].h, before[0].h, 'the diameter is untouched')
+  assert.equal(afterDiameter[0].y, roundStockCentre(wider) - before[0].h / 2, 'it is only recentred')
+  assert.equal(afterDiameter[0].height, 15 + 25, 'the height follows the new bar diameter')
+
+  const sameAxis = { ...project, stock: longer }
+  assert.equal(transposeRoundWorkholding(bar, sameAxis), sameAxis,
+    'the transpose leaves a same-axis project alone')
+  assert.equal(transposeRoundWorkholding(bar, project), project, 'and an unchanged project too')
+})
+
+test('a square blank X → Y → X returns the exact original chuck', () => {
+  const blank = squareStock(20, 100, 'x', { x: 5, y: 7 })
+  const chuck: Clamp = {
+    id: 'cl-chuck',
+    name: 'Chuck',
+    visible: true,
+    ...defaultRoundWorkholding('chuck', blank, 'mm'),
+  }
+  const moved = { ...chuck, x: 8.5, w: 61.5 }
+  seed({ ...newProject('square', 'mm'), stock: blank, clamps: [moved] })
+  const original = clampsOf()
+
+  reaimStock('y')
+  reaimStock('x')
+
+  assert.deepEqual(clampsOf(), original, 'the square blank keeps the same chuck')
+  assert.equal((stockOf() as { axis?: string }).axis, 'x', 'the blank is back on X')
+})
+
+test('an axis change undoes and redoes without transposing the restored clamps twice', () => {
+  const { project } = barWithWorkholding()
+  const chuck = { ...project.clamps[0], x: 7.25, w: 61.5 }
+  const tailstock = { ...project.clamps[1], x: 104.75, w: 43.25 }
+  seed({ ...project, clamps: [chuck, tailstock] })
+  const original = useProjectStore.getState().project
+
+  reaimStock('y')
+  const reaimed = useProjectStore.getState().project
+  assert.notDeepEqual(reaimed.clamps, original.clamps, 'the axis change did transpose the clamps')
+
+  useProjectStore.getState().undo()
+  assert.deepEqual(useProjectStore.getState().project, original, 'undo restores the whole project')
+
+  useProjectStore.getState().redo()
+  assert.deepEqual(useProjectStore.getState().project, reaimed, 'redo restores the re-aimed project')
 })
 
 // ── projectWithStockShape ─────────────────────────────────────

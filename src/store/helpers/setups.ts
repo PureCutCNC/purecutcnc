@@ -29,7 +29,8 @@
  * has to know setups exist.
  */
 
-import { defaultTopSetup, isRoundStock } from '../../types/project'
+import { defaultTopSetup } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import type {
   MachiningSetup,
   Operation,
@@ -234,7 +235,9 @@ export function syncProjectSetups(project: Project): Project {
   // The bar is only followed while the Around setup is empty: once it holds a
   // feature or an operation, turning the bar from X to Y would silently
   // re-read every stored drawing on a transposed sheet. The axis then stays
-  // put and `aroundStockMismatch` tells the user at generation time.
+  // put and `aroundStockMismatch` tells the user at generation time. Either bar
+  // shape repairs an empty setup's axis (issue #1016 C2-U1): a square blank
+  // turns about X or Y exactly as a round bar does.
   const aroundSetup = setups.find((setup) => setup.kind === 'around')
   const aroundEmpty = aroundSetup === undefined || (
     !project.features.some((feature) => (feature.authoringFace ?? 'top') === 'around')
@@ -242,7 +245,7 @@ export function syncProjectSetups(project: Project): Project {
   )
   let setupsChanged = setups !== currentSetups
   const nextSetups = setups.map((setup) => {
-    const orientation = setup.kind === 'around' && aroundEmpty && isRoundStock(project.stock) && setup.orientation.axis !== project.stock.axis
+    const orientation = setup.kind === 'around' && aroundEmpty && isBarStock(project.stock) && setup.orientation.axis !== project.stock.axis
       ? { axis: project.stock.axis, angleDeg: 0 } : setup.orientation
     const operationIds = members.get(setup.id) ?? []
     const registration = setup.registration.filter((reference) => (

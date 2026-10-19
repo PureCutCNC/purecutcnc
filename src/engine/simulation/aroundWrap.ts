@@ -108,14 +108,28 @@ export function aroundUniforms(frame?: AroundFrame): Record<string, THREE.IUnifo
   } : {}
 }
 
-/** Bounds enclose shader-displaced positions, including the back of the bar. */
-export function aroundBounds(grid: SimulationGrid, frame: AroundFrame): THREE.Box3 {
+/**
+ * Bounds enclose shader-displaced positions, including the back of the bar.
+ *
+ * The box is centred on the true turning pivot, `frame.radius`, and reaches
+ * `maxRadius` in every radial direction. The default is the grid's own radial
+ * envelope, `grid.stockTopZ`: for a round bar that is the bar radius, so the
+ * box is the familiar `0..2r` in world height; for a square blank it is the
+ * corner radius (`side/√2`), so the same call holds the raised corners. Either
+ * way the box grows about the same pivot (`pivot ± maxRadius`), never as
+ * `0..2·maxRadius`, which would lift a raised corner envelope off the bar.
+ */
+export function aroundBounds(grid: SimulationGrid, frame: AroundFrame, maxRadius: number = grid.stockTopZ): THREE.Box3 {
+  if (!Number.isFinite(maxRadius) || maxRadius < 0) {
+    throw new RangeError(`aroundBounds: maxRadius must be positive and finite, got ${maxRadius}`)
+  }
+  const pivot = frame.radius
   return frame.axis === 'x' ? new THREE.Box3(
-    new THREE.Vector3(grid.originX, 0, frame.centre - frame.radius),
-    new THREE.Vector3(grid.originX + grid.cols * grid.cellSize, 2 * frame.radius, frame.centre + frame.radius),
+    new THREE.Vector3(grid.originX, pivot - maxRadius, frame.centre - maxRadius),
+    new THREE.Vector3(grid.originX + grid.cols * grid.cellSize, pivot + maxRadius, frame.centre + maxRadius),
   ) : new THREE.Box3(
-    new THREE.Vector3(frame.centre - frame.radius, 0, grid.originY),
-    new THREE.Vector3(frame.centre + frame.radius, 2 * frame.radius, grid.originY + grid.rows * grid.cellSize),
+    new THREE.Vector3(frame.centre - maxRadius, pivot - maxRadius, grid.originY),
+    new THREE.Vector3(frame.centre + maxRadius, pivot + maxRadius, grid.originY + grid.rows * grid.cellSize),
   )
 }
 

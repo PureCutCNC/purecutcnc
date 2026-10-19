@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-import { getStockBounds, roundStockCentre } from '../../types/project'
-import type { Clamp, RoundStock } from '../../types/project'
+import { getStockBounds } from '../../types/project'
+import type { BarStock, Clamp, RoundStock } from '../../types/project'
+import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, isSquareStock } from '../../types/barStock'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
+import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -47,13 +49,23 @@ export interface RotarySampling {
   readonly along: readonly number[]
   /**
    * One row per angle, one value per `along` position: the tool tip's radius
-   * from the bar's centreline (tool tip height − R) where the tool may go
-   * without gouging the model, or `NaN` where no model lies under the tool
-   * (free travel). Values may be negative (below the centreline); the
-   * generators decide what to do with that.
+   * from the bar's turning pivot (tool tip height − `barPivotZ`) where the tool
+   * may go without gouging the model, or `NaN` where no model lies under the
+   * tool (free travel). Values may be negative (below the pivot); the
+   * generators decide what to do with that. On a square blank a value may
+   * exceed the inscribed radius — the retained corners are material.
    */
   readonly tipRadius: readonly Float32Array[]
   readonly stopped: boolean
+  /**
+   * False when the tool geometry handed to the sampler cannot describe a
+   * cutter at all (`radius` not finite or not positive). Such a result carries
+   * no angle rows, so an invalid radius can never be mistaken for the
+   * legitimate "no model under the tool" sample, which is a `NaN` inside a
+   * row. The rotary generators refuse before sampling; this keeps a direct
+   * caller from turning a meaningless sample into motion.
+   */
+  readonly valid: boolean
 }
 
 /** The turned X/Y bounds of a mesh, accumulated by `turnModelInto`. */
@@ -90,11 +102,11 @@ interface TurnedBounds {
 function turnModelInto(
   out: Float32Array,
   positions: Float32Array,
-  stock: RoundStock,
+  stock: BarStock,
   angleDeg: number,
 ): TurnedBounds {
-  const centre = roundStockCentre(stock)
-  const height = stock.thickness / 2
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock)
   const t = (angleDeg * Math.PI) / 180
   const cos = Math.cos(t)
   const sin = Math.sin(t)
@@ -140,7 +152,7 @@ function turnModelInto(
 }
 
 /** The model's vertices as they sit when the stock is turned to `angleDeg`. */
-export function turnedModelPositions(positions: Float32Array, stock: RoundStock, angleDeg: number): Float32Array {
+export function turnedModelPositions(positions: Float32Array, stock: BarStock, angleDeg: number): Float32Array {
   const turned = new Float32Array(positions.length)
   turnModelInto(turned, positions, stock, angleDeg)
   return turned
@@ -180,9 +192,9 @@ interface StripArc {
 }
 
 /** Every vertex's position in the bar's cross-section plane. */
-function crossSection(positions: Float32Array, stock: RoundStock): { across: Float64Array; up: Float64Array } {
-  const centre = roundStockCentre(stock)
-  const height = stock.thickness / 2
+function crossSection(positions: Float32Array, stock: BarStock): { across: Float64Array; up: Float64Array } {
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock)
   const count = positions.length / 3
   const across = new Float64Array(count)
   const up = new Float64Array(count)
@@ -201,7 +213,7 @@ function crossSection(positions: Float32Array, stock: RoundStock): { across: Flo
 }
 
 /** The along-axis extremes `turnModelInto` folds into its turned bounds. */
-function alongExtremes(positions: Float32Array, stock: RoundStock): { min: number; max: number } {
+function alongExtremes(positions: Float32Array, stock: BarStock): { min: number; max: number } {
   const offset = stock.axis === 'x' ? 0 : 1
   let min = Infinity
   let max = -Infinity
@@ -274,10 +286,10 @@ function turnedBounds(
   hull: Float64Array,
   minAlong: number,
   maxAlong: number,
-  stock: RoundStock,
+  stock: BarStock,
   angleDeg: number,
 ): TurnedBounds {
-  const centre = roundStockCentre(stock)
+  const centre = barCentre(stock)
   const t = (angleDeg * Math.PI) / 180
   const cos = Math.cos(t)
   const sin = Math.sin(t)
@@ -377,7 +389,7 @@ function bucketIndex(angle: number, bucketWidth: number): number {
 /** Build the angle-independent strip plan for one `sampleRotaryModel` call. */
 function buildStripPlan(
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   tool: NormalizedTool,
   requestedCellSize: number,
   anglesDeg: readonly number[],
@@ -478,14 +490,14 @@ function turnStripTriangles(
   index: Uint32Array,
   across: Float64Array,
   up: Float64Array,
-  stock: RoundStock,
+  stock: BarStock,
   cos: number,
   sin: number,
   triangles: Uint32Array,
   count: number,
 ): void {
-  const centre = roundStockCentre(stock)
-  const height = stock.thickness / 2
+  const centre = barCentre(stock)
+  const height = barPivotZ(stock)
   if (stock.axis === 'x') {
     for (let s = 0; s < count; s++) {
       const i = triangles[s]
@@ -517,7 +529,7 @@ function turnStripTriangles(
 
 export function sampleRotaryModel(
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   tool: NormalizedTool,
   options: RotarySampleOptions,
   warnings: ToolpathWarning[],
@@ -525,8 +537,16 @@ export function sampleRotaryModel(
   const anglesDeg: number[] = []
   const along = [...options.along]
   const tipRadius: Float32Array[] = []
-  const centre = roundStockCentre(stock)
-  const radius = stock.thickness / 2
+  // A tool radius that is not finite and positive cannot sample a surface: the
+  // window arithmetic would silently read no cells and every row would be
+  // `NaN`, which is indistinguishable from "no model under the tool". Return
+  // no rows and an explicit invalid verdict instead, so no caller can turn
+  // that failure into a cut along the axis (issue #1016 C2 correction M1).
+  if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
+    return { anglesDeg, along, tipRadius, stopped: false, valid: false }
+  }
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
   // One turned buffer for the whole operation: the mesh is the same size at
   // every angle, and neither the height map nor the sampling retains it, so a
   // fresh 3 V Float32 per angle is allocation the run does not need. Only the
@@ -587,13 +607,13 @@ export function sampleRotaryModel(
       const x = stock.axis === 'x' ? along[i] : centre
       const y = stock.axis === 'x' ? centre : along[i]
       const z = safeToolTipZAt(x, y, heightMap, tool)
-      row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - radius
+      row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
     }
     anglesDeg.push(angle)
     tipRadius.push(row)
     options.onAngle?.(anglesDeg.length, options.anglesDeg.length)
   }
-  return { anglesDeg, along, tipRadius, stopped }
+  return { anglesDeg, along, tipRadius, stopped, valid: true }
 }
 
 export interface RotaryFinishParams {
@@ -607,11 +627,11 @@ export interface RotaryFinishParams {
   readonly alongStart: number
   readonly alongEnd: number
   /**
-   * Tool-tip radius from the centreline for the operation's first positioning
-   * move and its final retract; must be above the bar's surface. Every move
-   * between runs -- a retract, a traverse or a turning link -- travels at the
-   * bar's surface plus a clearance, and the first and last moves go to the
-   * higher of this and that clearance.
+   * Tool-tip radius from the turning pivot for the operation's first
+   * positioning move and its final retract; must be above the blank's surface.
+   * Every move between runs -- a retract, a traverse or a turning link --
+   * travels at the blank's largest surface plus a clearance, and the first and
+   * last moves go to the higher of this and that clearance.
    */
   readonly safeRadius: number
   /** Requested height-map cell size, passed to the sampler. */
@@ -790,6 +810,7 @@ function emitRotaryRuns(
   safeZ: number,
   travelZ: number,
   previousEndedAtEnd: boolean,
+  forceStep?: (from: ToolpathPoint, to: ToolpathPoint) => boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
   let endedAtEnd = false
@@ -822,7 +843,13 @@ function emitRotaryRuns(
       // centreline, so only one of x and y changes, and this is the spacing.
       const spacing = Math.hypot(to.x - from.x, to.y - from.y)
       const rise = to.z - from.z
-      if (Math.abs(rise) > spacing) {
+      // A square blank's retained-stub zone forces the step regardless of the
+      // 45-degree rule: the exact contact chord can sag below the floor over a
+      // shallower-looking drop. A horizontal move is already safe and is left
+      // alone, so a forced segment only splits when it actually changes height.
+      const stepped = Math.abs(rise) > spacing
+        || (Math.abs(rise) > 1e-9 && forceStep?.(from, to) === true)
+      if (stepped) {
         if (rise > 0) {
           // Rising: straight up at the first (lower) sample, then along at the
           // higher tip.
@@ -845,32 +872,86 @@ function emitRotaryRuns(
 }
 
 /**
+ * The most samples one rotary operation may derive (`passes x along positions`).
+ * Both counts are quotients of caller parameters (`2 pi R / stepover` and
+ * `span / sampleSpacing`), so a value that is positive and finite can still ask
+ * for tens of billions of samples; `Array.from` on that length exhausts the
+ * worker rather than refusing. Sixteen million keeps the per-angle tip rows
+ * under a few hundred megabytes and is far above any job the panel describes.
+ */
+const MAX_ROTARY_SAMPLES = 16_000_000
+
+/**
+ * Per-shoulder cap on the extra along samples the square-blank refinement adds,
+ * so a very small requested cell under a large cutter still cannot allocate an
+ * unbounded grid; the spacing is widened to `zone / MAX_SHOULDER_SAMPLES`.
+ */
+const MAX_SHOULDER_SAMPLES = 4096
+
+/**
+ * The along grid's interval count at `spacing`, or null when it is not a
+ * finite, bounded, positive count. `Math.max(spacing, 1e-9)` mirrors the floors
+ * the generators apply, so a caller that slipped past `rotaryRefusal` still
+ * cannot reach an infinite count here.
+ */
+function boundedIntervals(span: number, spacing: number): number | null {
+  const intervals = Math.ceil(Math.abs(span) / Math.max(spacing, 1e-9))
+  if (!Number.isFinite(intervals) || intervals > MAX_ROTARY_SAMPLES) return null
+  return Math.max(1, intervals)
+}
+
+/**
  * Refuse a job whose sample count would be unbounded, and a bar with no surface
  * to cut. `stepover` becomes the angle step (`ceil(2 pi R / stepover)` passes)
  * and `sampleSpacing` the along interval count (`ceil(span / sampleSpacing)`);
  * flooring either at 1e-9 rather than refusing it asks for about 6e10 samples
  * and hangs the worker mid-generation. A bar with no positive radius has no
  * centreline the wrapped points could be placed on.
+ *
+ * The positivity checks alone do not bound those counts: `sampleSpacing = 1e-9`
+ * is positive and finite and asks for 2.4e10 intervals, so the derived counts
+ * themselves are checked here before any grid is allocated (#1016 C2-S3
+ * correction).
+ *
+ * This is the **uniform** bound, cheap enough to run before the along positions
+ * are built. `rotaryTargets` re-checks the budget against the square blank's
+ * actual refined along count, because the shoulder zones add up to `2 *
+ * MAX_SHOULDER_SAMPLES` positions this quotient does not see; keeping this
+ * check as well stops a huge uniform grid from being materialised just to be
+ * refused there.
  */
-function rotaryRefusal(stock: RoundStock, params: RotaryFinishParams): ToolpathWarningCode | null {
-  const radius = stock.thickness / 2
+function rotaryRefusal(stock: BarStock, params: RotaryFinishParams): ToolpathWarningCode | null {
+  const radius = barInscribedRadius(stock)
   if (!(radius > 0) || !Number.isFinite(radius)) return 'aroundStockMismatch'
   if (!(params.stepover > 0) || !Number.isFinite(params.stepover)) return 'operationStepoverRatioRange'
   if (!(params.sampleSpacing > 0) || !Number.isFinite(params.sampleSpacing)) return 'operationStepoverRatioRange'
+  // A non-finite cell makes the height map's own derived width/height
+  // non-finite, which `Array` cannot size; `chooseHeightMapCellSize` clamps a
+  // zero or negative request to 1e-6 but passes a non-finite one through.
+  if (!Number.isFinite(params.requestedCellSize)) return 'operationStepoverRatioRange'
+  const passes = Math.ceil((2 * Math.PI * barMaxRadius(stock)) / params.stepover)
+  const intervals = boundedIntervals(params.alongEnd - params.alongStart, params.sampleSpacing)
+  if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || intervals === null) return 'operationStepoverRatioRange'
+  if (passes * (intervals + 1) > MAX_ROTARY_SAMPLES) return 'operationStepoverRatioRange'
   return null
 }
 
 /**
- * True when any vertex of the target mesh lies outside the bar: farther from
- * its axis than the bar's radius, or past one of the bar's ends. The sampler
- * only sees the bar's own surface there, so those parts are machined as air.
+ * True when any vertex of the target mesh lies outside the bar: past one of
+ * the bar's ends, or outside its physical cross-section. For a round bar that
+ * is farther from the axis than the radius; for a square blank (#1016 C2-S3)
+ * it is outside the **box** `|across − centre| ≤ side / 2`, `|up − pivot| ≤
+ * side / 2` — the actual blank, not the inscribed circle. The sampler only
+ * sees the bar's own surface there, so those parts are machined as air.
  * `tolerance` is the 3D view's minimum render height, so a vertex the view
  * already draws on the surface is on it, not outside it.
  */
-function modelOutsideBar(mesh: RotaryModelMesh, stock: RoundStock, tolerance: number): boolean {
+function modelOutsideBar(mesh: RotaryModelMesh, stock: BarStock, tolerance: number): boolean {
   const bounds = getStockBounds(stock)
-  const radius = stock.thickness / 2
-  const centre = roundStockCentre(stock)
+  const radius = barInscribedRadius(stock)
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const square = isSquareStock(stock)
   const minAlong = stock.axis === 'x' ? bounds.minX : bounds.minY
   const maxAlong = stock.axis === 'x' ? bounds.maxX : bounds.maxY
   for (let i = 0; i < mesh.positions.length; i += 3) {
@@ -878,9 +959,25 @@ function modelOutsideBar(mesh: RotaryModelMesh, stock: RoundStock, tolerance: nu
     const across = stock.axis === 'x' ? mesh.positions[i + 1] : mesh.positions[i]
     const up = mesh.positions[i + 2]
     if (along < minAlong - tolerance || along > maxAlong + tolerance) return true
-    if (Math.hypot(across - centre, up - radius) > radius + tolerance) return true
+    if (square
+      ? squareBlankSectionExit(stock, across, up, tolerance)
+      : Math.hypot(across - centre, up - pivot) > radius + tolerance) return true
   }
   return false
+}
+
+/**
+ * The material the blank keeps beyond the cut range, as a mesh the sampler
+ * also reads: a closed cylinder of the round bar's own radius, or — for a
+ * square blank (#1016 C2-S3) — the closed square prism of the blank's physical
+ * cross-section, both coaxial with the turning pivot. A cylinder standing in
+ * for a square blank would leave its corners unsupported and let a finite
+ * cutter enter them. `null` for an empty span.
+ */
+function retainedBarStub(stock: BarStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
+  return isSquareStock(stock)
+    ? squareBlankRetainedStub(stock, alongFrom, alongTo)
+    : retainedRoundStub(stock, units, alongFrom, alongTo)
 }
 
 /**
@@ -891,10 +988,11 @@ function modelOutsideBar(mesh: RotaryModelMesh, stock: RoundStock, tolerance: nu
  * than the 3D view's own minimum height (100 segments for a 40 mm bar at
  * 0.01 mm). Returns `null` for an empty span.
  */
-function retainedBarStub(stock: RoundStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
-  const radius = stock.thickness / 2
+function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
+  const radius = barInscribedRadius(stock)
   if (!(alongTo - alongFrom > 0) || !(radius > 0)) return null
-  const centre = roundStockCentre(stock)
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
   const sagitta = minRenderHeight(units)
   const segments = Math.max(3, Math.ceil(Math.PI / Math.acos(Math.max(-1, 1 - sagitta / radius))))
   const positions: number[] = []
@@ -903,7 +1001,7 @@ function retainedBarStub(stock: RoundStock, units: Units, alongFrom: number, alo
     for (let i = 0; i < segments; i++) {
       const t = 2 * Math.PI * i / segments
       const across = centre + radius * Math.cos(t)
-      const up = radius + radius * Math.sin(t)
+      const up = pivot + radius * Math.sin(t)
       if (stock.axis === 'x') positions.push(along, across, up)
       else positions.push(across, along, up)
     }
@@ -939,7 +1037,7 @@ function retainedBarStub(stock: RoundStock, units: Units, alongFrom: number, alo
  */
 function withRetainedBar(
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   units: Units,
   alongStart: number,
   alongEnd: number,
@@ -969,18 +1067,317 @@ function withRetainedBar(
   return { positions, index }
 }
 
+/**
+ * The span the cutter's **centre** may travel inside a cut range (#1016 C2-F7).
+ *
+ * A square blank keeps the bar beyond the cut range as retained stock, so a cut
+ * range that ends inside the bar ends on a stub face. `rotaryAlongRange` limits
+ * the centre to the model's extent, which puts it exactly on that face, and the
+ * cutter then reaches a full radius into the retained square. Pulling the centre
+ * one cutter radius inside each stubbed end makes the cutter's rim tangent to
+ * the face: the cutter stays wholly inside the band, every sample is at or
+ * beyond the F6 floor's reach (so that exact floor is a net that no longer
+ * binds), and the pass starts and ends with the emitter's own plunge and
+ * retract. The price, approved for this slice, is that the band within one
+ * cutter radius of a stub face keeps the shoulder fillet the cutter's side
+ * leaves there.
+ *
+ * The pull is rounded **outward** (#1016 C2-F7b): each end is placed a tiny
+ * relative margin (`1e-12` of the coordinate) beyond `face +/- radius`, and the
+ * computed gap is verified to be at least the radius, so `start - alongStart >=
+ * radius` and `alongEnd - end >= radius` hold. `face + radius` can round one ulp
+ * below `radius`, and the along grid's last sample can round a few ulps past the
+ * span end; the F6 floor's strict `gap < reach` test would then lift that
+ * first/last sample to the blank's height -- a shoulder tick on every pass. The
+ * margin is thousands of ulps and about `1e-10 mm` on a 100 mm bar: far below
+ * any real overlap, and enough that neither rounding can cross the tangency. The
+ * floor stays strict; this span is what keeps every real sample at or beyond it.
+ *
+ * The end of a range that meets the bar's own end has no stub and is unchanged;
+ * round bars are returned unchanged (`radius` 0, byte-identical, and their band
+ * is #1042's).
+ *
+ * `null` when the two pulls cross: the caller refuses with the existing
+ * `rotaryNoRoom`, exactly as for an already-empty range.
+ */
+function rotaryCutterSpan(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): { start: number; end: number } | null {
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const radius = isSquareStock(stock) ? tool.radius : 0
+  // `Math.nextUp`/`Math.nextDown` are only proposals, so step the raw bits: one
+  // unit in the last place. The verification loops below rarely need it.
+  const ulpStep = (value: number, direction: 1 | -1): number => {
+    const view = new DataView(new ArrayBuffer(8))
+    view.setFloat64(0, value)
+    view.setBigUint64(0, view.getBigUint64(0) + BigInt(value >= 0 ? direction : -direction))
+    return view.getFloat64(0)
+  }
+  let start = params.alongStart
+  if (radius > 0 && params.alongStart > lower) {
+    // The exact sum can round below the radius, and the along grid's last
+    // sample (`start + (end - start) * i / intervals` in `rotaryAlongPositions`)
+    // can round a few ulps past the span end, so a one-ulp pull is not enough
+    // (#1016 C2-F7b). A nudge of `1e-12` of the coordinate is thousands of ulps
+    // -- about `1e-10 mm` on a 100 mm bar -- and orders of magnitude below any
+    // real overlap, so the strict F6 floor sees a tangency at every sampled end.
+    const margin = Math.max(Math.abs(params.alongStart), radius) * 1e-12
+    start = params.alongStart + radius + margin
+    for (let i = 0; i < 8 && start - params.alongStart < radius; i++) start = ulpStep(start, 1)
+  }
+  let end = params.alongEnd
+  if (radius > 0 && upper > params.alongEnd) {
+    const margin = Math.max(Math.abs(params.alongEnd), radius) * 1e-12
+    end = params.alongEnd - radius - margin
+    for (let i = 0; i < 8 && params.alongEnd - end < radius; i++) end = ulpStep(end, -1)
+  }
+  return start < end ? { start, end } : null
+}
+
+/**
+ * The along positions the sampler reads for one operation, over the
+ * cutter-centre span `rotaryCutterSpan` returns.
+ *
+ * On a round bar this is exactly the uniform grid `sampleSpacing` asks for.
+ *
+ * A square blank's stubbed end starts the required tip at the shoulder height:
+ * the first sample sits one cutter radius inside the band, and while its
+ * footprint still reaches the model at the band's edge the tip is the material
+ * there -- the blank's own surface when the target itself meets the blank at
+ * that edge. It falls to the model as the footprint clears, over the first
+ * cutter footprint plus the height map's cell. Both stubbed ends keep the F6
+ * refinement at that same fine resolution: with the centre one radius off the
+ * stub the exact floor no longer binds, but the along density and the
+ * `MAX_SHOULDER_SAMPLES` cap stay as they were and a steep rise at a band edge
+ * is still resolved. The rest of the span, every unstubbed end and every round
+ * bar are untouched.
+ *
+ * Returns `null` when `MAX_SHOULDER_SAMPLES` would widen the added spacing past
+ * the cell the sampler actually uses: the residual is then larger than the
+ * one-cell allowance the refinement exists to hold, so the caller refuses
+ * (`operationStepoverRatioRange`) instead of accepting a coarser tolerance in
+ * silence.
+ */
+function rotaryAlongPositions(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  span: { readonly start: number; readonly end: number },
+): number[] | null {
+  const start = span.start
+  const end = span.end
+  const intervals = boundedIntervals(end - start, params.sampleSpacing) ?? 1
+  const base: number[] = []
+  for (let i = 0; i <= intervals; i++) base.push(start + (end - start) * i / intervals)
+  if (!isSquareStock(stock)) return base
+  const stockBounds = getStockBounds(stock)
+  const meshAlong = alongExtremes(mesh.positions, stock)
+  const lower = Math.min(stock.axis === 'x' ? stockBounds.minX : stockBounds.minY, meshAlong.min)
+  const upper = Math.max(stock.axis === 'x' ? stockBounds.maxX : stockBounds.maxY, meshAlong.max)
+  // Only a real stub makes a shoulder: `withRetainedBar` leaves one out where
+  // the cut range already meets the bar's end, and then there is no shoulder to
+  // refine and no cap to prove. `rotaryCutterSpan` has already pulled the
+  // centre off that stub face, so this compares the *span* with the bar's ends.
+  const startShoulder = start > lower
+  const endShoulder = end < upper
+  if (!startShoulder && !endShoulder) return base
+  // The sampler's own resolution for the sampling bbox: the requested cell,
+  // clamped and widened by `chooseHeightMapCellSize` when the grid would exceed
+  // its cell cap. The sampling mesh's along extent contains the stock's (the
+  // retained stubs fill it) and its cross extent never passes `barMaxRadius`
+  // from the centre while the model is inside the blank, so this box contains
+  // every angle's turned bbox and its cell is at least the sampler's. The fine
+  // spacing is the requested cell, at most that cell, so the residual the
+  // refinement leaves is no larger than the sampler's own discretization.
+  const envelope = barMaxRadius(stock)
+  const centre = barCentre(stock)
+  const samplingBounds = stock.axis === 'x'
+    ? { minX: lower, maxX: upper, minY: centre - envelope, maxY: centre + envelope }
+    : { minX: centre - envelope, maxX: centre + envelope, minY: lower, maxY: upper }
+  const cell = chooseHeightMapCellSize(samplingBounds, params.requestedCellSize, [])
+  const fine = Math.max(params.requestedCellSize, 1e-6)
+  // A grid already at or below the resolution resolves the shoulder by itself.
+  if (!(params.sampleSpacing > fine)) return base
+  // The sampler widens the tool by `stockToLeave` (see `rotaryTargets`), so the
+  // shoulder sits one *enlarged* footprint inside the span.
+  const zone = tool.radius + Math.max(0, params.stockToLeave) + cell
+  if (!Number.isFinite(zone) || !(zone > 0)) return base
+  let step = fine
+  if (!(zone / step <= MAX_SHOULDER_SAMPLES)) step = zone / MAX_SHOULDER_SAMPLES
+  if (!Number.isFinite(step) || !(step > 0)) return base
+  // The cap can widen `step` past the cell the sampler will actually use. The
+  // sampler's own cell is smallest at a flat -- the turned blank spans `side`
+  // there and `side * sqrt(2)` at a corner -- so the flat-aligned box gives the
+  // smallest cell any angle can have, and comparing `step` with it proves the
+  // one-cell bound at every angle. A spacing that cannot honour it is refused
+  // rather than accepted at a coarser tolerance.
+  const inscribed = barInscribedRadius(stock)
+  const flatBounds = stock.axis === 'x'
+    ? { minX: lower, maxX: upper, minY: centre - inscribed, maxY: centre + inscribed }
+    : { minX: centre - inscribed, maxX: centre + inscribed, minY: lower, maxY: upper }
+  const effectiveCell = chooseHeightMapCellSize(flatBounds, params.requestedCellSize, [])
+  if (step > effectiveCell) return null
+  const addShoulder = (from: number, to: number, direction: number): void => {
+    for (let k = 1; k * step < zone; k++) {
+      const x = from + direction * k * step
+      if (direction > 0 ? x >= to : x <= to) break
+      base.push(x)
+    }
+  }
+  if (startShoulder) addShoulder(start, end, 1)
+  if (endShoulder) addShoulder(end, start, -1)
+  base.sort((a, b) => a - b)
+  const unique: number[] = []
+  for (const x of base) {
+    if (unique.length === 0 || x - unique[unique.length - 1] > 1e-9) unique.push(x)
+  }
+  return unique
+}
+
+/**
+ * The between-sample safety net for a square blank's exact retained-stub floor
+ * (#1016 C2-F6): a predicate that forces the emitter's stepped move on a
+ * segment whose straight chord would sag below the stub contact.
+ *
+ * `rotaryTargets` floors each sample at its own exact stub contact, but two
+ * neighbouring samples are joined by a straight move. The contact height falls
+ * away steeply just outside a square corner, so the chord between the exact
+ * values can dip below the floor in between -- on Codex's 25 mm case a 0.7 mm
+ * drop over the 0.733 mm sample spacing sagged 0.12 mm into the stub. The
+ * emitter's existing stepped move (run along at the higher tip, then drop
+ * straight down) removes that sag, but it only fires when the rise exceeds the
+ * spacing, which is a 45-degree test, not the stub's own geometry.
+ *
+ * The exact test is one comparison per segment. The contact floor is
+ * non-increasing with distance from the stub, so the largest material height
+ * anywhere on a segment is at the endpoint **nearer** the stub. Call that
+ * floor `F` and the farther endpoint's tip `far`. The chord's lowest point is
+ * `min(tipNear, far)`, and the near endpoint was floored, so `tipNear >= F`:
+ * the chord clears the whole interval exactly when `far >= F`. When `far < F`
+ * the near endpoint is also the higher tip and the stepped move's horizontal
+ * leg runs at `tipNear >= F` over the whole segment, while its vertical leg
+ * ends on the (also floored) far sample -- so the step is safe and no other
+ * segment needs one. A horizontal segment is already safe and is not split.
+ *
+ * `undefined` on a round bar and when an end has no retained stub, so their
+ * motion is untouched. A stub's floor is `-Infinity` beyond its cutter radius,
+ * so the predicate is false everywhere the stub cannot reach.
+ */
+function retainedStubStepForced(
+  stock: BarStock,
+  params: RotaryFinishParams,
+  tool: NormalizedTool,
+): ((from: ToolpathPoint, to: ToolpathPoint) => boolean) | undefined {
+  if (!isSquareStock(stock)) return undefined
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const lowerStub = params.alongStart > lower
+  const upperStub = upper > params.alongEnd
+  if (!lowerStub && !upperStub) return undefined
+  const pivot = barPivotZ(stock)
+  const alongOf = (point: ToolpathPoint): number => stock.axis === 'x' ? point.x : point.y
+  const tipOf = (point: ToolpathPoint): number => point.z - pivot
+  // The floor at `along` for the stub whose end face is at `face`.
+  const floorAt = (angle: number, face: number, along: number): number =>
+    squareRotaryStubContactFloor(stock, angle, tool.radius, tool.type, Math.abs(along - face))
+  return (fromPoint, toPoint) => {
+    const fromAlong = alongOf(fromPoint)
+    const toAlong = alongOf(toPoint)
+    if (fromAlong === toAlong) return false
+    const angle = fromPoint.a ?? toPoint.a ?? 0
+    const fromTip = tipOf(fromPoint)
+    const toTip = tipOf(toPoint)
+    if (lowerStub) {
+      const nearAlong = Math.min(fromAlong, toAlong)
+      const farTip = fromAlong <= toAlong ? toTip : fromTip
+      if (farTip < floorAt(angle, params.alongStart, nearAlong)) return true
+    }
+    if (upperStub) {
+      const nearAlong = Math.max(fromAlong, toAlong)
+      const farTip = fromAlong >= toAlong ? toTip : fromTip
+      if (farTip < floorAt(angle, params.alongEnd, nearAlong)) return true
+    }
+    return false
+  }
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   tool: NormalizedTool,
   params: RotaryFinishParams,
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
   warnings: ToolpathWarning[],
-): { angles: number[]; along: number[]; tips: number[][]; stopped: boolean } {
-  const radius = stock.thickness / 2
+): {
+  angles: number[]
+  along: number[]
+  tips: number[][]
+  /**
+   * The exact retained-stub contact at every sample (same shape as `tips`,
+   * `-Infinity` where no stub reaches), or `null` when there is no square stub.
+   * Kept apart from `tips` because `NaN` means "do not cut" to the finish and
+   * "cut to the axis" to the rough: the rough replaces its fallback with this
+   * floor where a stub overlaps (#1016 C2-F6b).
+   */
+  stubFloor: number[][] | null
+  stopped: boolean
+  refusal: ToolpathWarningCode | null
+} {
+  // The tool and its radial allowance are validated before any grid work: an
+  // invalid radius makes every sample read "no model", which the rough would
+  // turn into a cut down to the axis. The allowance must be finite and
+  // non-negative, and the radius it derives for the sampler must still be
+  // positive, or the operation refuses with no motion (issue #1016 C2
+  // correction M1).
   const stockToLeave = params.stockToLeave
+  if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
+  }
+  const samplingRadius = tool.radius + stockToLeave
+  if (!Number.isFinite(stockToLeave) || stockToLeave < 0
+    || !(samplingRadius > 0) || !Number.isFinite(samplingRadius)) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
+  }
+  // The radius the samples are capped at and the angular step is derived from
+  // is the blank's *largest* radius, not the inscribed one (#1016 C2-S3): a
+  // square blank stands material out to its corners at every angle, so passes
+  // spaced for the inscribed circle would step past the corners. The step is
+  // therefore conservative for a square and exactly the old one for a round
+  // bar (where the two radii are equal).
+  // The cutter-centre span (#1016 C2-F7): the cut range pulled one cutter radius
+  // inside a square blank's stubbed ends, so no sample overlaps the retained
+  // stock. `params.alongStart`/`alongEnd` stay the *band*, and so the stub faces
+  // the sampler, the F6 floor and the step predicate read. A span that collapses
+  // has no room for the cutter at all and refuses like an empty range.
+  const span = rotaryCutterSpan(stock, tool, params)
+  if (!span) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryNoRoom' }
+  }
+  const maxRadius = barMaxRadius(stock)
+  const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
+  const along = rotaryAlongPositions(mesh, stock, tool, params, span)
+  if (along === null) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+  }
+  // The budget is checked against the *refined* along count (#1016 C2-S3
+  // correction). `rotaryRefusal` bounds the uniform `passes x (intervals + 1)`
+  // grid, but a square blank's shoulder zones add up to
+  // `2 * MAX_SHOULDER_SAMPLES` positions on top of it, and `passes x
+  // along.length` is the size of the angle-row grid allocated just below. A
+  // 100,000-pass operation with 8,000 shoulder positions passed the uniform
+  // bound at 300,000 samples and then asked for ~8e8; refusing here is what
+  // keeps that allocation from happening.
+  if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || passes * along.length > MAX_ROTARY_SAMPLES) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+  }
   // One warning per operation, however many vertices stick out: the user can
   // only move the model or pick a bigger bar, and the sampler's answer is the
   // same either way. This judges the model alone -- the retained-bar stubs
@@ -997,12 +1394,8 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
-  const passes = Math.max(1, Math.ceil((2 * Math.PI * radius) / Math.max(params.stepover, 1e-9)))
   const angleStep = 360 / passes
   const angles = Array.from({ length: passes }, (_, k) => k * angleStep)
-  const span = Math.abs(params.alongEnd - params.alongStart)
-  const intervals = span <= 0 ? 1 : Math.max(1, Math.ceil(span / Math.max(params.sampleSpacing, 1e-9)))
-  const along = Array.from({ length: intervals + 1 }, (_, i) => params.alongStart + (params.alongEnd - params.alongStart) * i / intervals)
   const sampling = sampleRotaryModel(
     withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd),
     stock,
@@ -1015,7 +1408,10 @@ function rotaryTargets(
     },
     warnings,
   )
-  if (sampling.stopped) return { angles, along, tips: [], stopped: true }
+  if (!sampling.valid) {
+    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
+  }
+  if (sampling.stopped) return { angles, along, tips: [], stubFloor: null, stopped: true, refusal: null }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
   // decides it carries the stock offset, so leaving stock does not hide a model
@@ -1037,11 +1433,65 @@ function rotaryTargets(
     }
   }
   // A `NaN` sample (no model under the tool) stays `NaN`: the finish treats it
-  // as "do not cut" and the rough as "remove down to the centreline". Every
-  // finite value is floored at the centreline and capped at the bar's surface.
+  // as "do not cut" and the rough as "remove down to the pivot". Every finite
+  // value is floored at the pivot and capped at the blank's largest radius, so
+  // retained square corners above the inscribed radius survive (#1016 C2-S3);
+  // on a round bar the cap is the surface it always was.
   const tips = sampling.tipRadius.map((row) => Array.from(row, (raw) =>
-    Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), radius) : NaN))
-  return { angles, along, tips, stopped: false }
+    Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN))
+  // The retained end stubs are stock the cutter's side must never enter, and
+  // the sampler's discrete footprint can miss a thin axial overlap between the
+  // cutter's rim and a stub's end face (#1016 C2-F6): Codex's 25 mm repro read
+  // the model's 9.999256 at `x = 20.933333` while the retained `x < 18` stub's
+  // flat stands at 12.5, and the vertical plunge there put the rim 0.066667 mm
+  // into the stub. `squareRotaryStubContactFloor` is the exact closed-form
+  // contact height for the **real** cutter (radius `tool.radius`, not the
+  // stock-to-leave-enlarged sampling tool) at this pass angle and along
+  // position, so flooring the final tips -- after the normal stock offset has
+  // been added back -- makes the stub contact exact instead of one cell
+  // approximate. The finish reads `tips`; the rough reads `tips` and
+  // `stubFloor`, and re-uses one row for every layer, so this is the one shared
+  // place. A `NaN` sample stays `NaN` in `tips` -- the finish must not cut
+  // there -- but its floor is still recorded in `stubFloor`, because the rough
+  // turns `NaN` into "cut to the axis" and an off-axis model leaves `NaN`
+  // samples inside a stub's axial reach (#1016 C2-F6b). The rough takes
+  // `max(axis, floor)` from that row, so a stub that does not reach the sample
+  // leaves the axis fallback exactly as it was. Round bars take the old path
+  // byte for byte (`withRetainedBar` still meshes their stub, but the floor is
+  // only square, and `squareRotaryStubContactFloor` never lifts a round
+  // sample).
+  let stubFloor: number[][] | null = null
+  if (isSquareStock(stock)) {
+    const bounds = getStockBounds(stock)
+    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    // No stub exists at an end the cut range already meets; `rotaryAlongPositions`
+    // draws the same line before it refines a shoulder.
+    const lowerStub = params.alongStart > lower
+    const upperStub = upper > params.alongEnd
+    if (lowerStub || upperStub) {
+      stubFloor = tips.map((row) => new Array<number>(row.length).fill(Number.NEGATIVE_INFINITY))
+      for (let k = 0; k < tips.length; k++) {
+        const angle = angles[k]
+        const row = tips[k]
+        const floors = stubFloor[k]
+        for (let i = 0; i < row.length; i++) {
+          let floor = Number.NEGATIVE_INFINITY
+          if (lowerStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, angle, tool.radius, tool.type, along[i] - params.alongStart))
+          }
+          if (upperStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, angle, tool.radius, tool.type, params.alongEnd - along[i]))
+          }
+          floors[i] = floor
+          if (Number.isFinite(row[i]) && floor > row[i]) row[i] = floor
+        }
+      }
+    }
+  }
+  return { angles, along, tips, stubFloor, stopped: false, refusal: null }
 }
 
 /**
@@ -1075,7 +1525,7 @@ function rotaryTargets(
 export function generateRotaryFinish(
   operationId: string,
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   tool: NormalizedTool,
   params: RotaryFinishParams,
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
@@ -1093,25 +1543,31 @@ export function generateRotaryFinish(
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
   }
-  const radius = stock.thickness / 2
-  const centre = roundStockCentre(stock)
+  const pivot = barPivotZ(stock)
+  const centre = barCentre(stock)
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
+  if (sampling.refusal) {
+    return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
+  }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
   // Every move between runs -- a turning link, the retract off a run, or the
-  // traverse to the next run -- travels at the bar's surface plus a clearance,
-  // so it always clears the model and the standing stock between two pass
-  // angles. `safeRadius` does not cap it: a rapid height only a fifth of a
-  // millimetre above the bar would otherwise replace the clearance, and the
-  // clearance is the whole reason the between-run moves are safe. The
-  // operation's first positioning move and its final retract go to the higher
-  // of `safeRadius` and that travel height.
-  const travelZ = 2 * radius + convertLength(1, 'mm', tool.units)
-  const safeZ = Math.max(radius + params.safeRadius, travelZ)
+  // traverse to the next run -- travels at the blank's largest surface plus a
+  // clearance, so it always clears the model and the standing stock between two
+  // pass angles. The blank's turning envelope reaches its corner radius from
+  // the pivot at some angle, so that -- not the inscribed radius -- is the height
+  // nothing may travel below; on a round bar the two are equal. `safeRadius`
+  // does not cap it: a rapid height only a fifth of a millimetre above the bar
+  // would otherwise replace the clearance, and the clearance is the whole
+  // reason the between-run moves are safe. The operation's first positioning
+  // move and its final retract go to the higher of `safeRadius` and that travel
+  // height.
+  const travelZ = rotaryTravelZ(stock, tool.units)
+  const safeZ = Math.max(pivot + params.safeRadius, travelZ)
   // Sample `i` of a pass sits at `along[rowIndexAt(k, i)]`: even passes run from
   // alongStart to alongEnd, odd ones back, so the row index of position `i` is
   // mirrored on a return pass. Everything that reads a height must use the same
@@ -1122,9 +1578,10 @@ export function generateRotaryFinish(
     pass % 2 === 0 ? positionIndex : along.length - 1 - positionIndex
   const tipAt = (pass: number, positionIndex: number): number => sampling.tips[pass][rowIndexAt(pass, positionIndex)]
   const point = (alongPosition: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
-    ? { x: alongPosition, y: centre, z: radius + tip, a: angle }
-    : { x: centre, y: alongPosition, z: radius + tip, a: angle }
+    ? { x: alongPosition, y: centre, z: pivot + tip, a: angle }
+    : { x: centre, y: alongPosition, z: pivot + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
+  const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
@@ -1144,7 +1601,7 @@ export function generateRotaryFinish(
       runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
       i++
     }
-    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
+    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
     here = emitted.here
     previousEndedAtEnd = emitted.endedAtEnd
   }
@@ -1161,7 +1618,7 @@ export interface RotarySupports {
 }
 
 export function rotaryAlongRange(
-  stock: RoundStock,
+  stock: BarStock,
   clamps: readonly Clamp[],
   modelAlong: { readonly min: number; readonly max: number },
   tool: NormalizedTool,
@@ -1209,7 +1666,7 @@ export interface RotaryRoughParams extends RotaryFinishParams {
 export function generateRotaryRough(
   operationId: string,
   mesh: RotaryModelMesh,
-  stock: RoundStock,
+  stock: BarStock,
   tool: NormalizedTool,
   params: RotaryRoughParams,
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
@@ -1229,41 +1686,66 @@ export function generateRotaryRough(
   }
   const warnings: ToolpathWarning[] = []
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
+  if (sampling.refusal) {
+    return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
+  }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   // A `NaN` sample means "no model under the tool", which for the rough is the
-  // centreline: it removes the layer down to the axis there. The finish does
+  // pivot: it removes the layer down to the axis there. The finish does
   // the opposite -- a `NaN` sample is not cut -- because only the rough exists
-  // to take waste off.
-  const tips = sampling.tips.map((row) => row.map((tip) => Number.isFinite(tip) ? tip : 0))
+  // to take waste off. Where a square blank's retained stub reaches the sample
+  // the axis fallback is not allowed -- the cutter's side would enter the stub --
+  // so the effective tip is the higher of the fallback and the exact contact
+  // (#1016 C2-F6b). `stubFloor` is `null` on a round bar and `-Infinity`
+  // wherever no stub reaches, which leaves the old fallback byte for byte.
+  const stubFloor = sampling.stubFloor
+  const tips = sampling.tips.map((row, k) => row.map((tip, i) =>
+    Number.isFinite(tip) ? tip : Math.max(0, stubFloor ? stubFloor[k][i] : Number.NEGATIVE_INFINITY)))
   const { angles, along } = sampling
-  const radius = stock.thickness / 2
-  const centre = roundStockCentre(stock)
+  const pivot = barPivotZ(stock)
+  const maxRadius = barMaxRadius(stock)
+  const centre = barCentre(stock)
+  const square = isSquareStock(stock)
   // Every move between runs at every layer -- a turning link, the retract off a
-  // run, or the traverse to the next run -- travels at the bar's surface plus a
-  // clearance, for the same reason the finish does: the model between the two
-  // pass angles is not otherwise checked, and a full retract to `safeRadius` on
-  // every gap dominates a many-layer rough. `safeRadius` is never allowed to cap
-  // it down towards the bar; the first positioning move and the final retract go
-  // to the higher of the two heights.
-  const travelZ = 2 * radius + convertLength(1, 'mm', tool.units)
-  const safeZ = Math.max(radius + params.safeRadius, travelZ)
-  let lowest = radius
+  // run, or the traverse to the next run -- travels at the blank's largest
+  // surface plus a clearance, for the same reason the finish does: the model
+  // between the two pass angles is not otherwise checked, and a full retract to
+  // `safeRadius` on every gap dominates a many-layer rough. `safeRadius` is
+  // never allowed to cap it down towards the bar; the first positioning move
+  // and the final retract go to the higher of the two heights.
+  const travelZ = rotaryTravelZ(stock, tool.units)
+  const safeZ = Math.max(pivot + params.safeRadius, travelZ)
+  // The layer count and the band each layer cuts are still counted from the
+  // blank's largest radius, so a square blank's corners are covered from the
+  // first layer (#1016 C2-S3). What changes for a square is *which* of those
+  // bands a pass actually cuts: a flat's bottom is a disc at the tip, so a pass
+  // skips a band whose tip is at or above the inside-slab material height the
+  // blank reaches at that angle (#1016 C2-F2, C2-F2b); a ball's lower surface
+  // is a sphere, so the same call returns its exact contact height instead of
+  // that upper bound (#1016 C2-F2c). A round bar's footprint radius is
+  // constant, so it keeps the old output byte for byte and the helper is not
+  // even called.
+  let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
-  const layers = Math.ceil((radius - lowest) / params.stepdown)
+  const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
+  const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
-    ? { x: position, y: centre, z: radius + tip, a: angle }
-    : { x: centre, y: position, z: radius + tip, a: angle }
+    ? { x: position, y: centre, z: pivot + tip, a: angle }
+    : { x: centre, y: position, z: pivot + tip, a: angle }
   for (let layer = 1; layer <= layers; layer++) {
-    const previousRadius = radius - (layer - 1) * params.stepdown
-    const layerRadius = Math.max(lowest, radius - layer * params.stepdown)
+    const previousRadius = maxRadius - (layer - 1) * params.stepdown
+    const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
     // A new layer never links to the previous one, however its last pass ended.
     let previousEndedAtEnd = false
     for (let pass = 0; pass < angles.length; pass++) {
       const angle = angles[pass] + (layer - 1) * 360
+      const touchesMaterial = !square
+        || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
       const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
-      const needsCut = (i: number): boolean => tips[pass][indexAt(i)] < previousRadius
+      const needsCut = (i: number): boolean =>
+        touchesMaterial && tips[pass][indexAt(i)] < previousRadius
       const at = (i: number): ToolpathPoint => {
         const index = indexAt(i)
         return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
@@ -1280,7 +1762,7 @@ export function generateRotaryRough(
         runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
         i++
       }
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd
     }

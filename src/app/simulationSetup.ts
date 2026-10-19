@@ -44,8 +44,9 @@
  * to the bar's unrolled sheet and have no place on its rectangle.
  */
 
-import type { Clamp, MachineOrigin, MachiningSetup, Operation, Project, RoundStock } from '../types/project'
-import { isAroundSetup, isRoundStock } from '../types/project'
+import type { BarStock, Clamp, MachineOrigin, MachiningSetup, Operation, Project } from '../types/project'
+import { isAroundSetup } from '../types/project'
+import { isBarStock, isSquareStock } from '../types/barStock'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
@@ -53,18 +54,25 @@ import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameP
 import { aroundFrame, aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
 import { foldToolpath } from '../engine/aroundFold'
 import type { AroundFrame } from '../engine/aroundFrame'
+import { validateSquareBar } from '../engine/simulation/grid'
+import type { SquareBarDescriptor } from '../engine/simulation/types'
 import { activeSetup } from '../store/helpers/activeFace'
 
-/** Real bar display data alongside the unchanged unrolled replay project. */
+/**
+ * Real bar display data alongside the unchanged unrolled replay project. A
+ * square blank is a bar too: it unrolls through the same nominal reference
+ * cylinder, and the common heightfield renderer draws the blank's own seeded
+ * cross section (issue #1016 C2).
+ */
 export interface SimulationBar {
   frame: AroundFrame
-  stock: RoundStock
+  stock: BarStock
   clamps: Clamp[]
   origin: MachineOrigin
 }
 
 export function buildSimulationBar(project: Project, frame: AroundFrame): SimulationBar | undefined {
-  if (!isRoundStock(project.stock)) return undefined
+  if (!isBarStock(project.stock)) return undefined
   return {
     frame,
     stock: project.stock,
@@ -76,6 +84,16 @@ export function buildSimulationBar(project: Project, frame: AroundFrame): Simula
 /** Everything one setup's simulation needs, all of it in that setup's frame. */
 export interface SimulationSetupInput {
   bar?: SimulationBar
+  /**
+   * The square blank's grid initialization input, present only when the real
+   * stock is square (issue #1016 C2). `side` is the physical blank side and
+   * `frame` is the nominal reference cylinder the unrolled sheet is framed in;
+   * the true turning pivot stays `frame.radius = side/2`, never the corner
+   * radius. It seeds each cell's starting radius in `createSimulationGrid` and
+   * then leaves the picture — nothing downstream of initialization needs to
+   * know the blank was square. Transient — never persisted.
+   */
+  squareBar?: SquareBarDescriptor
   /** The project turned into the setup's frame; the same object for Top. */
   project: Project
   /** The setup's operations, in the order they are cut, disabled and hidden included. */
@@ -101,7 +119,7 @@ function frameForSetup(setup: MachiningSetup, project: Pick<Project, 'stock'>): 
  * that setup instead of raising out of a render pass.
  */
 function aroundSimulationFrame(project: Project, operations: readonly Operation[], setup: MachiningSetup): AroundFrame | null {
-  if (!isRoundStock(project.stock) || setup.orientation.axis !== project.stock.axis) return null
+  if (!isBarStock(project.stock) || setup.orientation.axis !== project.stock.axis) return null
   if (operations.length === 0) return aroundFrame(project.stock)
   for (const operation of operations) {
     try {
@@ -161,8 +179,11 @@ function unrolledSimulationProject(project: Project, frame: AroundFrame): Projec
  * clipped to that one circumference (`unrolledSimulationProject`): the sheet is
  * what is drawn, not the whole multi-turn keep-out the generators use.
  * Everything downstream then cuts a flat job unchanged. An Around setup whose
- * bar is no longer a round bar on its axis yields `null` — no simulation for
- * that setup — rather than throwing.
+ * bar is no longer a bar on its axis yields `null` — no simulation for that
+ * setup — rather than throwing. A square blank is the exception: it has no
+ * honest flat fallback (a flat sheet would report a successful uncut block for
+ * a real square-to-round job), so a missing square Around frame throws and the
+ * app's existing error surface reports it. The round behaviour is unchanged.
  */
 export function buildSimulationSetupInput(
   project: Project,
@@ -172,7 +193,16 @@ export function buildSimulationSetupInput(
   const operations = setupOperations(project, setup)
 
   const around = isAroundSetup(setup) ? aroundSimulationFrame(project, operations, setup) : null
-  if (isAroundSetup(setup) && !around) return null
+  if (isAroundSetup(setup) && !around) {
+    // A square blank has no honest flat fallback: the flat sheet would draw an
+    // uncut block that claims the job succeeded. Refuse loudly, reusing the
+    // app's existing error surface, while a round bar keeps the established
+    // "no simulation for this setup" result.
+    if (isSquareStock(project.stock)) {
+      throw new RangeError("The Around setup must match the square bar's axis.")
+    }
+    return null
+  }
 
   const frame = around ? undefined : frameForSetup(setup, project)
   const localToolpaths = new Map<string, ToolpathResult>()
@@ -185,14 +215,34 @@ export function buildSimulationSetupInput(
     )
   }
 
+  // The real bar display data and, for a square blank, its grid initialization
+  // input ride beside the unrolled block and its exact frozen Around frame
+  // (issue #1016 C2-R2V). This is the one coordinate mapping: the descriptor's
+  // frame is the sheet's, the pivot is `side/2`.
+  const bar = around ? buildSimulationBar(project, around) : undefined
+  const squareBar = around && bar && isSquareStock(bar.stock) ? squareBarFor(bar.stock, around) : undefined
+
   return {
     project: around
       ? unrolledSimulationProject(project, around)
       : projectInSetupFrame(flatFaceProject(project), frame),
     operations,
     toolpaths: localToolpaths,
-    ...(around ? { bar: buildSimulationBar(project, around) } : {}),
+    ...(bar ? { bar } : {}),
+    ...(squareBar ? { squareBar } : {}),
   }
+}
+
+/**
+ * The transient square grid-initialization descriptor for the real blank. It is
+ * validated here, before any grid allocation, through the same helper
+ * `createSimulationGrid` uses: a frame whose radius is not `side/2` (or a
+ * non-finite side) must surface, never be approximated by the round sheet.
+ */
+function squareBarFor(stock: BarStock, frame: AroundFrame): SquareBarDescriptor {
+  const descriptor: SquareBarDescriptor = { side: stock.thickness, frame }
+  validateSquareBar(descriptor)
+  return descriptor
 }
 
 /**

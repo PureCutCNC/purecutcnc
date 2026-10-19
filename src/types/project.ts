@@ -583,7 +583,22 @@ export interface RoundStock extends StockBase {
   axis: StockAxis
 }
 
-export type Stock = BlockStock | RoundStock
+/**
+ * A square bar lying along `axis` — the physical blank a square-to-round job
+ * turns (#1016 C2-S1). `thickness` is the physical side and `profile` is the
+ * rectangle the bar shows from above: side across `axis`, length along it. The
+ * corner radius is therefore `thickness * √½`, not the round bar's half-side;
+ * the pure geometry lives in `barStock.ts`.
+ */
+export interface SquareStock extends StockBase {
+  shape: 'square'
+  axis: StockAxis
+}
+
+/** The bar stock shapes: a round bar or a square blank. */
+export type BarStock = RoundStock | SquareStock
+
+export type Stock = BlockStock | RoundStock | SquareStock
 
 export interface GridSettings {
   extent: number
@@ -1713,8 +1728,14 @@ export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): numb
 
 export function defaultOrigin(stock: Stock): MachineOrigin {
   const bounds = getStockBounds(stock)
-  if (isRoundStock(stock)) {
-    const centre = roundStockCentre(stock)
+  // Both bars sit their default origin on the centreline (#1016 C2-S2): the
+  // round bar's former rule, with the same X-start / Y-start convention, so a
+  // square blank's origin is X minX / Y centre (axis 'x') and X centre / Y maxY
+  // (axis 'y'), and Z stays the physical top. A block keeps its corner origin.
+  if (isRoundStock(stock) || stock.shape === 'square') {
+    const centre = stock.axis === 'x'
+      ? (bounds.minY + bounds.maxY) / 2
+      : (bounds.minX + bounds.maxX) / 2
     return {
       name: 'Origin',
       x: stock.axis === 'x' ? bounds.minX : centre,

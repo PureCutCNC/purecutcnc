@@ -42,7 +42,8 @@
  * store's target validator.
  */
 
-import { isRoundStock, isRotaryOperationKind } from '../types/project'
+import { isBarStock, isSquareStock } from '../types/barStock'
+import { isRotaryOperationKind } from '../types/project'
 import { activeSetup } from '../store/helpers/activeFace'
 import { aroundFeaturesActive } from '../store/helpers/projectType'
 import type {
@@ -55,6 +56,8 @@ import type {
 } from '../types/project'
 import { depthFromFace, setupFace, setupForOperation } from './setupOrientation'
 import type { FaceDepthSpan, StockZSpan } from './setupOrientation'
+import { squareRotarySafetyRefusal } from './squareRotarySafety'
+import type { SquareRotarySafetyRefusal } from './squareRotarySafety'
 
 /**
  * How close to a stock face a span must come to count as reaching it, in
@@ -138,6 +141,10 @@ export function featureReachableFromFace(
   if (kind && isRotaryOperationKind(kind)) {
     return aroundFeaturesActive(project) && face === 'around' && isImportedModel(project, feature)
   }
+  // A square blank has no constant-depth cylinder wrapping (#1016 C2-S4): only
+  // a rotary rough/finish on a real model may target its Around face, so every
+  // other kind — the wrapped 2D paths a round bar allows — is refused here.
+  if (face === 'around' && isSquareStock(project.stock)) return false
   if (face === 'around' && isImportedModel(project, feature)) return false
   if ((feature.authoringFace ?? 'top') === face) return true
   if (face === 'around' || feature.authoringFace === 'around') return false
@@ -248,6 +255,15 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
   const face: SetupFace = setup ? setupFace(setup) : 'top'
   if (kind && isRotaryOperationKind(kind)
     && (!aroundFeaturesActive(project) || face !== 'around' || target.source !== 'features' || target.featureIds.length === 0)) return false
+  // A square blank's Around face carries no wrapped 2D feature targets at all
+  // (#1016 C2-S4): only an explicit rotary rough/finish may target it, so the
+  // store can never hand an Engrave, thread or flute the square face the round
+  // bar allows. Every other kind is refused **whatever the target source** —
+  // a stock or model target is not a wrapped path either, and a caller that
+  // leaves `kind` off gets the same refusal rather than a bypass.
+  if (face === 'around' && isSquareStock(project.stock) && !(kind && isRotaryOperationKind(kind))) {
+    return false
+  }
   return judgeTargetsFromFace(project, target, face, kind).every((verdict) => verdict.status !== 'rejected')
 }
 
@@ -255,9 +271,57 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
 
 /** Why an operation generates nothing in its setup. */
 export interface SetupGenerationBlock {
-  reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline'
+  reason: 'crossFaceNotThrough' | 'aroundStockMismatch' | 'aroundCentreline' | 'squareRotaryUnsupported'
   face: SetupFace
   features: TargetFaceVerdict[]
+  /**
+   * `squareRotaryUnsupported` only, and only when the physical guard is the
+   * refuser: the verdict's own reason plus the clamp it names, so generation can
+   * report the actual problem (a too-small diameter, a placement error, an
+   * ordinary clamp in the swept envelope) instead of one generic refusal. The
+   * semantic square refusals (a wrapped 2D path, a non-model target) carry no
+   * verdict and keep the generic message (#1016 C2 F3).
+   */
+  refusal?: SquareRotarySafetyRefusal
+}
+
+/**
+ * True when every target of a rotary operation is a real imported model. A
+ * square blank's Around operation exists only against such a target (#1016
+ * C2-S4): the wrapped 2D paths a round bar allows have no meaning on a blank
+ * whose depth around the bar changes with the angle. A missing feature, or one
+ * that is not an `stl` model, is not a model.
+ */
+function targetsAreModels(project: Project, operation: Operation): boolean {
+  const target = operation.target
+  if (target.source !== 'features' || target.featureIds.length === 0) return false
+  return target.featureIds.every((featureId) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    if (!feature) return false
+    const definition = project.featureDefinitions[feature.definitionId]
+    return definition?.kind === 'stl' && definition.operation === 'model'
+  })
+}
+
+/**
+ * True only for the one square-blank turning job this build supports (#1016
+ * C2-S4): an explicit rotary rough/finish, cut on an Around setup whose axis
+ * is the blank's own, in a rotary project, against a real imported model.
+ * Everything else — a wrapped 2D path, any other kind, any other face, or a
+ * target that is not a model — is not square turning, whatever the stored
+ * moves say.
+ *
+ * Generation asks this through {@link setupGenerationBlock}; output
+ * (`gcode/motionPipeline.ts`) asks it again before it posts a square
+ * angle-bearing path, so a stale `ToolpathResult` carrying synthetic `A`
+ * motion cannot reach the program by claiming an operation the engine would
+ * never have generated.
+ */
+export function squareRotaryWorkAdmitted(project: Project, operation: Operation): boolean {
+  if (!isSquareStock(project.stock) || !isRotaryOperationKind(operation.kind)) return false
+  if (!aroundFeaturesActive(project) || operationFace(project, operation) !== 'around') return false
+  if (setupForOperation(project, operation)?.orientation.axis !== project.stock.axis) return false
+  return targetsAreModels(project, operation)
 }
 
 /**
@@ -280,8 +344,31 @@ export function setupGenerationBlock(project: Project, operation: Operation): Se
   const verdicts = judgeTargetsFromFace(project, operation.target, face, operation.kind)
   if (face === 'around') {
     const setup = setupForOperation(project, operation)
-    if (!isRoundStock(project.stock) || setup?.orientation.axis !== project.stock.axis) {
+    // A bar lying along the setup's axis is the stock an Around face exists on
+    // (#1016 C2-S4 widens this from the round bar to either bar shape).
+    if (!isBarStock(project.stock) || setup?.orientation.axis !== project.stock.axis) {
       return { reason: 'aroundStockMismatch', face, features: [] }
+    }
+    // A square blank has no constant-depth cylinder wrapping: only the two
+    // rotary turning kinds exist on it, only against a real model, and only
+    // when the physical workholding / clamp guard says the setup is supported.
+    // Judged here, before any motion, so the same verdict refuses at generation
+    // and at output (`motionPipeline.ts` asks this function again).
+    if (isSquareStock(project.stock)) {
+      // The physical verdict is only the *reason* once the job is admitted at
+      // all. A wrapped 2D path or a non-model target is refused for its own
+      // semantic reason, and a clamp that also happens to be too small must not
+      // relabel that refusal (the generic code stays the fallback).
+      const admitted = squareRotaryWorkAdmitted(project, operation)
+      const refusal = admitted ? squareRotarySafetyRefusal(project, operation) : null
+      if (!admitted || refusal) {
+        // A **square**-only refusal gets its own reason, reported as an error:
+        // the old `aroundStockMismatch` code keeps the warning severity it has
+        // always had for round/flat mismatches (#1016 C2-S4 compatibility).
+        // The physical verdict (when it is the refuser) rides along, so the
+        // warning can name the clamp and the actual problem (#1016 C2 F3).
+        return { reason: 'squareRotaryUnsupported', face, features: [], refusal: refusal ?? undefined }
+      }
     }
     // A rejected target is reported as the face mismatch it is: it is not a
     // cut on this face, so its Z is not what blocks the Around operation.

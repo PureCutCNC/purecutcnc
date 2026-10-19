@@ -34,12 +34,15 @@ import {
   quickOperationGroup,
   quickOperationLabel,
   rotaryAddKindsForFace,
+  rotaryOperationHint,
   rotaryTargetModels,
   rotaryTargetToggle,
   selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
+import { squareStock } from '../../types/barStock'
+import { operationCutsInProject } from '../../store/helpers/projectType'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { camT } from './camI18n'
@@ -954,5 +957,77 @@ testRotaryTargetModelsListTheProject()
 testRotaryTargetToggleKeepsProjectOrder()
 testRotaryTargetToggleOffAndLastBox()
 testRotaryTargetToggleDropsStaleIds()
+
+// ── square rotary model hints (issue #1016 C2-U1) ─────────────────
+
+/** The slice-D rotary fixture with a real square blank in place of its bar. */
+function squareRotaryFixture(axis: 'x' | 'y', kind: OperationKind): Project {
+  const project = rotaryOperationFixture(axis, kind)
+  project.stock = squareStock(12, 30, axis)
+  return project
+}
+
+/**
+ * A generated rotary model on a **square** blank is a legitimate target: the
+ * rough/finish hints are clear on both axes, with either usable cutter, and
+ * never say the round bar is required. Non-rotary kinds on that Around sheet
+ * stay disabled (`operationCutsInProject`), and the model / tool errors are
+ * still truthful.
+ */
+function testSquareRotaryModelHints(): void {
+  const roundStockRequired = camT('cam.rotary.roundStockRequired')
+  for (const axis of ['x', 'y'] as const) {
+    const project = squareRotaryFixture(axis, 'rotary_rough')
+    const operation = project.operations[0]
+    assert(
+      rotaryOperationHint(project, operation) === null,
+      `${axis}: a square-blank rotary model with a ball cutter has no hint`,
+    )
+    assert(
+      rotaryOperationHint(project, operation) !== roundStockRequired,
+      `${axis}: the square blank never reports the round-stock requirement`,
+    )
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      assert(
+        getOperationAddHint(project, selectionFor([]), kind) === null,
+        `${axis}: ${kind} is offered on the square blank`,
+      )
+      assert(
+        JSON.stringify(operationTargetFromSelection(project, selectionFor([]), kind))
+          === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+        `${axis}: ${kind} targets the generated model`,
+      )
+    }
+
+    // A flat cutter is as usable as the ball one.
+    const flat = { ...project, tools: [{ ...project.tools[0], type: 'flat_endmill' as const }] }
+    assert(rotaryOperationHint(flat, flat.operations[0]) === null, `${axis}: a flat cutter is usable`)
+
+    // The model requirement is still truthful.
+    const onSketch = { ...project, operations: [{ ...operation, target: { source: 'features' as const, featureIds: ['sketch'] } }] }
+    assert(
+      rotaryOperationHint(onSketch, onSketch.operations[0]) === camT('cam.rotary.modelOnly'),
+      `${axis}: a non-model target is still refused`,
+    )
+    // The tool requirement is still truthful.
+    const noTool = { ...project, operations: [{ ...operation, toolRef: null }] }
+    assert(rotaryOperationHint(noTool, noTool.operations[0]) === camT('cam.operation.noTool'), `${axis}: a missing tool is still refused`)
+
+    // Non-rotary operations on that Around sheet stay disabled.
+    assert(
+      operationCutsInProject(project, { kind: 'pocket', setupId: project.activeSetupId }) === false,
+      `${axis}: a non-rotary Around operation stays disabled`,
+    )
+    assert(
+      operationCutsInProject(project, { kind: 'rotary_rough', setupId: project.activeSetupId }) === true,
+      `${axis}: the rotary model operation still cuts`,
+    )
+
+    // A block still needs a round bar: the widened check did not drop it.
+    const block = { ...project, stock: { ...project.stock, shape: undefined } }
+    assert(rotaryOperationHint(block, block.operations[0]) === roundStockRequired, `${axis}: a block still needs a bar`)
+  }
+}
+testSquareRotaryModelHints()
 
 console.log('operationValidity tests passed')

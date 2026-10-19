@@ -21,6 +21,7 @@
  */
 
 import type { ToolpathMove } from '../../engine/toolpaths/types'
+import { barCentre, barPivotZ, isSquareStock, squareStock } from '../../types/barStock'
 import { roundStock, type RoundStock, type Stock } from '../../types/project'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import {
@@ -340,21 +341,21 @@ testMutedOverlayOpacity()
 const AROUND_BAR_X = roundStock(40, 200, 'x', { x: 10, y: 30 })
 const AROUND_BAR_Y = roundStock(2, 8, 'y', { x: 3, y: 5 })
 
-/** The bar's centreline in the tool frame. */
-function barCentre(bar: RoundStock): number {
+/** The bar's centreline in the tool frame, for a round bar's own fixtures. */
+function roundBarCentre(bar: RoundStock): number {
   return bar.axis === 'x' ? bar.profile.start.y + bar.thickness / 2 : bar.profile.start.x + bar.thickness / 2
 }
 
 /** A wrapped tool point: on the centreline, `radius` from the axis, at `a`. */
 function wrappedToolPoint(bar: RoundStock, along: number, radius: number, a: number) {
   return bar.axis === 'x'
-    ? { x: along, y: barCentre(bar), z: bar.thickness / 2 + radius, a }
-    : { x: barCentre(bar), y: along, z: bar.thickness / 2 + radius, a }
+    ? { x: along, y: roundBarCentre(bar), z: bar.thickness / 2 + radius, a }
+    : { x: roundBarCentre(bar), y: along, z: bar.thickness / 2 + radius, a }
 }
 
 /** Distance of a stock-space point from the bar's axis. */
 function distanceFromBarAxis(bar: RoundStock, point: { x: number; y: number; z: number }): number {
-  const centre = barCentre(bar)
+  const centre = roundBarCentre(bar)
   const height = bar.thickness / 2
   return bar.axis === 'x'
     ? Math.hypot(point.y - centre, point.z - height)
@@ -450,6 +451,67 @@ function testWrappedToolpathIsADrawnCopyWithItsOwnBounds(): void {
 testWrappedTurningMoveFollowsTheBar()
 testConstantAngleAndAngleFreeMoves()
 testWrappedToolpathIsADrawnCopyWithItsOwnBounds()
+
+// ── A square blank turns about the same true pivot (#1016 C2-U1V) ──────
+//
+// The blank's corners are material at a radius the round bar does not have,
+// but they are not a different pivot: stock space is the same rigid rotation
+// about the box centre, so a corner radius never moves it. The oracle is the
+// rotation written out here, independent of the display code.
+{
+  const round = roundStock(12, 30, 'x', { x: 0, y: 0 })
+  const square = squareStock(12, 30, 'x', { x: 0, y: 0 })
+  assert(isSquareStock(square), 'the fixture is a square blank')
+  assert(barPivotZ(square) === 6 && barPivotZ(round) === 6, 'both bars share the true pivot at side / 2')
+  assert(Math.abs(barCentre(square) - barCentre(round)) < 1e-12, 'both bars share the centreline')
+
+  // A rigid rotation of the stock-space point about (centre, pivot) by `a`.
+  const oracle = (point: { x: number; y: number; z: number }, a: number) => {
+    const t = a * Math.PI / 180
+    const across = point.y - barCentre(square)
+    const up = point.z - barPivotZ(square)
+    return { x: point.x, y: barCentre(square) + across * Math.cos(t) + up * Math.sin(t), z: barPivotZ(square) - across * Math.sin(t) + up * Math.cos(t) }
+  }
+
+  for (const a of [0, 45, 90, -90, 425]) {
+    // The tool tip on the blank's surface at the corner radius, wrapped to `a`.
+    const radius = 12 * Math.SQRT1_2
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: { x: 20, y: barCentre(square), z: barPivotZ(square) + radius, a },
+      to: { x: 20, y: barCentre(square), z: barPivotZ(square) + radius, a },
+    }
+    const drawn = stockSpaceMoves([move], square)[0]
+    const expected = oracle({ x: 20, y: barCentre(square), z: barPivotZ(square) + radius }, a)
+    assert(Math.abs(drawn.from.y - expected.y) < 1e-9, `a=${a}: the across follows the rigid rotation`)
+    assert(Math.abs(drawn.from.z - expected.z) < 1e-9, `a=${a}: the height follows the rigid rotation`)
+    // The point stays a corner distance from the true pivot, never shifted out
+    // to `radius` from anywhere else.
+    assert(Math.abs(Math.hypot(drawn.from.y - barCentre(square), drawn.from.z - barPivotZ(square)) - radius) < 1e-9,
+      `a=${a}: the corner stays the corner radius from the true pivot`)
+  }
+
+  // A square blank and a round bar of the same box map a point identically:
+  // the pivot and the rotation are the same, whatever the cross-section.
+  const turning: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 20, y: barCentre(square), z: barPivotZ(square) + 4, a: 0 },
+    to: { x: 20, y: barCentre(square), z: barPivotZ(square) + 4, a: 90 },
+  }
+  const onSquare = stockSpaceToolpath({ operationId: 'op', moves: [turning], warnings: [], bounds: null }, square)
+  const onRound = stockSpaceToolpath({ operationId: 'op', moves: [turning], warnings: [], bounds: null }, round)
+  assert(JSON.stringify(onSquare.moves.map((m) => [m.from.y, m.from.z, m.to.y, m.to.z]))
+    === JSON.stringify(onRound.moves.map((m) => [m.from.y, m.from.z, m.to.y, m.to.z])),
+  'the square and round stock-space maps agree on the same box')
+
+  // Two-pivot mutation: taken from the corner radius the motion moves, so this
+  // fails.
+  const wrongPivot = stockSpaceMoves([turning], square)
+  for (const piece of wrongPivot) {
+    assert(Math.abs(Math.hypot(piece.to.y - barCentre(square), piece.to.z - barPivotZ(square)) - 4) < 1e-9,
+      'every drawn square end stays the tool radius from the true pivot')
+  }
+}
 
 // ── The 3D overlay's own layer split (issue #395) ─────────────────────
 //

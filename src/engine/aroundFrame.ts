@@ -29,13 +29,23 @@
  * a flat height r cuts stock across = centre + r·sin a, z = R + r·cos a;
  * toolSpacePoint of that stock point at a is the wrapped tool point.
  *
+ * A square blank (#1016 C2-S3) unrolls in the same frame with the *nominal
+ * reference cylinder*: radius = side / 2 (the inscribed radius) and
+ * circumference = π · side. That cylinder is a coordinate mapping only — the
+ * angle a square sheet column stands for, and the height a flat point is
+ * lowered by — never a claim that the blank's surface is round. The real
+ * surfaces (flats and corners) are the sampler's and the runout guard's
+ * business, not the sheet's; `barSurfaceRadius` is ray geometry and is
+ * deliberately not used here. On a round bar this is exactly the old frame.
+ *
  * A chuck or tailstock is a band across the *whole* bar, so it covers every
  * turn the job can reach: `unrolledProject` spreads it from one circumference
  * below the lowest across coordinate on the sheet to one above the highest.
  */
 
-import { getStockBounds, isAroundSetup, isRoundStock, rectProfile, roundStockCentre } from '../types/project'
-import type { Operation, Project, RoundStock } from '../types/project'
+import { getStockBounds, isAroundSetup, rectProfile } from '../types/project'
+import type { BarStock, Operation, Project } from '../types/project'
+import { barCentre, barInscribedRadius, isBarStock } from '../types/barStock'
 import { getFeatureGeometryBounds } from '../text'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { setupForOperation } from './setupOrientation'
@@ -44,7 +54,7 @@ import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from
 
 export interface AroundFrame {
   readonly axis: 'x' | 'y'
-  /** The centreline's across coordinate (roundStockCentre); the same as `zero`. */
+  /** The centreline's across coordinate (barCentre); the same as `zero`. */
   readonly centre: number
   readonly radius: number
   /**
@@ -62,27 +72,33 @@ export interface AroundFrame {
   readonly circumference: number
 }
 
-export function aroundFrame(stock: RoundStock): AroundFrame {
+export function aroundFrame(stock: BarStock): AroundFrame {
   const circumference = Math.PI * stock.thickness
-  const zero = roundStockCentre(stock)
+  const zero = barCentre(stock)
   return {
     axis: stock.axis,
     centre: zero,
-    radius: stock.thickness / 2,
+    radius: barInscribedRadius(stock),
     zero,
     sheetStart: zero - circumference / 2,
     circumference,
   }
 }
 
-/** Around requires a round bar and the same axis: never guess a frame. */
+/**
+ * Around requires a bar (round or square) and the same axis: never guess a
+ * frame. A block is still refused. A square blank maps through its nominal
+ * reference cylinder (see the header); whether an Around operation may be
+ * *authored* on one is the active-face/authoring guard's decision, not this
+ * module's.
+ */
 export function aroundFrameForOperation(
   project: Pick<Project, 'setups' | 'stock'>,
   operation: Pick<Operation, 'id' | 'setupId'>,
 ): AroundFrame | undefined {
   const setup = setupForOperation(project, operation)
   if (!setup || !isAroundSetup(setup)) return undefined
-  if (!isRoundStock(project.stock)) throw new Error('An Around setup requires round stock.')
+  if (!isBarStock(project.stock)) throw new Error('An Around setup requires a bar (round or square).')
   if (setup.orientation.axis !== project.stock.axis) throw new Error('The Around setup axis must match the bar axis.')
   return aroundFrame(project.stock)
 }

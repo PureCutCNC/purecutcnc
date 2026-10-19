@@ -16,15 +16,59 @@
 
 import type { Project, Point } from '../../types/project'
 import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
-import type { SimulationBuildOptions, SimulationGrid } from './types'
+import type { SimulationBuildOptions, SimulationGrid, SquareBarDescriptor } from './types'
 
 const DEFAULT_LONG_AXIS_CELLS = 180
 const MIN_AXIS_CELLS = 24
 
+/** A grid's dimensions and stock envelope, before its mutable `topZ` exists. */
+type SimulationGridSpec = Omit<SimulationGrid, 'topZ' | 'initialTopZ'>
+
+/**
+ * Validate a transient square descriptor before it initializes a grid. The
+ * frame is the Around unroll's nominal reference cylinder, so a descriptor
+ * that disagrees with `side` is a caller bug, not a blank to approximate.
+ */
+export function validateSquareBar(descriptor: SquareBarDescriptor): void {
+  const { side, frame } = descriptor
+  if (!Number.isFinite(side) || side <= 0) {
+    throw new RangeError(`squareBar: side must be a positive finite number, got ${side}`)
+  }
+  if (!frame) {
+    throw new RangeError('squareBar: frame is required')
+  }
+  if (frame.axis !== 'x' && frame.axis !== 'y') {
+    throw new RangeError(`squareBar: frame.axis must be 'x' or 'y', got ${String(frame.axis)}`)
+  }
+  const scale = Math.max(1, side)
+  const radiusTolerance = 1e-9 * scale
+  if (!Number.isFinite(frame.radius) || Math.abs(frame.radius - side / 2) > radiusTolerance) {
+    throw new RangeError(`squareBar: frame.radius must be side/2 (${side / 2}), got ${frame.radius}`)
+  }
+  if (!Number.isFinite(frame.circumference) || Math.abs(frame.circumference - Math.PI * side) > radiusTolerance) {
+    throw new RangeError(`squareBar: frame.circumference must be π·side (${Math.PI * side}), got ${frame.circumference}`)
+  }
+  for (const [name, value] of [['zero', frame.zero], ['centre', frame.centre], ['sheetStart', frame.sheetStart]] as const) {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`squareBar: frame.${name} must be finite, got ${value}`)
+    }
+  }
+}
+
+/**
+ * Radial distance from the pivot to the surface of a square blank of `side` at
+ * `angle` radians: `halfSide / max(|sin|,|cos|)` — half the side on a flat,
+ * `side/√2` at a corner. Raw blank geometry: a square grid's starting height
+ * per across cell, nothing downstream of initialization.
+ */
+export function squareSurfaceRadius(side: number, angle: number): number {
+  return (side / 2) / Math.max(Math.abs(Math.sin(angle)), Math.abs(Math.cos(angle)))
+}
+
 export function resolveSimulationGridSpec(
   project: Project,
   options: SimulationBuildOptions = {},
-): Omit<SimulationGrid, 'topZ'> {
+): SimulationGridSpec {
   const stockBounds = getStockBounds(project.stock)
   const width = Math.max(stockBounds.maxX - stockBounds.minX, 1e-6)
   const height = Math.max(stockBounds.maxY - stockBounds.minY, 1e-6)
@@ -35,6 +79,11 @@ export function resolveSimulationGridSpec(
   const cols = Math.max(MIN_AXIS_CELLS, Math.ceil(width / cellSize))
   const rows = Math.max(MIN_AXIS_CELLS, Math.ceil(height / cellSize))
 
+  // A square blank's corners reach side/√2, so the render envelope must hold
+  // them; the true turning pivot stays frame.radius either way.
+  const squareBar = options.squareBar
+  if (squareBar) validateSquareBar(squareBar)
+
   return {
     originX: stockBounds.minX,
     originY: stockBounds.minY,
@@ -42,7 +91,7 @@ export function resolveSimulationGridSpec(
     cols,
     rows,
     stockBottomZ: 0,
-    stockTopZ: project.stock.thickness,
+    stockTopZ: squareBar ? squareBar.side * Math.SQRT1_2 : project.stock.thickness,
   }
 }
 
@@ -58,6 +107,34 @@ function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
   return inside
 }
 
+/**
+ * Fill a square grid with the blank's true cross section. Along the bar the
+ * section is constant, so the radial height depends only on the across cell's
+ * angle from the frame's zero line: `halfSide / max(|sin|,|cos|)`. The caller
+ * snapshots the result as the immutable baseline — every later write lowers
+ * `topZ` only.
+ */
+export function seedSquareTopZ(
+  topZ: Float32Array,
+  spec: SimulationGridSpec,
+  squareBar: SquareBarDescriptor,
+): void {
+  const anglePerAcross = (2 * Math.PI) / squareBar.frame.circumference
+  const acrossOrigin = squareBar.frame.axis === 'x' ? spec.originY : spec.originX
+  const acrossCount = squareBar.frame.axis === 'x' ? spec.rows : spec.cols
+  const acrossHeights = new Float32Array(acrossCount)
+  for (let across = 0; across < acrossCount; across += 1) {
+    const coordinate = acrossOrigin + (across + 0.5) * spec.cellSize
+    acrossHeights[across] = squareSurfaceRadius(squareBar.side, (coordinate - squareBar.frame.zero) * anglePerAcross)
+  }
+  for (let row = 0; row < spec.rows; row += 1) {
+    for (let col = 0; col < spec.cols; col += 1) {
+      const across = squareBar.frame.axis === 'x' ? row : col
+      topZ[row * spec.cols + col] = acrossHeights[across]
+    }
+  }
+}
+
 export function createSimulationGrid(
   project: Project,
   options: SimulationBuildOptions = {},
@@ -65,6 +142,22 @@ export function createSimulationGrid(
   const spec = resolveSimulationGridSpec(project, options)
   const cellCount = spec.cols * spec.rows
   const topZ = new Float32Array(cellCount)
+
+  const squareBar = options.squareBar
+  if (squareBar) {
+    // A square blank enters here and only here: the starting heights are its
+    // true cross section, and the immutable snapshot is what statistics
+    // measure against. Everything downstream is the round bar's path.
+    seedSquareTopZ(topZ, spec, squareBar)
+    const initialTopZ = new Float32Array(topZ)
+    return {
+      ...spec,
+      ...(options.wrap ? { wrap: options.wrap } : {}),
+      initialTopZ,
+      topZ,
+    }
+  }
+
   topZ.fill(spec.stockTopZ)
 
   // If stock has a non-rectangular profile (from a source feature), mask cells
