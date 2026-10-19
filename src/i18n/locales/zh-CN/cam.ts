@@ -399,7 +399,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': '{title} 示例',
   'cam.addMenu.unavailable': '不适用于当前选择（{count}）',
   'cam.addMenu.selectFirst': '请在特征树或草图中选择几何图形，然后选择一项操作',
-  'cam.addMenu.needsPlasmaProject': '需要等离子项目。请在项目属性中更改项目类型。',
+  'cam.addMenu.needsPlasmaProject': '需要等离子项目。项目类型在创建项目时选择。',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': '非等离子切割，因项目类型而未包含在导出中：{count}',

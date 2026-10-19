@@ -17,52 +17,58 @@
 /**
  * Choosing and sizing bar stock in the Properties panel (#392 slices B–D,
  * square blank #1016 C2):
- * a **rotary** project turns the block into a bar — the project type does that
- * now, and the Shape control offers the type's shapes (#1028): a round bar and,
- * since #1016 C2, a real square blank. A round bar swaps
- * Width/Height/Thickness for Diameter/Length/Axis, a bar gains a chuck the
- * store keeps centred, the square blank swaps in Side/Length/Axis instead, a
- * plasma project offers only a block (disabled control) while a bar it already
- * has stays offered, and the bar and its chuck build a scene in the 3D view.
+ * a **rotary** project is created with its bar in the New project dialog
+ * (issue #1046) — round, or the real square blank — and the Shape control then
+ * offers the type's shapes (#1028). A round bar swaps Width/Height/Thickness
+ * for Diameter/Length/Axis, a square blank swaps in Side/Length/Axis, a plasma
+ * project offers only a block (disabled control) while a bar it already has
+ * stays offered, and a bar's chuck and the bar build a scene in the 3D view.
  */
 
 import { test, expect } from './fixtures'
-import { getProject, seedProject, setProjectType } from './helpers'
-import { roundStockCentre, type Project, type RoundStock, type SquareStock } from '../src/types/project'
+import { createNewProject, getProject, seedProject, seedProjectType } from './helpers'
+import {
+  roundStockCentre,
+  type BarStock,
+  type Project,
+  type RoundStock,
+  type SquareStock,
+} from '../src/types/project'
 import { barCentre, barPivotZ, squareStock } from '../src/types/barStock'
+import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 
 const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
-test('a rotary project turns the block into a bar, which is sized, and back', async ({ app, ui }) => {
+/**
+ * The created project with the chuck the app gives a bar. Used by the clamp
+ * tests, which are about the workholding controls rather than about creating
+ * the project; the bar itself stays exactly as the dialog made it.
+ */
+function withChuck(project: Project): Project {
+  const stock = project.stock as BarStock
+  return {
+    ...project,
+    clamps: [
+      { id: 'e2e-chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', stock, project.meta.units) },
+    ],
+  }
+}
+
+test('a rotary project is created as a bar, which is sized and re-aimed', async ({ app, ui }) => {
   const page = app.page
+  // The type is chosen in the New project dialog and locked afterwards
+  // (issue #1046); the blank metric rotary default is Ø 40 × 200 along X.
+  await createNewProject(page, ui, { type: 'Rotary' })
   await ui.tree.stockRow(page).click()
 
-  // The default project is a milling block: the block fields are on show, and
-  // the Shape control offers only that one shape, disabled.
-  await expect(ui.properties.exactText(page, 'Width')).toBeVisible()
+  // The created project is a bar: the Shape control offers the type's shapes.
   await expect(ui.properties.stockShape(page)).toBeVisible()
-  await expect(ui.properties.stockShape(page).locator('.ui-select__trigger')).toBeDisabled()
-
-  // The project type is what makes a bar (issue #1028), and since #1016 C2 that
-  // type offers both bar shapes: a round bar and a real square blank.
-  await setProjectType(page, ui, 'Rotary')
-  await ui.tree.stockRow(page).click()
   await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Round bar')
   await expect(ui.properties.stockShape(page).locator('.ui-select__trigger')).toBeEnabled()
-  // The type offers both bar shapes through this control (#1016 C2).
   await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
   await expect(ui.properties.stockShapeOption(page, 'Round bar')).toBeVisible()
   await expect(ui.properties.stockShapeOption(page, 'Square blank')).toBeVisible()
   await page.keyboard.press('Escape')
-
-  // A bar gains a chuck, centred on the bar's centreline; the origin follows.
-  const bar = await getProject(page) as unknown as Project
-  const barStock = bar.stock as RoundStock
-  const chuck = bar.clamps.find((clamp) => clamp.type === 'chuck')
-  expect(chuck?.name).toBe('Chuck')
-  expect(chuck?.y).toBeCloseTo(roundStockCentre(barStock) - (chuck?.h ?? 0) / 2, 6)
-  expect(bar.origin.y).toBeCloseTo(roundStockCentre(barStock), 6)
-  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(1)
 
   // Diameter / Length / Axis replace Width / Height / Thickness.
   await expect(ui.properties.exactText(page, 'Diameter')).toBeVisible()
@@ -72,15 +78,14 @@ test('a rotary project turns the block into a bar, which is sized, and back', as
   await expect(ui.properties.exactText(page, 'Height')).toHaveCount(0)
   await expect(ui.properties.exactText(page, 'Thickness')).toHaveCount(0)
 
-  // The default stock is 4 × 3 × 0.75 in: the long side (4) becomes the length
-  // along X and the thickness (0.75) the diameter.
-  await expect(ui.statusBar.stockDimensions(page)).toContainText('Ø0.75 × 4')
+  // The dialog's default stock is Ø 40 × 200 mm.
+  await expect(ui.statusBar.stockDimensions(page)).toContainText('Ø40 × 200')
 
   // A diameter edit reaches the status bar.
   const diameter = ui.properties.stockDiameter(page)
-  await diameter.fill('1.5')
+  await diameter.fill('50')
   await diameter.press('Enter')
-  await expect(ui.statusBar.stockDimensions(page)).toContainText('Ø1.5 × 4')
+  await expect(ui.statusBar.stockDimensions(page)).toContainText('Ø50 × 200')
 
   // The axis change is one undo step.
   await expect(ui.properties.stockAxis(page).locator('.ui-select__label')).toHaveText('X')
@@ -90,30 +95,11 @@ test('a rotary project turns the block into a bar, which is sized, and back', as
 
   await page.keyboard.press(`${modKey}+z`)
   await expect(ui.properties.stockAxis(page).locator('.ui-select__label')).toHaveText('X')
-
-  // Back to a block: the project type does that too (issue #1028).
-  await setProjectType(page, ui, 'Milling / routing')
-  await ui.tree.stockRow(page).click()
-  await expect(ui.properties.exactText(page, 'Width')).toBeVisible()
-  await expect(ui.properties.exactText(page, 'Height')).toBeVisible()
-  await expect(ui.properties.exactText(page, 'Thickness')).toBeVisible()
-  await expect(ui.properties.exactText(page, 'Diameter')).toHaveCount(0)
-  await expect(ui.properties.exactText(page, 'Axis')).toHaveCount(0)
-
-  // A block cannot hold a chuck: it is gone with the bar.
-  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(0)
-
-  // One undo brings the bar and its chuck back.
-  await page.keyboard.press(`${modKey}+z`)
-  await ui.tree.stockRow(page).click()
-  await expect(ui.properties.exactText(page, 'Diameter')).toBeVisible()
-  await expect(ui.properties.exactText(page, 'Axis')).toBeVisible()
-  await expect(ui.tree.clampRows(page).filter({ hasText: 'Chuck' })).toHaveCount(1)
 })
 
 test('a rotary project offers a real square blank, sized by side and axis', async ({ app, ui }) => {
   const page = app.page
-  await setProjectType(page, ui, 'Rotary')
+  await createNewProject(page, ui, { type: 'Rotary' })
   await ui.tree.stockRow(page).click()
 
   // Square blank is a choice the project type offers beside the round bar.
@@ -122,15 +108,15 @@ test('a rotary project offers a real square blank, sized by side and axis', asyn
   await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Square blank')
 
   // A real blank: `shape` is square and `thickness` is the physical side. The
-  // default 4 × 3 × 0.75 in block turns into a 4-long bar with a 0.75 side.
+  // created Ø 40 × 200 bar relabels to a 200-long blank with a 40 side.
   const project = await getProject(page) as unknown as Project
   const blank = project.stock as SquareStock
   expect(blank.shape).toBe('square')
-  expect(blank.thickness).toBeCloseTo(0.75, 6)
+  expect(blank.thickness).toBeCloseTo(40, 6)
   expect(blank.axis).toBe('x')
 
   // The status bar shows the square's own side, not a diameter.
-  await expect(ui.statusBar.stockDimensions(page)).toContainText('▢0.75 × 4')
+  await expect(ui.statusBar.stockDimensions(page)).toContainText('▢40 × 200')
 
   // Side / Length / Axis replace Width / Height / Thickness and Diameter.
   await expect(ui.properties.exactText(page, 'Side')).toBeVisible()
@@ -141,11 +127,11 @@ test('a rotary project offers a real square blank, sized by side and axis', asyn
   await expect(ui.properties.exactText(page, 'Height')).toHaveCount(0)
 
   // A side edit reaches the status bar and leaves the length alone.
-  await ui.properties.stockSide(page).fill('1')
+  await ui.properties.stockSide(page).fill('50')
   await ui.properties.stockSide(page).press('Enter')
-  await expect(ui.statusBar.stockDimensions(page)).toContainText('▢1 × 4')
+  await expect(ui.statusBar.stockDimensions(page)).toContainText('▢50 × 200')
   const resized = await getProject(page) as unknown as Project
-  expect((resized.stock as SquareStock).thickness).toBeCloseTo(1, 6)
+  expect((resized.stock as SquareStock).thickness).toBeCloseTo(50, 6)
 
   // The axis change is one undo step, exactly as for a round bar.
   await expect(ui.properties.stockAxis(page).locator('.ui-select__label')).toHaveText('X')
@@ -201,7 +187,8 @@ test('a square blank keeps a manual origin across a side edit and a reload', asy
 
 test('selecting the chuck shows Type and Diameter and no Z control', async ({ app, ui }) => {
   const page = app.page
-  await setProjectType(page, ui, 'Rotary')
+  await createNewProject(page, ui, { type: 'Rotary' })
+  await seedProject(page, JSON.stringify(withChuck(await getProject(page) as unknown as Project)))
   await ui.tree.clampRows(page).filter({ hasText: 'Chuck' }).click()
 
   await expect(ui.properties.clampType(page)).toBeVisible()
@@ -213,19 +200,18 @@ test('selecting the chuck shows Type and Diameter and no Z control', async ({ ap
 
 test('a square blank gets the same chuck Type and Diameter as a round bar', async ({ app, ui }) => {
   const page = app.page
-  // The reported repro (#1016 C2 F1): a rotary project, its bar made square,
-  // with the Around face — where a bar's workholding is edited — in view.
-  await setProjectType(page, ui, 'Rotary')
+  // The reported repro (#1016 C2 F1): a rotary project on a square blank, with
+  // the Around face — where a bar's workholding is edited — in view.
+  await createNewProject(page, ui, { type: 'Rotary', shape: 'Square blank' })
+  await seedProject(page, JSON.stringify(withChuck(await getProject(page) as unknown as Project)))
   await ui.tree.stockRow(page).click()
-  await ui.properties.stockShape(page).locator('.ui-select__trigger').click()
-  await ui.properties.stockShapeOption(page, 'Square blank').click()
   await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Square blank')
   await ui.face.segment(page, 'Around').click()
 
-  const project = await getProject(page) as unknown as Project
-  const blank = project.stock as SquareStock
+  const loaded = await getProject(page) as unknown as Project
+  const blank = loaded.stock as SquareStock
   expect(blank.shape).toBe('square')
-  const chuckId = project.clamps.find((clamp) => clamp.type === 'chuck')!.id
+  const chuckId = loaded.clamps.find((clamp) => clamp.type === 'chuck')!.id
   const side = blank.thickness
   const centre = barCentre(blank)
   const pivotZ = barPivotZ(blank)
@@ -258,18 +244,18 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   // Editing Diameter resizes the clamp, recentres it on the pivot and derives
   // its height — exactly the round bar's rule, using the square's own pivot.
   const diameter = ui.properties.clampDiameter(page)
-  await diameter.fill('2')
+  await diameter.fill('40')
   await diameter.press('Enter')
   const edited = ((await getProject(page)) as unknown as Project).clamps.find((clamp) => clamp.id === chuckId)!
-  expect(blank.axis === 'x' ? edited.h : edited.w).toBeCloseTo(2, 6)
-  expect(blank.axis === 'x' ? edited.y : edited.x).toBeCloseTo(centre - 1, 6)
-  expect(edited.height).toBeCloseTo(pivotZ + 1, 6)
-  await expect(ui.properties.clampDiameter(page)).toHaveValue('2')
+  expect(blank.axis === 'x' ? edited.h : edited.w).toBeCloseTo(40, 6)
+  expect(blank.axis === 'x' ? edited.y : edited.x).toBeCloseTo(centre - 20, 6)
+  expect(edited.height).toBeCloseTo(pivotZ + 20, 6)
+  await expect(ui.properties.clampDiameter(page)).toHaveValue('40')
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
 })
 
 test('a plasma project offers only a block, as a disabled control', async ({ app, ui }) => {
-  await setProjectType(app.page, ui, 'Plasma')
+  await createNewProject(app.page, ui, { type: 'Plasma' })
   await ui.tree.stockRow(app.page).click()
 
   // The project is a block, so Width/Height/Thickness are the fields on show.
@@ -285,11 +271,8 @@ test('a plasma project keeps offering the bar it already has', async ({ app, ui 
   // Start from a round bar — a rotary project makes one — then seed the stored
   // type as plasma. The bar is not a shape plasma offers, but it stays listed
   // so the user can convert it back instead of it becoming unreachable (#1028).
-  await setProjectType(app.page, ui, 'Rotary')
-  const withBar = await getProject(app.page)
-  const meta = withBar.meta as Record<string, unknown>
-  meta.projectType = 'plasma'
-  await seedProject(app.page, JSON.stringify(withBar))
+  await createNewProject(app.page, ui, { type: 'Rotary' })
+  await seedProjectType(app.page, 'plasma')
 
   await ui.tree.stockRow(app.page).click()
   await expect(ui.properties.stockShape(app.page)).toBeVisible()
@@ -309,7 +292,7 @@ test('a plasma project keeps offering the bar it already has', async ({ app, ui 
 // build (a bad geometry or a NaN transform) emits.
 test('the round bar builds its scene in the 3D view', async ({ app, ui }) => {
   const page = app.page
-  await setProjectType(page, ui, 'Rotary')
+  await createNewProject(page, ui, { type: 'Rotary' })
 
   const project = await getProject(page) as unknown as Project
   expect((project.stock as RoundStock).shape).toBe('round')

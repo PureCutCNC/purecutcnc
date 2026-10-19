@@ -15,197 +15,144 @@
  */
 
 /**
- * The project type in the UI (issue #1028).
+ * The project type is chosen once, when the project is created (issue #1046).
  *
- * The user chooses **Project type** in the project properties and the rest
- * follows: which machine is selected, whether the stock is a block or a round
- * bar, whether Around exists, and which operations the export cuts. The
- * confirmation says what will change, and nothing is ever deleted.
+ * The New project dialog's blank template asks for the stock the chosen type
+ * machines: a rotary project asks for its bar — shape (round or square),
+ * diameter or side, length and axis — while milling and plasma keep width ×
+ * height × thickness. The type is then stored and the Properties panel shows
+ * it as read-only text, with no picker to change it.
  *
- * Assumptions this spec makes, since it is written without a browser run:
- *
- * - The bundled library has no rotary-capable machine, so the fixture embeds
- *   one ("E2E Rotary Router") and selects it. Seeding merges a project's custom
- *   definitions into the application library, so the machine stays a candidate
- *   after the Plasma leg replaces the project's snapshot with QtPlasmaC, and
- *   the Rotary leg can select it again.
- * - The confirm dialog's lines are asserted exactly, which pins the wording and
- *   the order the lines are built in.
- * - The fixture has no Around **feature**, so the "kept but hidden" line is not
- *   asserted here; the operations and features are read straight from the store
- *   afterwards to prove nothing is deleted.
+ * The expected bar is read from the live store after creation, and the panel
+ * is checked for the fields the created shape must show.
  */
 
-import { readFileSync } from 'node:fs'
-import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import {
-  chooseProjectType,
-  clickMenuItem,
-  confirmProjectTypeChange,
-  getProject,
-  openRowContextMenu,
-  rowByName,
-  seedProject,
-  setProjectType,
-} from './helpers'
-import { camQuickOperationProjectJson } from './camOperations.helpers'
-import { e2eMachineDefinition } from './machineLibrary.helpers'
+import { createNewProject, getProject } from './helpers'
+import { getStockBounds, type Project, type Stock } from '../src/types/project'
 
-const QT_PLASMAC = JSON.parse(
-  readFileSync(new URL('../src/engine/gcode/definitions/qtplasmac.json', import.meta.url), 'utf8'),
-) as { name: string }
-
-const ROTARY_ROUTER_ID = 'e2e-rotary-router'
-const ROTARY_ROUTER_NAME = 'E2E Rotary Router'
-const POCKET = 'Pocket Rough'
-const PLASMA = 'Plasma'
-const ROTARY = 'Rotary'
-const MILLING = 'Milling / routing'
-
-/** A rectangular sketch profile, matching the fixture's own shape. */
-function rectProfile(cx: number, cy: number, w: number, h: number) {
-  return {
-    start: { x: cx, y: cy },
-    segments: [
-      { type: 'line' as const, to: { x: cx + w, y: cy } },
-      { type: 'line' as const, to: { x: cx + w, y: cy + h } },
-      { type: 'line' as const, to: { x: cx, y: cy + h } },
-      { type: 'line' as const, to: { x: cx, y: cy } },
-    ],
-    closed: true,
-  }
+interface BarCase {
+  readonly label: string
+  readonly template: 'Blank metric' | 'Blank imperial'
+  readonly shape: 'Round bar' | 'Square blank'
+  readonly size: string
+  readonly length: string
+  readonly axis: 'X' | 'Y'
+  readonly units: 'mm' | 'inch'
+  readonly barShape: 'round' | 'square'
 }
 
 /**
- * The CAM quick-operation fixture, with a stored milling type and a
- * rotary-capable router available. Carve Target is shrunk so the pocket
- * generates in about a second (see `seedCamQuickOperationProjectWithSmallCarveTarget`).
- * `selectedMachineId: null` leaves no machine chosen, so a type change has no
- * machine to move.
+ * Every bar combination the dialog offers, crossed: both shapes × both axes ×
+ * both units, with non-default numbers so a value that ignored its field
+ * cannot pass by matching the default.
  */
-function projectTypeFixtureJson(selectedMachineId: string | null = ROTARY_ROUTER_ID): string {
-  const project = JSON.parse(camQuickOperationProjectJson) as {
-    meta: Record<string, unknown>
-    featureDefinitions: Record<string, { profile: unknown }>
+const ROTARY_CASES: readonly BarCase[] = [
+  { label: 'a metric round bar along X', template: 'Blank metric', shape: 'Round bar', size: '25', length: '150', axis: 'X', units: 'mm', barShape: 'round' },
+  { label: 'a metric round bar along Y', template: 'Blank metric', shape: 'Round bar', size: '18', length: '90', axis: 'Y', units: 'mm', barShape: 'round' },
+  { label: 'a metric square blank along X', template: 'Blank metric', shape: 'Square blank', size: '30', length: '160', axis: 'X', units: 'mm', barShape: 'square' },
+  { label: 'a metric square blank along Y', template: 'Blank metric', shape: 'Square blank', size: '22', length: '110', axis: 'Y', units: 'mm', barShape: 'square' },
+  { label: 'an imperial round bar along X', template: 'Blank imperial', shape: 'Round bar', size: '1.25', length: '7', axis: 'X', units: 'inch', barShape: 'round' },
+  { label: 'an imperial round bar along Y', template: 'Blank imperial', shape: 'Round bar', size: '0.75', length: '5', axis: 'Y', units: 'inch', barShape: 'round' },
+  { label: 'an imperial square blank along X', template: 'Blank imperial', shape: 'Square blank', size: '1', length: '9', axis: 'X', units: 'inch', barShape: 'square' },
+  { label: 'an imperial square blank along Y', template: 'Blank imperial', shape: 'Square blank', size: '2', length: '4', axis: 'Y', units: 'inch', barShape: 'square' },
+]
+
+/** The bar's extent along its axis, from the stock box. */
+function lengthAlong(stock: Stock, axis: 'x' | 'y'): number {
+  const bounds = getStockBounds(stock)
+  return axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
+}
+
+test.describe('the project type is chosen when the project is created (#1046)', () => {
+  for (const entry of ROTARY_CASES) {
+    test(`Rotary creates ${entry.label} exactly as typed`, async ({ app, ui }) => {
+      await createNewProject(app.page, ui, {
+        template: entry.template,
+        type: 'Rotary',
+        shape: entry.shape,
+        size: entry.size,
+        length: entry.length,
+        axis: entry.axis,
+      })
+
+      // The stored project: the chosen type, the template's units, and the bar
+      // the dialog's own fields described — no block converted afterwards.
+      const project = await getProject(app.page) as unknown as Project
+      expect(project.meta.projectType).toBe('rotary')
+      expect(project.meta.units).toBe(entry.units)
+      const stock = project.stock as Stock & { axis: 'x' | 'y' }
+      expect(stock.shape).toBe(entry.barShape)
+      expect(stock.thickness).toBeCloseTo(Number(entry.size), 6)
+      expect(stock.axis).toBe(entry.axis.toLowerCase())
+      expect(lengthAlong(stock, entry.axis.toLowerCase() as 'x' | 'y')).toBeCloseTo(Number(entry.length), 6)
+
+      // The status bar reads the bar, with the shape's own symbol.
+      const symbol = entry.barShape === 'round' ? 'Ø' : '▢'
+      await expect(ui.statusBar.stockDimensions(app.page)).toContainText(`${symbol}${entry.size} × ${entry.length}`)
+
+      // The Properties panel's stock fields follow the created shape and axis.
+      await ui.tree.stockRow(app.page).click()
+      await expect(ui.properties.stockShape(app.page).locator('.ui-select__label')).toHaveText(entry.shape)
+      if (entry.barShape === 'round') {
+        await expect(ui.properties.stockDiameter(app.page)).toHaveValue(entry.size)
+        await expect(ui.properties.exactText(app.page, 'Side')).toHaveCount(0)
+      } else {
+        await expect(ui.properties.stockSide(app.page)).toHaveValue(entry.size)
+        await expect(ui.properties.exactText(app.page, 'Diameter')).toHaveCount(0)
+      }
+      await expect(ui.properties.exactText(app.page, 'Length')).toBeVisible()
+      await expect(ui.properties.stockAxis(app.page).locator('.ui-select__label')).toHaveText(entry.axis)
+      await expect(ui.properties.exactText(app.page, 'Width')).toHaveCount(0)
+    })
   }
-  project.featureDefinitions['def-carve-target'].profile = rectProfile(0, 0, 4, 2)
-  project.meta.projectType = 'milling'
-  project.meta.machineDefinitions = [
-    e2eMachineDefinition({
-      id: ROTARY_ROUTER_ID,
-      name: ROTARY_ROUTER_NAME,
-      rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
-    }),
-  ]
-  project.meta.selectedMachineId = selectedMachineId
-  return JSON.stringify(project)
-}
 
-interface SavedProject {
-  meta: { projectType?: string }
-  stock: { shape?: string }
-  features: { id: string }[]
-  operations: { id: string; kind: string }[]
-}
+  test('the dialog defaults to Ø 40 × 200 along X in the metric template', async ({ app, ui }) => {
+    await createNewProject(app.page, ui, { type: 'Rotary' })
 
-async function savedProject(page: Page): Promise<SavedProject> {
-  return await getProject(page) as unknown as SavedProject
-}
-
-test.describe('project type in the UI (#1028)', () => {
-  test('a milling project survives a trip through Plasma and Rotary', async ({ app, ui }) => {
-    // Seed through the seam, then read it back so the assertions compare the
-    // project to itself rather than to the fixture.
-    await seedProject(app.page, projectTypeFixtureJson())
-
-    // A pocket operation on the top face.
-    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
-    await ui.contextMenu.item(menu, 'Create operation').hover()
-    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
-    const pocket = ui.operations.rowByName(app.page, POCKET)
-    await expect(pocket).toBeVisible()
-    await expect(ui.generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-
-    const before = await savedProject(app.page)
-    expect(before.meta.projectType).toBe('milling')
-    expect(before.operations.map((operation) => operation.kind)).toEqual(['pocket'])
-
-    // ── Milling → Plasma ────────────────────────────────────────────
-    await chooseProjectType(app.page, ui, PLASMA)
-    // The confirm shows the operation the new type will not cut and the
-    // machine the change selects, in that order.
-    await expect(ui.projectTypeDialog.lines(app.page)).toHaveText([
-      '1 enabled operation will not be cut',
-      `Machine changes to ${QT_PLASMAC.name}`,
-    ])
-    await confirmProjectTypeChange(app.page, ui)
-
-    // The plasma machine is selected and the milling pocket is reported as not
-    // cut by the project type, not dropped.
-    await expect(ui.properties.machineTrigger(app.page).locator('.ui-select__label')).toHaveText(QT_PLASMAC.name)
-    await expect(ui.properties.machineTypeMismatch(app.page)).toHaveCount(0)
-    await expect(pocket).toBeVisible()
-    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
-    await expect(app.page.locator('.cam-operations-notice')).toHaveText(
-      'Not plasma cuts, left out of the export for this project type: 1',
-    )
-
-    // ── Plasma → Rotary ─────────────────────────────────────────────
-    await chooseProjectType(app.page, ui, ROTARY)
-    // The stock becomes a bar and the rotary-capable router is selected again —
-    // it is still in the application library the seed merged it into.
-    await expect(ui.projectTypeDialog.lines(app.page)).toHaveText([
-      'The block becomes a round bar of the same size',
-      `Machine changes to ${ROTARY_ROUTER_NAME}`,
-    ])
-    await confirmProjectTypeChange(app.page, ui)
-
-    await expect(ui.properties.machineTrigger(app.page).locator('.ui-select__label')).toHaveText(ROTARY_ROUTER_NAME)
-    await ui.tree.stockRow(app.page).click()
-    await expect(ui.properties.stockShape(app.page).locator('.ui-select__label')).toHaveText('Round bar')
-    await expect(ui.properties.stockDiameter(app.page)).toBeVisible()
-
-    // A rotary project with a round bar and a rotary machine has an Around face.
-    await expect(ui.face.switchGroup(app.page)).toBeVisible()
-    await expect(ui.face.segment(app.page, 'Around')).toBeVisible()
-    await expect(ui.generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-
-    // ── Rotary → Milling ────────────────────────────────────────────
-    await chooseProjectType(app.page, ui, MILLING)
-    // Only the stock changes back; the rotary router already suits milling, so
-    // there is no machine line.
-    await expect(ui.projectTypeDialog.lines(app.page)).toHaveText([
-      'The round bar becomes a block of the same size',
-    ])
-    await confirmProjectTypeChange(app.page, ui)
-
-    await ui.tree.stockRow(app.page).click()
-    await expect(ui.properties.stockShape(app.page).locator('.ui-select__label')).toHaveText('Block')
-
-    // Nothing was deleted: the pocket, every other operation and every feature
-    // are exactly what they were before the trip.
-    const after = await savedProject(app.page)
-    expect(after.meta.projectType).toBe('milling')
-    expect(after.stock.shape === 'round').toBe(false)
-    expect(after.operations.map((operation) => operation.id)).toEqual(before.operations.map((operation) => operation.id))
-    expect(after.features.map((feature) => feature.id)).toEqual(before.features.map((feature) => feature.id))
+    const project = await getProject(app.page) as unknown as Project
+    expect(project.meta.units).toBe('mm')
+    const stock = project.stock as Stock & { axis: 'x' | 'y' }
+    expect(stock.shape).toBe('round')
+    expect(stock.thickness).toBeCloseTo(40, 6)
+    expect(stock.axis).toBe('x')
+    expect(lengthAlong(stock, 'x')).toBeCloseTo(200, 6)
+    await expect(ui.statusBar.stockDimensions(app.page)).toContainText('Ø40 × 200')
   })
 
-  test('a change with nothing to say is applied without a dialog', async ({ app, ui }) => {
-    // No machine, no operations, a block either way: the milling → plasma
-    // change has nothing to report, so it must not open the confirm.
-    await seedProject(app.page, projectTypeFixtureJson(null))
+  for (const type of ['Milling / routing', 'Plasma'] as const) {
+    test(`${type} blanks keep width × height × thickness`, async ({ app, ui }) => {
+      await createNewProject(app.page, ui, { type })
 
-    await setProjectType(app.page, ui, PLASMA)
-    await expect(ui.properties.projectTypeTrigger(app.page).locator('.ui-select__label')).toHaveText(PLASMA)
-    expect((await savedProject(app.page)).meta.projectType).toBe('plasma')
+      const project = await getProject(app.page) as unknown as Project
+      expect(project.meta.projectType).toBe(type === 'Plasma' ? 'plasma' : 'milling')
+      expect('shape' in project.stock).toBe(false)
+      await expect(ui.statusBar.stockDimensions(app.page)).toContainText('100 × 80 × 20')
 
-    // The stock shape control offers only the shapes the type does: a plasma
-    // project is a block, shown as a disabled single-shape control rather than
-    // a dead Block/Round bar dropdown.
+      // The rotary-only bar fields are not offered.
+      await ui.tree.stockRow(app.page).click()
+      await expect(ui.properties.exactText(app.page, 'Width')).toBeVisible()
+      await expect(ui.properties.exactText(app.page, 'Height')).toBeVisible()
+      await expect(ui.properties.exactText(app.page, 'Thickness')).toBeVisible()
+      await expect(ui.properties.exactText(app.page, 'Length')).toHaveCount(0)
+      await expect(ui.properties.exactText(app.page, 'Axis')).toHaveCount(0)
+      await expect(ui.properties.exactText(app.page, 'Diameter')).toHaveCount(0)
+    })
+  }
+
+  test('the Properties panel shows the project type and offers no way to change it', async ({ app, ui }) => {
+    await createNewProject(app.page, ui, { type: 'Rotary' })
+
+    await ui.tree.projectRow(app.page).click()
+    await expect(ui.properties.projectTypeValue(app.page)).toHaveText('Rotary')
+    // Read-only: the type row carries no select at all.
+    await expect(ui.properties.projectTypeSelect(app.page)).toHaveCount(0)
+
+    // It is the project's stored type, not a display default, and it survives
+    // moving around the panel.
     await ui.tree.stockRow(app.page).click()
-    await expect(ui.properties.stockShape(app.page).locator('.ui-select__label')).toHaveText('Block')
-    await expect(ui.properties.stockShape(app.page).locator('.ui-select__trigger')).toBeDisabled()
+    await ui.tree.projectRow(app.page).click()
+    await expect(ui.properties.projectTypeValue(app.page)).toHaveText('Rotary')
+    expect((await getProject(app.page) as unknown as Project).meta.projectType).toBe('rotary')
   })
 })

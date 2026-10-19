@@ -398,7 +398,7 @@ export const camEn = {
   'cam.addMenu.exampleImage': '{title} example',
   'cam.addMenu.unavailable': 'Not available for this selection ({count})',
   'cam.addMenu.selectFirst': 'Select geometry in the sketch or feature tree, then choose an operation',
-  'cam.addMenu.needsPlasmaProject': 'Needs a plasma project. Change the project type in the project properties.',
+  'cam.addMenu.needsPlasmaProject': 'Needs a plasma project. The type is chosen when the project is created.',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Not plasma cuts, left out of the export for this project type: {count}',

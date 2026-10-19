@@ -15,16 +15,15 @@
  */
 
 /**
- * The Project type UI's pure decisions (issue #1028, slice B): the machine
- * picker's grouping and option order, and the confirm dialog's line list.
+ * The Project type UI's pure decisions (issue #1028, slice B): the type's label
+ * keys and the machine picker's grouping and option order.
  *
- * Kept out of the panel and the dialog so both can be tested without a
- * renderer: which machines suit a type and come first, and exactly which
- * sentences a change shows and in what order.
+ * Kept out of the panel so it can be tested without a renderer: which machines
+ * suit a type and come first. The type itself is chosen once, in the New
+ * project dialog (issue #1046), so nothing here changes it.
  */
 
 import { machineMatchesProjectType } from '../../store/helpers/projectType'
-import type { ProjectTypeChangeSummary } from '../../store/helpers/projectType'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { ProjectType } from '../../types/project'
 import type { SelectOption } from '../Select'
@@ -85,38 +84,4 @@ export function machineOptionsForType(
     ...groups.matching.map((definition) => ({ value: definition.id, label: definition.name })),
     ...groups.other.map((definition) => ({ value: definition.id, label: definition.name, group: otherGroup })),
   ]
-}
-
-/** One sentence of the confirm dialog, before it is translated. */
-export type ProjectTypeChangeLine =
-  | { readonly kind: 'inactiveOperations'; readonly count: number }
-  | { readonly kind: 'hiddenAroundFeatures'; readonly count: number }
-  | { readonly kind: 'stockConversion'; readonly conversion: 'toBlock' | 'toRound' }
-  | { readonly kind: 'machineChange'; readonly name: string }
-
-/**
- * What the confirm dialog lists: one line per non-zero item of the summary,
- * in the order the change reads (what is not cut, what is hidden, what the
- * stock becomes, what the machine becomes).
- */
-export function projectTypeChangeLines(summary: ProjectTypeChangeSummary): ProjectTypeChangeLine[] {
-  const lines: ProjectTypeChangeLine[] = []
-  if (summary.inactiveOperations > 0) {
-    lines.push({ kind: 'inactiveOperations', count: summary.inactiveOperations })
-  }
-  if (summary.hiddenAroundFeatures > 0) {
-    lines.push({ kind: 'hiddenAroundFeatures', count: summary.hiddenAroundFeatures })
-  }
-  if (summary.stockConversion !== null) {
-    lines.push({ kind: 'stockConversion', conversion: summary.stockConversion })
-  }
-  if (summary.machineChange !== null) {
-    lines.push({ kind: 'machineChange', name: summary.machineChange.name })
-  }
-  return lines
-}
-
-/** True when a change would show nothing, so it is applied without a dialog. */
-export function projectTypeChangeIsEmpty(summary: ProjectTypeChangeSummary): boolean {
-  return projectTypeChangeLines(summary).length === 0
 }

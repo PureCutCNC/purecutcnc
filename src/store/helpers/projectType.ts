@@ -23,12 +23,13 @@
  * (`aroundUnavailableReason`). The user now chooses a **project type** and
  * everything else follows it.
  *
- * This module is pure: no React, no store access, no mutation. The store
- * action that changes the type lives in `workpieceSlice.ts` and the confirm
- * dialog's summary is built here.
+ * This module is pure: no React, no store access, no mutation. The type is
+ * chosen when the project is created, in the New Project dialog
+ * (`projectTypeApply.ts`), and never changes afterwards (issue #1046), so
+ * nothing here writes it.
  */
 
-import { isRotaryOperationKind, isRoundStock } from '../../types/project'
+import { isRotaryOperationKind } from '../../types/project'
 import { isBarStock, isSquareStock } from '../../types/barStock'
 import { resolveMachineKind } from '../../engine/gcode/types'
 import { setupFace } from '../../engine/setupOrientation'
@@ -99,17 +100,6 @@ export function machineMatchesProjectType(definition: MachineDefinition, type: P
   if (type === 'plasma') return kind === 'plasma'
   if (type === 'rotary') return kind !== 'plasma' && definition.rotary !== undefined
   return kind !== 'plasma'
-}
-
-/**
- * The first machine in `candidates` that suits `type`, or null when none does.
- * `candidates` is the list the machine picker shows.
- */
-function firstMatchingMachine(
-  candidates: readonly MachineDefinition[],
-  type: ProjectType,
-): MachineDefinition | null {
-  return candidates.find((definition) => machineMatchesProjectType(definition, type)) ?? null
 }
 
 /**
@@ -220,54 +210,4 @@ function nonRotaryOperationOnSquareAround(
   if (isRotaryOperationKind(operation.kind)) return false
   const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
   return setup !== null && setupFace(setup) === 'around'
-}
-
-/** What changing the type would do, for the confirm dialog (slice B). Nothing is deleted. */
-export interface ProjectTypeChangeSummary {
-  readonly from: ProjectType
-  readonly to: ProjectType
-  /** enabled operations that would not be cut under the new type (plasma ops in milling/rotary, milling ops in plasma, rotary ops outside rotary) */
-  readonly inactiveOperations: number
-  /** Around features kept but hidden and not exported (leaving rotary) */
-  readonly hiddenAroundFeatures: number
-  readonly stockConversion: null | 'toBlock' | 'toRound'
-  /** the machine that will be selected, or null when the current one matches or none matches */
-  readonly machineChange: null | { id: string; name: string }
-}
-
-/** {@link ProjectTypeChangeSummary}, read off the project without changing it. */
-export function projectTypeChangeSummary(
-  project: Project,
-  to: ProjectType,
-  candidates: readonly MachineDefinition[],
-): ProjectTypeChangeSummary {
-  const from = projectType(project)
-  const wantsRound = stockShapesForProjectType(to).includes('round')
-  const round = isRoundStock(project.stock)
-  const current = activeMachine(project)
-  const replacement = current && !machineMatchesProjectType(current, to)
-    ? firstMatchingMachine(candidates, to)
-    : null
-  // Counted against the project as it would stand after the change: an
-  // operation in an Around setup stops being cut too when the new type is not
-  // rotary, and the confirm must not understate that.
-  const after: Pick<Project, 'meta' | 'stock' | 'setups'> = {
-    meta: { ...project.meta, projectType: to },
-    stock: project.stock,
-    setups: project.setups,
-  }
-  return {
-    from,
-    to,
-    inactiveOperations: project.operations.filter((operation) => (
-      operation.enabled && !operationCutsInProject(after, operation)
-    )).length,
-    // Only leaving rotary hides anything: a project that is already not
-    // rotary has its Around features hidden whatever this change does.
-    hiddenAroundFeatures: from === 'rotary' && to !== 'rotary'
-      ? project.features.filter((feature) => feature.authoringFace === 'around').length
-      : 0,
-    stockConversion: wantsRound === round ? null : wantsRound ? 'toRound' : 'toBlock',
-    machineChange: replacement ? { id: replacement.id, name: replacement.name } : null,
-  }
 }
