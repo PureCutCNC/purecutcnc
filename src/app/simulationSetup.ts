@@ -41,12 +41,14 @@
  * setups existed; the returned map is always a new one, scoped to the
  * setup's operations, so another setup's paths cannot leak through it. A flat
  * setup drops the project's Around features (`flatFaceProject`): they belong
- * to the bar's unrolled sheet and have no place on its rectangle.
+ * to the bar's unrolled sheet and have no place on its rectangle. A flat setup
+ * of a round bar describes the bar's real rounded profile for the grid to seed
+ * (issue #1049), so the simulation draws a bar rather than a block.
  */
 
-import type { BarStock, Clamp, MachineOrigin, MachiningSetup, Operation, Project } from '../types/project'
-import { isAroundSetup } from '../types/project'
-import { isBarStock, isSquareStock } from '../types/barStock'
+import type { BarStock, Clamp, MachineOrigin, MachiningSetup, Operation, Project, RoundStock } from '../types/project'
+import { isAroundSetup, isRoundStock } from '../types/project'
+import { barCentre, barInscribedRadius, barPivotZ, isBarStock, isSquareStock } from '../types/barStock'
 import type { ToolpathResult } from '../engine/toolpaths/types'
 import { setupForOperation, setupFrame } from '../engine/setupOrientation'
 import type { SetupFrame } from '../engine/setupOrientation'
@@ -54,8 +56,8 @@ import { projectInSetupFrame, toolpathInSetupFrame } from '../engine/setupFrameP
 import { aroundFrame, aroundFrameForOperation, flatFaceProject, unrolledProject, unwrapToolpath } from '../engine/aroundFrame'
 import { foldToolpath } from '../engine/aroundFold'
 import type { AroundFrame } from '../engine/aroundFrame'
-import { validateSquareBar } from '../engine/simulation/grid'
-import type { SquareBarDescriptor } from '../engine/simulation/types'
+import { validateFlatRoundBar, validateSquareBar } from '../engine/simulation/grid'
+import type { FlatRoundBarDescriptor, SquareBarDescriptor } from '../engine/simulation/types'
 import { activeSetup } from '../store/helpers/activeFace'
 
 /**
@@ -94,6 +96,16 @@ export interface SimulationSetupInput {
    * know the blank was square. Transient — never persisted.
    */
   squareBar?: SquareBarDescriptor
+  /**
+   * The round bar's real profile seen from a flat (Top or Bottom) setup
+   * (issue #1049), present only when this setup is not an Around setup and the
+   * setup-local stock is a round bar. `pivot`/`radius`/`centre` are the bar's
+   * own geometry in that setup's frame; the descriptor seeds each cell's
+   * starting height in `createSimulationGrid` and then leaves the picture —
+   * nothing downstream of initialization needs to know the stock was round.
+   * Transient — never persisted.
+   */
+  flatRoundBar?: FlatRoundBarDescriptor
   /** The project turned into the setup's frame; the same object for Top. */
   project: Project
   /** The setup's operations, in the order they are cut, disabled and hidden included. */
@@ -184,6 +196,11 @@ function unrolledSimulationProject(project: Project, frame: AroundFrame): Projec
  * honest flat fallback (a flat sheet would report a successful uncut block for
  * a real square-to-round job), so a missing square Around frame throws and the
  * app's existing error surface reports it. The round behaviour is unchanged.
+ *
+ * A flat setup of a **round bar** also carries the bar's real profile
+ * (`flatRoundBar`, issue #1049): its grid starts curved instead of as the
+ * bounding block. A Bottom setup needs no special case — the setup turn is
+ * already in `localProject`, and the bar is symmetric about its axis.
  */
 export function buildSimulationSetupInput(
   project: Project,
@@ -222,14 +239,25 @@ export function buildSimulationSetupInput(
   const bar = around ? buildSimulationBar(project, around) : undefined
   const squareBar = around && bar && isSquareStock(bar.stock) ? squareBarFor(bar.stock, around) : undefined
 
+  const localProject = around
+    ? unrolledSimulationProject(project, around)
+    : projectInSetupFrame(flatFaceProject(project), frame)
+
+  // A flat setup of a round bar sees the bar's real rounded profile from
+  // above, not its bounding-box block (issue #1049). The setup's own turn is
+  // already baked into `localProject`, and a round bar is symmetric about its
+  // axis, so a Bottom setup yields the same centreline and radius as Top.
+  const flatRoundBar = !around && isRoundStock(localProject.stock)
+    ? flatRoundBarFor(localProject.stock)
+    : undefined
+
   return {
-    project: around
-      ? unrolledSimulationProject(project, around)
-      : projectInSetupFrame(flatFaceProject(project), frame),
+    project: localProject,
     operations,
     toolpaths: localToolpaths,
     ...(bar ? { bar } : {}),
     ...(squareBar ? { squareBar } : {}),
+    ...(flatRoundBar ? { flatRoundBar } : {}),
   }
 }
 
@@ -242,6 +270,23 @@ export function buildSimulationSetupInput(
 function squareBarFor(stock: BarStock, frame: AroundFrame): SquareBarDescriptor {
   const descriptor: SquareBarDescriptor = { side: stock.thickness, frame }
   validateSquareBar(descriptor)
+  return descriptor
+}
+
+/**
+ * The transient flat round-bar grid-initialization descriptor for the real
+ * bar in this setup's frame (issue #1049). It is validated here, before any
+ * grid allocation, through the same helper `createSimulationGrid` uses, so a
+ * malformed bar surfaces instead of seeding a plausible-looking surface.
+ */
+function flatRoundBarFor(stock: RoundStock): FlatRoundBarDescriptor {
+  const descriptor: FlatRoundBarDescriptor = {
+    axis: stock.axis,
+    pivot: barPivotZ(stock),
+    radius: barInscribedRadius(stock),
+    centre: barCentre(stock),
+  }
+  validateFlatRoundBar(descriptor)
   return descriptor
 }
 

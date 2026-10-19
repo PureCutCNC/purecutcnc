@@ -16,7 +16,7 @@
 
 import type { Project, Point } from '../../types/project'
 import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
-import type { SimulationBuildOptions, SimulationGrid, SquareBarDescriptor } from './types'
+import type { FlatRoundBarDescriptor, SimulationBuildOptions, SimulationGrid, SquareBarDescriptor } from './types'
 
 const DEFAULT_LONG_AXIS_CELLS = 180
 const MIN_AXIS_CELLS = 24
@@ -84,6 +84,19 @@ export function resolveSimulationGridSpec(
   const squareBar = options.squareBar
   if (squareBar) validateSquareBar(squareBar)
 
+  // A flat round bar is a different seeding of the same flat grid, not a second
+  // stock model: it cannot be a square blank, and it is not the unrolled sheet.
+  const flatRoundBar = options.flatRoundBar
+  if (flatRoundBar) {
+    validateFlatRoundBar(flatRoundBar)
+    if (squareBar) {
+      throw new RangeError('simulation grid: squareBar and flatRoundBar are mutually exclusive')
+    }
+    if (options.wrap) {
+      throw new RangeError('simulation grid: a flat round bar cannot be wrapped')
+    }
+  }
+
   return {
     originX: stockBounds.minX,
     originY: stockBounds.minY,
@@ -135,6 +148,74 @@ export function seedSquareTopZ(
   }
 }
 
+/**
+ * Validate a transient flat round-bar descriptor before it seeds a grid. The
+ * values are raw bar geometry, so nothing here may be silently approximated: a
+ * non-positive radius or a non-finite centre/pivot is a caller bug.
+ */
+export function validateFlatRoundBar(descriptor: FlatRoundBarDescriptor): void {
+  const { axis, pivot, radius, centre } = descriptor
+  if (axis !== 'x' && axis !== 'y') {
+    throw new RangeError(`flatRoundBar: axis must be 'x' or 'y', got ${String(axis)}`)
+  }
+  if (!Number.isFinite(radius) || radius <= 0) {
+    throw new RangeError(`flatRoundBar: radius must be a positive finite number, got ${radius}`)
+  }
+  if (!Number.isFinite(pivot) || pivot < 0) {
+    throw new RangeError(`flatRoundBar: pivot must be a finite, non-negative number, got ${pivot}`)
+  }
+  if (!Number.isFinite(centre)) {
+    throw new RangeError(`flatRoundBar: centre must be a finite number, got ${centre}`)
+  }
+}
+
+/** The stock-top height of a round bar `distance` across from its centreline. */
+function flatRoundBarSurfaceZ(flatRoundBar: FlatRoundBarDescriptor, distance: number, emptyZ: number): number {
+  const radiusSquared = flatRoundBar.radius * flatRoundBar.radius
+  const distanceSquared = distance * distance
+  // Outside the bar there is no material at all: the grid's empty value, never
+  // a rounded-down or zero-height surface.
+  if (distanceSquared >= radiusSquared) return emptyZ
+  return flatRoundBar.pivot + Math.sqrt(radiusSquared - distanceSquared)
+}
+
+/**
+ * Fill a flat (Top/Bottom) grid from a round bar's real profile as seen from
+ * that face: each cell's material top is `pivot + sqrt(radius² − d²)`, where
+ * `d` is the cell centre's distance across the bar from its centreline
+ * (issue #1049). Along the bar the section is constant, so it depends only on
+ * the across cell. Cells with `|d| ≥ radius` start at the grid's empty value,
+ * which is how the profile-masked stock above already says "no material here";
+ * they are never raised above it.
+ *
+ * This is a **top-down heightfield**, so it shows the bar's upper half only:
+ * nothing below the equator is represented. A cutter approaches along +Z, so it
+ * cannot reach that half anyway; the render's boundary wall below the equator
+ * is a silhouette, not a modelled surface.
+ *
+ * The caller snapshots the result as the immutable baseline — every later write
+ * lowers `topZ` only.
+ */
+export function seedFlatRoundBarTopZ(
+  topZ: Float32Array,
+  spec: SimulationGridSpec,
+  flatRoundBar: FlatRoundBarDescriptor,
+): void {
+  const acrossOrigin = flatRoundBar.axis === 'x' ? spec.originY : spec.originX
+  const acrossCount = flatRoundBar.axis === 'x' ? spec.rows : spec.cols
+  const acrossHeights = new Float32Array(acrossCount)
+  for (let across = 0; across < acrossCount; across += 1) {
+    const coordinate = acrossOrigin + (across + 0.5) * spec.cellSize
+    acrossHeights[across] = flatRoundBarSurfaceZ(flatRoundBar, coordinate - flatRoundBar.centre, spec.stockBottomZ)
+  }
+  for (let row = 0; row < spec.rows; row += 1) {
+    for (let col = 0; col < spec.cols; col += 1) {
+      const across = flatRoundBar.axis === 'x' ? row : col
+      topZ[row * spec.cols + col] = acrossHeights[across]
+    }
+  }
+}
+
 export function createSimulationGrid(
   project: Project,
   options: SimulationBuildOptions = {},
@@ -142,6 +223,22 @@ export function createSimulationGrid(
   const spec = resolveSimulationGridSpec(project, options)
   const cellCount = spec.cols * spec.rows
   const topZ = new Float32Array(cellCount)
+
+  const flatRoundBar = options.flatRoundBar
+  if (flatRoundBar) {
+    // A round bar seen from a Top or Bottom setup enters here and only here:
+    // the starting heights are the bar's real upper profile, and the immutable
+    // snapshot keeps a virgin bar from reporting its own curvature as removal.
+    // Everything downstream is the same flat kernel that cuts a block.
+    seedFlatRoundBarTopZ(topZ, spec, flatRoundBar)
+    const initialTopZ = new Float32Array(topZ)
+    return {
+      ...spec,
+      ...(options.wrap ? { wrap: options.wrap } : {}),
+      initialTopZ,
+      topZ,
+    }
+  }
 
   const squareBar = options.squareBar
   if (squareBar) {

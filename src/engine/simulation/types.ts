@@ -39,6 +39,31 @@ export interface SquareBarDescriptor {
   frame: AroundFrame
 }
 
+/**
+ * A round bar being simulated from a flat (Top or Bottom) setup (issue #1049).
+ * Transient simulation initialization input — never persisted, never carried on
+ * the grid.
+ *
+ * A flat setup simulates on the top-down heightfield, so the bar's bounding
+ * rectangle used to seed every cell at the full stock thickness: the round bar
+ * was drawn as a square block. This descriptor is the bar's real profile as
+ * seen from that face — the upper half of the cylinder — so the grid starts
+ * curved instead.
+ *
+ * `pivot` is the turning axis height (`barPivotZ`) and `radius` is the bar
+ * radius (`barInscribedRadius`), both in project units. `centre` is the
+ * centreline coordinate across the bar: a Y value for axis `'x'`, an X value
+ * for axis `'y'`, in the setup-local frame the grid is built in. A Bottom setup
+ * sees the same profile as Top, because a round bar is symmetric about its
+ * axis.
+ */
+export interface FlatRoundBarDescriptor {
+  axis: 'x' | 'y'
+  pivot: number
+  radius: number
+  centre: number
+}
+
 export interface SimulationGrid {
   originX: number
   originY: number
@@ -81,6 +106,13 @@ export interface SimulationBuildOptions {
    * grid creation, never persisted, and never carried on the grid.
    */
   squareBar?: SquareBarDescriptor
+  /**
+   * Seed a flat (Top/Bottom) grid with a round bar's true profile instead of
+   * its bounding box (issue #1049). Initialization only — validated at grid
+   * creation, never persisted, and never carried on the grid. Mutually
+   * exclusive with `squareBar` and with `wrap`.
+   */
+  flatRoundBar?: FlatRoundBarDescriptor
 }
 
 export interface SimulationStats {
