@@ -102,6 +102,29 @@ function isCuttingMove(move: ToolpathMove): boolean {
   return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
+/**
+ * How much of `parent` a playback piece has covered by its end. Every piece is
+ * a linear slice of the source move, so projecting the piece's end point onto
+ * the parent gives the elapsed fraction without remembering the split. A
+ * degenerate source, and a piece at (or within a rounding step of) the parent's
+ * end, count as fully played — the wrapped kernel then takes the batch path
+ * exactly, which is what keeps the finished playback bit-identical to it.
+ */
+function elapsedFractionOf(piece: ToolpathMove, parent: ToolpathMove): number {
+  const dx = parent.to.x - parent.from.x
+  const dy = parent.to.y - parent.from.y
+  const dz = parent.to.z - parent.from.z
+  const lengthSq = dx * dx + dy * dy + dz * dz
+  if (!(lengthSq > 1e-18)) return 1
+  const fraction = (
+    (piece.to.x - parent.from.x) * dx
+    + (piece.to.y - parent.from.y) * dy
+    + (piece.to.z - parent.from.z) * dz
+  ) / lengthSq
+  if (!(fraction < 1 - 1e-9)) return 1
+  return fraction > 1e-9 ? fraction : 0
+}
+
 /** A playback piece and the source move it was cut from. */
 interface PlaybackSegment {
   move: ToolpathMove
@@ -112,9 +135,10 @@ interface PlaybackSegment {
 /**
  * Split any move longer than `maxSegmentLength` into equal-length sub-segments,
  * remembering its source move. Splitting is semantically safe because
- * `applyMoveToGrid` resolves every cell against the source move (`sweep`): the
- * cutter's position along the path does not change with the split, so the
- * sub-segments' cuts union to exactly the source move's cut (F8).
+ * `applyMoveToGrid` resolves every cell against the source move (`sweep`) with
+ * the piece's elapsed fraction: the cutter's reached position on the path does
+ * not change with the split, so the sub-segments' cuts union to exactly the
+ * source move's cut (F8, and issue #1048 for the elapsed pose).
  */
 function subdivideSegments(moves: ToolpathMove[], maxSegmentLength: number): PlaybackSegment[] {
   if (!(maxSegmentLength > 0) || moves.length === 0) {
@@ -342,6 +366,7 @@ export class PlaybackController {
             this.tool.toolType,
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
+            elapsedFractionOf(move, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -369,6 +394,7 @@ export class PlaybackController {
             this.tool.toolType,
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
+            elapsedFractionOf(move, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -399,6 +425,7 @@ export class PlaybackController {
             this.tool.toolType,
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
+            elapsedFractionOf(partial, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
