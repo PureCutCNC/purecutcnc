@@ -1051,10 +1051,13 @@ test('square playback starts from the prior rough, follows the finish and resets
   const startRemoved = start.removedCells
 
   // ── Play a burst, then seek to the end: more material is gone ──
+  // The burst only proves that Play advances; how far it gets in a minute is
+  // the runner's render speed (CI's software GL reached 1 % on this job), so
+  // any progress counts. The material checks follow the seek to the end.
   await ui.simSetup.playPause(page).click()
-  await expect.poll(async () => (await playbackEvidence(page, ui)).progress, { timeout: 60_000 }).toBeGreaterThan(0.02)
+  await expect.poll(async () => (await playbackEvidence(page, ui)).progress, { timeout: 60_000 }).toBeGreaterThan(0)
   await ui.simSetup.playPause(page).click()
-  await expect.poll(async () => (await playbackEvidence(page, ui)).progress).toBeGreaterThan(0.02)
+  await expect.poll(async () => (await playbackEvidence(page, ui)).progress).toBeGreaterThan(0)
 
   await setPlaybackProgress(page, ui, 1000)
   // The slider sets its progress immediately while the seek itself lands on the
