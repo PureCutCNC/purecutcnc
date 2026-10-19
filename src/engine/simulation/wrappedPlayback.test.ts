@@ -36,7 +36,7 @@
  *    and V-bit cutter, at five playback fractions and at the finish;
  *  - a Flutes-like twisted line and an around-the-bar ring, which exercise the
  *    same seam images through a different approach direction;
- *  - Frank's #1048 project (`scripts/fixtures-1048/rotary-thread-01.camj`),
+ *  - Frank's #1048 project (`src/engine/simulation/wrappedPlayback.fixture.camj`),
  *    loaded through the real project and toolpath path: at 2 % and 6 % no cell
  *    may be lowered past the truncated replay.
  *
@@ -314,7 +314,7 @@ interface ThreadFixture {
 
 function loadThreadFixture(): ThreadFixture {
   const raw = readFileSync(
-    new URL('../../../scripts/fixtures-1048/rotary-thread-01.camj', import.meta.url),
+    new URL('./wrappedPlayback.fixture.camj', import.meta.url),
     'utf8',
   )
   const project = decodeProjectFormat(JSON.parse(raw)).project
