@@ -20,15 +20,20 @@
  * sides below the equator.
  *
  * The scene test builds the real setup input, the real grid and then the same
- * `createFlatRoundBarLowerHalf` the viewport mounts, so a descriptor that stops
- * reaching the renderer or a builder that stops returning the half-cylinder
- * fails here. Every expected dimension is derived from the bar's own geometry,
- * written out in this file.
+ * `buildSimulationStockScene` the static and playback views mount, so a
+ * descriptor that stops reaching the renderer, a builder that stops returning
+ * the half-cylinder, or a view that stops mounting it fails here. Every
+ * expected dimension is derived from the bar's own geometry, written out in
+ * this file.
  *
  * It also pins the join the next screenshot found (issue #1049 follow-up): a
  * flat round bar draws no stock-underside quad, its walls land on the static
  * lower half instead of floating at the equator, and only the round-bar wall
- * variant changes — block and square scenes are compared by hash.
+ * variant changes — block and square scenes are compared by hash. The review
+ * added the silhouette case: a grid whose last material boundary falls inside
+ * the radius, exactly on it, or beyond it must still meet the lower half with
+ * no gap and no overlap past 2e-4 units (Ø40/Ø41 mm and 1.52/1.55 in at 96
+ * cells, both bar axes).
  *
  * Mutations these assertions were checked against, each applied on its own
  * from a `cp` backup and reverted:
@@ -39,13 +44,20 @@
  * - adding the floor quad back for a flat round bar → `round bar: the boundary
  *   is the two wall strips, no floor quad`;
  * - replacing the cylinder floor with the equator plane → `the round-bar wall
- *   shader takes its floor from the tested join rule`.
+ *   shader takes its floor from the tested join rule`;
+ * - dropping the silhouette clamp from the wall shader → `the wall shader joins
+ *   the silhouette with the tested rule`;
+ * - not adding the lower half to the built scene group → `the scene builder
+ *   mounts the static lower half`;
+ * - removing both `parent.add(built.group)` viewport mounts → `the static and
+ *   playback effects both mount the built scene group, got 0`.
  *
  * Run with: npx tsx src/engine/simulation/flatRoundBarLowerHalf.test.ts
  */
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import * as THREE from 'three'
 import {
   getStockBounds,
@@ -66,6 +78,8 @@ import {
 } from './flatRoundBarLowerHalf'
 import { createHeightfieldTexture } from './gpuMesh'
 import { createInstancedBoundaryGroup, ROUND_BAR_WALL_JOIN_GLSL } from './instancedBoundary'
+import { ROUND_BAR_SILHOUETTE_GLSL } from './heightfieldShader'
+import { buildSimulationStockScene } from './simulationScene'
 import { compileScalarGlsl } from './glslScalar.testSupport'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 import { buildSimulationSetupInput } from '../../app/simulationSetup'
@@ -214,12 +228,27 @@ function reportedFixture(): BarFixture {
 function lowerHalfSurfaceY(mesh: THREE.Mesh, descriptor: FlatRoundBarDescriptor, across: number): number {
   const samples = new Map<number, number>()
   for (const vertex of verticesOf(mesh, descriptor.axis)) {
-    // Below the equator only: that excludes the end caps' centre vertex and
-    // leaves the semicircle's own polyline.
-    if (vertex.up >= descriptor.pivot - 1e-9) continue
-    samples.set(Math.round(vertex.across * 1e6) / 1e6, vertex.up)
+    if (vertex.up > descriptor.pivot + 1e-9) continue
+    // The end caps' centre vertex also sits at the equator but in the middle of
+    // the bar; the side surface's own equator vertices are the ones at ±radius.
+    const atCapCentre =
+      Math.abs(vertex.up - descriptor.pivot) <= 1e-9 &&
+      Math.abs(vertex.across - descriptor.centre) < descriptor.radius - 1e-6
+    if (atCapCentre) continue
+    // Float32 vertex positions can collapse two nearly vertical samples onto
+    // the same across coordinate near the equator; the join must use the
+    // highest of them, which is the one the wall actually meets.
+    const existing = samples.get(vertex.across)
+    samples.set(vertex.across, existing === undefined ? vertex.up : Math.max(existing, vertex.up))
   }
   const points = [...samples.entries()].sort((a, b) => a[0] - b[0])
+  // The grid boundary and the bar radius can differ by a float ulp (the
+  // stock's centre is derived separately), so treat a query at the endpoint as
+  // that endpoint rather than falling off the polyline.
+  if (points.length > 0 && across <= points[0][0] + 1e-9) return points[0][1]
+  if (points.length > 0 && across >= points[points.length - 1][0] - 1e-9) {
+    return points[points.length - 1][1]
+  }
   for (let index = 1; index < points.length; index += 1) {
     const [fromAcross, fromUp] = points[index - 1]
     const [toAcross, toUp] = points[index]
@@ -779,10 +808,230 @@ function testBaseStockScenesByteIdentical(): void {
   console.log('block/square scene identity: PASSED')
 }
 
+// ---------------------------------------------------------------------------
+// 7. An outermost cell boundary inside or beyond the radius joins the lower
+//    half at the bar's real silhouette (issue #1049 review).
+// ---------------------------------------------------------------------------
+
+/** Both walls of the join: no gap and no penetration beyond this. */
+const JOIN_EPSILON = 2e-4
+
+function testOvershootingBoundaryJoinsSilhouette(): void {
+  console.log('Testing a last cell boundary inside and outside the bar radius still joins the lower half...')
+  const { roundBarWallFloorZ, roundBarSilhouetteAcross } = compileScalarGlsl(ROUND_BAR_WALL_JOIN_GLSL)
+  const silhouette = compileScalarGlsl(ROUND_BAR_SILHOUETTE_GLSL)
+
+  // The shaders must call the rules this test runs, or the geometry below
+  // would only prove a TypeScript copy of them.
+  const probeFixture = barFixture('x', 41)
+  const probe = setupSimulation(probeFixture, 'top')
+  const probeDescriptor = probe.input.flatRoundBar
+  assert(probeDescriptor, 'probe: carries the flat round-bar profile')
+  const probeScene = buildSimulationStockScene(probe.grid, COLOR, undefined, probeDescriptor)
+  const probeWallMaterial = (probeScene.boundary.children[0] as THREE.Mesh).material
+  const probeSurfaceMaterial = (probeScene.surface as THREE.Mesh).material
+  assert(probeWallMaterial instanceof THREE.ShaderMaterial, 'probe: the wall is a shader material')
+  assert(probeSurfaceMaterial instanceof THREE.ShaderMaterial, 'probe: the surface is a shader material')
+  assert(
+    probeWallMaterial.vertexShader.replace(/\s+/g, ' ').includes('roundBarSilhouetteAcross(across, uBarCentre, uBarRadius)'),
+    'the wall shader joins the silhouette with the tested rule',
+  )
+  assert(
+    probeSurfaceMaterial.fragmentShader.replace(/\s+/g, ' ').includes('roundBarOutsideSilhouette(vAcrossWorld, uBarCentre, uBarRadius)'),
+    'the surface shader clips with the tested silhouette rule',
+  )
+  probeScene.group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return
+    object.geometry.dispose()
+    ;(object.material as THREE.Material).dispose()
+  })
+  probeScene.heightfieldTexture.dispose()
+
+  let insideBoundaries = 0
+  let outsideBoundaries = 0
+  let exactBoundaries = 0
+
+  // Ø40/Ø41 mm at 96 cells put the last material boundary inside / 0.667 mm
+  // outside the radius. The inch diameters do the same at the same detail for
+  // an 8 in bar (1.52 in inside, 1.55 in outside).
+  const unitCases = [
+    { units: 'mm', diameters: [40, 41] },
+    { units: 'inch', diameters: [1.52, 1.55] },
+  ] as const
+  for (const axis of ['x', 'y'] as const) {
+    for (const { units, diameters } of unitCases) {
+      for (const diameter of diameters) {
+        const label = `${axis}/${units}/${diameter}`
+        const fixture = barFixture(axis, diameter, units)
+        const { input, grid } = setupSimulation(fixture, 'top')
+        const descriptor = input.flatRoundBar
+        assert(descriptor, `${label}: the setup input carries the flat round-bar profile`)
+        const lowerHalf = createFlatRoundBarLowerHalf(grid, descriptor, COLOR)
+        assert(lowerHalf, `${label}: builds the static lower half`)
+
+        const acrossOrigin = descriptor.axis === 'x' ? grid.originY : grid.originX
+        const acrossCount = descriptor.axis === 'x' ? grid.rows : grid.cols
+        let minIndex = -1
+        let maxIndex = -1
+        for (let across = 0; across < acrossCount; across += 1) {
+          const index = descriptor.axis === 'x' ? across * grid.cols : across
+          if (grid.topZ[index] > grid.stockBottomZ + 1e-6) {
+            if (minIndex < 0) minIndex = across
+            maxIndex = across
+          }
+        }
+        assert(minIndex >= 0 && maxIndex >= 0, `${label}: the bar has material across cells`)
+
+        const sides = [
+          { name: 'min', across: acrossOrigin + minIndex * grid.cellSize },
+          { name: 'max', across: acrossOrigin + (maxIndex + 1) * grid.cellSize },
+        ]
+        for (const side of sides) {
+          const distance = side.across - descriptor.centre
+          const relation = Math.abs(Math.abs(distance) - descriptor.radius)
+          if (relation <= 1e-9) exactBoundaries += 1
+          else if (Math.abs(distance) < descriptor.radius) insideBoundaries += 1
+          else outsideBoundaries += 1
+
+          // The wall shader pulls an overshooting boundary onto the silhouette.
+          const clamped = side.across
+          const clampedAcross = roundBarSilhouetteAcross(clamped, descriptor.centre, descriptor.radius) as number
+          if (Math.abs(distance) > descriptor.radius) {
+            approx(
+              clampedAcross,
+              descriptor.centre + Math.sign(distance) * descriptor.radius,
+              `${label}/${side.name}: the boundary is joined at the silhouette`,
+              1e-12,
+            )
+            assert(
+              silhouette.roundBarOutsideSilhouette(side.across, descriptor.centre, descriptor.radius) === true,
+              `${label}/${side.name}: the surface clips the overshoot`,
+            )
+          } else {
+            approx(clampedAcross, side.across, `${label}/${side.name}: a boundary inside the radius is untouched`, 1e-12)
+          }
+
+          const floor = roundBarWallFloorZ(
+            descriptor.pivot,
+            descriptor.radius,
+            clampedAcross - descriptor.centre,
+            false,
+            descriptor.pivot,
+            grid.stockBottomZ,
+          ) as number
+          const surface = lowerHalfSurfaceY(lowerHalf, descriptor, clampedAcross)
+          const gap = Math.max(0, floor - surface)
+          const overlap = Math.max(0, surface - floor)
+          assert(gap <= JOIN_EPSILON, `${label}/${side.name}: no gap at the join (${gap} > ${JOIN_EPSILON})`)
+          assert(
+            overlap <= JOIN_EPSILON,
+            `${label}/${side.name}: no overlap past the lower half (${overlap} > ${JOIN_EPSILON})`,
+          )
+          if (Math.abs(distance) > descriptor.radius) {
+            approx(floor, descriptor.pivot, `${label}/${side.name}: the wall ends at the silhouette equator`, 1e-6)
+          }
+        }
+
+        lowerHalf.geometry.dispose()
+        ;(lowerHalf.material as THREE.Material).dispose()
+      }
+    }
+  }
+
+  assert(insideBoundaries > 0, 'the fixtures include a boundary inside the radius')
+  assert(outsideBoundaries > 0, 'the fixtures include a boundary beyond the radius')
+  assert(exactBoundaries > 0, 'the fixtures include a boundary exactly on the radius')
+  console.log(
+    `overshooting boundary join: PASSED (${insideBoundaries} inside, ${outsideBoundaries} outside, ${exactBoundaries} exact)`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 8. The one scene builder both the static and the playback view mount.
+// ---------------------------------------------------------------------------
+
+function testSceneBuilderMountsLowerHalf(): void {
+  console.log('Testing the shared static/playback scene builder mounts the lower half and clips at the silhouette...')
+  const fixture = barFixture('x', 41)
+  const { input, grid } = setupSimulation(fixture, 'top')
+  const descriptor = input.flatRoundBar
+  assert(descriptor, 'scene builder: the setup input carries the flat round-bar profile')
+
+  const built = buildSimulationStockScene(grid, COLOR, undefined, descriptor)
+  const mounted = built.group.getObjectByName(FLAT_ROUND_BAR_LOWER_HALF_NAME)
+  assert(mounted instanceof THREE.Mesh, 'the scene builder mounts the static lower half')
+  assert(mounted === built.lowerHalf, 'the mounted mesh is the lower half the builder returns')
+  assert(built.group.children.includes(mounted), 'the lower half is a child of the mounted scene group')
+  assert(built.group.children.includes(built.surface), 'the heightfield surface is in the same scene group')
+  assert(built.group.children.includes(built.boundary), 'the boundary walls are in the same scene group')
+
+  // A round bar's top surface stops at the silhouette; its walls are pulled
+  // onto the same circle.
+  const surfaceMaterial = (built.surface as THREE.Mesh).material
+  assert(surfaceMaterial instanceof THREE.ShaderMaterial, 'the surface is a shader material')
+  assert(
+    surfaceMaterial.fragmentShader.includes('roundBarOutsideSilhouette(vAcrossWorld, uBarCentre, uBarRadius)'),
+    'the round-bar surface clips its flat top at the silhouette',
+  )
+  const wallMaterial = (built.boundary.children[0] as THREE.Mesh).material
+  assert(wallMaterial instanceof THREE.ShaderMaterial, 'the wall is a shader material')
+  assert(
+    wallMaterial.vertexShader.includes('roundBarSilhouetteAcross(across, uBarCentre, uBarRadius)'),
+    'the round-bar wall joins the silhouette, not the overshooting cell boundary',
+  )
+
+  // Both mounted views call this one builder. Removing either call — the
+  // static or the playback mount — is what the source count catches; removing
+  // the lower-half mount itself fails the group assertions above.
+  const viewportSource = readFileSync(
+    new URL('../../components/simulation/SimulationViewport.tsx', import.meta.url),
+    'utf8',
+  )
+  const builderCalls = viewportSource.match(/buildSimulationStockScene\(/g) ?? []
+  assert(
+    builderCalls.length === 2,
+    `the static and playback effects both build through the shared builder, got ${builderCalls.length}`,
+  )
+  const groupMounts = viewportSource.match(/parent\.add\(built\.group\)/g) ?? []
+  assert(
+    groupMounts.length === 2,
+    `the static and playback effects both mount the built scene group, got ${groupMounts.length}`,
+  )
+  assert(
+    !viewportSource.includes('createFlatRoundBarLowerHalf'),
+    'the viewport cannot bypass the shared builder to mount a lower half',
+  )
+
+  // A block scene builds the same group without the round-bar lower half.
+  const blockProject = flatProject(newProject('block', 'mm').stock)
+  const blockSetup = blockProject.setups.find((entry) => entry.id === faceSetup('top').id)!
+  const blockInput = buildSimulationSetupInput(blockProject, blockSetup, new Map())
+  assert(blockInput, 'block scene: yields an input')
+  const blockGrid = createSimulationGrid(blockInput.project, simulationBuildOptions(blockInput, DETAIL))
+  const blockScene = buildSimulationStockScene(blockGrid, COLOR)
+  assert(blockScene.lowerHalf === null, 'a block scene mounts no round-bar lower half')
+  assert(
+    blockScene.group.getObjectByName(FLAT_ROUND_BAR_LOWER_HALF_NAME) === undefined,
+    'a block scene group carries no lower-half mesh',
+  )
+
+  for (const scene of [built, blockScene]) {
+    scene.group.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      object.geometry.dispose()
+      ;(object.material as THREE.Material).dispose()
+    })
+    scene.heightfieldTexture.dispose()
+  }
+  console.log('shared scene builder mounting: PASSED')
+}
+
 testRoundBarSceneHasLowerHalf()
 testBaseStockScenesHaveNoLowerHalf()
 testWallFloorJoinsLowerHalf()
 testRoundBarSceneHasNoUndersideFloor()
 testHeightfieldEdgeMeetsLowerHalf()
 testBaseStockScenesByteIdentical()
+testOvershootingBoundaryJoinsSilhouette()
+testSceneBuilderMountsLowerHalf()
 console.log('All flat round-bar lower-half tests passed.')

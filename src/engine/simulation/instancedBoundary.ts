@@ -43,6 +43,7 @@ import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundBounds, aroundShader, around
 import {
   CELL_HEIGHT_GLSL,
   LIGHTING_GLSL,
+  ROUND_BAR_SILHOUETTE_GLSL,
   SLOPE_GRADIENT_GLSL,
   STEP_GLSL,
   SURFACE_NORMAL_GLSL,
@@ -69,11 +70,16 @@ export function wallInstanceCount(grid: Pick<SimulationGrid, 'cols' | 'rows'>): 
  * A flat round bar's wall floor: the static lower half's cylindrical surface
  * (issue #1049). The heightfield's outer edge and the half-cylinder must meet
  * without a gap, so a wall stops on the cylinder rather than at the equator
- * plane — the same value at `|across| = radius`, a little lower where the grid
- * boundary falls inside the bar. `wallEdgeCollapsed` is the same rule the wall
- * shader applies, written as a scalar so the tests can run this exact text.
+ * plane — the same value at the silhouette (`|across| = radius`), a little
+ * lower where the grid boundary falls inside the bar. An outermost boundary
+ * that overshoots the radius is pulled back onto the silhouette, so the join
+ * is the bar's real circle at any grid spacing. `wallEdgeCollapsed` is the same
+ * rule the wall shader applies, written as a scalar so the tests can run this
+ * exact text.
  */
 export const ROUND_BAR_WALL_JOIN_GLSL = /* glsl */ `
+  ${ROUND_BAR_SILHOUETTE_GLSL}
+
   float roundBarWallFloorZ(float pivot, float radius, float across, bool alongEnd, float baseFloorZ, float stockBottomZ) {
     if (alongEnd) return baseFloorZ;
     float dropSquared = radius * radius - across * across;
@@ -163,12 +169,20 @@ ${flatRoundBar ? ROUND_BAR_WALL_JOIN_GLSL : ''}
     float bottom = max(min(hNear, hFar), uStockBottomZ);
 ${flatRoundBar ? `    // A flat round bar's heightfield carries only the machinable upper half.
     // Its walls land on the static lower half: on the cylindrical surface
-    // along the sides (the equator where the grid edge is the radius, a little
-    // below it where the cell boundary falls short of the radius) and on the
-    // flat end caps' equator at the two along ends. Edges with no material
-    // above that surface collapse and discard.
-    vec3 wallPos = edgeStart + edgeAlong * position.y;
-    float across = uBarAxis < 0.5 ? wallPos.z : wallPos.x;
+    // along the sides (the silhouette where the grid edge is the radius, a
+    // little below it where the cell boundary falls short of the radius) and
+    // on the flat end caps' equator at the two along ends. An outermost cell
+    // boundary that overshoots the radius is pulled back onto the silhouette,
+    // so the wall and the lower half meet on the bar's real circle whatever
+    // the grid spacing. Edges with no material above that surface collapse.
+    vec3 pos = edgeStart + edgeAlong * position.y;
+    float across = uBarAxis < 0.5 ? pos.z : pos.x;
+    across = roundBarSilhouetteAcross(across, uBarCentre, uBarRadius);
+    if (uBarAxis < 0.5) {
+      pos.z = across;
+    } else {
+      pos.x = across;
+    }
     bool alongEnd = uBarAxis < 0.5
       ? uVertical > 0.5 && (edgeCol == 0 || edgeCol == uCols)
       : uVertical < 0.5 && (edgeRow == 0 || edgeRow == uRows);
@@ -203,8 +217,8 @@ ${flatRoundBar ? `    // A flat round bar's heightfield carries only the machina
     float hFarBeyond = cellHeight(farCell + perpStep);
     bool isStep = edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ, uCellSize);
 
-    vec3 pos = edgeStart + edgeAlong * position.y;
-    pos.y = mix(bottom, top, position.z);
+${flatRoundBar ? '' : `    vec3 pos = edgeStart + edgeAlong * position.y;
+`}    pos.y = mix(bottom, top, position.z);
 
     // Light the face looking into the trough (away from the taller side).
     float direction = hNear >= hFar ? 1.0 : -1.0;

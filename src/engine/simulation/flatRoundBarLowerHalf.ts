@@ -42,9 +42,11 @@ export const FLAT_ROUND_BAR_LOWER_HALF_NAME = 'flatRoundBarLowerHalf'
 /**
  * Radial samples around the semicircle. The wall mesh's floor follows the
  * analytic circle, so enough segments keep this polyline within a hair of it
- * and the two surfaces meet at the equator without a visible fin.
+ * and the two surfaces meet at the silhouette without a visible fin. 1024
+ * keeps the polyline's vertical error under 2e-4 project units at the grid
+ * boundaries these joins land on, so the join has no measurable overlap.
  */
-export const FLAT_ROUND_BAR_RADIAL_SEGMENTS = 96
+export const FLAT_ROUND_BAR_RADIAL_SEGMENTS = 1024
 
 function lowerHalfMaterial(stockColor: THREE.Color, grid: SimulationGrid): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
