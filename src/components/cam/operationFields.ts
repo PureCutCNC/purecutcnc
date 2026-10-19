@@ -227,6 +227,9 @@ export const OPERATION_FIELD_IDS = [
   'stockToLeaveAxial',
   'rotaryChuckSupport',
   'rotaryTailSupport',
+  // Rotary strategy, listed beside the rotary depth rows because the Passes
+  // choice belongs to the same family (#1045 slice B).
+  'rotaryPassDirection',
   // Speeds & feeds.
   'feed',
   'plungeFeed',
@@ -360,6 +363,14 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   { id: 'stockToLeaveAxial', group: 'depth', paramRef: 'stockAxial', appliesTo: leavesStock },
   { id: 'rotaryChuckSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
   { id: 'rotaryTailSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
+  {
+    // Along vs around the bar (#1045 slice B). Missing reads as `'along'`, the
+    // motion every saved rotary operation was cut with, so the row shows that
+    // value without writing the field onto the operation.
+    id: 'rotaryPassDirection',
+    group: 'strategy',
+    appliesTo: (operation) => isRotaryOperationKind(operation.kind),
+  },
   // ── Speeds & feeds — the numbers that change with the material. Slot feed and
   //   its engagement mode stay adjacent: the mode governs how the reduction
   //   above it is applied, so splitting them reads as two unrelated settings.
@@ -622,7 +633,7 @@ export function operationFieldsForGroup(
 ): OperationFieldSpec[] {
   return OPERATION_FIELDS.filter((field) => {
     const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
-    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport'].includes(field.id)) return false
+    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport', 'rotaryPassDirection'].includes(field.id)) return false
     if (operation.kind === 'plasma_profile' && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'feed', 'arcFitting'].includes(field.id)) return false
     return fieldGroup === group && field.appliesTo(operation, tool)
   })

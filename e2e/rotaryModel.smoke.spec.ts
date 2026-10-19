@@ -65,7 +65,7 @@ import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
 import { barMaxRadius, squareStock } from '../src/types/barStock'
 import type { MachineDefinition } from '../src/engine/gcode/types'
-import type { FeatureDefinition, FeatureInstance, Project, RoundStock, SquareStock } from '../src/types/project'
+import type { FeatureDefinition, FeatureInstance, Project, RotaryPassDirection, RoundStock, SquareStock } from '../src/types/project'
 
 /**
  * A complete bundled definition plus a rotary axis about x, as the sibling
@@ -172,6 +172,71 @@ async function rotaryPath(page: Page, operationId: string): Promise<RotaryPathRe
       allOnCentreline: points.every((point) => Math.abs(point[across] - centre) < 1e-6),
     }
   }, operationId)
+}
+
+interface RotaryPassReadout {
+  moveCount: number
+  pointCount: number
+  angleCount: number
+  minAngle: number
+  maxAngle: number
+  signature: number
+  warningCodes: string[]
+}
+
+/**
+ * The generated path of one rotary operation, read from the store's own
+ * project, with the A range and a deterministic signature of the move list
+ * (#1045 slice B).
+ *
+ * `passDirection` overrides the stored Passes value, so the along result can be
+ * compared against the same operation after the control has written 'around'.
+ * The signature is an FNV-1a hash of the rounded points rather than an array of
+ * thousands of moves: it still differs when any move differs, and it keeps the
+ * evaluate payload small.
+ */
+async function rotaryPassReadout(
+  page: Page,
+  operationId: string,
+  passDirection: RotaryPassDirection | null = null,
+): Promise<RotaryPassReadout> {
+  return page.evaluate(async ({ id, direction }) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const project = useProjectStore.getState().project
+    const stored = project.operations.find((candidate) => candidate.id === id)
+    if (!stored) throw new Error(`e2e: the project has no operation ${id}`)
+    const operation = direction === null ? stored : { ...stored, rotaryPassDirection: direction }
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) throw new Error(`e2e: ${id} did not generate`)
+
+    let hash = 2166136261
+    const mix = (text: string): void => {
+      for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i)
+        hash = Math.imul(hash, 16777619)
+      }
+    }
+    const points = envelope.result.moves.flatMap((move) => [move.from, move.to])
+    for (const move of envelope.result.moves) {
+      mix(`${move.kind}|`)
+      for (const point of [move.from, move.to]) {
+        mix(`${point.x.toFixed(5)},${point.y.toFixed(5)},${point.z.toFixed(5)},${point.a === undefined ? 'none' : point.a.toFixed(4)};`)
+      }
+    }
+    const angles = points
+      .map((point) => point.a)
+      .filter((angle): angle is number => typeof angle === 'number')
+    return {
+      moveCount: envelope.result.moves.length,
+      pointCount: points.length,
+      angleCount: angles.length,
+      minAngle: angles.length > 0 ? Math.min(...angles) : Number.NaN,
+      maxAngle: angles.length > 0 ? Math.max(...angles) : Number.NaN,
+      signature: hash >>> 0,
+      warningCodes: envelope.result.warnings.map((warning) => warning.code),
+    }
+  }, { id: operationId, direction: passDirection })
 }
 
 test('the rotary operation shows the model it machines, checked and locked', async ({ app, ui }) => {
@@ -304,6 +369,60 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   ).toBeGreaterThan(0)
   await page.waitForTimeout(500)
   await page.screenshot({ path: testInfo.outputPath('rotary-model-simulation-bar.png') })
+})
+
+/**
+ * #1045 slice B: the Passes control switches a rotary operation between passes
+ * along the bar and rings around it. The DOM proves the control exists and
+ * writes the operation; the generated path proves the generator honoured it —
+ * every point still carries A within one turn, and the move list is not the
+ * along list merely relabelled.
+ */
+test('the rotary finish can run its passes around the bar', async ({ app, ui }) => {
+  test.setTimeout(180_000)
+  const { page } = app
+  await seedRotaryModelProject(page)
+  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await addRotaryOperation(page, ui, 'Rotary finish')
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0)
+
+  const added = await getProject(page) as unknown as Project
+  const finish = added.operations.find((operation) => operation.kind === 'rotary_finish')!
+  // A new operation leaves the field absent: missing IS along, the motion every
+  // saved rotary operation was cut with (#1045 slice A).
+  expect(finish.rotaryPassDirection).toBeUndefined()
+  const along = await rotaryPassReadout(page, finish.id)
+  expect(along.moveCount).toBeGreaterThan(0)
+  expect(along.warningCodes).toEqual([])
+
+  // The Passes control lives in the collapsed Strategy group. Add selected the
+  // operation, so its properties are already on screen.
+  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await ui.cam.operationGroup(page, 'Strategy').click()
+  const passes = ui.cam.operationField(page, 'Passes')
+  await expect(passes).toBeVisible()
+  await expect(passes.locator('.ui-select__label')).toHaveText('Along the bar')
+  await passes.locator('.ui-select__trigger').click()
+  await page.getByRole('option', { name: 'Around the bar', exact: true }).click()
+  await expect(passes.locator('.ui-select__label')).toHaveText('Around the bar')
+
+  // The control wrote the operation, and generation settled on the new motion.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0)
+  const changed = await getProject(page) as unknown as Project
+  expect(changed.operations.find((operation) => operation.kind === 'rotary_finish')!.rotaryPassDirection).toBe('around')
+
+  const around = await rotaryPassReadout(page, finish.id)
+  expect(around.warningCodes).toEqual([])
+  expect(around.moveCount).toBeGreaterThan(0)
+  // Every point of the around path turns, and one operation never leaves the
+  // first turn: the ring alternation keeps A inside [0, 360].
+  expect(around.angleCount).toBe(around.pointCount)
+  expect(around.minAngle).toBeGreaterThanOrEqual(0)
+  expect(around.maxAngle).toBeLessThanOrEqual(360)
+  // Rings at one along position are not the along pass with a different label.
+  expect(around.signature).not.toBe(along.signature)
 })
 
 // ── #1016 C2: square blanks and the generation cache ────────────────
