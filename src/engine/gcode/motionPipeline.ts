@@ -45,11 +45,10 @@
 
 import type { Operation, Project } from '../../types/project'
 import { isRotaryOperationKind } from '../../types/project'
-import { barCentre, barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
-import type { BarStock } from '../../types/project'
+import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
 import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { rotaryTravelZ, squareRotaryTouchRadius } from '../toolpaths/squareRotaryStock'
+import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH, type Units } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
@@ -57,7 +56,9 @@ import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProce
 import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
-import { operationTargetKey, setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
+import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
+import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
+import type { SquareSweepState } from './squareSweepGuard'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
@@ -927,12 +928,6 @@ interface TrackedOperationAngle {
   established: boolean
   /** The controller angle after the operation, in the program's direction. */
   trackedAngle: number | null
-  /**
-   * The lowest Z of any move that actually commands a new controller angle, or
-   * `null` when no move turns. For a rapid this is judged by the angle the
-   * emitted block will command, not by the stale `from.a` a toolpath may carry.
-   */
-  lowestTurnZ: number | null
 }
 
 /**
@@ -949,8 +944,9 @@ interface TrackedOperationAngle {
  * A rapid labelled `from.a = to.a = 45` while the controller sits at A0 still
  * writes `A45` and turns the blank, so it is a turn here (#1016 C2). At program
  * start the controller is at zero, and a rapid, feed, arc or lead move is
- * treated the same way; the lowest Z of a turning move is reported so the
- * square-blank guard can refuse a turn below the generator's travel height.
+ * treated the same way. The square blank's own guard walks the same motion for
+ * the physical geometry (see `squareSweepGuard.ts`); this tracker only answers
+ * where the controller ends up and whether the motion is well formed.
  */
 function trackOperationAngle(
   moves: readonly ToolpathMove[],
@@ -958,39 +954,27 @@ function trackOperationAngle(
   tracked: number | null,
 ): TrackedOperationAngle {
   let current = tracked
-  let lowestTurnZ: number | null = null
-  const noteTurn = (move: ToolpathMove) => {
-    const low = Math.min(move.from.z, move.to.z)
-    if (lowestTurnZ === null || low < lowestTurnZ) lowestTurnZ = low
-  }
   for (const move of moves) {
     const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
     if (!carriesAngle) continue
     // A feed move with an angle on one end only is broken, not trackable: say
     // the angle is not established so the operation is refused.
-    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ }
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current }
     const start = move.from.a === undefined ? undefined : move.from.a * direction
     const end = move.to.a === undefined ? undefined : move.to.a * direction
     // The emitter's modal angle is unknown before the first angle word, and a
     // program starts on the machine's zero. A rapid's endpoint is what the
     // emitted block commands; the controller goes there from here.
-    const controller = current ?? 0
     if (move.kind === 'rapid') {
-      if (end !== undefined && end !== controller) noteTurn(move)
       if (end !== undefined) current = end
       continue
     }
     if (current === null || start !== current) {
-      // The move will be refused as unestablished, but it still commands its
-      // end angle from the controller's actual angle; report the turn so the
-      // square guard sees the physical motion the emitter would write.
-      if (end !== undefined && end !== controller) noteTurn(move)
-      return { established: false, trackedAngle: current, lowestTurnZ }
+      return { established: false, trackedAngle: current }
     }
-    if (end !== undefined && end !== controller) noteTurn(move)
     if (end !== undefined) current = end
   }
-  return { established: true, trackedAngle: current, lowestTurnZ }
+  return { established: true, trackedAngle: current }
 }
 
 /**
@@ -1011,282 +995,6 @@ function operationHasTurningFeed(moves: readonly ToolpathMove[]): boolean {
  */
 function emittedCoordinateHalfStep(definition: MachineDefinition, units: Units): number {
   return 0.5 * 10 ** -definition.numberFormat.decimalPlaces[units]
-}
-
-/**
- * Angular resolution of the square-blank sweep bookkeeping below, in degrees.
- * A cut recorded at one angle is read back at another within the same bin, and
- * the blank's surface can rise across it by `barMaxRadius * this` — the
- * allowance {@link squareAroundTurnsWithinBound} adds to the operation's own
- * bound. One tenth of a degree is 0.05 mm on a 28 mm corner radius, below the
- * default height-map cell.
- */
-const SQUARE_SWEEP_BIN_DEGREES = 0.1
-const SQUARE_SWEEP_BIN_COUNT = Math.ceil(360 / SQUARE_SWEEP_BIN_DEGREES)
-
-/**
- * The material a square blank has already had removed, accumulated across the
- * whole program (#1045 slice C).
- *
- * - `cut` is one entry per angular bin: the deepest tip radius already cut
- *   there, or `NaN` before any cut. An around rough reads it to bound each
- *   layer against what the layer above left standing.
- * - `minTip` is the deepest tip any earlier program **rough** reached. A
- *   finish rides the roughed surface, and this is the one number from the
- *   rough that the finish's own moves can be checked against without the model.
- * - `roughTargets` names the targets those roughs cleared, so a finish only
- *   counts a rough aimed at the same model, not a rough on another region.
- */
-interface SquareSweepState {
-  readonly cut: Float64Array
-  minTip: number
-  readonly roughTargets: Set<string>
-}
-
-function newSquareSweepState(): SquareSweepState {
-  return { cut: new Float64Array(SQUARE_SWEEP_BIN_COUNT).fill(Number.NaN), minTip: Number.POSITIVE_INFINITY, roughTargets: new Set() }
-}
-
-/** The bin an angle belongs to, reduced to one turn so a wound-up A word still lands. */
-function squareSweepBin(angleDeg: number): number {
-  const turn = ((angleDeg % 360) + 360) % 360
-  const bin = Math.floor(turn / SQUARE_SWEEP_BIN_DEGREES)
-  return bin >= SQUARE_SWEEP_BIN_COUNT ? SQUARE_SWEEP_BIN_COUNT - 1 : bin
-}
-
-/**
- * The material still standing at `angleDeg`: the deepest tip already cut in
- * that angle's bin, or the blank's own material bound where nothing has cut
- * yet. `squareRotaryTouchRadius` is the highest blank material a cutter of this
- * radius and shape can reach at that angle (#1016 C2-F2/C2-F2c), the same
- * bound the square rough's air skip asks.
- */
-function squareStandingMaterial(
-  state: SquareSweepState,
-  stock: BarStock,
-  cutter: EmittedSquareCutter,
-  angleDeg: number,
-): number {
-  const cut = state.cut[squareSweepBin(angleDeg)]
-  return Number.isFinite(cut)
-    ? cut
-    : squareRotaryTouchRadius(stock, angleDeg, cutter.radius, cutter.type)
-}
-
-/**
- * The largest commanded angle change one turning **cut** may make below the
- * travel height and still be read as an around pass's sample-to-sample ring
- * move. A generated ring steps by `sampleSpacing` round the blank's largest
- * circumference (a few degrees); a move that sweeps further is not a sampled
- * around pass — a stale or hand-edited path — and keeps the refusal. The bound
- * also caps the guard's own bookkeeping work.
- */
-const SQUARE_SWEEP_MAX_ARC_DEGREES = 90
-
-/** Lower one bin to the deepest tip this program has cut there, never raising it. */
-function lowerSquareBin(state: SquareSweepState, angleDeg: number, tipRadius: number): void {
-  const bin = squareSweepBin(angleDeg)
-  const previous = state.cut[bin]
-  state.cut[bin] = Number.isFinite(previous) ? Math.min(previous, tipRadius) : tipRadius
-}
-
-/**
- * Record a cut's angular span. The two endpoints are exact (the samples the
- * generator emitted), and every bin **between** them is lowered to at most the
- * larger endpoint tip.
- *
- * The interior fill is what lets the next layer find the material a previous
- * layer left *between* its samples. The tip is linear in the angle, and the
- * material left standing at an intermediate angle is at most that interpolated
- * tip — hence at most the larger endpoint tip — so the fill is an upper bound
- * on the remaining material and can only over-state engagement, never
- * under-state it. Keeping the endpoints exact (rather than filling them too)
- * matters: consecutive samples of one ring share an endpoint, and filling it to
- * the higher neighbour's tip would spend the operation's engagement budget on
- * the fill's own slack.
- *
- * An absolute A word turns the shorter way between two values, so the span is
- * the shorter arc.
- */
-function recordSquareSweep(
-  state: SquareSweepState,
-  fromAngle: number,
-  toAngle: number,
-  fromTip: number,
-  toTip: number,
-): void {
-  const start = ((fromAngle % 360) + 360) % 360
-  const end = ((toAngle % 360) + 360) % 360
-  const forward = (end - start + 360) % 360
-  const backward = (start - end + 360) % 360
-  lowerSquareBin(state, start, fromTip)
-  lowerSquareBin(state, end, toTip)
-  if (forward === 0 && backward === 0) return
-  const sign = forward <= backward ? 1 : -1
-  const span = sign === 1 ? forward : backward
-  const count = Math.round(span / SQUARE_SWEEP_BIN_DEGREES)
-  if (count <= 1) return
-  const top = Math.max(fromTip, toTip)
-  for (let i = 1; i < count; i++) {
-    lowerSquareBin(state, start + sign * (span * i) / count, top)
-  }
-}
-
-/**
- * Record an **along**-mode square pass's cuts (#1045 slice C). An along pass
- * never turns below the travel height — its turns are links over the blank —
- * so the around guard never asks it the engagement question, but its cuts still
- * remove the material a later around finish rides on. A cut at or above the
- * travel height is a link and removes nothing.
- */
-function recordSquareAlongCuts(
-  state: SquareSweepState,
-  operation: Operation,
-  moves: readonly ToolpathMove[],
-  pivot: number,
-  travelZ: number,
-  roundingAllowance: number,
-): void {
-  if (operation.kind !== 'rotary_rough') return
-  let recorded = false
-  for (const move of moves) {
-    if (move.kind !== 'cut') continue
-    if (Math.min(move.from.z, move.to.z) >= travelZ - roundingAllowance) continue
-    const fromAngle = move.from.a
-    const toAngle = move.to.a
-    const fromTip = move.from.z - pivot
-    const toTip = move.to.z - pivot
-    if (fromAngle !== undefined && toAngle !== undefined) {
-      recordSquareSweep(state, fromAngle, toAngle, fromTip, toTip)
-    } else if (toAngle !== undefined) {
-      recordSquareSweep(state, toAngle, toAngle, toTip, toTip)
-    } else {
-      continue
-    }
-    state.minTip = Math.min(state.minTip, fromTip, toTip)
-    recorded = true
-  }
-  if (recorded) state.roughTargets.add(operationTargetKey(operation.target))
-}
-
-/**
- * Whether an around-mode square operation's turning motion is a set of real
- * cuts, each inside the operation's own bound (#1045 slice C). `false` keeps
- * the old refusal.
- *
- * The old rule refused **every** move that changed the controller angle below
- * `rotaryTravelZ`, because a turn there sweeps the blank's standing corner
- * through the cutter. That is right for a link and wrong for an around pass,
- * where the turn *is* the cut.
- *
- * **A rough** is checked against the material its own program has cut: a ring
- * at layer `L` is exactly one `stepdown` below the layer above, and the layer
- * above only skipped a sample whose standing material was already below it, so
- * the first bite at any angle is less than one `stepdown` (the air-skip proof
- * in `squareRotaryTouchRadius`). Every turn must be a `cut`, `standing - tip`
- * must be inside `stepdown + bin allowance + emitted rounding` at both ends,
- * and the cut is then recorded as removed for the next layer.
- *
- * **A finish** follows the model, so the guard cannot re-derive its engagement
- * from its own moves — the model is not in the program. It admits one of two
- * cases, and the generator asks the same two questions
- * (`squareAroundFinishNeedsRough`): either the blank is already at the model
- * within the finish's stock plus a third of the cutter radius (the largest
- * height-map cell the adapter derives), or an earlier program rough cleared the
- * same target and no turning cut goes below that rough's deepest tip less
- * `stockToLeave + tolerance`. The second is a sanity bound, not the local
- * engagement: the file's own rough is the proof the material is gone.
- *
- * A **rapid** that turns below the height is always refused: it removes
- * nothing, so nothing licenses it. A constant-angle feed below the height is
- * not a turn — the along passes' own plunges are that — and is recorded as
- * material removed, never refused.
- *
- * Only an operation that says it runs around the bar (`rotaryPassDirection
- * === 'around'`) and is an admitted square turning kind can reach the bound
- * check at all; every other square angle-bearing path keeps the old refusal.
- */
-function squareAroundTurnsWithinBound(args: {
-  stock: BarStock
-  operation: Operation
-  moves: readonly ToolpathMove[]
-  cutter: EmittedSquareCutter
-  travelZ: number
-  roundingAllowance: number
-  direction: 1 | -1
-  /** The controller angle the program hands in, or `null` at program start. */
-  entryAngle: number | null
-  state: SquareSweepState
-}): boolean {
-  const { stock, operation, moves, cutter, travelZ, roundingAllowance, direction, entryAngle, state } = args
-  if (operation.rotaryPassDirection !== 'around' || !isRotaryOperationKind(operation.kind)) return false
-  const finish = operation.kind === 'rotary_finish'
-  const pivot = barPivotZ(stock)
-  const binAllowance = barMaxRadius(stock) * SQUARE_SWEEP_BIN_DEGREES * Math.PI / 180
-  const stockToLeave = operation.stockToLeaveRadial
-  if (finish && (!Number.isFinite(stockToLeave) || stockToLeave < 0)) return false
-  if (!finish && (!Number.isFinite(operation.stepdown) || operation.stepdown <= 0)) return false
-  const roughTolerance = (finish ? 0 : operation.stepdown) + binAllowance + roundingAllowance
-  // The finish's near-net allowance: its own stock plus the largest height-map
-  // cell the adapter derives (`min(radius / 3, stepover * 0.5)`), so a blank
-  // already at the model is admitted without a rough.
-  const nearNetAllowance = stockToLeave + Math.max(0, cutter.radius) / 3 + binAllowance + roundingAllowance
-  const finishKey = finish ? operationTargetKey(operation.target) : ''
-  const finishRoughTip = finish ? state.minTip - stockToLeave - binAllowance - roundingAllowance : 0
-  let nearNet = finish
-  let roughCleared = finish && Number.isFinite(finishRoughTip) && state.roughTargets.has(finishKey)
-  const considerFinish = (angle: number, tip: number): boolean => {
-    if (nearNet && squareRotaryTouchRadius(stock, angle, cutter.radius, cutter.type) - tip > nearNetAllowance) {
-      nearNet = false
-    }
-    if (roughCleared && tip < finishRoughTip) roughCleared = false
-    return nearNet || roughCleared
-  }
-  let current = entryAngle
-  for (const move of moves) {
-    if (move.from.a === undefined && move.to.a === undefined) continue
-    if (feedAngleIsSplit(move)) return false
-    const end = move.to.a === undefined ? undefined : move.to.a * direction
-    const controller = current ?? 0
-    const turns = end !== undefined && end !== controller
-    const low = Math.min(move.from.z, move.to.z)
-    const belowEnvelope = low < travelZ - roundingAllowance
-    if (turns && belowEnvelope) {
-      // A rapid here sweeps the corner through the cutter: nothing licenses it.
-      const fromAngle = move.from.a
-      const toAngle = move.to.a
-      if (move.kind !== 'cut' || fromAngle === undefined || toAngle === undefined) return false
-      const rawArc = Math.abs(toAngle * direction - controller) % 360
-      if (Math.min(rawArc, 360 - rawArc) > SQUARE_SWEEP_MAX_ARC_DEGREES) return false
-      const fromTip = move.from.z - pivot
-      const toTip = move.to.z - pivot
-      if (finish) {
-        if (!considerFinish(fromAngle, fromTip) || !considerFinish(toAngle, toTip)) return false
-      } else {
-        for (const sample of [{ angle: fromAngle, tip: fromTip }, { angle: toAngle, tip: toTip }]) {
-          const standing = squareStandingMaterial(state, stock, cutter, sample.angle)
-          if (standing - sample.tip > roughTolerance) return false
-        }
-        recordSquareSweep(state, fromAngle, toAngle, fromTip, toTip)
-        state.minTip = Math.min(state.minTip, fromTip, toTip)
-        state.roughTargets.add(operationTargetKey(operation.target))
-      }
-    } else if (!turns && belowEnvelope && move.kind === 'cut' && move.to.a !== undefined) {
-      // The ring's plunge, or any cut that does not turn, still removes
-      // material at its own angle. It is not a turn, so it is never refused
-      // here; recording it is what lets the following move see the truth.
-      const tip = move.to.z - pivot
-      if (finish) {
-        if (!considerFinish(move.to.a, tip)) return false
-      } else {
-        recordSquareSweep(state, move.to.a, move.to.a, tip, tip)
-        state.minTip = Math.min(state.minTip, tip)
-        state.roughTargets.add(operationTargetKey(operation.target))
-      }
-    }
-    if (end !== undefined) current = end
-  }
-  return true
 }
 
 function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): ToolpathWarning {
@@ -1313,11 +1021,13 @@ function inspectRotaryOperation(args: {
   trackedAngle: number | null
   borrowedCoordinate: number | null
   /**
-   * The program's square-blank material account, carried from one operation to
-   * the next (#1045 slice C): a rough's cuts are what let the finish after it
-   * be shown to be a finishing pass.
+   * The program's square-blank standing-material grid, carried from one
+   * operation to the next (#1045 slice E), or `null` on any other stock. A
+   * rough's cuts are what let a finish over it be shown to be a finishing pass;
+   * a rough that covered only part of the band leaves the rest of the grid at
+   * the blank, and the finish over it is refused.
    */
-  sweep: SquareSweepState
+  sweep: SquareSweepState | null
 }): { refused: ToolpathWarning } | {
   refused: null
   trackedAngle: number | null
@@ -1414,37 +1124,28 @@ function inspectRotaryOperation(args: {
     // is emitted *at* the height and is not refused for the sub-step. This runs
     // only for square stock: a round bar's output stays frozen.
     //
-    // #1045 slice C: an around-the-bar pass turns *below* that height by
-    // design, because the turn is the cut. `squareAroundTurnsWithinBound` walks
-    // the same moves and admits exactly the turns whose engagement the
-    // operation's own bound covers; a rapid, an along-mode turn, or a cut that
-    // takes more than the bound keeps the refusal. It sees the program's
-    // accumulated cuts, so a finish over a rough that cleared the blank is a
-    // finishing pass while the same finish over the raw blank is refused.
-    const travelZ = rotaryTravelZ(project.stock, project.meta.units)
-    const roundingAllowance = emittedCoordinateHalfStep(definition, project.meta.units)
-    if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
-      const admitted = squareAroundTurnsWithinBound({
-        stock: project.stock,
+    // #1045 slice E: an around-the-bar pass turns *below* that height by
+    // design, because the turn is the cut. The guard now owns one
+    // standing-material grid for the whole program and walks every turning
+    // operation's commanded motion through it (position, angle, cutter
+    // footprint), refusing a turning cut that takes more than the operation's
+    // own bound. A rapid that turns under the height removes nothing and keeps
+    // the refusal; so does a turn on an along-mode operation. A non-turning cut
+    // is never refused here but lowers the grid, which is what lets an along
+    // rough clear material for a later around finish.
+    if (sweep !== null && isRotaryOperationKind(operation.kind)) {
+      const admitted = guardSquareOperation(sweep, {
         operation,
         moves: toolpath.moves,
         cutter: emittedCutter,
-        travelZ,
-        roundingAllowance,
-        direction: rotaryDirection(definition),
         entryAngle: trackedAngle,
-        state: sweep,
+        direction: rotaryDirection(definition),
+        travelZ: rotaryTravelZ(project.stock, project.meta.units),
+        roundingAllowance: emittedCoordinateHalfStep(definition, project.meta.units),
       })
       if (!admitted) {
         return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
       }
-    } else if (isRotaryOperationKind(operation.kind)) {
-      // An along-mode square pass turns only in links above the blank, so the
-      // guard never asks it the around question -- but its cuts still remove the
-      // material a later around finish may rely on. Record them, or a finish
-      // that legitimately follows an along rough would be refused (#1045 slice
-      // C).
-      recordSquareAlongCuts(sweep, operation, toolpath.moves, barPivotZ(project.stock), travelZ, roundingAllowance)
     }
   }
   if (!hasAngle) {
@@ -1485,6 +1186,21 @@ function inspectRotaryOperation(args: {
  * emitter (rule 3c), which is the only place that knows which lines the
  * program actually writes; see `lineCarriesAxisWord` in `postprocessor.ts`.
  */
+/**
+ * The smallest tip radius among the program's cutter rows, or 1 when none is
+ * usable. The square guard derives its along-bin resolution from it: the cutter
+ * body must always span several bins so consecutive samples' footprints overlap.
+ */
+function smallestCutterRadius(operations: PostProcessorInput['operations']): number {
+  let smallest = Number.POSITIVE_INFINITY
+  for (const entry of operations) {
+    if (!isRotaryOperationKind(entry.operation.kind)) continue
+    const radius = entry.tool.radius
+    if (Number.isFinite(radius) && radius > 0 && radius < smallest) smallest = radius
+  }
+  return Number.isFinite(smallest) ? smallest : 1
+}
+
 export function planRotaryRefusals(
   input: Pick<PostProcessorInput, 'project' | 'definition' | 'operations'>,
 ): { operations: PostProcessorInput['operations']; warnings: ToolpathWarning[] } {
@@ -1495,13 +1211,16 @@ export function planRotaryRefusals(
   // and the borrowed coordinate carry from one operation to the next.
   let trackedAngle: number | null = null
   let borrowedCoordinate: number | null = null
-  // The square blank's material account spans the program too (#1045 slice C):
-  // only after a rough's cuts are in it can the finish after that rough be
-  // shown to be a finishing pass. A refused operation's cuts are rolled back --
-  // it emits no motion, so it removes nothing.
-  const sweep = newSquareSweepState()
+  // The square blank's standing-material grid spans the program too (#1045
+  // slice E): only after a rough's cuts are in it can a finish over that rough
+  // be shown to be a finishing pass, and a rough that covered only part of the
+  // band leaves the rest at the blank. A refused operation's cuts are rolled
+  // back -- it emits no motion, so it removes nothing.
+  const sweep = isSquareStock(project.stock) ? createSquareSweepState(project.stock, smallestCutterRadius(operations)) : null
   for (const entry of operations) {
-    const snapshot = { cut: sweep.cut.slice(), minTip: sweep.minTip, roughTargets: new Set(sweep.roughTargets) }
+    const snapshot = sweep
+      ? { material: sweep.material.slice(), roughAllowance: new Map(sweep.roughAllowance) }
+      : null
     const verdict = inspectRotaryOperation({
       definition,
       project,
@@ -1520,10 +1239,11 @@ export function planRotaryRefusals(
       sweep,
     })
     if (verdict.refused !== null) {
-      sweep.cut.set(snapshot.cut)
-      sweep.minTip = snapshot.minTip
-      sweep.roughTargets.clear()
-      for (const key of snapshot.roughTargets) sweep.roughTargets.add(key)
+      if (sweep && snapshot) {
+        sweep.material.set(snapshot.material)
+        sweep.roughAllowance.clear()
+        for (const [key, value] of snapshot.roughAllowance) sweep.roughAllowance.set(key, value)
+      }
       warnings.push(verdict.refused)
       continue
     }

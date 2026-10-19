@@ -649,12 +649,14 @@ export interface RotaryFinishParams {
   readonly passDirection?: RotaryPassDirection
   /**
    * True when an earlier enabled rotary rough on the same setup and target
-   * clears this blank before the finish runs (#1045 slice C). A **square**
-   * blank's corners stand whole layers above an around finish's model-
-   * following ring, so a finish on the raw blank would take a full-depth
-   * corner bite in one turning pass; the generator refuses that unless it is
-   * told a rough already removed the bulk. Missing reads as `false`, the safe
-   * answer, and the field is never consulted on a round bar or in along mode.
+   * runs before this finish (#1045 slice E). It is **advisory only**: a
+   * **square** blank's corners stand whole layers above an around finish's
+   * model-following ring, so a finish with no rough in front of it may take a
+   * full-depth corner bite. The generator now still emits the motion and warns
+   * (`rotarySquareFinishNeedsRough`); the export guard's standing-material grid
+   * is the authority, because only it can see what the program's earlier
+   * operations actually cut. Missing reads as `false`, and the field is never
+   * consulted on a round bar or in along mode.
    */
   readonly squareRoughBefore?: boolean
 }
@@ -1469,6 +1471,172 @@ function retainedStubStepForced(
   }
 }
 
+/**
+ * The most bisection rounds the around grid may add before it gives up and
+ * refuses. The between-sample error of a linear move over a convex feature
+ * falls roughly with the square of the angle step, so one round quarters it;
+ * eight rounds is a 65,536-fold reduction and far beyond the "0.005 mm floor"
+ * the check actually needs. A grid that still fails then is one the sample
+ * budget will not let us resolve, and the caller refuses rather than posting a
+ * move it could not bound.
+ */
+const MAX_AROUND_REFINEMENT_ROUNDS = 8
+
+/**
+ * The between-sample tolerance for one angular segment of an around pass
+ * (#1045 slice E), in the operation's units.
+ *
+ * It is the larger of the stated 0.005 mm surface bound and the error the along
+ * path accepts between samples that far apart on a ball-nosed cutter —
+ * `s² / (8 r)` for a surface spacing `s` and ball radius `r`. Using the
+ * segment's own spacing keeps the two modes honest: a coarser segment may not
+ * do worse than the along path would at that spacing, and as bisection makes a
+ * segment finer the bound approaches the 0.005 mm floor rather than vanishing.
+ * A flat end mill has no ball to lift between samples, so it takes the floor.
+ *
+ * `tipA`/`tipB` are the sampled tip radii at the segment's ends; the smaller
+ * one is the surface radius the move's arc actually travels at.
+ */
+function aroundSegmentationTolerance(
+  tipA: number,
+  tipB: number,
+  deltaDegrees: number,
+  tool: NormalizedTool,
+  units: Units,
+): number {
+  const floor = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
+  if (tool.type !== 'ball_endmill') return floor
+  const radius = Math.max(0, Math.min(tipA, tipB))
+  const arc = radius * Math.abs(deltaDegrees) * Math.PI / 180
+  return Math.max(floor, (arc * arc) / (8 * tool.radius))
+}
+
+/**
+ * Make the around-mode interpolation bound a property of the **emitted motion**
+ * (#1045 slice E).
+ *
+ * A ring is sampled at the angles `aroundGrid` built, and the emitter joins two
+ * neighbouring samples with one straight move in A and Z. A pair of safe
+ * endpoints is not a safe sweep: the material between them can stand above the
+ * chord. The slice-D sagitta cap bounds that for a smooth convex section, but
+ * not for a ball-nose cutter pivoting over a sharp feature — a hex prism's
+ * vertex, or a square blank's corner. On the radius-8 hex in a Ø40 bar with a
+ * 1.5 mm ball, the emitted Z values interpolated across the A209.362 -> A211.915
+ * move gouge 0.0236 mm, because `R dTheta² / 8` says nothing about the ball's
+ * contact envelope.
+ *
+ * So every adjacent pair is checked against the model at its **mid angle**, and
+ * a pair whose mid contact stands more than {@link aroundSegmentationTolerance}
+ * above the chord is bisected. Only the failing mid angle is kept, so a smooth
+ * ring pays one extra sampling pass and a sharp feature pays one round per
+ * halving it needs. The extra pass is the cost: one height map per existing
+ * angle per round, and each round's kept angles grow only by the failures.
+ *
+ * The pair is only checked when both ends sample the model (`NaN` means "no
+ * model under the tool", which the finish does not cut and the rough replaces
+ * with its axis fallback — neither is a smooth surface the chord interpolates).
+ * The emitted tip of every generator is at or above these sampled values (a
+ * rough clamps to its layer radius, a finish adds its stock and floors at a
+ * retained stub), and `max` cannot lower the chord, so the check covers all of
+ * them.
+ *
+ * Returns `null` when even the sampled grid is invalid, and `stopped: true`
+ * when the caller cancelled during a refinement pass.
+ */
+function refineAroundSampling(args: {
+  mesh: RotaryModelMesh
+  stock: BarStock
+  tool: NormalizedTool
+  samplingTool: NormalizedTool
+  along: readonly number[]
+  angles: readonly number[]
+  tips: readonly Float32Array[]
+  requestedCellSize: number
+  warnings: ToolpathWarning[]
+  shouldStop?: () => boolean
+}): { angles: number[]; tips: Float32Array[]; stopped: boolean } | null {
+  const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, shouldStop } = args
+  let angles = [...args.angles]
+  let tips: Float32Array[] = [...args.tips]
+  for (let round = 0; round < MAX_AROUND_REFINEMENT_ROUNDS; round++) {
+    const mids = angles.slice(0, -1).map((angle, k) => (angle + angles[k + 1]) / 2)
+    if (mids.length === 0) break
+    const sampled = sampleRotaryModel(mesh, stock, samplingTool, {
+      anglesDeg: mids,
+      along,
+      requestedCellSize,
+      ...(shouldStop ? { shouldStop } : {}),
+    }, warnings)
+    if (!sampled.valid) return null
+    if (sampled.stopped) return { angles, tips, stopped: true }
+    const fails = new Set<number>()
+    for (let k = 0; k + 1 < angles.length && fails.size < mids.length; k++) {
+      const delta = angles[k + 1] - angles[k]
+      const rowA = tips[k]
+      const rowB = tips[k + 1]
+      const rowMid = sampled.tipRadius[k]
+      const rowPrev = k > 0 ? tips[k - 1] : null
+      const rowNext = k + 2 < angles.length ? tips[k + 2] : null
+      for (let i = 0; i < along.length; i++) {
+        const a = rowA[i]
+        const b = rowB[i]
+        const mid = rowMid[i]
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+        const tolerance = aroundSegmentationTolerance(a, b, delta, tool, tool.units)
+        // A peak that falls **between** the two samples is invisible to the mid
+        // sample when the height map reads it low: the sampler's cell is wider
+        // than one angle step near a sharp feature. Detect it from the sampled
+        // tips instead -- the surface rises into this segment and falls out of
+        // it -- and hold the segment to the exact sharp-corner bound
+        // `dTheta^2 (R + R^2 / r) / 8` for a ball (`R dTheta^2 / 8` for a flat),
+        // which is a property of the section and not of the sampler.
+        //
+        // A revolved surface samples almost flat (its ideal support is the same
+        // at every angle), and the height map's own cell noise makes its tips
+        // wobble by a few cell widths. Requiring each side of the sign change to
+        // rise by half the sharp bound separates that noise from a real cusp:
+        // the bound is what the cusp would put above the chord, and cell noise
+        // is below it. A face's support is convex, so its chord never dips and
+        // the sign change it cannot produce is never asked for.
+        const radius = Math.max(0, Math.min(a, b))
+        const radians = Math.abs(delta) * Math.PI / 180
+        const sharp = tool.type === 'ball_endmill'
+          ? radians * radians * (radius + radius * radius / tool.radius) / 8
+          : radians * radians * radius / 8
+        const rises = rowPrev === null || a > rowPrev[i] + sharp * 0.5
+        const falls = rowNext === null || b > rowNext[i] + sharp * 0.5
+        if (rises && falls) {
+          if (sharp > tolerance) {
+            fails.add(k)
+            break
+          }
+          continue
+        }
+        if (!Number.isFinite(mid)) continue
+        if (mid - (a + b) / 2 > tolerance) {
+          fails.add(k)
+          break
+        }
+      }
+    }
+    if (fails.size === 0) break
+    const nextAngles: number[] = []
+    const nextTips: Float32Array[] = []
+    for (let k = 0; k < angles.length; k++) {
+      nextAngles.push(angles[k])
+      nextTips.push(tips[k])
+      if (k + 1 < angles.length && fails.has(k)) {
+        nextAngles.push(mids[k])
+        nextTips.push(sampled.tipRadius[k])
+      }
+    }
+    angles = nextAngles
+    tips = nextTips
+    if (angles.length * along.length > MAX_ROTARY_SAMPLES) return null
+  }
+  return { angles, tips, stopped: false }
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -1575,8 +1743,9 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
+  const samplingMesh = withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd)
   const sampling = sampleRotaryModel(
-    withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd),
+    samplingMesh,
     stock,
     samplingTool,
     {
@@ -1591,6 +1760,30 @@ function rotaryTargets(
     return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
   }
   if (sampling.stopped) return { angles, along, tips: [], stubFloor: null, stopped: true, refusal: null }
+  // #1045 slice E: the around path's between-sample safety is a property of the
+  // emitted motion, not of the endpoint grid. Bisect every segment whose chord
+  // falls more than the segment tolerance below the model at its mid angle.
+  let tipRows = sampling.tipRadius
+  if (params.passDirection === 'around' && angles.length > 1) {
+    const refined = refineAroundSampling({
+      mesh: samplingMesh,
+      stock,
+      tool,
+      samplingTool,
+      along,
+      angles,
+      tips: sampling.tipRadius,
+      requestedCellSize: params.requestedCellSize,
+      warnings,
+      ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
+    })
+    if (refined === null) {
+      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+    }
+    if (refined.stopped) return { angles: [], along: [], tips: [], stubFloor: null, stopped: true, refusal: null }
+    angles = refined.angles
+    tipRows = refined.tips
+  }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
   // decides it carries the stock offset, so leaving stock does not hide a model
@@ -1598,7 +1791,7 @@ function rotaryTargets(
   // along[i], whichever direction the pass runs.
   outer: for (let k = 0; k < angles.length; k++) {
     for (let i = 0; i < along.length; i++) {
-      if (sampling.tipRadius[k][i] + stockToLeave < 0) {
+      if (tipRows[k][i] + stockToLeave < 0) {
         warnings.push({
           code: 'rotaryBelowCentreline',
           params: {
@@ -1616,7 +1809,7 @@ function rotaryTargets(
   // value is floored at the pivot and capped at the blank's largest radius, so
   // retained square corners above the inscribed radius survive (#1016 C2-S3);
   // on a round bar the cap is the surface it always was.
-  const tips = sampling.tipRadius.map((row) => Array.from(row, (raw) =>
+  const tips = tipRows.map((row) => Array.from(row, (raw) =>
     Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN))
   // The retained end stubs are stock the cutter's side must never enter, and
   // the sampler's discrete footprint can miss a thin axial overlap between the
@@ -1675,8 +1868,8 @@ function rotaryTargets(
 
 /**
  * The material an around-mode finish would have to take out of a **square**
- * blank in one turning pass, and whether that is a rough's job instead
- * (#1045 slice C).
+ * blank in one turning pass, and whether a rough should run first (advisory
+ * since #1045 slice E).
  *
  * A ring follows the model, so at each sample the finish tip is the model plus
  * the stock it leaves. On a **raw** square blank the corners stand whole layers
@@ -1689,11 +1882,12 @@ function rotaryTargets(
  * `params.squareRoughBefore` is the caller saying an earlier enabled rough has
  * already cleared the bulk, which is how a square-to-round finish is reached.
  *
- * The rule is about **blank material**, never about the saved operation list:
- * the generator stays a pure function of its arguments, and a direct caller
- * that cannot say whether a rough ran gets the safe answer. A round bar and
- * along mode return false before any sample is read, so their output is
- * untouched.
+ * The rule is about **blank material** and is advisory since #1045 slice E: it
+ * decides whether to warn, not whether to generate. The export guard owns the
+ * authority, because only it sees the whole program's cuts and can tell a rough
+ * that actually covered a spot from one that merely ran somewhere on the same
+ * target. A round bar and along mode return false before any sample is read, so
+ * their output is untouched.
  */
 function squareAroundFinishNeedsRough(
   stock: BarStock,
@@ -1795,13 +1989,12 @@ export function generateRotaryFinish(
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
   }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
+  // A finish with no rough in front of it may still take a full corner bite out
+  // of a raw square blank. It generates -- the export guard now decides from
+  // the material the program actually left (see `squareSweepGuard.ts`) -- but
+  // says so here, where the user is looking at the operation (#1045 slice E).
   if (squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
-    return {
-      operationId,
-      moves: [],
-      warnings: [{ code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationId } }],
-      bounds: null,
-    }
+    warnings.push({ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } })
   }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)

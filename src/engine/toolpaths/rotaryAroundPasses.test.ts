@@ -71,6 +71,13 @@
  *  - the new angle-step cap removed -> the ring-count assertion, and
  *    independently the hex block's cap and sweep assertions (the pre-cap
  *    A325.7143 -> 330 move gouges 0.0396 mm);
+ *  - the adaptive subdivision removed (#1045 slice E) -> the hex block's
+ *    **emitted-motion** assertion: the sampler-backed cap alone leaves 0.01329
+ *    mm at a 1.5 mm ball on the hex, because the sagitta bound is not the ball
+ *    contact envelope. `tol` is `max(0.005 mm, s^2 / (8 r))` for the segment's
+ *    own surface spacing `s`, and the block measures the emitted Z values with
+ *    the sampler's per-move endpoint under-estimate added, never the ideal
+ *    endpoint supports;
  *  - the retained-end pull-in removed for round bars -> the retained-end block:
  *    the first centre is on the stub face and the cutter body crosses it.
  *
@@ -1027,25 +1034,34 @@ console.log('Testing the around rough on a band with no model under the tool...'
 }
 
 // ---------------------------------------------------------------------------
-// 12. A safe pair of endpoints is a safe sweep (#1045 slice D, finding 2).
+// 12. The emitted sweep, not its ideal endpoints (#1045 slice D finding 2,
+//     corrected by #1045 slice E).
 //
 //     An around move interpolates the tip radius linearly between two angle
 //     samples. On the radius-8 hex prism with the 1.5 mm ball and 1.5 mm
-//     spacing, the A325.7143 -> 330 move reached 7.9247 at its midpoint while
-//     the independent cutter contact required 7.9643: 0.0396 mm of gouge. The
-//     generator now caps the angle step at `barMaxRadius * dTheta^2 / 8 <=
-//     0.005 mm`. The reference below is the exact drop-cutter support of the
-//     extruded hex -- the highest material a cutter can touch at one bar
-//     rotation, sampled on the section's own edges. It never calls the sampler.
+//     spacing, the cap's A209.362 -> A211.915 move reached 7.9247 at its
+//     midpoint while the independent cutter contact required 7.9643. Slice D
+//     capped the angle step by `barMaxRadius * dTheta^2 / 8 <= 0.005 mm`, but
+//     that is the circular sagitta, not the ball-cutter contact envelope: the
+//     review measured the **emitted** Z values (the sampler's, not the ideal
+//     supports) at 0.02363 mm of gouge on that move, while the endpoint-only
+//     measure said 0.01402 mm and the test permitted 0.02 mm.
 //
-//     The check is the *sweep* error: the reference at the interpolated angle
-//     against the linear interpolation of the reference at the move's two
-//     endpoint angles. That isolates the between-sample error the cap controls
-//     from the sampler's own height-map-cell error, which the property block
-//     above already bounds.
+//     The check below therefore walks the emitted motion. For each cut move it
+//     samples the independent drop-cutter support of the extruded hex -- the
+//     highest material a cutter can touch at one bar rotation, on the section's
+//     own edges, never the sampler -- at nine interior points and compares it
+//     with the emitted chord. The allowance is `tol` plus the sampler's own
+//     height-map-cell under-estimate measured at that move's two endpoints:
+//     `tol` = max(0.005 mm, s^2 / (8 r)) for the segment's own surface spacing
+//     `s` and ball radius `r`, the between-sample error the along path accepts
+//     at the same spacing. The sampler's endpoint error is a separate,
+//     pre-existing discretization the interpolation cannot remove; measuring it
+//     per move keeps the bound tight instead of hiding the emitted values
+//     behind the ideal ones.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the capped around angle step and the hex sweep...')
+console.log('Testing the emitted around sweep on the hex prism...')
 {
   const section = HEX_SECTION
   const samplesPerEdge = 4000
@@ -1088,8 +1104,9 @@ console.log('Testing the capped around angle step and the hex sweep...')
   }, {})
   assert.deepEqual(reference.warnings, [], 'the capped hex finish has no warning')
 
-  // The emitted angular step honours the cap. The smallest positive difference
-  // between any two emitted angles is one sample step.
+  // The emitted angular step starts at the cap's sagitta bound (the slice-D
+  // guarantee), and the adaptive subdivision has made at least one segment
+  // finer than that for the ball's contact envelope.
   const angles = [...new Set(reference.moves.flatMap((move) => [angleOf(move.from), angleOf(move.to)]))].sort((a, b) => a - b)
   let step = Infinity
   for (let i = 1; i < angles.length; i++) step = Math.min(step, angles[i] - angles[i - 1])
@@ -1098,34 +1115,47 @@ console.log('Testing the capped around angle step and the hex sweep...')
     `the angle step ${step.toFixed(4)} deg is finer than the uncapped 4.2857 deg`)
   assert.ok(capError <= 0.005 * (1 + 1e-9),
     `the cap keeps barRadius * dTheta^2 / 8 = ${capError.toFixed(6)} mm at or below the stated 0.005 mm`)
-
   const travel = barMaxRadius(HEX_STOCK) + 1
   const pivot = barPivotZ(HEX_STOCK)
-  let worst = { error: Number.NEGATIVE_INFINITY, angle: 0 }
+  const toleranceFloor = 0.005
+  let worst = { error: Number.NEGATIVE_INFINITY, allowance: 0, angle: 0 }
+  let checked = 0
   for (const move of reference.moves) {
     if (move.kind !== 'cut') continue
     // A link at the travel height is in air; the sweep error there is not a
     // surface gouge and its endpoints are not surface samples.
-    if (move.from.z - pivot >= travel - 1e-9 || move.to.z - pivot >= travel - 1e-9) continue
+    const z0 = move.from.z - pivot
+    const z1 = move.to.z - pivot
+    if (z0 >= travel - 1e-9 || z1 >= travel - 1e-9) continue
     const a0 = angleOf(move.from)
     const a1 = angleOf(move.to)
-    const r0 = sectionSupport(a0, BALL)
-    const r1 = sectionSupport(a1, BALL)
-    for (let s = 0; s <= 9; s++) {
+    const ideal0 = sectionSupport(a0, BALL)
+    const ideal1 = sectionSupport(a1, BALL)
+    // The sampler's own one-cell under-estimate at this move's endpoints. The
+    // interpolation cannot correct it; it is the known height-map
+    // discretization, and the property block above bounds the same quantity.
+    const samplerAllowance = Math.max(0, ideal0 - z0, ideal1 - z1)
+    // `tol` from the segment's own surface spacing at the smaller emitted tip.
+    const surfaceArc = Math.max(0, Math.min(z0, z1)) * Math.abs(a1 - a0) * Math.PI / 180
+    const tolerance = Math.max(toleranceFloor, surfaceArc * surfaceArc / (8 * BALL.radius))
+    for (let s = 1; s <= 8; s++) {
       const f = s / 9
       const angle = a0 + (a1 - a0) * f
-      const error = sectionSupport(angle, BALL) - (r0 + (r1 - r0) * f)
-      if (error > worst.error) worst = { error, angle }
+      const emitted = z0 + (z1 - z0) * f
+      const error = sectionSupport(angle, BALL) - emitted
+      if (error > worst.error) worst = { error, allowance: tolerance + samplerAllowance, angle }
+      assert.ok(error <= tolerance + samplerAllowance + 1e-9,
+        `emitted gouge ${error.toFixed(5)} mm at A ${angle.toFixed(3)} stays within tol ${tolerance.toFixed(5)} + sampler ${samplerAllowance.toFixed(5)}`)
+      checked++
     }
   }
-  // The isolated sweep tolerance: the 0.005 mm chord bound plus the ball's own
-  // between-sample lift at the hex's sharp corner, `rho^2 (dTheta/2)^2 / (2r)`
-  // with rho = 8 mm and r = 1.5 mm, is 0.0156 mm at the capped step. 0.02 mm is
-  // that derived bound rounded up; the review's pre-cap sweep was 0.0396 mm, so
-  // removing the cap cannot pass.
-  assert.ok(worst.error <= 0.02,
-    `the hex sweep gouge ${worst.error.toFixed(5)} mm at A ${worst.angle.toFixed(3)} stays at or below 0.02 mm`)
-  console.log(`  hex step ${step.toFixed(4)} deg, cap error ${capError.toFixed(5)} mm, worst sweep gouge ${worst.error.toFixed(5)} mm at A ${worst.angle.toFixed(3)}`)
+  assert.ok(checked > 2000, `the emitted sweep check walked ${checked} interior points`)
+  // And the subdivision is what made it hold: at least one emitted step is
+  // finer than the unrefined starting step, while the sagitta cap still bounds
+  // the step as a whole.
+  assert.ok(step < 2.5532 / 2,
+    `the adaptive subdivision refined a segment below the ${(2.5532).toFixed(4)} deg starting step (it is ${step.toFixed(4)})`)
+  console.log(`  hex step ${step.toFixed(4)} deg, worst emitted gouge ${worst.error.toFixed(5)} mm at A ${worst.angle.toFixed(3)} within ${worst.allowance.toFixed(5)} mm (${checked} points)`)
 }
 
 // ---------------------------------------------------------------------------

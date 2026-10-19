@@ -350,6 +350,13 @@ export type ToolpathWarningCode =
    *  own surface there, so those parts are machined as air; the operation still
    *  runs and says so (issue #1015). */
   | 'rotaryModelOutsideBar'
+  /** An around-mode finish on a square blank runs with no enabled Rotary rough
+   *  before it in the same setup, so its first ring would take the standing
+   *  square corner in one turning pass wherever the blank still stands above
+   *  the model. The operation still generates (#1045 slice E): the export guard
+   *  is the authority, because only it can see the material the program's
+   *  earlier operations actually removed. Params: operation. */
+  | 'rotarySquareFinishNeedsRough'
   /** The operation's radial stock to leave is not a usable allowance: it is
    *  not finite, it is negative, or it makes the sampler's tool radius zero or
    *  negative. Sampling with that radius would read "no model" everywhere, and
@@ -462,13 +469,12 @@ export type ToolpathWarningCode =
    *  corners through the cutter, so the operation is refused rather than
    *  posted (issue #1016 C2 correction M1).
    *
-   *  #1045 slice C admits the one kind of below-envelope turn that is a real
-   *  cut: an around-the-bar pass whose own layer bound covers the material it
-   *  sweeps (a rough's layer, or a finish over stock a rough already cleared).
-   *  A turn that is not such a cut keeps this refusal, and the generator asks
-   *  the same question when an around finish would take a full corner bite out
-   *  of a raw square blank, so the operation reports it before any motion is
-   *  generated. */
+   *  #1045 slice E admits the one kind of below-envelope turn that is a real
+   *  cut: an around-the-bar pass whose own bound covers the material actually
+   *  standing at that angle, along position and cutter footprint, as the
+   *  export guard's standing-material grid reports it. A turning rapid, a turn
+   *  on an along-mode operation, or a cut that takes more than the operation's
+   *  bound keeps this refusal. Params: operation. */
   | 'postRotarySquareTurnBelowEnvelope'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'

@@ -31,28 +31,37 @@
  *    at its angle: a layer is exactly one `stepdown` below the layer above, and
  *    that layer either cut there (one stepdown lower) or skipped the sample
  *    because its standing material was already below its radius;
- *  - an around finish that would take a full-depth corner bite out of a **raw**
- *    blank is refused (`postRotarySquareTurnBelowEnvelope`); it is admitted
- *    when an earlier enabled rough clears the same target, or when the blank is
- *    already at the model within one height-map cell.
+ *  - an around finish with no rough in front of it may still take a full-depth
+ *    corner bite out of a **raw** blank: since #1045 slice E the generator
+ *    emits it and warns (`rotarySquareFinishNeedsRough`), because only the
+ *    export guard sees the material the program's earlier operations actually
+ *    removed.
  *
- * The output guard (`motionPipeline.ts`) admits a turning **cut** below
- * `rotaryTravelZ` only for an admitted around-mode square operation and only
- * when the program's own accumulated cuts show the engagement is inside the
- * operation's bound -- `stepdown` for a rough, `stockToLeaveRadial` plus a
- * stated tolerance for a finish. Rapids, along-mode turns and a finish run
- * without its rough keep refusing.
+ * The output guard (`src/engine/gcode/squareSweepGuard.ts`, asked from
+ * `motionPipeline.ts`) keeps one standing-material grid for the whole program
+ * -- along-bar bins by angle bins, initialised from the raw blank -- and walks
+ * every move of every square turning operation through it. A turning **cut**
+ * below `rotaryTravelZ` is admitted only when the material inside the cutter's
+ * footprint at every interior sample of the actual commanded motion is within
+ * the operation's bound: `stepdown` for a rough, `stockToLeaveRadial` plus the
+ * scallop of the strongest earlier rough on the same target for a finish.
+ * Rapids, along-mode turns and a cut that takes more than the bound keep
+ * refusing. The three Codex review-pass-2 reproductions live at the end of
+ * block 7: a chuck-support-limited rough cannot license the finish across the
+ * band it never reached, an A0 -> A90 cut at tip radius 9 takes the 14.14 mm
+ * corner at A45 in its interior, and A0 -> A360 is judged as the full
+ * revolution the controller makes rather than a zero-span shortcut.
  *
  * The seeded property block builds its material model independently: the
  * blank's cross-section is sampled from the square's own boundary (never
- * `squareRotaryTouchRadius`), a cut lowers the standing radius at its own
- * angle, and the emitted rough is asserted never to cut above that standing
- * material or take more than one `stepdown` out of it. The slope of every
- * random profile is bounded, so the height-map cell allowance is stated once.
- * Since #1045 slice D the block also walks **every** move -- cuts, links,
- * rapids and plunges -- at eight interior points plus both endpoints against
- * the model's independent safe tip, and requires every non-cut move that turns
- * the stock to stay at or above the travel height.
+ * `squareRotaryTouchRadius`), and it keeps a **two-dimensional**
+ * along-bin by angle-bin standing map, lowered through the cutter footprint at
+ * every sample of every move. The emitted rough is asserted never to cut above
+ * that standing material or take more than one `stepdown` out of it at any
+ * interior point. Since #1045 slice D the block also walks **every** move --
+ * cuts, links, rapids and plunges -- at interior points plus both endpoints
+ * against the model's independent safe tip, and requires every non-cut move
+ * that turns the stock to stay at or above the travel height.
  *
  * Run with: npx tsx src/engine/toolpaths/rotarySquareAroundPasses.test.ts
  */
@@ -254,32 +263,33 @@ console.log('Testing the square touch-radius gate on every cut point...')
 }
 
 // ---------------------------------------------------------------------------
-// 3. The around finish refusal rule.
+// 3. The around finish advisory rule (#1045 slice E).
 //
 //    A finish follows the model. On a **raw** square blank the corners stand
 //    whole layers above it, so its first ring would take a full-depth corner
-//    bite; that case refuses. A model equal to the blank's own surface has no
-//    material above the tip beyond the stock it leaves, so the same finish
-//    generates without a rough. And `squareRoughBefore` -- the adapter's "an
-//    earlier enabled rough clears this target" -- admits the square-to-round
-//    finish.
+//    bite. Since slice E the generator no longer refuses that: it emits the
+//    motion and warns `rotarySquareFinishNeedsRough`, because the export guard
+//    is the authority (only it sees the material the program's earlier
+//    operations actually removed). A finish told an earlier enabled rough runs
+//    (`squareRoughBefore`) warns about nothing, and a model equal to the
+//    blank's own surface has no material above the tip beyond the stock it
+//    leaves, so it needs no rough and warns about nothing either.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the around finish refusal rule...')
+console.log('Testing the around finish advisory rule...')
 {
   const raw = generateRotaryFinish('finish-raw', SQUARE_MODEL, SQUARE, FLAT, {
     ...SQUARE_BASE, passDirection: 'around',
   }, {})
-  assert.deepEqual(raw.moves, [], 'a finish on a raw square blank emits no motion')
-  assert.deepEqual(raw.warnings, [
-    { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: 'finish-raw' } },
-  ], 'and refuses with the turn-below-envelope code')
-  assert.equal(raw.bounds, null, 'and has no bounds')
+  assert.ok(raw.moves.length > 0, 'a finish on a raw square blank still generates (the guard decides at export)')
+  assert.deepEqual(raw.warnings.map((warning) => warning.code),
+    ['rotarySquareFinishNeedsRough'], 'and warns that a rough should run first')
+  assert.ok(raw.bounds !== null, 'and has bounds')
 
   const roughed = generateRotaryFinish('finish-roughed', SQUARE_MODEL, SQUARE, FLAT, {
     ...SQUARE_BASE, passDirection: 'around', squareRoughBefore: true,
   }, {})
-  assert.deepEqual(roughed.warnings, [], 'the same finish over a cleared blank is admitted')
+  assert.deepEqual(roughed.warnings, [], 'the same finish with an earlier rough warns about nothing')
   assert.ok(roughed.moves.length > 0, 'and cuts')
 
   // The blank itself as the model: no material stands above the tip beyond the
@@ -289,21 +299,26 @@ console.log('Testing the around finish refusal rule...')
     stepover: 4, sampleSpacing: 2, stockToLeave: 0, alongStart: 0, alongEnd: 40,
     safeRadius: 40, requestedCellSize: 0.2, passDirection: 'around',
   }, {})
-  assert.deepEqual(nearNet.warnings, [], 'a finish on a blank already at its model is admitted without a rough')
+  assert.deepEqual(nearNet.warnings, [], 'a finish on a blank already at its model needs no rough and warns about nothing')
   assert.ok(nearNet.moves.length > 0, 'and cuts')
 }
 
 // ---------------------------------------------------------------------------
 // 4. Seeded property: an independent square-material model.
 //
-//    The reference never calls `squareRotaryTouchRadius`. At each angle it
-//    samples the square's own boundary densely (the material's height inside a
-//    slab), and it keeps the standing radius at every angle; a cut lowers it.
+//    The reference never calls `squareRotaryTouchRadius`. It samples the
+//    square's own boundary densely (the material's height inside the cutter
+//    slab) and keeps a **two-dimensional** standing-material map -- along bins
+//    by angle bins, initialised from the blank -- lowering it through the
+//    cutter footprint at every sample of every move (#1045 slice E). The map
+//    has axial position and footprint, so a rough that covered only part of the
+//    band cannot look complete.
 //    Three assertions on the emitted around rough:
-//      - no cut point stands above the blank material at its own angle (the
-//        per-sample touch-radius gate);
-//      - a cut takes at most `stepdown` out of the standing material;
-//      - no cut point is below the model's analytic safe tip.
+//      - no cut sample stands above the blank material at its own angle;
+//      - every interior sample of a cut move takes at most `stepdown` out of
+//        the standing material inside the cutter's footprint, which is the
+//        review's "engagement at interior points of every move";
+//      - no move point is below the model's analytic safe tip.
 // ---------------------------------------------------------------------------
 
 const PROP_SEEDS = 50
@@ -444,8 +459,18 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
     assert.deepEqual(result.warnings, [], `seed ${seed}: no warning`)
     const pivot = barPivotZ(stock)
     const travel = barMaxRadius(stock) + 1
-    // The reference material per exact sample angle, seeded from the blank.
-    const standing = new Map<number, number>()
+    // The blank's own material radius along the ray at `angleDeg`, from the
+    // square's half-side. Raw blank geometry, not the cutter's support: a cell
+    // is the material standing there, and the cutter's footprint is applied
+    // when a cut is read.
+    const blankRadius = (angleDeg: number): number => {
+      const radians = angleDeg * Math.PI / 180
+      return half / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+    }
+    // The highest blank material the cutter can touch at `angleDeg` (the
+    // footprint-aware support) -- only for the "a cut never stands above the
+    // blank" gate, because a ball's tip can sit above the ray radius while it
+    // touches material earlier in its footprint.
     const supportCache = new Map<number, number>()
     const support = (angle: number): number => {
       let value = supportCache.get(angle)
@@ -470,6 +495,63 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
         : 0)
       + supportStep
       + 1e-4
+    // The reference's **standing-material map**. Unlike the slice-C block it is
+    // two-dimensional -- along bins by angle bins -- because the review's
+    // finding was exactly that one global tip cannot see a rough that covered
+    // only part of the band. Its cells are the blank's own material (sampled
+    // from the square boundary through the cutter footprint, never
+    // `squareRotaryTouchRadius`), and every emitted cut lowers them through the
+    // same footprint. A cut's engagement is read from the map *before* it is
+    // lowered, at every interior sample of every move, so a bite hidden between
+    // two safe endpoints is measured too.
+    const referenceAngleBins = 720
+    const referenceAngleBin = 360 / referenceAngleBins
+    const alongLower = stock.axis === 'x' ? stock.profile.start.x : stock.profile.start.y
+    const alongBins = Math.max(1, Math.ceil(length / (0.25 * tool.radius)))
+    const alongBin = length / alongBins
+    const standing = new Float64Array(alongBins * referenceAngleBins)
+    for (let i = 0; i < alongBins; i++) {
+      for (let k = 0; k < referenceAngleBins; k++) {
+        standing[i * referenceAngleBins + k] = blankRadius((k + 0.5) * referenceAngleBin)
+      }
+    }
+    const referenceCut = (along: number, angle: number, tip: number): number => {
+      const i0 = Math.max(0, Math.floor((along - alongLower) / alongBin) - Math.ceil(tool.radius / alongBin) - 1)
+      const i1 = Math.min(alongBins - 1, Math.floor((along - alongLower) / alongBin) + Math.ceil(tool.radius / alongBin) + 1)
+      // Only cells whose material still stands above the tip can be touched, and
+      // the widest angle that can hold them is `asin(r / tip)`; the same window
+      // the guard uses, reached independently here. A full turn is needed only
+      // for a tip at or below the axis.
+      const halfSpan = tip > 0
+        ? Math.ceil(Math.asin(Math.min(1, tool.radius / tip)) / (referenceAngleBin * Math.PI / 180)) + 1
+        : Math.ceil(referenceAngleBins / 2)
+      const baseBin = Math.floor(((angle % 360) + 360) % 360 / referenceAngleBin)
+      let engagement = Number.NEGATIVE_INFINITY
+      for (let i = i0; i <= i1; i++) {
+        const dx = alongLower + (i + 0.5) * alongBin - along
+        const remaining = tool.radius * tool.radius - dx * dx
+        if (remaining <= 0) continue
+        for (let o = -halfSpan; o <= halfSpan; o++) {
+          const k = ((baseBin + o) % referenceAngleBins + referenceAngleBins) % referenceAngleBins
+          const cellAngle = (k + 0.5) * referenceAngleBin
+          const material = standing[i * referenceAngleBins + k]
+          if (material <= tip) continue
+          const offset = material * Math.sin((cellAngle - angle) * Math.PI / 180)
+          if (offset * offset > remaining) continue
+          const contact = tool.type === 'ball_endmill'
+            ? tip + tool.radius - Math.sqrt(Math.max(0, remaining - offset * offset))
+            : tip
+          if (material - contact > engagement) engagement = material - contact
+          if (contact < material) standing[i * referenceAngleBins + k] = contact
+        }
+      }
+      return engagement
+    }
+    // The reference's own resolution: two angle bins' worth of the blank's
+    // corner envelope (`barMaxRadius` covers the cusp's steepest change),
+    // one along bin, and its boundary-sampling step.
+    const gridAllowance = 2 * barMaxRadius(stock) * referenceAngleBin * Math.PI / 180
+      + alongBin + supportStep + 1e-4
     let seedCuts = 0
     let seedSamples = 0
     for (const move of result.moves) {
@@ -482,36 +564,40 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
             `seed ${seed}: a non-cut turning move at A ${angleOf(point).toFixed(2)} travels at tip ${(point.z - pivot).toFixed(4)}, below the travel height ${travel}`)
         }
       }
-      // Walk the move itself, not only its endpoints (#1045 slice D): a link
-      // lowered to the pivot, or a dip between two safe samples, is invisible
-      // to an endpoint-only check.
-      for (let step = 0; step <= 9; step++) {
-        const f = step / 9
-        const x = (stock.axis === 'x' ? move.from.x : move.from.y)
-          + ((stock.axis === 'x' ? move.to.x : move.to.y) - (stock.axis === 'x' ? move.from.x : move.from.y)) * f
+      const alongOf = (point: ToolpathPoint): number => stock.axis === 'x' ? point.x : point.y
+      const fromAlong = alongOf(move.from)
+      const toAlong = alongOf(move.to)
+      const fromAngle = angleOf(move.from)
+      const toAngle = angleOf(move.to)
+      const steps = Math.max(8,
+        Math.ceil(Math.abs(toAngle - fromAngle) / referenceAngleBin),
+        Math.ceil(Math.abs(toAlong - fromAlong) / alongBin))
+      for (let step = 0; step <= steps; step++) {
+        const f = step / steps
+        const x = fromAlong + (toAlong - fromAlong) * f
         const tip = move.from.z + (move.to.z - move.from.z) * f - pivot
         const reference = referenceAt(x)
         assert.ok(Number.isFinite(reference), `seed ${seed}: the model reference at x ${x.toFixed(3)} is finite`)
         assert.ok(tip >= reference - allowance,
           `seed ${seed} ${tool.type} ${move.kind}: tip ${tip.toFixed(4)} at x ${x.toFixed(3)} f=${f} is below the model reference ${reference.toFixed(4)} by more than ${allowance.toFixed(4)}`)
         seedSamples++
-      }
-      if (move.kind !== 'cut') continue
-      for (const point of [move.from, move.to]) {
-        const tip = point.z - pivot
-        if (tip >= travel - 1e-9) continue // a link at the travel height
-        const angle = angleOf(point)
-        const blank = support(angle)
-        const material = standing.get(angle) ?? blank
-        // Anchor the absolute height: a cut point is never above the blank.
-        assert.ok(tip < blank + supportStep + 1e-9,
-          `seed ${seed}: cut at A ${angle.toFixed(2)} reaches ${tip.toFixed(4)}, above the blank material ${blank.toFixed(4)}`)
-        // The engagement bound: one stepdown out of the standing material.
-        const engagement = material - tip
-        assert.ok(engagement <= stepdown + supportStep + 1e-9,
-          `seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at A ${angle.toFixed(2)} exceeds stepdown ${stepdown.toFixed(4)}`)
-        worstEngagement = Math.max(worstEngagement, engagement)
-        standing.set(angle, Math.min(material, tip))
+        if (move.kind === 'rapid') continue
+        // Only a sample under the blank's envelope removes material; a link at
+        // the travel height is in air and no cell is lowered by it.
+        if (tip >= travel - 1e-9) continue
+        const angle = fromAngle + (toAngle - fromAngle) * f
+        // The touch gate is a question about a *cut's* destination, exactly as
+        // before: a plunge's or a link's straight leg passes above the blank on
+        // its way down from the travel height, and that is not a cut there.
+        if (step === steps) {
+          assert.ok(tip < support(angle) + supportStep + 1e-9,
+            `seed ${seed}: cut at x ${x.toFixed(3)} A ${angle.toFixed(2)} reaches ${tip.toFixed(4)}, above the blank material ${support(angle).toFixed(4)}`)
+        }
+        const engagement = referenceCut(x, angle, tip)
+        if (engagement > stepdown + gridAllowance) {
+          assert.fail(`seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at x ${x.toFixed(3)} A ${angle.toFixed(2)} f=${f} exceeds stepdown ${stepdown.toFixed(4)} + ${gridAllowance.toFixed(4)}`)
+        }
+        if (Number.isFinite(engagement)) worstEngagement = Math.max(worstEngagement, engagement)
         seedCuts++
       }
     }
@@ -521,7 +607,7 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
     checkedSeeds++
   }
   assert.ok(checkedSeeds === PROP_SEEDS, `the property ran all ${PROP_SEEDS} seeds`)
-  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut endpoints and ${checkedSamples} move samples; worst engagement ${worstEngagement.toFixed(4)}`)
+  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut samples and ${checkedSamples} move samples; worst axial engagement ${worstEngagement.toFixed(4)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +717,7 @@ interface Fixture {
   stock: SquareStock
 }
 
-function fixture(axis: Axis = 'x', direction: 'around' | 'along' = 'around'): Fixture {
+function fixture(axis: Axis = 'x', direction: 'around' | 'along' = 'around', chuckSupport = 0): Fixture {
   const stock = squareStock(20, 40, axis, { x: 0, y: 0 })
   // The model as the project sees it: the same square-to-round section, placed
   // on the stock's own axis (a Y bar swaps the across coordinate).
@@ -683,6 +769,7 @@ function fixture(axis: Axis = 'x', direction: 'around' | 'along' = 'around'): Fi
     stockToLeaveRadial: 0,
     stepdown: 2,
     stepover: 0.5,
+    ...(chuckSupport > 0 ? { rotaryChuckSupport: chuckSupport } : {}),
   }
   const finish: Operation = {
     ...defaultOperationForTarget(project, 'rotary_finish', 'finish', target, 1),
@@ -717,11 +804,12 @@ function post(
 }
 
 // ---------------------------------------------------------------------------
-// 6. Generation through the production adapter: the flag is derived from the
-//    operation list, and the finish refuses without the rough.
+// 6. Generation through the production adapter: the advisory flag is derived
+//    from the operation list, and a finish without its rough still generates --
+//    the export guard, not the generator, is the authority.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the adapter\'s rough-before rule and the generated programs...')
+console.log('Testing the adapter\'s rough-before advisory and the generated programs...')
 {
   const { project } = fixture()
   const [rough, finish] = project.operations
@@ -732,38 +820,40 @@ console.log('Testing the adapter\'s rough-before rule and the generated programs
 
   const finishEnvelope = computeOperationToolpath(project, finish)
   assert.ok(finishEnvelope, 'the around finish generates through the dispatch')
-  assert.deepEqual(finishEnvelope!.result.warnings, [], 'the finish is admitted because the rough precedes it')
+  assert.deepEqual(finishEnvelope!.result.warnings, [], 'the finish warns about nothing because the rough precedes it')
   assert.ok(finishEnvelope!.result.moves.length > 0, 'the around finish cuts')
 
-  // Remove the rough: the same finish on the raw blank refuses.
+  // Remove the rough: the same finish on the raw blank still generates (#1045
+  // slice E moved the decision to the export guard) and warns that a rough
+  // should run first.
   const rawProject: Project = { ...project, operations: [finish] }
   const rawFinish = computeOperationToolpath(rawProject, finish)
-  assert.ok(rawFinish, 'the refusal is a result, not a missing envelope')
-  assert.deepEqual(rawFinish!.result.moves, [], 'the finish on a raw blank emits no motion')
+  assert.ok(rawFinish, 'the finish is a result, not a missing envelope')
+  assert.ok(rawFinish!.result.moves.length > 0, 'the finish on a raw blank still generates')
   assert.deepEqual(rawFinish!.result.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'and names the turn-below-envelope refusal')
+    ['rotarySquareFinishNeedsRough'], 'and says to rough first')
 
-  // A disabled rough is not a rough: a disabled operation emits nothing.
+  // A disabled rough is not a rough: the advisory fires again.
   const disabled: Project = {
     ...project,
     operations: [{ ...rough, enabled: false }, finish],
   }
   const disabledFinish = computeOperationToolpath(disabled, finish)
   assert.deepEqual(disabledFinish!.result.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'a disabled rough does not clear the blank')
-  // A rough on another target does not clear this one.
+    ['rotarySquareFinishNeedsRough'], 'a disabled rough does not count as a rough')
+  // A rough on another target does not count for this one.
   const otherTarget: Project = {
     ...project,
     operations: [{ ...rough, target: { source: 'stock' } }, finish],
   }
   const otherFinish = computeOperationToolpath(otherTarget, finish)
   assert.deepEqual(otherFinish!.result.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'a rough on another target does not clear this blank')
+    ['rotarySquareFinishNeedsRough'], 'a rough on another target does not count')
   // A rough that comes after the finish does not precede it.
   const reordered: Project = { ...project, operations: [finish, rough] }
   const reorderedFinish = computeOperationToolpath(reordered, finish)
   assert.deepEqual(reorderedFinish!.result.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'a rough later in the list does not precede the finish')
+    ['rotarySquareFinishNeedsRough'], 'a rough later in the list does not precede the finish')
 }
 
 // ---------------------------------------------------------------------------
@@ -873,6 +963,97 @@ console.log('Testing the square around output guard...')
   const engrave: Operation = { ...rough, kind: 'follow_line' }
   assert.deepEqual(post(project, ROTARY, [{ operation: engrave, moves: roughResult.moves }]).warnings.map((w) => w.code),
     ['postSetupOperationRefused'], 'a non-rotary operation carrying A is refused')
+
+  // -------------------------------------------------------------------------
+  // Codex review pass 2, finding 1: an **incomplete** rough must not license
+  // the whole finish. The rough's 20 mm chuck support restricts its cutter
+  // centres to x 24..26, while the finish spans x 14..26: at x 14 the blank's
+  // corner is still standing whole layers above the model, and the finish would
+  // sweep it in one turning pass.
+  // -------------------------------------------------------------------------
+  {
+    const partial = fixture('x', 'around', 20)
+    const partialRough = partial.project.operations[0]
+    const partialFinish = partial.project.operations[1]
+    const partialRoughResult = computeOperationToolpath(partial.project, partialRough)!.result
+    const partialFinishResult = computeOperationToolpath(partial.project, partialFinish)!.result
+    assert.deepEqual(partialRoughResult.warnings, [], 'the supported rough generates')
+    const roughAlong = partialRoughResult.moves.flatMap((move) => [move.from.x, move.to.x])
+    assert.ok(Math.min(...roughAlong) >= 24 - 1e-6 && Math.max(...roughAlong) <= 26 + 1e-6,
+      `the supported rough only reaches x 24..26 (it covers ${Math.min(...roughAlong).toFixed(4)}..${Math.max(...roughAlong).toFixed(4)})`)
+    const finishAlong = partialFinishResult.moves.flatMap((move) => [move.from.x, move.to.x])
+    assert.ok(Math.min(...finishAlong) < 15, 'the finish spans the whole band, not only the roughed part')
+    const partialProgram = post(partial.project, ROTARY, [
+      { operation: partialRough, moves: partialRoughResult.moves },
+      { operation: partialFinish, moves: partialFinishResult.moves },
+    ])
+    assert.deepEqual(partialProgram.warnings.map((warning) => warning.code),
+      ['postRotarySquareTurnBelowEnvelope'],
+      'an incomplete rough cannot license the finish over the material it never reached')
+  }
+
+  // -------------------------------------------------------------------------
+  // Codex review pass 2, finding 1b: an along rough with a single cut point is
+  // not coverage either.
+  // -------------------------------------------------------------------------
+  {
+    const alongFixtures = fixture('x', 'along')
+    const aloneRough = alongFixtures.project.operations[0]
+    // One constant-angle cut point deep in the band: the along rough ran, but it
+    // cleared a single spot and nothing else.
+    const onePoint: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
+      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 5, a: 0 }, to: { x: 20.1, y: centre, z: barPivotZ(stock) + 5, a: 0 } },
+    ]
+    const program = post(project, ROTARY, [
+      { operation: aloneRough, moves: onePoint },
+      { operation: finish, moves: finishResult.moves },
+    ])
+    assert.deepEqual(program.warnings.map((warning) => warning.code),
+      ['postRotarySquareTurnBelowEnvelope'],
+      'one cut point of an along rough does not clear the blank for a finish')
+  }
+
+  // -------------------------------------------------------------------------
+  // Codex review pass 2, finding 2: the interior of a turning cut is checked,
+  // and A is the commanded sweep.
+  //
+  // A single A0 -> A90 cut at tip radius 9 with the Ø4 flat over the 20 mm
+  // square: both endpoints stand no more than 1 mm above the flat, but at A45
+  // the corner stands at 14.142 mm -- 5.142 mm of engagement. Endpoint checks
+  // pass it; the grid must refuse it.
+  // -------------------------------------------------------------------------
+  {
+    const corner = barMaxRadius(stock)
+    const single: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
+      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 90 } },
+    ]
+    // Confirm the review's figure: at A45 the untouched corner is 5.14 mm above
+    // this tip (the grid's engagement, not a helper's, is what the guard reads).
+    assert.ok(corner - 9 > 5 && corner - 9 < 5.3,
+      `the A45 corner stands ${(corner - 9).toFixed(3)} mm above a tip radius of 9`)
+    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: single }]).warnings.map((w) => w.code),
+      ['postRotarySquareTurnBelowEnvelope'], 'a turning cut whose interior takes the corner is refused')
+
+    // The same sweep written as A0 -> A360 must be a full revolution, not a
+    // zero-span check: the corner is taken at A45 either way.
+    const full: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
+      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 360 } },
+    ]
+    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: full }]).warnings.map((w) => w.code),
+      ['postRotarySquareTurnBelowEnvelope'], 'an A0 -> A360 cut is judged as a full revolution')
+
+    // A real ring at the rough's first layer is admitted: its interior
+    // engagement is one stepdown everywhere.
+    const ring: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
+      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + corner - rough.stepdown, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + corner - rough.stepdown, a: 360 } },
+    ]
+    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: ring }]).warnings, [],
+      'a full ring at one stepdown below the corner is admitted')
+  }
 }
 
 // ---------------------------------------------------------------------------

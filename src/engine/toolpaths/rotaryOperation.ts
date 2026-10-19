@@ -16,7 +16,7 @@
 
 import type { Operation, Project } from '../../types/project'
 import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
-import { operationFace, rotaryRoughBefore } from '../setupTargets'
+import { operationFace, rotaryRoughPrecedes } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
@@ -89,9 +89,10 @@ export function generateRotaryOperation(project: Project, operation: Operation):
     // Missing reads as 'along' inside the generators, so a saved operation keeps
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
-    // An around finish on a square blank is refused unless an earlier enabled
-    // rough has cleared the blank to the model (#1045 slice C).
-    squareRoughBefore: rotaryRoughBefore(project, operation),
+    // Advisory only since #1045 slice E: an around finish on a square blank
+    // warns when no earlier enabled rough runs before it. The export guard
+    // decides from the material the program actually leaves.
+    squareRoughBefore: rotaryRoughPrecedes(project, operation),
   }
   const generator = operation.kind === 'rotary_rough' ? generateRotaryRough : generateRotaryFinish
   const result = generator(operation.id, surface.mesh, stock, tool, params, {})

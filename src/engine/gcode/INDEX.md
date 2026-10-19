@@ -71,6 +71,21 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
+- `squareSweepGuard.ts` — the square blank's standing-material grid and the
+  export guard that walks a whole program's commanded motion through it
+  (#1045 slice E). Cells are along-bar bins by angle bins, each the material's
+  outer radius above the pivot, initialised from the raw blank (corner envelope
+  at every angle, retained ends included) and lowered by every cut in program
+  order. A turning cut below the travel height is admitted only when its
+  interior engagement — sampled along the **actual commanded** motion, A as
+  commanded so A0→A360 is a full revolution, inside the cutter's footprint —
+  is within the operation's bound: a rough's `stepdown`, or a finish's
+  `stockToLeave` plus the scallop of the strongest earlier rough on the same
+  target. A turning rapid, or a turn on an along-mode operation, still refuses.
+  Non-turning cuts (an along pass, a plunge) are never refused here but do
+  lower the grid, which is what lets an along rough clear material for an
+  around finish. This replaced the slice-C licence that one earlier rough on
+  the same target proved coverage everywhere.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
@@ -115,11 +130,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   valid row or carrying a foreign unit label is refused even when its shape and
   numbers were spoofed to match; a removed, unusable, differently shaped or
   differently sized cutter fails closed too, rather than letting the guard prove
-  one tool clear and the emitter write another), an A-changing square move whose
+  one tool clear and the emitter write another), a **turning** square move whose
   cutter's lowest point is below the corner envelope `barPivotZ + barMaxRadius`
-  is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1; the generators
-  keep every A-changing move above that envelope, and a turn placed exactly on
-  it is within the generator's own tolerance — the emitted Z's half-step), and
+  is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1) unless
+  `squareSweepGuard.ts` can show from the program's own standing material that
+  the cut takes no more than the operation's bound — see that file below — and
   the inverse-time refusal keeps its own whole-operation turning-feed test,
   independent of the angle tracker, so an unestablished constant-angle feed
   cannot hide a later turning feed and change which refusal a round bar reports
