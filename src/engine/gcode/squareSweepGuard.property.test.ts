@@ -308,7 +308,10 @@ function randomProgram(stock: SquareStock, project: Project): ProgramOperation[]
       const tip = Math.max(0, surface - between(-1, 1.4) * Math.max(stepdown, stockToLeaveRadial + 0.2))
       if (around) {
         const span = between(2, 60) * (random() < 0.15 ? 8 : 1)
-        const lowerTip = Math.max(0, tip - between(0, stepdown * 0.4))
+        // Half the turning cuts hold their tip (a flat ring), which is the
+        // generator's usual around move and the turn guard's band-pass path
+        // (#1045 slice G); the rest ramp down and take the per-sample walk.
+        const lowerTip = random() < 0.5 ? tip : Math.max(0, tip - between(0, stepdown * 0.4))
         moves.push({
           kind: 'cut',
           from: point(stock, along, tip, controller),

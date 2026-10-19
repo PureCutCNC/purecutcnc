@@ -105,7 +105,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `postRotarySquareTurnBelowEnvelope`; non-turning cuts are never refused here
   but do lower the grid, which is what lets an along rough clear material for
   an around finish. This replaced the slice-C licence that one earlier rough on
-  the same target proved coverage everywhere.
+  the same target proved coverage everywhere. #1045 slice G rewrites the hot
+  path for a 1 m stubbed rough: per-sample and per-row terms are hoisted, only
+  the cells a row's cutter footprint covers are read, contact/wall/engagement
+  are one inlined calculation, a cell whose material is at or below the tip is
+  skipped before the wall is computed, and nothing is allocated per sample. A
+  band pass (`cutBand`) applies a whole constant-along around move in one pass
+  over its band — every cell is reached by its nearest sample, so walking the
+  ~720 samples only repeats the same cell calculation — which is what keeps the
+  export check on the slice-F timing inputs inside its budget.
 - `squareSweepGuard.test.ts` — boundary and review-reproduction tests for that
   guard on the 20 mm square blank: a hand-built around-mode rough cut taking
   1.25 × `stepdown` is refused while 0.9 × is admitted, and a finish taking
@@ -301,6 +309,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
   angle and the single closing unwind, `postRotaryAxisMismatch`, and the
   program read back through `parseGcodeMotion` onto the flat toolpath).
+- `squareRetainedEndOvercut.test.ts` — #1045 slice G item 1, the overcut the
+  guard found on a 20 × 1,000 mm blank with 100 mm retained ends: the rough and
+  finish generate and the guard admits both, on that case and on a seeded set of
+  retained-end variants (a coaxial round part, a square prism part and a flanged
+  stepped part). An independent measurement then walks the rough's own commanded
+  layers at a quarter-degree sample and asserts no cut takes more than one
+  `stepdown` out of the material an earlier pass left at that sample. The
+  generator's spurious retained-stub height-map read is out of the around
+  sampler (the cutter-centre span and the exact stub floor are the stub's
+  protection), and the rough keeps what each sample last left so a raised
+  sample's neighbour is held to `standing - stepdown`.
 - `squareRotaryOutput.test.ts` — the square blank through generation and the
   real posted program (#1016 C2-S4): both axes, both units, rough/finish and
   own / borrowed / reversed machines post nonempty angle-bearing inverse-time

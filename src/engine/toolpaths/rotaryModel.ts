@@ -16,7 +16,7 @@
 
 import { getStockBounds } from '../../types/project'
 import type { BarStock, Clamp, RotaryPassDirection, RoundStock } from '../../types/project'
-import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, isSquareStock } from '../../types/barStock'
+import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, barSurfaceRadius, isSquareStock } from '../../types/barStock'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
@@ -712,6 +712,35 @@ function distanceFromLine(
 }
 
 /**
+ * Perpendicular distance of `point` from the line through `a` and `b` in
+ * **(along, A, Z) motion space** (#1045 slice G), A scaled by `angularWeight`
+ * (millimetres of surface per degree) so the distance is a real tool-position
+ * error. A dropped point stays on the commanded straight move only if its
+ * angular position is on the same chord as its along and Z positions: merging on
+ * (along, Z) alone would cut a corner the ring actually follows.
+ */
+function distanceFromLineAngular(
+  point: { x: number; y: number; z: number; a?: number },
+  a: { x: number; y: number; z: number; a?: number },
+  b: { x: number; y: number; z: number; a?: number },
+  angularWeight: number,
+): number {
+  const abx = b.x - a.x
+  const aby = b.y - a.y
+  const abz = b.z - a.z
+  const aba = angularWeight * ((b.a ?? 0) - (a.a ?? 0))
+  const apx = point.x - a.x
+  const apy = point.y - a.y
+  const apz = point.z - a.z
+  const apa = angularWeight * ((point.a ?? 0) - (a.a ?? 0))
+  const lengthSq = abx * abx + aby * aby + abz * abz + aba * aba
+  const apSq = apx * apx + apy * apy + apz * apz + apa * apa
+  if (lengthSq <= 1e-18) return Math.sqrt(apSq)
+  const dot = apx * abx + apy * aby + apz * abz + apa * aba
+  return Math.sqrt(Math.max(0, apSq - dot * dot / lengthSq))
+}
+
+/**
  * Drop the collinear interior points of every run of `cut` moves that share one
  * pass, keeping the run's first and last point. A run never crosses a move that
  * turns the stock -- the same rule `linearMoveOptimization` follows (issue
@@ -719,37 +748,77 @@ function distanceFromLine(
  * this toolpath emits is a command the machine must reach. Runs also stop where
  * the tool reverses along the bar, so a merge can never join two passes that
  * happen to line up in X through the link between them.
+ *
+ * With `pivot` (an around pass, #1045 slice G) a run *is* allowed to turn: the
+ * controller interpolates A and Z linearly, so consecutive cut moves inside one
+ * ring are one straight move in (along, A, Z). Runs still stop where A reverses
+ * and at a stepped leg (A constant, Z or along moving), so the emitter's
+ * rise/traverse/drop links are never joined into one diagonal. Along mode and
+ * round bars pass no pivot and keep the old rule and the old distance exactly.
  */
-function mergeCollinearCuts(moves: readonly ToolpathMove[], tolerance: number): { moves: ToolpathMove[]; dropped: number } {
+export function mergeCollinearCuts(
+  moves: readonly ToolpathMove[],
+  tolerance: number,
+  pivot?: number,
+): { moves: ToolpathMove[]; dropped: number } {
+  const angular = pivot !== undefined
   const merged: ToolpathMove[] = []
   let index = 0
   while (index < moves.length) {
     const first = moves[index]
-    if (first.kind !== 'cut' || first.from.a !== first.to.a) {
+    if (first.kind !== 'cut' || (!angular && first.from.a !== first.to.a)) {
       merged.push(first)
       index++
       continue
     }
-    const direction = Math.sign((first.to.x - first.from.x) + (first.to.y - first.from.y))
+    const direction = angular
+      ? angularDirection(first.from, first.to)
+      : Math.sign((first.to.x - first.from.x) + (first.to.y - first.from.y))
     let end = index
     while (
       end + 1 < moves.length
       && moves[end + 1].kind === 'cut'
-      && moves[end + 1].from.a === moves[end + 1].to.a
-      && moves[end + 1].from.a === first.from.a
       && moves[end + 1].from.x === moves[end].to.x
       && moves[end + 1].from.y === moves[end].to.y
-      && Math.sign((moves[end + 1].to.x - moves[end + 1].from.x) + (moves[end + 1].to.y - moves[end + 1].from.y)) === direction
+      && (!angular || moves[end + 1].from.z === moves[end].to.z)
+      && (!angular || moves[end + 1].from.a === moves[end].to.a)
+      && (!angular || angularDirection(moves[end + 1].from, moves[end + 1].to) === direction)
+      && (angular
+        || (moves[end + 1].from.a === moves[end + 1].to.a
+          && moves[end + 1].from.a === first.from.a
+          && Math.sign((moves[end + 1].to.x - moves[end + 1].from.x) + (moves[end + 1].to.y - moves[end + 1].from.y)) === direction))
     ) end++
     const points: ToolpathPoint[] = [moves[index].from]
     for (let i = index; i <= end; i++) points.push(moves[i].to)
-    const kept = simplifyRun(points, tolerance)
+    let kept: ToolpathPoint[]
+    if (angular) {
+      // The tolerance is a surface distance, so A is scaled at the run's largest
+      // tip radius: the widest the arc can be for a given angle. A smaller tip
+      // would scale A down and merge more, never less.
+      let maxTip = 0
+      for (const point of points) maxTip = Math.max(maxTip, point.z - (pivot as number))
+      kept = simplifyRun(points, tolerance, Math.max(0, maxTip) * Math.PI / 180)
+    } else {
+      kept = simplifyRun(points, tolerance)
+    }
     for (let i = 0; i + 1 < kept.length; i++) {
       merged.push({ kind: 'cut', from: kept[i], to: kept[i + 1] })
     }
     index = end + 1
   }
   return { moves: merged, dropped: moves.length - merged.length }
+}
+
+/**
+ * The direction of one move for the around-pass merge: A when the move turns the
+ * blank, otherwise the along/centre motion the old rule used. A stepped leg (A
+ * constant, a pure Z move) yields zero, so it always starts its own run and is
+ * never folded into a ring chord.
+ */
+function angularDirection(from: ToolpathPoint, to: ToolpathPoint): number {
+  const deltaAngle = (to.a ?? from.a ?? 0) - (from.a ?? 0)
+  if (deltaAngle !== 0) return Math.sign(deltaAngle)
+  return Math.sign((to.x - from.x) + (to.y - from.y))
 }
 
 /**
@@ -766,8 +835,15 @@ function mergeCollinearCuts(moves: readonly ToolpathMove[], tolerance: number): 
  * 2.8 ms from 36,282 to 2,136 on the rough, against the old neighbour scan's
  * single pass. The farthest-point split makes it near `n log n` per run rather
  * than `n`, which the fixture's 252 passes and 751 samples do not notice.
+ *
+ * `angularWeight` (an around pass, #1045 slice G) measures the points in
+ * (along, A, Z) space as {@link distanceFromLineAngular} describes. Without it
+ * the distance is the original 3D one, to the bit.
  */
-function simplifyRun(points: readonly ToolpathPoint[], tolerance: number): ToolpathPoint[] {
+function simplifyRun(points: readonly ToolpathPoint[], tolerance: number, angularWeight?: number): ToolpathPoint[] {
+  const distance = angularWeight === undefined
+    ? (point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint): number => distanceFromLine(point, a, b)
+    : (point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint): number => distanceFromLineAngular(point, a, b, angularWeight)
   const keep = new Uint8Array(points.length)
   keep[0] = 1
   keep[points.length - 1] = 1
@@ -777,9 +853,9 @@ function simplifyRun(points: readonly ToolpathPoint[], tolerance: number): Toolp
     let split = -1
     let farthest = tolerance
     for (let i = first + 1; i < last; i++) {
-      const distance = distanceFromLine(points[i], points[first], points[last])
-      if (distance > farthest) {
-        farthest = distance
+      const pointDistance = distance(points[i], points[first], points[last])
+      if (pointDistance > farthest) {
+        farthest = pointDistance
         split = i
       }
     }
@@ -1210,6 +1286,19 @@ function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, a
  * bar end to the cut range, which is the model's own end when the end supports
  * do not bind and the support keep-out when they do. The outside-bar check
  * (`modelOutsideBar`) still looks at the model alone, not at these.
+ *
+ * `includeSquareStubs` is false for a **square blank in around mode** (#1045
+ * slice G). `rotaryCutterSpan` already keeps the ring's centre one cutter
+ * radius inside a stub face, so the cutter is tangent to the face and the exact
+ * `squareRotaryStubContactFloor` is the net that catches any real overlap. The
+ * square stub inside the sampling mesh is then *not* a contact: the tool's rim
+ * merely touches the face, while the height map reads the whole retained square
+ * across the footprint and lifts the tip to the blank's corner. On a 20 x
+ * 1,000 blank with 100 mm retained ends that raised the ring's tip above its
+ * layer radius, which both multiplied the emitted moves (the refinement chased
+ * the raised samples) and left a corner the next layer then took more than
+ * `stepdown` out of -- the overcut the export guard found. The along pass keeps
+ * the stub in its mesh byte for byte.
  */
 function withRetainedBar(
   mesh: RotaryModelMesh,
@@ -1217,7 +1306,9 @@ function withRetainedBar(
   units: Units,
   alongStart: number,
   alongEnd: number,
+  includeSquareStubs = true,
 ): RotaryModelMesh {
+  if (isSquareStock(stock) && !includeSquareStubs) return mesh
   const bounds = getStockBounds(stock)
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
   const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
@@ -1775,7 +1866,18 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
-  const samplingMesh = withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd)
+  const samplingMesh = withRetainedBar(
+    mesh,
+    stock,
+    tool.units,
+    params.alongStart,
+    params.alongEnd,
+    // A square blank's around rings are protected from the retained stub by the
+    // cutter-centre span pull and the exact stub floor, not by the height map;
+    // including the stub here lifted every ring's tip near an end to the blank's
+    // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
+    !(isSquareStock(stock) && params.passDirection === 'around'),
+  )
   const sampling = sampleRotaryModel(
     samplingMesh,
     stock,
@@ -2105,7 +2207,10 @@ export function generateRotaryFinish(
     }
   }
   if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
-  const merged = mergeCollinearCuts(moves, tolerance)
+  // An around pass's moves are straight on the controller in (along, A, Z), so
+  // the merge may drop the interior points of a ring; along mode keeps the old
+  // merge and its byte-identical output (#1045 slice G).
+  const merged = mergeCollinearCuts(moves, tolerance, params.passDirection === 'around' ? pivot : undefined)
   return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
 }
 
@@ -2162,6 +2267,99 @@ export interface RotaryRoughParams extends RotaryFinishParams {
 }
 
 /**
+ * The highest material still standing anywhere in one around sample's cutter
+ * footprint (#1045 slice G).
+ *
+ * `left[k][i]` is what each sample last left: its own cut's tip radius, or the
+ * raw blank's surface radius at its angle until it cuts. A ring shares one
+ * along position and every layer repeats the same angle grid, so when a sample
+ * stands above the layer top -- a model protrusion, or a retained-stub contact
+ * floor -- a *neighbouring* sample's cutter reaches that material. Taking only
+ * the sample's own value would let the neighbour take the whole protrusion in
+ * one pass, which is the retained-end overcut the export guard found on a
+ * 20 x 1,000 blank with 100 mm retained ends. The footprint is the one the guard
+ * accounts: every angle within `asin(r / tip)` (a flat) or `asin(r / (tip + r))`
+ * (a ball), at every along position within one cutter radius. `angles` is
+ * ascending and closed at 360, so the two bounds are binary searches and the
+ * span wraps through 0.
+ */
+function materialLeftInFootprint(
+  left: readonly number[][],
+  angles: readonly number[],
+  along: readonly number[],
+  alongIndex: number,
+  angleIndex: number,
+  tip: number,
+  cutterRadius: number,
+  ball: boolean,
+): number {
+  const bins = angles.length
+  const halfSpan = tip > 0
+    ? Math.asin(Math.min(1, cutterRadius / (ball ? tip + cutterRadius : tip)))
+    : Math.PI
+  const halfSpanDegrees = Math.min(180, halfSpan * 180 / Math.PI)
+  // The rows the cutter's body can reach: `along` is ascending, so the window
+  // is a contiguous index range and a body at exactly one radius is out of
+  // reach (the guard's own strict test).
+  const centre = along[alongIndex]
+  // The strict, margin-guarded comparison matters: the along grid is uniform,
+  // and a neighbouring ring one cutter radius away is a tangency, not an
+  // overlap (the guard's own cell test is strict for the same reason).
+  const reach = cutterRadius - 1e-9
+  let i0 = alongIndex
+  while (i0 > 0 && centre - along[i0 - 1] < reach) i0--
+  let i1 = alongIndex
+  while (i1 + 1 < along.length && along[i1 + 1] - centre < reach) i1++
+  const ranges: Array<[number, number]> = []
+  const low = angles[angleIndex] - halfSpanDegrees
+  const high = angles[angleIndex] + halfSpanDegrees
+  if (low < 0) {
+    ranges.push([firstAngleAtLeast(angles, low + 360), bins - 1])
+    ranges.push([0, lastAngleAtMost(angles, high)])
+  } else if (high >= 360) {
+    ranges.push([firstAngleAtLeast(angles, low), bins - 1])
+    ranges.push([0, lastAngleAtMost(angles, high - 360)])
+  } else {
+    ranges.push([firstAngleAtLeast(angles, low), lastAngleAtMost(angles, high)])
+  }
+  let standing = Number.NEGATIVE_INFINITY
+  for (const [k0, k1] of ranges) {
+    for (let k = k0; k <= k1; k++) {
+      const row = left[k]
+      for (let i = i0; i <= i1; i++) {
+        const value = row[i]
+        if (value > standing) standing = value
+      }
+    }
+  }
+  return standing
+}
+
+/** First index in the ascending `angles` whose value is at least `value`. */
+function firstAngleAtLeast(angles: readonly number[], value: number): number {
+  let low = 0
+  let high = angles.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (angles[mid] < value) low = mid + 1
+    else high = mid
+  }
+  return low
+}
+
+/** Last index in the ascending `angles` whose value is at most `value`, or -1. */
+function lastAngleAtMost(angles: readonly number[], value: number): number {
+  let low = 0
+  let high = angles.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (angles[mid] <= value) low = mid + 1
+    else high = mid
+  }
+  return low - 1
+}
+
+/**
  * Sample once, then remove only the material still standing at each layer.
  *
  * `passDirection: 'around'` replaces each layer's along passes with rings at one
@@ -2181,6 +2379,19 @@ export interface RotaryRoughParams extends RotaryFinishParams {
  * of the material standing at its angle -- the engagement bound the output
  * guard re-checks. The layer count and radii stay counted from
  * `barMaxRadius`, so the corners are covered from the first layer.
+ *
+ * A **raised** sample (#1045 slice G) breaks that per-sample argument: a model
+ * protrusion, or a retained-stub contact floor, can hold a sample's tip above
+ * the layer radius, and a *neighbouring* sample's cutter still reaches the
+ * material that sample left. The ring therefore keeps what each sample last
+ * left (`left[k][i]`, the blank's own surface at its angle until it cuts) and,
+ * once any sample stands above the previous layer's top, takes each sample's
+ * target as `max(layerRadius, standing - stepdown)` with `standing` the highest
+ * material anywhere in its cutter footprint ({@link materialLeftInFootprint}).
+ * No sample then takes more than `stepdown` out of what stands in any cell its
+ * cut reaches, which is the property the export guard re-checks. A layer with
+ * no raised sample takes the plain path, so a normal rough's output is
+ * unchanged.
  */
 export function generateRotaryRough(
   operationId: string,
@@ -2274,12 +2485,32 @@ export function generateRotaryRough(
     // output stays byte for byte.
     const last = angles.length - 1
     let ring = 0
+    // What each sample last left (#1045 slice G). Until a sample cuts, that is
+    // the blank's own surface radius at its angle -- identical at every along
+    // position, retained ends included -- so a corner keeps its cusp and a flat
+    // keeps half the side. A cut writes the tip it emitted.
+    const left: number[][] = angles.map((angle) => {
+      const surface = Math.min(maxRadius, barSurfaceRadius(stock, angle))
+      return new Array<number>(along.length).fill(surface)
+    })
+    const ballTool = tool.type === 'ball_endmill'
     for (let layer = 1; layer <= layers; layer++) {
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
       const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
       const touchesMaterial = square
         ? angles.map((angle) => layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type))
         : null
+      // A raised sample is one that still stands above the previous layer's
+      // top: only a model protrusion or a stub floor can put it there. Without
+      // one every sample's own value is enough and the layer takes the plain
+      // path, so a normal rough is unchanged.
+      let raised = false
+      for (let k = 0; k < left.length && !raised; k++) {
+        const row = left[k]
+        for (let i = 0; i < row.length; i++) {
+          if (row[i] > previousRadius) { raised = true; break }
+        }
+      }
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
       for (let i = 0; i < along.length; i++, ring++) {
@@ -2288,8 +2519,20 @@ export function generateRotaryRough(
         for (let step = 0; step <= last; step++) {
           const k = forward ? step : last - step
           const tip = tips[k][i]
-          const cuts = tip < previousRadius && (touchesMaterial === null || touchesMaterial[k])
-          samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
+          const material = left[k][i]
+          const standing = raised
+            ? materialLeftInFootprint(left, angles, along, i, k, tip, tool.radius, ballTool)
+            : material
+          // Never take more than one stepdown out of the highest material the
+          // cutter can reach here. The sample's own material decides whether it
+          // cuts at all: material inside the footprint that belongs to the model
+          // is not removed.
+          const target = Math.max(layerRadius, standing - params.stepdown)
+          const effective = raised ? Math.max(tip, target) : Math.max(tip, layerRadius)
+          const cuts = (raised ? effective < material : tip < previousRadius)
+            && (touchesMaterial === null || touchesMaterial[k])
+          samples.push(cuts ? point(along[i], effective, angles[k]) : null)
+          if (cuts) left[k][i] = effective
         }
         const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
         here = emitted.here
@@ -2332,6 +2575,10 @@ export function generateRotaryRough(
     }
   }
   if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
-  const merged = mergeCollinearCuts(moves, convertLength(0.001, 'mm', tool.units))
+  const merged = mergeCollinearCuts(
+    moves,
+    convertLength(0.001, 'mm', tool.units),
+    params.passDirection === 'around' ? pivot : undefined,
+  )
   return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
 }

@@ -118,15 +118,6 @@ const GUARD_MAX_CELLS = 3_000_000
  */
 export const MAX_GUARD_SWEEP_DEGREES = 720
 
-/** One sample of a move: the commanded along position, angle and tip radius. */
-interface GuardSample {
-  along: number
-  /** Program-direction angle in degrees (the project A word times the machine's direction). */
-  angle: number
-  /** Cutter tip radius from the turning pivot. */
-  tip: number
-}
-
 /**
  * Why the guard refused an operation. `resolution` is not a statement about the
  * cut: the blank and cutter need a finer grid than the guard may allocate, so
@@ -368,19 +359,44 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
     // sampled footprints overlap and a short sweep cannot slip between samples.
     const steps = Math.max(1, Math.ceil(Math.abs(end - controller) / state.angleBinDegrees),
       Math.ceil(Math.abs(alongTo - alongFrom) / state.alongBin))
-    for (let step = 0; step <= steps; step++) {
-      const fraction = step / steps
-      const sample: GuardSample = {
-        along: alongFrom + (alongTo - alongFrom) * fraction,
-        angle: controller + (end - controller) * fraction,
-        tip: move.from.z + (move.to.z - move.from.z) * fraction - pivot,
-      }
-      if (turns) {
-        if (!around) return { admitted: false, reason: 'turn' }
-        const engagement = cutSample(state, sample, cutterRadius, ball)
+    if (turns) {
+      if (!around) return { admitted: false, reason: 'turn' }
+      // A full turn at one along position and one tip radius visits every cell
+      // in its band; the per-step loop below would pay for the same cells on
+      // every one of its ~720 samples. `cutFullTurn` produces exactly the same
+      // grid and engagement in one pass over the band (#1045 slice G). Only a
+      // move whose tip and along are constant qualifies: with either varying,
+      // the nearest sample is not the cell's lowest contact and the shortcut's
+      // bound no longer holds.
+      const tipChange = Math.abs(move.to.z - move.from.z)
+      if (alongTo === alongFrom && tipChange <= bandTipVariation(state)) {
+        const lowTip = Math.min(move.from.z, move.to.z) - pivot
+        const highTip = Math.max(move.from.z, move.to.z) - pivot
+        const engagement = cutBand(state, alongFrom, controller, end, lowTip, highTip, cutterRadius, ball)
         if (engagement > bound) return { admitted: false, reason: 'turn' }
       } else {
-        cutSample(state, sample, cutterRadius, ball)
+        for (let step = 0; step <= steps; step++) {
+          const fraction = step / steps
+          // Scalars, not a sample object: this loop runs millions of times on a
+          // long stubbed rough, and the guard allocates nothing per sample.
+          const along = alongFrom + (alongTo - alongFrom) * fraction
+          const angle = controller + (end - controller) * fraction
+          const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
+          const engagement = cutSample(state, along, angle, tip, cutterRadius, ball)
+          if (engagement > bound) return { admitted: false, reason: 'turn' }
+        }
+      }
+    } else {
+      for (let step = 0; step <= steps; step++) {
+        const fraction = step / steps
+        cutSample(
+          state,
+          alongFrom + (alongTo - alongFrom) * fraction,
+          controller + (end - controller) * fraction,
+          move.from.z + (move.to.z - move.from.z) * fraction - pivot,
+          cutterRadius,
+          ball,
+        )
       }
     }
     controller = end
@@ -424,8 +440,14 @@ interface GuardTrig {
 }
 
 let trig: GuardTrig | null = null
-/** Scratch for one sample's angular offsets; grown as needed and reused. */
+/** Scratch for one sample: the rotated cosines, their squared sines, and the
+ * per-sample product that scales them. Grown as needed and reused, so the cell
+ * loop allocates nothing. */
 let offsetScratch = new Float64Array(0)
+let sinSqScratch = new Float64Array(0)
+let radialScratch = new Float64Array(0)
+let inverseScratch = new Float64Array(0)
+let inverseSineScratch = new Float64Array(0)
 function guardTrig(): GuardTrig {
   if (trig) return trig
   const sin = new Float64Array(GUARD_ANGLE_BIN_COUNT)
@@ -440,112 +462,26 @@ function guardTrig(): GuardTrig {
 }
 
 /**
- * The radius at which a cell's angular ray meets the cutter's **lower surface**,
- * or `null` when the body does not reach that ray.
- *
- * A flat end mill's cutting face is the disc at the tip, perpendicular to the
- * tool axis: along a ray `dTheta` off that axis the face is at
- * `tip / cos(dTheta)`, while the ray is still inside the cutter's radius
- * (`|tip tan dTheta| <= sqrt(r^2 - dx^2)`). That is the material the face
- * leaves — not `tip`, which is only its on-axis depth. A ball's lower surface is
- * the sphere of radius `r` centred `tip + r` above the pivot on the tool axis;
- * the near root of the quadratic is the contact radius along the ray, and the
- * shank above its equator is a cylinder of the same radius (see {@link exitAt}).
- *
- * `cosTheta`/`sinSqTheta` are the ray's cosine and squared sine, so the caller
- * reuses its rotated bin tables instead of calling trigonometry per cell. `dx`
- * is the cell's along offset from the sample: both shapes are evaluated at the
- * cell's own coordinate, so a cell never records another point's contact.
- */
-function contactAt(
-  ball: boolean,
-  cutterRadius: number,
-  tip: number,
-  cosTheta: number,
-  sinSqTheta: number,
-  dx: number,
-): number | null {
-  if (!(cutterRadius > 0) || !Number.isFinite(cutterRadius)) return null
-  if (!Number.isFinite(tip) || !Number.isFinite(cosTheta) || !Number.isFinite(dx)) return null
-  // A ray at or behind the cutter's shoulder (90 degrees or more off the axis)
-  // is not reached by the tool's lower surface.
-  if (!(cosTheta > 1e-9)) return null
-  const radiusSq = cutterRadius * cutterRadius
-  const alongSq = dx * dx
-  if (alongSq >= radiusSq) return null
-  if (!ball) {
-    const reachSq = radiusSq - alongSq
-    // `|tip tan dTheta| <= reach`, squared so the cell loop never calls `tan`.
-    if (tip * tip * sinSqTheta > reachSq * cosTheta * cosTheta) return null
-    return Math.max(0, tip / cosTheta)
-  }
-  const centre = tip + cutterRadius
-  if (!(centre > 0)) return null
-  const discriminant = radiusSq - alongSq - centre * centre * sinSqTheta
-  if (discriminant < 0) return null
-  return Math.max(0, centre * cosTheta - Math.sqrt(discriminant))
-}
-
-/**
- * The **outer** radius at which the cutter body ends along a cell's ray, or
- * `null` when the body does not reach that ray.
- *
- * The body occupies the radial interval between the lower surface
- * ({@link contactAt}) and this exit: a flat's cylinder, or for a ball the union
- * of the sphere's far root and the **shank** above its equator (a cylinder of
- * the same radius, which a ray near the axis meets at any radius above the ball
- * centre). Material *above* the exit is beyond the cutter's flank and stays; a
- * single-value cell may only be written down to the contact when the exit is at
- * or above the material's top, i.e. when the cut removes the whole standing
- * column and not just an interval inside it. This is the "disc at the tip **and
- * the cylinder**" half of the radial model: omitting it lets a grazing side cut
- * look like a full-depth plunge and leaves material the grid has already
- * written off.
- */
-function exitAt(
-  ball: boolean,
-  cutterRadius: number,
-  tip: number,
-  cosTheta: number,
-  sinSqTheta: number,
-  dx: number,
-): number | null {
-  if (contactAt(ball, cutterRadius, tip, cosTheta, sinSqTheta, dx) === null) return null
-  const radiusSq = cutterRadius * cutterRadius
-  const alongSq = dx * dx
-  if (!ball) {
-    // A flat's exit is its cylinder: `sqrt(r^2 - dx^2) / |sin dTheta|`, infinite
-    // on the tool's own ray (the cylinder is parallel to it).
-    if (!(sinSqTheta > 0)) return Number.POSITIVE_INFINITY
-    return Math.sqrt(radiusSq - alongSq) / Math.sqrt(sinSqTheta)
-  }
-  const centre = tip + cutterRadius
-  const discriminant = radiusSq - alongSq - centre * centre * sinSqTheta
-  if (!(discriminant >= 0)) return null
-  const sphereExit = centre * cosTheta + Math.sqrt(discriminant)
-  // Above the sphere the tool is a cylinder of the same radius (the shank): a
-  // ray that passes through the shank's radius outside the ball still meets the
-  // body, so the material above the sphere's far root is not automatically left
-  // standing. The shank's interval starts where the ball's equator begins
-  // (`(tip + r) / cos`) and ends at the cylinder's wall.
-  const sinTheta = Math.sqrt(sinSqTheta)
-  const shankStart = centre / cosTheta
-  const shankExit = sinTheta > 1e-12 ? Math.sqrt(radiusSq - alongSq) / sinTheta : Number.POSITIVE_INFINITY
-  return shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
-}
-
-/**
  * Lower the grid to what one cutter sample leaves, and report the sample's
  * radial engagement: the deepest standing material found inside the cutter's
  * footprint before it is removed.
  *
- * A cell is evaluated at **its own** along coordinate and angular ray, exactly
- * as the slice-E design asks: the contact is the radius at which that ray meets
- * the cutter's lower surface ({@link contactAt}), and the cut only writes the
- * cell down to it when the body's outer wall ({@link exitAt}) stands at or above
- * the cell's material. Material above the wall — the outer side of a slot the
- * cutter has not reached — survives, so a grazing cut is never recorded as a
- * full-depth plunge.
+ * A cell is evaluated at **its own** along coordinate and angular ray: the
+ * contact is the radius at which that ray meets the cutter's lower surface, and
+ * the cut only writes the cell down to it when the body's outer wall stands at
+ * or above the cell's material. Material above the wall -- the outer side of a
+ * slot the cutter has not reached -- survives, so a grazing cut is never
+ * recorded as a full-depth plunge.
+ *
+ * The lower surface is the flat's **disc at the tip** (`tip / cos(dTheta)`,
+ * while the ray is still inside the cutter's radius, `|tip tan| <= reach`) or
+ * the ball's **sphere** near root (`centre cos - sqrt(reach^2 - centre^2
+ * sin^2)`). The outer wall is the flat's cylinder, or for a ball the union of
+ * the sphere's far root and the **shank** above its equator. Recording `tip`
+ * instead of the disc's radial contact is the slice-E defect the review found;
+ * omitting the wall lets a grazing side cut look like a full-depth plunge and
+ * leaves material the grid has already written off. `reach = sqrt(r^2 - dx^2)`
+ * is the row's cross-section radius, `centre = tip + r` the ball's centre.
  *
  * The cell holds the **largest** material anywhere in it, so reading that value
  * against the sample's own ray is what makes the engagement an over-estimate:
@@ -553,20 +489,33 @@ function exitAt(
  * the sample's ray is a fraction of a bin away. The angular resolution rule in
  * {@link createSquareSweepState} keeps that over-estimate within the tolerance
  * {@link guardSquareOperation} states for it.
+ *
+ * This is the export check's hot path -- on a 1 m stubbed rough virtually all of
+ * the guard's time is here (#1045 slice G) -- so the terms that do not depend on
+ * the cell are hoisted (the sample's tip and centre; each row's reach; each
+ * offset's `sin^2` and the two products that only use it), the contact and wall
+ * are one inlined calculation instead of two helper calls, a cell whose contact
+ * cannot reach its material is skipped before the wall is computed, a ray the
+ * row's cross-section does not reach is rejected by one comparison, and bin
+ * indices wrap with integer arithmetic. Only the cells a row's footprint covers
+ * are ever read, and nothing is allocated per cell.
  */
 function cutSample(
   state: SquareSweepState,
-  sample: GuardSample,
+  along: number,
+  angle: number,
+  tip: number,
   cutterRadius: number,
   ball: boolean,
 ): number {
   if (!(cutterRadius > 0) || !Number.isFinite(cutterRadius)) return Number.NEGATIVE_INFINITY
-  if (!Number.isFinite(sample.tip) || !Number.isFinite(sample.along) || !Number.isFinite(sample.angle)) {
+  if (!Number.isFinite(tip) || !Number.isFinite(along) || !Number.isFinite(angle)) {
     return Number.NEGATIVE_INFINITY
   }
   const { material, angleBins, alongBins, alongBin, alongStart, angleBinDegrees } = state
   const radius = cutterRadius
-  const alongIndex = Math.floor((sample.along - alongStart) / alongBin)
+  const radiusSq = radius * radius
+  const alongIndex = Math.floor((along - alongStart) / alongBin)
   const spanAlong = Math.ceil(radius / alongBin) + 1
   const i0 = Math.max(0, alongIndex - spanAlong)
   const i1 = Math.min(alongBins - 1, alongIndex + spanAlong)
@@ -575,50 +524,289 @@ function cutSample(
   // `asin(r / tip)` for a flat, `asin(r / (tip + r))` for a ball (both clamped,
   // and a tip at or below the pivot can reach the whole turn). One extra bin on
   // each side covers the cell's own angular extent.
-  const tip = sample.tip
   let halfSpan = Math.PI
   if (tip > 0) {
-    halfSpan = ball
-      ? Math.asin(Math.min(1, radius / (tip + radius)))
-      : Math.asin(Math.min(1, radius / tip))
+    halfSpan = ball ? Math.asin(Math.min(1, radius / (tip + radius))) : Math.asin(Math.min(1, radius / tip))
   }
   const halfSpanBins = Math.min(angleBins, Math.ceil(halfSpan / GUARD_ANGLE_BIN_RADIANS) + 1)
-  const wrapped = ((sample.angle % 360) + 360) % 360
+  const wrapped = ((angle % 360) + 360) % 360
   const sampleBin = wrapped / angleBinDegrees
   const firstBin = Math.floor(sampleBin)
   const tables = guardTrig()
   // The centre of the first bin in the window sits `phase` radians from the
   // sample; every later bin adds exactly one bin. Cosine of that sequence is a
-  // rotation of the precomputed bin table, so the hot loop is arithmetic only.
+  // rotation of the precomputed bin table, so the cell loop is arithmetic only.
   const phase = (firstBin + 0.5 - sampleBin) * GUARD_ANGLE_BIN_RADIANS
   const sinPhase = Math.sin(phase)
   const cosPhase = Math.cos(phase)
   const width = 2 * halfSpanBins + 1
-  if (offsetScratch.length < width) offsetScratch = new Float64Array(width)
+  if (offsetScratch.length < width) {
+    offsetScratch = new Float64Array(width)
+    sinSqScratch = new Float64Array(width)
+    radialScratch = new Float64Array(width)
+    inverseScratch = new Float64Array(width)
+    inverseSineScratch = new Float64Array(width)
+  }
   const cosines = offsetScratch
+  const sinSquares = sinSqScratch
+  const radialProducts = radialScratch
+  const inverseCosines = inverseScratch
+  const inverseSines = inverseSineScratch
+  // Per-sample terms: the ball's centre and the two products that scale a cell's
+  // squared sine by a constant for the whole sample. The reciprocals are per
+  // angular offset alone, so the cell loop never divides.
+  const centre = ball ? tip + radius : 0
+  const centreSq = centre * centre
+  const tipSq = tip * tip
   for (let j = 0; j < width; j++) {
     const offset = j - halfSpanBins
     const index = wrapBin(offset)
-    cosines[j] = cosPhase * tables.cos[index] - sinPhase * tables.sin[index]
+    const cosDelta = Math.max(-1, Math.min(1, cosPhase * tables.cos[index] - sinPhase * tables.sin[index]))
+    const sinSq = Math.max(0, 1 - cosDelta * cosDelta)
+    cosines[j] = cosDelta
+    sinSquares[j] = sinSq
+    radialProducts[j] = ball ? centreSq * sinSq : tipSq * sinSq
+    inverseCosines[j] = cosDelta > 0 ? 1 / cosDelta : Number.POSITIVE_INFINITY
+    inverseSines[j] = sinSq > 0 ? 1 / Math.sqrt(sinSq) : Number.POSITIVE_INFINITY
   }
   let engagement = Number.NEGATIVE_INFINITY
   for (let i = i0; i <= i1; i++) {
-    const alongDelta = alongStart + (i + 0.5) * alongBin - sample.along
-    if (Math.abs(alongDelta) >= radius) continue
+    const alongDelta = alongStart + (i + 0.5) * alongBin - along
+    const alongSq = alongDelta * alongDelta
+    if (alongSq >= radiusSq) continue
+    const reachSq = radiusSq - alongSq
+    const reach = Math.sqrt(reachSq)
+    // Only the cells this row's cutter cross-section reaches: a flat's disc
+    // covers the ray while `|tip tan| <= reach`, a ball's sphere while
+    // `centre sin <= reach`. The angular half-extent turned into a bin range
+    // means a row never iterates a cell outside its own footprint.
+    let rowHalf = Math.PI
+    if (tip > 0) {
+      rowHalf = ball
+        ? (centre > 0 ? Math.asin(Math.min(1, reach / centre)) : 0)
+        : Math.atan2(reach, tip)
+    }
+    const firstSlot = Math.max(0, Math.ceil((phase - rowHalf) / GUARD_ANGLE_BIN_RADIANS) + halfSpanBins - 1)
+    const lastSlot = Math.min(width - 1, Math.floor((phase + rowHalf) / GUARD_ANGLE_BIN_RADIANS) + halfSpanBins + 1)
+    if (lastSlot < firstSlot) continue
     const rowOffset = i * angleBins
-    for (let offset = -halfSpanBins; offset <= halfSpanBins; offset++) {
-      const index = wrapBin(firstBin + offset)
+    // A row's window is at most `rowHalf + 2.5 bins` either side. Below 80
+    // degrees the cosine of that is still positive, so the shoulder test is not
+    // needed at all -- the common case for a generated cutter.
+    const needsAxisCheck = rowHalf > 1.4
+    let index = firstBin + firstSlot - halfSpanBins
+    while (index < 0) index += angleBins
+    while (index >= angleBins) index -= angleBins
+    for (let slot = firstSlot; slot <= lastSlot; slot++, index++) {
+      if (index === angleBins) index = 0
+      const cosDelta = cosines[slot]
+      if (needsAxisCheck && !(cosDelta > 1e-9)) continue
       const materialRadius = material[rowOffset + index]
-      if (!(materialRadius > 0)) continue
-      const cosDelta = Math.max(-1, Math.min(1, cosines[offset + halfSpanBins]))
-      const sinSqDelta = Math.max(0, 1 - cosDelta * cosDelta)
-      const contact = contactAt(ball, radius, tip, cosDelta, sinSqDelta, alongDelta)
-      if (contact === null) continue
-      const exit = exitAt(ball, radius, tip, cosDelta, sinSqDelta, alongDelta)
-      if (exit === null || exit < materialRadius) continue
+      let contact: number
+      if (ball) {
+        if (!(centre > 0)) continue
+        const discriminant = reachSq - radialProducts[slot]
+        if (discriminant < 0) continue
+        // The contact clears the cell unless `centre cos - sqrt(d)` is below
+        // the material. Square that comparison so the square root -- and the
+        // wall below -- is only paid for a cell this cut actually reaches.
+        const delta = centre * cosDelta - materialRadius
+        if (delta > 0 && delta * delta >= discriminant) continue
+        const root = Math.sqrt(discriminant)
+        contact = centre * cosDelta - root
+        if (contact < 0) contact = 0
+        if (!(materialRadius > contact)) continue
+        // The body ends at the farther of the sphere's far root and the shank
+        // above its equator; the cell stands only if that wall is below it.
+        const sphereExit = centre * cosDelta + root
+        const shankExit = reach * inverseSines[slot]
+        const shankStart = centre * inverseCosines[slot]
+        const exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+        if (exit < materialRadius) continue
+      } else {
+        // The ray must still be inside the disc (`|tip tan| <= reach`), and the
+        // material is cleared only when `tip < material * cos`, so the division
+        // is only paid for a cell this cut actually reaches.
+        if (radialProducts[slot] > reachSq * cosDelta * cosDelta) continue
+        if (!(tip < materialRadius * cosDelta)) continue
+        contact = tip * inverseCosines[slot]
+        if (contact < 0) contact = 0
+        const exit = reach * inverseSines[slot]
+        if (exit < materialRadius) continue
+      }
       const engagementHere = materialRadius - contact
       if (engagementHere > engagement) engagement = engagementHere
-      if (contact < materialRadius) material[rowOffset + index] = contact
+      material[rowOffset + index] = contact
+    }
+  }
+  return engagement
+}
+
+/**
+ * The largest tip change across one around move the band pass may absorb: a
+ * tenth of the guard's own angular tolerance. Both of the band pass's errors --
+ * the engagement over-estimate and the lowering over-estimate -- scale with this
+ * change, so holding it to a tenth of the tolerance keeps them far inside the
+ * bound the operation is judged against.
+ */
+function bandTipVariation(state: SquareSweepState): number {
+  return 0.1 * state.maxMaterial * (state.angleBinDegrees * Math.PI / 180)
+}
+
+/**
+ * Apply one around move at a constant along position in a single pass over its
+ * band (#1045 slice G).
+ *
+ * A move's commanded samples are `(end - start) / steps` degrees apart. For any
+ * cell the cutter's contact falls as a sample approaches the cell's angle and
+ * rises again after it passes, so the **lowest** contact the move reaches there
+ * is the contact at the nearest sample; the move's engagement at that cell is
+ * `material - that contact`, and the material it leaves is that contact. Walking
+ * every sample therefore repeats the same cell calculation as each sample passes
+ * over it: this function visits each cell of the move's band **once** and takes
+ * the nearest sample's contact. A 360-degree ring, a 5-degree wobble segment and
+ * the merge's flat rings all reduce to the same pass, and on a 1 m stubbed rough
+ * this is most of the export check's cell visits.
+ *
+ * A cell outside the move's angle interval is reached only by an endpoint
+ * sample, so its nearest sample is that endpoint. The band is the interval
+ * widened by the row's own footprint and is walked once (its width is below a
+ * turn unless the tip is at or below the pivot, and then every cell is in it).
+ *
+ * The move's tip is not exactly constant -- a generated ring's height map
+ * wobbles by a few thousandths of a millimetre -- so the caller passes the
+ * move's low and high tip. The engagement is measured from `tipLow`, a lower
+ * contact than any sample's, so it **over**-estimates; the material is lowered
+ * to the contact at `tipHigh`, an upper contact, so the grid never under-states
+ * what stands. The caller bounds the tip variation to a tenth of the guard's own
+ * angular tolerance, so both errors stay well inside it.
+ */
+function cutBand(
+  state: SquareSweepState,
+  along: number,
+  angleStart: number,
+  angleEnd: number,
+  tipLow: number,
+  tipHigh: number,
+  cutterRadius: number,
+  ball: boolean,
+): number {
+  if (!(cutterRadius > 0) || !Number.isFinite(cutterRadius)) return Number.NEGATIVE_INFINITY
+  if (!Number.isFinite(tipLow) || !Number.isFinite(tipHigh) || !Number.isFinite(along)
+    || !Number.isFinite(angleStart) || !Number.isFinite(angleEnd)) {
+    return Number.NEGATIVE_INFINITY
+  }
+  const { material, angleBins, alongBins, alongBin, alongStart, angleBinDegrees } = state
+  const radius = cutterRadius
+  const radiusSq = radius * radius
+  const a0 = Math.min(angleStart, angleEnd)
+  const a1 = Math.max(angleStart, angleEnd)
+  const span = a1 - a0
+  const steps = Math.max(1, Math.ceil(span / GUARD_ANGLE_BIN_DEGREES))
+  const stepDegrees = span / steps
+  const alongIndex = Math.floor((along - alongStart) / alongBin)
+  const spanAlong = Math.ceil(radius / alongBin) + 1
+  const i0 = Math.max(0, alongIndex - spanAlong)
+  const i1 = Math.min(alongBins - 1, alongIndex + spanAlong)
+  if (i1 < i0) return Number.NEGATIVE_INFINITY
+  // The cutter's footprint is widest at the move's lowest tip, so that is the
+  // one the band must cover.
+  const lowCentre = ball ? tipLow + radius : 0
+  const lowCentreSq = lowCentre * lowCentre
+  const highCentre = ball ? tipHigh + radius : 0
+  const highCentreSq = highCentre * highCentre
+  const highTipSq = tipHigh * tipHigh
+  let engagement = Number.NEGATIVE_INFINITY
+  for (let i = i0; i <= i1; i++) {
+    const alongDelta = alongStart + (i + 0.5) * alongBin - along
+    const alongSq = alongDelta * alongDelta
+    if (alongSq >= radiusSq) continue
+    const reachSq = radiusSq - alongSq
+    const reach = Math.sqrt(reachSq)
+    const rowHalf = tipLow > 0
+      ? (ball ? (lowCentre > 0 ? Math.asin(Math.min(1, reach / lowCentre)) : 0) : Math.atan2(reach, tipLow))
+      : Math.PI
+    const rowHalfDegrees = Math.min(180, rowHalf * 180 / Math.PI)
+    const rowOffset = i * angleBins
+    // The cells this row's footprint can reach: the move's interval widened by
+    // the row's own half-extent, plus one bin for the cell it sits in. A band at
+    // least a full turn wide is simply every bin, walked once.
+    const loDegrees = a0 - rowHalfDegrees
+    const hiDegrees = a1 + rowHalfDegrees
+    const firstCell = hiDegrees - loDegrees >= 360
+      ? 0
+      : Math.ceil(loDegrees / angleBinDegrees - 0.5) - 1
+    const lastCell = hiDegrees - loDegrees >= 360
+      ? angleBins - 1
+      : Math.floor(hiDegrees / angleBinDegrees - 0.5) + 1
+    for (let cell = firstCell; cell <= lastCell; cell++) {
+      const k = ((cell % angleBins) + angleBins) % angleBins
+      const cellAngle = (k + 0.5) * angleBinDegrees
+      // The distance from the move's start, on the circle, and then the nearest
+      // sample's signed angular offset: inside the interval the nearest of the
+      // evenly spaced samples, outside it the nearer endpoint.
+      const fromStart = ((cellAngle - a0) % 360 + 360) % 360
+      let offset: number
+      if (fromStart <= span) {
+        offset = fromStart - Math.round(fromStart / stepDegrees) * stepDegrees
+      } else {
+        const toStart = 360 - fromStart
+        const toEnd = fromStart - span
+        offset = toStart <= toEnd ? -toStart : toEnd
+      }
+      const offsetRadians = offset * Math.PI / 180
+      if (Math.abs(offsetRadians) > rowHalf + GUARD_ANGLE_BIN_RADIANS) continue
+      const cosDelta = Math.cos(offsetRadians)
+      if (!(cosDelta > 1e-9)) continue
+      const index = rowOffset + k
+      const materialRadius = material[index]
+      const sinSq = Math.max(0, 1 - cosDelta * cosDelta)
+      let contactHigh = Number.POSITIVE_INFINITY
+      let covers = false
+      if (ball) {
+        if (highCentre > 0) {
+          const discriminant = reachSq - highCentreSq * sinSq
+          if (discriminant >= 0) {
+            const root = Math.sqrt(discriminant)
+            contactHigh = highCentre * cosDelta - root
+            if (contactHigh < 0) contactHigh = 0
+            const sphereExit = highCentre * cosDelta + root
+            const sinTheta = Math.sqrt(sinSq)
+            const shankStart = highCentre / cosDelta
+            const shankExit = sinTheta > 1e-12 ? reach / sinTheta : Number.POSITIVE_INFINITY
+            const exit = shankStart <= shankExit ? Math.max(sphereExit, shankExit) : sphereExit
+            covers = exit >= materialRadius
+          }
+        }
+      } else {
+        if (highTipSq * sinSq <= reachSq * cosDelta * cosDelta) {
+          contactHigh = highTipSq > 0 ? tipHigh / cosDelta : 0
+          const exit = sinSq > 0 ? reach / Math.sqrt(sinSq) : Number.POSITIVE_INFINITY
+          covers = exit >= materialRadius
+        }
+      }
+      // The engagement is measured from the lowest contact the move can have,
+      // which over-states it; a cut the wall keeps off the cell cannot lower it.
+      let crossed = false
+      let contactLow = 0
+      if (ball) {
+        if (lowCentre > 0) {
+          const discriminant = reachSq - lowCentreSq * sinSq
+          if (discriminant >= 0) {
+            contactLow = lowCentre * cosDelta - Math.sqrt(discriminant)
+            if (contactLow < 0) contactLow = 0
+            crossed = true
+          }
+        }
+      } else if (!(tipLow * tipLow * sinSq > reachSq * cosDelta * cosDelta)) {
+        contactLow = tipLow > 0 ? tipLow / cosDelta : 0
+        crossed = true
+      }
+      if (crossed && materialRadius > contactLow) {
+        const depth = materialRadius - contactLow
+        if (depth > engagement) engagement = depth
+      }
+      if (covers && materialRadius > contactHigh) material[index] = contactHigh
     }
   }
   return engagement

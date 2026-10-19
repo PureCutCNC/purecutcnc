@@ -360,11 +360,15 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   // `stepover` is the along step: 20 mm over 2 mm makes 11 rings. The angular
   // step is `sampleSpacing` round the bar's circumference, capped by slice D.
   assert.equal(rings.length, 11, 'one ring per along position, `stepover` apart')
-  // 141 samples per ring under the slice-D angle cap (both ends of the turn),
-  // so 140 moves between them; without the cap the count would be `ceil(2 pi
-  // R / sampleSpacing)` = 126.
+  // 141 samples per ring under the slice-D angle cap (both ends of the turn).
+  // Slice G's merge drops the interior points of a run that is straight in
+  // (along, A, Z), so a ring's emitted points are that grid or fewer; the run
+  // still starts and ends on the grid's own angles, and `rotaryMerge.test.ts`
+  // proves the dropped points are on the emitted line within tolerance.
   const angularIntervals = aroundAngleIntervals(20, RING_PARAMS.sampleSpacing)
-  assert.equal(rings[0].angles.length, angularIntervals * 2, 'a ring sweeps the capped angle count, both ends included')
+  assert.ok(rings[0].angles.length <= angularIntervals * 2,
+    'a ring sweeps no more points than the capped angle count')
+  assert.ok(rings[0].angles.length >= 2, 'and it still turns')
   for (let i = 0; i < rings.length; i++) {
     const direction = ringDirection(rings[i])
     assert.equal(direction, i % 2 === 0 ? 1 : -1, `ring ${i} runs ${i % 2 === 0 ? 'forward' : 'reversed'}`)
