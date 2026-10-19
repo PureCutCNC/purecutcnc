@@ -33,6 +33,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
 - `language/` — language manager + per-key custom-language editor dialogs (see `language/INDEX.md`); backed by the locale registry/store in `src/i18n/`
 - `theme/` — theme manager + guided custom-theme editor dialogs (see `theme/INDEX.md`); backed by the registry/selection model in `src/theme/`
+- `commandPalette/` — Ctrl/Cmd+K command palette over the shared command registry; the host keeps store-backed command hooks unmounted while closed (see `commandPalette/INDEX.md`)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)
 - `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)

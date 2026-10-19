@@ -6,6 +6,7 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 
 - `shared.ts` — shared toolbar prop types, popover option types, creation shape constants, and hover delay constants.
 - `primitives.tsx` — low-level tooltip/action button primitives used by toolbar groups.
+- `useToolbarPaletteEvents.ts` — global palette import/text event bridge consumed by the desktop and tablet toolbar assemblies.
 - `useToolbarState.ts` — state and command wiring consumed by the toolbar assemblies.
 - `ToolbarPopoverMenu.tsx` — portaled hover/click popover menu used by grouped commands.
 - `ToolbarDialog.tsx` — portaled new/import/text dialogs launched by toolbar commands.
