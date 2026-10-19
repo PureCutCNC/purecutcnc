@@ -15,7 +15,7 @@
  */
 
 import { getStockBounds } from '../../types/project'
-import type { BarStock, Clamp, RoundStock } from '../../types/project'
+import type { BarStock, Clamp, RotaryPassDirection, RoundStock } from '../../types/project'
 import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, isSquareStock } from '../../types/barStock'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
@@ -636,6 +636,13 @@ export interface RotaryFinishParams {
   readonly safeRadius: number
   /** Requested height-map cell size, passed to the sampler. */
   readonly requestedCellSize: number
+  /**
+   * Whether each pass runs along the bar (the original motion) or around it: a
+   * ring at one along position, turning A round the bar, then a step along
+   * (#1045 slice A). Missing reads as `'along'`, so a saved operation's motion
+   * is unchanged.
+   */
+  readonly passDirection?: RotaryPassDirection
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -802,6 +809,15 @@ interface RotaryRun {
  * height or below (exact for a flat end mill; for a ball nose what is left is the
  * ordinary between-sample error, about `s^2 / (8r)` for sample spacing `s` and
  * ball radius `r`). Gentler steps keep the single diagonal move.
+ *
+ * "The samples are apart" is their distance **along the surface**, which is not
+ * always their X/Y distance: in an around pass two neighbouring samples share
+ * one along position and differ only in A, so their X/Y spacing is zero and
+ * every rise would look steep. Passing `pivot` (the bar's turning centreline in
+ * Z) adds the arc the tool tip sweeps, `rMin * |dA| * pi / 180` at the smaller
+ * of the two tip radii, to that distance (#1045 slice A). The along pass never
+ * passes `pivot`: its `dA` inside a run is zero, and leaving the two-argument
+ * `Math.hypot` in place keeps its spacing, and so its output, byte-identical.
  */
 function emitRotaryRuns(
   moves: ToolpathMove[],
@@ -811,6 +827,7 @@ function emitRotaryRuns(
   travelZ: number,
   previousEndedAtEnd: boolean,
   forceStep?: (from: ToolpathPoint, to: ToolpathPoint) => boolean,
+  pivot?: number,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
   let endedAtEnd = false
@@ -839,9 +856,17 @@ function emitRotaryRuns(
     for (let i = 1; i < run.points.length; i++) {
       const from = run.points[i - 1]
       const to = run.points[i]
-      // The along distance between the two samples: the run is over the
-      // centreline, so only one of x and y changes, and this is the spacing.
-      const spacing = Math.hypot(to.x - from.x, to.y - from.y)
+      // The distance along the surface between the two samples. Along the bar
+      // that is their X/Y spacing (`pivot` is absent, exactly as before); in an
+      // around pass they share an along position and differ only in A, so the
+      // distance is the arc at the smaller tip radius from the pivot.
+      const spacing = pivot === undefined
+        ? Math.hypot(to.x - from.x, to.y - from.y)
+        : Math.hypot(
+            to.x - from.x,
+            to.y - from.y,
+            Math.max(0, Math.min(from.z, to.z) - pivot) * Math.abs((to.a ?? 0) - (from.a ?? 0)) * Math.PI / 180,
+          )
       const rise = to.z - from.z
       // A square blank's retained-stub zone forces the step regardless of the
       // 45-degree rule: the exact contact chord can sag below the floor over a
@@ -869,6 +894,79 @@ function emitRotaryRuns(
     endedAtEnd = run.atEnd
   }
   return { here: current, endedAtEnd }
+}
+
+/**
+ * Split one around-mode ring into the runs of contiguous samples that cut.
+ * `samples` is already in the order the ring is traversed (forward or reversed),
+ * so `atStart`/`atEnd` speak about that traversal: the emitter links two runs
+ * only where one ends at a ring end and the next begins there. A `null` sample
+ * is not cut -- the finish's "no model under the tool", or the rough's "no
+ * material standing at this layer" (#1045 slice A).
+ */
+function ringRuns(samples: readonly (ToolpathPoint | null)[]): RotaryRun[] {
+  const runs: RotaryRun[] = []
+  let i = 0
+  while (i < samples.length) {
+    if (samples[i] === null) {
+      i++
+      continue
+    }
+    const start = i
+    while (i + 1 < samples.length && samples[i + 1] !== null) i++
+    const points: ToolpathPoint[] = []
+    for (let j = start; j <= i; j++) {
+      const sample = samples[j]
+      if (sample) points.push(sample)
+    }
+    runs.push({ points, atStart: start === 0, atEnd: i === samples.length - 1 })
+    i++
+  }
+  return runs
+}
+
+/**
+ * The around-mode sampling grid (#1045 slice A): one along position every
+ * `stepover` over the cutter span, and one angle every `sampleSpacing` of
+ * surface distance round the blank, both endpoints included so a ring closes at
+ * 360 degrees. `null` when either count is unbounded or the two together exceed
+ * the sample budget, which the caller refuses with the existing
+ * `operationStepoverRatioRange`. The angle count is derived from the blank's
+ * largest radius -- the conservative radius the along pass's pass count already
+ * uses, and the surface a square blank's corners stand at.
+ */
+function aroundGrid(
+  stock: BarStock,
+  span: { readonly start: number; readonly end: number },
+  params: RotaryFinishParams,
+): { along: number[]; angles: number[] } | null {
+  const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), params.sampleSpacing)
+  const axial = boundedIntervals(span.end - span.start, params.stepover)
+  if (angular === null || axial === null) return null
+  if ((angular + 1) * (axial + 1) > MAX_ROTARY_SAMPLES) return null
+  const angles = Array.from({ length: angular + 1 }, (_, k) => 360 * k / angular)
+  const along = Array.from({ length: axial + 1 }, (_, i) => span.start + (span.end - span.start) * i / axial)
+  return { along, angles }
+}
+
+/**
+ * Around-mode passes around the bar need a round blank: a ring follows one
+ * constant-radius surface, which a square blank does not have yet (#1045 slice
+ * A leaves that to slice C). Returns the refusal the generators return, or
+ * `null` when the pass may run.
+ */
+function aroundSquareRefusal(
+  operationId: string,
+  stock: BarStock,
+  params: RotaryFinishParams,
+): ToolpathResult | null {
+  if (params.passDirection !== 'around' || !isSquareStock(stock)) return null
+  return {
+    operationId,
+    moves: [],
+    warnings: [{ code: 'rotaryAroundSquareUnsupported', params: { operation: operationId } }],
+    bounds: null,
+  }
 }
 
 /**
@@ -929,6 +1027,17 @@ function rotaryRefusal(stock: BarStock, params: RotaryFinishParams): ToolpathWar
   // non-finite, which `Array` cannot size; `chooseHeightMapCellSize` clamps a
   // zero or negative request to 1e-6 but passes a non-finite one through.
   if (!Number.isFinite(params.requestedCellSize)) return 'operationStepoverRatioRange'
+  // Around mode swaps the two roles: `sampleSpacing` is the angular step round
+  // the blank and `stepover` the step along it (#1045 slice A). The along
+  // counts checked here are the mode's own, so an around job is neither refused
+  // for a pass count it does not have nor allowed an unbounded one.
+  if (params.passDirection === 'around') {
+    const angular = boundedIntervals(2 * Math.PI * barMaxRadius(stock), params.sampleSpacing)
+    const axial = boundedIntervals(params.alongEnd - params.alongStart, params.stepover)
+    if (angular === null || axial === null) return 'operationStepoverRatioRange'
+    if ((angular + 1) * (axial + 1) > MAX_ROTARY_SAMPLES) return 'operationStepoverRatioRange'
+    return null
+  }
   const passes = Math.ceil((2 * Math.PI * barMaxRadius(stock)) / params.stepover)
   const intervals = boundedIntervals(params.alongEnd - params.alongStart, params.sampleSpacing)
   if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || intervals === null) return 'operationStepoverRatioRange'
@@ -1362,21 +1471,39 @@ function rotaryTargets(
     return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryNoRoom' }
   }
   const maxRadius = barMaxRadius(stock)
-  const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
-  const along = rotaryAlongPositions(mesh, stock, tool, params, span)
-  if (along === null) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
-  }
-  // The budget is checked against the *refined* along count (#1016 C2-S3
-  // correction). `rotaryRefusal` bounds the uniform `passes x (intervals + 1)`
-  // grid, but a square blank's shoulder zones add up to
-  // `2 * MAX_SHOULDER_SAMPLES` positions on top of it, and `passes x
-  // along.length` is the size of the angle-row grid allocated just below. A
-  // 100,000-pass operation with 8,000 shoulder positions passed the uniform
-  // bound at 300,000 samples and then asked for ~8e8; refusing here is what
-  // keeps that allocation from happening.
-  if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || passes * along.length > MAX_ROTARY_SAMPLES) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+  // Around mode is the same sampling grid with the two roles swapped: one ring
+  // per along position (`stepover` apart) and the angle sweeping round the blank
+  // (`sampleSpacing` apart). `aroundGrid` carries the budget check for the
+  // counts it builds (#1045 slice A).
+  let angles: number[]
+  let along: number[]
+  if (params.passDirection === 'around') {
+    const grid = aroundGrid(stock, span, params)
+    if (grid === null) {
+      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+    }
+    angles = grid.angles
+    along = grid.along
+  } else {
+    const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
+    const positions = rotaryAlongPositions(mesh, stock, tool, params, span)
+    if (positions === null) {
+      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+    }
+    along = positions
+    // The budget is checked against the *refined* along count (#1016 C2-S3
+    // correction). `rotaryRefusal` bounds the uniform `passes x (intervals + 1)`
+    // grid, but a square blank's shoulder zones add up to
+    // `2 * MAX_SHOULDER_SAMPLES` positions on top of it, and `passes x
+    // along.length` is the size of the angle-row grid allocated just below. A
+    // 100,000-pass operation with 8,000 shoulder positions passed the uniform
+    // bound at 300,000 samples and then asked for ~8e8; refusing here is what
+    // keeps that allocation from happening.
+    if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || passes * along.length > MAX_ROTARY_SAMPLES) {
+      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+    }
+    const angleStep = 360 / passes
+    angles = Array.from({ length: passes }, (_, k) => k * angleStep)
   }
   // One warning per operation, however many vertices stick out: the user can
   // only move the model or pick a bigger bar, and the sampler's answer is the
@@ -1394,8 +1521,6 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
-  const angleStep = 360 / passes
-  const angles = Array.from({ length: passes }, (_, k) => k * angleStep)
   const sampling = sampleRotaryModel(
     withRetainedBar(mesh, stock, tool.units, params.alongStart, params.alongEnd),
     stock,
@@ -1417,7 +1542,7 @@ function rotaryTargets(
   // decides it carries the stock offset, so leaving stock does not hide a model
   // that needs a cut below the centreline. `tipRadius[k][i]` is the height at
   // along[i], whichever direction the pass runs.
-  outer: for (let k = 0; k < passes; k++) {
+  outer: for (let k = 0; k < angles.length; k++) {
     for (let i = 0; i < along.length; i++) {
       if (sampling.tipRadius[k][i] + stockToLeave < 0) {
         warnings.push({
@@ -1521,6 +1646,15 @@ function rotaryTargets(
  * higher of `safeRadius` and that clearance. A pass with
  * no finite sample emits nothing. Cutting the centreline instead would be
  * full-width, full-depth slotting with a finishing tool, silently.
+ *
+ * With `passDirection: 'around'` (#1045 slice A) the pass runs round the bar
+ * instead: one **ring** per along position, the angle sweeping the whole turn,
+ * then a step along. Rings alternate direction so A stays within [0, 360] and
+ * each ring starts where the previous one ended. A `NaN` sample is still not
+ * cut, the layer links are the same emitter's, and the steep-step rule measures
+ * their surface distance along the arc rather than across X/Y. A square blank is
+ * refused with `rotaryAroundSquareUnsupported` (slice C adds real support); a
+ * saved operation without the field keeps the along motion above byte for byte.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -1539,6 +1673,8 @@ export function generateRotaryFinish(
       bounds: null,
     }
   }
+  const squareRefusal = aroundSquareRefusal(operationId, stock, params)
+  if (squareRefusal) return squareRefusal
   const refusal = rotaryRefusal(stock, params)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
@@ -1585,25 +1721,47 @@ export function generateRotaryFinish(
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
-  for (let k = 0; k < angles.length; k++) {
-    // A `NaN` sample has no model under the tool: the finish follows the model,
-    // and removing waste is the rough's job, so it is not cut. Each pass is the
-    // runs of finite samples; a pass with none emits nothing at all.
-    const runs: RotaryRun[] = []
-    let i = 0
-    while (i < along.length) {
-      if (!Number.isFinite(tipAt(k, i))) { i++; continue }
-      const start = i
-      while (i + 1 < along.length && Number.isFinite(tipAt(k, i + 1))) i++
-      const end = i
-      const points: ToolpathPoint[] = []
-      for (let j = start; j <= end; j++) points.push(point(alongAt(k, j), tipAt(k, j), angles[k]))
-      runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
-      i++
+  if (params.passDirection === 'around') {
+    // One ring per along position (#1045 slice A): the angle sweeps the whole
+    // turn, so the along coordinate never changes inside a ring. Rings alternate
+    // direction, which keeps A within [0, 360] for the operation and makes each
+    // ring start where the last ended. Every point reads its own angle row, `k`,
+    // at the ring's own along index -- a reversed ring uses its reversed `k` for
+    // the along position, the angle and the tip alike.
+    const last = angles.length - 1
+    for (let ring = 0; ring < along.length; ring++) {
+      const forward = ring % 2 === 0
+      const samples: (ToolpathPoint | null)[] = []
+      for (let step = 0; step <= last; step++) {
+        const k = forward ? step : last - step
+        const tip = sampling.tips[k][ring]
+        samples.push(Number.isFinite(tip) ? point(along[ring], tip, angles[k]) : null)
+      }
+      const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
+      here = emitted.here
+      previousEndedAtEnd = emitted.endedAtEnd
     }
-    const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
-    here = emitted.here
-    previousEndedAtEnd = emitted.endedAtEnd
+  } else {
+    for (let k = 0; k < angles.length; k++) {
+      // A `NaN` sample has no model under the tool: the finish follows the model,
+      // and removing waste is the rough's job, so it is not cut. Each pass is the
+      // runs of finite samples; a pass with none emits nothing at all.
+      const runs: RotaryRun[] = []
+      let i = 0
+      while (i < along.length) {
+        if (!Number.isFinite(tipAt(k, i))) { i++; continue }
+        const start = i
+        while (i + 1 < along.length && Number.isFinite(tipAt(k, i + 1))) i++
+        const end = i
+        const points: ToolpathPoint[] = []
+        for (let j = start; j <= end; j++) points.push(point(alongAt(k, j), tipAt(k, j), angles[k]))
+        runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
+        i++
+      }
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
+      here = emitted.here
+      previousEndedAtEnd = emitted.endedAtEnd
+    }
   }
   if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })
   const merged = mergeCollinearCuts(moves, tolerance)
@@ -1662,7 +1820,16 @@ export interface RotaryRoughParams extends RotaryFinishParams {
   readonly stepdown: number
 }
 
-/** Sample once, then remove only the material still standing at each layer. */
+/**
+ * Sample once, then remove only the material still standing at each layer.
+ *
+ * `passDirection: 'around'` replaces each layer's along passes with rings at one
+ * along position (#1045 slice A): the per-sample `needsCut`/layer rule is the
+ * along pass's, the direction alternation continues across layers (no
+ * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and a square blank
+ * is refused with `rotaryAroundSquareUnsupported`. Missing keeps the along
+ * motion byte for byte.
+ */
 export function generateRotaryRough(
   operationId: string,
   mesh: RotaryModelMesh,
@@ -1674,6 +1841,8 @@ export function generateRotaryRough(
   if (tool.type !== 'ball_endmill' && tool.type !== 'flat_endmill') {
     return { operationId, moves: [], warnings: [{ code: 'rotaryToolUnsupported', params: { operation: operationId } }], bounds: null }
   }
+  const squareRefusal = aroundSquareRefusal(operationId, stock, params)
+  if (squareRefusal) return squareRefusal
   const refusal = rotaryRefusal(stock, params)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
@@ -1734,37 +1903,69 @@ export function generateRotaryRough(
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
     ? { x: position, y: centre, z: pivot + tip, a: angle }
     : { x: centre, y: position, z: pivot + tip, a: angle }
-  for (let layer = 1; layer <= layers; layer++) {
-    const previousRadius = maxRadius - (layer - 1) * params.stepdown
-    const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
-    // A new layer never links to the previous one, however its last pass ended.
-    let previousEndedAtEnd = false
-    for (let pass = 0; pass < angles.length; pass++) {
-      const angle = angles[pass] + (layer - 1) * 360
-      const touchesMaterial = !square
-        || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
-      const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
-      const needsCut = (i: number): boolean =>
-        touchesMaterial && tips[pass][indexAt(i)] < previousRadius
-      const at = (i: number): ToolpathPoint => {
-        const index = indexAt(i)
-        return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
+  if (params.passDirection === 'around') {
+    // A ring is one along position (#1045 slice A), so the layer loop keeps its
+    // layers and the rings run along inside each one. The direction alternation
+    // continues across the layer boundary -- a single `ring` counter -- so a
+    // layer that ends at 360 degrees starts the next at 360 as well; A stays
+    // within [0, 360] for the whole operation and no `(layer - 1) * 360` is
+    // added. Each sample keeps its own angle row's height at the ring's own
+    // along index, and the same `needsCut`/layer rule as an along pass: material
+    // still standing at this layer is cut, a sample already at the layer radius
+    // is not.
+    const last = angles.length - 1
+    let ring = 0
+    for (let layer = 1; layer <= layers; layer++) {
+      const previousRadius = maxRadius - (layer - 1) * params.stepdown
+      const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
+      // A new layer never links to the previous one, however its last ring ended.
+      let previousEndedAtEnd = false
+      for (let i = 0; i < along.length; i++, ring++) {
+        const forward = ring % 2 === 0
+        const samples: (ToolpathPoint | null)[] = []
+        for (let step = 0; step <= last; step++) {
+          const k = forward ? step : last - step
+          const tip = tips[k][i]
+          samples.push(tip < previousRadius ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
+        }
+        const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
+        here = emitted.here
+        previousEndedAtEnd = emitted.endedAtEnd
       }
-      const runs: RotaryRun[] = []
-      let i = 0
-      while (i < along.length) {
-        if (!needsCut(i)) { i++; continue }
-        const start = i
-        while (i + 1 < along.length && needsCut(i + 1)) i++
-        const end = i
-        const points: ToolpathPoint[] = []
-        for (let j = start; j <= end; j++) points.push(at(j))
-        runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
-        i++
+    }
+  } else {
+    for (let layer = 1; layer <= layers; layer++) {
+      const previousRadius = maxRadius - (layer - 1) * params.stepdown
+      const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
+      // A new layer never links to the previous one, however its last pass ended.
+      let previousEndedAtEnd = false
+      for (let pass = 0; pass < angles.length; pass++) {
+        const angle = angles[pass] + (layer - 1) * 360
+        const touchesMaterial = !square
+          || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
+        const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
+        const needsCut = (i: number): boolean =>
+          touchesMaterial && tips[pass][indexAt(i)] < previousRadius
+        const at = (i: number): ToolpathPoint => {
+          const index = indexAt(i)
+          return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
+        }
+        const runs: RotaryRun[] = []
+        let i = 0
+        while (i < along.length) {
+          if (!needsCut(i)) { i++; continue }
+          const start = i
+          while (i + 1 < along.length && needsCut(i + 1)) i++
+          const end = i
+          const points: ToolpathPoint[] = []
+          for (let j = start; j <= end; j++) points.push(at(j))
+          runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
+          i++
+        }
+        const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
+        here = emitted.here
+        previousEndedAtEnd = emitted.endedAtEnd
       }
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep)
-      here = emitted.here
-      previousEndedAtEnd = emitted.endedAtEnd
     }
   }
   if (here) moves.push({ kind: 'rapid', from: here, to: { ...here, z: safeZ } })

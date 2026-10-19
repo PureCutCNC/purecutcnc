@@ -77,6 +77,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   // display / lifecycle only — never read by a resolver
   rotaryChuckSupport: 'compare',
   rotaryTailSupport: 'compare',
+  rotaryPassDirection: 'compare',
   plasmaSide: 'compare',
   plasmaReverseDirection: 'compare',
   plasmaLeadIn: 'compare',

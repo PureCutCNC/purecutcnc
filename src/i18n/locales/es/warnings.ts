@@ -225,6 +225,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryBelowCentreline': '{operation}: el modelo baja por debajo de la línea central de la barra cerca de {along} a lo largo de la barra, a {angle}°. La herramienta se detiene en la línea central allí.',
   'warnings.rotaryModelOutsideBar': '{operation}: parte del modelo está fuera de la barra. Esas partes no se mecanizan.',
   'warnings.rotaryStockToLeaveInvalid': '{operation}: el sobreespesor radial debe ser un valor finito igual o mayor que cero y debe dejar un radio de muestreo utilizable. No se genera ningún movimiento.',
+  'warnings.rotaryAroundSquareUnsupported': '{operation}: las pasadas alrededor de la barra aún no están disponibles en un bloque cuadrado. Use pasadas a lo largo de la barra.',
   'warnings.postMixedSetups': 'El programa contiene operaciones de más de una sujeción ({setups}). La pieza se voltea a mano entre sujeciones, por lo que cada sujeción se exporta como su propio programa.',
   'warnings.postSetupOperationRefused': 'La operación "{operation}" no tiene trayectoria porque su sujeción no puede cortarla. Corrija o elimine la operación antes de exportar.',
   'warnings.workholdingDiameter': '{operation}: el diámetro de {clamp} ({diameter}) es menor que las esquinas del bloque cuadrado ({required}); agrándelo o restablezca su tipo a Mandril.',

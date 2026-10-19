@@ -90,7 +90,7 @@ const ALL_CODES = [
   'pocketFinishIslandWallTooTight',
   'aroundStockMismatch', 'aroundCentreline', 'aroundCutReachesCentreline',
   'rotaryToolUnsupported', 'rotaryBelowCentreline', 'rotaryNoRoom', 'rotaryModelOutsideBar',
-  'rotaryStockToLeaveInvalid',
+  'rotaryStockToLeaveInvalid', 'rotaryAroundSquareUnsupported',
   'setupTargetNotThrough', 'postMixedSetups', 'postSetupOperationRefused',
   'workholdingDiameter', 'workholdingPlacement', 'ordinaryClampOverlap',
   'postSetupNoRegistration', 'exportMachineTypeMismatch',

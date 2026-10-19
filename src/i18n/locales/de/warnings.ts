@@ -245,6 +245,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryBelowCentreline': '{operation}: Das Modell reicht nahe {along} entlang der Stange, bei {angle}°, unter die Mittellinie der Stange. Das Werkzeug hält dort an der Mittellinie an.',
   'warnings.rotaryModelOutsideBar': '{operation}: Ein Teil des Modells liegt außerhalb der Stange. Diese Teile werden nicht bearbeitet.',
   'warnings.rotaryStockToLeaveInvalid': '{operation}: Das radiale Aufmaß muss ein endlicher Wert von null oder mehr sein und einen brauchbaren Abtastradius übrig lassen. Es wird keine Bewegung erzeugt.',
+  'warnings.rotaryAroundSquareUnsupported': '{operation}: Bahnen rund um die Stange sind auf einem Vierkantrohling noch nicht verfügbar. Verwenden Sie Bahnen entlang der Stange.',
   'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',
   'warnings.postSetupOperationRefused': 'Operation „{operation}" hat keine Werkzeugbahn, weil ihre Aufspannung sie nicht schneiden kann. Korrigieren oder entfernen Sie die Operation vor dem Export.',
   'warnings.workholdingDiameter': 'Operation „{operation}": Der Durchmesser von {clamp} ist mit {diameter} kleiner als die Ecken des Vierkantrohlings ({required}); vergrößern Sie ihn oder setzen Sie den Typ auf Spannfutter zurück.',

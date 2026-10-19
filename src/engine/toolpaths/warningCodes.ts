@@ -356,6 +356,11 @@ export type ToolpathWarningCode =
    *  the rough would cut the whole pass down to the axis, so it refuses with
    *  no motion instead (issue #1016 C2 correction M1). */
   | 'rotaryStockToLeaveInvalid'
+  /** Around-the-bar passes were asked for on a **square** blank, which has no
+   *  constant-radius surface for a ring to follow yet (#1045 slice A; slice C
+   *  adds real support). The operation emits no motion rather than an
+   *  approximate ring. */
+  | 'rotaryAroundSquareUnsupported'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
