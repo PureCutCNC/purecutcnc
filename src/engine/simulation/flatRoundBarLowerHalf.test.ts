@@ -25,17 +25,27 @@
  * fails here. Every expected dimension is derived from the bar's own geometry,
  * written out in this file.
  *
+ * It also pins the join the next screenshot found (issue #1049 follow-up): a
+ * flat round bar draws no stock-underside quad, its walls land on the static
+ * lower half instead of floating at the equator, and only the round-bar wall
+ * variant changes — block and square scenes are compared by hash.
+ *
  * Mutations these assertions were checked against, each applied on its own
  * from a `cp` backup and reverted:
  * - `flatRoundBarFor` returning the bounding-box profile again (dropping the
  *   descriptor) → `x/mm/top: the setup input carries the flat round-bar profile`;
  * - the builder rendering the full cylinder (`theta` from 0 to π instead of
- *   π to 2π) → `... every vertex is at or below the equator`.
+ *   π to 2π) → `... every vertex is at or below the equator`;
+ * - adding the floor quad back for a flat round bar → `round bar: the boundary
+ *   is the two wall strips, no floor quad`;
+ * - replacing the cylinder floor with the equator plane → `the round-bar wall
+ *   shader takes its floor from the tested join rule`.
  *
  * Run with: npx tsx src/engine/simulation/flatRoundBarLowerHalf.test.ts
  */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import * as THREE from 'three'
 import {
   getStockBounds,
@@ -52,9 +62,11 @@ import { createSimulationGrid } from './grid'
 import {
   createFlatRoundBarLowerHalf,
   FLAT_ROUND_BAR_LOWER_HALF_NAME,
+  FLAT_ROUND_BAR_RADIAL_SEGMENTS,
 } from './flatRoundBarLowerHalf'
 import { createHeightfieldTexture } from './gpuMesh'
-import { createInstancedBoundaryGroup } from './instancedBoundary'
+import { createInstancedBoundaryGroup, ROUND_BAR_WALL_JOIN_GLSL } from './instancedBoundary'
+import { compileScalarGlsl } from './glslScalar.testSupport'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 import { buildSimulationSetupInput } from '../../app/simulationSetup'
 import { simulationBuildOptions } from '../../app/simulationCompute'
@@ -62,6 +74,12 @@ import { simulationBuildOptions } from '../../app/simulationCompute'
 const DETAIL = 96
 const EPSILON = 1e-4
 const COLOR = new THREE.Color('#b9a83c')
+/** The reported scene's detail slider: 4 in × 2 in at 240 cells along the long axis. */
+const REPORTED_DETAIL = 240
+/** Block and square boundary scenes from before the join change, byte for byte. */
+const BLOCK_SCENE_HASH = 'afc35f6f6f5f4259374e58f409702aad1dcd7f1f53a706de94250df95ed2de99'
+const SQUARE_SCENE_HASH = 'd763c33ed33b00b43a013e92d24101adbc1da7153b95557e48b9d47fd592cf91'
+
 
 function approx(actual: number, expected: number, label: string, epsilon = EPSILON): void {
   assert(
@@ -116,10 +134,17 @@ function setupSimulation(fixture: BarFixture, face: SetupFace): {
   input: NonNullable<ReturnType<typeof buildSimulationSetupInput>>
   grid: SimulationGrid
 } {
+  return setupSimulationAt(fixture, face, DETAIL)
+}
+
+function setupSimulationAt(fixture: BarFixture, face: SetupFace, detail: number): {
+  input: NonNullable<ReturnType<typeof buildSimulationSetupInput>>
+  grid: SimulationGrid
+} {
   const setup = fixture.project.setups.find((entry) => entry.id === faceSetup(face).id)!
   const input = buildSimulationSetupInput(fixture.project, setup, new Map())
   assert(input, `${fixture.axis}/${face}: the setup yields a simulation input`)
-  return { input, grid: createSimulationGrid(input.project, simulationBuildOptions(input, DETAIL)) }
+  return { input, grid: createSimulationGrid(input.project, simulationBuildOptions(input, detail)) }
 }
 
 /** Signed distance of a vertex from the bar's axis, in the cross-section. */
@@ -148,6 +173,154 @@ function verticesOf(mesh: THREE.Mesh, axis: 'x' | 'y'): Vertex[] {
       : { along: z, across: x, up: y })
   }
   return vertices
+}
+
+function meshesOf(group: THREE.Group): THREE.Mesh[] {
+  return group.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh)
+}
+
+function wallMeshesOf(group: THREE.Group): THREE.Mesh[] {
+  return meshesOf(group).filter((mesh) => mesh.geometry instanceof THREE.InstancedBufferGeometry)
+}
+
+function disposeBoundary(group: THREE.Group, texture: THREE.DataTexture): void {
+  for (const mesh of meshesOf(group)) {
+    mesh.geometry.dispose()
+    ;(mesh.material as THREE.Material).dispose()
+  }
+  texture.dispose()
+}
+
+/**
+ * Frank's own rotary file, `rotary-polygon-test-01.camj`, reduced to the
+ * geometry the screenshot showed: a 4 in long, 2 in diameter round bar along X
+ * whose stock box is the bar's bounding box. At the detail slider's steps the
+ * grid fits the bar exactly, so every cell holds material and the sheet seen
+ * under the bar can only be the stock-underside quad.
+ */
+function reportedFixture(): BarFixture {
+  const project = flatProject(roundStock(2, 4, 'x', { x: 0, y: -0.625 }), 'inch')
+  const bounds = getStockBounds(project.stock)
+  return {
+    project,
+    axis: 'x',
+    diameter: 2,
+    length: 4,
+    centre: (bounds.minY + bounds.maxY) / 2,
+  }
+}
+
+/** Y of the lower half's polyline at one across coordinate, from its vertices. */
+function lowerHalfSurfaceY(mesh: THREE.Mesh, descriptor: FlatRoundBarDescriptor, across: number): number {
+  const samples = new Map<number, number>()
+  for (const vertex of verticesOf(mesh, descriptor.axis)) {
+    // Below the equator only: that excludes the end caps' centre vertex and
+    // leaves the semicircle's own polyline.
+    if (vertex.up >= descriptor.pivot - 1e-9) continue
+    samples.set(Math.round(vertex.across * 1e6) / 1e6, vertex.up)
+  }
+  const points = [...samples.entries()].sort((a, b) => a[0] - b[0])
+  for (let index = 1; index < points.length; index += 1) {
+    const [fromAcross, fromUp] = points[index - 1]
+    const [toAcross, toUp] = points[index]
+    if (across < fromAcross || across > toAcross) continue
+    const t = (across - fromAcross) / (toAcross - fromAcross)
+    return fromUp + (toUp - fromUp) * t
+  }
+  throw new Error(`lower half has no surface at across ${across}`)
+}
+
+// ---------------------------------------------------------------------------
+// Block / square scene signature, for the "unchanged" half of the contract.
+// ---------------------------------------------------------------------------
+
+function plainValue(value: unknown): unknown {
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string' || value === null) {
+    return value
+  }
+  if (value === undefined) return null
+  if (Array.isArray(value)) return value.map(plainValue)
+  const record = value as Record<string, unknown>
+  if (typeof record.x === 'number' && typeof record.y === 'number') {
+    return typeof record.z === 'number' ? [record.x, record.y, record.z] : [record.x, record.y]
+  }
+  if (typeof record.r === 'number' && typeof record.g === 'number' && typeof record.b === 'number') {
+    return [record.r, record.g, record.b]
+  }
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(record).sort()) out[key] = plainValue(record[key])
+  return out
+}
+
+function geometrySignature(geometry: THREE.BufferGeometry): unknown {
+  const attributes: Record<string, unknown> = {}
+  for (const name of Object.keys(geometry.attributes).sort()) {
+    const attribute = geometry.attributes[name]
+    attributes[name] = { count: attribute.count, itemSize: attribute.itemSize, array: Array.from(attribute.array) }
+  }
+  const index = geometry.getIndex()
+  return {
+    instanced: geometry instanceof THREE.InstancedBufferGeometry ? geometry.instanceCount : null,
+    attributes,
+    index: index ? Array.from(index.array) : null,
+    boundingBox: geometry.boundingBox
+      ? [geometry.boundingBox.min.toArray(), geometry.boundingBox.max.toArray()]
+      : null,
+  }
+}
+
+function materialSignature(material: THREE.Material): unknown {
+  if (!(material instanceof THREE.ShaderMaterial)) return { type: material.type }
+  const uniforms: Record<string, unknown> = {}
+  for (const name of Object.keys(material.uniforms).sort()) {
+    const value = material.uniforms[name].value
+    uniforms[name] = value instanceof THREE.DataTexture
+      ? { texture: true, width: value.image.width, height: value.image.height, format: value.format, type: value.type }
+      : plainValue(value)
+  }
+  return {
+    type: material.type,
+    glslVersion: material.glslVersion,
+    side: material.side,
+    defines: plainValue(material.defines ?? {}),
+    uniforms,
+    vertexShader: material.vertexShader,
+    fragmentShader: material.fragmentShader,
+  }
+}
+
+function boundarySceneHash(group: THREE.Group): string {
+  const meshes = meshesOf(group).map((mesh) => ({
+    name: mesh.name,
+    frustumCulled: mesh.frustumCulled,
+    geometry: geometrySignature(mesh.geometry),
+    material: materialSignature(mesh.material as THREE.Material),
+  }))
+  return createHash('sha256').update(JSON.stringify({ name: group.name, meshes })).digest('hex')
+}
+
+function buildBoundaryScene(stock: Stock, flatRoundBar?: FlatRoundBarDescriptor): {
+  group: THREE.Group
+  grid: SimulationGrid
+  texture: THREE.DataTexture
+  descriptor?: FlatRoundBarDescriptor
+} {
+  const project = flatProject(stock)
+  const setup = project.setups.find((entry) => entry.id === faceSetup('top').id)!
+  const input = buildSimulationSetupInput(project, setup, new Map())
+  assert(input, 'scene fixture: the setup yields an input')
+  const grid = createSimulationGrid(input.project, simulationBuildOptions(input, DETAIL))
+  const descriptor = input.flatRoundBar
+  const texture = createHeightfieldTexture(grid)
+  const group = createInstancedBoundaryGroup(
+    texture,
+    grid,
+    COLOR,
+    undefined,
+    descriptor?.pivot,
+    flatRoundBar ?? descriptor,
+  )
+  return { group, grid, texture, descriptor }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +440,8 @@ function testBaseStockScenesHaveNoLowerHalf(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The heightfield walls stop at the equator only for the round bar.
+// 3. The flat round-bar wall floor joins the lower half; a block keeps the
+//    stock bottom.
 // ---------------------------------------------------------------------------
 
 function wallFloorZ(boundary: THREE.Group): number {
@@ -280,16 +454,29 @@ function wallFloorZ(boundary: THREE.Group): number {
   return uniform.value as number
 }
 
-function testWallFloorStopsAtEquatorForRoundBar(): void {
-  console.log('Testing the flat round-bar walls stop at the equator; block walls keep the stock bottom...')
+function testWallFloorJoinsLowerHalf(): void {
+  console.log('Testing the flat round-bar wall floor joins the lower half; block walls keep the stock bottom...')
   const fixture = barFixture('x', 40)
   const { input, grid } = setupSimulation(fixture, 'top')
   const descriptor = input.flatRoundBar
   assert(descriptor, 'x/mm/top: the setup input carries the flat round-bar profile')
 
   const roundTexture = createHeightfieldTexture(grid)
-  const roundBoundary = createInstancedBoundaryGroup(roundTexture, grid, COLOR, undefined, descriptor.pivot)
+  const roundBoundary = createInstancedBoundaryGroup(
+    roundTexture,
+    grid,
+    COLOR,
+    undefined,
+    descriptor.pivot,
+    descriptor,
+  )
   approx(wallFloorZ(roundBoundary), descriptor.pivot, 'round bar: walls start at the equator')
+  assert(meshesOf(roundBoundary).length === 2, 'round bar: the boundary is the two wall strips, no floor quad')
+  const roundWall = roundBoundary.children[0]
+  assert(roundWall instanceof THREE.Mesh && roundWall.material instanceof THREE.ShaderMaterial, 'round bar: wall material')
+  assert(roundWall.material.uniforms.uBarPivot?.value === descriptor.pivot, 'round bar: the join carries the pivot')
+  assert(roundWall.material.uniforms.uBarRadius?.value === descriptor.radius, 'round bar: the join carries the radius')
+  assert(roundWall.material.uniforms.uBarCentre?.value === descriptor.centre, 'round bar: the join carries the centre')
   for (const child of roundBoundary.children) {
     if (!(child instanceof THREE.Mesh)) continue
     child.geometry.dispose()
@@ -305,6 +492,7 @@ function testWallFloorStopsAtEquatorForRoundBar(): void {
   const blockTexture = createHeightfieldTexture(blockGrid)
   const blockBoundary = createInstancedBoundaryGroup(blockTexture, blockGrid, COLOR)
   approx(wallFloorZ(blockBoundary), blockGrid.stockBottomZ, 'block: walls keep the stock bottom')
+  assert(meshesOf(blockBoundary).length === 3, 'block: walls plus the stock underside')
   for (const child of blockBoundary.children) {
     if (!(child instanceof THREE.Mesh)) continue
     child.geometry.dispose()
@@ -314,7 +502,287 @@ function testWallFloorStopsAtEquatorForRoundBar(): void {
   console.log('wall floor: PASSED')
 }
 
+// ---------------------------------------------------------------------------
+// 4. No stock underside, and no floor/wall geometry for empty cells.
+// ---------------------------------------------------------------------------
+
+function testRoundBarSceneHasNoUndersideFloor(): void {
+  console.log('Testing a flat round-bar scene draws no stock underside and empty cells draw no wall...')
+  const fixture = reportedFixture()
+  const { input, grid } = setupSimulationAt(fixture, 'top', REPORTED_DETAIL)
+  const descriptor = input.flatRoundBar
+  assert(descriptor, 'reported fixture: carries the flat round-bar profile')
+
+  // Frank's file: the across extent is exactly the diameter, so every cell
+  // holds material. The sheet seen under the bar is therefore the full-width
+  // stock-underside quad, not an empty cell's top — a round bar has no flat
+  // underside, so that quad must not exist at all.
+  assert(grid.rows * grid.cellSize === descriptor.radius * 2, 'reported fixture: the grid fits the diameter exactly')
+  for (const height of grid.topZ) {
+    assert(height > grid.stockBottomZ + 1e-6, 'reported fixture: every cell holds material')
+  }
+  const reportedScene = buildBoundaryScene(fixture.project.stock)
+  assert(
+    meshesOf(reportedScene.group).length === 2,
+    `round bar: walls only, no floor quad, got ${meshesOf(reportedScene.group).length} meshes`,
+  )
+  assert(wallMeshesOf(reportedScene.group).length === 2, 'round bar: both boundary meshes are wall strips')
+  disposeBoundary(reportedScene.group, reportedScene.texture)
+
+  // A bar long enough that the grid's 24-row minimum leaves empty cells beyond
+  // the bar: those cells must draw nothing, surface or wall.
+  const longBar = barFixture('x', 40)
+  const long = setupSimulationAt(longBar, 'top', DETAIL)
+  const longDescriptor = long.input.flatRoundBar
+  assert(longDescriptor, 'long bar: carries the flat round-bar profile')
+  const longScene = buildBoundaryScene(longBar.project.stock)
+  assert(meshesOf(longScene.group).length === 2, 'long bar: no stock underside quad on a round bar')
+  disposeBoundary(longScene.group, longScene.texture)
+
+  const { roundBarWallFloorZ, wallEdgeCollapsed } = compileScalarGlsl(ROUND_BAR_WALL_JOIN_GLSL)
+  const bottom = long.grid.stockBottomZ
+  const acrossBar = longDescriptor.axis === 'x'
+  const emptyCell = (col: number, row: number): boolean =>
+    long.grid.topZ[row * long.grid.cols + col] <= bottom + 1e-6
+
+  let emptyEdges = 0
+  let surfaceEdges = 0
+  let materialEdges = 0
+  const checkPair = (colA: number, rowA: number, colB: number, rowB: number): void => {
+    const emptyA = emptyCell(colA, rowA)
+    const emptyB = emptyCell(colB, rowB)
+    if (!emptyA && !emptyB) {
+      materialEdges += 1
+      return
+    }
+    // The wall's across coordinate: a cell centre when the pair runs along the
+    // bar, the boundary between the two cells when the pair crosses it.
+    const acrossPair = acrossBar ? rowA !== rowB : colA !== colB
+    const acrossIndex = acrossBar
+      ? (acrossPair ? Math.max(rowA, rowB) : rowA)
+      : (acrossPair ? Math.max(colA, colB) : colA)
+    const acrossOrigin = acrossBar ? long.grid.originY : long.grid.originX
+    const across = acrossOrigin + (acrossIndex + (acrossPair ? 0 : 0.5)) * long.grid.cellSize
+    const floorAt = (alongEnd: boolean): number => roundBarWallFloorZ(
+      longDescriptor.pivot,
+      longDescriptor.radius,
+      across - longDescriptor.centre,
+      alongEnd,
+      longDescriptor.pivot,
+      bottom,
+    ) as number
+    if (emptyA && emptyB) {
+      for (const alongEnd of [false, true]) {
+        const floor = floorAt(alongEnd)
+        assert(
+          wallEdgeCollapsed(0, 0, floor) === true,
+          `empty edge at (${colA},${rowA})-(${colB},${rowB}) draws no wall (floor ${floor}, alongEnd ${alongEnd})`,
+        )
+      }
+      emptyEdges += 1
+      return
+    }
+    // An edge onto empty space beside real material is still a wall — the rule
+    // removes empty cells, not the bar's own surface.
+    const materialCol = emptyA ? colB : colA
+    const materialRow = emptyA ? rowB : rowA
+    const height = long.grid.topZ[materialRow * long.grid.cols + materialCol]
+    assert(
+      wallEdgeCollapsed(height, 0, floorAt(false)) === false,
+      `material edge at (${materialCol},${materialRow}) keeps its wall`,
+    )
+    surfaceEdges += 1
+  }
+  for (let row = 0; row < long.grid.rows; row += 1) {
+    for (let col = 0; col < long.grid.cols - 1; col += 1) checkPair(col, row, col + 1, row)
+  }
+  for (let row = 0; row < long.grid.rows - 1; row += 1) {
+    for (let col = 0; col < long.grid.cols; col += 1) checkPair(col, row, col, row + 1)
+  }
+  assert(emptyEdges > 0, 'fixture: the long bar really leaves empty cells in the grid')
+  assert(surfaceEdges > 0, 'fixture: the bar has a material edge onto empty space')
+  assert(materialEdges > 0, 'fixture: the bar still has material edges to draw its walls on')
+  console.log(`round-bar scene without a floor: PASSED (${emptyEdges} empty edges draw nothing)`)
+}
+
+// ---------------------------------------------------------------------------
+// 5. The heightfield's equator edge and the half-cylinder's top edge meet.
+// ---------------------------------------------------------------------------
+
+function testHeightfieldEdgeMeetsLowerHalf(): void {
+  console.log('Testing the heightfield edge and the half-cylinder top edge coincide...')
+  const fixture = reportedFixture()
+  const { input, grid } = setupSimulationAt(fixture, 'top', REPORTED_DETAIL)
+  const descriptor = input.flatRoundBar
+  assert(descriptor, 'reported fixture: carries the flat round-bar profile')
+  const scene = buildBoundaryScene(fixture.project.stock)
+  const lowerHalf = createFlatRoundBarLowerHalf(grid, descriptor, COLOR)
+  assert(lowerHalf, 'reported scene: builds the static lower half')
+
+  const acrossMin = descriptor.axis === 'x' ? grid.originY : grid.originX
+  const acrossMax = acrossMin + (descriptor.axis === 'x' ? grid.rows : grid.cols) * grid.cellSize
+  approx(acrossMin, descriptor.centre - descriptor.radius, 'the heightfield starts at the bar radius')
+  approx(acrossMax, descriptor.centre + descriptor.radius, 'the heightfield ends at the bar radius')
+
+  const { roundBarWallFloorZ } = compileScalarGlsl(ROUND_BAR_WALL_JOIN_GLSL)
+  const wallFloorAt = (across: number): number => roundBarWallFloorZ(
+    descriptor.pivot,
+    descriptor.radius,
+    across - descriptor.centre,
+    false,
+    descriptor.pivot,
+    grid.stockBottomZ,
+  ) as number
+
+  // The half-cylinder's top edge is its equator vertices; the heightfield's
+  // edge is the wall bottom at the grid boundary. They are the same line.
+  const equator = verticesOf(lowerHalf, descriptor.axis)
+    .filter((vertex) => Math.abs(vertex.up - descriptor.pivot) <= 1e-6)
+  for (const [across, side] of [[acrossMin, -1], [acrossMax, 1]] as const) {
+    const floor = wallFloorAt(across)
+    approx(floor, descriptor.pivot, `wall floor at across ${across} is the equator`, 1e-6)
+    const vertex = equator.find((entry) =>
+      Math.abs(entry.across - (descriptor.centre + side * descriptor.radius)) <= 1e-6,
+    )
+    assert(vertex, `the half-cylinder has an equator vertex at across ${across}`)
+    approx(vertex!.up, floor, `the heightfield edge and the half-cylinder edge coincide at across ${across}`, 1e-6)
+    approx(vertex!.across, across, 'the edges share the across coordinate', 1e-6)
+  }
+
+  // Matching outward normals: the half-cylinder's equator normal points
+  // straight out along the across axis, which is the direction the round-bar
+  // wall adds. Both shaders light in world space with the same depth term, so
+  // the lighting is continuous across the join. Only the side surface counts —
+  // the end caps reuse the same positions with their own ±along normals.
+  const normals = lowerHalf.geometry.getAttribute('normal')
+  const lowerVertices = verticesOf(lowerHalf, descriptor.axis)
+  const alongMin = descriptor.axis === 'x' ? grid.originX : grid.originY
+  let equatorNormals = 0
+  for (const side of [-1, 1] as const) {
+    const across = descriptor.centre + side * descriptor.radius
+    const index = lowerVertices.findIndex((vertex) =>
+      Math.abs(vertex.up - descriptor.pivot) <= 1e-6 &&
+      Math.abs(vertex.across - across) <= 1e-6 &&
+      Math.abs(vertex.along - alongMin) <= 1e-6,
+    )
+    assert(index >= 0, `the half-cylinder has a side equator vertex at across ${across}`)
+    const nx = normals.getX(index), ny = normals.getY(index), nz = normals.getZ(index)
+    approx(ny, 0, 'the equator normal is horizontal', 1e-6)
+    if (descriptor.axis === 'x') {
+      approx(nx, 0, 'the equator normal has no X component', 1e-6)
+      approx(nz, side, 'the equator normal points outward across Z', 1e-6)
+    } else {
+      approx(nz, 0, 'the equator normal has no Z component', 1e-6)
+      approx(nx, side, 'the equator normal points outward across X', 1e-6)
+    }
+    equatorNormals += 1
+  }
+  assert(equatorNormals === 2, 'the half-cylinder carries an outward equator normal on each side')
+
+  const wallMaterial = scene.group.children[0]
+  assert(wallMaterial instanceof THREE.Mesh && wallMaterial.material instanceof THREE.ShaderMaterial, 'wall material')
+  const lowerMaterial = lowerHalf.material
+  assert(lowerMaterial instanceof THREE.ShaderMaterial, 'lower-half material')
+  // The wall shader really calls the floor rule the tests just ran, and it
+  // treats the two along ends (the end caps' equator) separately. The helper
+  // definitions alone carry these names, so match the call sites.
+  const wallSource = wallMaterial.material.vertexShader.replace(/\s+/g, ' ')
+  assert(
+    wallSource.includes('roundBarWallFloorZ( uBarPivot'),
+    'the round-bar wall shader takes its floor from the tested join rule',
+  )
+  assert(
+    wallSource.includes('wallEdgeCollapsed(hNear, hFar, wallFloor)'),
+    'the round-bar wall shader collapses edges with the tested rule',
+  )
+  const endWallFloor = roundBarWallFloorZ(
+    descriptor.pivot,
+    descriptor.radius,
+    0,
+    true,
+    descriptor.pivot,
+    grid.stockBottomZ,
+  ) as number
+  approx(endWallFloor, descriptor.pivot, 'an along-end wall stops at the end cap equator', 1e-9)
+  assert(
+    wallMaterial.material.vertexShader.includes('mat3(modelMatrix)'),
+    'the round-bar wall lights in world space, like the lower half',
+  )
+  assert(
+    lowerMaterial.vertexShader.includes('mat3(modelMatrix)'),
+    'the lower half lights in world space',
+  )
+  assert(
+    wallMaterial.material.fragmentShader.includes('depthDarken(vHeight, uStockTopZ)'),
+    'the round-bar wall takes the same depth darkening as the lower half',
+  )
+  assert(
+    lowerMaterial.fragmentShader.includes('depthDarken(vHeight, uStockTopZ)'),
+    'the lower half darkens its depth',
+  )
+
+  // Where the grid stops short of the radius, the wall must still land on the
+  // cylinder rather than float at the equator plane.
+  const longBar = barFixture('x', 40)
+  const long = setupSimulationAt(longBar, 'top', DETAIL)
+  const longDescriptor = long.input.flatRoundBar
+  assert(longDescriptor, 'long bar: carries the flat round-bar profile')
+  const longLowerHalf = createFlatRoundBarLowerHalf(long.grid, longDescriptor, COLOR)
+  assert(longLowerHalf, 'long bar: builds the static lower half')
+  let lastMaterialRow = -1
+  for (let row = 0; row < long.grid.rows; row += 1) {
+    const across = long.grid.originY + (row + 0.5) * long.grid.cellSize
+    if (Math.abs(across - longDescriptor.centre) < longDescriptor.radius) lastMaterialRow = row
+  }
+  assert(lastMaterialRow >= 0, 'long bar: has material rows')
+  const boundaryAcross = long.grid.originY + (lastMaterialRow + 1) * long.grid.cellSize
+  assert(
+    boundaryAcross < longDescriptor.centre + longDescriptor.radius - 1e-6,
+    'fixture: the grid boundary really falls inside the bar radius',
+  )
+  const { roundBarWallFloorZ: longFloorAt } = compileScalarGlsl(ROUND_BAR_WALL_JOIN_GLSL)
+  const floor = longFloorAt(
+    longDescriptor.pivot,
+    longDescriptor.radius,
+    boundaryAcross - longDescriptor.centre,
+    false,
+    longDescriptor.pivot,
+    long.grid.stockBottomZ,
+  ) as number
+  const surface = lowerHalfSurfaceY(longLowerHalf, longDescriptor, boundaryAcross)
+  const sagitta = longDescriptor.radius * (1 - Math.cos(Math.PI / FLAT_ROUND_BAR_RADIAL_SEGMENTS)) + 1e-4
+  approx(floor, surface, 'the wall lands on the lower-half surface', sagitta)
+  assert(floor < longDescriptor.pivot - 1e-6, 'the wall reaches below the equator where the grid stops short')
+
+  disposeBoundary(scene.group, scene.texture)
+  console.log('equator join: PASSED')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Block and square scenes are byte-identical to before the join change.
+// ---------------------------------------------------------------------------
+
+function testBaseStockScenesByteIdentical(): void {
+  console.log('Testing block and square boundary scenes are byte-identical...')
+  const block = buildBoundaryScene(newProject('block', 'mm').stock)
+  assert(block.descriptor === undefined, 'block: no flat round-bar descriptor')
+  assert(meshesOf(block.group).length === 3, 'block: two wall strips and the stock underside')
+  assert(boundarySceneHash(block.group) === BLOCK_SCENE_HASH, 'block: boundary scene is byte-identical')
+  disposeBoundary(block.group, block.texture)
+
+  const squareStockScene = normalizeSquareStock(squareStock(25, 120, 'x', { x: 0, y: 10 }))
+  const square = buildBoundaryScene(squareStockScene)
+  assert(square.descriptor === undefined, 'square: no flat round-bar descriptor')
+  assert(meshesOf(square.group).length === 3, 'square: two wall strips and the stock underside')
+  assert(boundarySceneHash(square.group) === SQUARE_SCENE_HASH, 'square: boundary scene is byte-identical')
+  disposeBoundary(square.group, square.texture)
+  console.log('block/square scene identity: PASSED')
+}
+
 testRoundBarSceneHasLowerHalf()
 testBaseStockScenesHaveNoLowerHalf()
-testWallFloorStopsAtEquatorForRoundBar()
+testWallFloorJoinsLowerHalf()
+testRoundBarSceneHasNoUndersideFloor()
+testHeightfieldEdgeMeetsLowerHalf()
+testBaseStockScenesByteIdentical()
 console.log('All flat round-bar lower-half tests passed.')

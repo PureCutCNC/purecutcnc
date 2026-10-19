@@ -39,8 +39,12 @@ import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 /** Name of the mesh, so the scene can be told apart in tests and smoke checks. */
 export const FLAT_ROUND_BAR_LOWER_HALF_NAME = 'flatRoundBarLowerHalf'
 
-/** Radial samples around the semicircle. Smooth at any on-screen bar size. */
-const DEFAULT_RADIAL_SEGMENTS = 48
+/**
+ * Radial samples around the semicircle. The wall mesh's floor follows the
+ * analytic circle, so enough segments keep this polyline within a hair of it
+ * and the two surfaces meet at the equator without a visible fin.
+ */
+export const FLAT_ROUND_BAR_RADIAL_SEGMENTS = 96
 
 function lowerHalfMaterial(stockColor: THREE.Color, grid: SimulationGrid): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -124,7 +128,7 @@ export function createFlatRoundBarLowerHalf(
   grid: SimulationGrid,
   flatRoundBar: FlatRoundBarDescriptor | undefined,
   stockColor: THREE.Color,
-  radialSegments: number = DEFAULT_RADIAL_SEGMENTS,
+  radialSegments: number = FLAT_ROUND_BAR_RADIAL_SEGMENTS,
 ): THREE.Mesh | null {
   if (!flatRoundBar) return null
 

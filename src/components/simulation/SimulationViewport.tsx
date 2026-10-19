@@ -756,6 +756,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       color,
       frame,
       flatRoundBarDescriptor?.pivot,
+      flatRoundBarDescriptor,
     )
     parent.add(boundary)
     boundaryMeshRef.current = boundary
@@ -963,6 +964,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         color,
         frame,
         flatRoundBarDescriptor?.pivot,
+        flatRoundBarDescriptor,
       )
       parent.add(boundary)
       playbackBoundaryMeshRef.current = boundary

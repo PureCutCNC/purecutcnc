@@ -109,13 +109,20 @@ shows the bar's upper half only, and nothing below the equator is represented
 The lower half is drawn as a fixed surface instead (#1049 follow-up):
 `createFlatRoundBarLowerHalf` builds a static half-cylinder of the bar's own
 radius and length from the same descriptor — colour and light rig shared with
-the heightfield — and the boundary walls stop at the equator
-(`uWallFloorZ = pivot`) rather than running straight down to the stock bottom.
-The lower half is cut by nothing: it is the surface the Top cutter cannot
-reach. The machinable upper half remains the heightfield exactly as before.
-Block and square blanks have no descriptor, so their boundary floor stays the
-stock bottom and their scenes are unchanged; cutting, playback, reset and
-uploads stay the shared ones.
+the heightfield. A round bar has no flat stock underside, so the boundary group
+draws no underside quad for it: the half-cylinder is the bottom. The boundary
+walls land on that cylinder instead of floating at the equator plane — at the
+equator where the grid's edge is the radius, a little below it where a cell
+boundary falls short — and the two along ends stop at the equator, where the
+half-cylinder's flat end caps already are. The round-bar wall variant uses the
+lower half's world-space normals and depth darkening, so the surfaces meet
+under one continuous shade with no gap or z-fight. Empty cells outside the bar,
+and cut-through cells with no material above the cylinder, collapse their walls
+and discard; the lower half is cut by nothing: it is the surface the Top cutter
+cannot reach. The machinable upper half remains the heightfield exactly as
+before. Block and square blanks have no descriptor, so their boundary floor
+stays the stock bottom, their walls keep the established normals and their
+scenes are unchanged; cutting, playback, reset and uploads stay the shared ones.
 
 ## Invariants
 
@@ -124,7 +131,8 @@ uploads stay the shared ones.
   (`seedSquareTopZ` / `seedFlatRoundBarTopZ`); a square blank also changes the
   radial bounding envelope (`grid.stockTopZ`), and a flat round bar adds one
   static render-only mesh for the lower half the heightfield cannot represent,
-  with the shared surface shader and no effect on simulation state.
+  removes the flat underside quad, and lands its walls on that lower half, with
+  no effect on simulation state.
 - GPU data is derived render state; it never becomes the simulation source of
   truth.
 - Texture updates use the smallest valid dirty rectangle when practical.
