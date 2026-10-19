@@ -81,11 +81,26 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   commanded so A0→A360 is a full revolution, inside the cutter's footprint —
   is within the operation's bound: a rough's `stepdown`, or a finish's
   `stockToLeave` plus the scallop of the strongest earlier rough on the same
-  target. A turning rapid, or a turn on an along-mode operation, still refuses.
+  target. The tolerance added to that bound is one angular bin's surface
+  change, the cutter's **own** radial change across half an along bin (zero for
+  a flat; `r - sqrt(r² - (alongBin/2)²)` for a ball — never the along bin's
+  length), and the emitted-Z rounding. A finish with no earlier rough also
+  gets its cutter footprint's angular sagitta, capped to a 30° span, because
+  the footprint reaches material above the sample's ray on the blank's flats.
+  A turning rapid, or a turn on an along-mode operation, still refuses.
   Non-turning cuts (an along pass, a plunge) are never refused here but do
   lower the grid, which is what lets an along rough clear material for an
   around finish. This replaced the slice-C licence that one earlier rough on
   the same target proved coverage everywhere.
+- `squareSweepGuard.test.ts` — boundary tests for that bound on the 20 mm
+  square blank: a hand-built around-mode rough cut taking 1.25 × `stepdown` is
+  refused while 0.9 × is admitted, and a finish taking `stockToLeave + scallop
+  + 0.2 mm` is refused while 0.9 × is admitted. The true engagement is the
+  blank's own corner radius (`halfSide × √2`) less the cut's tip, measured in
+  the test rather than read from the guard. The finish case first admits a
+  rough at another along position, so the allowance the finish may take is
+  exercised while its own cut still meets the raw blank. These are the cases
+  that make a doubled rough bound, or a reintroduced `+ alongBin` term, fail.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change

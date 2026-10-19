@@ -55,7 +55,17 @@
  * program, with the along count capped so the two together stay under
  * {@link GUARD_MAX_CELLS}. The tolerance the guard adds to an operation's own
  * bound is stated in {@link guardSquareOperation}: one angle bin's worst-case
- * surface change, one along bin, and the emitted Z's rounding.
+ * surface change, the cutter's own radial change across half an along bin, and
+ * the emitted Z's rounding. The along **bin is not itself a radial error**: a
+ * cell's along coordinate is its bin centre and the cutter's lower surface is
+ * evaluated exactly there, so the along bin only decides footprint membership.
+ * What it does hide is the cutter surface's height change across the bin, and
+ * that change is zero for a flat and
+ * `r - sqrt(r² - (alongBin/2)²)` for a ball. A **finish with no earlier rough**
+ * on its target also carries its cutter footprint's angular sagitta (at most
+ * 30 degrees of span), because a footprint on the square's flats reaches
+ * material above the sample's ray even when the ray is at the blank; the old
+ * `+ alongBin` term was covering that effect too.
  */
 
 import { barMaxRadius, barPivotZ, barSurfaceRadius } from '../../types/barStock'
@@ -206,10 +216,18 @@ export interface GuardOperationInput {
  *   radial stock to leave — what a rough that actually covered the spot leaves),
  *   or just `stockToLeave` when no such rough ran.
  *
- * The guard adds one stated tolerance: `barMaxRadius * angleBin + alongBin` for
- * the grid's own resolution plus `roundingAllowance` for the emitted Z. A rough
- * therefore admits a bite of `stepdown + tolerance`; a finish `stockToLeave +
- * scallop + tolerance`.
+ * The guard adds one stated tolerance: `barMaxRadius * angleBin` for the
+ * angular grid's own resolution, the cutter's radial change across half an
+ * along bin, and `roundingAllowance` for the emitted Z. A rough therefore
+ * admits a bite of `stepdown + tolerance`; a finish `stockToLeave + scallop +
+ * tolerance`. The along term is the **cutter's** change, not the bin length: a
+ * flat's lower surface is at the tip at every along offset, so its term is
+ * zero; a ball's lower surface rises by up to `r - sqrt(r² - (alongBin/2)²)`
+ * from the bin centre to its far edge, and the grid records the centre. Adding
+ * a length along the bar to a radial depth would not be a radial error. A
+ * finish with no earlier rough (so `scallop` is 0) also gets
+ * {@link footprintSagitta}: its footprint spans an angle, and on the square's
+ * flats the material at the footprint edge stands above the ray.
  *
  * Returns `false` — keeping `postRotarySquareTurnBelowEnvelope` — for a turning
  * rapid, a turn on an operation that does not run around the bar, or a turning
@@ -228,12 +246,14 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
   if (!finish && (!Number.isFinite(operation.stepdown) || operation.stepdown <= 0)) return false
   const targetKey = operationTargetKey(operation.target)
   const scallop = finish ? state.roughAllowance.get(targetKey) ?? 0 : 0
-  const bound = (finish ? stockToLeave + scallop : operation.stepdown)
-    + state.maxMaterial * (state.angleBinDegrees * Math.PI / 180) + state.alongBin + roundingAllowance
-  const pivot = barPivotZ(state.stock)
-  const travelTip = travelZ - pivot
   const cutterRadius = cutter.type === 'ball_endmill' || cutter.type === 'flat_endmill' ? cutter.radius : 0
   const ball = cutter.type === 'ball_endmill'
+  const bound = (finish ? stockToLeave + scallop : operation.stepdown)
+    + state.maxMaterial * (state.angleBinDegrees * Math.PI / 180)
+    + alongBinRadialError(ball, cutterRadius, state.alongBin)
+    + roundingAllowance
+  const pivot = barPivotZ(state.stock)
+  const travelTip = travelZ - pivot
   let controller = input.entryAngle ?? 0
   for (const move of moves) {
     const hasAngle = move.from.a !== undefined || move.to.a !== undefined
@@ -281,7 +301,17 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
       if (turns) {
         if (!around) return false
         const engagement = cutSample(state, sample, cutterRadius, ball)
-        if (engagement > bound) return false
+        // A finish with no earlier rough on its target has a bound of just its
+        // own stock to leave, but the cutter's footprint still spans a finite
+        // angle: on the square's flat faces the material rises away from the
+        // sample's ray, so the footprint edge legitimately takes up to the
+        // sagitta more. This is the term the old `+ alongBin` was silently
+        // covering for the near-net case; it is claimed only while the
+        // footprint is a small local patch (see `footprintSagitta`).
+        const footprint = finish && scallop === 0
+          ? footprintSagitta(state.maxMaterial, cutterRadius, sample.tip)
+          : 0
+        if (engagement > bound + footprint) return false
       } else {
         cutSample(state, sample, cutterRadius, ball)
       }
@@ -297,6 +327,56 @@ export function guardSquareOperation(state: SquareSweepState, input: GuardOperat
     state.roughAllowance.set(targetKey, Math.max(state.roughAllowance.get(targetKey) ?? 0, allowance))
   }
   return true
+}
+
+/**
+ * The radial error one along bin can hide, for the cutter shape in use.
+ *
+ * A cell's along coordinate **is** its bin centre, and {@link cutSample}
+ * evaluates the cutter's lower surface at exactly that coordinate, so the along
+ * bin contributes no positional error to the engagement: it only decides which
+ * cells the footprint covers. What it does hide is the lower surface's change
+ * across the bin, because the whole bin is lowered to the contact found at its
+ * centre. A flat's lower surface is the tip at every along offset, so the error
+ * is zero. A ball's is `tip + r - sqrt(r² - dx² - X²)`; from the centre to a
+ * bin edge its height changes by at most
+ * `r - sqrt(r² - (alongBin/2)²)`, which is the amount by which a later cut can
+ * find more standing material than the grid recorded. (When a capped grid
+ * makes the bin wider than the ball, the bound saturates at `r`.)
+ *
+ * This replaces the old `+ alongBin` term, which added a length along the bar
+ * to a radial depth: the two are not the same error.
+ */
+function alongBinRadialError(ball: boolean, cutterRadius: number, alongBin: number): number {
+  if (!ball || !(cutterRadius > 0) || !Number.isFinite(cutterRadius) || !(alongBin > 0)) return 0
+  const half = alongBin / 2
+  return cutterRadius - Math.sqrt(Math.max(0, cutterRadius * cutterRadius - half * half))
+}
+
+/**
+ * The extra radial material a cutter's footprint sees on a locally smooth
+ * convex surface, for a finish that has no earlier rough to set an allowance.
+ *
+ * A constant-tip turning cut is a ring of cutter positions; at one sample the
+ * lower surface spans an angular half-width `asin(r / tip)` about the ray, and
+ * the material there stands up to `M * (1 - cos halfSpan)` above the ray for
+ * the square's flats (up to `M`, the blank's corner radius, as a conservative
+ * scale). This is a **surface** effect, not a roughing layer: the near-net
+ * finish test measures 0.179 mm at its footprint edge while its tip is at the
+ * blank, and the old `+ alongBin` term is what happened to admit it.
+ *
+ * It is claimed only while the footprint spans at most 30 degrees. Beyond that
+ * the cutter is not touching a local patch -- a deep cut's engagement is read
+ * directly from the grid -- and returning the sagitta would license material it
+ * must refuse. A tip at or below the axis therefore gets no allowance at all.
+ */
+const FOOTPRINT_SAGITTA_MAX_HALF_ANGLE = Math.PI / 6
+
+function footprintSagitta(maxMaterial: number, cutterRadius: number, tip: number): number {
+  if (!(cutterRadius > 0) || !(tip > 0) || !Number.isFinite(tip) || !Number.isFinite(maxMaterial)) return 0
+  const halfSpan = Math.asin(Math.min(1, cutterRadius / tip))
+  if (halfSpan > FOOTPRINT_SAGITTA_MAX_HALF_ANGLE) return 0
+  return maxMaterial * (1 - Math.cos(halfSpan))
 }
 
 function alongOf(stock: BarStock, point: { x: number; y: number }): number {
