@@ -245,7 +245,6 @@ export const warningsEn = {
   'warnings.rotaryBelowCentreline': "{operation}: the model reaches below the bar's centreline near {along} along the bar, at {angle}°. The tool stops at the centreline there.",
   'warnings.rotaryModelOutsideBar': '{operation}: part of the model lies outside the bar. Those parts are not machined.',
   'warnings.rotaryStockToLeaveInvalid': '{operation}: the radial stock to leave must be a finite value of zero or more and must leave a usable sampling radius. No motion is generated.',
-  'warnings.rotaryAroundSquareUnsupported': '{operation}: passes around the bar are not available on a square blank yet. Use passes along the bar.',
   'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',
   'warnings.postSetupOperationRefused': 'Operation "{operation}" has no toolpath because its setup cannot cut it. Fix or remove the operation before exporting.',
   'warnings.workholdingDiameter': "{operation}: the {clamp} diameter {diameter} is smaller than the square blank's corners ({required}); enlarge it or reset its type to Chuck.",

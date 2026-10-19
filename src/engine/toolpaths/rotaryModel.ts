@@ -643,6 +643,16 @@ export interface RotaryFinishParams {
    * is unchanged.
    */
   readonly passDirection?: RotaryPassDirection
+  /**
+   * True when an earlier enabled rotary rough on the same setup and target
+   * clears this blank before the finish runs (#1045 slice C). A **square**
+   * blank's corners stand whole layers above an around finish's model-
+   * following ring, so a finish on the raw blank would take a full-depth
+   * corner bite in one turning pass; the generator refuses that unless it is
+   * told a rough already removed the bulk. Missing reads as `false`, the safe
+   * answer, and the field is never consulted on a round bar or in along mode.
+   */
+  readonly squareRoughBefore?: boolean
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -947,26 +957,6 @@ function aroundGrid(
   const angles = Array.from({ length: angular + 1 }, (_, k) => 360 * k / angular)
   const along = Array.from({ length: axial + 1 }, (_, i) => span.start + (span.end - span.start) * i / axial)
   return { along, angles }
-}
-
-/**
- * Around-mode passes around the bar need a round blank: a ring follows one
- * constant-radius surface, which a square blank does not have yet (#1045 slice
- * A leaves that to slice C). Returns the refusal the generators return, or
- * `null` when the pass may run.
- */
-function aroundSquareRefusal(
-  operationId: string,
-  stock: BarStock,
-  params: RotaryFinishParams,
-): ToolpathResult | null {
-  if (params.passDirection !== 'around' || !isSquareStock(stock)) return null
-  return {
-    operationId,
-    moves: [],
-    warnings: [{ code: 'rotaryAroundSquareUnsupported', params: { operation: operationId } }],
-    bounds: null,
-  }
 }
 
 /**
@@ -1620,6 +1610,48 @@ function rotaryTargets(
 }
 
 /**
+ * The material an around-mode finish would have to take out of a **square**
+ * blank in one turning pass, and whether that is a rough's job instead
+ * (#1045 slice C).
+ *
+ * A ring follows the model, so at each sample the finish tip is the model plus
+ * the stock it leaves. On a **raw** square blank the corners stand whole layers
+ * above that surface; the first revolution would take the lot in one turning
+ * cut -- the full-depth corner bite the along passes avoid by cutting one layer
+ * at a time. `squareRotaryTouchRadius` is the blank material the real cutter can
+ * reach at each sample's own angle, so `touch - tip` is that sample's engagement
+ * into untouched blank. The operation may remove its own stock layer plus one
+ * height-map cell (the sampler's own resolution) and no more;
+ * `params.squareRoughBefore` is the caller saying an earlier enabled rough has
+ * already cleared the bulk, which is how a square-to-round finish is reached.
+ *
+ * The rule is about **blank material**, never about the saved operation list:
+ * the generator stays a pure function of its arguments, and a direct caller
+ * that cannot say whether a rough ran gets the safe answer. A round bar and
+ * along mode return false before any sample is read, so their output is
+ * untouched.
+ */
+function squareAroundFinishNeedsRough(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  angles: readonly number[],
+  tips: readonly number[][],
+): boolean {
+  if (!isSquareStock(stock) || params.passDirection !== 'around' || params.squareRoughBefore === true) return false
+  const allowance = Math.max(0, params.stockToLeave) + Math.max(params.requestedCellSize, 0)
+  for (let k = 0; k < angles.length; k++) {
+    const top = squareRotaryTouchRadius(stock, angles[k], tool.radius, tool.type)
+    const row = tips[k]
+    for (let i = 0; i < row.length; i++) {
+      const tip = row[i]
+      if (Number.isFinite(tip) && top - tip > allowance) return true
+    }
+  }
+  return false
+}
+
+/**
  * Rotary finishing (issue #1015 slice B): passes run along the bar and step
  * round it, so a ball nose leaves its best surface along a long part.
  *
@@ -1652,9 +1684,19 @@ function rotaryTargets(
  * then a step along. Rings alternate direction so A stays within [0, 360] and
  * each ring starts where the previous one ended. A `NaN` sample is still not
  * cut, the layer links are the same emitter's, and the steep-step rule measures
- * their surface distance along the arc rather than across X/Y. A square blank is
- * refused with `rotaryAroundSquareUnsupported` (slice C adds real support); a
- * saved operation without the field keeps the along motion above byte for byte.
+ * their surface distance along the arc rather than across X/Y. A saved operation
+ * without the field keeps the along motion above byte for byte.
+ *
+ * A **square** blank supports around mode too (#1045 slice C). Each sample is
+ * already floored at its own exact retained-stub contact by `rotaryTargets`
+ * (the C2-F6 floor), so a ring near a stubbed end cannot cut the square that
+ * holds the part. Rings are separate runs -- the emitter retracts to the travel
+ * height between them -- so, unlike an along grid, no cut chord spans two ring
+ * positions and the stub's steep along profile needs no shoulder refinement
+ * here; the along *step* is the operation's own `stepover`, and the stub's
+ * angular profile is resolved by `sampleSpacing`. What a finish may not do is
+ * take a full-depth corner bite out of a raw blank, so
+ * `squareAroundFinishNeedsRough` refuses that case (see its comment).
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -1673,8 +1715,6 @@ export function generateRotaryFinish(
       bounds: null,
     }
   }
-  const squareRefusal = aroundSquareRefusal(operationId, stock, params)
-  if (squareRefusal) return squareRefusal
   const refusal = rotaryRefusal(stock, params)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
@@ -1689,6 +1729,14 @@ export function generateRotaryFinish(
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
   }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
+  if (squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
+    return {
+      operationId,
+      moves: [],
+      warnings: [{ code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationId } }],
+      bounds: null,
+    }
+  }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)
   // Every move between runs -- a turning link, the retract off a run, or the
@@ -1826,9 +1874,18 @@ export interface RotaryRoughParams extends RotaryFinishParams {
  * `passDirection: 'around'` replaces each layer's along passes with rings at one
  * along position (#1045 slice A): the per-sample `needsCut`/layer rule is the
  * along pass's, the direction alternation continues across layers (no
- * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and a square blank
- * is refused with `rotaryAroundSquareUnsupported`. Missing keeps the along
- * motion byte for byte.
+ * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and every sample
+ * reads its own angle row. Missing keeps the along motion byte for byte.
+ *
+ * A **square** blank supports around mode too (#1045 slice C): a sample is cut
+ * only when the layer radius is below `squareRotaryTouchRadius` at that
+ * sample's own angle (the along pass's air skip, applied per angle instead of
+ * per pass) and its tip is below the layer above. Because a layer is exactly
+ * one `stepdown` below the previous one and the first layer starts at the
+ * blank's corner radius, a sample can never take more than one `stepdown` out
+ * of the material standing at its angle -- the engagement bound the output
+ * guard re-checks. The layer count and radii stay counted from
+ * `barMaxRadius`, so the corners are covered from the first layer.
  */
 export function generateRotaryRough(
   operationId: string,
@@ -1841,8 +1898,6 @@ export function generateRotaryRough(
   if (tool.type !== 'ball_endmill' && tool.type !== 'flat_endmill') {
     return { operationId, moves: [], warnings: [{ code: 'rotaryToolUnsupported', params: { operation: operationId } }], bounds: null }
   }
-  const squareRefusal = aroundSquareRefusal(operationId, stock, params)
-  if (squareRefusal) return squareRefusal
   const refusal = rotaryRefusal(stock, params)
   if (refusal) {
     return { operationId, moves: [], warnings: [{ code: refusal, params: { operation: operationId } }], bounds: null }
@@ -1913,11 +1968,23 @@ export function generateRotaryRough(
     // along index, and the same `needsCut`/layer rule as an along pass: material
     // still standing at this layer is cut, a sample already at the layer radius
     // is not.
+    //
+    // A **square** blank's standing material is not the same at every angle
+    // (#1045 slice C): the corners reach `barMaxRadius` while a flat is only
+    // half the side. The along pass asks `squareRotaryTouchRadius` at its own
+    // pass angle; the ring asks it per sample at **that sample's** angle, so a
+    // layer above the material standing there is air and emits nothing. The
+    // gate is computed once per layer -- it depends on the layer radius and the
+    // angle, never on the along position -- and is `null` on a round bar, whose
+    // output stays byte for byte.
     const last = angles.length - 1
     let ring = 0
     for (let layer = 1; layer <= layers; layer++) {
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
       const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
+      const touchesMaterial = square
+        ? angles.map((angle) => layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type))
+        : null
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
       for (let i = 0; i < along.length; i++, ring++) {
@@ -1926,7 +1993,8 @@ export function generateRotaryRough(
         for (let step = 0; step <= last; step++) {
           const k = forward ? step : last - step
           const tip = tips[k][i]
-          samples.push(tip < previousRadius ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
+          const cuts = tip < previousRadius && (touchesMaterial === null || touchesMaterial[k])
+          samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
         const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
         here = emitted.here

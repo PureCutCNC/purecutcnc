@@ -356,11 +356,6 @@ export type ToolpathWarningCode =
    *  the rough would cut the whole pass down to the axis, so it refuses with
    *  no motion instead (issue #1016 C2 correction M1). */
   | 'rotaryStockToLeaveInvalid'
-  /** Around-the-bar passes were asked for on a **square** blank, which has no
-   *  constant-radius surface for a ring to follow yet (#1045 slice A; slice C
-   *  adds real support). The operation emits no motion rather than an
-   *  approximate ring. */
-  | 'rotaryAroundSquareUnsupported'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
@@ -465,7 +460,15 @@ export type ToolpathWarningCode =
    *  blank turns. A supplied or stale path that changes A while the cutter's
    *  lowest point is below that corner envelope would drive the standing
    *  corners through the cutter, so the operation is refused rather than
-   *  posted (issue #1016 C2 correction M1). */
+   *  posted (issue #1016 C2 correction M1).
+   *
+   *  #1045 slice C admits the one kind of below-envelope turn that is a real
+   *  cut: an around-the-bar pass whose own layer bound covers the material it
+   *  sweeps (a rough's layer, or a finish over stock a rough already cleared).
+   *  A turn that is not such a cut keeps this refusal, and the generator asks
+   *  the same question when an around finish would take a full corner bite out
+   *  of a raw square blank, so the operation reports it before any motion is
+   *  generated. */
   | 'postRotarySquareTurnBelowEnvelope'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'

@@ -46,8 +46,11 @@
  *    layering block: the cylinder is cut to its model radius on the first
  *    layer and that full-depth cut is repeated at every layer;
  *  - the around pass silently falling back to along -> the differing-outputs and
- *    ring-shape blocks;
- *  - the square refusal removed -> the square block.
+ *    ring-shape blocks.
+ *
+ * A square blank now generates around passes; #1045 slice C owns those
+ * (`rotarySquareAroundPasses.test.ts`), so the square block here only proves
+ * the old refusal is gone and the blank still produces motion.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryAroundPasses.test.ts
  */
@@ -647,22 +650,25 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
 }
 
 // ---------------------------------------------------------------------------
-// 7. Square blank refusal.
+// 7. Square blank: the slice-A refusal is gone (#1045 slice C supports it).
+//    The square rules themselves -- per-sample touch radius, stub floor, the
+//    finish refusal and the output guard -- live in
+//    `rotarySquareAroundPasses.test.ts`.
 // ---------------------------------------------------------------------------
 
 {
   const mesh = prism(DIGEST_SQUARE, SQUARE_SECTION, [10, 30])
   const params = { ...RING_PARAMS, alongStart: 10, alongEnd: 30 }
-  const finish = generateRotaryFinish('square-around', mesh, DIGEST_SQUARE, FLAT, { ...params, passDirection: 'around' }, {})
+  const finish = generateRotaryFinish('square-around', mesh, DIGEST_SQUARE, FLAT, {
+    ...params, passDirection: 'around', squareRoughBefore: true,
+  }, {})
   const rough = generateRotaryRough('square-around', mesh, DIGEST_SQUARE, FLAT, {
     ...params, stepdown: 3, passDirection: 'around',
   }, {})
   for (const [label, result] of [['finish', finish], ['rough', rough]] as const) {
-    assert.deepEqual(result.moves, [], `${label} square around emits no motion`)
-    assert.deepEqual(result.warnings, [
-      { code: 'rotaryAroundSquareUnsupported', params: { operation: 'square-around' } },
-    ], `${label} square around warns once and names the operation`)
-    assert.equal(result.bounds, null, `${label} square around has no bounds`)
+    assert.ok(result.moves.length > 0, `${label} square around emits motion`)
+    assert.deepEqual(result.warnings, [], `${label} square around has no warning`)
+    assert.ok(result.bounds !== null, `${label} square around has bounds`)
   }
 }
 

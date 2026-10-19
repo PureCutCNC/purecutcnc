@@ -325,6 +325,39 @@ export function squareRotaryWorkAdmitted(project: Project, operation: Operation)
 }
 
 /**
+ * A target's identity for "the same model": its source and its feature ids in
+ * a fixed order. Used by the square around rule below (#1045 slice C).
+ */
+export function operationTargetKey(target: OperationTarget): string {
+  return target.source === 'features'
+    ? `features:${[...target.featureIds].sort().join(',')}`
+    : 'stock'
+}
+
+/**
+ * True when an earlier **enabled** Rotary rough clears the same target in the
+ * same setup before this operation runs (#1045 slice C). The project's
+ * operation order is the machining order.
+ *
+ * An around finish follows the model, so on a raw square blank its first ring
+ * would take the whole standing corner in one turning pass. The finish
+ * generator refuses that case unless it is told the bulk is already gone, and
+ * the output guard asks this same question before it admits the program; one
+ * rule, asked by both. A rough needs no predecessor.
+ */
+export function rotaryRoughBefore(project: Project, operation: Operation): boolean {
+  if (operation.kind !== 'rotary_finish') return false
+  const index = project.operations.findIndex((entry) => entry.id === operation.id)
+  if (index <= 0) return false
+  const key = operationTargetKey(operation.target)
+  return project.operations.slice(0, index).some((entry) =>
+    entry.enabled
+    && entry.kind === 'rotary_rough'
+    && entry.setupId === operation.setupId
+    && operationTargetKey(entry.target) === key)
+}
+
+/**
  * Whether an operation may be generated in its setup, checked at generation
  * time as well as when a target is edited: a feature's span or face can
  * change after the operation was built, and an operation left targeting the

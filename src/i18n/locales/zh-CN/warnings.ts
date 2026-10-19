@@ -229,7 +229,6 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryBelowCentreline': '{operation}：模型在圆棒约 {along} 处、{angle}° 时低于圆棒中心线。刀具在该处停在中心线上。',
   'warnings.rotaryModelOutsideBar': '{operation}：模型的一部分位于圆棒之外。这些部分不会被加工。',
   'warnings.rotaryStockToLeaveInvalid': '{operation}：径向余量必须为零或更大的有限值，并须留下可用的采样半径。不生成任何移动。',
-  'warnings.rotaryAroundSquareUnsupported': '{operation}：方料暂不支持绕棒料旋转的走刀。请改用沿棒料方向的走刀。',
   'warnings.postMixedSetups': '程序包含来自多个装夹的加工操作（{setups}）。装夹之间需要手动翻转工件，因此每个装夹单独导出为一个程序。',
   'warnings.postSetupOperationRefused': '加工操作“{operation}”没有刀路，因为其装夹无法加工它。请在导出前修正或删除该操作。',
   'warnings.workholdingDiameter': '{operation}：{clamp} 的直径 {diameter} 小于方料的角部直径（{required}）；请加大它，或将其类型重置为卡盘。',

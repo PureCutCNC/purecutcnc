@@ -225,7 +225,6 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.rotaryBelowCentreline': '{operation} : le modèle descend sous la ligne centrale de la barre près de {along} le long de la barre, à {angle}°. L’outil s’arrête à la ligne centrale à cet endroit.',
   'warnings.rotaryModelOutsideBar': '{operation} : une partie du modèle se trouve à l’extérieur de la barre. Ces parties ne sont pas usinées.',
   'warnings.rotaryStockToLeaveInvalid': '{operation} : la surépaisseur radiale doit être une valeur finie supérieure ou égale à zéro et laisser un rayon d’échantillonnage utilisable. Aucun mouvement n’est généré.',
-  'warnings.rotaryAroundSquareUnsupported': '{operation} : les passes autour de la barre ne sont pas encore disponibles sur un brut carré. Utilisez des passes le long de la barre.',
   'warnings.postMixedSetups': 'Le programme contient des opérations de plusieurs montages ({setups}). La pièce est retournée à la main entre les montages, chaque montage est donc exporté dans son propre programme.',
   'warnings.postSetupOperationRefused': 'L’opération « {operation} » n’a pas de parcours d’outil, car son montage ne peut pas l’usiner. Corrigez ou supprimez l’opération avant d’exporter.',
   'warnings.workholdingDiameter': '{operation} : le diamètre de {clamp} ({diameter}) est inférieur aux coins du brut carré ({required}) ; agrandissez-le ou rétablissez son type sur Mandrin.',
