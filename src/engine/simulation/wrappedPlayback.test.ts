@@ -36,13 +36,23 @@
  *    and V-bit cutter, at five playback fractions and at the finish;
  *  - a Flutes-like twisted line and an around-the-bar ring, which exercise the
  *    same seam images through a different approach direction;
+ *  - an ascending ramp (the reviewer's swept-under cell), a descending ramp at
+ *    the reviewer's 0.2-mm grid, plunges, and a ramp crossing the sheet seam;
+ *  - the finish is checked for every step size `totalPathLength / k` with
+ *    `k ∈ {7, 53, 197, 1000}` and for forward/backward seek sequences, not only
+ *    for a direct seek to 100 %: the sample poses are a function of the move
+ *    and the grid alone, so the accumulated partial cuts of any stepping
+ *    sequence must union to the batch;
  *  - Frank's #1048 project (`src/engine/simulation/wrappedPlayback.fixture.camj`),
  *    loaded through the real project and toolpath path: at 2 % and 6 % no cell
  *    may be lowered past the truncated replay.
  *
  * Mutations checked: `advance()` returning immediately fails the fixture's
- * symmetric/removal check, and restoring the nearest-pose batch ceiling on a
- * partial piece fails the ascending ramp at 10 % (0.373 > one cell).
+ * symmetric/removal check; restoring the nearest-pose batch ceiling on a
+ * partial piece fails the ascending ramp at 10 % (0.373 > one cell); adding the
+ * reached pose as an extra ramp sample makes the `steps/53`, `steps/197` and
+ * `steps/1000` finishes differ from the batch on the descending ramp (the
+ * reviewer's 0.102 mm).
  *
  * Run with: npx tsx src/engine/simulation/wrappedPlayback.test.ts
  */
@@ -212,7 +222,30 @@ function assertPlaybackAtFraction(
   )
 }
 
-/** At the finish the playback must equal the batch replay exactly. */
+/**
+ * Playback step counts the finish must be independent of (issue #1048 review).
+ * The step is `totalPathLength / k`, so an accumulated partial cut lands at a
+ * different place inside the source move for every k. `7` is coarse enough to
+ * land squarely between sample poses, `1000` fine enough to land on many.
+ */
+const FINISH_STEP_COUNTS = [7, 53, 197, 1000] as const
+
+/** Forward/backward seek sequences, which also accumulate partial cuts. */
+const FINISH_SEEK_SEQUENCES: ReadonlyArray<readonly number[]> = [
+  [1],
+  [0.13, 0.51, 0.07, 0.73, 1],
+  [0.37, 0.09, 1],
+]
+
+/**
+ * At the finish the playback must equal the batch replay, for **every** way of
+ * stepping there — not only a direct seek to 100 %. The sample poses are a
+ * function of the move and the grid alone, and a piece applies exactly the
+ * poses it has reached, so the union over any sequence of pieces is the batch
+ * and the finish is frame-independent by construction. A frame that adds its
+ * own reached pose as an extra sample breaks this for a step size whose partial
+ * pieces land between sample poses.
+ */
 function assertPlaybackFinishesAsBatch(
   base: SimulationGrid,
   moves: ToolpathMove[],
@@ -226,18 +259,51 @@ function assertPlaybackFinishesAsBatch(
       applyMoveToGrid(batch, move, tool.toolRadius, tool.toolType, tool.vBitAngle)
     }
   }
-  const playback = new PlaybackController(base, moves, tool, options)
-  playback.seekToFraction(1)
-  const delta = deviation(playback.liveGrid, batch)
+
+  const runs: Array<{ name: string; play: (playback: PlaybackController) => void }> = []
+  for (const k of FINISH_STEP_COUNTS) {
+    runs.push({
+      name: `steps/${k}`,
+      play: (playback) => {
+        const step = playback.totalPathLength / k
+        for (let i = 0; i < k; i += 1) playback.advance(step)
+        // A float remainder below the last piece's resolution may leave the
+        // controller a hair short of `totalPathLength`; finish it so the test
+        // measures the accumulated cuts, not floating-point bookkeeping.
+        if (!playback.isFinished()) playback.advance(playback.totalPathLength)
+      },
+    })
+  }
+  for (const sequence of FINISH_SEEK_SEQUENCES) {
+    runs.push({
+      name: `seek/${sequence.join('-')}`,
+      play: (playback) => {
+        for (const fraction of sequence) playback.seekToFraction(fraction)
+      },
+    })
+  }
+
+  for (const run of runs) {
+    const playback = new PlaybackController(base, moves, tool, options)
+    run.play(playback)
+    assert(playback.isFinished(), `${label}/${run.name}: playback must be finished`)
+    const delta = deviation(playback.liveGrid, batch)
+    // The batch and a stepped playback reach the same fixed point; a float
+    // epsilon is allowed, agreement to the float32 noise floor is the contract.
+    assert(
+      delta.max <= 1e-9,
+      `${label}/${run.name}: finished playback must equal the batch `
+      + `(max ${delta.max} at ${delta.cells} cells; ${delta.loweredBeyondMax} below the batch)`,
+    )
+  }
+
+  const first = new PlaybackController(base, moves, tool, options)
+  first.seekToFraction(1)
   assert(
-    delta.max === 0,
-    `${label}: finished playback must equal the batch exactly (max ${delta.max} at ${delta.cells} cells)`,
-  )
-  assert(
-    removedCells(playback.liveGrid, base) > 0,
+    removedCells(first.liveGrid, base) > 0,
     `${label}: finished playback must remove material, not leave the stock untouched`,
   )
-  console.log(`  ${label}: finished playback equals the batch exactly`)
+  console.log(`  ${label}: finished playback equals the batch for ${runs.length} step/seek sequences`)
 }
 
 // ── a hand-built thread: three turns, one pitch of along advance per turn ──
@@ -377,6 +443,83 @@ function testAscendingRamp(): void {
   console.log('ascending ramp: PASSED')
 }
 
+// ── a descending ramp: the frame-dependent finish the reviewer reported ──
+
+/**
+ * The reviewer's descending case (issue #1048 review): a radius-5 bar at
+ * 0.2-mm cells, a radius-1 cutter, (2, 0, 4) → (10, 0, 1), advanced by
+ * `totalPathLength / 197`. The old ramp path added the pose each partial piece
+ * had reached as an extra sample. Those poses are absent from the batch's
+ * sample set, so a sequence of partial cuts landed 0.102 mm deeper than the
+ * batch. The sample poses are now fixed by the move and the grid, and every
+ * step count below must finish exactly on the batch.
+ */
+function testDescendingRamp(): void {
+  console.log('Testing a descending ramp at k = 7, 53, 197, 1000 (flat, ball, V-bit)...')
+  const period = 2 * Math.PI * 5
+  const grid = roundGrid(period, 20, 100)
+  assert(Math.abs(grid.cellSize - 0.2) < 1e-12, `fixture: the cell is ${grid.cellSize}`)
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 2, y: 0, z: 4 }, to: { x: 10, y: 0, z: 1 } },
+  ]
+  const profiles: Array<{ label: string; toolType: ToolType; vBitAngle: number | null }> = [
+    { label: 'flat', toolType: 'flat_endmill', vBitAngle: null },
+    { label: 'ball', toolType: 'ball_endmill', vBitAngle: null },
+    { label: 'v-bit', toolType: 'v_bit', vBitAngle: 30 },
+  ]
+  for (const profile of profiles) {
+    const tool: PlaybackToolInfo = { toolType: profile.toolType, toolRadius: 1, vBitAngle: profile.vBitAngle }
+    assertPlaybackFinishesAsBatch(grid, moves, tool, { maxSegmentLength: 2 }, `descending/${profile.label}`)
+  }
+  console.log('descending ramp: PASSED')
+}
+
+// ── plunges, and a ramp crossing the sheet seam ─────────────────────
+
+function testPlunges(): void {
+  console.log('Testing plunges (flat, ball, V-bit)...')
+  const period = 2 * Math.PI * 5
+  const grid = roundGrid(period, 20, 140)
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 2, y: 0, z: 8 }, to: { x: 2, y: 0, z: 5 } },
+    { kind: 'plunge', from: { x: 2, y: 0, z: 5 }, to: { x: 2, y: 0, z: 1 } },
+    { kind: 'rapid', from: { x: 2, y: 0, z: 1 }, to: { x: 6, y: 0, z: 1 } },
+    { kind: 'plunge', from: { x: 6, y: 0, z: 1 }, to: { x: 6, y: 0, z: 2.5 } },
+  ]
+  const profiles: Array<{ label: string; toolType: ToolType; vBitAngle: number | null }> = [
+    { label: 'flat', toolType: 'flat_endmill', vBitAngle: null },
+    { label: 'ball', toolType: 'ball_endmill', vBitAngle: null },
+    { label: 'v-bit', toolType: 'v_bit', vBitAngle: 30 },
+  ]
+  for (const profile of profiles) {
+    const tool: PlaybackToolInfo = { toolType: profile.toolType, toolRadius: 1, vBitAngle: profile.vBitAngle }
+    assertPlaybackFinishesAsBatch(grid, moves, tool, { maxSegmentLength: 1 }, `plunge/${profile.label}`)
+  }
+  console.log('plunges: PASSED')
+}
+
+function testSeamCrossingRamp(): void {
+  console.log('Testing a ramp that crosses the sheet seam (flat, ball, V-bit)...')
+  const period = 2 * Math.PI * 5
+  const grid = roundGrid(period, 20, 140)
+  const low = -period / 2
+  // Starts just outside the sheet's low seam and finishes just inside it, so
+  // the +period image is the copy that reaches the first part of the motion.
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 2, y: low - 0.4, z: 3.5 }, to: { x: 8, y: low + 0.4, z: 1.5 } },
+  ]
+  const profiles: Array<{ label: string; toolType: ToolType; vBitAngle: number | null }> = [
+    { label: 'flat', toolType: 'flat_endmill', vBitAngle: null },
+    { label: 'ball', toolType: 'ball_endmill', vBitAngle: null },
+    { label: 'v-bit', toolType: 'v_bit', vBitAngle: 30 },
+  ]
+  for (const profile of profiles) {
+    const tool: PlaybackToolInfo = { toolType: profile.toolType, toolRadius: 1, vBitAngle: profile.vBitAngle }
+    assertPlaybackFinishesAsBatch(grid, moves, tool, { maxSegmentLength: 1.5 }, `seam/${profile.label}`)
+  }
+  console.log('seam-crossing ramp: PASSED')
+}
+
 // ── Frank's #1048 project, through the real project/toolpath path ────
 
 interface ThreadFixture {
@@ -449,4 +592,7 @@ testThread()
 testTwistedLine()
 testRing()
 testAscendingRamp()
+testDescendingRamp()
+testPlunges()
+testSeamCrossingRamp()
 testFrankFixture()

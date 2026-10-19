@@ -385,7 +385,7 @@ export class PlaybackController {
       // move: slower moves (ratio < 1) cost more budget per unit of geometry.
       const budgetToFinish = available / ratio
 
-      if (remaining >= budgetToFinish) {
+      if (remaining >= budgetToFinish - 1e-9) {
         if (isCuttingMove(move) && this.lastMoveApplied !== this.moveIndex) {
           const result = applyMoveToGrid(
             this.liveGrid,
@@ -459,7 +459,9 @@ export class PlaybackController {
     const clampedTarget = Math.max(0, Math.min(this.totalPathLength, target))
     const delta = clampedTarget - this.distanceTraveled
 
-    if (delta > 1e-9 && !this.finished) {
+    if (delta > 0 && !this.finished) {
+      // A forward delta, however small, is remaining geometry: stepping it is
+      // what finishes a seek that lands within a rounding step of the end.
       return this.step(delta, false)
     }
     if (delta >= -1e-9) {

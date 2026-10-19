@@ -347,6 +347,30 @@ export function wrappedSweepStep(
   return step / pathLength
 }
 
+/** First index of the ascending `sorted` array whose value is >= `value`. */
+function sampleLowerBound(sorted: readonly number[], value: number): number {
+  let low = 0
+  let high = sorted.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (sorted[mid] < value - 1e-12) low = mid + 1
+    else high = mid
+  }
+  return low
+}
+
+/** First index of the ascending `sorted` array whose value is > `value`. */
+function sampleUpperBound(sorted: readonly number[], value: number): number {
+  let low = 0
+  let high = sorted.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (sorted[mid] <= value + 1e-12) low = mid + 1
+    else high = mid
+  }
+  return low
+}
+
 /** Every absolute ramp sample fraction of `sweep`, endpoint included. */
 export function wrappedSweepSampleFractions(
   grid: SimulationGrid,
@@ -384,7 +408,7 @@ export function wrappedSweepSampleFractions(
  * replay, one elapsed piece (or partial piece) for playback. `sweep` is the
  * source move the cutter is resolved against, so a split path uses the same
  * cutter parameters as the unsplit one, and `elapsed` is the fraction of
- * `sweep` that this application starts from (1 for a batch replay). Every cell
+ * `sweep` that this application has reached (1 for a batch replay). Every cell
  * inside the applied piece's swept footprint is evaluated against *all* the
  * source move's periodic cutter images, and the intervals are applied until
  * their cut reaches a fixed point (F8b):
@@ -401,21 +425,26 @@ export function wrappedSweepSampleFractions(
  *    (4.95, -0.258) of the 3 mm rise from (2,0,1) to (10,0,4) is reached at
  *    x ≈ 3.95 with its bottom at 1.731, while the nearest pose is x = 4.95 at
  *    2.106. A later pose cannot put material back, so the batch must cut at the
- *    swept minimum too. The sweep is sampled at absolute poses `halfCell /
- *    |dZ/dS|` apart: the Z difference between samples is at most half a cell,
- *    which is the grid's height resolution. Each cell also evaluates its own
- *    nearest pose, so a cell between two samples is still cut to the closest
- *    approach. The sample positions depend only on the source move's slope, so
- *    a truncated replay and every playback piece evaluate the same prefix set,
- *    and the finished playback is exactly the batch. The source move's sample
- *    grid ends at the move end, included only at `elapsed = 1`; a partial piece
- *    adds the pose it has reached, which for a monotone-Z move cannot cut below
- *    the batch's swept minimum. A move whose Z
- *    changes by less than one cell across the cutter's diameter uses the exact
- *    single-pose path (the nearest pose is then within the grid's resolution);
- *    a part-played *horizontal* move keeps that path clamped to
- *    `min(t, elapsed)`, so a thread's next turn or a ring's far seam image
- *    cannot cut a slot the cutter has not reached.
+ *    swept minimum too. The sweep has **one fixed set of sample poses**, a
+ *    function of the source move and the grid only (half a cell of Z apart,
+ *    {@link wrappedSweepSampleFractions}); the batch applies all of them and a
+ *    playback piece applies exactly those with `t <= elapsed` plus each cell's
+ *    nearest pose once the piece has reached it. It never adds the reached
+ *    endpoint as an extra pose, so the union over any sequence of pieces is the
+ *    batch set and the finished playback equals the batch for every step size;
+ *    playback may lag the true pose by under one sample step. Cells are only
+ *    evaluated against the poses whose cutter footprint can reach their current
+ *    top (the along/across index range below), so the cost is proportional to
+ *    the cutter's footprint, not the move's length. A move whose Z changes by
+ *    less than one cell across the cutter's diameter uses the exact single-pose
+ *    path (the nearest pose is then within the grid's resolution); a part-played
+ *    *horizontal* move keeps that path clamped to `min(t, elapsed)`, so a
+ *    thread's next turn or a ring's far seam image cannot cut a slot the cutter
+ *    has not reached. Every cutter solid lies inside the cylinder of radius
+ *    `toolRadius` about its axis, so a pose can only reach a cell whose current
+ *    top is `h` when its along offset is within `toolRadius` and
+ *    `h·|sin(angle)| <= toolRadius`; that is the per-cell index range, widened
+ *    as the fixed point lowers `h`, for axial and circumferential motion alike.
  *  - A cell at or below the deepest tip this move can reach (`tipFloor`) can
  *    never be lowered, so it is rejected before the trigonometric work. The
  *    across box uses the tight profile-specific reach from
@@ -495,10 +524,11 @@ function applyWrappedMoveKernel(
   const reached = partial ? (elapsed > 0 ? elapsed : 0) : 1
 
   // Ramps are swept at sample poses (see the doc comment). The poses are an
-  // absolute property of the source move, so a truncated replay and every
-  // playback piece evaluate the same set. Every piece applies the *whole*
-  // prefix: an interval that was inactive at the incoming top can become active
-  // after another pose lowers the cell, and the fixed point must see it.
+  // absolute property of the source move and the grid — never of the playback
+  // frame — so every piece applies exactly the sub-set with `t <= elapsed` and
+  // the union over any sequence of pieces is the batch set. The piece's reached
+  // endpoint is not added as a pose: playback may lag the true pose by less
+  // than one sample step, and adding it would make the finish frame-dependent.
   const ramp = wrappedNeedsSweep(grid, sweep, toolRadius)
   const rampPrefix: number[] = []
   if (ramp) {
@@ -506,16 +536,12 @@ function applyWrappedMoveKernel(
       if (t > reached + 1e-12) continue
       rampPrefix.push(t)
     }
-    // The cutter is at `reached` right now, so the partial piece must cut that
-    // pose even when it falls between two samples. A monotone-Z move makes it
-    // no deeper than the batch's swept minimum, so the finish stays exact.
-    if (partial && reached > 0 && (rampPrefix.length === 0 || reached > rampPrefix[rampPrefix.length - 1] + 1e-12)) {
-      rampPrefix.push(reached)
-    }
   }
 
   // Reused per cell, so the hot loop stays allocation-free. `pose*` holds every
-  // interval of the reached prefix; `cap*` is the horizontal batch ceiling.
+  // interval already evaluated for this cell; `seenSample` stamps which absolute
+  // poses they came from, so a widening pass never evaluates one twice. `cap*`
+  // is the horizontal batch ceiling.
   const reachedLo = [0, 0, 0]
   const reachedHi = [0, 0, 0]
   const capLo = [0, 0, 0]
@@ -525,8 +551,12 @@ function applyWrappedMoveKernel(
   const imageReached = [false, false, false]
   const imageLo = [0, 0, 0]
   const imageHi = [0, 0, 0]
-  const poseLo: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 1)) : []
-  const poseHi: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 1)) : []
+  // + 2 leaves room for the nearest-pose intervals and a sample that coincides
+  // with one of them (duplicates only repeat an interval already in the set).
+  const poseLo: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 2)) : []
+  const poseHi: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 2)) : []
+  const seenSample = ramp ? new Uint32Array(rampPrefix.length) : new Uint32Array(0)
+  let cellSerial = 0
 
   let changed = 0
   let dirtyColMin = grid.cols
@@ -573,64 +603,25 @@ function applyWrappedMoveKernel(
         }
 
         if (ramp) {
-          // The reached prefix's whole interval set, in one fixed point. The
+          // The source move's fixed pose set, resolved against this cell. The
           // sweep samples carry the Z variation; each image's closest approach
           // covers the along/across geometry between samples. Both are absolute
           // poses of the source move, so a truncated replay and every piece here
-          // are prefix subsets of the one batch set.
+          // evaluate sub-sets of the one batch set.
           let poseCount = 0
-          // Only the samples whose axial position is within the cutter radius
-          // can reach this ray; skipping the rest is exact and keeps the hot
-          // loop proportional to the cutter's footprint, not the move's length.
-          let firstSample = 0
-          let lastSample = rampPrefix.length - 1
-          if (alongDelta !== 0) {
-            const tA = (alongCell - toolRadius - alongFrom) / alongDelta
-            const tB = (alongCell + toolRadius - alongFrom) / alongDelta
-            const tLow = Math.min(tA, tB)
-            const tHigh = Math.max(tA, tB)
-            // Binary search the prefix by value: the last entry can be the move
-            // end (1), which is not a multiple of the step.
-            let low = 0
-            let high = rampPrefix.length
-            while (low < high) {
-              const mid = (low + high) >>> 1
-              if (rampPrefix[mid] < tLow - 1e-12) low = mid + 1
-              else high = mid
-            }
-            firstSample = low
-            low = 0
-            high = rampPrefix.length
-            while (low < high) {
-              const mid = (low + high) >>> 1
-              if (rampPrefix[mid] <= tHigh + 1e-12) low = mid + 1
-              else high = mid
-            }
-            lastSample = low - 1
-          } else if (Math.abs(alongCell - alongFrom) > toolRadius) {
-            continue
-          }
-          for (let sample = firstSample; sample <= lastSample; sample += 1) {
-            const t = rampPrefix[sample]
-            for (let image = 0; image < imageCount; image += 1) {
-              if (wrappedRayInterval(
-                isBall, toolType, toolRadius, vBitAngle,
-                top, alongCell, acrossCell,
-                alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
-                t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
-              )) {
-                poseLo[poseCount] = wrappedRayScratch.lo
-                poseHi[poseCount] = wrappedRayScratch.hi
-                poseCount += 1
-              }
-            }
-          }
+          cellSerial += 1
+          const serial = cellSerial
+
+          // Each image's closest approach is a pose of the source move. It is
+          // part of this piece only once the piece has reached it; a future pose
+          // belongs to the piece that reaches it.
           for (let image = 0; image < imageCount; image += 1) {
-            let t = tBase - shifts[image] * acrossDelta * invSweepLengthSq
-            if (t < 0) t = 0
-            else if (t > 1) t = 1
-            // A pose beyond the reached fraction is a future cut, not this
-            // piece's; it belongs to the piece that reaches it.
+            let t = 0
+            if (!sweepStationary) {
+              t = tBase - shifts[image] * acrossDelta * invSweepLengthSq
+              if (t < 0) t = 0
+              else if (t > 1) t = 1
+            }
             if (t > reached + 1e-12) continue
             if (wrappedRayInterval(
               isBall, toolType, toolRadius, vBitAngle,
@@ -643,6 +634,118 @@ function applyWrappedMoveKernel(
               poseCount += 1
             }
           }
+
+          // Every cutter solid lies inside the cylinder of radius `toolRadius`
+          // about its axis, so a pose can only reach this cell's *current* top
+          // `h` when its along offset is within `toolRadius` and, across the
+          // unrolled sheet, `|h·sin(angle)| <= sqrt(toolRadius² - along²)`.
+          // `alongMin` is the smallest along offset the source move can bring
+          // the cutter to for this cell, so the bound below is the widest across
+          // reach any pose can have here. That gives the index range of `t`
+          // worth evaluating — for axial and circumferential motion alike. The
+          // range widens as the fixed point lowers the cell, so passes repeat
+          // until the top stops moving; each sample is still evaluated at most
+          // once per cell.
+          let alongMin: number
+          if (alongDelta !== 0) {
+            let tAlong = (alongCell - alongFrom) / alongDelta
+            if (tAlong < 0) tAlong = 0
+            else if (tAlong > 1) tAlong = 1
+            alongMin = Math.abs(alongCell - (alongFrom + alongDelta * tAlong))
+          } else {
+            alongMin = Math.abs(alongCell - alongFrom)
+          }
+          const acrossSideSq = toolRadius * toolRadius - alongMin * alongMin
+          const acrossSideMax = acrossSideSq > 0 ? Math.sqrt(acrossSideSq) : 0
+          for (let pass = 0; pass <= rampPrefix.length + 1; pass += 1) {
+            const reachAngle = nextTop > acrossSideMax ? Math.asin(acrossSideMax / nextTop) : Math.PI / 2
+            const acrossReachForCell = reachAngle * frameRadius
+            let alongReachable = true
+            let alongFirst = 0
+            let alongLast = rampPrefix.length - 1
+            if (alongDelta !== 0) {
+              const tA = (alongCell - toolRadius - alongFrom) / alongDelta
+              const tB = (alongCell + toolRadius - alongFrom) / alongDelta
+              alongFirst = sampleLowerBound(rampPrefix, Math.min(tA, tB))
+              alongLast = sampleUpperBound(rampPrefix, Math.max(tA, tB)) - 1
+            } else if (Math.abs(alongCell - alongFrom) > toolRadius) {
+              alongReachable = false
+            }
+            let rangeFirst = rampPrefix.length
+            let rangeLast = -1
+            if (alongReachable) {
+              for (let image = 0; image < imageCount; image += 1) {
+                let first = alongFirst
+                let last = alongLast
+                if (acrossDelta !== 0) {
+                  const tA = (acrossCell - acrossReachForCell - acrossFrom - shifts[image]) / acrossDelta
+                  const tB = (acrossCell + acrossReachForCell - acrossFrom - shifts[image]) / acrossDelta
+                  first = Math.max(first, sampleLowerBound(rampPrefix, Math.min(tA, tB)))
+                  last = Math.min(last, sampleUpperBound(rampPrefix, Math.max(tA, tB)) - 1)
+                } else if (Math.abs(acrossCell - acrossFrom - shifts[image]) > acrossReachForCell) {
+                  continue
+                }
+                if (first > last) continue
+                if (first < rangeFirst) rangeFirst = first
+                if (last > rangeLast) rangeLast = last
+              }
+            }
+            if (rangeLast < rangeFirst) {
+              // The nearest pose may already have lowered the cell below the
+              // reach this pass was computed at. Do not give up: the next pass
+              // recomputes the range at the lowered top and may include poses
+              // this one did not.
+              const candidate = poseCount > 0
+                ? fixedPointTop(poseLo, poseHi, poseCount, top, stockBottomZ)
+                : nextTop
+              if (candidate >= nextTop - 1e-9) break
+              nextTop = candidate
+              continue
+            }
+
+            // Walk the range from the deepest tip towards the shallow end: a
+            // sample at or above the cell's current best top cannot lower it
+            // (every profile's interval starts at or above its own tip), and
+            // every later sample in this order is at least as high, so the walk
+            // stops there. The best top is updated as intervals come in, so the
+            // first active sample ends the pass; the fixed point after the walk
+            // still re-applies the intervals already collected, which is what
+            // lets a previously inert sample become active when the cell drops.
+            let scanTop = nextTop
+            const direction = sweepDz >= 0 ? 1 : -1
+            const firstSample = direction > 0 ? rangeFirst : rangeLast
+            const lastSample = direction > 0 ? rangeLast : rangeFirst
+            for (let sample = firstSample; direction > 0 ? sample <= lastSample : sample >= lastSample; sample += direction) {
+              const t = rampPrefix[sample]
+              if (sweepZ0 + sweepDz * t >= scanTop) break
+              if (seenSample[sample] === serial) continue
+              seenSample[sample] = serial
+              for (let image = 0; image < imageCount; image += 1) {
+                if (wrappedRayInterval(
+                  isBall, toolType, toolRadius, vBitAngle,
+                  top, alongCell, acrossCell,
+                  alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
+                  t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+                )) {
+                  const intervalLo = wrappedRayScratch.lo
+                  const intervalHi = wrappedRayScratch.hi
+                  poseLo[poseCount] = intervalLo
+                  poseHi[poseCount] = intervalHi
+                  poseCount += 1
+                  if (scanTop <= intervalHi && intervalLo < scanTop - 1e-9) {
+                    scanTop = intervalLo > stockBottomZ ? intervalLo : stockBottomZ
+                  }
+                }
+              }
+            }
+
+            const candidate = poseCount > 0
+              ? fixedPointTop(poseLo, poseHi, poseCount, top, stockBottomZ)
+              : nextTop
+            if (candidate >= nextTop - 1e-9) break
+            nextTop = candidate
+          }
+
           if (poseCount > 0) {
             nextTop = fixedPointTop(poseLo, poseHi, poseCount, top, stockBottomZ)
           }
