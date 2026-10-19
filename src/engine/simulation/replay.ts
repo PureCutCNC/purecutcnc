@@ -348,9 +348,9 @@ export function wrappedSweepStep(
 }
 
 /** First index of the ascending `sorted` array whose value is >= `value`. */
-function sampleLowerBound(sorted: readonly number[], value: number): number {
+function sampleLowerBound(sorted: readonly number[], value: number, length = sorted.length): number {
   let low = 0
-  let high = sorted.length
+  let high = length
   while (low < high) {
     const mid = (low + high) >>> 1
     if (sorted[mid] < value - 1e-12) low = mid + 1
@@ -360,9 +360,9 @@ function sampleLowerBound(sorted: readonly number[], value: number): number {
 }
 
 /** First index of the ascending `sorted` array whose value is > `value`. */
-function sampleUpperBound(sorted: readonly number[], value: number): number {
+function sampleUpperBound(sorted: readonly number[], value: number, length = sorted.length): number {
   let low = 0
-  let high = sorted.length
+  let high = length
   while (low < high) {
     const mid = (low + high) >>> 1
     if (sorted[mid] <= value + 1e-12) low = mid + 1
@@ -377,8 +377,55 @@ export function wrappedSweepSampleFractions(
   sweep: ToolpathMove,
   toolRadius: number,
 ): number[] {
+  return sweepScheduleFor(grid, sweep, toolRadius).fractions.slice()
+}
+
+/**
+ * The ramp sample schedule of one source move (issue #1048 correction 3).
+ *
+ * Playback applies the same source move once per rendered frame — dozens of
+ * times for a long plunge or ramp — and every piece used to re-derive the
+ * identical absolute schedule and allocate it afresh. The schedule is a pure
+ * function of the source move and the grid (it is absolute precisely so batch
+ * and playback agree), so it is cached per move object and per grid cell size.
+ * A move that needs no sweep caches an empty schedule; a move that does caches
+ * one array reused by every piece.
+ */
+interface SweepSchedule {
+  cellSize: number
+  toolRadius: number
+  fractions: readonly number[]
+}
+
+const EMPTY_SCHEDULE: readonly number[] = []
+const sweepSchedules = new WeakMap<ToolpathMove, SweepSchedule[]>()
+
+function sweepScheduleFor(
+  grid: SimulationGrid,
+  sweep: ToolpathMove,
+  toolRadius: number,
+): SweepSchedule {
+  const cellSize = grid.cellSize
+  let entries = sweepSchedules.get(sweep)
+  if (entries) {
+    for (const entry of entries) {
+      if (entry.cellSize === cellSize && entry.toolRadius === toolRadius) return entry
+    }
+  } else {
+    entries = []
+    sweepSchedules.set(sweep, entries)
+  }
+
   const tStep = wrappedSweepStep(grid, sweep, toolRadius)
-  if (!(tStep > 0)) return []
+  const fractions: readonly number[] = tStep > 0
+    ? buildSweepFractions(tStep)
+    : EMPTY_SCHEDULE
+  const entry = { cellSize, toolRadius, fractions }
+  entries.push(entry)
+  return entry
+}
+
+function buildSweepFractions(tStep: number): number[] {
   const out: number[] = []
   for (let k = 0; ; k += 1) {
     const t = k * tStep
@@ -522,6 +569,16 @@ function applyWrappedMoveKernel(
   // move, so the finished playback takes the batch path bit for bit.
   const partial = elapsed < 1
   const reached = partial ? (elapsed > 0 ? elapsed : 0) : 1
+  // A flat/drill cutter at a constant Z whose across position does not change
+  // removes along the same ray at every pose: its interval's lower end is
+  // `tip / cos(angle)`, a function of the across angle only. The batch ceiling
+  // of a partial move therefore cannot be deeper than the reached pose's own
+  // fixed point, and need not be evaluated. An across move (a thread's rotation,
+  // a ring) still needs it, as does a ball/V-bit whose entry depends on the along
+  // offset, and any ramp.
+  const capRedundant = sweepDz === 0
+    && acrossDelta === 0
+    && (toolType === 'flat_endmill' || toolType === 'drill')
 
   // Ramps are swept at sample poses (see the doc comment). The poses are an
   // absolute property of the source move and the grid — never of the playback
@@ -529,14 +586,18 @@ function applyWrappedMoveKernel(
   // the union over any sequence of pieces is the batch set. The piece's reached
   // endpoint is not added as a pose: playback may lag the true pose by less
   // than one sample step, and adding it would make the finish frame-dependent.
-  const ramp = wrappedNeedsSweep(grid, sweep, toolRadius)
-  const rampPrefix: number[] = []
-  if (ramp) {
-    for (const t of wrappedSweepSampleFractions(grid, sweep, toolRadius)) {
-      if (t > reached + 1e-12) continue
-      rampPrefix.push(t)
-    }
-  }
+  //
+  // The schedule itself is cached per source move (correction 3): only the
+  // prefix length this piece has reached is recomputed, by binary search, so a
+  // ramp that is applied once per frame allocates no schedule and derives no
+  // fractions again. A stationary move (a vertical plunge, whose footprint does
+  // not change with `t`) has an empty schedule and keeps the nearest-pose path.
+  const schedule = sweepScheduleFor(grid, sweep, toolRadius)
+  const fractions = schedule.fractions
+  const ramp = fractions.length > 0
+  const rampPrefixLength = ramp && reached < 1
+    ? sampleUpperBound(fractions, reached)
+    : fractions.length
 
   // Reused per cell, so the hot loop stays allocation-free. `pose*` holds every
   // interval already evaluated for this cell; `seenSample` stamps which absolute
@@ -546,16 +607,11 @@ function applyWrappedMoveKernel(
   const reachedHi = [0, 0, 0]
   const capLo = [0, 0, 0]
   const capHi = [0, 0, 0]
-  const imageT = [0, 0, 0]
-  const imageFuture = [false, false, false]
-  const imageReached = [false, false, false]
-  const imageLo = [0, 0, 0]
-  const imageHi = [0, 0, 0]
   // + 2 leaves room for the nearest-pose intervals and a sample that coincides
   // with one of them (duplicates only repeat an interval already in the set).
-  const poseLo: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 2)) : []
-  const poseHi: number[] = ramp ? new Array<number>(imageCount * (rampPrefix.length + 2)) : []
-  const seenSample = ramp ? new Uint32Array(rampPrefix.length) : new Uint32Array(0)
+  const poseLo: number[] = ramp ? new Array<number>(imageCount * (rampPrefixLength + 2)) : []
+  const poseHi: number[] = ramp ? new Array<number>(imageCount * (rampPrefixLength + 2)) : []
+  const seenSample = ramp ? new Uint32Array(rampPrefixLength) : new Uint32Array(0)
   let cellSerial = 0
 
   let changed = 0
@@ -657,21 +713,21 @@ function applyWrappedMoveKernel(
           }
           const acrossSideSq = toolRadius * toolRadius - alongMin * alongMin
           const acrossSideMax = acrossSideSq > 0 ? Math.sqrt(acrossSideSq) : 0
-          for (let pass = 0; pass <= rampPrefix.length + 1; pass += 1) {
+          for (let pass = 0; pass <= rampPrefixLength + 1; pass += 1) {
             const reachAngle = nextTop > acrossSideMax ? Math.asin(acrossSideMax / nextTop) : Math.PI / 2
             const acrossReachForCell = reachAngle * frameRadius
             let alongReachable = true
             let alongFirst = 0
-            let alongLast = rampPrefix.length - 1
+            let alongLast = rampPrefixLength - 1
             if (alongDelta !== 0) {
               const tA = (alongCell - toolRadius - alongFrom) / alongDelta
               const tB = (alongCell + toolRadius - alongFrom) / alongDelta
-              alongFirst = sampleLowerBound(rampPrefix, Math.min(tA, tB))
-              alongLast = sampleUpperBound(rampPrefix, Math.max(tA, tB)) - 1
+              alongFirst = sampleLowerBound(fractions, Math.min(tA, tB), rampPrefixLength)
+              alongLast = sampleUpperBound(fractions, Math.max(tA, tB), rampPrefixLength) - 1
             } else if (Math.abs(alongCell - alongFrom) > toolRadius) {
               alongReachable = false
             }
-            let rangeFirst = rampPrefix.length
+            let rangeFirst = rampPrefixLength
             let rangeLast = -1
             if (alongReachable) {
               for (let image = 0; image < imageCount; image += 1) {
@@ -680,8 +736,8 @@ function applyWrappedMoveKernel(
                 if (acrossDelta !== 0) {
                   const tA = (acrossCell - acrossReachForCell - acrossFrom - shifts[image]) / acrossDelta
                   const tB = (acrossCell + acrossReachForCell - acrossFrom - shifts[image]) / acrossDelta
-                  first = Math.max(first, sampleLowerBound(rampPrefix, Math.min(tA, tB)))
-                  last = Math.min(last, sampleUpperBound(rampPrefix, Math.max(tA, tB)) - 1)
+                  first = Math.max(first, sampleLowerBound(fractions, Math.min(tA, tB), rampPrefixLength))
+                  last = Math.min(last, sampleUpperBound(fractions, Math.max(tA, tB), rampPrefixLength) - 1)
                 } else if (Math.abs(acrossCell - acrossFrom - shifts[image]) > acrossReachForCell) {
                   continue
                 }
@@ -716,7 +772,7 @@ function applyWrappedMoveKernel(
             const firstSample = direction > 0 ? rangeFirst : rangeLast
             const lastSample = direction > 0 ? rangeLast : rangeFirst
             for (let sample = firstSample; direction > 0 ? sample <= lastSample : sample >= lastSample; sample += direction) {
-              const t = rampPrefix[sample]
+              const t = fractions[sample]
               if (sweepZ0 + sweepDz * t >= scanTop) break
               if (seenSample[sample] === serial) continue
               seenSample[sample] = serial
@@ -769,49 +825,85 @@ function applyWrappedMoveKernel(
               else if (t > 1) t = 1
             }
             const future = partial && t > reached
-            if (partial) {
-              imageT[image] = t
-              imageFuture[image] = future
-              if (future) anyFuture = true
-            }
-            if (wrappedRayInterval(
-              isBall, toolType, toolRadius, vBitAngle,
-              top, alongCell, acrossCell,
-              alongFrom, alongDelta, acrossFrom, acrossDelta, imageShift,
-              future ? reached : t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
-            )) {
-              const intervalLo = wrappedRayScratch.lo
-              const intervalHi = wrappedRayScratch.hi
-              reachedLo[reachedCount] = intervalLo
-              reachedHi[reachedCount] = intervalHi
-              reachedCount += 1
-              if (partial) {
-                imageReached[image] = true
-                imageLo[image] = intervalLo
-                imageHi[image] = intervalHi
+            if (future) anyFuture = true
+            // The interval test is inlined here, not routed through
+            // `wrappedRayInterval`: this is the per-cell hot path for every
+            // horizontal move, i.e. almost all playback of an ordinary job
+            // (correction 3). The helper's argument marshalling measured a
+            // large share of this job's frame cost when every cell paid it.
+            const poseT = future ? reached : t
+            const toolCenterZ = sweepStationary ? stationaryZ : sweepZ0 + sweepDz * poseT
+            let intervalLo = 0
+            let intervalHi = 0
+            if (top > toolCenterZ) {
+              const alongOffset = alongCell - (alongFrom + alongDelta * poseT)
+              if (alongOffset <= toolRadius && alongOffset >= -toolRadius) {
+                const angle = (acrossCell - (acrossFrom + imageShift + acrossDelta * poseT)) * invFrameRadius
+                const absAngle = angle < 0 ? -angle : angle
+                if (absAngle < Math.PI / 2) {
+                  let hit = true
+                  if (isBall && toolCenterZ > 0) {
+                    const c = toolCenterZ + toolRadius
+                    const absAngleSq = absAngle * absAngle
+                    const sinLower = absAngle - (absAngleSq * absAngle) / 6
+                    let loLower: number
+                    if (c * sinLower > toolRadius) {
+                      loLower = c
+                    } else {
+                      const k = (c * c) / (2 * toolRadius) - c / 2 - (c * c * absAngleSq) / (6 * toolRadius)
+                      loLower = toolCenterZ + (k > 0 ? absAngleSq * k : 0)
+                    }
+                    hit = top > loLower
+                  }
+                  if (hit) {
+                    const interval = cutterRayIntervalInPlace(
+                      toolType, toolRadius, toolCenterZ, vBitAngle, alongOffset, angle,
+                    )
+                    if (interval !== null) {
+                      intervalLo = interval.lo
+                      intervalHi = interval.hi
+                      reachedLo[reachedCount] = intervalLo
+                      reachedHi[reachedCount] = intervalHi
+                      reachedCount += 1
+                    }
+                  }
+                }
               }
-            } else if (partial) {
-              imageReached[image] = false
             }
           }
           if (reachedCount === 0) continue
-          nextTop = fixedPointTop(reachedLo, reachedHi, reachedCount, top, stockBottomZ)
-          if (anyFuture && nextTop < top - 1e-9) {
+          // The overwhelmingly common cell has one event; folding it here keeps
+          // the per-cell cost at the inline kernel's (correction 3).
+          if (reachedCount === 1) {
+            if (top <= reachedHi[0]) {
+              const candidate = reachedLo[0] > stockBottomZ ? reachedLo[0] : stockBottomZ
+              if (candidate < top - 1e-9) nextTop = candidate
+            }
+          } else {
+            nextTop = fixedPointTop(reachedLo, reachedHi, reachedCount, top, stockBottomZ)
+          }
+          if (!capRedundant && anyFuture && nextTop < top - 1e-9) {
+            // The ceiling is only needed for a partial move whose projection
+            // lies ahead of the reached pose. Re-derive each image's pose here
+            // instead of storing five per-image arrays for every cell on the
+            // chance that one cell needs them (correction 3).
             let capCount = 0
             for (let image = 0; image < imageCount; image += 1) {
-              if (!imageFuture[image]) {
-                if (imageReached[image]) {
-                  capLo[capCount] = imageLo[image]
-                  capHi[capCount] = imageHi[image]
-                  capCount += 1
-                }
-                continue
+              const imageShift = shifts[image]
+              let t = 0
+              if (!sweepStationary) {
+                t = tBase - imageShift * acrossDelta * invSweepLengthSq
+                if (t < 0) t = 0
+                else if (t > 1) t = 1
               }
+              // The ceiling is the source move's own closest pose for this
+              // image, whatever the piece has reached: it is the batch value
+              // the piece may never exceed.
               if (wrappedRayInterval(
                 isBall, toolType, toolRadius, vBitAngle,
                 top, alongCell, acrossCell,
-                alongFrom, alongDelta, acrossFrom, acrossDelta, shifts[image],
-                imageT[image], sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
+                alongFrom, alongDelta, acrossFrom, acrossDelta, imageShift,
+                t, sweepStationary, stationaryZ, sweepZ0, sweepDz, invFrameRadius,
               )) {
                 capLo[capCount] = wrappedRayScratch.lo
                 capHi[capCount] = wrappedRayScratch.hi
