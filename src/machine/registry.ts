@@ -199,8 +199,8 @@ export function findMachine(
  * carries that machine — an older project keeps offering what it holds until
  * the user re-picks.
  *
- * `setProjectType` receives the same list, so the machine a type change
- * selects is one the picker can actually show.
+ * The New Project dialog receives the same list, so the machine a new
+ * project's type selects is one the picker can actually show.
  */
 export function machineCandidates(
   library: readonly MachineDefinition[],

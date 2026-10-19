@@ -223,7 +223,7 @@ assert(bundledCandidateMerge.added.length === 0, 'a bundled-id candidate is neve
 const invalidMerge = mergeCustomMachineList([], [{ id: 'broken' } as unknown as MachineDefinition])
 assert(invalidMerge.added.length === 0, 'an invalid candidate is skipped')
 
-// The machine picker's candidate list (issue #1028), shared with `setProjectType`.
+// The machine picker's candidate list (issue #1028), shared with the New Project dialog.
 {
   const library = bundledMachines()
   const embeddedOnly = customFrom({ id: 'embedded-only', name: 'Embedded Only' })

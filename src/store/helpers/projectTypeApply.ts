@@ -17,12 +17,13 @@
 /**
  * Applying a project type to a project (issue #1028).
  *
- * One pure function, shared by the store's `setProjectType` action and the New
- * Project dialog: it sets `meta.projectType`, gives the stock a shape the type
- * offers through the same block/bar conversion `setStockShape` takes, and
- * selects the first matching candidate machine when the current one no longer
- * suits the type. It deletes nothing; features and operations of the other
- * kind stay in the project, inert.
+ * One pure function, used by the New Project dialog: it sets
+ * `meta.projectType`, gives the stock a shape the type offers through the same
+ * block/bar conversion `setStockShape` takes, and selects the first matching
+ * candidate machine when the current one no longer suits the type. The type is
+ * chosen when the project is created and is not changed afterwards (issue
+ * #1046), so no store action wraps this any more. It deletes nothing; features
+ * and operations of the other kind stay in the project, inert.
  *
  * The workspace face is part of the change: a project that leaves rotary has no
  * Around face, so an Around setup in view would be left unreachable. The active

@@ -15,8 +15,8 @@
  */
 
 /**
- * Issue #1028 slice B: the Project type UI's pure helpers. The machine
- * picker's grouping and option order, and the confirm dialog's line list.
+ * Issue #1028 slice B: the Project type UI's pure helpers — the type's label
+ * keys and the machine picker's grouping and option order.
  *
  * Run with: npx tsx src/components/feature-tree/projectTypeChoice.test.ts
  */
@@ -24,13 +24,10 @@
 import assert from 'node:assert/strict'
 import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
 import { validateMachineDefinition, type MachineDefinition } from '../../engine/gcode/types'
-import type { ProjectTypeChangeSummary } from '../../store/helpers/projectType'
 import {
   PROJECT_TYPES,
   groupMachinesForProjectType,
   machineOptionsForType,
-  projectTypeChangeIsEmpty,
-  projectTypeChangeLines,
   projectTypeLabelKey,
 } from './projectTypeChoice'
 
@@ -63,19 +60,6 @@ const ROTARY_ROUTER = validateMachineDefinition({
   rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
 })
 
-/** A summary that changes nothing, as a base for the line tests. */
-function emptySummary(overrides: Partial<ProjectTypeChangeSummary> = {}): ProjectTypeChangeSummary {
-  return {
-    from: 'milling',
-    to: 'plasma',
-    inactiveOperations: 0,
-    hiddenAroundFeatures: 0,
-    stockConversion: null,
-    machineChange: null,
-    ...overrides,
-  }
-}
-
 console.log('\nProject type UI (issue #1028)')
 
 test('every type has its own label key', () => {
@@ -107,31 +91,6 @@ test('the machine options are None, the type machines, then the rest under the g
     'None first, then the matching machines unlabelled, then the others',
   )
   assert.deepEqual(options.map((option) => option.label), ['None', ROTARY_ROUTER.name, PLASMA.name, ROUTER.name], 'the labels are the machines\' names')
-})
-
-test('the confirm lists one line per non-zero item, in reading order', () => {
-  const lines = projectTypeChangeLines(emptySummary({
-    inactiveOperations: 2,
-    hiddenAroundFeatures: 3,
-    stockConversion: 'toBlock',
-    machineChange: { id: PLASMA.id, name: PLASMA.name },
-  }))
-  assert.deepEqual(lines, [
-    { kind: 'inactiveOperations', count: 2 },
-    { kind: 'hiddenAroundFeatures', count: 3 },
-    { kind: 'stockConversion', conversion: 'toBlock' },
-    { kind: 'machineChange', name: PLASMA.name },
-  ], 'all four lines, in order')
-
-  assert.deepEqual(projectTypeChangeLines(emptySummary({ stockConversion: 'toRound' })), [
-    { kind: 'stockConversion', conversion: 'toRound' },
-  ], 'only the items that are non-zero')
-})
-
-test('a change that shows no line is applied without a dialog', () => {
-  assert.equal(projectTypeChangeIsEmpty(emptySummary()), true, 'nothing to say')
-  assert.equal(projectTypeChangeIsEmpty(emptySummary({ inactiveOperations: 1 })), false, 'one operation is something to say')
-  assert.equal(projectTypeChangeIsEmpty(emptySummary({ machineChange: { id: 'x', name: 'X' } })), false, 'a machine change is something to say')
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

@@ -33,12 +33,10 @@ import {
   seedProject,
   selectFeatures,
   selectMachine,
-  setProjectType,
 } from './helpers'
 import {
   camQuickOperationProjectJson,
   seedCamQuickOperationProject,
-  seedCamQuickOperationProjectWithSmallCarveTarget,
 } from './camOperations.helpers'
 
 /** The bundled router machine the picker offers, read from the app's own JSON. */
@@ -47,9 +45,47 @@ const GRBL = JSON.parse(
 ) as { name: string }
 
 const PLASMA_OP = 'Plasma through-cut'
-const PLASMA_HINT = 'Needs a plasma project. Change the project type in the project properties.'
+const PLASMA_HINT = 'Needs a plasma project. The type is chosen when the project is created.'
 const LEFT_OUT_PLASMA = 'Not plasma cuts, left out of the export for this project type: 1'
 const LEFT_OUT_ROUTER = 'Plasma cuts, left out of the export for this project type: 1'
+
+/** A milling cutter and a plasma torch, in the quick-operation fixture's units. */
+const MILLING_TOOL = {
+  id: 'tool-1',
+  name: 'Quarter Inch Endmill',
+  units: 'inch',
+  type: 'flat_endmill',
+  diameter: 0.25,
+  vBitAngle: null,
+  flutes: 2,
+  material: 'carbide',
+  defaultRpm: 18000,
+  defaultFeed: 60,
+  defaultPlungeFeed: 30,
+  defaultStepdown: 0.1,
+  defaultStepover: 0.125,
+  maxCutDepth: 1,
+}
+
+const PLASMA_TORCH = {
+  id: 'torch',
+  name: 'Plasma Torch',
+  units: 'inch',
+  type: 'plasma',
+  diameter: 0.055,
+  pierceHeight: 0.15,
+  cutHeight: 0.06,
+  pierceDelay: 0.2,
+  vBitAngle: null,
+  flutes: 0,
+  material: 'carbide',
+  defaultRpm: 0,
+  defaultFeed: 200,
+  defaultPlungeFeed: 0,
+  defaultStepdown: 0,
+  defaultStepover: 0,
+  maxCutDepth: 0,
+}
 
 /** The CAM quick-operation fixture as a plasma project with no machine (issue #1034). */
 function plasmaProjectJson(): string {
@@ -58,6 +94,118 @@ function plasmaProjectJson(): string {
   project.meta.machineDefinitions = []
   project.meta.selectedMachineId = null
   return JSON.stringify(project)
+}
+
+/** A rectangular sketch profile, matching the quick-operation fixture's shape. */
+function rectProfile(cx: number, cy: number, w: number, h: number) {
+  return {
+    start: { x: cx, y: cy },
+    segments: [
+      { type: 'line' as const, to: { x: cx + w, y: cy } },
+      { type: 'line' as const, to: { x: cx + w, y: cy + h } },
+      { type: 'line' as const, to: { x: cx, y: cy + h } },
+      { type: 'line' as const, to: { x: cx, y: cy } },
+    ],
+    closed: true,
+  }
+}
+
+interface CamFixtureProject {
+  meta: Record<string, unknown>
+  featureDefinitions: Record<string, { profile: unknown }>
+  features: { id: string }[]
+  tools: Record<string, unknown>[]
+  operations: Record<string, unknown>[]
+}
+
+interface MixedContentFixture {
+  json: string
+  operationIds: string[]
+  featureIds: string[]
+}
+
+/**
+ * The CAM quick-operation fixture as a project of `type` that already carries
+ * the other family's operations and tools. Since #1046 a project's type is
+ * fixed when it is created, so a mixed project arrives in the file instead of
+ * being switched into it. Carve Target is shrunk so a pocket generates in
+ * about a second (as in `seedCamQuickOperationProjectWithSmallCarveTarget`).
+ */
+function mixedContentProject(
+  type: 'milling' | 'plasma',
+  tools: Record<string, unknown>[],
+  operations: Record<string, unknown>[],
+): MixedContentFixture {
+  const project = JSON.parse(camQuickOperationProjectJson) as CamFixtureProject
+  project.featureDefinitions['def-carve-target'].profile = rectProfile(0, 0, 4, 2)
+  project.meta.projectType = type
+  project.meta.machineDefinitions = []
+  project.meta.selectedMachineId = null
+  project.tools = tools
+  project.operations = operations
+  return {
+    json: JSON.stringify(project),
+    operationIds: operations.map((operation) => operation.id as string),
+    featureIds: project.features.map((feature) => feature.id),
+  }
+}
+
+/** The plasma through-cut a plasma project would author on Carve Target. */
+function plasmaCutOperation(): Record<string, unknown> {
+  return {
+    id: 'op-plasma-cut',
+    name: PLASMA_OP,
+    kind: 'plasma_profile',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['f-carve-target'] },
+    toolRef: PLASMA_TORCH.id,
+    stepdown: 0.1,
+    stepover: 0.125,
+    feed: 200,
+    plungeFeed: 0,
+    rpm: 0,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
+  }
+}
+
+/** The milling pocket a router project would author on Carve Target. */
+function pocketOperation(): Record<string, unknown> {
+  return {
+    id: 'op-pocket',
+    name: 'Pocket Rough',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['f-carve-target'] },
+    toolRef: MILLING_TOOL.id,
+    stepdown: 0.1,
+    stepover: 0.125,
+    feed: 60,
+    plungeFeed: 30,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
+  }
 }
 
 /** The properties field whose label is exactly `label`, in the tool editor. */
@@ -83,7 +231,7 @@ test.describe('the project type decides plasma mode (#1028)', () => {
 
     // The plasma cut is present but blocked. The hint names the project type,
     // which is the root cause: only a plasma project offers the cut (#1028,
-    // wording corrected in #1034).
+    // wording corrected in #1034 and #1046).
     await ui.operations.addMenuUnavailableToggle(app.page).click()
     const plasmaRow = ui.operations.addMenuUnavailableRows(app.page)
       .filter({ hasText: PLASMA_OP })
@@ -96,8 +244,9 @@ test.describe('the project type decides plasma mode (#1028)', () => {
   })
 
   test('a plasma project leaves only the plasma cut, torch tools and no face switch', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
-    await setProjectType(app.page, ui, 'Plasma')
+    // The type is chosen when a project is created (issue #1046), so a plasma
+    // project with this fixture's geometry is seeded with the stored field.
+    await seedProject(app.page, plasmaProjectJson())
     await selectFeatures(app.page, ['f-carve-target'])
 
     await ui.operations.headerAddButton(app.page).click()
@@ -139,58 +288,66 @@ test.describe('the project type decides plasma mode (#1028)', () => {
     await expect(ui.face.switchGroup(app.page)).toHaveCount(0)
   })
 
-  test('switching a plasma project back to milling brings the milling menu back and badges the plasma cut', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
-    await setProjectType(app.page, ui, 'Plasma')
-    await selectFeatures(app.page, ['f-carve-target'])
-    await ui.operations.headerAddButton(app.page).click()
-    await ui.operations.addMenuAvailableRows(app.page)
-      .getByRole('button', { name: 'Add', exact: true }).click()
-    await expect(ui.operations.rowByName(app.page, PLASMA_OP)).toBeVisible()
-
-    // The type, not the machine, decides the mode (#1028): switching it back to
-    // milling is what restores the milling family and the face switch.
-    await setProjectType(app.page, ui, 'Milling / routing')
+  test('a milling project with a plasma cut keeps the milling menu and badges the cut', async ({ app, ui }) => {
+    // The type is fixed at creation (#1046), so a router project that already
+    // carries a plasma cut is loaded that way instead of switched back to
+    // milling. This is the loaded-mixed-content half of the deleted
+    // plasma → milling test.
+    const fixture = mixedContentProject('milling', [PLASMA_TORCH], [plasmaCutOperation()])
+    await seedProject(app.page, fixture.json)
     await selectFeatures(app.page, ['f-carve-target'])
 
-    // The milling menu is back.
+    // The milling family the type offers is what the Add menu presents.
     await ui.operations.headerAddButton(app.page).click()
     await expect(
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toContainText(['Pocket', 'V-carve offset', 'Edge in', 'Engrave'])
 
-    // The plasma operation is still listed, badged, and counted above the list.
+    // The plasma operation is still listed, badged as one this project type
+    // does not cut, and counted above the list — loaded, not dropped. The row
+    // may also transiently carry the generating badge, so the project-type
+    // badge is matched by its text.
     const row = ui.operations.rowByName(app.page, PLASMA_OP)
     await expect(row).toBeVisible()
-    await expect(row.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
+    await expect(row.locator('.cam-operation-badge').filter({ hasText: 'not for this project type' }))
+      .toHaveText(['not for this project type'])
     await expect(app.page.locator('.cam-operations-notice')).toHaveText(LEFT_OUT_ROUTER)
 
     await expect(ui.face.switchGroup(app.page)).toBeVisible()
+
+    // Nothing was deleted by the load: the stored type, every operation and
+    // every feature the file carried are still there (the deleted trip's
+    // opening and final legs).
+    const loaded = await getProject(app.page)
+    expect((loaded.meta as { projectType?: string }).projectType).toBe('milling')
+    expect((loaded.operations as { id: string; kind: string }[]).map((operation) => operation.kind))
+      .toEqual(['plasma_profile'])
+    expect((loaded.operations as { id: string }[]).map((operation) => operation.id)).toEqual(fixture.operationIds)
+    expect((loaded.features as { id: string }[]).map((feature) => feature.id)).toEqual(fixture.featureIds)
   })
 
-  test('a milling project switched to plasma keeps its operation and tool', async ({ app, ui }) => {
-    // The small carve target keeps a real pocket toolpath quick to generate.
-    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
-    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
-    await ui.contextMenu.item(menu, 'Create operation').hover()
-    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+  test('a plasma project with a pocket and a milling tool keeps both', async ({ app, ui }) => {
+    // A plasma project that already carries router work is loaded that way; it
+    // is not created as milling and switched. This is the loaded-mixed-content
+    // half of the deleted milling → plasma test.
+    const fixture = mixedContentProject('plasma', [MILLING_TOOL], [pocketOperation()])
+    await seedProject(app.page, fixture.json)
+
+    // Still listed, and flagged as not for this project type, with the count line.
     await expect(ui.operations.rows(app.page)).toHaveCount(1)
     const pocket = ui.operations.rowByName(app.page, 'Pocket Rough')
     await expect(pocket).toBeVisible()
-
-    await setProjectType(app.page, ui, 'Plasma')
-
-    // Still listed, and now flagged as not for this project type, with the count line.
-    await expect(pocket).toBeVisible()
-    await expect(pocket.locator('.cam-operation-badge')).toHaveText(['not for this project type'])
+    await expect(pocket.locator('.cam-operation-badge').filter({ hasText: 'not for this project type' }))
+      .toHaveText(['not for this project type'])
     await expect(app.page.locator('.cam-operations-notice')).toHaveText(LEFT_OUT_PLASMA)
 
     // Its tool is still listed and still reads as the milling tool it is.
     await app.page.getByRole('tab', { name: 'Tools' }).click()
-    const toolRow = app.page.locator('.cam-tool-tree .tree-row--feature').first()
+    const toolRow = app.page.locator('.cam-tool-tree .tree-row--feature')
+      .filter({ hasText: MILLING_TOOL.name })
     await expect(toolRow).toBeVisible()
     await toolRow.click()
-    // Still a milling tool, not forced into a torch by the type change.
+    // Still a milling tool, not forced into a torch by the project type.
     await expect(toolField(app.page, 'Type').locator('.ui-select__label'))
       .toHaveText(/^(Flat endmill|Ball endmill|V-bit|Drill)$/)
 
@@ -201,11 +358,21 @@ test.describe('the project type decides plasma mode (#1028)', () => {
     await expect(
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toHaveText([PLASMA_OP])
+
+    // The load kept the stored type, the operation and its tool, and every
+    // feature the mixed file carried (the deleted trip's opening and final
+    // legs, applied to content that arrives in the file).
+    const loaded = await getProject(app.page)
+    expect((loaded.meta as { projectType?: string }).projectType).toBe('plasma')
+    expect((loaded.operations as { id: string; kind: string }[]).map((operation) => operation.kind))
+      .toEqual(['pocket'])
+    expect((loaded.operations as { id: string }[]).map((operation) => operation.id)).toEqual(fixture.operationIds)
+    expect((loaded.tools as { type: string }[]).map((tool) => tool.type)).toEqual(['flat_endmill'])
+    expect((loaded.features as { id: string }[]).map((feature) => feature.id)).toEqual(fixture.featureIds)
   })
 
   test('the feature context menu offers the plasma cut in a plasma project', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
-    await setProjectType(app.page, ui, 'Plasma')
+    await seedProject(app.page, plasmaProjectJson())
 
     // A closed subtract is a valid target for both families, so the same
     // feature shows what each project type does with it.

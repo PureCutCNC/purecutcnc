@@ -207,8 +207,27 @@ export const newProjectDialog = {
   root: (page: Page) => page.locator('.dialog--new-project'),
   template: (page: Page, label: string) =>
     newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
-  stockDimension: (page: Page, dimension: 'width' | 'height' | 'thickness') =>
+  stockDimension: (page: Page, dimension: 'width' | 'height' | 'thickness' | 'size' | 'length') =>
     newProjectDialog.root(page).locator(`#new-project-stock-${dimension}`),
+  /** The project type picker, chosen once here (issue #1046). */
+  typeTrigger: (page: Page) =>
+    newProjectDialog.root(page).locator('.properties-field--new-project-type .ui-select__trigger'),
+  typeOption: (page: Page, label: string) =>
+    newProjectDialog.root(page).locator('.properties-field--new-project-type').getByRole('option', { name: label, exact: true }),
+  /** A rotary blank's Shape picker — Round bar or Square blank (issue #1046). */
+  stockShapeTrigger: (page: Page) =>
+    newProjectDialog.root(page).locator('.properties-field--stock-shape .ui-select__trigger'),
+  stockShapeValue: (page: Page) =>
+    newProjectDialog.root(page).locator('.properties-field--stock-shape .ui-select__label'),
+  stockShapeOption: (page: Page, label: 'Round bar' | 'Square blank') =>
+    newProjectDialog.root(page).locator('.properties-field--stock-shape').getByRole('option', { name: label, exact: true }),
+  /** A rotary blank's Axis picker — X or Y (issue #1046). */
+  stockAxisTrigger: (page: Page) =>
+    newProjectDialog.root(page).locator('.properties-field--stock-axis .ui-select__trigger'),
+  stockAxisValue: (page: Page) =>
+    newProjectDialog.root(page).locator('.properties-field--stock-axis .ui-select__label'),
+  stockAxisOption: (page: Page, label: 'X' | 'Y') =>
+    newProjectDialog.root(page).locator('.properties-field--stock-axis').getByRole('option', { name: label, exact: true }),
 }
 
 // ── CAM operation properties ───────────────────────────────────────
@@ -421,13 +440,17 @@ export const properties = {
   machineOption: (page: Page, label: string) =>
     page.locator('.properties-panel .properties-field--machine').getByRole('option', { name: label, exact: true }),
 
-  /** Project type custom-select trigger, visible when the project root is selected (issue #1028). */
-  projectTypeTrigger: (page: Page) =>
-    page.locator('.properties-panel .properties-field--project-type .ui-select__trigger'),
+  /**
+   * The project type's read-only value, visible when the project root is
+   * selected. The type is chosen once in the New project dialog and cannot be
+   * changed afterwards (issue #1046).
+   */
+  projectTypeValue: (page: Page) =>
+    page.locator('.properties-panel .properties-field--project-type [data-testid="project-type"]'),
 
-  /** An option in the open Project type custom select. */
-  projectTypeOption: (page: Page, label: 'Milling / routing' | 'Plasma' | 'Rotary') =>
-    page.locator('.properties-panel .properties-field--project-type').getByRole('option', { name: label, exact: true }),
+  /** There is no project-type picker any more (issue #1046); this proves it. */
+  projectTypeSelect: (page: Page) =>
+    page.locator('.properties-panel .properties-field--project-type .ui-select'),
 
   /** The machine/type mismatch note under the machine picker (issue #1028). */
   machineTypeMismatch: (page: Page) => page.getByTestId('machine-type-mismatch'),
@@ -509,16 +532,6 @@ export const unitConversionDialog = {
   directionArrow: (page: Page) => page.locator('.unit-conversion-route__arrow'),
   convertButton: (page: Page) => page.getByRole('button', { name: /Convert values/ }),
   reinterpretButton: (page: Page) => page.getByRole('button', { name: /Keep numeric values/ }),
-  cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
-}
-
-// ── Project type change confirm (issue #1028) ──────────────────────
-
-export const projectTypeDialog = {
-  root: (page: Page) => page.getByRole('dialog', { name: 'Change project type' }),
-  /** The one line per non-zero item the change would do. */
-  lines: (page: Page) => page.getByTestId('project-type-change-lines').locator('li'),
-  confirmButton: (page: Page) => page.getByTestId('project-type-confirm'),
   cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
 }
 

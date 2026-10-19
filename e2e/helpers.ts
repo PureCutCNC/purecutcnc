@@ -59,48 +59,70 @@ export async function selectMachine(
   await ui.properties.machineOption(page, name).click()
 }
 
-/**
- * Choose a project type in the project properties (issue #1028), without
- * confirming: Project → Project type.
- */
-export async function chooseProjectType(
-  page: Page,
-  ui: typeof import('./selectors'),
-  label: 'Milling / routing' | 'Plasma' | 'Rotary',
-): Promise<void> {
-  await ui.tree.projectRow(page).click()
-  await ui.properties.projectTypeTrigger(page).click()
-  await ui.properties.projectTypeOption(page, label).click()
+/** A project type, as the New project dialog offers it. */
+export type NewProjectType = 'Milling / routing' | 'Plasma' | 'Rotary'
+
+/** What a spec wants the New project dialog to create. */
+export interface NewProjectOptions {
+  template?: 'Blank metric' | 'Blank imperial'
+  type?: NewProjectType
+  /** A rotary blank's shape; the field only exists once the type is Rotary. */
+  shape?: 'Round bar' | 'Square blank'
+  /** A rotary blank's diameter (round) or side (square), as typed. */
+  size?: string
+  /** A rotary blank's length, as typed. */
+  length?: string
+  /** A rotary blank's axis. */
+  axis?: 'X' | 'Y'
 }
 
 /**
- * Confirm the type-change dialog when the change has anything to say
- * (issue #1028). A change with nothing to report applies without one.
+ * Create a project through the New project dialog, the only way a project gets
+ * its type since #1046: the type is chosen here and locked afterwards.
  */
-export async function confirmProjectTypeChange(
+export async function createNewProject(
   page: Page,
   ui: typeof import('./selectors'),
+  options: NewProjectOptions = {},
 ): Promise<void> {
-  const dialog = ui.projectTypeDialog.root(page)
-  if (await dialog.isVisible()) {
-    await ui.projectTypeDialog.confirmButton(page).click()
-    await expect(dialog).toBeHidden()
+  await ui.toolbar.newProjectButton(page).click()
+  const dialog = ui.newProjectDialog.root(page)
+  await expect(dialog).toBeVisible()
+
+  if (options.template) await ui.newProjectDialog.template(page, options.template).click()
+  if (options.type) {
+    await ui.newProjectDialog.typeTrigger(page).click()
+    await ui.newProjectDialog.typeOption(page, options.type).click()
   }
+  if (options.shape) {
+    await ui.newProjectDialog.stockShapeTrigger(page).click()
+    await ui.newProjectDialog.stockShapeOption(page, options.shape).click()
+  }
+  if (options.size !== undefined) await ui.newProjectDialog.stockDimension(page, 'size').fill(options.size)
+  if (options.length !== undefined) await ui.newProjectDialog.stockDimension(page, 'length').fill(options.length)
+  if (options.axis) {
+    await ui.newProjectDialog.stockAxisTrigger(page).click()
+    await ui.newProjectDialog.stockAxisOption(page, options.axis).click()
+  }
+
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await expect(dialog).toHaveCount(0)
 }
 
 /**
- * Choose a project type and confirm it if asked. `setProjectType` also gives
- * the stock the type's shape and selects the first matching machine, so a spec
- * that set a plasma or rotary *machine* to reach a mode now sets the type
- * instead.
+ * Give an already-seeded project a stored type, for specs that are about
+ * something else. The type is not changeable through the UI since #1046, so a
+ * spec that needs a plasma project with a fixture's geometry seeds the field
+ * and reloads; the real user path is `createNewProject`.
  */
-export async function setProjectType(
+export async function seedProjectType(
   page: Page,
-  ui: typeof import('./selectors'),
-  label: 'Milling / routing' | 'Plasma' | 'Rotary',
+  type: 'milling' | 'plasma' | 'rotary',
 ): Promise<void> {
-  await chooseProjectType(page, ui, label)
-  await confirmProjectTypeChange(page, ui)
+  const project = await getProject(page)
+  const meta = project.meta as Record<string, unknown>
+  meta.projectType = type
+  await seedProject(page, JSON.stringify(project))
 }
 
 /** Return the feature currently preview-highlighted by the live store. */

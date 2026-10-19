@@ -361,7 +361,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.addMenu.exampleImage': 'Ejemplo de {title}',
   'cam.addMenu.unavailable': 'No disponible para esta selección ({count})',
   'cam.addMenu.selectFirst': 'Seleccione geometría en el croquis o en el árbol y luego elija una operación.',
-  'cam.addMenu.needsPlasmaProject': 'Necesita un proyecto de plasma. Cambie el tipo de proyecto en las propiedades del proyecto.',
+  'cam.addMenu.needsPlasmaProject': 'Necesita un proyecto de plasma. El tipo se elige al crear el proyecto.',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Cortes que no son de plasma, excluidos de la exportación para este tipo de proyecto: {count}',
