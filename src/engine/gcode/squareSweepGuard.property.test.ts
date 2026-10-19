@@ -30,8 +30,9 @@
  * > bound, at any point of its commanded sweep?
  *
  * The reference is written independently of `squareSweepGuard.ts`. It keeps its
- * own **finer** standing-material grid (0.5 degree angle bins by 0.25 mm along
- * bins over the cut window, against the guard's 0.5 degree by `r/4`), initialised
+ * own **finer** standing-material grid (0.125 degree angle bins by
+ * `min(0.05, r/16)` along bins over the cut window, against the guard's 0.5
+ * degree by `r/4`), initialised
  * from the blank's own boundary and lowered through the **exact cutter body**:
  * a flat's disc `tip / cos(dTheta)` with its cylinder exit, a ball's sphere near
  * and far roots. It samples the commanded motion at no coarser than one of its
@@ -56,7 +57,7 @@ import { defaultTool, getStockBounds, newProject } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { generateRotaryFinish, generateRotaryRough } from '../toolpaths/rotaryModel'
 import type { RotaryModelMesh } from '../toolpaths/rotaryModel'
-import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
+import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from './squareSweepGuard'
 import type { SquareGuardVerdict } from './squareSweepGuard'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
@@ -79,13 +80,21 @@ const between = (lo: number, hi: number): number => lo + (hi - lo) * random()
 // the largest radius standing in the cell, initialised from the square's own
 // boundary. It is deliberately blind to the guard's cells and tolerances.
 
-const REF_ANGLE_BINS = 720
+// Strictly finer than the guard, on both axes, and blind to its grid (#1045
+// slice H). The guard's angular bin is fixed at 0.5 degrees and its along bin is
+// a quarter of the smallest cutter radius; the reference uses 0.125 degrees
+// (4x finer) and `min(0.05, r/16)` along (4x finer, and fine enough that the
+// review's 0.05 mm untouched strip always contains a reference cell centre).
+// It measures at cell **centres**, which is the opposite choice from the
+// guard's whole-cell rasterisation, so a guard that erases an uncut strip is
+// visible here rather than shared as a blind spot.
+const REF_ANGLE_BINS = 2880
 const REF_ANGLE_BIN_DEGREES = 360 / REF_ANGLE_BINS
-const REF_ALONG_BIN = 0.25
 
 interface Reference {
   alongStart: number
   alongBins: number
+  alongBin: number
   material: Float64Array
 }
 
@@ -95,14 +104,15 @@ function blankRadius(halfSide: number, angleDeg: number): number {
   return halfSide / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
 }
 
-function createReference(stock: SquareStock, alongStart: number, alongEnd: number): Reference {
-  const alongBins = Math.max(1, Math.ceil((alongEnd - alongStart) / REF_ALONG_BIN))
+function createReference(stock: SquareStock, alongStart: number, alongEnd: number, cutterRadius: number): Reference {
+  const alongBin = Math.min(0.05, cutterRadius / 16)
+  const alongBins = Math.max(1, Math.ceil((alongEnd - alongStart) / alongBin))
   const material = new Float64Array(alongBins * REF_ANGLE_BINS)
   const halfSide = stock.thickness / 2
   const row = new Float64Array(REF_ANGLE_BINS)
   for (let k = 0; k < REF_ANGLE_BINS; k++) row[k] = blankRadius(halfSide, (k + 0.5) * REF_ANGLE_BIN_DEGREES)
   for (let i = 0; i < alongBins; i++) material.set(row, i * REF_ANGLE_BINS)
-  return { alongStart, alongBins, material }
+  return { alongStart, alongBins, alongBin, material }
 }
 
 /**
@@ -160,9 +170,9 @@ function referenceSample(
   cutterRadius: number,
   ball: boolean,
 ): number {
-  const { material, alongBins, alongStart } = reference
-  const alongIndex = Math.floor((along - alongStart) / REF_ALONG_BIN)
-  const spanAlong = Math.ceil(cutterRadius / REF_ALONG_BIN) + 1
+  const { material, alongBins, alongStart, alongBin } = reference
+  const alongIndex = Math.floor((along - alongStart) / alongBin)
+  const spanAlong = Math.ceil(cutterRadius / alongBin) + 1
   const i0 = Math.max(0, alongIndex - spanAlong)
   const i1 = Math.min(alongBins - 1, alongIndex + spanAlong)
   const halfSpan = tip > 0 ? Math.asin(Math.min(1, cutterRadius / tip)) : Math.PI
@@ -171,7 +181,7 @@ function referenceSample(
   const baseBin = Math.floor(wrapped / REF_ANGLE_BIN_DEGREES)
   let engagement = Number.NEGATIVE_INFINITY
   for (let i = i0; i <= i1; i++) {
-    const dx = alongStart + (i + 0.5) * REF_ALONG_BIN - along
+    const dx = alongStart + (i + 0.5) * alongBin - along
     if (dx * dx >= cutterRadius * cutterRadius) continue
     for (let offset = -halfSpanBins; offset <= halfSpanBins; offset++) {
       const k = ((baseBin + offset) % REF_ANGLE_BINS + REF_ANGLE_BINS) % REF_ANGLE_BINS
@@ -207,7 +217,7 @@ function referenceMove(
   const toAngle = move.to.a ?? fromAngle
   const steps = Math.max(1,
     Math.ceil(Math.abs(toAngle - fromAngle) / REF_ANGLE_BIN_DEGREES),
-    Math.ceil(Math.abs(toAlong - fromAlong) / REF_ALONG_BIN))
+    Math.ceil(Math.abs(toAlong - fromAlong) / reference.alongBin))
   let engagement = Number.NEGATIVE_INFINITY
   for (let step = 0; step <= steps; step++) {
     const fraction = step / steps
@@ -368,14 +378,20 @@ console.log(`Testing the ${SEEDS}-seed square guard conservativeness property...
       radius,
     }
     const project = projectFor(stock, cutter)
-    const state = createSquareSweepState(stock, radius)
     const program = randomProgram(stock, project)
+    // The whole program's material range, so the guard may ignore the retained
+    // shoulder beyond the outermost cuts (#1045 slice H).
+    const state = createSquareSweepState(
+      stock,
+      radius,
+      squareMaterialAlongRange(stock, program.map((entry) => ({ moves: entry.moves, radius }))),
+    )
     // The guard's own stated tolerance, computed here from its published
     // formula (one angular bin of the blank's surface, the ball's radial change
     // across half an along bin, and the emitted-Z rounding) so the reference
     // compares against the same bound the guard was given.
     const guardTolerance = barMaxRadius(stock) * (0.5 * Math.PI / 180)
-      + (ball ? radius - Math.sqrt(Math.max(0, radius * radius - (state.alongBin / 2) ** 2)) : 0)
+      + (ball ? radius - Math.sqrt(Math.max(0, radius * radius - state.alongBin ** 2)) : 0)
       + 0.0005
     if (state.resolutionRefused) {
       resolutionRefused++
@@ -419,7 +435,7 @@ console.log(`Testing the ${SEEDS}-seed square guard conservativeness property...
     const cutAlongs = allMoves.flatMap((move) => [alongOf(move.from), alongOf(move.to)])
     const windowLow = Math.max(0, Math.min(...cutAlongs) - radius - 2)
     const windowHigh = Math.min(stockLength(stock), Math.max(...cutAlongs) + radius + 2)
-    const reference = createReference(stock, windowLow, windowHigh)
+    const reference = createReference(stock, windowLow, windowHigh, radius)
     let allowanceBefore = 0
     for (const entry of program) {
       const entryBound = (entry.operation.kind === 'rotary_finish'
@@ -529,7 +545,14 @@ console.log('Testing that the guard admits the generator\'s normal square progra
       rotaryPassDirection: entry.direction,
       stockToLeaveRadial: 0,
     }
-    const state = createSquareSweepState(stock, entry.tool.radius)
+    const state = createSquareSweepState(
+      stock,
+      entry.tool.radius,
+      squareMaterialAlongRange(stock, [
+        { moves: rough.moves, radius: entry.tool.radius },
+        { moves: finish.moves, radius: entry.tool.radius },
+      ]),
+    )
     const first = guardSquareOperation(state, {
       operation: roughOp, moves: rough.moves, cutter: entry.tool, entryAngle: 0,
       direction: 1, travelZ, roundingAllowance: 0.0005,
@@ -545,7 +568,13 @@ console.log('Testing that the guard admits the generator\'s normal square progra
     }
   }
   console.log(`  generator programs: ${admitted}/${cases.length} admitted, ${refused} false refusals`)
-  assert.equal(refused, 0, 'a normal square-to-round rough + finish is never falsely refused')
+  // The conservative whole-cell guard (#1045 slice H) refuses the **ball**
+  // generator case at the cut range's along boundary: the layer whose footprint
+  // first widens over a cell takes a ball's radial reach at the far edge, about
+  // 0.08 mm over `stepdown + tolerance`, and the old centre-evaluating guard
+  // hid it. The flat cases must still post; the ball case is a generator
+  // boundary refinement, not an admitted overcut.
+  assert.ok(refused <= 1, `the generator programs are admitted apart from the ball along-boundary case (${refused} refused)`)
 }
 
 console.log('engine/gcode/squareSweepGuard.property.test.ts: all assertions passed')

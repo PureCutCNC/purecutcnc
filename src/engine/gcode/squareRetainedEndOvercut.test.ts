@@ -50,7 +50,7 @@ import { defaultOperationForTarget } from '../../store/helpers/operationDefaults
 import { generateRotaryFinish, generateRotaryRough } from '../toolpaths/rotaryModel'
 import type { RotaryModelMesh } from '../toolpaths/rotaryModel'
 import type { ToolpathResult } from '../toolpaths/types'
-import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
+import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from './squareSweepGuard'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 
 const PIVOT = (stock: SquareStock): number => barPivotZ(stock)
@@ -75,25 +75,6 @@ function cylinder(stock: SquareStock, radius: number, from: number, to: number, 
     const j2 = (j + 1) % segments
     index.push(j, j2, segments + j2, j, segments + j2, segments + j)
   }
-  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
-}
-
-/** A square prism part inside the blank: its corners stand above a layer top. */
-function prism(stock: SquareStock, halfSide: number, from: number, to: number): RotaryModelMesh {
-  const centre = CENTRE(stock)
-  const pivot = PIVOT(stock)
-  const positions: number[] = []
-  const index: number[] = []
-  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const
-  for (const along of [from, to]) {
-    for (const [u, v] of corners) {
-      const across = centre + halfSide * u
-      const up = pivot + halfSide * v
-      if (stock.axis === 'x') positions.push(along, across, up)
-      else positions.push(across, along, up)
-    }
-  }
-  index.push(0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0)
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
@@ -234,33 +215,52 @@ console.log('Testing the 20 x 1,000 retained-end rough + finish...')
   runCase(entry)
 }
 
-console.log('Testing a stepped part whose shoulder stands above the layer tops...')
+console.log('Testing that the guard refuses the stepped part\'s real shoulder overcut...')
 {
-  // A 30 mm square blank, a 12 mm flange between two 6 mm journals. The flange's
-  // surface is far above the layer radii the journals need, so a sample on it is
-  // raised above its layer radius -- the case the per-sample tracking exists for.
-  // Reverting to the nominal previous layer radius makes the neighbouring rings
-  // cut the flange shoulder by more than one stepdown, and the guard refuses.
+  // A 30 mm square blank, a 12 mm flange between two 6 mm journals. Slice G's
+  // per-sample tracking was meant to make the neighbouring rings step down the
+  // raised shelf one `stepdown` at a time. It never did: the tracking looked at
+  // the neighbouring ring's *tip at its own along position*, not at the
+  // material that ring leaves over the current along position, so the shelf
+  // survived and the next ring took ~2.8 mm. Codex found exactly this (the
+  // tracking never binds and the fixture exempted first cuts); slice H removed
+  // the tracking rather than leave dead code. The guard, now conservative in
+  // whole cells, sees the shelf and refuses the rough. That refusal is the
+  // correct answer for this generated program, and is asserted here so the
+  // generator limitation stays visible rather than hidden behind a guard that
+  // evaluated cell centres.
   const stock = squareStock(30, 200, 'x', { x: 0, y: 0 })
-  runCase({
-    label: 'flanged 30x200 D4 flat',
+  const tool = normalizedTool('flat_endmill', 4)
+  const params = {
+    stepover: 2.5, sampleSpacing: 1, stockToLeave: 0, alongStart: 20, alongEnd: 180,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.1,
+  }
+  const rough = generateRotaryRough('flanged shoulder rough', stepped(stock, [
+    { along: 20, radius: 6 },
+    { along: 80, radius: 6 },
+    { along: 80, radius: 12 },
+    { along: 120, radius: 12 },
+    { along: 120, radius: 6 },
+    { along: 180, radius: 6 },
+  ]), stock, tool, { ...params, stepdown: 2, passDirection: 'around' }, {})
+  const project = projectFor(stock, { type: 'flat_endmill', diameter: 4 } as Case)
+  const cutter = cutterFor({ type: 'flat_endmill', diameter: 4 } as Case)
+  const state = createSquareSweepState(
     stock,
-    model: stepped(stock, [
-      { along: 20, radius: 6 },
-      { along: 80, radius: 6 },
-      { along: 80, radius: 12 },
-      { along: 120, radius: 12 },
-      { along: 120, radius: 6 },
-      { along: 180, radius: 6 },
-    ]),
-    type: 'flat_endmill',
-    diameter: 4,
-    stepdown: 2,
-    stepover: 2.5,
-    sampleSpacing: 1,
-    alongStart: 20,
-    alongEnd: 180,
+    2,
+    squareMaterialAlongRange(stock, [{ moves: rough.moves, radius: 2 }]),
+  )
+  const roughOp = {
+    ...defaultOperationForTarget(project, 'rotary_rough', 'rough', { source: 'stock' }, 0),
+    rotaryPassDirection: 'around' as const, stepdown: 2, stockToLeaveRadial: 0,
+  }
+  const verdict = guardSquareOperation(state, {
+    operation: roughOp, moves: rough.moves, cutter, entryAngle: 0, direction: 1,
+    travelZ: travelZ(stock), roundingAllowance: 0.0005,
   })
+  assert.deepEqual(verdict, { admitted: false, reason: 'turn' },
+    'the guard refuses the rough that takes more than one stepdown at the flange shoulder')
+  console.log('  flanged shoulder rough: refused, as the conservative guard requires')
 }
 
 console.log('Testing seeded retained-end variants...')
@@ -285,11 +285,11 @@ console.log('Testing seeded retained-end variants...')
     const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
     const alongStart = lower + ends
     const alongEnd = upper - ends
-    // Alternate a coaxial round part and a square prism: the prism's corners
-    // stand above the layer tops, which is exactly the raised-sample case.
-    const model = seed % 3 === 2
-      ? prism(stock, Math.round(side * 0.22), alongStart + 2, alongEnd - 2)
-      : cylinder(stock, Math.round(side * 0.22), alongStart + 2, alongEnd - 2)
+    // A coaxial round part at every seed. A square prism's corners stand above
+    // the layer tops and the generator's raised shelf over that shoulder is a
+    // real overcut the conservative guard refuses (see the flanged block above),
+    // not a retained-end case this test is about.
+    const model = cylinder(stock, Math.round(side * 0.22), alongStart + 2, alongEnd - 2)
     variants.push({
       label: `variant ${seed} ${side}x${length} ends ${ends} D${diameter} ${type}`,
       stock,
@@ -301,6 +301,7 @@ console.log('Testing seeded retained-end variants...')
       sampleSpacing: 1,
       alongStart,
       alongEnd,
+
     })
   }
   for (const entry of variants) runCase(entry)
@@ -329,7 +330,14 @@ function runCase(entry: Case): void {
   const project = projectFor(stock, entry)
   const cutter = cutterFor(entry)
   const travel = travelZ(stock)
-  const state = createSquareSweepState(stock, entry.diameter / 2)
+  const state = createSquareSweepState(
+    stock,
+    entry.diameter / 2,
+    squareMaterialAlongRange(stock, [
+      { moves: rough.moves, radius: entry.diameter / 2 },
+      { moves: finish.moves, radius: entry.diameter / 2 },
+    ]),
+  )
   const roughOp = {
     ...defaultOperationForTarget(project, 'rotary_rough', 'rough', { source: 'stock' }, 0),
     rotaryPassDirection: 'around' as const, stepdown: entry.stepdown, stockToLeaveRadial: 0,
@@ -342,7 +350,18 @@ function runCase(entry: Case): void {
     operation: roughOp, moves: rough.moves, cutter, entryAngle: 0, direction: 1,
     travelZ: travel, roundingAllowance: 0.0005,
   })
-  assert.deepEqual(roughVerdict, { admitted: true }, `${entry.label}: the guard admits the rough`)
+  if (!roughVerdict.admitted) {
+    // A ball's footprint widens over a cut-range boundary cell by a little more
+    // than `stepdown + tolerance` (the property test's generator note). The
+    // conservative guard refuses those ball variants; a flat's contact does not
+    // vary along, so a flat refusal is a failure.
+    assert.ok(entry.type === 'ball_endmill',
+      `${entry.label}: only a ball boundary case may be refused, got ${JSON.stringify(roughVerdict)}`)
+    assert.deepEqual(roughVerdict, { admitted: false, reason: 'turn' },
+      `${entry.label}: the refusal is the engagement bound`)
+    console.log(`  ${entry.label}: rough ${rough.moves.length} moves, refused at the ball cut-range boundary`)
+    return
+  }
   const finishVerdict = guardSquareOperation(state, {
     operation: finishOp, moves: finish.moves, cutter, entryAngle: 360, direction: 1,
     travelZ: travel, roundingAllowance: 0.0005,

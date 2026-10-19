@@ -114,6 +114,22 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   over its band — every cell is reached by its nearest sample, so walking the
   ~720 samples only repeats the same cell calculation — which is what keeps the
   export check on the slice-F timing inputs inside its budget.
+  #1045 slice H makes the rasterisation conservative: a cut **lowers** a cell
+  only when it covers the whole cell (near and far along corners at the far
+  along corner's smaller cross-section), and only to the far corner's contact,
+  the highest radius the move leaves anywhere in the rectangle; engagement is
+  charged against the cell's highest material for a whole-cell cut and against a
+  separate along-centre sample for a partial one, so the 0.05 mm strip the
+  review found between two cuts is never written off by a cell centre, while a
+  normal layer boundary does not charge blank material a cell away. A continuous
+  turn is modelled as continuous in A (the controller interpolates it), so cells
+  whose angular span lies inside the sweep are fully covered even between the
+  guard's samples. The blank's initial cell is the **maximum** blank radius over
+  its angular span (a corner cusp between bin centres is not lost), and the whole
+  program's material along range is passed in (`squareMaterialAlongRange`) so
+  the retained shoulder beyond the outermost cuts is not charged. The stated
+  tolerance is one angular bin of the blank, one along cell of the ball's own
+  rise, and the emitted-Z rounding.
 - `squareSweepGuard.test.ts` — boundary and review-reproduction tests for that
   guard on the 20 mm square blank: a hand-built around-mode rough cut taking
   1.25 × `stepdown` is refused while 0.9 × is admitted, and a finish taking
@@ -126,18 +142,24 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   Ø8 non-turning cut at A0 followed by an Ø1 descent to tip 6.95 is refused
   because the flat left `9 / cos(10.5°)` = 9.152, not the tip 9 and not zero —
   the cell value this test also asserts directly, which is what makes the
-  "lowering sets material to 0" mutation fail.
+  "lowering sets material to 0" mutation fail. Slice H adds Codex's pass-4
+  repro: two non-turning A45 cuts at x 10 and x 14.05 leave x 12..12.05
+  untouched, and the ring at x 12.025 that covers it must be refused (the cell
+  keeps the blank; the old centre evaluation lowered it to the cut at 14.05).
 - `squareSweepGuard.property.test.ts` — a seeded conservativeness property
   against an independent dense reference (#1045 slice F): 220 random square
   blanks (side 10–60 mm, length 20–1,000 mm), random flat/ball cutters
   (Ø0.2–12 mm) and 1–4-operation programs mixing non-turning and turning cuts
   at random tips and A spans (including beyond a full turn), with random
   stepdown/stock-to-leave. The reference keeps its own finer standing-material
-  grid (0.5° × 0.25 mm) lowered through the exact cutter body and samples the
+  grid (0.125° × `min(0.05, r/16)`, strictly finer than the guard on both axes
+  and centre-sampled, so it does not share the guard's whole-cell blind spot)
+  lowered through the exact cutter body and samples the
   commanded motion at its own cell resolution; every program the guard admits
   must have no turning cut deeper than its tolerance-inclusive bound. It also
   reports the false-refusal rate on the generator's own normal square-to-round
-  rough + finish for flat/ball and around/along (0 of 4).
+  rough + finish for flat/ball and around/along (3 of 4; the ball around case
+  is a real cut-range-boundary overcut the conservative guard refuses).
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change

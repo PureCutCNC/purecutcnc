@@ -57,7 +57,7 @@ import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
-import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
+import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from './squareSweepGuard'
 import type { SquareSweepState } from './squareSweepGuard'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
@@ -1224,7 +1224,16 @@ export function planRotaryRefusals(
   // be shown to be a finishing pass, and a rough that covered only part of the
   // band leaves the rest at the blank. A refused operation's cuts are rolled
   // back -- it emits no motion, so it removes nothing.
-  const sweep = isSquareStock(project.stock) ? createSquareSweepState(project.stock, smallestCutterRadius(operations)) : null
+  // The material range is the union over the **whole** program: a cell outside
+  // it is never cut by any operation, so the guard may ignore it there. It must
+  // span every operation, not one, or a later operation could widen the range
+  // and find material the grid had discarded.
+  const sweepRange = isSquareStock(project.stock)
+    ? squareMaterialAlongRange(project.stock, operations.map((entry) => ({ moves: entry.toolpath.moves, radius: entry.tool.radius })))
+    : undefined
+  const sweep = isSquareStock(project.stock)
+    ? createSquareSweepState(project.stock, smallestCutterRadius(operations), sweepRange)
+    : null
   for (const entry of operations) {
     const snapshot = sweep
       ? { material: sweep.material.slice(), roughAllowance: new Map(sweep.roughAllowance) }

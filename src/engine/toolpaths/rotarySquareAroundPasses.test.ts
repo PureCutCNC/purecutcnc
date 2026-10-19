@@ -909,7 +909,16 @@ console.log('Testing the square around output guard...')
     { operation: alongRough, moves: alongRoughResult.moves },
     { operation: finish, moves: finishResult.moves },
   ])
-  assert.deepEqual(mixed.warnings, [], 'an around finish after an along-mode rough posts')
+  // The conservative guard (#1045 slice H) charges the along rough's retained-end
+  // shoulder: its passes start one cutter radius inside the model end, so the
+  // corner cells between that start and the end are still blank, and the finish's
+  // first ring takes them. Slice E's centre-evaluating guard admitted this; the
+  // whole-cell guard refuses it. Refusing is the safe answer, and the reach of
+  // the finish past the along rough's cut range is the thing to fix in the
+  // generator, not the guard.
+  assert.deepEqual(mixed.warnings.map((warning) => warning.code),
+    ['postRotarySquareTurnBelowEnvelope'],
+    'the around finish after the along-mode rough is refused at the retained-end shoulder')
 
   // A blank already at its model needs no rough: the geometric alternative
   // admits the finish on any square operation whose material is within the

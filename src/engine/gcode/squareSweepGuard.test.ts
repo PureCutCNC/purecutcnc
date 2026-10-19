@@ -52,7 +52,7 @@ import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/bar
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { operationTargetKey } from '../setupTargets'
 import type { ToolpathMove } from '../toolpaths/types'
-import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
+import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from './squareSweepGuard'
 import type { SquareGuardVerdict, SquareSweepState } from './squareSweepGuard'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 
@@ -351,6 +351,58 @@ console.log('Testing the flat disc\'s radial contact instead of the tip radius..
     `the descending cut would take ${engagement.toFixed(3)} mm against a tolerance-inclusive bound of ${bound.toFixed(3)} mm`)
   assert.deepEqual(admit(state, rough, second, 10.25, ONE), { admitted: false, reason: 'turn' },
     'the descent is refused because the disc left 9/cos(dTheta), not 9')
+}
+
+// ── 6. Codex review pass 4, finding 1: a cell is a rectangle, not its centre ──
+//
+// A 20 x 30 mm square, Ø4 flat, rough stepdown 1.1. Two non-turning cuts at
+// A45 -- along x 10 and x 14.05 -- leave the 0.05 mm strip x 12..12.05
+// untouched at the corner. A ring at x 12.025, tip 8, A0 -> 360 covers that
+// strip completely: it takes `side * sqrt(2) - 8` = 6.142 mm at the 45 degree
+// corner, far over the 1.1 mm stepdown. The slice-G guard evaluated each cell at
+// its **centre**, so the cut at 14.05 lowered the cell x 12..12.5 (its centre,
+// 12.25, lies inside that cut's footprint) and the ring posted. A cell may only
+// be lowered where the cutter covers the whole cell; x 12..12.05 is not covered
+// by either earlier cut, so the cell keeps the blank and the ring is refused.
+
+console.log('Testing that an uncut strip between two cuts is not erased by a cell centre...')
+{
+  const stock = squareStock(20, 30, 'x', { x: 0, y: 0 })
+  const stepdown = 1.1
+  const tip = 8
+  const op: Operation = { ...rough, stepdown }
+  const moves: ToolpathMove[] = [
+    // A45: cut at x 10, a non-turning plunge, then retract.
+    { kind: 'rapid', from: at(10, CORNER + 1, 0), to: at(10, CORNER + 1, 45) },
+    { kind: 'cut', from: at(10, tip, 45), to: at(10, tip, 45) },
+    { kind: 'rapid', from: at(10, tip, 45), to: at(10, CORNER + 1, 45) },
+    // A45: cut at x 14.05, leaving x 12..12.05 between the two footprints.
+    { kind: 'rapid', from: at(10, CORNER + 1, 45), to: at(14.05, CORNER + 1, 45) },
+    { kind: 'cut', from: at(14.05, tip, 45), to: at(14.05, tip, 45) },
+    { kind: 'rapid', from: at(14.05, tip, 45), to: at(14.05, CORNER + 1, 45) },
+    // Back to A0, plunge, then the full ring at x 12.025.
+    { kind: 'rapid', from: at(14.05, CORNER + 1, 45), to: at(12.025, CORNER + 1, 0) },
+    { kind: 'cut', from: at(12.025, tip, 0), to: at(12.025, tip, 0) },
+    { kind: 'cut', from: at(12.025, tip, 0), to: at(12.025, tip, 360) },
+  ]
+  const state = createSquareSweepState(stock, CUTTER.radius, squareMaterialAlongRange(stock, [{ moves, radius: CUTTER.radius }]))
+  // The earlier cuts alone are admitted: a non-turning cut is never refused, it
+  // only lowers the grid -- and here it must leave the strip standing.
+  const earlier = admit(state, op, moves.slice(0, 8), null)
+  assert.deepEqual(earlier, { admitted: true }, 'the two non-turning cuts are admitted')
+  const alongBin = state.alongBin
+  const cell = Math.floor((12.25 - state.alongStart) / alongBin) * state.angleBins
+    + Math.floor(45 / state.angleBinDegrees)
+  assert.ok(state.material[cell] > CORNER - 1e-6,
+    `the cell over the uncut strip x 12..12.05 still stands at the blank ${state.material[cell].toFixed(4)} mm`)
+  // The ring's true engagement at the corner is the blank corner less its tip.
+  const bite = CORNER - tip
+  const bound = stepdown + barMaxRadius(stock) * (0.5 * Math.PI / 180) + ROUNDING
+  assert.ok(bite > bound + 4,
+    `the ring would take ${bite.toFixed(3)} mm against a tolerance-inclusive bound of ${bound.toFixed(3)} mm`)
+  // And the guard must refuse it, not post the 6.142 mm bite.
+  assert.deepEqual(admit(state, op, moves, null), { admitted: false, reason: 'turn' },
+    'the ring over the untouched strip is refused')
 }
 
 console.log('engine/gcode/squareSweepGuard.test.ts: all assertions passed')

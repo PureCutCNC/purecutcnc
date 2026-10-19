@@ -46,7 +46,7 @@ import { defaultTool, newProject } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { generateRotaryFinish, generateRotaryRough, mergeCollinearCuts } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import { createSquareSweepState, guardSquareOperation } from '../gcode/squareSweepGuard'
+import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from '../gcode/squareSweepGuard'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 import type { ToolpathMove, ToolpathPoint } from './types'
 
@@ -86,24 +86,31 @@ function ringAngles(): number[] {
 }
 
 /**
- * Perpendicular distance from `point` to the line through `a` and `b` in
- * (along, A, Z) motion space, A scaled to surface length. Independent of the
- * merge's own function, so the test measures the emitted line itself.
+ * The commanded error of the merged move `a -> b` at `point`: the controller
+ * interpolates linearly, so the point's own A (or, on a leg whose A is
+ * constant, its own along position) fixes the fraction, and the difference in
+ * Z -- and in X and Y -- at that fraction is the real tool-position error.
+ * Written independently of the merge's own function (#1045 slice H).
  */
-function distanceInMotionSpace(point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint, surfacePerDegree: number): number {
-  const abx = b.x - a.x
-  const aby = b.y - a.y
-  const abz = b.z - a.z
-  const aba = surfacePerDegree * ((b.a ?? 0) - (a.a ?? 0))
-  const apx = point.x - a.x
-  const apy = point.y - a.y
-  const apz = point.z - a.z
-  const apa = surfacePerDegree * ((point.a ?? 0) - (a.a ?? 0))
-  const lengthSq = abx * abx + aby * aby + abz * abz + aba * aba
-  const apSq = apx * apx + apy * apy + apz * apz + apa * apa
-  if (lengthSq <= 1e-18) return Math.sqrt(apSq)
-  const dot = apx * abx + apy * aby + apz * abz + apa * aba
-  return Math.sqrt(Math.max(0, apSq - dot * dot / lengthSq))
+function interpolationErrorAtOwnAngle(point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint): number {
+  const deltaAngle = (b.a ?? 0) - (a.a ?? 0)
+  let fraction: number
+  if (deltaAngle !== 0) {
+    fraction = ((point.a ?? 0) - (a.a ?? 0)) / deltaAngle
+  } else {
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const lengthSq = dx * dx + dy * dy
+    if (lengthSq <= 1e-18) return Math.hypot(point.x - a.x, point.y - a.y, point.z - a.z)
+    fraction = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq
+  }
+  if (!(fraction >= -1e-9 && fraction <= 1 + 1e-9)) return Number.POSITIVE_INFINITY
+  const f = Math.min(1, Math.max(0, fraction))
+  return Math.max(
+    Math.abs(point.x - (a.x + (b.x - a.x) * f)),
+    Math.abs(point.y - (a.y + (b.y - a.y) * f)),
+    Math.abs(point.z - (a.z + (b.z - a.z) * f)),
+  )
 }
 
 console.log('Testing that the around merge keeps the commanded motion at every sample...')
@@ -140,21 +147,15 @@ console.log('Testing that the around merge keeps the commanded motion at every s
     const fromIndex = indexOf.get(move.from)
     const toIndex = indexOf.get(move.to)
     assert.ok(fromIndex !== undefined && toIndex !== undefined, 'a merged move keeps original sample points as its ends')
-    // The move's own endpoints are exact; every sample it spans must lie within
-    // the tolerance of its commanded line.
+    // The move's own endpoints are exact; every sample it spans must be within
+    // the tolerance **at its own A**, not merely near the line in motion space.
     const low = Math.min(fromIndex, toIndex)
     const high = Math.max(fromIndex, toIndex)
-    // The merge scales A at the largest tip radius of the run this move came
-    // from; the move's own span's maximum is at most that, so measuring with it
-    // is never stricter than the guarantee and still charges the angle error.
-    let maxTip = 0
-    for (let i = low; i <= high; i++) maxTip = Math.max(maxTip, sequence[i].z - PIVOT)
-    const surfacePerDegree = maxTip * Math.PI / 180
     for (let i = low + 1; i < high; i++) {
-      const distance = distanceInMotionSpace(sequence[i], move.from, move.to, surfacePerDegree)
-      if (distance > worst) worst = distance
-      assert.ok(distance <= TOLERANCE + 1e-9,
-        `sample ${i} (A${sequence[i].a}) is ${distance.toExponential(3)} mm off the merged move, over the tolerance`)
+      const error = interpolationErrorAtOwnAngle(sequence[i], move.from, move.to)
+      if (error > worst) worst = error
+      assert.ok(error <= TOLERANCE + 1e-9,
+        `sample ${i} (A${sequence[i].a}) commands ${error.toExponential(3)} mm of error at its own A, over the tolerance`)
     }
   }
   // The emitter stepped leg survives as its own move: a vertical rise is not a
@@ -195,6 +196,51 @@ console.log('Testing that the around merge keeps the commanded motion at every s
   const after = guardSquareOperation(createSquareSweepState(STOCK, 2), { ...input, moves: merged.moves })
   assert.deepEqual(after, before, 'the guard reaches the same verdict on the merged and unmerged programs')
   console.log(`  guard verdict unchanged: ${JSON.stringify(before)}`)
+}
+
+// ── Codex review pass 4, finding 3: interpolation at the sample's own A ──
+//
+// Tips (A0, 10), (A0.1, 10.0151), (A0.2, 10.028). The merged move A0 -> A0.2
+// would command 10.014 at A0.1: 0.0011 mm off the 0.001 mm tolerance. The old
+// perpendicular metric in (along, A, Z) space measures 0.000858 mm and merges
+// them; the sample's own-A error does not.
+
+console.log('Testing the three points that a perpendicular metric merges over tolerance...')
+{
+  const tips = [10, 10.0151, 10.028]
+  const points: ToolpathPoint[] = tips.map((tip, index) => ({
+    x: ALONG, y: CENTRE, z: PIVOT + tip, a: index * 0.1,
+  }))
+  const program: ToolpathMove[] = [
+    { kind: 'cut', from: points[0], to: points[1] },
+    { kind: 'cut', from: points[1], to: points[2] },
+  ]
+  const merged = mergeCollinearCuts(program, TOLERANCE, PIVOT)
+  assert.equal(merged.moves.length, 2, 'the middle tip stays its own move')
+  for (const move of merged.moves) {
+    for (const point of points) {
+      if ((point.a ?? 0) < Math.min(move.from.a ?? 0, move.to.a ?? 0) - 1e-9
+        || (point.a ?? 0) > Math.max(move.from.a ?? 0, move.to.a ?? 0) + 1e-9) continue
+      const error = interpolationErrorAtOwnAngle(point, move.from, move.to)
+      assert.ok(error <= TOLERANCE + 1e-9,
+        `A${point.a}: the merged move commands ${error.toExponential(3)} mm of Z error at that A`)
+    }
+  }
+  // The perpendicular distance the old metric used, for contrast: it is under
+  // the tolerance, which is why the middle tip used to be dropped.
+  const surfacePerDegree = 10 * Math.PI / 180
+  const abx = points[2].x - points[0].x
+  const abz = points[2].z - points[0].z
+  const aba = surfacePerDegree * 0.2
+  const apx = points[1].x - points[0].x
+  const apz = points[1].z - points[0].z
+  const apa = surfacePerDegree * 0.1
+  const lengthSq = abx * abx + abz * abz + aba * aba
+  const dot = apx * abx + apz * abz + apa * aba
+  const perpendicular = Math.sqrt(Math.max(0, apx * apx + apz * apz + apa * apa - dot * dot / lengthSq))
+  assert.ok(perpendicular < TOLERANCE,
+    `the old perpendicular metric would have merged the tips (${perpendicular.toExponential(3)} mm)`)
+  console.log(`  three tips: kept as 2 moves; old perpendicular ${perpendicular.toExponential(3)} mm < ${TOLERANCE} mm`)
 }
 
 // ---------------------------------------------------------------------------
@@ -275,17 +321,30 @@ console.log('Testing that a generated around ring merges and still posts...')
     ...defaultOperationForTarget(project, 'rotary_finish', 'finish', { source: 'stock' }, 1),
     rotaryPassDirection: 'around' as const, stockToLeaveRadial: 0,
   }
-  const state = createSquareSweepState(stock, 1.5)
+  const state = createSquareSweepState(
+    stock,
+    1.5,
+    squareMaterialAlongRange(stock, [
+      { moves: rough.moves, radius: 1.5 },
+      { moves: finish.moves, radius: 1.5 },
+    ]),
+  )
   const roughVerdict = guardSquareOperation(state, {
     operation: roughOp, moves: rough.moves, cutter, entryAngle: 0, direction: 1, travelZ, roundingAllowance: 0.0005,
   })
   const finishVerdict = guardSquareOperation(state, {
     operation: finishOp, moves: finish.moves, cutter, entryAngle: 360, direction: 1, travelZ, roundingAllowance: 0.0005,
   })
-  assert.deepEqual(roughVerdict, { admitted: true }, 'the merged rough posts')
-  assert.deepEqual(finishVerdict, { admitted: true }, 'the merged finish over it posts')
+  // The conservative guard (#1045 slice H) refuses the ball generator at the
+  // cut range's along boundary (the same ~0.08 mm over `stepdown + tolerance`
+  // the property test documents). The merge's job is the motion, not the
+  // verdict: assert the refusal and that the merged rings are still short.
+  assert.deepEqual(roughVerdict, { admitted: false, reason: 'turn' },
+    'the conservative guard refuses the ball rough at its cut-range boundary')
+  assert.deepEqual(finishVerdict, { admitted: false, reason: 'turn' },
+    'the finish over the refused rough is refused too')
   console.log(`  generated rough ${rough.moves.length} moves (${turningCuts(rough.moves)} turning cuts), `
-    + `finish ${finish.moves.length} moves; guard admits both`)
+    + `finish ${finish.moves.length} moves; guard refuses the ball boundary`)
 }
 
 console.log('engine/toolpaths/rotaryMerge.test.ts: all assertions passed')
