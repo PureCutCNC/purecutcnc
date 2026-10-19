@@ -73,34 +73,63 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   are used, as on a machine with canned cycles off.
 - `squareSweepGuard.ts` — the square blank's standing-material grid and the
   export guard that walks a whole program's commanded motion through it
-  (#1045 slice E). Cells are along-bar bins by angle bins, each the material's
-  outer radius above the pivot, initialised from the raw blank (corner envelope
-  at every angle, retained ends included) and lowered by every cut in program
-  order. A turning cut below the travel height is admitted only when its
-  interior engagement — sampled along the **actual commanded** motion, A as
-  commanded so A0→A360 is a full revolution, inside the cutter's footprint —
-  is within the operation's bound: a rough's `stepdown`, or a finish's
-  `stockToLeave` plus the scallop of the strongest earlier rough on the same
-  target. The tolerance added to that bound is one angular bin's surface
-  change, the cutter's **own** radial change across half an along bin (zero for
-  a flat; `r - sqrt(r² - (alongBin/2)²)` for a ball — never the along bin's
-  length), and the emitted-Z rounding. A finish with no earlier rough also
-  gets its cutter footprint's angular sagitta, capped to a 30° span, because
-  the footprint reaches material above the sample's ray on the blank's flats.
-  A turning rapid, or a turn on an along-mode operation, still refuses.
-  Non-turning cuts (an along pass, a plunge) are never refused here but do
-  lower the grid, which is what lets an along rough clear material for an
-  around finish. This replaced the slice-C licence that one earlier rough on
+  (#1045 slices E and F). Cells are along-bar bins by angle bins, each the
+  **largest** material radius anywhere in the cell above the turning pivot,
+  initialised from the raw blank (the square's corner envelope, retained ends
+  included) and lowered by every cut in program order. A turning cut below the
+  travel height is admitted only when its interior engagement — sampled along
+  the **actual commanded** motion, A as commanded so A0→A360 is a full
+  revolution, at each cell's own along coordinate and angular ray — is within
+  the operation's bound: a rough's `stepdown`, or a finish's `stockToLeave`
+  plus the scallop of the strongest earlier rough on the same target. The
+  engagement and the material a cut leaves are the **exact ray/cutter
+  intersection**, never the tip radius: a flat's bottom face meets a ray
+  `dTheta` off its axis at `tip / cos(dTheta)` (its disc), a ball's sphere at
+  the near root of `(R cos dTheta - (tip + r))^2 + (R sin dTheta)^2 + dx^2 =
+  r^2`; a cell is written down only when the body's outer wall (a flat's
+  cylinder; a ball's far sphere root unioned with the shank above its equator)
+  reaches past the material's top there, so a
+  grazing slot is never recorded as a full-depth plunge. Resolution is
+  conservative by construction and never widened to fit a budget: the along
+  bin is at most a quarter of the program's smallest cutter radius, and the
+  angular bin must be narrower than the cutter's footprint at the blank's
+  corner (`2 asin(r / barMaxRadius)`). A program that needs more than
+  `GUARD_MAX_ALONG_BINS` along bins or `GUARD_MAX_CELLS` cells (a 1 m blank
+  with a sub-millimetre cutter) is refused with
+  `postRotarySquareGuardResolution` — "split the operation or use a larger
+  cutter" — instead of being checked against a grid that cannot see the
+  cutter. The tolerance added to the bound is one angular bin of the blank's
+  surface, the ball's own radial change across half an along bin (zero for a
+  flat) and the emitted-Z rounding. A turning rapid, a turn on an along-mode
+  operation, or a cut that takes more than its bound still refuses with
+  `postRotarySquareTurnBelowEnvelope`; non-turning cuts are never refused here
+  but do lower the grid, which is what lets an along rough clear material for
+  an around finish. This replaced the slice-C licence that one earlier rough on
   the same target proved coverage everywhere.
-- `squareSweepGuard.test.ts` — boundary tests for that bound on the 20 mm
-  square blank: a hand-built around-mode rough cut taking 1.25 × `stepdown` is
-  refused while 0.9 × is admitted, and a finish taking `stockToLeave + scallop
-  + 0.2 mm` is refused while 0.9 × is admitted. The true engagement is the
-  blank's own corner radius (`halfSide × √2`) less the cut's tip, measured in
-  the test rather than read from the guard. The finish case first admits a
-  rough at another along position, so the allowance the finish may take is
-  exercised while its own cut still meets the raw blank. These are the cases
-  that make a doubled rough bound, or a reintroduced `+ alongBin` term, fail.
+- `squareSweepGuard.test.ts` — boundary and review-reproduction tests for that
+  guard on the 20 mm square blank: a hand-built around-mode rough cut taking
+  1.25 × `stepdown` is refused while 0.9 × is admitted, and a finish taking
+  `stockToLeave + scallop + 0.2 mm` is refused while 0.9 × is admitted, with
+  the true engagement measured from the blank's own corner geometry. #1045
+  slice F adds Codex's three reproductions as tests: a 20 × 1,000 mm blank with
+  an Ø0.2 flat is refused at `resolution` (a widened 0.488 mm along bin made
+  every cell miss the cutter); a 60 mm blank with an Ø0.1 flat is refused
+  because its 0.135° corner footprint is narrower than one angle bin; and an
+  Ø8 non-turning cut at A0 followed by an Ø1 descent to tip 6.95 is refused
+  because the flat left `9 / cos(10.5°)` = 9.152, not the tip 9 and not zero —
+  the cell value this test also asserts directly, which is what makes the
+  "lowering sets material to 0" mutation fail.
+- `squareSweepGuard.property.test.ts` — a seeded conservativeness property
+  against an independent dense reference (#1045 slice F): 220 random square
+  blanks (side 10–60 mm, length 20–1,000 mm), random flat/ball cutters
+  (Ø0.2–12 mm) and 1–4-operation programs mixing non-turning and turning cuts
+  at random tips and A spans (including beyond a full turn), with random
+  stepdown/stock-to-leave. The reference keeps its own finer standing-material
+  grid (0.5° × 0.25 mm) lowered through the exact cutter body and samples the
+  commanded motion at its own cell resolution; every program the guard admits
+  must have no turning cut deeper than its tolerance-inclusive bound. It also
+  reports the false-refusal rate on the generator's own normal square-to-round
+  rough + finish for flat/ball and around/along (0 of 4).
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change

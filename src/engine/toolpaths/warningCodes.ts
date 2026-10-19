@@ -476,6 +476,15 @@ export type ToolpathWarningCode =
    *  on an along-mode operation, or a cut that takes more than the operation's
    *  bound keeps this refusal. Params: operation. */
   | 'postRotarySquareTurnBelowEnvelope'
+  /** The square blank's standing-material grid cannot be built finely enough
+   *  for the program's smallest cutter within the guard's budget: the along bin
+   *  would have to be wider than the cutter (letting a sample fall between two
+   *  cell centres and miss the cut), or the cutter's footprint at the blank's
+   *  corner would be narrower than one angular bin. The program is refused
+   *  rather than checked against a grid that cannot see the cutter; splitting
+   *  the operation shortens the blank the check has to cover (issue #1045
+   *  slice F). Params: operation. */
+  | 'postRotarySquareGuardResolution'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -535,11 +544,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
  *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
- *   `postRotaryAxisMismatch` and `postRotarySquareTurnBelowEnvelope` — a rotary
- *   operation the machine cannot run is left out of the program (issues #393,
- *   #1016 C2 M1). The file would otherwise be saved without that pass, and
- *   approximating any of them would cut the stock at the wrong angle, the
- *   wrong feed, or through the square blank's standing corners.
+ *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope` and
+ *   `postRotarySquareGuardResolution` — a rotary operation the machine cannot
+ *   run, or the square guard cannot prove, is left out of the program (issues
+ *   #393, #1016 C2 M1, #1045). The file would otherwise be saved without that
+ *   pass, and approximating any of them would cut the stock at the wrong angle,
+ *   the wrong feed, or through the square blank's standing corners.
  *
  * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
  * round bar or a block in an Around setup is a note about a job the setup does
@@ -569,6 +579,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
+  'postRotarySquareGuardResolution',
 ])
 
 /**

@@ -1134,7 +1134,7 @@ function inspectRotaryOperation(args: {
     // is never refused here but lowers the grid, which is what lets an along
     // rough clear material for a later around finish.
     if (sweep !== null && isRotaryOperationKind(operation.kind)) {
-      const admitted = guardSquareOperation(sweep, {
+      const verdict = guardSquareOperation(sweep, {
         operation,
         moves: toolpath.moves,
         cutter: emittedCutter,
@@ -1143,8 +1143,16 @@ function inspectRotaryOperation(args: {
         travelZ: rotaryTravelZ(project.stock, project.meta.units),
         roundingAllowance: emittedCoordinateHalfStep(definition, project.meta.units),
       })
-      if (!admitted) {
-        return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
+      if (!verdict.admitted) {
+        // A grid the guard cannot build is not a verdict about the cut: the
+        // blank and cutter need finer bins than the export check may allocate.
+        // The operation is refused with its own message instead of being
+        // checked against a grid too coarse to see the cutter.
+        return {
+          refused: verdict.reason === 'resolution'
+            ? { code: 'postRotarySquareGuardResolution', params: { operation: operationName } }
+            : { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } },
+        }
       }
     }
   }

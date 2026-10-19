@@ -223,7 +223,13 @@ console.log('Testing that a square blank generates around passes...')
     assert.notEqual(rings[i].direction, 0, `ring ${i} turns`)
     if (rings[i].direction > 0) forward++
     else reversed++
-    if (i > 0) assert.equal(rings[i].direction, -rings[i - 1].direction, `ring ${i} runs opposite its predecessor`)
+    // Rings alternate within a layer. Across a layer boundary the direction
+    // also alternates by the generator's single ring counter, but a ring that
+    // is all air at its layer emits no cut moves and is absent here, so the
+    // parity only holds inside a layer (the along coordinate climbs).
+    if (i > 0 && rings[i].along > rings[i - 1].along) {
+      assert.equal(rings[i].direction, -rings[i - 1].direction, `ring ${i} runs opposite its predecessor`)
+    }
   }
   assert.ok(forward > 0 && reversed > 0, 'both ring directions are emitted')
 }
@@ -251,7 +257,15 @@ console.log('Testing the square touch-radius gate on every cut point...')
         // a real layer never reaches the corner envelope.
         if (tip >= TRAVEL_TIP - 1e-9) continue
         const material = squareRotaryTouchRadius(SQUARE, angleOf(point), tool.radius, tool.type)
-        assert.ok(tip < material + 1e-9,
+        // `squareRotaryTouchRadius` is the blank's radius along the sample's own
+        // ray; the cutter's footprint also reaches material just off that ray
+        // (a corner, or the retained stub one radius away), and since #1045
+        // slice F the sampler reads that footprint support plus the conservative
+        // cell pad, so a grazing cut can sit above the ray radius by that pad.
+        // The gate being tested is the per-sample one that would otherwise emit
+        // a whole layer (millimetres) above the material; the pad is a fraction
+        // of the requested height-map cell.
+        assert.ok(tip <= material + 0.06,
           `${tool.type}: cut at A ${angleOf(point).toFixed(2)} reaches ${tip.toFixed(4)}, above the blank material ${material.toFixed(4)}`)
         checked++
       }
@@ -942,7 +956,10 @@ console.log('Testing the square around output guard...')
   const over: ToolpathMove[] = structuredClone(roughResult.moves)
   let edited = false
   for (const move of over) {
+    // A **turning** cut: a constant-angle cut is never checked for engagement
+    // (it lowers the grid only), so editing one would test nothing.
     if (move.kind !== 'cut' || move.from.x !== move.to.x) continue
+    if (move.from.a === move.to.a) continue
     const tip = move.from.z - barPivotZ(stock)
     if (tip > barMaxRadius(stock) - 0.5) continue
     if (edited) break

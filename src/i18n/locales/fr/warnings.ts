@@ -254,6 +254,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': "Les modèles de la machine écrivent {axis}, le mot qui fait tourner l'axe rotatif sur cette machine. Retirez-le des modèles de la machine avant d'exporter.",
   'warnings.postRotaryDrillNotExpanded': "L'opération « {operation} » n'a pas été exportée : son perçage n'a pas de mouvements développés, et les cycles fixes ne peuvent pas être utilisés sur une machine dont l'axe rotatif emprunte un moteur.",
   'warnings.postRotaryAxisMismatch': "L'opération « {operation} » n'a pas été exportée : l'axe rotatif de la machine est selon {machineAxis}, mais la barre est selon {stockAxis}.",
+  'warnings.postRotarySquareGuardResolution': "L'opération « {operation} » n'a pas été exportée : le brut carré est trop long pour la vérification d'export avec cet outil, la grille de matière restante ne peut donc pas résoudre la fraise. Divisez l'opération en passes plus courtes ou utilisez une fraise plus grande.",
   'warnings.postRotarySquareTurnBelowEnvelope': "L'opération « {operation} » n'a pas été exportée : elle fait tourner le brut carré alors que l'outil est sous l'enveloppe des coins et la coupe enlèverait plus que la profondeur autorisée de l'opération, si bien que les coins saillants balayeraient l'outil.",
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',

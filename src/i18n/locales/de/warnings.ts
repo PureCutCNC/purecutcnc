@@ -274,6 +274,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Die Vorlagen der Maschine schreiben {axis}, das Wort, das an dieser Maschine die Drehachse dreht. Entfernen Sie es vor dem Export aus den Vorlagen der Maschine.',
   'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
+  'warnings.postRotarySquareGuardResolution': 'Operation „{operation}" wurde nicht exportiert: Der Vierkant-Rohling ist für die Exportprüfung mit diesem Werkzeug zu lang, sodass das Raster des stehenden Materials den Fräser nicht auflösen kann. Teilen Sie die Operation in kürzere Durchgänge oder verwenden Sie einen größeren Fräser.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, und der Schnitt würde mehr als die zulässige Tiefe der Operation abtragen, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',

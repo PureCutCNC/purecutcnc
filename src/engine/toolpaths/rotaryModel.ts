@@ -42,6 +42,16 @@ export interface RotarySampleOptions {
   readonly onAngle?: (done: number, total: number) => void
   /** Return true to stop early; the result then holds the angles done so far. */
   readonly shouldStop?: () => boolean
+  /**
+   * Raise every sample by the operation's largest cell-centre rise and query
+   * the tool's support from each cell's nearest point (issue #1045 slice F).
+   * Used by around mode: the stated 0.005 mm between-sample bound is a property
+   * of the emitted motion against the model, and a cell-centre height map
+   * under-reads a sharp face by up to a cell, which no interpolation can put
+   * back. The returned tips are then at or above the true support, and the
+   * between-sample tolerance is the only remaining error.
+   */
+  readonly conservativeCellBounds?: boolean
 }
 
 export interface RotarySampling {
@@ -557,6 +567,13 @@ export function sampleRotaryModel(
   const subset = new Uint32Array(2 * Math.floor(mesh.index.length / 3))
   let plan: RotaryStripPlan | null = null
   let stopped = false
+  // #1045 slice F: around mode reads every cell as the top of its square, not
+  // its centre. The height map's centre samples can under-read a surface by
+  // `(|dz/dx| + |dz/dy|) * cellSize / 2` inside one cell; that margin is added
+  // to every sample of the angle it belongs to (one scalar per angle, so the
+  // pad varies no faster than the turned surface's own slope), which keeps the
+  // emitted tip at or above the model.
+  const angleLifts: number[] = []
   for (const angle of options.anglesDeg) {
     if (options.shouldStop?.()) {
       stopped = true
@@ -601,17 +618,30 @@ export function sampleRotaryModel(
     const heightMap = buildHeightMap(turned, mesh.index, bbox, cellSize, {
       window,
       triangles: subset.subarray(0, count),
+      ...(options.conservativeCellBounds ? { trackCellRise: true } : {}),
     })
+    if (options.conservativeCellBounds) angleLifts.push(Math.min(heightMap.cellRise ?? 0, cellSize))
     const row = new Float32Array(along.length)
     for (let i = 0; i < along.length; i++) {
       const x = stock.axis === 'x' ? along[i] : centre
       const y = stock.axis === 'x' ? centre : along[i]
-      const z = safeToolTipZAt(x, y, heightMap, tool)
+      const z = safeToolTipZAt(x, y, heightMap, tool,
+        options.conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
       row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
     }
     anglesDeg.push(angle)
     tipRadius.push(row)
     options.onAngle?.(anglesDeg.length, options.anglesDeg.length)
+  }
+  if (options.conservativeCellBounds) {
+    for (let k = 0; k < tipRadius.length; k++) {
+      const lift = angleLifts[k]
+      if (!(lift > 0)) continue
+      const row = tipRadius[k]
+      for (let i = 0; i < row.length; i++) {
+        if (Number.isFinite(row[i])) row[i] += lift
+      }
+    }
   }
   return { anglesDeg, along, tipRadius, stopped, valid: true }
 }
@@ -1553,9 +1583,10 @@ function refineAroundSampling(args: {
   tips: readonly Float32Array[]
   requestedCellSize: number
   warnings: ToolpathWarning[]
+  conservativeCellBounds: boolean
   shouldStop?: () => boolean
 }): { angles: number[]; tips: Float32Array[]; stopped: boolean } | null {
-  const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, shouldStop } = args
+  const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, conservativeCellBounds, shouldStop } = args
   let angles = [...args.angles]
   let tips: Float32Array[] = [...args.tips]
   for (let round = 0; round < MAX_AROUND_REFINEMENT_ROUNDS; round++) {
@@ -1565,6 +1596,7 @@ function refineAroundSampling(args: {
       anglesDeg: mids,
       along,
       requestedCellSize,
+      ...(conservativeCellBounds ? { conservativeCellBounds: true } : {}),
       ...(shouldStop ? { shouldStop } : {}),
     }, warnings)
     if (!sampled.valid) return null
@@ -1752,6 +1784,7 @@ function rotaryTargets(
       anglesDeg: angles,
       along,
       requestedCellSize: params.requestedCellSize,
+      ...(params.passDirection === 'around' ? { conservativeCellBounds: true } : {}),
       ...hooks,
     },
     warnings,
@@ -1775,6 +1808,7 @@ function rotaryTargets(
       tips: sampling.tipRadius,
       requestedCellSize: params.requestedCellSize,
       warnings,
+      conservativeCellBounds: true,
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     })
     if (refined === null) {

@@ -274,6 +274,7 @@ export const warningsEn = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis}, the word that turns the rotary on this machine. Remove it from the machine's templates before exporting.",
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
+  'warnings.postRotarySquareGuardResolution': 'Operation "{operation}" was not exported: the square blank is too long for the export check at this cutter size, so the standing-material grid cannot resolve the cutter. Split the operation into shorter passes or use a larger cutter.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope and the cut would take more than the operation\'s allowed depth, so the standing corners would sweep into the cutter.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',

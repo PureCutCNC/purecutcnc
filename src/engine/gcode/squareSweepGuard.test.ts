@@ -48,12 +48,12 @@
 import assert from 'node:assert/strict'
 import { defaultTool, newProject } from '../../types/project'
 import type { Operation, OperationTarget, Project } from '../../types/project'
-import { barCentre, barPivotZ, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { operationTargetKey } from '../setupTargets'
 import type { ToolpathMove } from '../toolpaths/types'
 import { createSquareSweepState, guardSquareOperation } from './squareSweepGuard'
-import type { SquareSweepState } from './squareSweepGuard'
+import type { SquareGuardVerdict, SquareSweepState } from './squareSweepGuard'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 
 // ── fixture: the 20 mm square blank, a Ø4 flat, one rough and one finish ──
@@ -122,11 +122,17 @@ function freshState(): SquareSweepState {
   return createSquareSweepState(STOCK, CUTTER.radius)
 }
 
-function admit(state: SquareSweepState, operation: Operation, moves: ToolpathMove[], entryAngle: number | null): boolean {
+function admit(
+  state: SquareSweepState,
+  operation: Operation,
+  moves: ToolpathMove[],
+  entryAngle: number | null,
+  cutter: EmittedSquareCutter = CUTTER,
+): SquareGuardVerdict {
   return guardSquareOperation(state, {
     operation,
     moves,
-    cutter: CUTTER,
+    cutter,
     entryAngle,
     direction: 1,
     travelZ: TRAVEL_Z,
@@ -143,7 +149,7 @@ function admit(state: SquareSweepState, operation: Operation, moves: ToolpathMov
 function stateAfterRough(): SquareSweepState {
   const state = freshState()
   const admitted = admit(state, rough, turningCut(5, CORNER - rough.stepdown, 0, 45), null)
-  assert.equal(admitted, true, 'fixture: the prior rough takes one stepdown and is admitted')
+  assert.equal(admitted.admitted, true, 'fixture: the prior rough takes one stepdown and is admitted')
   assert.equal(
     state.roughAllowance.get(operationTargetKey(rough.target)),
     rough.stepdown + rough.stockToLeaveRadial,
@@ -183,16 +189,16 @@ console.log('Testing the rough engagement boundary on the 20 mm square blank...'
   assert.ok(below < stepdown, 'fixture: the rough probe below is one stepdown at most')
 
   const refused = admit(freshState(), rough, turningCut(20, CORNER - above, 0, 45), null)
-  assert.equal(
+  assert.deepEqual(
     refused,
-    false,
+    { admitted: false, reason: 'turn' },
     `a rough cut taking ${above.toFixed(3)} mm (1.25 x stepdown ${stepdown}) is refused`,
   )
 
   const admitted = admit(freshState(), rough, turningCut(20, CORNER - below, 0, 45), null)
-  assert.equal(
+  assert.deepEqual(
     admitted,
-    true,
+    { admitted: true },
     `a rough cut taking ${below.toFixed(3)} mm (0.9 x stepdown ${stepdown}) is admitted`,
   )
 
@@ -220,16 +226,16 @@ console.log('Testing the finish engagement boundary on the 20 mm square blank...
   // The finish starts at the corner (A45, handed over by the prior rough) and
   // turns to the flat at A90, so its cut sweeps the corner.
   const refused = admit(stateAfterRough(), finish, turningCut(20, CORNER - above, 45, 90), 45)
-  assert.equal(
+  assert.deepEqual(
     refused,
-    false,
+    { admitted: false, reason: 'turn' },
     `a finish cut taking ${above.toFixed(3)} mm (stockToLeave ${finish.stockToLeaveRadial} + allowance ${allowance} + 0.2) is refused`,
   )
 
   const admitted = admit(stateAfterRough(), finish, turningCut(20, CORNER - below, 45, 90), 45)
-  assert.equal(
+  assert.deepEqual(
     admitted,
-    true,
+    { admitted: true },
     `a finish cut taking ${below.toFixed(3)} mm (0.9 x its ${nominal.toFixed(3)} bound) is admitted`,
   )
 
@@ -237,6 +243,114 @@ console.log('Testing the finish engagement boundary on the 20 mm square blank...
     `the blank surface gives the above probe ${trueEngagement(45, 90, CORNER - above).toFixed(6)} mm`)
   assert.ok(Math.abs(trueEngagement(45, 90, CORNER - below) - below) < 1e-6,
     `the blank surface gives the below probe ${trueEngagement(45, 90, CORNER - below).toFixed(6)} mm`)
+}
+
+// ── 3. Codex review pass 3, finding 1: resolution may not be widened ──
+//
+// A 20 x 1,000 mm square blank with an Ø0.2 flat at x 500, tip radius 9, one
+// A0 -> A360 cut at stepdown 2. The corner stands 5.142 mm above the tip. The
+// slice-E guard capped the along bin at 2,048 rows, which with a 1,000 mm bar
+// made the bin 0.488 mm wide — wider than the whole cutter — so every cell lay
+// outside the footprint, no cell changed, and the cut posted. A bin wider than
+// the cutter cannot see the cutter at all; the guard must refuse the grid, not
+// widen it.
+
+console.log('Testing that the guard refuses a grid too coarse for the cutter...')
+{
+  const long = squareStock(20, 1000, 'x', { x: 0, y: 0 })
+  const tiny: EmittedSquareCutter = { ...CUTTER, id: 'flat-0.2', diameter: 0.2, radius: 0.1 }
+  const state = createSquareSweepState(long, tiny.radius)
+  assert.equal(state.resolutionRefused, true,
+    'a 1,000 mm blank with a 0.1 mm cutter radius cannot be resolved inside the guard budget')
+  const bite = barMaxRadius(long) - 9
+  assert.ok(bite > 5.14 && bite < 5.15, `the A45 corner stands ${bite.toFixed(3)} mm above a tip radius of 9`)
+  assert.ok(bite > rough.stepdown, 'and the cut takes far more than the rough stepdown, so admitting it would be unsafe')
+  const centreLong = barCentre(long)
+  const longCut: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 500, y: centreLong, z: PIVOT + barMaxRadius(long) + 1, a: 0 }, to: { x: 500, y: centreLong, z: PIVOT + barMaxRadius(long) + 1, a: 0 } },
+    { kind: 'cut', from: { x: 500, y: centreLong, z: PIVOT + 9, a: 0 }, to: { x: 500, y: centreLong, z: PIVOT + 9, a: 360 } },
+  ]
+  assert.deepEqual(
+    guardSquareOperation(state, {
+      operation: rough,
+      moves: longCut,
+      cutter: tiny,
+      entryAngle: 0,
+      direction: 1,
+      travelZ: PIVOT + barMaxRadius(long) + 1,
+      roundingAllowance: ROUNDING,
+    }),
+    { admitted: false, reason: 'resolution' },
+    'the guard refuses the unresolved program instead of widening its along bin',
+  )
+}
+
+// ── 4. The angular grid also has to resolve the cutter ──
+//
+// A short 60 mm blank with an Ø0.1 flat: the along bin fits the budget, but the
+// cutter's footprint at the 42.4 mm corner is `2 asin(0.05 / 42.4)` = 0.135
+// degrees, under a third of one 0.5-degree bin. The footprint can then fall
+// between two angular cell centres and take a corner the grid never reads, so
+// the grid is refused too.
+
+console.log('Testing that the angular grid must resolve the cutter...')
+{
+  const wide = squareStock(60, 20, 'x', { x: 0, y: 0 })
+  const narrow: EmittedSquareCutter = { ...CUTTER, id: 'flat-0.1', diameter: 0.1, radius: 0.05 }
+  const state = createSquareSweepState(wide, narrow.radius)
+  const footprintDegrees = 2 * Math.asin(narrow.radius / barMaxRadius(wide)) * 180 / Math.PI
+  assert.ok(footprintDegrees < 0.5,
+    `the cutter footprint at the corner is ${footprintDegrees.toFixed(3)} degrees, narrower than one angle bin`)
+  assert.equal(state.resolutionRefused, true, 'the angular grid refuses instead of stepping over the cutter')
+}
+
+// ── 5. Codex review pass 3, finding 2: lowering is the radial intersection ──
+//
+// An Ø8 flat's non-turning cut at A0 leaves, along a ray 10.25 degrees off its
+// axis, the disc's intersection radius `9 / cos(10.25)` = 9.145 - not the tip
+// radius 9 the slice-E grid recorded and certainly not zero. An Ø1 turning
+// descent at A10.25 -> A10.3 to tip 6.95 then takes 2.197 mm out of that
+// material, over the rough's 2 mm bound plus the stated 0.124 mm tolerance.
+// With the tip recorded (or the cell zeroed) the second cut posts.
+
+console.log('Testing the flat disc\'s radial contact instead of the tip radius...')
+{
+  const ONE: EmittedSquareCutter = { ...CUTTER, id: 'flat-1', diameter: 1, radius: 0.5 }
+  const EIGHT: EmittedSquareCutter = { ...CUTTER, id: 'flat-8', diameter: 8, radius: 4 }
+  const state = createSquareSweepState(STOCK, ONE.radius)
+  // One non-turning pass: the Ø8 flat cuts along the bar at A0 with its tip at 9.
+  const first: ToolpathMove[] = [
+    { kind: 'rapid', from: at(15, 9 + 3, 0), to: at(15, 9 + 3, 0) },
+    { kind: 'cut', from: at(15, 9, 0), to: at(25, 9, 0) },
+  ]
+  assert.deepEqual(admit(state, rough, first, null, EIGHT), { admitted: true },
+    'the non-turning cut itself is never refused, it only lowers the grid')
+  // The cell whose span reaches A10.5 must hold the disc contact at 10.5
+  // degrees, `9 / cos(10.5)`, not 9 and not 0.
+  const alongBin = state.alongBin
+  const alongBins = state.alongBins
+  assert.equal(alongBins, Math.ceil(40 / (ONE.radius * 0.25)), 'the along bin is a quarter of the smallest cutter radius')
+  assert.equal(state.angleBinDegrees, 0.5, 'the angular grid is the fixed 0.5 degree one')
+  const row = Math.min(alongBins - 1, Math.floor(20 / alongBin))
+  const column = Math.floor(10.25 / state.angleBinDegrees)
+  const recorded = state.material[row * state.angleBins + column]
+  const expected = 9 / Math.cos(10.5 * Math.PI / 180)
+  assert.ok(recorded > 9.1 && recorded < expected + 1e-9,
+    `the cell at A${((column + 1) * state.angleBinDegrees).toFixed(2)} records the disc contact ${recorded.toFixed(4)}, not the tip 9`)
+  assert.ok(recorded > 0.5, 'the grid was lowered to material, never to zero')
+  // Then the Ø1 turning descent: 9.145 - 6.95 = 2.195 mm, over the rough's
+  // 2 mm stepdown plus one angular bin of the blank (14.142 * 0.5 deg = 0.123)
+  // and the emitted-Z rounding.
+  const second: ToolpathMove[] = [
+    { kind: 'rapid', from: at(20, 9 + 3, 10.25), to: at(20, 9 + 3, 10.25) },
+    { kind: 'cut', from: at(20, 6.95, 10.25), to: at(20, 6.95, 10.3) },
+  ]
+  const bound = rough.stepdown + barMaxRadius(STOCK) * (0.5 * Math.PI / 180) + ROUNDING
+  const engagement = recorded - 6.95
+  assert.ok(engagement > bound,
+    `the descending cut would take ${engagement.toFixed(3)} mm against a tolerance-inclusive bound of ${bound.toFixed(3)} mm`)
+  assert.deepEqual(admit(state, rough, second, 10.25, ONE), { admitted: false, reason: 'turn' },
+    'the descent is refused because the disc left 9/cos(dTheta), not 9')
 }
 
 console.log('engine/gcode/squareSweepGuard.test.ts: all assertions passed')

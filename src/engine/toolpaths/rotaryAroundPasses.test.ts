@@ -72,12 +72,15 @@
  *    independently the hex block's cap and sweep assertions (the pre-cap
  *    A325.7143 -> 330 move gouges 0.0396 mm);
  *  - the adaptive subdivision removed (#1045 slice E) -> the hex block's
- *    **emitted-motion** assertion: the sampler-backed cap alone leaves 0.01329
- *    mm at a 1.5 mm ball on the hex, because the sagitta bound is not the ball
- *    contact envelope. `tol` is `max(0.005 mm, s^2 / (8 r))` for the segment's
- *    own surface spacing `s`, and the block measures the emitted Z values with
- *    the sampler's per-move endpoint under-estimate added, never the ideal
- *    endpoint supports;
+ *    **emitted-motion** assertion: the sampler-backed cap alone leaves more
+ *    than `tol` at a 1.5 mm ball on the hex, because the sagitta bound is not
+ *    the ball contact envelope. `tol` is `max(0.005 mm, s^2 / (8 r))` for the
+ *    segment's own surface spacing `s`, asserted with no added allowance;
+ *  - the conservative cell upper bound removed (#1045 slice F,
+ *    `conservativeCellBounds`) -> the same block's endpoint check: a
+ *    cell-centre height map under-reads the hex's vertex by 0.0127 mm, so the
+ *    emitted sample itself stands below the model and the block fails before
+ *    it even measures the interpolation;
  *  - the retained-end pull-in removed for round bars -> the retained-end block:
  *    the first centre is on the stub face and the cutter body crosses it.
  *
@@ -624,8 +627,11 @@ const HEX_SECTION = Array.from({ length: 6 }, (_, i): readonly [number, number] 
   const points = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
   const alongs = [...new Set(points.map(alongOf))].sort((a, b) => a - b)
   const angles = [...new Set(points.map(angleOf))].sort((a, b) => a - b)
+  // The emitted tips come from the around-mode sampler's conservative cell
+  // bounds (#1045 slice F): every sample is at or above the model's support, so
+  // the value at that (along, angle) is the one the emitter had.
   const sampling = sampleRotaryModel(mesh, HEX_STOCK, BALL, {
-    anglesDeg: angles, along: alongs, requestedCellSize: CELL,
+    anglesDeg: angles, along: alongs, requestedCellSize: CELL, conservativeCellBounds: true,
   }, [])
   const maxRadius = barMaxRadius(HEX_STOCK)
   for (const point of points) {
@@ -852,14 +858,27 @@ function aroundLayers(moves: readonly ToolpathMove[], pivot: number): LayeredPoi
     ringAlong = along
   }
   if (ring.length > 0) rings.push(ring)
+  // A ring is one along position; the along coordinate climbs through a layer
+  // and drops to the first position at the next one. The layer is therefore the
+  // number of descents before the ring plus one -- never the ring index divided
+  // by a count, because a ring that finds only air at its layer emits no cut
+  // moves and is simply absent (#1045 slice F changed the sampled support, and
+  // a descending layer can now be all air at the retained-stub edge). Sample
+  // **counts** within a ring are not asserted either: the emitter merges a run
+  // of collinear cut points, and a layer that lands on a flat model radius is
+  // exactly collinear there, so its ring is legitimately shorter.
+  let layer = 1
   for (let r = 1; r < rings.length; r++) {
-    assert.equal(rings[r].length, rings[0].length, `around ring ${r} has ring 0's sample count`)
+    if (alongOf(rings[r][0]) <= alongOf(rings[r - 1][0])) layer++
   }
-  assert.equal(rings.length % alongCount, 0, 'around rings repeat every along position in each layer')
-  return rings.flatMap((ringPoints, r) => ringPoints.map((point) => ({
-    layer: Math.floor(r / alongCount) + 1,
-    tip: point.z - pivot,
-  })))
+  assert.ok(layer > 1, 'the around rough cuts more than one layer')
+  let ringLayer = 1
+  const layered: LayeredPoint[] = []
+  for (let r = 0; r < rings.length; r++) {
+    if (r > 0 && alongOf(rings[r][0]) <= alongOf(rings[r - 1][0])) ringLayer++
+    for (const point of rings[r]) layered.push({ layer: ringLayer, tip: point.z - pivot })
+  }
+  return layered
 }
 
 /**
@@ -1051,14 +1070,16 @@ console.log('Testing the around rough on a band with no model under the tool...'
 //     samples the independent drop-cutter support of the extruded hex -- the
 //     highest material a cutter can touch at one bar rotation, on the section's
 //     own edges, never the sampler -- at nine interior points and compares it
-//     with the emitted chord. The allowance is `tol` plus the sampler's own
-//     height-map-cell under-estimate measured at that move's two endpoints:
+//     with the emitted chord. The allowance is `tol` alone:
 //     `tol` = max(0.005 mm, s^2 / (8 r)) for the segment's own surface spacing
 //     `s` and ball radius `r`, the between-sample error the along path accepts
-//     at the same spacing. The sampler's endpoint error is a separate,
-//     pre-existing discretization the interpolation cannot remove; measuring it
-//     per move keeps the bound tight instead of hiding the emitted values
-//     behind the ideal ones.
+//     at the same spacing. No measured under-cut is added back: #1045 slice F
+//     makes the around sampler read each height-map cell as an upper bound over
+//     its square and the support from the cell's nearest point, so the emitted
+//     sample stands at or above the model (the block asserts that too) and the
+//     only remaining error is the interpolation between samples. A cell-centre
+//     map under-read the hex's vertex by 0.0127 mm, which is what the measured
+//     endpoint allowance used to hide.
 // ---------------------------------------------------------------------------
 
 console.log('Testing the emitted around sweep on the hex prism...')
@@ -1119,6 +1140,7 @@ console.log('Testing the emitted around sweep on the hex prism...')
   const pivot = barPivotZ(HEX_STOCK)
   const toleranceFloor = 0.005
   let worst = { error: Number.NEGATIVE_INFINITY, allowance: 0, angle: 0 }
+  let undercut = Number.NEGATIVE_INFINITY
   let checked = 0
   for (const move of reference.moves) {
     if (move.kind !== 'cut') continue
@@ -1131,10 +1153,11 @@ console.log('Testing the emitted around sweep on the hex prism...')
     const a1 = angleOf(move.to)
     const ideal0 = sectionSupport(a0, BALL)
     const ideal1 = sectionSupport(a1, BALL)
-    // The sampler's own one-cell under-estimate at this move's endpoints. The
-    // interpolation cannot correct it; it is the known height-map
-    // discretization, and the property block above bounds the same quantity.
-    const samplerAllowance = Math.max(0, ideal0 - z0, ideal1 - z1)
+    // The emitted sample must not stand **below** the model: the around sampler
+    // reads a cell as an upper bound over its square (#1045 slice F), so the
+    // ideal endpoint support is at or under the emitted tip. This is the check
+    // that the "measured endpoint undercut" allowance used to hide.
+    undercut = Math.max(undercut, ideal0 - z0, ideal1 - z1)
     // `tol` from the segment's own surface spacing at the smaller emitted tip.
     const surfaceArc = Math.max(0, Math.min(z0, z1)) * Math.abs(a1 - a0) * Math.PI / 180
     const tolerance = Math.max(toleranceFloor, surfaceArc * surfaceArc / (8 * BALL.radius))
@@ -1143,12 +1166,14 @@ console.log('Testing the emitted around sweep on the hex prism...')
       const angle = a0 + (a1 - a0) * f
       const emitted = z0 + (z1 - z0) * f
       const error = sectionSupport(angle, BALL) - emitted
-      if (error > worst.error) worst = { error, allowance: tolerance + samplerAllowance, angle }
-      assert.ok(error <= tolerance + samplerAllowance + 1e-9,
-        `emitted gouge ${error.toFixed(5)} mm at A ${angle.toFixed(3)} stays within tol ${tolerance.toFixed(5)} + sampler ${samplerAllowance.toFixed(5)}`)
+      if (error > worst.error) worst = { error, allowance: tolerance, angle }
+      assert.ok(error <= tolerance + 1e-9,
+        `emitted gouge ${error.toFixed(5)} mm at A ${angle.toFixed(3)} stays within tol ${tolerance.toFixed(5)}`)
       checked++
     }
   }
+  assert.ok(undercut <= 1e-6,
+    `every emitted sample is at or above the model (worst endpoint under-read ${undercut.toFixed(6)} mm)`)
   assert.ok(checked > 2000, `the emitted sweep check walked ${checked} interior points`)
   // And the subdivision is what made it hold: at least one emitted step is
   // finer than the unrefined starting step, while the sagitta cap still bounds
