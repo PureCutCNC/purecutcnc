@@ -18,7 +18,7 @@ import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
-import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import type { CutDirection, Operation, Point, Project, SketchFeature } from '../../types/project'
 import { loadSTLTransformedGeometry } from '../csg'
 import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import type {
@@ -128,6 +128,7 @@ import {
   unionClipperPaths,
 } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
+import { barEntryStartZ, barSectionAtZ, clipPathsToBarSection } from './barSection'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
 import { appendAll } from './appendAll'
@@ -227,6 +228,11 @@ function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   return solution as ClipperPath[]
 }
 
+/** Every closed loop of a tool-centre region set, for the bar section's own tests. */
+function surfaceRegionLoops(regions: readonly ResolvedPocketRegion[]): Point[][] {
+  return regions.flatMap((region) => [region.outer, ...region.islands])
+}
+
 function flattenProfileToClipperPath(profile: SketchFeature['sketch']['profile'], scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
   const flattened = flattenProfile(profile)
   return toClipperPath(normalizeWinding(flattened.points, false), scale)
@@ -263,13 +269,32 @@ function buildSurfaceCoverageRegions(
 }
 
 function buildSurfaceCoverageRegionsAtLevel(
+  project: Project,
   band: SurfaceCleanBand,
+  z: number,
   modelKeepOutPaths: readonly ClipperPath[],
   toolRadius: number,
   radialLeave: number,
+  clipToBar = true,
 ): ResolvedPocketRegion[] {
+  // The band's material is the target feature's footprint less what stands
+  // above it. On a round bar that material only exists where the bar's section
+  // at this Z does, so the clip goes on the **material** before the tool radius
+  // expansion (#1054 slice 3) — the cutter's edge still reaches the bar's
+  // surface, and the target's walls do not move.
+  //
+  // `clipToBar` is off for one caller only: the trochoidal plan asks whether a
+  // channel *fits* the band, which is a property of the pocket rather than of
+  // the crown it happens to resolve against.
+  let subjectPaths = band.subjectPaths
+  const section = clipToBar ? barSectionAtZ(project, z) : null
+  if (section) {
+    if (section.halfWidth <= 0) return []
+    subjectPaths = clipPathsToBarSection(section, subjectPaths)
+    if (subjectPaths.length === 0) return []
+  }
   let coverageRegions = buildSurfaceCoverageRegions(
-    band.subjectPaths,
+    subjectPaths,
     [...band.protectedPaths, ...modelKeepOutPaths],
     band.regions,
     toolRadius,
@@ -589,6 +614,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
 }
 
 function generateRoughBandMoves(
+  project: Project,
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
@@ -639,10 +665,13 @@ function generateRoughBandMoves(
       radialLeave,
       regions: stepLevels.length > 0
         ? buildSurfaceCoverageRegionsAtLevel(
+          project,
           band,
+          stepLevels[0],
           modelKeepOutsByLevel.get(stepLevels[0]) ?? [],
           toolRadius,
           radialLeave,
+          false,
         )
         : [],
       regionsInsetBy: toolRadius,
@@ -668,7 +697,9 @@ function generateRoughBandMoves(
     for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
       const z = stepLevels[levelIndex]
       const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+        project,
         band,
+        z,
         modelKeepOutsByLevel.get(z) ?? [],
         toolRadius,
         radialLeave,
@@ -699,7 +730,9 @@ function generateRoughBandMoves(
       )
       const levelEntryPolicy = withEntryStartZ(
         entryPolicy,
-        levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+        levelIndex === 0
+          ? barEntryStartZ(project, z, surfaceRegionLoops(roughRegions), entryClearance, safeZ)
+          : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
       )
       const levelStartIndex = moves.length
       const orderedBoundaryContours = orderClosedContoursGreedy(
@@ -788,7 +821,9 @@ function generateRoughBandMoves(
 
   const buildOffsetPlan = (z: number) => {
     const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+      project,
       band,
+      z,
       modelKeepOutsByLevel.get(z) ?? [],
       toolRadius,
       radialLeave,
@@ -871,7 +906,13 @@ function generateRoughBandMoves(
     const z = stepLevels[levelIndex]
     const plan = buildOffsetPlan(z)
     const levelEntryStartZ = levelIndex === 0
-      ? safeZ
+      ? barEntryStartZ(
+        project,
+        z,
+        surfaceRegionLoops(plan.regionTrees.map((tree) => tree.region)),
+        entryClearance,
+        safeZ,
+      )
       : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
     const levelEntryPolicy = withEntryStartZ(plan.entryPolicy, levelEntryStartZ)
     // The orbit entry starts from the same height as the contour entry, so a
@@ -1092,6 +1133,7 @@ function generateRoughBandMoves(
 }
 
 function generateFinishBandMoves(
+  project: Project,
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
@@ -1129,7 +1171,9 @@ function generateFinishBandMoves(
     warnings,
   )
   const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+    project,
     band,
+    effectiveBottom,
     modelKeepOutsByLevel.get(effectiveBottom) ?? [],
     toolRadius,
     radialLeave,
@@ -1148,6 +1192,12 @@ function generateFinishBandMoves(
       (warning) => appendUniqueWarning(warnings, warning),
     ),
     slotScale,
+  )
+  // The floor's first entry starts from the bar's surface over it instead of the
+  // box top (#1054 slice 3), exactly as the rough band does.
+  const levelEntryPolicy = withEntryStartZ(
+    entryPolicy,
+    barEntryStartZ(project, effectiveBottom, surfaceRegionLoops(finishRegions), getOperationClearance(project), safeZ),
   )
   // XY leads on the wall contours (issue #695): this is the pass the feature
   // exists for. The wall contour IS the finished wall, and without a lead the
@@ -1342,7 +1392,7 @@ function generateFinishBandMoves(
             loops: 'all',
             smoothRadius: floorSmoothRadius,
             depth: 0,
-            entryPolicy,
+            entryPolicy: levelEntryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
             trochoidal: floorTrochoidalPlan?.ringOptions,
@@ -1382,7 +1432,7 @@ function generateFinishBandMoves(
             safeZ,
             maxLinkDistance,
             undefined,
-            entryPolicy,
+            levelEntryPolicy,
           )
           let circleMoves = toClosedCutMoves(circle, z)
           const tangentSplice = spliceTangentSLink(
@@ -1435,7 +1485,7 @@ function generateFinishBandMoves(
             loops: 'all',
             smoothRadius: floorSmoothRadius,
             depth: unit.depth,
-            entryPolicy,
+            entryPolicy: levelEntryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
             parent: unit.parent ?? undefined,
@@ -1465,7 +1515,7 @@ function generateFinishBandMoves(
         z,
         safeZ,
         currentPosition,
-        entryPolicy,
+        levelEntryPolicy,
       )
     }
 
@@ -1482,7 +1532,7 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
       )
       const cutMoves = toOpenCutMoves(segment, z)
       appendAll(moves, cutMoves)
@@ -1522,7 +1572,7 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
       )
       if (leadPlan && levelWallLead) {
         currentPosition = emitXyLead(moves, currentPosition, leadPlan, z, levelWallLead.options, 'lead_in')
@@ -1672,6 +1722,7 @@ function generateSurfaceCleanToolpathSingle(
   for (const band of resolved.bands) {
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
+        project,
         band,
         operation,
         safeZ,
@@ -1684,6 +1735,7 @@ function generateSurfaceCleanToolpathSingle(
         trochoidalBudget,
       )
       : generateRoughBandMoves(
+        project,
         band,
         operation,
         safeZ,
