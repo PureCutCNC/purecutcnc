@@ -317,6 +317,13 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
+  /** A Bottom setup of a rotary bar project flips the part about the other
+   *  horizontal axis than the bar lies along, so its A180 instruction (which
+   *  turns the bar about its own axis) does not describe the turn its
+   *  transform applies. The stored setup is left as the user made it and the
+   *  export names it; the fix is the setup's flip axis (#1054 slice 2). A
+   *  warning, not an error: the program is still the user's to run. */
+  | 'setupFlipAxisMismatch'
   /** Around needs a bar — round or square — lying along the setup's axis for
    *  the operation to cut. A warning, as it always was: the operation produces
    *  no motion, but the code's severity is part of the frozen round/flat

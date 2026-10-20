@@ -221,6 +221,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': '无法安全清理圆滑的型腔壁转角；该环保留了原有的尖角壁路径',
   'warnings.pocketFinishIslandWallTooTight': '刀具无法通过岛屿与型腔壁之间的间隙；岛屿精加工路径已裁剪至刀具可达的范围，因此该处会残留材料',
   'warnings.setupTargetNotThrough': '{features}：绘制在另一面且不是贯穿毛坯的切除特征，因此此装夹无法加工到它。只有同时到达毛坯两面的切除特征或导入的 3D 模型才能从另一面加工。未生成任何刀路。',
+  'warnings.setupFlipAxisMismatch': '装夹“{setup}”绕 {axis} 轴翻转工件，但棒料沿 {barAxis} 方向。请将该装夹的翻转轴设为 {barAxis}，使 A180 旋转与底面程序一致。',
   'warnings.aroundStockMismatch': '{operation}：Around 面需要一根沿设置时相同轴向放置的棒料。',
   'warnings.aroundCentreline': '{operation}：{feature} 到达圆棒中心线；Around 面上的切削必须在中心线之前停止。',
   'warnings.aroundCutReachesCentreline': '{operation}：切削会到达圆棒中心线。请减小其深度，使其在圆棒中部之前停止。',

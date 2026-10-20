@@ -217,6 +217,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'No se pudo limpiar de forma segura una esquina redondeada de la pared del vaciado; se mantuvo la trayectoria de pared afilada para ese anillo.',
   'warnings.pocketFinishIslandWallTooTight': 'La fresa no cabe entre una isla y la pared del vaciado; la pasada de acabado de la isla se recortó hasta donde sí cabe, por lo que queda material en ese hueco.',
   'warnings.setupTargetNotThrough': '{features}: dibujado en la otra cara y no es un corte pasante, por lo que esta sujeción no puede alcanzarlo. Solo una sustracción que llega a las dos caras del material, o un modelo 3D importado, puede mecanizarse desde el otro lado. No se generó nada.',
+  'warnings.setupFlipAxisMismatch': 'La sujeción "{setup}" voltea la pieza sobre {axis}, pero la barra va a lo largo de {barAxis}. Ajuste el eje de volteo de la sujeción a {barAxis} para que el giro A180 coincida con el programa de la cara inferior.',
   'warnings.aroundStockMismatch': '{operation}: la cara Around necesita una barra situada sobre el mismo eje que cuando se configuró.',
   'warnings.aroundCentreline': '{operation}: {feature} alcanza la línea central de la barra; un corte en la cara Around debe detenerse antes de ella.',
   'warnings.aroundCutReachesCentreline': '{operation}: el corte alcanzaría la línea central de la barra. Reduce su profundidad para que se detenga antes del centro de la barra.',

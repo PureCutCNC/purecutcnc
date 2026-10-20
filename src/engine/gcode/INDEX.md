@@ -138,8 +138,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   about its setup, for every dialect: the header comment lines, an error when
   a program holds operations of more than one setup or one its setup refused
   to cut, and a warning for a second setup with no registration. It returns
-  nothing for a project with a single setup, except an Around one (#395), which
-  is always annotated.
+  nothing for a project with a single setup, except an Around one (#395) and a
+  Top/Bottom one of a rotary bar (#1054 slice 2), which are always annotated.
 - `setupPrograms.ts` — one program per setup (issue #946):
   `planSetupPrograms` splits an export's operations by setup and names each
   file (`<project>_01_top`; a single-setup project keeps exactly today's
@@ -150,6 +150,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   in place of registration and, on a borrowed-motor machine, the line telling
   the operator to set the tool over the centreline by hand;
   `setupLacksRegistration` is false for it (a chuck locates the bar).
+  A Top or Bottom setup of a rotary project on a bar (#1054 slice 2) carries
+  a header even when it is the only setup, and adds the manual indexing the
+  operator performs: `ROTARY: SET A TO 0° BEFORE RUNNING` on Top,
+  `ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING` on
+  Bottom, and `ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A`.
+  No A word is emitted (#394 owns that), the single-setup file name is
+  unchanged, and `planProgramSetup` warns (naming the setup) when a Bottom
+  setup flips about the other axis than the bar lies along instead of
+  rewriting it.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.

@@ -217,6 +217,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'Un angle arrondi de paroi de poche n’a pas pu être nettoyé en toute sécurité ; la trajectoire de paroi vive a été conservée pour cet anneau',
   'warnings.pocketFinishIslandWallTooTight': 'La fraise ne passe pas entre un îlot et la paroi de la poche ; la passe de finition de l’îlot a été rognée là où elle passe, il reste donc de la matière dans cet intervalle',
   'warnings.setupTargetNotThrough': '{features} : dessiné sur l’autre face et non débouchant, ce montage ne peut donc pas l’atteindre. Seule une soustraction qui atteint les deux faces du brut, ou un modèle 3D importé, peut être usinée depuis l’autre côté. Rien n’a été généré.',
+  'warnings.setupFlipAxisMismatch': 'Le montage « {setup} » retourne la pièce autour de {axis}, mais la barre est selon {barAxis}. Réglez l’axe de retournement du montage sur {barAxis} pour que la rotation A180 corresponde au programme de la face inférieure.',
   'warnings.aroundStockMismatch': '{operation} : la face Around nécessite une barre orientée selon le même axe que lors de sa configuration.',
   'warnings.aroundCentreline': '{operation} : {feature} atteint la ligne centrale de la barre ; une coupe sur la face Around doit s’arrêter avant celle-ci.',
   'warnings.aroundCutReachesCentreline': '{operation} : la coupe atteindrait la ligne centrale de la barre. Réduisez sa profondeur pour qu’elle s’arrête avant le milieu de la barre.',
