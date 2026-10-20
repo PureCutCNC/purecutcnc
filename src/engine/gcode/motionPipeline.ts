@@ -60,7 +60,7 @@ import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 import { manualIndexingApplies } from '../../store/helpers/projectType'
-import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
+import { manualIndexAngle, projectExportsPerSetup, setupHeaderLines, setupLacksRegistration, setupStatesManualIndexing } from './setupPrograms'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
 /** Largest sweep a single emitted arc may cover, in degrees. */
@@ -505,11 +505,17 @@ export interface ProgramSetupPlan {
   /**
    * Lines to write as comments after the program header, in order: which
    * setup this is and how the stock is turned, what locates the part, where
-   * to touch off, the manual A angle and retract of a rotary bar, and the
+   * to touch off, the manual-index instruction of a rotary bar, and the
    * operator's notes. Empty for a flat single-setup project, whose program is
    * exactly what it was before setups existed.
    */
   headerComments: string[]
+  /**
+   * The angle the program turns the rotary to before its first operation
+   * (#1054 slice 2b), or null when it turns nothing: an Around program turns
+   * through its own toolpath, and a machine with no rotary axis cannot.
+   */
+  manualIndexAngle: 0 | 180 | null
   /** Raised for the program as a whole; the caller appends them to its own. */
   warnings: ToolpathWarning[]
 }
@@ -524,7 +530,9 @@ export interface ProgramSetupPlan {
  *
  * A single-setup project normally carries no header (the legacy-parity rule),
  * except an Around setup and a Top/Bottom setup of a rotary bar project,
- * which say how the operator turns the bar by hand (#1054 slice 2).
+ * which say how the bar is turned (#1054 slices 2 and 2b): by the operator
+ * when the machine cannot, and by the program's own opening rapids when it
+ * can.
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
@@ -541,7 +549,7 @@ export function planProgramSetup(
   }
 
   if (!projectExportsPerSetup(project) && !manualIndexingApplies(project)) {
-    return { headerComments: [], warnings }
+    return { headerComments: [], manualIndexAngle: null, warnings }
   }
 
   // An operation without a setup reads as the first one, exactly as
@@ -554,14 +562,14 @@ export function planProgramSetup(
       code: 'postMixedSetups',
       params: { setups: setups.map((setup) => setup?.name ?? 'Top').join(', ') },
     })
-    return { headerComments: [], warnings }
+    return { headerComments: [], manualIndexAngle: null, warnings }
   }
   const setup = setups[0]
-  if (!setup) return { headerComments: [], warnings }
+  if (!setup) return { headerComments: [], manualIndexAngle: null, warnings }
 
-  // The operator sets A by hand, so a Bottom setup whose flip axis is not the
-  // bar's would turn the part a different way than the program's A180
-  // instruction says. The stored setup is not silently rewritten: it is
+  // A Bottom setup whose flip axis is not the bar's describes a different
+  // turn than the program's A180 about the bar (whether the operator or the
+  // program makes it). The stored setup is not silently rewritten: it is
   // named, and the user decides (#1054 slice 2).
   if (manualIndexingApplies(project) && isBarStock(project.stock)
     && setupFace(setup) === 'bottom' && setup.orientation.axis !== project.stock.axis) {
@@ -578,7 +586,15 @@ export function planProgramSetup(
   if (setupLacksRegistration(project, setup)) {
     warnings.push({ code: 'postSetupNoRegistration', params: { setup: setup.name } })
   }
-  return { headerComments: setupHeaderLines(project, setup, input.definition), warnings }
+  // A manual-index program turns the bar itself when the machine has a rotary
+  // axis (#1054 slice 2b); without one the header keeps slice 2's instruction
+  // and nothing is posted.
+  const turns = setupStatesManualIndexing(project, setup) && rotaryWord(input.definition) !== null
+  return {
+    headerComments: setupHeaderLines(project, setup, input.definition),
+    manualIndexAngle: turns ? manualIndexAngle(setup) : null,
+    warnings,
+  }
 }
 // ── Rotary axis (#393) ────────────────────────────────────────
 

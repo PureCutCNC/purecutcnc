@@ -28,9 +28,12 @@
  * below are keyed on the project having more than one setup.
  *
  * The exceptions are the faces that need an operator instruction even on
- * their own (#1054 slice 2): an Around setup (#395) and, in a rotary project
- * on a bar, a Top or Bottom setup, whose program says which A angle the
- * operator sets by hand and to retract before turning it. Those headers are
+ * their own (#1054 slices 2 and 2b): an Around setup (#395) and, in a rotary
+ * project on a bar, a Top or Bottom setup. Slices 2 and 2b split on the
+ * machine: without a rotary axis the header tells the operator which A to set
+ * by hand and to retract before turning it; with one, the header says the
+ * program turns the bar itself after retracting, and the emitter writes those
+ * two rapids (`manualIndexAngle` in `motionPipeline.ts`). Those headers are
  * added without changing the single-setup file name.
  *
  * The header is plain text lines. Each output dialect writes them as comments
@@ -267,8 +270,7 @@ const ROTARY_ZERO_LINE = 'ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THE
 
 /**
  * The manual A angle a Top program expects (#1054 slice 2): the bar's own
- * zero. Nothing in the program turns A — that is #394 — so the operator is
- * told what to set before the program runs.
+ * zero, which the operator sets by hand when the machine has no rotary axis.
  */
 const MANUAL_INDEX_TOP_LINE = 'ROTARY: SET A TO 0° BEFORE RUNNING'
 
@@ -280,6 +282,27 @@ const MANUAL_INDEX_BOTTOM_LINE = 'ROTARY: SET A TO 180° - TURN THE BAR ABOUT IT
 
 /** Turning A with the cutter down would drag it through the bar. */
 const RETRACT_BEFORE_TURNING_LINE = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'
+
+/**
+ * The operator line of a program that turns the bar itself (#1054 slice 2b).
+ * The retract and the turn are in the motion that follows, so the comment says
+ * what they are and what the operator still has to check. The letter is the
+ * program's own rotary word: on a borrowed motor it is the axis the program
+ * writes, not always A.
+ */
+function manualIndexTurnLine(word: 'A' | 'X' | 'Y', angleDeg: 0 | 180): string {
+  return `ROTARY: THE PROGRAM TURNS ${word} TO ${angleDeg}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
+}
+
+/**
+ * The angle a manual-index program turns to before its first operation
+ * (#1054 slice 2b): the bar's own zero for Top, half a turn for Bottom. When
+ * the machine has a rotary axis this is posted as motion; without one the
+ * slice 2 comments above say it and nothing turns.
+ */
+export function manualIndexAngle(setup: Pick<MachiningSetup, 'kind' | 'orientation'>): 0 | 180 {
+  return setupFace(setup) === 'bottom' ? 180 : 0
+}
 
 /**
  * True when a Top or Bottom program must say which A the operator sets by
@@ -316,8 +339,16 @@ export function setupHeaderLines(project: Project, setup: MachiningSetup, defini
     `TOUCH OFF: ${describeTouchOff(project, setupFace(setup))}`,
   ]
   if (setupStatesManualIndexing(project, setup)) {
-    lines.push(setupFace(setup) === 'bottom' ? MANUAL_INDEX_BOTTOM_LINE : MANUAL_INDEX_TOP_LINE)
-    lines.push(RETRACT_BEFORE_TURNING_LINE)
+    const word = rotaryWord(definition)
+    if (word === null) {
+      // No rotary axis: the operator turns the bar by hand and the header is
+      // slice 2's unchanged instruction (#1054 slice 2).
+      lines.push(setupFace(setup) === 'bottom' ? MANUAL_INDEX_BOTTOM_LINE : MANUAL_INDEX_TOP_LINE)
+      lines.push(RETRACT_BEFORE_TURNING_LINE)
+    } else {
+      // The program turns the word itself after retracting (#1054 slice 2b).
+      lines.push(manualIndexTurnLine(word, manualIndexAngle(setup)))
+    }
   }
   if (around && definition.rotary?.drive === 'borrowed') {
     lines.push(`THE ${rotaryWord(definition)} MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND`)

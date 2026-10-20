@@ -59,9 +59,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the program end. It refuses a program whose own templates write the machine's
   rotary word, judged on the rendered lines the program actually writes
   (`postRotaryTemplateUsesBorrowedAxis`).
+  A Top or Bottom program of a manual-index rotary bar starts with the bar's
+  own turn (#1054 slice 2b): a rapid to the generators' travel height
+  (`rotaryTravelZ`, above a square blank's corners), then a rapid of the
+  rotary word to 0 or 180 through `rotaryDirection`, before any operation's
+  moves. The header says the program does it, and X/Y are left unknown
+  afterwards so the first operation writes its own position.
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
-  and none for a program that ends at 0 or that never carried an angle. On a
+  and none for a program that ends at 0 or that never carried an angle (so a
+  Top manual-index program writes no unwind, and a Bottom one does). On a
   square blank it first rapids to the generators' travel height whenever the
   last emitted Z is below it or unknown, because the last operation may have
   descended at a constant angle. A template that can move Z (a Z word, a
@@ -135,11 +142,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   setup's frame is resolved once per operation and passed to the transform,
   for moves and drill cycles alike. `planDrillCycles` takes the operation for
   that reason. `planProgramSetup` (issue #946) decides what a program says
-  about its setup, for every dialect: the header comment lines, an error when
-  a program holds operations of more than one setup or one its setup refused
-  to cut, and a warning for a second setup with no registration. It returns
-  nothing for a project with a single setup, except an Around one (#395) and a
-  Top/Bottom one of a rotary bar (#1054 slice 2), which are always annotated.
+  about its setup, for every dialect: the header comment lines, the angle a
+  manual-index program turns to before its first operation (or null when the
+  machine cannot turn it), an error when a program holds operations of more
+  than one setup or one its setup refused to cut, and a warning for a second
+  setup with no registration. It returns no header for a project with a single
+  setup, except an Around one (#395) and a Top/Bottom one of a rotary bar
+  (#1054 slices 2 and 2b), which are always annotated.
 - `setupPrograms.ts` — one program per setup (issue #946):
   `planSetupPrograms` splits an export's operations by setup and names each
   file (`<project>_01_top`; a single-setup project keeps exactly today's
@@ -150,15 +159,20 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   in place of registration and, on a borrowed-motor machine, the line telling
   the operator to set the tool over the centreline by hand;
   `setupLacksRegistration` is false for it (a chuck locates the bar).
-  A Top or Bottom setup of a rotary project on a bar (#1054 slice 2) carries
-  a header even when it is the only setup, and adds the manual indexing the
-  operator performs: `ROTARY: SET A TO 0° BEFORE RUNNING` on Top,
+  A Top or Bottom setup of a rotary project on a bar (#1054 slices 2 and 2b)
+  carries a header even when it is the only setup, and adds the manual
+  indexing. On a machine with no rotary axis it is the operator's own move —
+  `ROTARY: SET A TO 0° BEFORE RUNNING` on Top,
   `ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING` on
-  Bottom, and `ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A`.
-  No A word is emitted (#394 owns that), the single-setup file name is
-  unchanged, and `planProgramSetup` warns (naming the setup) when a Bottom
-  setup flips about the other axis than the bar lies along instead of
-  rewriting it.
+  Bottom, and `ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A`
+  — and no A word is emitted. On a machine with a rotary axis the program
+  turns the bar itself, so one line says so instead:
+  `ROTARY: THE PROGRAM TURNS <word> TO 0°/180° AFTER RETRACTING - CHECK THE
+  BAR IS CLAMPED`, where `<word>` is `rotaryWord` (A, or the borrowed motor's
+  letter), and the emitter writes the retract and the turn under it. The
+  single-setup file name is unchanged, and `planProgramSetup` warns (naming
+  the setup) when a Bottom setup flips about the other axis than the bar lies
+  along instead of rewriting it.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.

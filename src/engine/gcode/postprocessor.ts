@@ -25,7 +25,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
-import { isSquareStock } from '../../types/barStock'
+import { isBarStock, isSquareStock } from '../../types/barStock'
 import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import type { OperationTarget } from '../../types/project'
 import { resolveEmittedArc } from './arcFitting'
@@ -252,9 +252,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // A word is ever written with the cutter below the blank's standing corners.
   // The height is a project coordinate; map it exactly as the move's own Z is
   // mapped, never with a second copy of the origin arithmetic.
-  const operationTurns = operations.some(({ toolpath }) => toolpath.moves.some(
-    (move) => move.from.a !== undefined || move.to.a !== undefined,
-  ))
+  // What the program says about its setup, decided once for both the header
+  // comments and the manual-index turn that follows them (#1054 slice 2b). It
+  // is read here because that turn makes the program one that turns, which the
+  // square guard and the template-word check below must both know.
+  const setupPlan = planProgramSetup(input)
+  const programTurns = setupPlan.manualIndexAngle !== null || operations.some(
+    ({ toolpath }) => toolpath.moves.some(
+      (move) => move.from.a !== undefined || move.to.a !== undefined,
+    ),
+  )
   const squareRetractZ = isSquareStock(project.stock)
     ? projectToMachinePoint({
       x: 0,
@@ -263,7 +270,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }, project.origin, definition).z
     : null
   const squareRetractHalfStep = 0.5 * 10 ** -definition.numberFormat.decimalPlaces[outputUnits]
-  if (squareRetractZ !== null && operationTurns && !Number.isFinite(squareRetractZ)) {
+  if (squareRetractZ !== null && programTurns && !Number.isFinite(squareRetractZ)) {
     // The blank carries no usable turning height (a corrupt or degenerate
     // stock), so the retract cannot be placed. Refuse the program rather than
     // turn it with no proven clearance. Only a program that turns is refused:
@@ -478,6 +485,42 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   /**
+   * Start a manual-index program by turning the bar itself (#1054 slice 2b):
+   * a rapid to the blank's travel height, then a rapid of the rotary word to
+   * the program's angle. The height is `rotaryTravelZ` mapped exactly as any
+   * other Z word is, so a square blank's standing corners stay clear; a round
+   * bar gets the same generous height. The angle goes through
+   * `rotaryDirection`, exactly as the Around output's does, so a reversed axis
+   * (or a mirrored borrowed motor) turns the same physical way.
+   *
+   * Both blocks spell their rapid word: the turn must not be read as the
+   * continuation of whatever motion mode a template may have left behind, and
+   * it must never share a block with a Z word. The turn is a rapid, so it stays
+   * in G94 — no inverse-time mode is entered.
+   *
+   * X/Y are deliberately left unknown afterwards: the header moved only Z and
+   * the rotary, so the machine may be anywhere in the plane and the first
+   * operation must write its own position rather than inherit a 0/0 the
+   * emitter would have invented.
+   */
+  const emitManualIndexTurn = (angleDeg: 0 | 180) => {
+    if (!isBarStock(project.stock) || state.rotaryWord === null) return
+    const travelZ = projectToMachinePoint({
+      x: 0,
+      y: 0,
+      z: rotaryTravelZ(project.stock, project.meta.units),
+    }, project.origin, definition).z
+    leaveInverseTime()
+    emitMotionLine(definition.motion.rapidCommand, { z: travelZ })
+    state.motionCommand = null
+    emitMotionLine(definition.motion.rapidCommand, {
+      a: angleDeg * rotaryDirection(definition),
+    })
+    state.currentPosition = null
+    emittedPosition = null
+  }
+
+  /**
    * Emit a straight move from a planned step, applying its own feed directive
    * (issue #393, rule 4): a turning feed move enters inverse-time mode first —
    * once, since it is modal — and then carries its own `F` in 1/min whatever
@@ -551,10 +594,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   // Which setup the program is for, and how the part must sit (issue #946).
   // Nothing is written for a project with a single setup.
-  const setupPlan = planProgramSetup(input)
   warnings.push(...setupPlan.warnings)
   for (const comment of setupPlan.headerComments) {
     emitLine(`${definition.program.commentPrefix} ${safeCommentText(comment)}${definition.program.commentSuffix}`)
+  }
+
+  // The bar is turned by the program itself in a manual-index setup whose
+  // machine can turn it (#1054 slice 2b): after the header, before any
+  // operation's motion, and only when the machine really has a rotary word.
+  if (setupPlan.manualIndexAngle !== null) {
+    emitManualIndexTurn(setupPlan.manualIndexAngle)
   }
 
   // 4. Operations
@@ -1143,7 +1192,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     const templateDrivesRotary = templateLines.some(
       (line) => lineCarriesAxisWord(line, rotaryLetter, prefix),
     )
-    if (templateDrivesRotary && (rotaryBorrowedAxis(definition) !== null || operationTurns)) {
+    if (templateDrivesRotary && (rotaryBorrowedAxis(definition) !== null || programTurns)) {
       return {
         gcode: '',
         warnings: [{ code: 'postRotaryTemplateUsesBorrowedAxis', params: { axis: rotaryLetter } }],

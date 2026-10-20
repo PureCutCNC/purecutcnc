@@ -26,19 +26,23 @@
  * assertions were checked against: dropping the header for a single setup →
  * the single-setup header assertions fail; flipping a Bottom setup about X on
  * a Y bar → the flip-axis assertion fails; giving a block or an Around program
- * the A lines → the byte-identical baselines fail.
+ * the A lines → the byte-identical baselines fail. For the program's own turn
+ * (#1054 slice 2b): writing the turn before the retract → the exact
+ * retract-then-turn lines fail; ignoring `reversed` → the bottom-program
+ * blocks fail.
  *
  * Run with: npx tsx src/engine/gcode/setupPrograms.test.ts
  */
 
 import { createHash } from 'node:crypto'
+import { squareStock } from '../../types/barStock'
 import { circleProfile, defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../../types/project'
 import type { MachineOrigin, MachiningSetup, Operation, Project, SketchFeature } from '../../types/project'
 import { suggestGcodeFileName } from '../../components/export/exportOperationSelection'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
 import { syncProjectSetups } from '../../store/helpers/setups'
 import { normalizeToolForProject } from '../toolpaths/geometry'
-import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
+import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import { warningSeverity } from '../toolpaths/warningCodes'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { planProgramSetup } from './motionPipeline'
@@ -51,7 +55,7 @@ import {
   setupHeaderLines,
 } from './setupPrograms'
 import { validateMachineDefinition } from './types'
-import type { MachineDefinition, PostProcessorResult } from './types'
+import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -147,14 +151,19 @@ const MOVES: ToolpathMove[] = [
   { kind: 'cut', from: { x: 10, y: 70, z: 15 }, to: { x: 30, y: 70, z: 15 } },
 ]
 
-function post(project: Project, operationIds: string[], definition: MachineDefinition): PostProcessorResult {
+function post(
+  project: Project,
+  operationIds: string[],
+  definition: MachineDefinition,
+  moves: ToolpathMove[] = MOVES,
+): PostProcessorResult {
   const tool = normalizeToolForProject(project.tools[0], project)
   return runPostProcessor({
     project,
     definition,
     operations: operationIds.map((id) => {
       const operation = project.operations.find((entry) => entry.id === id)!
-      const toolpath: ToolpathResult = { operationId: id, warnings: [], bounds: null, moves: MOVES }
+      const toolpath: ToolpathResult = { operationId: id, warnings: [], bounds: null, moves }
       return { operation, tool, toolpath }
     }),
     options: { emitToolChanges: true, emitCoolant: false },
@@ -345,7 +354,7 @@ function testSingleSetupProgramIsUnchanged(): void {
     setups: [{ ...project.setups[0], notes: 'Mind the clamp.', registration: [{ id: 'r', kind: 'corner', target: { type: 'point', point: { x: 0, y: 0 } } }] }],
   }
   assertEqual(post(annotated, ['rough'], GRBL).gcode, post(project, ['rough'], GRBL).gcode, 'a single annotated setup still exports the legacy program')
-  assertEqual(planProgramSetup({ project, operations: [], definition: GRBL }), { headerComments: [], warnings: [] }, 'and plans nothing')
+  assertEqual(planProgramSetup({ project, operations: [], definition: GRBL }), { headerComments: [], manualIndexAngle: null, warnings: [] }, 'and plans nothing')
 }
 
 function testWhatAProgramMayNotBe(): void {
@@ -391,10 +400,10 @@ function testWhatAProgramMayNotBe(): void {
 
 // ── Manual indexing on a rotary bar (#1054 slice 2) ───────────
 
-/** A rotary project on a 20 mm round bar along `axis`, with the flat fixture's operations. */
-function rotaryBarProject(axis: 'x' | 'y' = 'x'): Project {
+/** A rotary project on a 20 mm round or square bar along `axis`, with the flat fixture's operations. */
+function rotaryBarProjectOf(shape: 'round' | 'square', axis: 'x' | 'y' = 'x'): Project {
   const project = singleSetupProject()
-  const bar = roundStock(20, 100, axis)
+  const bar = shape === 'round' ? roundStock(20, 100, axis) : squareStock(20, 100, axis)
   const bounds = getStockBounds(bar)
   const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
   return syncProjectSetups({
@@ -409,6 +418,11 @@ function rotaryBarProject(axis: 'x' | 'y' = 'x'): Project {
       visible: true,
     },
   })
+}
+
+/** The slice-2 fixture: a 20 mm round bar along `axis`. */
+function rotaryBarProject(axis: 'x' | 'y' = 'x'): Project {
+  return rotaryBarProjectOf('round', axis)
 }
 
 /** The program's lines with every comment removed, so an A search sees motion only. */
@@ -539,6 +553,154 @@ function testBottomFlipAxisWarning(): void {
   assert(!flatProgram.gcode.includes('ROTARY: SET A'), 'and gets no A line')
 }
 
+// ── The program turns the bar itself (#1054 slice 2b) ─────────
+
+/** The bundled grbl definition plus a rotary block the program can turn. */
+function rotaryMachine(
+  about: 'x' | 'y',
+  drive: 'own' | 'borrowed',
+  reversed = false,
+): MachineDefinition {
+  const rotary: RotaryDefinition = {
+    about,
+    drive,
+    reversed,
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  }
+  return validateMachineDefinition({ ...structuredClone(GRBL), rotary })
+}
+
+/**
+ * A pass that travels only along the bar, so a borrowed across motor never
+ * moves as a linear axis (which the planner refuses). `clearance` is above the
+ * top face for Top and under the bottom face for Bottom, as the toolpaths are
+ * stored in stock space.
+ */
+function barMoves(axis: 'x' | 'y', face: 'top' | 'bottom'): ToolpathMove[] {
+  const clearance = face === 'top' ? 25 : -5
+  const cut = face === 'top' ? 15 : 5
+  const at = (along: number, z: number): ToolpathPoint => (
+    axis === 'x' ? { x: along, y: 10, z } : { x: 10, y: along, z }
+  )
+  return [
+    { kind: 'rapid', from: at(0, clearance), to: at(10, clearance) },
+    { kind: 'plunge', from: at(10, clearance), to: at(10, cut) },
+    { kind: 'cut', from: at(10, cut), to: at(30, cut) },
+    { kind: 'rapid', from: at(30, cut), to: at(30, clearance) },
+  ]
+}
+
+function testManualIndexTurnsTheBarItself(): void {
+  console.log('Testing the program turns the bar itself when the machine can...')
+  // The travel height is the blank's largest radius above the pivot plus 1 mm:
+  // 21 mm on a Ø20 round bar, 11 + 10√2 on a 20 mm square blank. The origin is
+  // the top of the bar, 20 mm above the pivot, so the emitted machine Z is the
+  // height above the bar: 1 mm and 5.142 mm.
+  const travel = { round: 10 + 10 + 1, square: 10 + 20 * Math.SQRT1_2 + 1 } as const
+  const travelWord = (shape: 'round' | 'square'): string => (travel[shape] - 20).toFixed(3)
+  const turnComment = (word: string, angle: number): string =>
+    `ROTARY: THE PROGRAM TURNS ${word} TO ${angle}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
+
+  for (const shape of ['round', 'square'] as const) {
+    for (const axis of ['x', 'y'] as const) {
+      const bar = rotaryBarProjectOf(shape, axis)
+      const two = withBottomSetup(bar, { axis, operationIds: ['under'] })
+      const letters = { own: 'A', borrowed: axis === 'x' ? 'Y' : 'X' } as const
+      const shapeName = `${shape} bar along ${axis.toUpperCase()}`
+
+      for (const reversed of [false, true]) {
+        for (const drive of ['own', 'borrowed'] as const) {
+          const definition = rotaryMachine(axis, drive, reversed)
+          const letter = letters[drive]
+          const label = `${shapeName}, ${drive} ${letter}${reversed ? ', reversed' : ''}`
+
+          for (const face of ['top', 'bottom'] as const) {
+            const angle = face === 'bottom' ? 180 : 0
+            // The same sign handling the Around output uses: a reversed axis
+            // (or a mirrored borrowed motor) writes the negative angle.
+            const angleWord = `${letter}${(angle * (reversed ? -1 : 1)).toFixed(3)}`
+            const program = post(two, [face === 'top' ? 'rough' : 'under'], definition, barMoves(axis, face)).gcode
+            const lines = program.split('\n')
+            const at = lines.findIndex((line) => /SETUP \d\d:/.test(line))
+            const turn = `SETUP ${face === 'top' ? '01' : '02'}: ${face === 'top'
+              ? 'Top - TOP FACE UP'
+              : `Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`}`
+            assert(at > 0, `${label}, ${face}: the header is in the program`)
+            assertEqual(lines.slice(at, at + 6), [
+              `; ${turn}`,
+              '; REGISTRATION: NONE DECLARED',
+              `; TOUCH OFF: ${describeTouchOff(two, face)}`,
+              `; ${turnComment(letter, angle)}`,
+              `G0 Z${travelWord(shape)}`,
+              `G0 ${angleWord}`,
+            ], `${label}, ${face}: the header, then the retract, then the turn`)
+            assert(lines[at + 6].startsWith('; Operation'), `${label}, ${face}: before the first operation's header and moves`)
+            assert(!lines.slice(0, at + 6).includes('G93'), `${label}, ${face}: the turn is a rapid, still in G94`)
+
+            const motion = programWithoutComments(program, 'gcode').split('\n')
+            const turnBlocks = motion.filter((line) => line.startsWith(`G0 ${letter}`))
+            const endsAt = lines.lastIndexOf('M30')
+            if (face === 'top') {
+              assertEqual(turnBlocks, [`G0 ${angleWord}`], `${label}: Top turns once and never unwinds`)
+              assertEqual(lines[endsAt - 1], 'M5', `${label}: nothing is posted after the last operation but the spindle stop`)
+            } else {
+              assertEqual(turnBlocks, [`G0 ${angleWord}`, `G0 ${letter}0.000`], `${label}: Bottom turns to 180, then unwinds to 0`)
+              assertEqual(lines[endsAt - 1], `G0 ${letter}0.000`, `${label}: the unwind is the last motion block`)
+              if (shape === 'square') {
+                assertEqual(lines[endsAt - 2], `Z${travelWord(shape)}`, `${label}: after retracting to the corner envelope`)
+              } else {
+                assertEqual(lines[endsAt - 2], 'M5', `${label}: the round bar unwinds where the last operation retracted`)
+              }
+            }
+          }
+        }
+      }
+
+      // The project's only setup is a Top one, and it is not a per-setup
+      // export: the header and the opening turn are still posted (#1054
+      // slice 2b does not depend on a second setup existing).
+      const single = post(bar, ['rough'], rotaryMachine(axis, 'own'), barMoves(axis, 'top')).gcode
+      assert(single.includes(`; ${turnComment('A', 0)}`), `${shapeName}, one Top setup: the turn comment`)
+      assert(single.includes(`\nG0 Z${travelWord(shape)}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
+
+      // A machine without a rotary axis keeps slice 2 exactly: the operator
+      // comment, no turn word, and no motion added.
+      const plain = post(two, ['under'], GRBL, barMoves(axis, 'bottom')).gcode
+      assert(plain.includes('; ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'), `${shapeName}, no rotary axis: slice 2's instruction`)
+      assert(plain.includes('; ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'), `${shapeName}, no rotary axis: slice 2's retract line`)
+      assert(!plain.includes('ROTARY: THE PROGRAM TURNS'), `${shapeName}, no rotary axis: no program-turn comment`)
+      assert(!/(^|\s)A[-+]?\d/.test(programWithoutComments(plain, 'gcode')), `${shapeName}, no rotary axis: no A word`)
+    }
+  }
+
+  // The travel height is in the program's units: a 2 in round bar (1 in pivot,
+  // 1 in radius, 1 mm of clearance) retracts to 0.0394 in above the origin.
+  const inchBase = newProject('Inch Bar', 'inch')
+  inchBase.stock = roundStock(2, 8, 'x')
+  const inchBounds = getStockBounds(inchBase.stock)
+  inchBase.origin = {
+    name: 'Origin',
+    x: inchBounds.minX,
+    y: (inchBounds.minY + inchBounds.maxY) / 2,
+    z: inchBase.stock.thickness,
+    visible: true,
+  }
+  inchBase.tools = [{ ...defaultTool('inch', 1), id: 't1', name: 'Tool 1' }]
+  const inchProject = syncProjectSetups({
+    ...inchBase,
+    meta: { ...inchBase.meta, projectType: 'rotary' },
+    operations: [makeOperation('rough', 'Rough')],
+  })
+  const inchMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 0, y: 1, z: 2.5 }, to: { x: 1, y: 1, z: 2.5 } },
+    { kind: 'plunge', from: { x: 1, y: 1, z: 2.5 }, to: { x: 1, y: 1, z: 1.5 } },
+    { kind: 'cut', from: { x: 1, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 1.5 } },
+    { kind: 'rapid', from: { x: 3, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 2.5 } },
+  ]
+  const inchProgram = post(inchProject, ['rough'], rotaryMachine('x', 'own'), inchMoves).gcode
+  assert(inchProgram.includes('\nG0 Z0.0394\nG0 A0.0000\n'), 'inch: the travel height and the angle use the program units and precision')
+}
+
 /**
  * The posted text of the work these changes must not touch, captured from the
  * base commit before #1054 slice 2. Only the generated-date line is
@@ -601,6 +763,7 @@ testSingleSetupProgramIsUnchanged()
 testWhatAProgramMayNotBe()
 testManualIndexingOnARotaryBar()
 testBottomFlipAxisWarning()
+testManualIndexTurnsTheBarItself()
 testFlatAndAroundProgramsAreUnchanged()
 
 console.log('setup program tests passed')
