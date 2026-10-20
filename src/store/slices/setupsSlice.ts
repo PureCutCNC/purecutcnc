@@ -26,11 +26,13 @@
 import type { StateCreator } from 'zustand'
 import { uniqueName } from '../../import'
 import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrientation'
+import { isBarStock } from '../../types/barStock'
 import { applyOperationMove, planOperationMove } from '../../engine/setupOperationMove'
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { aroundUnavailableReason, dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
+import { manualIndexingApplies } from '../helpers/projectType'
 import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
 import { syncRoundWorkholding, transposeRoundWorkholding } from '../helpers/roundWorkholding'
 import type { ProjectStore, SelectionState } from '../types'
@@ -137,6 +139,13 @@ export function createSetupsSlice(
         || input.orientation.angleDeg !== 0 || project.setups.some((setup) => setup.kind === 'around'))) return null
       const id = nextUniqueGeneratedId(project, 'su')
       const face = setupFace(input)
+      // A new Bottom setup on a rotary bar follows the bar's axis (#1054
+      // slice 2): A180 is a turn about the bar, so flipping about the other
+      // horizontal axis would turn the part the wrong way. An existing setup
+      // is never rewritten — export warns about one that disagrees.
+      const orientation = face === 'bottom' && manualIndexingApplies(project) && isBarStock(project.stock)
+        ? { axis: project.stock.axis, angleDeg: input.orientation.angleDeg }
+        : { axis: input.orientation.axis, angleDeg: input.orientation.angleDeg }
       const setup: MachiningSetup = {
         ...(input.kind === 'around' ? { kind: 'around' as const } : {}),
         id,
@@ -144,7 +153,7 @@ export function createSetupsSlice(
           input.name?.trim() || (face === 'around' ? 'Around' : face === 'top' ? 'Top' : 'Bottom'),
           project.setups.map((entry) => entry.name),
         ),
-        orientation: { axis: input.orientation.axis, angleDeg: input.orientation.angleDeg },
+        orientation,
         indexing: 'manual',
         registration: [],
         notes: '',

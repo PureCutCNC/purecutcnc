@@ -151,6 +151,19 @@ export function barSeedsModel(project: Pick<Project, 'meta' | 'stock'>): boolean
 }
 
 /**
+ * Whether Top and Bottom are manual-indexing faces of the project (#1054
+ * slice 2): a rotary project whose stock is a bar — round or square — turns
+ * the bar by hand to A0 for a Top program and A180 for a Bottom one, about
+ * the bar's own axis. Every Top/Bottom program and setup sheet of such a
+ * project must state that angle and the retract before turning A, and a new
+ * Bottom setup flips about the bar's axis. A block (milling, plasma) has no A
+ * and no bar axis, so nothing about it changes.
+ */
+export function manualIndexingApplies(project: Pick<Project, 'meta' | 'stock'>): boolean {
+  return projectType(project) === 'rotary' && isBarStock(project.stock)
+}
+
+/**
  * Whether an operation of `kind` is cut under `type` (issue #1028).
  *
  * - a plasma cut only in a plasma project;

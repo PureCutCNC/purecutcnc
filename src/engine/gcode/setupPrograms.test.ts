@@ -19,13 +19,20 @@
  * is called, what its header tells the operator, and what a program may not
  * be — one that runs across a manual turn, or one missing a refused pass.
  *
- * The stock is 100 × 80 × 20 at (0, 0); the default origin is its front-left
- * corner on the face that is up: (0, 80, 20).
+ * The flat stock is 100 × 80 × 20 at (0, 0); the default origin is its
+ * front-left corner on the face that is up: (0, 80, 20). The rotary bar the
+ * manual-indexing cases use is a 20 mm round bar 100 mm long, with its origin
+ * on the centreline and the top of the bar (#1054 slice 2). Mutations those
+ * assertions were checked against: dropping the header for a single setup →
+ * the single-setup header assertions fail; flipping a Bottom setup about X on
+ * a Y bar → the flip-axis assertion fails; giving a block or an Around program
+ * the A lines → the byte-identical baselines fail.
  *
  * Run with: npx tsx src/engine/gcode/setupPrograms.test.ts
  */
 
-import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { createHash } from 'node:crypto'
+import { circleProfile, defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../../types/project'
 import type { MachineOrigin, MachiningSetup, Operation, Project, SketchFeature } from '../../types/project'
 import { suggestGcodeFileName } from '../../components/export/exportOperationSelection'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
@@ -382,6 +389,209 @@ function testWhatAProgramMayNotBe(): void {
   assert(!post(allowed, ['under'], GRBL).warnings.some((warning) => warning.code === 'postSetupOperationRefused'), 'a cross-face through target is not refused')
 }
 
+// ── Manual indexing on a rotary bar (#1054 slice 2) ───────────
+
+/** A rotary project on a 20 mm round bar along `axis`, with the flat fixture's operations. */
+function rotaryBarProject(axis: 'x' | 'y' = 'x'): Project {
+  const project = singleSetupProject()
+  const bar = roundStock(20, 100, axis)
+  const bounds = getStockBounds(bar)
+  const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+  return syncProjectSetups({
+    ...project,
+    meta: { ...project.meta, projectType: 'rotary' },
+    stock: bar,
+    origin: {
+      name: 'Origin',
+      x: axis === 'x' ? bounds.minX : centre,
+      y: axis === 'x' ? centre : bounds.maxY,
+      z: bar.thickness,
+      visible: true,
+    },
+  })
+}
+
+/** The program's lines with every comment removed, so an A search sees motion only. */
+function programWithoutComments(program: string, dialect: 'gcode' | 'sbp'): string {
+  return program
+    .split(dialect === 'sbp' ? '\r\n' : '\n')
+    .filter((line) => {
+      const trimmed = line.trim()
+      if (trimmed.length === 0) return false
+      return dialect === 'sbp' ? !trimmed.startsWith("'") : !/^[;(%]/.test(trimmed)
+    })
+    .join('\n')
+}
+
+function testManualIndexingOnARotaryBar(): void {
+  console.log('Testing the manual A angle in a rotary bar program...')
+  const A0 = 'ROTARY: SET A TO 0° BEFORE RUNNING'
+  const A180 = 'ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'
+  const RETRACT = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'
+  const touch = {
+    x: 'CENTRE OF THE LEFT EDGE OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
+    y: 'CENTRE OF THE FRONT EDGE OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
+  } as const
+
+  for (const axis of ['x', 'y'] as const) {
+    const project = rotaryBarProject(axis)
+    // One Top setup: still not a per-setup export, and the file name is the
+    // legacy one — only the header is added.
+    assert(!projectExportsPerSetup(project), `${axis}: one Top setup is not a per-setup export`)
+    assertEqual(planSetupPrograms(project, ['rough'])[0].fileStem, 'Pin_Plate_Rough', `${axis}: the single-setup file name is unchanged`)
+    assertEqual(setupHeaderLines(project, project.setups[0], GRBL), [
+      'SETUP 01: Top - TOP FACE UP',
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis]}`,
+      A0,
+      RETRACT,
+    ], `${axis}: the Top lines, even with one setup`)
+
+    const gcode = post(project, ['rough'], GRBL).gcode.split('\n')
+    const at = gcode.findIndex((line) => line.includes('SETUP 01'))
+    assert(at > 0, `${axis}: the header is in the program`)
+    assertEqual(gcode.slice(at, at + 5), [
+      '; SETUP 01: Top - TOP FACE UP',
+      '; REGISTRATION: NONE DECLARED',
+      `; TOUCH OFF: ${touch[axis]}`,
+      `; ${A0}`,
+      `; ${RETRACT}`,
+    ], `${axis}: G-code writes the exact lines`)
+
+    const sbp = post(project, ['rough'], SHOPBOT).gcode.split('\r\n')
+    const sbpAt = sbp.findIndex((line) => line.includes('SETUP 01'))
+    assertEqual(sbp.slice(sbpAt, sbpAt + 5), [
+      "' SETUP 01: Top - TOP FACE UP",
+      "' REGISTRATION: NONE DECLARED",
+      `' TOUCH OFF: ${touch[axis]}`,
+      `' ${A0}`,
+      `' ${RETRACT}`,
+    ], `${axis}: SBP writes the same lines as part-file comments`)
+
+    // The program says which A to set but never moves it (#394 owns that).
+    for (const [dialect, program] of [
+      ['gcode', post(project, ['rough'], GRBL).gcode],
+      ['sbp', post(project, ['rough'], SHOPBOT).gcode],
+    ] as const) {
+      const motion = programWithoutComments(program, dialect)
+      assert(!/(^|\s)A[-+]?\d/.test(motion), `${axis}: ${dialect} emits no A word:\n${motion}`)
+    }
+
+    // A project whose only setup is Bottom is headed as program 01 too.
+    const top = project.setups[0]
+    const onlyBottom: MachiningSetup = { ...top, id: 'only-bottom', name: 'Bottom', orientation: { axis, angleDeg: 180 } }
+    const bottomOnly = syncProjectSetups({
+      ...project,
+      setups: [onlyBottom],
+      activeSetupId: onlyBottom.id,
+      operations: project.operations.map((operation) => ({ ...operation, setupId: onlyBottom.id })),
+    })
+    assert(!projectExportsPerSetup(bottomOnly), `${axis}: one Bottom setup is not a per-setup export`)
+    assertEqual(setupHeaderLines(bottomOnly, bottomOnly.setups[0], GRBL), [
+      `SETUP 01: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`,
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis].replace('TOP', 'BOTTOM')}`,
+      A180,
+      RETRACT,
+    ], `${axis}: the single Bottom setup is headed too`)
+
+    // Two setups: each program is numbered and headed as before, plus A.
+    const two = withBottomSetup(project, { axis, operationIds: ['under'] })
+    assertEqual(setupHeaderLines(two, two.setups[1], GRBL), [
+      `SETUP 02: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`,
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis].replace('TOP', 'BOTTOM')}`,
+      A180,
+      RETRACT,
+    ], `${axis}: the Bottom program's lines`)
+    const postedBottom = post(two, ['under'], GRBL).gcode
+    assert(postedBottom.includes(`\n; ${A180}\n`), `${axis}: the posted Bottom program carries A180`)
+    assert(postedBottom.includes(`\n; ${RETRACT}\n`), `${axis}: and the retract before turning`)
+  }
+}
+
+function testBottomFlipAxisWarning(): void {
+  console.log('Testing a Bottom setup whose flip axis is not the bar\'s warns...')
+  const yBar = rotaryBarProject('y')
+  const mismatched = withBottomSetup(yBar, { axis: 'x', operationIds: ['under'] })
+  const program = post(mismatched, ['under'], GRBL)
+  assertEqual(
+    program.warnings.find((warning) => warning.code === 'setupFlipAxisMismatch'),
+    { code: 'setupFlipAxisMismatch', params: { setup: 'Bottom', axis: 'X', barAxis: 'Y' } },
+    'the warning names the setup and both axes',
+  )
+  assertEqual(warningSeverity('setupFlipAxisMismatch'), 'warning', 'as a warning: the stored setup is not rewritten')
+  assert(program.gcode.includes('FLIP STOCK ABOUT X'), 'the program still describes the flip the setup stores')
+  assert(program.gcode.includes('ROTARY: SET A TO 180°'), 'and still states A180 about the bar')
+
+  const matching = withBottomSetup(yBar, { axis: 'y', operationIds: ['under'] })
+  assert(
+    !post(matching, ['under'], GRBL).warnings.some((warning) => warning.code === 'setupFlipAxisMismatch'),
+    'a Y bar with a Y flip is not warned about',
+  )
+
+  // A block is not a bar: no A line, no flip-axis warning.
+  const flatProgram = post(twoSetupProject({}, 'x'), ['under'], GRBL)
+  assert(
+    !flatProgram.warnings.some((warning) => warning.code === 'setupFlipAxisMismatch'),
+    'a block project is not warned about',
+  )
+  assert(!flatProgram.gcode.includes('ROTARY: SET A'), 'and gets no A line')
+}
+
+/**
+ * The posted text of the work these changes must not touch, captured from the
+ * base commit before #1054 slice 2. Only the generated-date line is
+ * normalised; geometry, feeds, wording and comments are exact.
+ */
+function normalizedProgram(program: string): string {
+  return program.replace(/Generated by PureCutCNC on \d{4}-\d{2}-\d{2}/g, 'Generated by PureCutCNC on <date>')
+}
+
+function programHash(project: Project, operationIds: string[], definition: MachineDefinition): string {
+  return createHash('sha256').update(normalizedProgram(post(project, operationIds, definition).gcode)).digest('hex')
+}
+
+function testFlatAndAroundProgramsAreUnchanged(): void {
+  console.log('Testing flat and Around programs are byte-identical to the base...')
+  // A milling project with a Top and a Bottom setup: no bar, so no A lines
+  // and no flip-axis warning may appear.
+  const mill = withBottomSetup(singleSetupProject(), { axis: 'x', operationIds: ['under'] })
+  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], GRBL), '3179263c634d8ec1e764a3faf8eefe2c9a444838ca729170cf728c1f775a0f1f', 'milling Top program, G-code')
+  assertEqual(programHash(mill, ['under'], GRBL), '2b99f3defc62a11888f6ecfea359a152968c8c443848a388e75da4ba2c29f6be', 'milling Bottom program, G-code')
+  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], SHOPBOT), '5c83729c6b52fb60dad0c95a903cdaa6bf41a6a1f30f89a81c89b167e6f31c14', 'milling Top program, SBP')
+  assertEqual(programHash(mill, ['under'], SHOPBOT), '4e7a863ac3499b84d95a6c6502537582dc11908575d29e75ca2da2f49bb8eca4', 'milling Bottom program, SBP')
+
+  // An Around program keeps its own header, and is not given the Top/Bottom
+  // A lines.
+  const base = newProject('Around Bar', 'mm')
+  base.stock = roundStock(20, 100, 'x')
+  base.meta.projectType = 'rotary'
+  base.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Tool 1' }]
+  const aroundSetup: MachiningSetup = {
+    ...base.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+  }
+  const aroundProject = syncProjectSetups({
+    ...base,
+    setups: [aroundSetup],
+    activeSetupId: aroundSetup.id,
+    operations: [makeOperation('pocket', 'Pocket', { setupId: aroundSetup.id })],
+  })
+  const aroundPosted = post(aroundProject, ['pocket'], GRBL).gcode
+  assertEqual(
+    createHash('sha256').update(normalizedProgram(aroundPosted)).digest('hex'),
+    '3ad70b17d2b26498020109b5cb8c04657a756202ad9af8fd30e544905dd8a84e',
+    'Around program, G-code',
+  )
+  assert(!aroundPosted.includes('ROTARY: SET A'), 'an Around program is not given a Top/Bottom A line')
+  assert(aroundPosted.includes('; SETUP 01: Around - AROUND THE BAR, BAR ALONG X'), 'and keeps its own header')
+}
+
 testSingleSetupIsNotSplit()
 testTwoSetupsAreSplit()
 testTouchOff()
@@ -389,5 +599,8 @@ testHeaderLines()
 testProgramHeaderInBothDialects()
 testSingleSetupProgramIsUnchanged()
 testWhatAProgramMayNotBe()
+testManualIndexingOnARotaryBar()
+testBottomFlipAxisWarning()
+testFlatAndAroundProgramsAreUnchanged()
 
 console.log('setup program tests passed')

@@ -55,10 +55,11 @@ import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from 
 import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
 import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
-import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
+import { setupForOperation, setupFace, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
 import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
@@ -504,8 +505,9 @@ export interface ProgramSetupPlan {
   /**
    * Lines to write as comments after the program header, in order: which
    * setup this is and how the stock is turned, what locates the part, where
-   * to touch off, and the operator's notes. Empty for a project with a single
-   * setup, whose program is exactly what it was before setups existed.
+   * to touch off, the manual A angle and retract of a rotary bar, and the
+   * operator's notes. Empty for a flat single-setup project, whose program is
+   * exactly what it was before setups existed.
    */
   headerComments: string[]
   /** Raised for the program as a whole; the caller appends them to its own. */
@@ -519,6 +521,10 @@ export interface ProgramSetupPlan {
  * between setups, and nothing in a program does it for them. Operations of
  * two setups in one program are therefore reported as an error and the header
  * is left out, rather than a header written for one of them.
+ *
+ * A single-setup project normally carries no header (the legacy-parity rule),
+ * except an Around setup and a Top/Bottom setup of a rotary bar project,
+ * which say how the operator turns the bar by hand (#1054 slice 2).
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
@@ -534,9 +540,15 @@ export function planProgramSetup(
     }
   }
 
-  if (!projectExportsPerSetup(project)) return { headerComments: [], warnings }
+  if (!projectExportsPerSetup(project) && !manualIndexingApplies(project)) {
+    return { headerComments: [], warnings }
+  }
 
-  const setups = [...new Set(operations.map(({ operation }) => setupForOperation(project, operation)))]
+  // An operation without a setup reads as the first one, exactly as
+  // `planSetupPrograms` places it, so the header names the program it is in.
+  const setups = [...new Set(operations.map(({ operation }) => (
+    setupForOperation(project, operation) ?? project.setups?.[0] ?? null
+  )))]
   if (setups.length > 1) {
     warnings.push({
       code: 'postMixedSetups',
@@ -546,6 +558,22 @@ export function planProgramSetup(
   }
   const setup = setups[0]
   if (!setup) return { headerComments: [], warnings }
+
+  // The operator sets A by hand, so a Bottom setup whose flip axis is not the
+  // bar's would turn the part a different way than the program's A180
+  // instruction says. The stored setup is not silently rewritten: it is
+  // named, and the user decides (#1054 slice 2).
+  if (manualIndexingApplies(project) && isBarStock(project.stock)
+    && setupFace(setup) === 'bottom' && setup.orientation.axis !== project.stock.axis) {
+    warnings.push({
+      code: 'setupFlipAxisMismatch',
+      params: {
+        setup: setup.name,
+        axis: setup.orientation.axis.toUpperCase(),
+        barAxis: project.stock.axis.toUpperCase(),
+      },
+    })
+  }
 
   if (setupLacksRegistration(project, setup)) {
     warnings.push({ code: 'postSetupNoRegistration', params: { setup: setup.name } })
