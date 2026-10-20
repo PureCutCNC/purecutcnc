@@ -99,6 +99,7 @@ const ALL_CODES = [
   'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis', 'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
+  'postRotaryTurnWithoutClearance',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',

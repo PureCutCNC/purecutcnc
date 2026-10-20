@@ -639,12 +639,17 @@ console.log('Testing the closing unwind retract on a square blank...')
   }])
   const roundBar = round.project.stock
   assert.ok(isBarStock(roundBar), 'fixture: the round project has bar stock')
-  const roundTravel = (barPivotZ(roundBar) + barMaxRadius(roundBar)
-    + convertLength(1, 'mm', 'mm') - round.project.origin.z).toFixed(3)
+  // GRBL applies no tool-length compensation, so the retract is the
+  // machine-coordinate Safe Z (#1054 fix 2), not the work-coordinate travel
+  // height.
+  const roundSafe = (Math.max(
+    round.project.meta.maxTravelZ,
+    barPivotZ(roundBar) + barMaxRadius(roundBar) + convertLength(1, 'mm', 'mm'),
+  ) - round.project.origin.z).toFixed(3)
   assert.match(
     roundResult.gcode,
-    new RegExp(`Z${roundTravel}\\nG0 A0`),
-    'a round bar also retracts to its travel height before the closing unwind',
+    new RegExp(`G53 G0 Z${roundSafe}\\nG0 A0`),
+    'a round bar also retracts to the machine Safe Z before the closing unwind',
   )
 
   // The reviewer's repro (#1054 fix 1, finding 2): a spindle-stop template that
@@ -663,7 +668,7 @@ console.log('Testing the closing unwind retract on a square blank...')
   }])
   assert.match(
     droppingResult.gcode,
-    new RegExp(`G0 Z-2\\nZ${roundTravel}\\nG0 A0`),
+    new RegExp(`G0 Z-2\\nG53 G0 Z${roundSafe}\\nG0 A0`),
     'the template Z move is repaired before the unwind turns the bar',
   )
   assert.match(droppingResult.gcode, /G0 Z-2/, 'the template line is still written')

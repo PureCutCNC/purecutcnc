@@ -275,6 +275,7 @@ export const warningsEn = {
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope, so the standing corners would sweep into the cutter.',
+  'warnings.postRotaryTurnWithoutClearance': 'Operation "{operation}" was not exported: the bar cannot be turned safely because no tool-length compensation is active and this machine has no machine-coordinate move to its safe Z. Apply tool-length compensation or give the machine a machine-coordinate rapid, then export again.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',

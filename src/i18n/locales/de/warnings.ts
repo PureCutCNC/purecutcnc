@@ -275,6 +275,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
+  'warnings.postRotaryTurnWithoutClearance': 'Operation „{operation}" wurde nicht exportiert: Der Stab kann nicht sicher gedreht werden, weil keine Werkzeuglängenkorrektur aktiv ist und diese Maschine keine Maschinenkoordinaten-Bewegung auf ihre sichere Z-Höhe hat. Aktivieren Sie die Werkzeuglängenkorrektur oder geben Sie der Maschine einen Maschinenkoordinaten-Eilgang, und exportieren Sie erneut.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

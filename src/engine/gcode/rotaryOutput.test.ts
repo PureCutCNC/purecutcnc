@@ -208,12 +208,12 @@ function motionLines(program: string): string[] {
  * asserted in `aroundExport.test.ts` and in the last section of this file.
  */
 function withoutUnwind(program: string): string {
-  // The closing unwind is a retract to the bar's travel height (when the last
-  // operation left the cutter low or a template moved Z) followed by the turn
-  // to 0 (#1054 fix 1, finding 2). Remove both, leaving the program as it reads
-  // before its closing block.
+  // The closing unwind is a retract clear of the bar followed by the turn to
+  // 0 (#1054 fix 1, finding 2; fix 2 makes the retract a machine-coordinate
+  // `G53 G0` when no tool-length compensation is active). Remove both,
+  // leaving the program as it reads before its closing block.
   return program
-    .replace(/\nG0 Z-?\d+\.\d+\nG0 (?:A|X|Y)0\.000(?=\n)/, '')
+    .replace(/\n(?:G53 G0|G0) Z-?\d+\.\d+\nG0 (?:A|X|Y)0\.000(?=\n)/, '')
     .replace(/\nG0 (?:A|X|Y)0\.000(?=\n)/, '')
 }
 
@@ -1823,9 +1823,11 @@ const NINETY = Math.PI / 2
   const raw = result.gcode.split('\n')
   assert.equal(raw[raw.length - 2], 'G0 A0.000', 'a rapid returns the rotary to 0 before the program end')
   assert.equal(raw[raw.length - 1], 'M30', 'and the program end follows it')
-  // Finding 2 (#1054 fix 1): the unwind retracts to the bar's travel height
-  // first, because the turning cut ended below it.
-  assert.equal(raw[raw.length - 3], 'G0 Z1.000', 'the closing unwind retracts before it turns')
+  // Finding 2 (#1054 fix 1): the unwind retracts clear of the bar first,
+  // because the turning cut ended below it. GRBL applies no tool-length
+  // compensation, so fix 2 makes that retract the machine-coordinate Safe Z
+  // (the project ceiling is 50, the origin is the bar top at 20).
+  assert.equal(raw[raw.length - 3], 'G53 G0 Z30.000', 'the closing unwind retracts before it turns')
   // The borrowed letter carries the unwind on a borrowed-motor machine.
   const borrowed = exportProgram(project, rotaryMachine(BORROWED_Y), [{
     operation: operation('Unwind'),
@@ -1840,7 +1842,7 @@ const NINETY = Math.PI / 2
   assert.ok(!/\nG0 [AXY]0\.000\n/.test(zero.gcode), 'a program that ends at 0 writes no unwind')
   assert.equal(
     withoutUnwind(result.gcode),
-    result.gcode.replace('\nG0 Z1.000\nG0 A0.000', ''),
+    result.gcode.replace('\nG53 G0 Z30.000\nG0 A0.000', ''),
     'the helper strips exactly the closing block',
   )
 }

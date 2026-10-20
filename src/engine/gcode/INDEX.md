@@ -32,11 +32,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 
 - `index.ts` — public API.
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
-  `arcFormat`, the optional `outputDialect`, `machineKind`, `plasma` and
-  `rotary` blocks), `resolveOutputDialect`, the rotary helpers `rotaryWord` /
-  `rotaryBorrowedAxis` / `rotaryDirection` (which letter the program uses for
-  rotation, which project axis a borrowed motor costs, and the sign a positive
-  angle is multiplied by),
+  `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
+  for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
+  `null` meaning none — `outputDialect`, `machineKind`, `plasma` and `rotary`
+  blocks), `resolveOutputDialect`, `machineCoordinateRapidCommand`, the rotary
+  helpers `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection` (which letter
+  the program uses for rotation, which project axis a borrowed motor costs, and
+  the sign a positive angle is multiplied by),
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
@@ -60,16 +62,24 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rotary word, judged on the rendered lines the program actually writes
   (`postRotaryTemplateUsesBorrowedAxis`).
   A Top or Bottom program of a manual-index rotary bar starts with the bar's
-  own turn (#1054 slice 2b): a rapid to the generators' travel height
-  (`rotaryTravelZ`, above a square blank's corners), then a rapid of the
+  own turn (#1054 slice 2b): a rapid clear of the bar, then a rapid of the
   rotary word to 0 or 180 through `rotaryDirection`, before any operation's
   moves. The header says the program does it, and X/Y are left unknown
-  afterwards so the first operation writes its own position.
+  afterwards so the first operation writes its own position. The clearance
+  retract is compensation-independent (#1054 fix 2): while a tool-length
+  compensation is known active (`G43`/`G44`, not cancelled by `G49`) it is the
+  historical work-coordinate rapid to the generators' travel height
+  (`rotaryTravelZ`, above a square blank's corners); otherwise it is a
+  machine-coordinate rapid to the project's Safe Z (`maxTravelZ`, floored at
+  the bar's travel height), which no work offset or compensation can change. A
+  machine with neither a compensation nor a machine-coordinate move is refused
+  with `postRotaryTurnWithoutClearance` rather than turned.
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
   and none for a program that ends at 0 or that never carried an angle (so a
-  Top manual-index program writes no unwind, and a Bottom one does). On a
-  square blank it first rapids to the generators' travel height whenever the
+  Top manual-index program writes no unwind, and a Bottom one does). It makes
+  the same compensation-independent clearance retract first (#1054 fix 2). On a
+  square blank it also rapids to the generators' travel height whenever the
   last emitted Z is below it or unknown, because the last operation may have
   descended at a constant angle. A template that can move Z (a Z word, a
   canned cycle, a macro, a tool change) invalidates the tracked Z, and a later

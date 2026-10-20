@@ -259,6 +259,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': '加工操作“{operation}”未导出：其钻孔没有展开的移动，而旋转轴借用电机时机床不能使用固定循环。',
   'warnings.postRotaryAxisMismatch': '加工操作“{operation}”未导出：机床旋转轴沿 {machineAxis} 方向，而棒料沿 {stockAxis} 方向。',
   'warnings.postRotarySquareTurnBelowEnvelope': '加工操作“{operation}”未导出：它在刀具低于方料角部包络时转动方料，因此直立的角部会扫入刀具。',
+  'warnings.postRotaryTurnWithoutClearance': '加工操作“{operation}”未导出：由于没有生效的刀具长度补偿，且该机床没有移动到安全 Z 的机床坐标运动，无法安全转动棒料。请启用刀具长度补偿或为机床添加机床坐标快速移动，然后重新导出。',
   'warnings.replayNoTool': '所选加工操作未指定刀具。',
   'warnings.bookletNoTool': '此加工操作未选择刀具。',
   'warnings.bookletNoToolpath': '无法为此加工操作生成刀路。',

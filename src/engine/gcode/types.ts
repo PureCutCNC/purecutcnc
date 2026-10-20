@@ -201,6 +201,16 @@ export const MachineDefinitionSchema = z.object({
     arcFormat: z.enum(['ij', 'r']),
     modalMotion: z.boolean(),
     arcInterpolation: z.boolean().default(false),
+    /**
+     * The block prefix that moves an axis in machine coordinates, e.g.
+     * `G53 G0` (issue #1054). A bar-clearance retract needs it when no
+     * tool-length compensation is active, because then the work-coordinate Z
+     * the emitter writes does not describe the tip's physical height.
+     * Absent means the G-code dialect's standard move — `G53` followed by the
+     * definition's own `rapidCommand`; `null` means this machine has none, and
+     * a turn that needs one is refused rather than written.
+     */
+    machineCoordinateCommand: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.').nullable().optional(),
   }),
   feedSpeed: z.object({
     feedCommand: z.string(),
@@ -276,6 +286,25 @@ export function resolveMachineKind(definition: Pick<MachineDefinition, 'machineK
 /** The dialect a definition exports; a definition without the field is G-code. */
 export function resolveOutputDialect(definition: Pick<MachineDefinition, 'outputDialect'>): OutputDialect {
   return definition.outputDialect ?? 'gcode'
+}
+
+/**
+ * The block prefix for a rapid in machine coordinates, or null when this
+ * machine has no such move (issue #1054). G-code's non-modal machine-
+ * coordinate move is `G53`, and every bundled G-code definition supports it;
+ * an explicit `motion.machineCoordinateCommand` overrides that, and `null`
+ * declares the dialect has none. ShopBot part files are not G-code and have no
+ * equivalent, which is why an `opensbp` definition never gets one.
+ */
+export function machineCoordinateRapidCommand(
+  definition: Pick<MachineDefinition, 'motion' | 'outputDialect'>,
+): string | null {
+  if (definition.motion.machineCoordinateCommand !== undefined) {
+    return definition.motion.machineCoordinateCommand
+  }
+  return resolveOutputDialect(definition) === 'gcode'
+    ? `G53 ${definition.motion.rapidCommand}`
+    : null
 }
 
 /**

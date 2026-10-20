@@ -255,6 +255,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': "L'opération « {operation} » n'a pas été exportée : son perçage n'a pas de mouvements développés, et les cycles fixes ne peuvent pas être utilisés sur une machine dont l'axe rotatif emprunte un moteur.",
   'warnings.postRotaryAxisMismatch': "L'opération « {operation} » n'a pas été exportée : l'axe rotatif de la machine est selon {machineAxis}, mais la barre est selon {stockAxis}.",
   'warnings.postRotarySquareTurnBelowEnvelope': "L'opération « {operation} » n'a pas été exportée : elle fait tourner le brut carré alors que l'outil est sous l'enveloppe des coins du brut, si bien que les coins saillants balayeraient l'outil.",
+  'warnings.postRotaryTurnWithoutClearance': "L'opération « {operation} » n'a pas été exportée : la barre ne peut pas être tournée en sécurité car aucune compensation de longueur d'outil n'est active et cette machine n'a pas de mouvement en coordonnées machine vers sa Z de sécurité. Activez la compensation de longueur d'outil ou donnez à la machine un rapide en coordonnées machine, puis exportez à nouveau.",
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',
   'warnings.bookletNoToolpath': 'Le parcours d’outil n’a pas pu être généré pour cette opération.',

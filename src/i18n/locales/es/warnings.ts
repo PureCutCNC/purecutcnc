@@ -255,6 +255,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': 'La operación "{operation}" no se exportó: su taladrado no tiene movimientos expandidos, y los ciclos fijos no pueden usarse en una máquina cuyo eje rotativo toma prestado un motor.',
   'warnings.postRotaryAxisMismatch': 'La operación "{operation}" no se exportó: el eje rotativo de la máquina va a lo largo de {machineAxis}, pero la barra va a lo largo de {stockAxis}.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'La operación "{operation}" no se exportó: gira el bloque cuadrado con la herramienta por debajo de la envolvente de las esquinas, por lo que las esquinas sobresalientes barrerían la herramienta.',
+  'warnings.postRotaryTurnWithoutClearance': 'La operación "{operation}" no se exportó: la barra no se puede girar con seguridad porque no hay compensación de longitud de herramienta activa y esta máquina no tiene un movimiento en coordenadas de máquina hasta su Z de seguridad. Active la compensación de longitud de herramienta o añada a la máquina un rápido en coordenadas de máquina y vuelva a exportar.',
   'warnings.replayNoTool': 'No se ha asignado ninguna herramienta a la operación seleccionada.',
   'warnings.bookletNoTool': 'No se ha seleccionado ninguna herramienta para esta operación.',
   'warnings.bookletNoToolpath': 'No se pudo generar la trayectoria de la herramienta para esta operación.',

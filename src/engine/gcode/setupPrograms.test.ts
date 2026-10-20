@@ -58,6 +58,7 @@ import {
   setupHeaderLines,
 } from './setupPrograms'
 import { validateMachineDefinition } from './types'
+import { formatGCodeNumber } from './utils'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -159,6 +160,7 @@ function post(
   operationIds: string[],
   definition: MachineDefinition,
   moves: ToolpathMove[] = MOVES,
+  emitToolChanges = true,
 ): PostProcessorResult {
   const tool = normalizeToolForProject(project.tools[0], project)
   return runPostProcessor({
@@ -169,7 +171,7 @@ function post(
       const toolpath: ToolpathResult = { operationId: id, warnings: [], bounds: null, moves }
       return { operation, tool, toolpath }
     }),
-    options: { emitToolChanges: true, emitCoolant: false },
+    options: { emitToolChanges, emitCoolant: false },
   })
 }
 
@@ -597,10 +599,14 @@ function testManualIndexTurnsTheBarItself(): void {
   console.log('Testing the program turns the bar itself when the machine can...')
   // The travel height is the blank's largest radius above the pivot plus 1 mm:
   // 21 mm on a Ø20 round bar, 11 + 10√2 on a 20 mm square blank. The origin is
-  // the top of the bar, 20 mm above the pivot, so the emitted machine Z is the
-  // height above the bar: 1 mm and 5.142 mm.
+  // the top of the bar, 20 mm above the pivot. These fixtures apply no
+  // tool-length compensation, so the retract is the machine-coordinate Safe Z
+  // (50 - 20 = 30 mm), above both travel heights (#1054 fix 2).
   const travel = { round: 10 + 10 + 1, square: 10 + 20 * Math.SQRT1_2 + 1 } as const
-  const travelWord = (shape: 'round' | 'square'): string => (travel[shape] - 20).toFixed(3)
+  // Without a tool-length compensation the retract is in machine coordinates
+  // to the project's Safe Z (`maxTravelZ`), which is above the bar's travel
+  // height here (#1054 fix 2).
+  const safeWord = (shape: 'round' | 'square'): string => (Math.max(50, travel[shape]) - 20).toFixed(3)
   const turnComment = (word: string, angle: number): string =>
     `ROTARY: THE PROGRAM TURNS ${word} TO ${angle}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
 
@@ -637,13 +643,14 @@ function testManualIndexTurnsTheBarItself(): void {
             ], `${label}, ${face}: the header comments, including what the program does`)
             assert(lines[at + 4].startsWith('; Operation'), `${label}, ${face}: before the first operation's header`)
             // The opening retract and turn follow the first operation's tool
-            // change and its length compensation (#1054 fix 1, finding 1), then
-            // the operation's own motion. GRBL's tool change is `M5` plus its
-            // `M0` tool-change line and pause.
-            const retractAt = lines.indexOf(`G0 Z${travelWord(shape)}`)
+            // change (#1054 fix 1, finding 1), then the operation's own motion.
+            // GRBL's tool change is `M5` plus its `M0` tool-change line and
+            // pause, and it applies no tool-length compensation, so the retract
+            // is in machine coordinates to the Safe Z (#1054 fix 2).
+            const retractAt = lines.indexOf(`G53 G0 Z${safeWord(shape)}`)
             assert(retractAt > at, `${label}, ${face}: the opening retract is in the program`)
             assertEqual(lines.slice(retractAt, retractAt + 2), [
-              `G0 Z${travelWord(shape)}`,
+              `G53 G0 Z${safeWord(shape)}`,
               `G0 ${angleWord}`,
             ], `${label}, ${face}: the retract, then the turn`)
             const changeAt = lines.findIndex((line) => line.startsWith('M0 ; Tool change'))
@@ -661,11 +668,11 @@ function testManualIndexTurnsTheBarItself(): void {
             } else {
               assertEqual(turnBlocks, [`G0 ${angleWord}`, `G0 ${letter}0.000`], `${label}: Bottom turns to 180, then unwinds to 0`)
               assertEqual(lines[endsAt - 1], `G0 ${letter}0.000`, `${label}: the unwind is the last motion block`)
-              if (shape === 'square') {
-                assertEqual(lines[endsAt - 2], `Z${travelWord(shape)}`, `${label}: after retracting to the corner envelope`)
-              } else {
-                assertEqual(lines[endsAt - 2], 'M5', `${label}: the round bar unwinds where the last operation retracted`)
-              }
+              // No compensation is active, so the closing retract is the
+              // machine-coordinate Safe Z too, whatever the bar's shape
+              // (#1054 fix 2).
+              assertEqual(lines[endsAt - 2], `G53 G0 Z${safeWord(shape)}`, `${label}: after retracting to the machine Safe Z`)
+              assertEqual(lines[endsAt - 3], 'M5', `${label}: after the spindle stop`)
             }
           }
         }
@@ -676,7 +683,7 @@ function testManualIndexTurnsTheBarItself(): void {
       // slice 2b does not depend on a second setup existing).
       const single = post(bar, ['rough'], rotaryMachine(axis, 'own'), barMoves(axis, 'top')).gcode
       assert(single.includes(`; ${turnComment('A', 0)}`), `${shapeName}, one Top setup: the turn comment`)
-      assert(single.includes(`\nG0 Z${travelWord(shape)}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
+      assert(single.includes(`\nG53 G0 Z${safeWord(shape)}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
 
       // A machine without a rotary axis keeps slice 2 exactly: the operator
       // comment, no turn word, and no motion added.
@@ -713,7 +720,7 @@ function testManualIndexTurnsTheBarItself(): void {
     { kind: 'rapid', from: { x: 3, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 2.5 } },
   ]
   const inchProgram = post(inchProject, ['rough'], rotaryMachine('x', 'own'), inchMoves).gcode
-  assert(inchProgram.includes('\nG0 Z0.0394\nG0 A0.0000\n'), 'inch: the travel height and the angle use the program units and precision')
+  assert(inchProgram.includes('\nG53 G0 Z0.0394\nG0 A0.0000\n'), 'inch: the machine Safe Z and the angle use the program units and precision')
 }
 
 /**
@@ -794,18 +801,153 @@ function testInvertedZAxisUnwindRetracts(): void {
     coordinateSystem: { ...base.coordinateSystem, zAxis: '-Z' },
   })
   // The path ends at the cut height: no operation retract, so only the closing
-  // unwind can establish clearance. The square blank's project travel height is
-  // 10 + 10√2 + 1 = 25.142; the origin is its top at 20, so the inverted
-  // machine's travel coordinate is -(25.142 - 20) = -5.142.
+  // unwind can establish clearance. GRBL applies no tool-length compensation,
+  // so the retract is the machine-coordinate Safe Z (#1054 fix 2), not the
+  // work-coordinate travel height: the project ceiling is 50 and the origin is
+  // its top at 20, so the inverted machine's value is -(50 - 20) = -30.
   const moves = barMoves('x', 'bottom').slice(0, -1)
   const lines = post(two, ['under'], inverted, moves).gcode.split('\n')
-  const travel = -(10 + 20 * Math.SQRT1_2 + 1 - 20)
+  const safeZ = -(50 - 20)
   const unwindAt = lines.lastIndexOf('G0 A0.000')
   assert(unwindAt > 0, 'the program still unwinds the bar')
-  assertEqual(lines[unwindAt - 1], `G0 Z${travel.toFixed(3)}`, 'the unwind retracts to the travel height first')
+  assertEqual(lines[unwindAt - 1], `G53 G0 Z${safeZ.toFixed(3)}`, 'the unwind retracts to the machine Safe Z first')
   assertEqual(lines[unwindAt - 2], 'M5', 'after the spindle stop, before the turn')
 }
 
+/**
+ * #1054 fix 2: a single-tool Top or Bottom program with tool changes disabled
+ * has no tool-length compensation, so the opening and closing bar-clearance
+ * retract cannot be a work-coordinate `G0 Z<travel>`: that Z no longer
+ * describes the tip. Every bundled rotary-capable dialect must retract in
+ * machine coordinates to the Safe Z instead, and a machine with no
+ * machine-coordinate move must refuse the turn.
+ */
+function testManualIndexTurnWithoutCompensation(): void {
+  console.log('Testing the bar turn without tool-length compensation...')
+  const project = rotaryBarProject('x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  // 50 mm Safe Z on the 20 mm bar, origin on its top at 20: machine Z 30.
+  const safeZ = Math.max(two.meta.maxTravelZ, 21) - two.origin.z
+  const rotary: RotaryDefinition = {
+    about: 'x',
+    drive: 'own',
+    reversed: false,
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  }
+  const rotaryMachineOf = (
+    base: MachineDefinition,
+    overrides: Partial<MachineDefinition['motion']> = {},
+  ): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(base),
+    rotary,
+    motion: { ...structuredClone(base.motion), ...overrides },
+  })
+
+  for (const id of ['linuxcnc', 'grbl', 'grblhal', 'mach3', 'uccnc', 'generic']) {
+    const definition = rotaryMachineOf(bundled(id))
+    const label = `${definition.name} without tool changes`
+    for (const face of ['top', 'bottom'] as const) {
+      const operation = face === 'top' ? 'rough' : 'under'
+      const result = post(two, [operation], definition, barMoves('x', face), false)
+      assertEqual(
+        result.warnings.filter((warning) => warningSeverity(warning.code) === 'error'),
+        [],
+        `${label}, ${face}: no refusal`,
+      )
+      const lines = result.gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+      const angle = formatGCodeNumber(face === 'bottom' ? 180 : 0, definition, two.meta.units)
+      const turnAt = lines.indexOf(`G0 A${angle}`)
+      const safeLine = `G53 G0 Z${formatGCodeNumber(safeZ, definition, two.meta.units)}`
+      assert(turnAt > 0, `${label}, ${face}: the turn is posted\n${result.gcode}`)
+      assertEqual(lines[turnAt - 1], safeLine, `${label}, ${face}: machine-coordinate Safe Z before the turn`)
+      assert(
+        !lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)),
+        `${label}, ${face}: no compensation is claimed`,
+      )
+      if (face === 'bottom') {
+        const unwindAt = lines.findLastIndex((line) => line === `G0 A${formatGCodeNumber(0, definition, two.meta.units)}`)
+        assert(unwindAt > turnAt, `${label}, ${face}: the closing unwind is posted`)
+        assertEqual(
+          lines[unwindAt - 1],
+          safeLine,
+          `${label}, ${face}: machine-coordinate Safe Z before the closing unwind`,
+        )
+      }
+    }
+  }
+
+  // With tool changes enabled, LinuxCNC/Mach3/UCCNC apply G43 and keep the
+  // historical work-coordinate retract: the compensated path is unchanged.
+  for (const id of ['linuxcnc', 'mach3', 'uccnc']) {
+    const definition = rotaryMachineOf(bundled(id))
+    const lines = post(two, ['under'], definition, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+    const turnAt = lines.indexOf(`G0 A${formatGCodeNumber(180, definition, two.meta.units)}`)
+    assert(turnAt > 0, `${definition.name}: the turn is posted with tool changes on`)
+    assert(lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)), `${definition.name}: G43 is applied`)
+    assertEqual(
+      lines[turnAt - 1],
+      `G0 Z${formatGCodeNumber(1, definition, two.meta.units)}`,
+      `${definition.name}: the work-coordinate retract is unchanged`,
+    )
+  }
+
+  // A tool change that applies and then cancels compensation is the same as no
+  // compensation: the retract must not trust the cancelled work-coordinate Z.
+  const cancellingBase = bundled('linuxcnc')
+  const cancelling = validateMachineDefinition({
+    ...structuredClone(cancellingBase),
+    rotary,
+    toolChange: {
+      ...structuredClone(cancellingBase.toolChange),
+      commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}', 'G49'],
+    },
+  })
+  const cancelled = post(two, ['under'], cancelling, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+  const cancelledTurn = cancelled.indexOf(`G0 A${formatGCodeNumber(180, cancelling, two.meta.units)}`)
+  assert(cancelledTurn > 0, 'a cancelled compensation still turns')
+  assertEqual(
+    cancelled[cancelledTurn - 1],
+    `G53 G0 Z${formatGCodeNumber(safeZ, cancelling, two.meta.units)}`,
+    'the retract follows the cancellation, not G43',
+  )
+
+  // A machine with no machine-coordinate move and no compensation is refused
+  // rather than turned. `machineCoordinateCommand: null` declares no G53.
+  const noMachineMove = rotaryMachineOf(bundled('grbl'), { machineCoordinateCommand: null })
+  const refused = post(two, ['under'], noMachineMove, barMoves('x', 'bottom'), false)
+  assertEqual(refused.gcode, '', 'no program text is posted')
+  assertEqual(refused.warnings, [{ code: 'postRotaryTurnWithoutClearance', params: { operation: 'Under' } }], 'the refusal names the operation')
+  assertEqual(warningSeverity('postRotaryTurnWithoutClearance'), 'error', 'as an error, which blocks the save')
+
+  // The same machine with compensation active needs no machine move: the
+  // work-coordinate retract is still valid.
+  const compensated = validateMachineDefinition({
+    ...structuredClone(cancelling),
+    motion: { ...structuredClone(cancelling.motion), machineCoordinateCommand: null },
+    toolChange: {
+      ...structuredClone(cancelling.toolChange),
+      commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}'],
+    },
+  })
+  const compensatedLines = post(two, ['under'], compensated, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+  const compensatedTurn = compensatedLines.indexOf(`G0 A${formatGCodeNumber(180, compensated, two.meta.units)}`)
+  assert(compensatedTurn > 0, 'compensation alone is enough to turn')
+  assertEqual(
+    compensatedLines[compensatedTurn - 1],
+    `G0 Z${formatGCodeNumber(1, compensated, two.meta.units)}`,
+    'the work-coordinate retract is used',
+  )
+
+  // ShopBot part files are not G-code and cannot carry a rotary axis, so no
+  // bundled ShopBot definition reaches this turn. The schema says so.
+  let shopbotRefused = false
+  try {
+    validateMachineDefinition({ ...structuredClone(SHOPBOT), rotary })
+  } catch {
+    shopbotRefused = true
+  }
+  assert(shopbotRefused, 'ShopBot SBP cannot be given a rotary axis')
+}
 
 function normalizedProgram(program: string): string {
   return program.replace(/Generated by PureCutCNC on \d{4}-\d{2}-\d{2}/g, 'Generated by PureCutCNC on <date>')
@@ -866,6 +1008,7 @@ testManualIndexingOnARotaryBar()
 testBottomFlipAxisWarning()
 testManualIndexTurnsTheBarItself()
 testManualIndexTurnFollowsToolLengthCompensation()
+testManualIndexTurnWithoutCompensation()
 testManualIndexAxisMismatchIsRefused()
 testInvertedZAxisUnwindRetracts()
 testFlatAndAroundProgramsAreUnchanged()
