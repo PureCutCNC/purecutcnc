@@ -53,6 +53,7 @@ import { createAddGearFeatureAction } from '../helpers/gearFeature'
 import { createAddRotaryPatternAction } from '../helpers/rotaryPatterns'
 import { createAddRotarySolidAction } from '../helpers/rotarySolids'
 import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
+import { barSeedsModel } from '../helpers/projectType'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -508,7 +509,11 @@ export function createFeatureSlice(
         // selection work. A generated solid (C2-B) lands as an ordinary Top
         // model through its own action and never comes through here.
         if (aroundSketchAuthoringRefused(s.project, authoringFace)) return {}
-        const isFirstSolidFeature = isSolid({ ...featureForInsert, authoringFace })
+        // A rotary project's bar is already the material (#1054), so a first
+        // subtract is a cut into the bar, not a base solid waiting to be made
+        // into Add. Block projects keep the base-add rule unchanged.
+        const needsBaseAdd = !barSeedsModel(s.project)
+        const isFirstSolidFeature = needsBaseAdd && isSolid({ ...featureForInsert, authoringFace })
           && !resolvedProjectFeatures(s.project).some(isSolid)
         const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
@@ -990,7 +995,8 @@ export function createFeatureSlice(
         const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
         const reorderedProject = { ...s.project, features: reordered }
         const firstSolid = resolvedProjectFeatures(reorderedProject).find(isSolid)
-        const normalized = firstSolid && firstSolid.operation !== 'add' && !isImportedModelFeature(firstSolid)
+        const normalized = firstSolid && !barSeedsModel(s.project)
+          && firstSolid.operation !== 'add' && !isImportedModelFeature(firstSolid)
           ? applyFeaturePatch(reorderedProject, new Set([firstSolid.id]), { operation: 'add' })
           : { features: reordered, featureDefinitions: s.project.featureDefinitions }
         return {

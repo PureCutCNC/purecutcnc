@@ -34,6 +34,7 @@ import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
 import { isSolid } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { resolvedProjectFeatures } from './resolveFeatures'
 
 /**
@@ -158,8 +159,11 @@ export function applyFeaturePatch(
     features,
     featureDefinitions,
   }).find(isSolid)
+  // A rotary project's bar is the material (#1054), so its first solid row may
+  // stay Subtract; a block project keeps the base-add rule unchanged.
   if (
     firstSolid
+    && !barSeedsModel(project)
     && firstSolid.operation !== 'add'
     && !isImportedModelFeature(firstSolid)
   ) {

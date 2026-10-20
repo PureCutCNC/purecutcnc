@@ -49,6 +49,7 @@ import {
 } from '../../engine/setupTargets'
 import { decodeProjectFormat } from './projectFormat'
 import {
+  barSeedsModel,
   inferProjectType,
   machineMatchesProjectType,
   operationCutsInProject,
@@ -57,6 +58,7 @@ import {
   projectType,
   stockShapesForProjectType,
 } from './projectType'
+import { squareStock } from '../../types/barStock'
 import { projectWithProjectType } from './projectTypeApply'
 import { activeFace, aroundUnavailableReason } from './activeFace'
 import { syncProjectSetups } from './setups'
@@ -400,6 +402,19 @@ async function main(): Promise<void> {
     assertEqual([...stockShapesForProjectType('plasma')], ['block'], 'plasma cuts a block')
     assertEqual([...stockShapesForProjectType('rotary')], ['round', 'square'], 'rotary turns either bar, round first')
     assertEqual(stockShapesForProjectType('rotary')[0], 'round', 'a new rotary project still starts on a round bar')
+  })
+
+  await test('barSeedsModel: a rotary project on either bar, and nothing else (#1054)', () => {
+    const milling = projectOfType('milling')
+    assertEqual(barSeedsModel(milling), false, 'a milling block is not a bar')
+    assertEqual(barSeedsModel(projectOfType('plasma')), false, 'a plasma block is not a bar')
+
+    const round = { ...milling, meta: { ...milling.meta, projectType: 'rotary' as const }, stock: roundStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(round), true, 'a rotary round bar is the material')
+    const square = { ...round, stock: squareStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(square), true, 'a rotary square blank is the material')
+    assertEqual(barSeedsModel({ ...milling, stock: round.stock }), false, 'a round bar in a milling project keeps the base-add rule')
+    assertEqual(barSeedsModel({ ...round, stock: milling.stock }), false, 'a rotary project without a bar has no bar to seed from')
   })
 
   await test('generated and exported programs are byte-identical to the base commit', () => {

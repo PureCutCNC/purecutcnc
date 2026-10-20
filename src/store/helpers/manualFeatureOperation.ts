@@ -25,6 +25,7 @@ import {
 } from '../../engine/toolpaths/geometry'
 import { activeFace, featuresAtActiveFace } from './activeFace'
 import { resolveFeatureInstances } from './resolveFeatures'
+import { barSeedsModel } from './projectType'
 
 const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
   PointInPolygon(point: { X: number; Y: number }, path: Array<{ X: number; Y: number }>): number
@@ -38,13 +39,15 @@ const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
  *
  * Around is the exception (issue #395): the bar is already solid, so a shape
  * drawn on its surface is always a cut into it, never a base solid — whatever
- * the project holds.
+ * the project holds. A rotary project's Top and Bottom are no different
+ * (#1054): the bar is the material on every face, so a closed shape there also
+ * starts as a cut. A block project keeps the inferred base-solid role.
  */
 export function inferManualFeatureOperation(
   project: Project,
   profile: SketchProfile,
 ): FeatureOperation {
-  if (activeFace(project) === 'around') return 'subtract'
+  if (activeFace(project) === 'around' || barSeedsModel(project)) return 'subtract'
   const existingSolids = featuresAtActiveFace(project, resolveFeatureInstances(project))
     .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .map((feature) => ({

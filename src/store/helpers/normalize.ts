@@ -39,6 +39,7 @@ import { normalizePlasmaTool, withCompatibleOperationTool } from '../../toolPoli
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isSolid } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { isImportedModelFeature } from './modelAssets'
 import { fallbackOperationTarget, defaultOperationForTarget, isOperationTargetValid } from './operationDefaults'
 import { resolveFeatureRow } from './resolveFeatures'
@@ -610,7 +611,17 @@ export function projectsEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-export function isFirstFeatureValid(features: SketchFeature[]): boolean {
+/**
+ * Whether the feature list has a sensible base solid: the first solid row must
+ * be Add (or an imported model). A rotary project with bar stock has no
+ * base-add rule (#1054) — the bar is the material — so pass the project to
+ * apply that exception; without one the historical rule answers.
+ */
+export function isFirstFeatureValid(
+  features: SketchFeature[],
+  project?: Pick<Project, 'meta' | 'stock'>,
+): boolean {
+  if (project && barSeedsModel(project)) return true
   const firstSolidFeature = features.find(isSolid)
   if (!firstSolidFeature) return true
   return firstSolidFeature.operation === 'add' || isImportedModelFeature(firstSolidFeature)
