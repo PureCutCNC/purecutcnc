@@ -1053,10 +1053,18 @@ function unionClippedToBar(
  *
  * The bar is the material, so there is no base add. A Top or Bottom subtract
  * cuts the bar directly and an add unions material back, clipped to the bar.
- * The Around sheet's wrapped slabs then run on that **same** solid, so one
- * model shows every face; flat features keep the project's own order and the
- * Around ones follow, which is the order the two solids used to be unioned in
- * (issue #395). An Around add alone leaves the bar as it was.
+ * The Around sheet's wrapped slabs run on that **same** solid, so one model
+ * shows every face. Every feature — flat and Around — is applied in the
+ * project's own feature order (#1054 fix 1, finding 6): a feature's position in
+ * the tree is the order the user expects the material to change, and applying
+ * one face's features as a later batch would let an earlier Around add restore
+ * a cut a later Top/Bottom subtract had made. An Around add alone still leaves
+ * the bar as it was.
+ *
+ * The Around slabs are built before the fold, and a failure to wrap one is
+ * caught so it cannot take the flat faces down with it (the previous fallback).
+ * Groups of features expanded from one project row (text shapes) keep that
+ * row's position and their own order.
  *
  * Returns `null` for a non-bar stock. Block projects never call this: their
  * flat model is built exactly as it always was.
@@ -1078,10 +1086,48 @@ export function buildBarModelSolid(
     if (current !== bar) current.delete()
     current = next
   }
+
+  // One ordered list of the boolean features, flat and Around alike. A row's
+  // position comes from the project's own feature list; its expanded shapes
+  // stay together, in their own order, because the sort is stable.
+  const rowIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
+  const stages: Array<{ index: number; around: boolean; feature: SketchFeature }> = []
+  for (const around of [false, true] as const) {
+    for (const source of around ? visibleAroundFeatures : visibleFlatFeatures) {
+      const index = rowIndex.get(source.id) ?? Number.MAX_SAFE_INTEGER
+      for (const feature of expandFeatureGeometry(source, false)) {
+        stages.push({ index, around, feature })
+      }
+    }
+  }
+  stages.sort((a, b) => a.index - b.index)
+
+  // The Around sheet's slabs are wrapped up front. A failure here is caught so
+  // it cannot take the flat faces down with it.
+  const options: AroundSlabOptions = { minHeight: minRenderHeight(project.meta.units), arcStepRadians }
+  const slabs = new Map<SketchFeature, ManifoldSolid>()
+  let aroundFailed = false
   try {
-    for (const feature of visibleFlatFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))) {
+    for (const stage of stages) {
+      if (!stage.around) continue
+      const { feature } = stage
       if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
-      const solid = buildFeatureSolid(module, project, feature)
+      const slab = buildAroundFeatureSolid(module, project, feature, options)
+      if (slab) slabs.set(feature, slab)
+    }
+  } catch (error) {
+    aroundFailed = true
+    console.error('Failed to apply the Around features to the bar model, showing the flat faces only.', error)
+  }
+
+  try {
+    for (const stage of stages) {
+      const { feature, around } = stage
+      if (around && aroundFailed) continue
+      if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
+      // A wrapped slab is owned by `slabs`; a flat solid is built and released
+      // here. Neither is deleted before the boolean that consumes it returns.
+      const solid = around ? slabs.get(feature) ?? null : buildFeatureSolid(module, project, feature)
       if (!solid) continue
       try {
         const next = feature.operation === 'subtract'
@@ -1089,35 +1135,14 @@ export function buildBarModelSolid(
           : unionClippedToBar(module, current, solid, bar)
         replace(next)
       } finally {
-        solid.delete()
+        if (!around) solid.delete()
       }
-    }
-
-    // The Around sheet's slabs, applied to the same solid. A failure here is
-    // caught so it cannot take the flat faces down with it.
-    const options: AroundSlabOptions = { minHeight: minRenderHeight(project.meta.units), arcStepRadians }
-    const slabs: Array<{ feature: SketchFeature; slab: ManifoldSolid }> = []
-    try {
-      for (const feature of visibleAroundFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))) {
-        if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
-        const slab = buildAroundFeatureSolid(module, project, feature, options)
-        if (slab) slabs.push({ feature, slab })
-      }
-      for (const { feature, slab } of slabs) {
-        const next = feature.operation === 'subtract'
-          ? module.Manifold.difference(current, slab)
-          : unionClippedToBar(module, current, slab, bar)
-        replace(next)
-      }
-    } catch (error) {
-      console.error('Failed to apply the Around features to the bar model, showing the flat faces only.', error)
-    } finally {
-      for (const { slab } of slabs) slab.delete()
     }
 
     handedOver = true
     return current
   } finally {
+    for (const slab of slabs.values()) slab.delete()
     if (handedOver) {
       // The returned solid owns its own object; only the seed is released.
       if (current !== bar) bar.delete()

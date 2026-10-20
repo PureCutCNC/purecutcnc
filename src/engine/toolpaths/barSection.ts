@@ -166,19 +166,30 @@ export function clipPathsToBarSection(section: BarSection, paths: ClipperPath[])
 }
 
 /**
- * The highest point of the bar's surface over the given contours, or `null`
- * when this project has no round bar. Taking every contour's closest approach
- * to the centreline and the maximum surface over them is what makes this an
- * over-estimate of the surface above any single region: the entry may sit
- * anywhere inside the region and still start at or above the material.
+ * The highest point of the bar's surface under a circular cutter footprint
+ * swept anywhere over the given contours, or `null` when this project has no
+ * round bar.
+ *
+ * The cutter is not a point: its rim reaches `cutterRadius` beyond its centre,
+ * so the highest material the entry has to clear is the surface at the
+ * footprint's closest approach to the centreline — the region's own closest
+ * approach less the cutter radius, and never less than zero (the crown).
+ * Taking every contour's closest approach to the centreline and the maximum
+ * surface over them also makes this an over-estimate of the surface above any
+ * single region: the entry may sit anywhere inside the region, and along a
+ * ramp or helix path, and still start at or above the material.
  *
  * A loop whose across extent spans the centreline counts as reaching it, so a
  * region over the crown reports the crown — the honest answer there, and the
- * reason a centred pocket keeps its previous entry height.
+ * reason a centred pocket keeps its previous entry height. Omitting the radius
+ * is a real defect: a shoulder pocket's path may sit 13 mm off the centreline
+ * while its rim reaches 10 mm, where the bar stands 2 mm higher (#1054 fix 1,
+ * finding 5).
  */
 export function barSurfaceZOverContours(
   project: Pick<Project, 'meta' | 'stock'>,
   loops: ReadonlyArray<ReadonlyArray<Point>>,
+  cutterRadius: number,
 ): number | null {
   if (!barSeedsModel(project) || !isBarStock(project.stock) || !isRoundStock(project.stock)) return null
   const stock = project.stock
@@ -200,14 +211,18 @@ export function barSurfaceZOverContours(
     if (minAcross <= centre && maxAcross >= centre) closest = 0
   }
   if (!Number.isFinite(closest)) return null
-  return pivotZ + Math.sqrt(Math.max(0, radius * radius - closest * closest))
+  // The footprint reaches `cutterRadius` towards the centreline; the material
+  // under its rim is the highest surface the entry must clear.
+  const reach = Math.max(0, closest - Math.max(0, cutterRadius))
+  return pivotZ + Math.sqrt(Math.max(0, radius * radius - reach * reach))
 }
 
 /**
  * The Z a clearing region's first entry may start its descent from: the bar's
- * surface over the region plus the operation's clearance, never above the
- * global safe Z and never below the level being cut. `safeZ` is returned for
- * anything this module does not cover.
+ * surface under the cutter footprint anywhere over the region, plus the
+ * operation's clearance, never above the global safe Z and never below the
+ * level being cut. `safeZ` is returned for anything this module does not
+ * cover (a block, a square blank, an Around sheet).
  */
 export function barEntryStartZ(
   project: Pick<Project, 'meta' | 'stock'>,
@@ -215,8 +230,9 @@ export function barEntryStartZ(
   loops: ReadonlyArray<ReadonlyArray<Point>>,
   clearance: number,
   safeZ: number,
+  cutterRadius: number,
 ): number {
-  const surface = barSurfaceZOverContours(project, loops)
+  const surface = barSurfaceZOverContours(project, loops, cutterRadius)
   if (surface === null) return safeZ
   return Math.max(levelZ, Math.min(safeZ, surface + Math.max(0, clearance)))
 }

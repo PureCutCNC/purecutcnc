@@ -25,6 +25,12 @@
  * own, leaves the uncut bar. A project with no visible Around feature produces
  * the scene it always did, exactly.
  *
+ * Cross-face feature order (#1054 fix 1, finding 6): a flat and an Around
+ * feature apply in the project's own order, so an Around add written before a
+ * Top subtract cannot restore the later cut. Mutation: fold the flat features
+ * as a batch before the Around ones (the previous code) → the order assertion
+ * fails by the add's own volume.
+ *
  * Volumes are compared against the bar solid the model itself starts from
  * (`roundBarSolid`), so the comparison is against the same faceting, not an
  * idealised cylinder. Positions are compared exactly, which is what the sibling
@@ -407,6 +413,41 @@ for (const bar of [BAR, Y_BAR]) {
       )
     }
   }
+}
+
+// ── 4b. Cross-face features apply in project order (#1054 fix 1) ────────────
+
+{
+  // The reviewer's repro (finding 6): an Around add that precedes an
+  // overlapping Top subtract. The add is made after the cut if the two faces
+  // are folded in batches, restoring material the later cut removed. The
+  // project's feature order must decide: [add, subtract] leaves the cut,
+  // [subtract, add] restores the add.
+  const ORDER_ADD = { profile: rectProfile(100, 38, 30, 10), operation: 'add' as const, zTop: 40, zBottom: 32 }
+  const ORDER_CUT = { profile: rectProfile(95, 30, 40, 20), operation: 'subtract' as const, zTop: 40, zBottom: 20 }
+  const addVolume = sectorVolume(ORDER_ADD)
+  assert(addVolume > 1800 && addVolume < 2100, `fixture: the add restores about 1,800 mm³ (${addVolume})`)
+
+  const addedThenCut = await buildScene(
+    topProject(BAR, [draft('order-add', ORDER_ADD, 'around'), draft('order-cut', ORDER_CUT, 'top')]),
+    threePalette,
+  )
+  const cutThenAdded = await buildScene(
+    topProject(BAR, [draft('order-cut', ORDER_CUT, 'top'), draft('order-add', ORDER_ADD, 'around')]),
+    threePalette,
+  )
+  const cutOnly = await buildScene(topProject(BAR, [draft('order-cut', ORDER_CUT, 'top')]), threePalette)
+  assert(addedThenCut.modelMesh && cutThenAdded.modelMesh && cutOnly.modelMesh, 'fixture: every order builds a model')
+
+  const cutVolume = meshVolume(cutOnly.modelMesh!)
+  const cutAfterAdd = meshVolume(addedThenCut.modelMesh!)
+  const addAfterCut = meshVolume(cutThenAdded.modelMesh!)
+  // The later cut stands: adding first must give the cut-only solid.
+  assertClose(cutAfterAdd, cutVolume, BAR_VOLUME * 0.002, 'an earlier add does not survive the later subtract')
+  // The reverse order really restores the add, so the order is observable and
+  // the assertion above is not vacuous.
+  assertClose(addAfterCut, cutVolume + addVolume, BAR_VOLUME * 0.005, 'add after the cut restores its material')
+  assert(addAfterCut - cutAfterAdd > 1500, `the two orders differ by the add (${addAfterCut - cutAfterAdd})`)
 }
 
 // ── 5. No visible Around feature draws nothing extra ─────────────────────────

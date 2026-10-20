@@ -49,6 +49,9 @@
  *   the air assertions fail with hundreds of points;
  * - **start every entry at the box top** (drop the level-0 `barEntryStartZ`):
  *   the first descent still begins at safe Z, and the entry assertion fails;
+ * - **drop the cutter radius** from `barEntryStartZ` (find the surface at the
+ *   tool centre only): the entry starts below the material under its rim, and
+ *   the footprint assertion fails;
  * - **clip the tool-centre region instead of the material region**: the pocket
  *   wall moves a cutter radius inward, and the floor/wall comparison fails;
  * - **apply the clip to a square blank or a block** (`barSectionAtZ` stops
@@ -304,6 +307,30 @@ function surfaceAt(stock: Stock, axis: StockAxis, point: { x: number; y: number 
 }
 
 /**
+ * The highest bar surface under a cutter of `cutterRadius` centred at `point`
+ * (#1054 fix 1, finding 5): the rim reaches the radius towards the centreline,
+ * so the surface there is the analytic surface at
+ * `max(0, |across - centre| - radius)`. Written from the stock's dimensions
+ * alone, never from `barSection.ts`, and deliberately larger than
+ * `surfaceAt(point)` — the entry assertion must check material under the rim,
+ * not only under the axis.
+ */
+function surfaceUnderCutter(
+  stock: Stock,
+  axis: StockAxis,
+  point: { x: number; y: number },
+  cutterRadius: number,
+): number {
+  const halfSide = stock.thickness / 2
+  if (stock.shape !== 'round') return stock.thickness
+  const reach = Math.max(
+    0,
+    Math.abs(acrossOf(axis, point) - centreAcross(stock, axis)) - cutterRadius,
+  )
+  return halfSide + Math.sqrt(Math.max(0, halfSide * halfSide - reach * reach))
+}
+
+/**
  * Cut moves whose tool centre lies outside the bar's section at their own Z,
  * with `reach` project units of allowance for a generator whose tool-centre
  * domain is the material expanded by the cutter radius (surface clean).
@@ -484,9 +511,25 @@ function testEntryStartsAtTheBarSurface(): void {
     entry.z >= surface + project.meta.operationClearanceZ - 1e-6,
     `the entry starts at ${entry.z}, below the bar surface ${surface} plus clearance`,
   )
+  // The cutter is not a point (#1054 fix 1, finding 5). The rim reaches
+  // `toolRadius` towards the crown, where the 40 mm bar stands higher than at
+  // the axis: the entry must clear the material under the whole footprint, not
+  // only under the tool centre. This is the reviewer's repro — Ø40 bar, Ø6
+  // cutter, a shoulder pocket across 30..39, floor Z30, 0.1 clearance — and
+  // omitting the radius from `barEntryStartZ` fails it.
+  const toolRadius = fixture.toolDiameter / 2
+  const underRim = surfaceUnderCutter(stock, 'x', entry.at, toolRadius)
+  assertTrue(
+    entry.z >= underRim + project.meta.operationClearanceZ - 1e-6,
+    `the entry starts at ${entry.z}, below the material under its rim ${underRim} plus clearance`,
+  )
+  assertTrue(
+    underRim > surface + 1e-6,
+    `fixture: the bar really stands higher under the rim (${underRim}) than at the axis (${surface})`,
+  )
   assertTrue(
     entry.z < safeZ - 1.5,
-    `the entry still starts at ${entry.z}, effectively the box top ${safeZ} (surface ${surface})`,
+    `the entry still starts at ${entry.z}, effectively the box top ${safeZ} (surface ${underRim})`,
   )
   assertTrue(
     entry.z > levelZ + 1,

@@ -320,7 +320,7 @@ function generateRoughSurfaceToolpathSingle(
         ),
         // A round bar's surface over this level's region is the highest material
         // the entry has to reach (#1054 slice 3); `safeZ` for anything else.
-        barEntryStartZ(project, level.z, roughRegionLoops(orderedRegions), getOperationClearance(project), resolved.safeZ),
+        barEntryStartZ(project, level.z, roughRegionLoops(orderedRegions), getOperationClearance(project), resolved.safeZ, resolved.tool.diameter / 2),
       )
       // Raster clearing has no ring for a lead to join, so a request here is
       // answered rather than dropped (issue #695).
@@ -412,7 +412,7 @@ function generateRoughSurfaceToolpathSingle(
         // Each region starts from the bar's surface over it, never the box top
         // (#1054 slice 3). 3D roughing recomputes its regions per level, so this
         // is per region rather than the pocket's per level.
-        barEntryStartZ(project, level.z, roughRegionLoops([region]), getOperationClearance(project), resolved.safeZ),
+        barEntryStartZ(project, level.z, roughRegionLoops([region]), getOperationClearance(project), resolved.safeZ, resolved.tool.diameter / 2),
       )
       const cutRingsForRegion = (
         target: ResolvedPocketRegion,

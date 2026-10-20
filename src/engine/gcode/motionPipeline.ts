@@ -588,11 +588,29 @@ export function planProgramSetup(
   }
   // A manual-index program turns the bar itself when the machine has a rotary
   // axis (#1054 slice 2b); without one the header keeps slice 2's instruction
-  // and nothing is posted.
+  // and nothing is posted. The turn is about the bar's own axis, so a machine
+  // whose rotary is about the other horizontal axis cannot make it: it is
+  // refused with the code the planner already uses for a mismatched rotary
+  // operation, never silently reduced to the comment-only header (#1054 fix 1,
+  // finding 4).
   const turns = setupStatesManualIndexing(project, setup) && rotaryWord(input.definition) !== null
+  const rotary = input.definition.rotary
+  const bar = project.stock
+  let turnAxisMismatch = false
+  if (turns && rotary != null && isBarStock(bar) && rotary.about !== bar.axis) {
+    turnAxisMismatch = true
+    warnings.push({
+      code: 'postRotaryAxisMismatch',
+      params: {
+        operation: operations[0]?.operation.name ?? 'program',
+        machineAxis: rotary.about.toUpperCase(),
+        stockAxis: bar.axis.toUpperCase(),
+      },
+    })
+  }
   return {
     headerComments: setupHeaderLines(project, setup, input.definition),
-    manualIndexAngle: turns ? manualIndexAngle(setup) : null,
+    manualIndexAngle: turns && !turnAxisMismatch ? manualIndexAngle(setup) : null,
     warnings,
   }
 }

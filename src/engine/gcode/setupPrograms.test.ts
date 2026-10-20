@@ -29,7 +29,10 @@
  * the A lines → the byte-identical baselines fail. For the program's own turn
  * (#1054 slice 2b): writing the turn before the retract → the exact
  * retract-then-turn lines fail; ignoring `reversed` → the bottom-program
- * blocks fail.
+ * blocks fail. For #1054 fix 1: writing the opening turn before the first
+ * tool change → the LinuxCNC G43-order assertion fails; posting the turn on a
+ * mismatched rotary axis → the refusal assertion fails; comparing the closing
+ * unwind in machine Z → the `-Z` assertion fails.
  *
  * Run with: npx tsx src/engine/gcode/setupPrograms.test.ts
  */
@@ -626,16 +629,28 @@ function testManualIndexTurnsTheBarItself(): void {
               ? 'Top - TOP FACE UP'
               : `Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`}`
             assert(at > 0, `${label}, ${face}: the header is in the program`)
-            assertEqual(lines.slice(at, at + 6), [
+            assertEqual(lines.slice(at, at + 4), [
               `; ${turn}`,
               '; REGISTRATION: NONE DECLARED',
               `; TOUCH OFF: ${describeTouchOff(two, face)}`,
               `; ${turnComment(letter, angle)}`,
+            ], `${label}, ${face}: the header comments, including what the program does`)
+            assert(lines[at + 4].startsWith('; Operation'), `${label}, ${face}: before the first operation's header`)
+            // The opening retract and turn follow the first operation's tool
+            // change and its length compensation (#1054 fix 1, finding 1), then
+            // the operation's own motion. GRBL's tool change is `M5` plus its
+            // `M0` tool-change line and pause.
+            const retractAt = lines.indexOf(`G0 Z${travelWord(shape)}`)
+            assert(retractAt > at, `${label}, ${face}: the opening retract is in the program`)
+            assertEqual(lines.slice(retractAt, retractAt + 2), [
               `G0 Z${travelWord(shape)}`,
               `G0 ${angleWord}`,
-            ], `${label}, ${face}: the header, then the retract, then the turn`)
-            assert(lines[at + 6].startsWith('; Operation'), `${label}, ${face}: before the first operation's header and moves`)
-            assert(!lines.slice(0, at + 6).includes('G93'), `${label}, ${face}: the turn is a rapid, still in G94`)
+            ], `${label}, ${face}: the retract, then the turn`)
+            const changeAt = lines.findIndex((line) => line.startsWith('M0 ; Tool change'))
+            assert(changeAt > at && changeAt < retractAt, `${label}, ${face}: after the tool change`)
+            assert(!lines.slice(0, retractAt).includes('G93'), `${label}, ${face}: the turn is a rapid, still in G94`)
+            const firstMotionAt = lines.findIndex((line, index) => index > retractAt + 1 && /^(G0|G1|G2|G3|X|Y|Z)/.test(line))
+            assert(firstMotionAt > retractAt + 1, `${label}, ${face}: the turn is before the first operation's motion`)
 
             const motion = programWithoutComments(program, 'gcode').split('\n')
             const turnBlocks = motion.filter((line) => line.startsWith(`G0 ${letter}`))
@@ -702,10 +717,96 @@ function testManualIndexTurnsTheBarItself(): void {
 }
 
 /**
- * The posted text of the work these changes must not touch, captured from the
- * base commit before #1054 slice 2. Only the generated-date line is
- * normalised; geometry, feeds, wording and comments are exact.
+ * Finding 1 (#1054 fix 1): the opening retract and turn must follow the first
+ * operation's tool change and its length compensation. LinuxCNC's header
+ * cancels tool length with `G49`, so a retract written before `M6`/`G43` is
+ * measured with no compensation and cannot establish tip clearance. The
+ * alternative — a `G53` machine-coordinate retract — cannot be written: the
+ * emitter works in the work coordinate system and knows no machine zero.
  */
+function testManualIndexTurnFollowsToolLengthCompensation(): void {
+  console.log('Testing the opening turn follows the tool change and G43...')
+  const project = rotaryBarProject('x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  const definition = validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+  // The 20 mm round bar's travel height is 21 mm; the origin is its top at 20,
+  // so the emitted retract is 1.000.
+  for (const face of ['top', 'bottom'] as const) {
+    const angle = face === 'bottom' ? 180 : 0
+    const program = post(two, [face === 'top' ? 'rough' : 'under'], definition, barMoves('x', face)).gcode
+    const lines = program.split('\n')
+    const g49 = lines.findIndex((line) => /\bG49\b/.test(line))
+    const m6 = lines.findIndex((line) => line.startsWith('M6 T1'))
+    const g43 = lines.findIndex((line) => line.startsWith('G43 H1'))
+    const retractAt = lines.indexOf('G0 Z1.000')
+    const turnAt = lines.indexOf(`G0 A${angle.toFixed(3)}`)
+    assert(g49 > 0 && g49 < m6, `${face}: the header cancels tool length before the change`)
+    assert(m6 > 0 && g43 > m6, `${face}: the tool change applies its length compensation`)
+    assert(g43 < retractAt, `${face}: the retract is written after G43, with the length applied`)
+    assertEqual([lines[retractAt], lines[retractAt + 1]], ['G0 Z1.000', `G0 A${angle.toFixed(3)}`], `${face}: retract, then turn`)
+    assert(
+      !lines.slice(0, retractAt).some((line) => /(^|\s)A[-+]?\d/.test(line)),
+      `${face}: no A word is written before the length compensation`,
+    )
+    assert(/^Z|^X|^G[0-3]/.test(lines[turnAt + 2]), `${face}: the operation's own motion follows the turn`)
+  }
+}
+
+/**
+ * Finding 4 (#1054 fix 1): an automatic header turn about the bar's axis is
+ * refused with `postRotaryAxisMismatch` when the machine's rotary is about the
+ * other horizontal axis. Falling back to the comment-only header would post a
+ * program that silently never turns the bar.
+ */
+function testManualIndexAxisMismatchIsRefused(): void {
+  console.log('Testing a header turn on the wrong rotary axis is refused...')
+  const xBar = rotaryBarProject('x')
+  const refused = post(xBar, ['rough'], rotaryMachine('y', 'own'), barMoves('x', 'top'))
+  assertEqual(refused.gcode, '', 'no program text: a comment-only header is not an acceptable fallback')
+  assertEqual(refused.warnings, [{
+    code: 'postRotaryAxisMismatch',
+    params: { operation: 'Rough', machineAxis: 'Y', stockAxis: 'X' },
+  }], 'the refusal names both axes')
+  assertEqual(warningSeverity('postRotaryAxisMismatch'), 'error', 'as an error, which blocks the save')
+
+  // The matching machine still posts the turn, and the same mismatch on a
+  // machine whose operation carries its own angle is refused by the planner
+  // (its own code path, unchanged).
+  assert(post(xBar, ['rough'], rotaryMachine('x', 'own'), barMoves('x', 'top')).gcode.includes('G0 A0.000'), 'the matching axis still turns')
+}
+
+/**
+ * Finding 3 (#1054 fix 1): the closing unwind judges clearance in project
+ * space, not machine-signed coordinates. With `zAxis: '-Z'` a cut height is a
+ * large positive machine Z, so comparing it raw against the negative travel
+ * coordinate called it clear and unwound without retracting.
+ */
+function testInvertedZAxisUnwindRetracts(): void {
+  console.log('Testing the closing unwind retracts on an inverted Z machine...')
+  const project = rotaryBarProjectOf('square', 'x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  const base = rotaryMachine('x', 'own')
+  const inverted = validateMachineDefinition({
+    ...base,
+    coordinateSystem: { ...base.coordinateSystem, zAxis: '-Z' },
+  })
+  // The path ends at the cut height: no operation retract, so only the closing
+  // unwind can establish clearance. The square blank's project travel height is
+  // 10 + 10√2 + 1 = 25.142; the origin is its top at 20, so the inverted
+  // machine's travel coordinate is -(25.142 - 20) = -5.142.
+  const moves = barMoves('x', 'bottom').slice(0, -1)
+  const lines = post(two, ['under'], inverted, moves).gcode.split('\n')
+  const travel = -(10 + 20 * Math.SQRT1_2 + 1 - 20)
+  const unwindAt = lines.lastIndexOf('G0 A0.000')
+  assert(unwindAt > 0, 'the program still unwinds the bar')
+  assertEqual(lines[unwindAt - 1], `G0 Z${travel.toFixed(3)}`, 'the unwind retracts to the travel height first')
+  assertEqual(lines[unwindAt - 2], 'M5', 'after the spindle stop, before the turn')
+}
+
+
 function normalizedProgram(program: string): string {
   return program.replace(/Generated by PureCutCNC on \d{4}-\d{2}-\d{2}/g, 'Generated by PureCutCNC on <date>')
 }
@@ -764,6 +865,9 @@ testWhatAProgramMayNotBe()
 testManualIndexingOnARotaryBar()
 testBottomFlipAxisWarning()
 testManualIndexTurnsTheBarItself()
+testManualIndexTurnFollowsToolLengthCompensation()
+testManualIndexAxisMismatchIsRefused()
+testInvertedZAxisUnwindRetracts()
 testFlatAndAroundProgramsAreUnchanged()
 
 console.log('setup program tests passed')

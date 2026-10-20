@@ -731,7 +731,7 @@ function generateRoughBandMoves(
       const levelEntryPolicy = withEntryStartZ(
         entryPolicy,
         levelIndex === 0
-          ? barEntryStartZ(project, z, surfaceRegionLoops(roughRegions), entryClearance, safeZ)
+          ? barEntryStartZ(project, z, surfaceRegionLoops(roughRegions), entryClearance, safeZ, toolRadius)
           : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
       )
       const levelStartIndex = moves.length
@@ -912,6 +912,7 @@ function generateRoughBandMoves(
         surfaceRegionLoops(plan.regionTrees.map((tree) => tree.region)),
         entryClearance,
         safeZ,
+        toolRadius,
       )
       : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
     const levelEntryPolicy = withEntryStartZ(plan.entryPolicy, levelEntryStartZ)
@@ -1197,7 +1198,7 @@ function generateFinishBandMoves(
   // box top (#1054 slice 3), exactly as the rough band does.
   const levelEntryPolicy = withEntryStartZ(
     entryPolicy,
-    barEntryStartZ(project, effectiveBottom, surfaceRegionLoops(finishRegions), getOperationClearance(project), safeZ),
+    barEntryStartZ(project, effectiveBottom, surfaceRegionLoops(finishRegions), getOperationClearance(project), safeZ, toolRadius),
   )
   // XY leads on the wall contours (issue #695): this is the pass the feature
   // exists for. The wall contour IS the finished wall, and without a lead the

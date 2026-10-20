@@ -820,7 +820,9 @@ console.log('Testing the single unwind rapid...')
   const restoredAt = lines.lastIndexOf('G94', unwindAt)
   const lastInverseAt = lines.lastIndexOf('G93', unwindAt)
   assert.ok(restoredAt > lastInverseAt, 'inverse-time mode is left before the unwind')
-  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5'], 'only the spindle stop sits between G94 and the unwind')
+  // The closing unwind now retracts a round bar to its travel height too
+  // (#1054 fix 1, finding 2), after the spindle stop and before the turn.
+  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5', 'G0 Z1.000'], 'the spindle stop, then the unwind retract')
 }
 
 // ── 6. the bar and the machine must agree (rule 3) ────────────

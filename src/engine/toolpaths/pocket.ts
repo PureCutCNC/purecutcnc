@@ -3998,7 +3998,7 @@ function generateRoughBandMoves(
           // entry has to reach, so it can start there instead of at the box top
           // (#1054 slice 3). `barEntryStartZ` is the stock top's own safe Z for
           // anything this does not cover, so a block takes the previous path.
-          ? barEntryStartZ(project, z, regionLoops(roughRegions), entryClearance, safeZ)
+          ? barEntryStartZ(project, z, regionLoops(roughRegions), entryClearance, safeZ, toolRadius)
           : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
       )
       const levelStartIndex = moves.length
@@ -4176,6 +4176,7 @@ function generateRoughBandMoves(
         plan.regionTrees.flatMap((tree) => [tree.region.outer, ...tree.region.islands]),
         entryClearance,
         safeZ,
+        toolRadius,
       )
       : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
     const levelEntryPolicy = withEntryStartZ(plan.entryPolicy, levelEntryStartZ)
@@ -4567,7 +4568,7 @@ function generateFinishBandMoves(
   // descend through air the bar does not occupy. `safeZ` for a non-bar project.
   const levelEntryPolicy = withEntryStartZ(
     entryPolicy,
-    barEntryStartZ(project, effectiveBottom, regionLoops(finishRegions), getOperationClearance(project), safeZ),
+    barEntryStartZ(project, effectiveBottom, regionLoops(finishRegions), getOperationClearance(project), safeZ, toolRadius),
   )
   // XY leads on the wall contours (issue #695). This is the pass the feature
   // exists for: the wall contour IS the finished wall, and without a lead the

@@ -22,7 +22,7 @@ import type {
 } from './types'
 import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { formatGCodeNumber, projectToMachinePoint } from './utils'
+import { formatGCodeNumber, machineToProjectPoint, projectToMachinePoint } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import { isBarStock, isSquareStock } from '../../types/barStock'
@@ -250,27 +250,51 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // machine template that moves Z behind the emitter's back, and the closing
   // unwind. Both are repaired here by a rapid retract to this height, so no
   // A word is ever written with the cutter below the blank's standing corners.
-  // The height is a project coordinate; map it exactly as the move's own Z is
-  // mapped, never with a second copy of the origin arithmetic.
+  // The mid-program repair stays square-only. The closing unwind uses the same
+  // height for a round bar too (#1054 fix 1, finding 2), where there are no
+  // corners but the cutter may still sit at cut height after a constant-angle
+  // descent or a template Z move. The height is a project coordinate; map it
+  // exactly as the move's own Z is mapped, never with a second copy of the
+  // origin arithmetic.
   // What the program says about its setup, decided once for both the header
   // comments and the manual-index turn that follows them (#1054 slice 2b). It
   // is read here because that turn makes the program one that turns, which the
   // square guard and the template-word check below must both know.
   const setupPlan = planProgramSetup(input)
+  // A manual-index turn about the bar's own axis on a machine whose rotary is
+  // about the other horizontal axis would turn the stock the wrong way. The
+  // planner refuses such an operation for the same reason; a program whose only
+  // turn is the opening one must be refused the same way, never posted as a
+  // comment-only header that silently drops the turn (#1054 fix 1, finding 4).
+  if (setupPlan.warnings.some((warning) => warning.code === 'postRotaryAxisMismatch')) {
+    return {
+      gcode: '',
+      warnings: setupPlan.warnings,
+      stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+      ...(captureTrace ? { motionTraces: [] } : null),
+    }
+  }
   const programTurns = setupPlan.manualIndexAngle !== null || operations.some(
     ({ toolpath }) => toolpath.moves.some(
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
-  const squareRetractZ = isSquareStock(project.stock)
-    ? projectToMachinePoint({
+  const projectBarTravelZ = isBarStock(project.stock)
+    ? rotaryTravelZ(project.stock, project.meta.units)
+    : null
+  const barTravelZ = projectBarTravelZ === null
+    ? null
+    : projectToMachinePoint({
       x: 0,
       y: 0,
-      z: rotaryTravelZ(project.stock, project.meta.units),
+      z: projectBarTravelZ,
     }, project.origin, definition).z
-    : null
+  // The square blank's mid-program repair (a template that moved Z before an A
+  // word) is square-only: a round bar's bytes are unchanged. The closing unwind
+  // uses the same height for both shapes (#1054 fix 1, finding 2).
+  const squareRetractZ = isSquareStock(project.stock) ? barTravelZ : null
   const squareRetractHalfStep = 0.5 * 10 ** -definition.numberFormat.decimalPlaces[outputUnits]
-  if (squareRetractZ !== null && programTurns && !Number.isFinite(squareRetractZ)) {
+  if (barTravelZ !== null && programTurns && !Number.isFinite(barTravelZ)) {
     // The blank carries no usable turning height (a corrupt or degenerate
     // stock), so the retract cannot be placed. Refuse the program rather than
     // turn it with no proven clearance. Only a program that turns is refused:
@@ -473,15 +497,30 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   /**
    * Before the closing unwind the cutter may legitimately sit below the travel
-   * height (the last operation descended at a constant angle). A turn there is
-   * never safe, so the unwind retracts whenever Z is unknown or known low.
+   * height (the last operation descended at a constant angle), and a template
+   * may have moved Z where the emitter cannot see it. A turn there is never
+   * safe, so the unwind retracts to the bar's travel height whenever Z is
+   * unknown or known low — for a round bar as well as a square blank (#1054
+   * fix 1, finding 2).
+   *
+   * "At or above the travel height" is judged in *project* space: the tracked
+   * position is a machine coordinate, and a machine whose Z axis is inverted
+   * (`zAxis: '-Z'`) signs every height the other way. Comparing the raw machine
+   * Z against the travel coordinate would call a cut height "clear" on such a
+   * machine and unwind without retracting (#1054 fix 1, finding 3). The
+   * conversion uses the emitter's own forward transform in reverse, so the two
+   * sides of the comparison are always the same frame.
    */
-  const retractForSquareUnwind = () => {
-    if (squareRetractZ === null) return
-    const clear = state.zKnown && state.currentPosition !== null
-      && state.currentPosition.z >= squareRetractZ - squareRetractHalfStep
-    if (clear) return
-    retractToSquareTravel()
+  const atBarTravelHeight = (): boolean => {
+    if (projectBarTravelZ === null || !state.zKnown || state.currentPosition === null) return false
+    const projectPoint = machineToProjectPoint(state.currentPosition, project.origin, definition)
+    return projectPoint.z >= projectBarTravelZ - squareRetractHalfStep
+  }
+
+  const retractForBarUnwind = () => {
+    if (barTravelZ === null) return
+    if (atBarTravelHeight()) return
+    emitMotionLine(definition.motion.rapidCommand, { z: barTravelZ })
   }
 
   /**
@@ -497,6 +536,15 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * continuation of whatever motion mode a template may have left behind, and
    * it must never share a block with a Z word. The turn is a rapid, so it stays
    * in G94 — no inverse-time mode is entered.
+   *
+   * The turn is written *after* the first operation's tool change and its
+   * length compensation (#1054 fix 1, finding 1). A LinuxCNC header carries
+   * `G49`, cancelling tool length, so a retract written before `M6`/`G43` would
+   * measure the tip with no compensation and could not establish clearance. A
+   * machine-coordinate retract (`G53`) cannot replace this: the emitter writes
+   * in the work coordinate system and knows no machine zero, so the physical
+   * height it can prove is only the work-coordinate one. Writing the turn after
+   * `G43` puts it in the frame the first operation cuts in.
    *
    * X/Y are deliberately left unknown afterwards: the header moved only Z and
    * the rotary, so the machine may be anywhere in the plane and the first
@@ -600,11 +648,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   // The bar is turned by the program itself in a manual-index setup whose
-  // machine can turn it (#1054 slice 2b): after the header, before any
-  // operation's motion, and only when the machine really has a rotary word.
-  if (setupPlan.manualIndexAngle !== null) {
-    emitManualIndexTurn(setupPlan.manualIndexAngle)
-  }
+  // machine can turn it (#1054 slice 2b), but not from here: the opening
+  // retract and turn are written after the first operation's tool change and
+  // its length compensation, immediately before that operation's motion
+  // (#1054 fix 1, finding 1). See `emitManualIndexTurn`.
+  let pendingManualIndexAngle = setupPlan.manualIndexAngle
 
   // 4. Operations
   // A plasma table's torch path is written in both pierce modes: controller
@@ -916,6 +964,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
 
+    // The manual-index retract and turn (#1054 slice 2b): written here, after
+    // the first operation's tool change and its length compensation, so the
+    // retract is measured with the tool's length applied and the first motion
+    // below it is the operation's own. A machine that emits no tool change
+    // still gets it here, immediately before its first motion.
+    if (pendingManualIndexAngle !== null) {
+      emitManualIndexTurn(pendingManualIndexAngle)
+      pendingManualIndexAngle = null
+    }
+
     // Spindle On
     if (step.startSpindle) {
       emitTemplateLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
@@ -1160,14 +1218,14 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // operator's next part starts where this one did. Not between operations,
   // and never written when the program never turned or already ends at 0. The
   // last operation may have descended at a constant angle (that is not a turn),
-  // or a template may have moved Z, so the unwind first raises a square blank's
-  // cutter to the generators' travel height; a round bar keeps the historical
-  // "at the height the last operation retracted to" bytes. The block spells the
+  // or a template may have moved Z, so the unwind first raises the cutter to
+  // the bar's travel height — for a round bar as well as a square blank, and
+  // whatever the templates did (#1054 fix 1, finding 2). The block spells the
   // rapid word itself rather than relying on modal motion: a command that does
   // not move the tool must not be read as a continuation of whatever mode was
   // left behind.
   if (state.rotaryAngle !== null && state.rotaryAngle !== 0) {
-    retractForSquareUnwind()
+    retractForBarUnwind()
     emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
     state.motionCommand = definition.motion.rapidCommand
     state.rotaryAngle = 0
