@@ -469,22 +469,21 @@ export type ToolpathWarningCode =
    *  corners through the cutter, so the operation is refused rather than
    *  posted (issue #1016 C2 correction M1).
    *
-   *  #1045 slice E admits the one kind of below-envelope turn that is a real
-   *  cut: an around-the-bar pass whose own bound covers the material actually
-   *  standing at that angle, along position and cutter footprint, as the
-   *  export guard's standing-material grid reports it. A turning rapid, a turn
-   *  on an along-mode operation, or a cut that takes more than the operation's
-   *  bound keeps this refusal. Params: operation. */
+   *  #1045 slice K admits the one kind of below-envelope turn that is a real
+   *  cut: an around-the-bar pass on a square blank, whose motion must equal the
+   *  toolpath the generator emits for the current project (see
+   *  `postSquareAroundToolpathStale`). A **turning rapid**, and a turn on an
+   *  along-mode operation, keeps this refusal. Params: operation. */
   | 'postRotarySquareTurnBelowEnvelope'
-  /** The square blank's standing-material grid cannot be built finely enough
-   *  for the program's smallest cutter within the guard's budget: the along bin
-   *  would have to be wider than the cutter (letting a sample fall between two
-   *  cell centres and miss the cut), or the cutter's footprint at the blank's
-   *  corner would be narrower than one angular bin. The program is refused
-   *  rather than checked against a grid that cannot see the cutter; splitting
-   *  the operation shortens the blank the check has to cover (issue #1045
-   *  slice F). Params: operation. */
-  | 'postRotarySquareGuardResolution'
+  /** A square blank's around-the-bar operation is being posted with motion that
+   *  is not what the generator emits for the current project: a stale path, a
+   *  hand-edited one, or another operation's path. Around mode turns below the
+   *  blank's corner envelope because the turn is the cut, so the export check
+   *  proves the motion is the generator's own by regenerating the operation and
+   *  comparing it move for move (same kinds, points within a relative 1e-9, same
+   *  order). The operation is refused rather than posted (issue #1045 slice K).
+   *  Params: operation. */
+  | 'postSquareAroundToolpathStale'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -545,8 +544,9 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
  *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
  *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope` and
- *   `postRotarySquareGuardResolution` — a rotary operation the machine cannot
- *   run, or the square guard cannot prove, is left out of the program (issues
+ *   `postSquareAroundToolpathStale` — a rotary operation the machine cannot
+ *   run, or a square around path that is not the current project's own, is left
+ *   out of the program (issues
  *   #393, #1016 C2 M1, #1045). The file would otherwise be saved without that
  *   pass, and approximating any of them would cut the stock at the wrong angle,
  *   the wrong feed, or through the square blank's standing corners.
@@ -579,7 +579,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
-  'postRotarySquareGuardResolution',
+  'postSquareAroundToolpathStale',
 ])
 
 /**

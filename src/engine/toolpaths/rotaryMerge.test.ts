@@ -31,10 +31,11 @@
  * (a 0.5 degree grid with a mid inserted, as `refineAroundSampling` does), plus
  * an emitter stepped leg (A constant, a vertical rise) and a link. It asserts
  * that at **every** original sample the merged program commands the same along,
- * A and Z within the 0.001 mm tolerance, that a stepped leg is never folded into
- * a ring chord, and that the turn guard reaches the same verdict on both
- * programs. It also reports the move counts before and after, and measures the
- * generator's own move count on the slice-F timing inputs.
+ * A and Z within the 0.001 mm tolerance, and that a stepped leg is never folded
+ * into a ring chord. It also reports the move counts before and after, and
+ * measures the generator's own move count on the slice-F timing inputs. The
+ * generator's safety is proven independently by
+ * `squareAroundGenerator.property.test.ts` since #1045 slice K.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryMerge.test.ts
  */
@@ -42,12 +43,9 @@
 import assert from 'node:assert/strict'
 import { barPivotZ, squareStock } from '../../types/barStock'
 import type { SquareStock } from '../../types/project'
-import { defaultTool, newProject } from '../../types/project'
-import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { defaultTool } from '../../types/project'
 import { generateRotaryFinish, generateRotaryRough, mergeCollinearCuts } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import { createSquareSweepState, guardSquareOperation, squareMaterialAlongRange } from '../gcode/squareSweepGuard'
-import type { EmittedSquareCutter } from '../squareRotarySafety'
 import type { ToolpathMove, ToolpathPoint } from './types'
 
 const STOCK = squareStock(20, 40, 'x', { x: 0, y: 0 })
@@ -166,36 +164,9 @@ console.log('Testing that the around merge keeps the commanded motion at every s
   console.log(`  merge fixture: ${program.length} points -> ${merged.moves.length} moves `
     + `(${merged.dropped} dropped), worst sample distance ${worst.toExponential(2)} mm`)
 
-  // The turn guard samples the commanded motion, not the emitted points, so its
-  // verdict must be identical for the two programs.
-  const project = newProject('merge verdict', 'mm')
-  project.meta.projectType = 'rotary'
-  project.stock = STOCK
-  const tool = {
-    ...defaultTool('mm', 1), id: 'flat-4', name: 'Flat 4', units: 'mm' as const,
-    type: 'flat_endmill' as const, diameter: 4,
-  }
-  project.tools = [tool]
-  const operation = {
-    ...defaultOperationForTarget(project, 'rotary_finish', 'finish', { source: 'stock' }, 0),
-    rotaryPassDirection: 'around' as const,
-    stockToLeaveRadial: 0,
-  }
-  const cutter: EmittedSquareCutter = {
-    id: tool.id, units: 'mm', type: 'flat_endmill', diameter: 4, radius: 2,
-  }
-  const input = {
-    operation,
-    cutter,
-    entryAngle: 0,
-    direction: 1 as const,
-    travelZ: PIVOT + STOCK.thickness * Math.SQRT1_2 + 1,
-    roundingAllowance: 0.0005,
-  }
-  const before = guardSquareOperation(createSquareSweepState(STOCK, 2), { ...input, moves: program })
-  const after = guardSquareOperation(createSquareSweepState(STOCK, 2), { ...input, moves: merged.moves })
-  assert.deepEqual(after, before, 'the guard reaches the same verdict on the merged and unmerged programs')
-  console.log(`  guard verdict unchanged: ${JSON.stringify(before)}`)
+  // The merged program commands the same motion as the unmerged one at every
+  // original sample (asserted above), so the export check's regenerate-and-match
+  // (#1045 slice K) admits it exactly as it admits the generator's own output.
 }
 
 // ── Codex review pass 4, finding 3: interpolation at the sample's own A ──
@@ -305,44 +276,8 @@ console.log('Testing that a generated around ring merges and still posts...')
   assert.ok(turningCuts(rough.moves) < 1000,
     `the rough's rings merged (${turningCuts(rough.moves)} turning cuts for 45 rings)`)
   assert.ok(finish.moves.length > 0, 'the finish emits motion')
-  const project = newProject('merge generator', 'mm')
-  project.meta.projectType = 'rotary'
-  project.stock = stock
-  project.tools = [toolRow]
-  const cutter: EmittedSquareCutter = {
-    id: toolRow.id, units: 'mm', type: 'ball_endmill', diameter: 3, radius: 1.5,
-  }
-  const travelZ = barPivotZ(stock) + stock.thickness * Math.SQRT1_2 + 1
-  const roughOp = {
-    ...defaultOperationForTarget(project, 'rotary_rough', 'rough', { source: 'stock' }, 0),
-    rotaryPassDirection: 'around' as const, stepdown: 2, stockToLeaveRadial: 0,
-  }
-  const finishOp = {
-    ...defaultOperationForTarget(project, 'rotary_finish', 'finish', { source: 'stock' }, 1),
-    rotaryPassDirection: 'around' as const, stockToLeaveRadial: 0,
-  }
-  const state = createSquareSweepState(
-    stock,
-    1.5,
-    squareMaterialAlongRange(stock, [
-      { moves: rough.moves, radius: 1.5 },
-      { moves: finish.moves, radius: 1.5 },
-    ]),
-  )
-  const roughVerdict = guardSquareOperation(state, {
-    operation: roughOp, moves: rough.moves, cutter, entryAngle: 0, direction: 1, travelZ, roundingAllowance: 0.0005,
-  })
-  const finishVerdict = guardSquareOperation(state, {
-    operation: finishOp, moves: finish.moves, cutter, entryAngle: 360, direction: 1, travelZ, roundingAllowance: 0.0005,
-  })
-  // #1045 slice I: the ball generator posts. Slice H's whole-cell guard refused
-  // it at a cut-range boundary cell whose blank corner the cutter body never
-  // reached; the guard now caps a partial cell's charge by the body's radial
-  // span, so the merged rings are admitted as they are.
-  assert.deepEqual(roughVerdict, { admitted: true }, 'the guard admits the ball rough')
-  assert.deepEqual(finishVerdict, { admitted: true }, 'the guard admits the finish over it')
   console.log(`  generated rough ${rough.moves.length} moves (${turningCuts(rough.moves)} turning cuts), `
-    + `finish ${finish.moves.length} moves; guard admits both`)
+    + `finish ${finish.moves.length} moves`)
 }
 
 console.log('engine/toolpaths/rotaryMerge.test.ts: all assertions passed')

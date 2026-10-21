@@ -32,25 +32,21 @@
  *    that layer either cut there (one stepdown lower) or skipped the sample
  *    because its standing material was already below its radius;
  *  - an around finish with no rough in front of it may still take a full-depth
- *    corner bite out of a **raw** blank: since #1045 slice E the generator
- *    emits it and warns (`rotarySquareFinishNeedsRough`), because only the
- *    export guard sees the material the program's earlier operations actually
- *    removed.
+ *    corner bite out of a **raw** blank: the generator emits it and warns
+ *    (`rotarySquareFinishNeedsRough`). Since #1045 slice K the export check does
+ *    not attempt to re-prove coverage from the program; the generator's safety
+ *    is proven by `squareAroundGenerator.property.test.ts`.
  *
- * The output guard (`src/engine/gcode/squareSweepGuard.ts`, asked from
- * `motionPipeline.ts`) keeps one standing-material grid for the whole program
- * -- along-bar bins by angle bins, initialised from the raw blank -- and walks
- * every move of every square turning operation through it. A turning **cut**
- * below `rotaryTravelZ` is admitted only when the material inside the cutter's
- * footprint at every interior sample of the actual commanded motion is within
- * the operation's bound: `stepdown` for a rough, `stockToLeaveRadial` plus the
- * scallop of the strongest earlier rough on the same target for a finish.
- * Rapids, along-mode turns and a cut that takes more than the bound keep
- * refusing. The three Codex review-pass-2 reproductions live at the end of
- * block 7: a chuck-support-limited rough cannot license the finish across the
- * band it never reached, an A0 -> A90 cut at tip radius 9 takes the 14.14 mm
- * corner at A45 in its interior, and A0 -> A360 is judged as the full
- * revolution the controller makes rather than a zero-span shortcut.
+ * The export check (`motionPipeline.ts`, #1045 slice K) regenerates an
+ * around-mode square operation for the current project and requires the motion
+ * being posted to equal it move for move (same kinds, points within a relative
+ * 1e-9, same order); anything else is `postSquareAroundToolpathStale`. That is
+ * what admits a turning cut below `rotaryTravelZ`, where the turn is the cut: a
+ * stale, hand-edited or borrowed toolpath is refused, while a turning **rapid**
+ * in any mode and a turn on an along-mode operation keep
+ * `postRotarySquareTurnBelowEnvelope`. Block 7 exercises the fresh, stale,
+ * hand-edited and borrowed paths, the rapid and along-mode refusals, and a
+ * non-rotary operation carrying A.
  *
  * The seeded property block builds its material model independently: the
  * blank's cross-section is sampled from the square's own boundary (never
@@ -820,7 +816,8 @@ function post(
 // ---------------------------------------------------------------------------
 // 6. Generation through the production adapter: the advisory flag is derived
 //    from the operation list, and a finish without its rough still generates --
-//    the export guard, not the generator, is the authority.
+//    an advisory, because slice K's export check proves the toolpath is the
+//    generator's own, not that a rough covered the blank.
 // ---------------------------------------------------------------------------
 
 console.log('Testing the adapter\'s rough-before advisory and the generated programs...')
@@ -871,13 +868,16 @@ console.log('Testing the adapter\'s rough-before advisory and the generated prog
 }
 
 // ---------------------------------------------------------------------------
-// 7. The output guard: turning cuts below the travel height are admitted only
-//    for an around-mode square operation whose engagement the program's own
-//    cuts prove, and only for a cut. Rapids, along-mode turns and an
-//    over-engagement edit keep refusing.
+// 7. The export check (#1045 slice K): around mode turns below the blank's
+//    corner envelope because the turn is the cut, so the threat the check
+//    exists for is a stale or hand-edited toolpath, not a safe program the
+//    generator emitted. An around-mode square operation regenerates its own
+//    motion for the current project and must match it move for move; a turning
+//    rapid in any mode, and a turn on an along-mode operation, keep the old
+//    height refusal.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the square around output guard...')
+console.log('Testing the square around export check...')
 {
   const { project, stock } = fixture()
   const [rough, finish] = project.operations
@@ -885,10 +885,11 @@ console.log('Testing the square around output guard...')
   const finishResult = computeOperationToolpath(project, finish)!.result
   assert.deepEqual(roughResult.warnings, [])
   assert.deepEqual(finishResult.warnings, [])
+  const codesOf = (result: PostProcessorResult): string[] => result.warnings.map((warning) => warning.code)
 
-  // The generated rough and the generated rough+finish both post.
+  // The freshly generated rough and rough+finish both post.
   const roughProgram = post(project, ROTARY, [{ operation: rough, moves: roughResult.moves }])
-  assert.deepEqual(roughProgram.warnings, [], 'the generated around rough posts')
+  assert.deepEqual(roughProgram.warnings, [], 'the freshly generated around rough posts')
   assert.ok(/A-?\d/.test(roughProgram.gcode), 'and carries A words')
   const aWords = [...roughProgram.gcode.matchAll(/A(-?\d+(?:\.\d+)?)/g)].map((match) => Number(match[1]))
   for (const a of aWords) assert.ok(a >= 0 && a <= 360, `posted A ${a} stays inside [0, 360]`)
@@ -896,190 +897,93 @@ console.log('Testing the square around output guard...')
     { operation: rough, moves: roughResult.moves },
     { operation: finish, moves: finishResult.moves },
   ])
-  assert.deepEqual(both.warnings, [], 'the generated around rough followed by its finish posts')
+  assert.deepEqual(both.warnings, [], 'the freshly generated around rough followed by its finish posts')
 
-  // An **along**-mode rough clears the blank too, even though it never turns
-  // below the travel height: its cuts are recorded in the guard's account, so
-  // an around finish after it is admitted as well.
-  const alongRoughProject = fixture('x', 'along').project
-  const alongRough = alongRoughProject.operations[0]
-  const alongRoughResult = computeOperationToolpath(alongRoughProject, alongRough)!.result
-  assert.deepEqual(alongRoughResult.warnings, [], 'the along-mode rough generates cleanly')
+  // A **stale** path: the project's stepdown changed after this toolpath was
+  // generated, so regenerating now produces different layers than the moves
+  // being posted. Refused, naming the stale path rather than the geometry.
+  const steeperProject: Project = {
+    ...project,
+    operations: project.operations.map((entry) =>
+      entry.id === rough.id ? { ...entry, stepdown: entry.stepdown + 0.5 } : entry),
+  }
+  const steeperRough = steeperProject.operations[0]
+  assert.deepEqual(
+    codesOf(post(steeperProject, ROTARY, [{ operation: steeperRough, moves: roughResult.moves }])),
+    ['postSquareAroundToolpathStale'],
+    'a toolpath generated before a stepdown change is refused as stale',
+  )
+
+  // A **hand-edited** path: one cut point moved 0.5 mm deeper.
+  const edited: ToolpathMove[] = structuredClone(roughResult.moves)
+  let editedOne = false
+  for (const move of edited) {
+    if (move.kind !== 'cut' || move.from.a === move.to.a) continue
+    move.from = { ...move.from, z: move.from.z - 0.5 }
+    editedOne = true
+    break
+  }
+  assert.ok(editedOne, 'the fixture edited one cut point')
+  assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: rough, moves: edited }])),
+    ['postSquareAroundToolpathStale'], 'a hand-edited around toolpath is refused as stale')
+
+  // **Another operation's** toolpath posted as this one.
+  assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: rough, moves: finishResult.moves }])),
+    ['postSquareAroundToolpathStale'], "another operation's toolpath is refused as stale")
+
+  // An along-mode operation is never regenerate-and-matched: its turns are all
+  // at the travel height. Its generated moves post unchanged.
+  const alongFixture = fixture('x', 'along')
+  const alongOp = alongFixture.project.operations[0]
+  const alongResult = computeOperationToolpath(alongFixture.project, alongOp)!.result
+  assert.deepEqual(
+    post(alongFixture.project, ROTARY, [{ operation: alongOp, moves: alongResult.moves }]).warnings,
+    [],
+    'the generated along-mode square rough posts',
+  )
+
+  // An along rough followed by an around finish: both are current for their
+  // project, so the mixed program posts.
   const mixed = post(project, ROTARY, [
-    { operation: alongRough, moves: alongRoughResult.moves },
+    { operation: alongOp, moves: alongResult.moves },
     { operation: finish, moves: finishResult.moves },
   ])
-  // #1045 slice I: the mixed program posts. Slice H's whole-cell guard charged
-  // the along rough's retained-end shoulder fringe as blank, although the
-  // finish's cutter body there only grazes the cell edge; the guard now caps a
-  // partially covered cell's charge by the body's own radial span.
-  assert.deepEqual(mixed.warnings, [], 'the around finish after the along-mode rough posts')
+  assert.deepEqual(mixed.warnings, [], 'an along rough then an around finish posts')
 
-  // A blank already at its model needs no rough: the geometric alternative
-  // admits the finish on any square operation whose material is within the
-  // stock it leaves (plus the adapter's cell).
-  const nearNetMoves = generateRotaryFinish('near-net-post', prism(SQUARE, SQUARE_SECTION, [0, 40]), SQUARE, FLAT, {
-    stepover: 4, sampleSpacing: 2, stockToLeave: 0, alongStart: 0, alongEnd: 40,
-    safeRadius: 40, requestedCellSize: 0.2, passDirection: 'around',
-  }, {})
-  assert.deepEqual(nearNetMoves.warnings, [], 'the near-net finish generates')
-  const nearNetProgram = post(project, ROTARY, [{ operation: finish, moves: nearNetMoves.moves }])
-  assert.deepEqual(nearNetProgram.warnings, [], 'a near-net finish needs no rough in the program')
-
-  // The finish alone: its own turning cuts have no rough in the program to
-  // account for the material they would remove, so the guard refuses them.
-  const finishAlone = post(project, ROTARY, [{ operation: finish, moves: finishResult.moves }])
-  assert.deepEqual(finishAlone.warnings.map((warning) => warning.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'the finish alone is refused')
-
-  // A turning rapid below the travel height is refused even on an admitted
-  // around operation: it removes nothing.
+  // A turning **rapid** below the travel height is refused in every mode: it
+  // removes nothing and swings the standing corner into the cutter.
   const centre = barCentre(stock)
   const travel = barPivotZ(stock) + barMaxRadius(stock) + 1
   const lowTurn: ToolpathMove[] = [
     { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
     { kind: 'rapid', from: { x: 20, y: centre, z: travel - 2, a: 0 }, to: { x: 20, y: centre, z: travel - 2, a: 30 } },
   ]
-  assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: lowTurn }]).warnings.map((w) => w.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'a turning rapid below the height is refused')
+  assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: rough, moves: lowTurn }])),
+    ['postRotarySquareTurnBelowEnvelope'], 'a turning rapid below the height is refused in around mode')
+  assert.deepEqual(codesOf(post(alongFixture.project, ROTARY, [{ operation: alongOp, moves: lowTurn }])),
+    ['postRotarySquareTurnBelowEnvelope'], 'a turning rapid below the height is refused in along mode')
 
-  // The same turn on an along-mode operation is refused: only an around-mode
-  // cut is licensed by the generator's layer bound.
-  const alongProject = fixture('x', 'along').project
-  const alongStock = fixture('x', 'along').stock
-  const alongOp = alongProject.operations[0]
+  // The same turn as a **cut** on an along-mode operation is refused: only an
+  // around-mode cut may turn below the height, and only with the generator's
+  // own current motion.
+  const alongStock = alongFixture.stock
+  const alongCentre = barCentre(alongStock)
   const alongCut: ToolpathMove[] = [
-    { kind: 'rapid', from: { x: 20, y: barCentre(alongStock), z: travel + 2, a: 0 }, to: { x: 20, y: barCentre(alongStock), z: travel + 2, a: 0 } },
-    { kind: 'cut', from: { x: 20, y: barCentre(alongStock), z: travel - 2, a: 0 }, to: { x: 20, y: barCentre(alongStock), z: travel - 2, a: 3 } },
+    { kind: 'rapid', from: { x: 20, y: alongCentre, z: travel + 2, a: 0 }, to: { x: 20, y: alongCentre, z: travel + 2, a: 0 } },
+    { kind: 'cut', from: { x: 20, y: alongCentre, z: travel - 2, a: 0 }, to: { x: 20, y: alongCentre, z: travel - 2, a: 3 } },
   ]
-  assert.deepEqual(post(alongProject, ROTARY, [{ operation: alongOp, moves: alongCut }]).warnings.map((w) => w.code),
+  assert.deepEqual(codesOf(post(alongFixture.project, ROTARY, [{ operation: alongOp, moves: alongCut }])),
     ['postRotarySquareTurnBelowEnvelope'], 'an along-mode turning cut below the height is refused')
-
-  // An around-mode program whose engagement exceeds its bound: take the real
-  // rough and push its deepest layer lower by twice the stepdown at one ring.
-  const over: ToolpathMove[] = structuredClone(roughResult.moves)
-  let edited = false
-  for (const move of over) {
-    // A **turning** cut: a constant-angle cut is never checked for engagement
-    // (it lowers the grid only), so editing one would test nothing.
-    if (move.kind !== 'cut' || move.from.x !== move.to.x) continue
-    if (move.from.a === move.to.a) continue
-    const tip = move.from.z - barPivotZ(stock)
-    if (tip > barMaxRadius(stock) - 0.5) continue
-    if (edited) break
-    // A single move whose whole ring plunges two stepdowns deeper.
-    const drop = 2 * rough.stepdown
-    if (move.from.z - drop < barPivotZ(stock)) continue
-    const angle = move.from.a
-    if (angle === undefined) continue
-    move.from = { ...move.from, z: move.from.z - drop }
-    move.to = { ...move.to, z: move.to.z - drop }
-    edited = true
-  }
-  assert.ok(edited, 'the fixture edited one rough move deeper')
-  assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: over }]).warnings.map((w) => w.code),
-    ['postRotarySquareTurnBelowEnvelope'], 'a cut that takes more than the layer bound is refused')
 
   // A non-rotary operation carrying A keeps its semantic refusal.
   const engrave: Operation = { ...rough, kind: 'follow_line' }
-  assert.deepEqual(post(project, ROTARY, [{ operation: engrave, moves: roughResult.moves }]).warnings.map((w) => w.code),
+  assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: engrave, moves: roughResult.moves }])),
     ['postSetupOperationRefused'], 'a non-rotary operation carrying A is refused')
-
-  // -------------------------------------------------------------------------
-  // Codex review pass 2, finding 1: an **incomplete** rough must not license
-  // the whole finish. The rough's 20 mm chuck support restricts its cutter
-  // centres to x 24..26, while the finish spans x 14..26: at x 14 the blank's
-  // corner is still standing whole layers above the model, and the finish would
-  // sweep it in one turning pass.
-  // -------------------------------------------------------------------------
-  {
-    const partial = fixture('x', 'around', 20)
-    const partialRough = partial.project.operations[0]
-    const partialFinish = partial.project.operations[1]
-    const partialRoughResult = computeOperationToolpath(partial.project, partialRough)!.result
-    const partialFinishResult = computeOperationToolpath(partial.project, partialFinish)!.result
-    assert.deepEqual(partialRoughResult.warnings, [], 'the supported rough generates')
-    const roughAlong = partialRoughResult.moves.flatMap((move) => [move.from.x, move.to.x])
-    assert.ok(Math.min(...roughAlong) >= 24 - 1e-6 && Math.max(...roughAlong) <= 26 + 1e-6,
-      `the supported rough only reaches x 24..26 (it covers ${Math.min(...roughAlong).toFixed(4)}..${Math.max(...roughAlong).toFixed(4)})`)
-    const finishAlong = partialFinishResult.moves.flatMap((move) => [move.from.x, move.to.x])
-    assert.ok(Math.min(...finishAlong) < 15, 'the finish spans the whole band, not only the roughed part')
-    const partialProgram = post(partial.project, ROTARY, [
-      { operation: partialRough, moves: partialRoughResult.moves },
-      { operation: partialFinish, moves: partialFinishResult.moves },
-    ])
-    assert.deepEqual(partialProgram.warnings.map((warning) => warning.code),
-      ['postRotarySquareTurnBelowEnvelope'],
-      'an incomplete rough cannot license the finish over the material it never reached')
-  }
-
-  // -------------------------------------------------------------------------
-  // Codex review pass 2, finding 1b: an along rough with a single cut point is
-  // not coverage either.
-  // -------------------------------------------------------------------------
-  {
-    const alongFixtures = fixture('x', 'along')
-    const aloneRough = alongFixtures.project.operations[0]
-    // One constant-angle cut point deep in the band: the along rough ran, but it
-    // cleared a single spot and nothing else.
-    const onePoint: ToolpathMove[] = [
-      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
-      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 5, a: 0 }, to: { x: 20.1, y: centre, z: barPivotZ(stock) + 5, a: 0 } },
-    ]
-    const program = post(project, ROTARY, [
-      { operation: aloneRough, moves: onePoint },
-      { operation: finish, moves: finishResult.moves },
-    ])
-    assert.deepEqual(program.warnings.map((warning) => warning.code),
-      ['postRotarySquareTurnBelowEnvelope'],
-      'one cut point of an along rough does not clear the blank for a finish')
-  }
-
-  // -------------------------------------------------------------------------
-  // Codex review pass 2, finding 2: the interior of a turning cut is checked,
-  // and A is the commanded sweep.
-  //
-  // A single A0 -> A90 cut at tip radius 9 with the Ø4 flat over the 20 mm
-  // square: both endpoints stand no more than 1 mm above the flat, but at A45
-  // the corner stands at 14.142 mm -- 5.142 mm of engagement. Endpoint checks
-  // pass it; the grid must refuse it.
-  // -------------------------------------------------------------------------
-  {
-    const corner = barMaxRadius(stock)
-    const single: ToolpathMove[] = [
-      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
-      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 90 } },
-    ]
-    // Confirm the review's figure: at A45 the untouched corner is 5.14 mm above
-    // this tip (the grid's engagement, not a helper's, is what the guard reads).
-    assert.ok(corner - 9 > 5 && corner - 9 < 5.3,
-      `the A45 corner stands ${(corner - 9).toFixed(3)} mm above a tip radius of 9`)
-    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: single }]).warnings.map((w) => w.code),
-      ['postRotarySquareTurnBelowEnvelope'], 'a turning cut whose interior takes the corner is refused')
-
-    // The same sweep written as A0 -> A360 must be a full revolution, not a
-    // zero-span check: the corner is taken at A45 either way.
-    const full: ToolpathMove[] = [
-      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
-      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + 9, a: 360 } },
-    ]
-    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: full }]).warnings.map((w) => w.code),
-      ['postRotarySquareTurnBelowEnvelope'], 'an A0 -> A360 cut is judged as a full revolution')
-
-    // A real ring at the rough's first layer is admitted: its interior
-    // engagement is one stepdown everywhere.
-    const ring: ToolpathMove[] = [
-      { kind: 'rapid', from: { x: 20, y: centre, z: travel + 2, a: 0 }, to: { x: 20, y: centre, z: travel + 2, a: 0 } },
-      { kind: 'cut', from: { x: 20, y: centre, z: barPivotZ(stock) + corner - rough.stepdown, a: 0 }, to: { x: 20, y: centre, z: barPivotZ(stock) + corner - rough.stepdown, a: 360 } },
-    ]
-    assert.deepEqual(post(project, ROTARY, [{ operation: rough, moves: ring }]).warnings, [],
-      'a full ring at one stepdown below the corner is admitted')
-  }
 }
 
 // ---------------------------------------------------------------------------
 // 8. Round bars stay frozen: an around finish on a round bar is not given the
-//    square guard, and the same kind of low turning cut still posts there.
+//    square export check, and the same kind of low turning cut still posts there.
 // ---------------------------------------------------------------------------
 
 console.log('Testing that round-bar output is untouched...')

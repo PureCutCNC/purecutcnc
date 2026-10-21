@@ -254,7 +254,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Las plantillas de la máquina escriben {axis}, la palabra que gira el eje rotativo en esta máquina. Elimínala de las plantillas de la máquina antes de exportar.',
   'warnings.postRotaryDrillNotExpanded': 'La operación "{operation}" no se exportó: su taladrado no tiene movimientos expandidos, y los ciclos fijos no pueden usarse en una máquina cuyo eje rotativo toma prestado un motor.',
   'warnings.postRotaryAxisMismatch': 'La operación "{operation}" no se exportó: el eje rotativo de la máquina va a lo largo de {machineAxis}, pero la barra va a lo largo de {stockAxis}.',
-  'warnings.postRotarySquareGuardResolution': 'La operación "{operation}" no se exportó: el bloque cuadrado es demasiado largo para la comprobación de exportación con este cortador, por lo que la rejilla de material restante no puede resolver el cortador. Divida la operación en pasadas más cortas o use un cortador más grande.',
+  'warnings.postSquareAroundToolpathStale': 'La operación "{operation}" no se exportó: su trayectoria de herramienta está desactualizada para este proyecto. Vuelva a generarla antes de exportar.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'La operación "{operation}" no se exportó: gira el bloque cuadrado con la herramienta por debajo de la envolvente de las esquinas y el corte quitaría más que la profundidad permitida de la operación, por lo que las esquinas sobresalientes barrerían la herramienta.',
   'warnings.replayNoTool': 'No se ha asignado ninguna herramienta a la operación seleccionada.',
   'warnings.bookletNoTool': 'No se ha seleccionado ninguna herramienta para esta operación.',

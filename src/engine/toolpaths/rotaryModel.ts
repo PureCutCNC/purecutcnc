@@ -2132,9 +2132,11 @@ export function generateRotaryFinish(
   }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
   // A finish with no rough in front of it may still take a full corner bite out
-  // of a raw square blank. It generates -- the export guard now decides from
-  // the material the program actually left (see `squareSweepGuard.ts`) -- but
-  // says so here, where the user is looking at the operation (#1045 slice E).
+  // of a raw square blank. It generates -- the export check proves the posted
+  // motion is this generator's own, and the generator's safety is proven by
+  // `squareAroundGenerator.property.test.ts` -- but says so here, where the
+  // user is looking at the operation (#1045 slice E; slice K removed the export
+  // guard that used to re-prove coverage).
   if (squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
     warnings.push({ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } })
   }
