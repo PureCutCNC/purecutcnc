@@ -11,6 +11,7 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `ToolbarPopoverMenu.tsx` — portaled hover/click popover menu used by grouped commands.
 - `ToolbarDialog.tsx` — portaled new/import/text dialogs launched by toolbar commands.
 - `ProjectNameControl.tsx` — project name and dirty-state control.
+- `CommandPaletteButton.tsx` — top-bar pointer/touch entry point for the Ctrl/Cmd+K command palette.
 - `GlobalActions.tsx` — file/history/zoom action group.
 - `CreationActions.tsx` — feature/region creation target and shape picker group.
 - `FeatureEditActions.tsx` — selected-feature transform/edit action group, including the one-shot Feature Distribution command.
