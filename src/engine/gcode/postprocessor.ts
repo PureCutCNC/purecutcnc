@@ -75,6 +75,16 @@ interface ModalState {
    *  template that can move Z clears this until a motion block writes Z again
    *  (issue #1016 C2 correction M1). */
   zKnown: boolean
+  /** Planar and rotary equivalents of `zKnown` (#1057 correction 2): a template
+   *  can park the spindle at X0 Y0, or index the bar, without the emitter
+   *  seeing a motion block. Each axis the template may have moved is unknown
+   *  until a motion block writes it, and an unknown axis is always restated by
+   *  the next rapid rather than skipped as "already there". */
+  xKnown: boolean
+  yKnown: boolean
+  /** True when the last written angle is still where the controller is. Only
+   *  meaningful when `rotaryWord` is not null. */
+  rotaryKnown: boolean
   lineNumber: number
 }
 
@@ -156,39 +166,42 @@ const INERT_TEMPLATE_COMMANDS: ReadonlySet<string> = new Set([
 
 /**
  * The four motion commands every bundled G-code definition writes. A motion
- * block is not inert by itself — a later word on the same line can be a Z — but
- * the per-word scan below decides that from the words actually present, so
- * `G0 X0` moves only X and leaves Z known (#1057).
+ * block is not inert by itself — a later word on the same line can be an axis —
+ * but the per-word scan below decides that from the words actually present, so
+ * `G0 X0` moves only X and leaves Y and Z known (#1057).
  */
 const TEMPLATE_MOTION_COMMANDS: ReadonlySet<string> = new Set(['G0', 'G1', 'G2', 'G3'])
 
 /**
- * Letters whose value cannot move Z on its own: planar and rotary coordinates,
- * arc offsets, cycle parameters, a feed, speed, tool, tool-offset or line
- * number. `Z` is decisive and is handled before this set is consulted.
+ * Letters whose value cannot move the machine's linear or rotary axes on its
+ * own: planar and rotary coordinates, arc offsets, cycle parameters, a feed,
+ * speed, tool, tool-offset or line number. The axis being asked about is
+ * decisive and is handled before this set is consulted.
  */
 const INERT_TEMPLATE_LETTERS: ReadonlySet<string> = new Set([
   'X', 'Y', 'A', 'I', 'J', 'K', 'R', 'P', 'Q', 'F', 'S', 'T', 'N', 'H', 'D', 'L',
 ])
 
 /**
- * True when a rendered machine template can move the cutter in Z behind the
- * emitter's back.
+ * True when a rendered machine template can move `axis` behind the emitter's
+ * back.
  *
- * The rule is an allowlist (#1057, Codex review): a line is inert only when
- * every word on it cannot move Z. A `Z` word is decisive. A motion command
- * (`G0`–`G3`) moves only the axes it names, so a motion block with no `Z` word
- * leaves Z known. Everything else — an O-word or macro call, a tool change, a
- * home, a canned cycle, a coordinate-system command, an expression, or any word
- * this allowlist does not know — leaves Z unknown.
+ * The rule is an allowlist (#1057, Codex review): a line is inert for an axis
+ * only when every word on it cannot move that axis. An axis word is decisive.
+ * A motion command (`G0`–`G3`) moves only the axes it names, so a motion block
+ * naming Y leaves X and Z known. Everything else — an O-word or macro call, a
+ * tool change, a home, a canned cycle, a coordinate-system command, an
+ * expression, or any word this allowlist does not know — can move any axis, so
+ * it leaves all of them unknown.
  *
  * The O-word check comes first because a subroutine call is the reason for the
- * inversion: `o<toolchange> call` has no `G`/`M` word and no `Z`, and the old
- * "no unknown G/M command" scan therefore called it inert while it could move Z.
+ * inversion: `o<toolchange> call` has no `G`/`M` word and no axis word, and the
+ * old "no unknown G/M command" scan therefore called it inert while it could
+ * move the machine.
  *
  * Comments are stripped first, so prose never counts as a command.
  */
-function templateCanMoveZ(line: string, commentPrefix: string): boolean {
+function templateMovesAxis(line: string, axis: 'X' | 'Y' | 'Z' | 'A', commentPrefix: string): boolean {
   let code = lineCode(line, commentPrefix).trim()
   // Block delete marks an optional block; it is not a word.
   while (code.startsWith('/')) code = code.slice(1).trimStart()
@@ -196,9 +209,14 @@ function templateCanMoveZ(line: string, commentPrefix: string): boolean {
   // The program delimiter cannot move an axis.
   if (code === '%') return false
   // An O-word is the interpreter's program/subroutine/macro syntax: `O100`,
-  // `o100 call`, `o<toolchange> call`. A subroutine can move Z without naming
-  // it, so an O-word is never inert.
+  // `o100 call`, `o<toolchange> call`. A subroutine can move an axis without
+  // naming it, so an O-word is never inert.
   if (/(?:^|\s)[Oo](?=\s*(?:<|\d))/.test(code)) return true
+  // A numeric selector — QtPlasmaC's `M3 $0 S1` / `M5 $0` — is an argument of
+  // the command, not an expression, and it names no axis. Remove it before the
+  // word scan. Every other `$` (a grbl `$H` system command, a macro variable)
+  // is arbitrary text and is distrusted whole.
+  code = code.replace(/\$\d+(?:\.\d+)?/g, ' ')
   // Macro variables and expressions are arbitrary text; distrust them whole.
   if (['#', '[', ']', '$', '='].some((character) => code.includes(character))) return true
 
@@ -212,7 +230,7 @@ function templateCanMoveZ(line: string, commentPrefix: string): boolean {
     const value = match[2]
     // A letter with no number is not a word this allowlist knows.
     if (value === undefined) return true
-    if (letter === 'Z') return true
+    if (letter === axis) return true
     if (letter === 'G' || letter === 'M') {
       const command = `${letter}${Number(value)}`
       if (!TEMPLATE_MOTION_COMMANDS.has(command) && !INERT_TEMPLATE_COMMANDS.has(command)) return true
@@ -293,6 +311,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     inverseTime: false,
     currentPosition: null,
     zKnown: false,
+    xKnown: false,
+    yKnown: false,
+    rotaryKnown: false,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
 
@@ -413,16 +434,20 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    *
    * A template can move the machine behind the emitter's back (`G0 Z-8`, a
    * tool-change macro, a canned cycle), and nothing corrects the emitter's
-   * tracked Z when it does. For a square blank that matters: the next A word
-   * would be written as if the cutter were still where the emitter left it. So
-   * a line that can move Z clears the known Z, and a later motion block
-   * re-establishes it; an inert line (`M5`, `G94`, a comment) leaves it
-   * provable. Round and non-rotary programs never read the flag, so their
-   * bytes do not move.
+   * tracked position when it does. For a square blank that matters: the next A
+   * word would be written as if the cutter were still where the emitter left
+   * it. So a line that can move an axis clears that axis's known flag, and a
+   * later motion block writes it again; an inert line (`M5`, `G94`, a comment)
+   * leaves every axis provable. Round, non-rotary and template-free programs
+   * never read the flags, so their bytes do not move (#1057 correction 2).
+   *
+   * The probe is per axis, so a `G0 X0 Y0` park clears X and Y while leaving Z
+   * known: the next rapid restates the parked plane exactly, and does not add a
+   * Z block it does not need.
    *
    * A template may hold several physical lines (`"; note\nG0 Y0"`). The
-   * program carries them as one entry, but they are judged one physical line
-   * at a time: the axis-word scan drops everything after a line's comment
+   * program carries them as one entry, but they are judged one physical line at
+   * a time: the axis-word scan drops everything after a line's comment
    * marker, so scanning the joined text would lose the code on every line
    * after the first.
    */
@@ -430,8 +455,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     const physicalLines = content.split(/\r?\n/)
     templateLines.push(...physicalLines)
     emitLine(content)
-    if (physicalLines.some((line) => templateCanMoveZ(line, definition.program.commentPrefix))) {
-      state.zKnown = false
+    const commentPrefix = definition.program.commentPrefix
+    for (const line of physicalLines) {
+      if (templateMovesAxis(line, 'X', commentPrefix)) state.xKnown = false
+      if (templateMovesAxis(line, 'Y', commentPrefix)) state.yKnown = false
+      if (templateMovesAxis(line, 'Z', commentPrefix)) state.zKnown = false
+      // The rotary word is `A` on its own axis and a borrowed motor's `X`/`Y`
+      // otherwise, so the same scan answers both questions.
+      if (state.rotaryWord !== null && templateMovesAxis(line, state.rotaryWord, commentPrefix)) {
+        state.rotaryKnown = false
+      }
     }
   }
 
@@ -464,12 +497,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * `rotaryDirection` — it is already the program's angle, done in the
    * transform — and is never reduced to 0–360, so a move from 350 to 370 writes
    * 370. A machine with no rotary axis writes nothing.
+   *
+   * An angle a template may have moved is unknown even when it equals the last
+   * one this emitter wrote: the word is then restated rather than skipped
+   * (#1057 correction 2), and writing it makes the angle provable again.
    */
   const emitRotaryAxisWord = (segments: string[], angle: number | undefined) => {
     if (angle === undefined || state.rotaryWord === null) return
-    if (state.rotaryAngle === angle) return
+    if (state.rotaryKnown && state.rotaryAngle === angle) return
     segments.push(`${state.rotaryWord}${formatGCodeNumber(angle, definition, outputUnits)}`)
     state.rotaryAngle = angle
+    state.rotaryKnown = true
   }
 
   /** Turn inverse-time feed off, if it is on (issue #393, rule 4). */
@@ -546,6 +584,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         : state.currentPosition?.a !== undefined ? { a: state.currentPosition.a } : null),
     }
     if (axes.z !== undefined) state.zKnown = true
+    if (axes.x !== undefined) state.xKnown = true
+    if (axes.y !== undefined) state.yKnown = true
 
     emittedPosition = {
       x: axes.x !== undefined ? formatValue(axes.x) : emittedPosition?.x ?? 0,
@@ -607,6 +647,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     state.motionCommand = null
     state.currentPosition = null
     state.zKnown = false
+    state.xKnown = false
+    state.yKnown = false
+    state.rotaryKnown = false
     emittedPosition = null
     return true
   }
@@ -668,6 +711,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       a: angleDeg * rotaryDirection(definition),
     })
     state.currentPosition = null
+    state.xKnown = false
+    state.yKnown = false
+    state.zKnown = false
     emittedPosition = null
   }
 
@@ -679,7 +725,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * modal-feed rules exactly as before.
    */
   const emitPlannedMove = (point: ToolpathPoint, directive: FeedDirective) => {
-    if (point.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== point.a) {
+    if (point.a !== undefined && state.rotaryWord !== null
+      && (!state.rotaryKnown || state.rotaryAngle !== point.a)) {
       retractUnknownSquareZ()
     }
     if (directive.mode === 'inverse') {
@@ -843,6 +890,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       z: state.currentPosition?.z ?? 0,
       ...(arc.endPoint.a !== undefined ? { a: arc.endPoint.a } : null),
     }
+    // The block spelled both planar coordinates, so both are provable again
+    // (the arc is at a constant angle, so it writes no rotary word).
+    state.xKnown = true
+    state.yKnown = true
 
     emittedPosition = {
       x: formatValue(arc.endPoint.x),
@@ -929,7 +980,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       // states that decision and writes nothing for this dialect.
       restateSafeZBeforeTravel(clearanceZ)
       const at = state.currentPosition
-      if (at === null || at.x !== point.x || at.y !== point.y) {
+      // A template may have parked the torch at another XY (#1057 correction
+      // 2): the stale plane is no proof the torch is at the pierce point, so
+      // an unknown X or Y is written even when it matches the tracked value.
+      if (at === null || !state.xKnown || !state.yKnown || at.x !== point.x || at.y !== point.y) {
         emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
       }
     }
@@ -1169,7 +1223,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           if (!state.zKnown || cp.z !== firstMachineXY.z) {
             emitMotionLine(definition.motion.rapidCommand, { z: firstMachineXY.z })
           }
-          if (cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
+          if (!state.xKnown || !state.yKnown || cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
             emitMotionLine(definition.motion.rapidCommand, { x: firstMachineXY.x, y: firstMachineXY.y })
           }
         } else {
@@ -1250,9 +1304,14 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         // Reset state: canned cancel breaks motion modality
         state.motionCommand = null
 
-        // Track position as last hole's XY at clearZ (machine coords)
+        // Track position as last hole's XY at clearZ (machine coords). The
+        // emitter wrote those X/Y words itself, so the plane is provable again
+        // even though the cycle lines went through the template writer, which
+        // cleared it (#1057 correction 2). Z stays unknown exactly as before.
         const lastMachinePos = cycles[cycles.length - 1].clear
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
+        state.xKnown = true
+        state.yKnown = true
       } else {
         // Command not available for this drill type — fall back to expanded moves
         warnings.push({
@@ -1280,10 +1339,15 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         if (state.currentPosition !== null
           && pt.a !== undefined
           && state.rotaryWord !== null
-          && state.rotaryAngle !== pt.a) {
+          && (!state.rotaryKnown || state.rotaryAngle !== pt.a)) {
           retractUnknownSquareZ()
         }
-        for (const axes of splitRapid(state.currentPosition, pt, state.zKnown)) {
+        for (const axes of splitRapid(state.currentPosition, pt, {
+          xKnown: state.xKnown,
+          yKnown: state.yKnown,
+          zKnown: state.zKnown,
+          rotaryKnown: state.rotaryKnown,
+        })) {
           emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }
@@ -1373,7 +1437,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // Unwind the bar once, at the end (issue #395, rule 5): a program that has
   // turned the stock and stops at a non-zero angle is returned to 0 so the
   // operator's next part starts where this one did. Not between operations,
-  // and never written when the program never turned or already ends at 0. The
+  // and never written when the program never turned or already ends at 0. An
+  // angle a template may have moved is unknown even when the tracked angle is
+  // 0, so that case unwinds too (#1057 correction 2). The
   // last operation may have descended at a constant angle (that is not a turn),
   // or a template may have moved Z, so the unwind first raises the cutter clear
   // of the bar — for a round bar as well as a square blank, and whatever the
@@ -1383,7 +1449,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // rapid word itself rather than relying on modal motion: a command that does
   // not move the tool must not be read as a continuation of whatever mode was
   // left behind.
-  if (state.rotaryAngle !== null && state.rotaryAngle !== 0) {
+  if (state.rotaryAngle !== null && (state.rotaryAngle !== 0 || !state.rotaryKnown)) {
     if (!retractForBarUnwind()) {
       return {
         gcode: '',
@@ -1395,6 +1461,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
     state.motionCommand = definition.motion.rapidCommand
     state.rotaryAngle = 0
+    state.rotaryKnown = true
   }
 
   // 5. Footer

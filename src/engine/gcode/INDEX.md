@@ -89,16 +89,21 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   last operation may have descended at a constant angle. A template is inert
   only when every word on it is on an explicit allowlist (dwell, plane, units,
   distance/feed modes, cutter compensation, work-coordinate select, spindle,
-  coolant, pause/end, a tool select with no change, and parameter words): a Z
-  word, an O-word/subroutine or macro call, a canned cycle, a home, a tool
-  change, an expression or any unknown word invalidates the tracked Z, and a
-  later A word is preceded by a validated retract to that height — a header or
-  tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1;
-  #1057 Codex review). A motion block whose words name no Z (`G0 X0`) moves
-  only the axes it names and leaves Z known.
-  For every project type the next rapid after such a template restates its own
-  Z before any XY or rotary motion, so a stale tracked Z never drops the
-  retract (#1057). Controller-owned piercing (QtPlasmaC) is the one path that
+  coolant, pause/end, a tool select with no change, and parameter words, plus a
+  numeric `$` selector such as QtPlasmaC's `M5 $0`): an axis word, an
+  O-word/subroutine or macro call, a canned cycle, a home, a tool change, an
+  expression or any unknown word invalidates the tracked position of every axis
+  it can move. A motion block moves only the axes it names (`G0 X0` leaves Y and
+  Z known), so a later A word is preceded by a validated retract to the travel
+  height — a header or tool-change `G0 Z-8` cannot hide the cutter below the
+  blank (#1016 C2 M1; #1057).
+  For every project type the next rapid after such a template restates every
+  axis the template may have moved, in the existing order — safe Z first, then
+  XY, then the rotary word — so a stale tracked Z never drops the retract
+  (#1057) and a template that parks the spindle at X0 Y0 or indexes the bar
+  never lets the next rapid skip that plane or angle as "already there" (#1057
+  correction 2). A program with no axis-moving template is byte-identical.
+  Controller-owned piercing (QtPlasmaC) is the one path that
   writes no Z of its own: its load filter comments out Z words, templates
   included, and keeps the torch height, so the XY torch path needs no
   restatement and adds none. G-code-owned piercing writes Z itself and
@@ -125,9 +130,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
   split of a rapid, carrying a rotary angle so a rotation-only rapid is never
   dropped — the angle rides the XY block when there is one and otherwise a
-  block of its own, never a Z block, in either direction of Z; a tracked Z a
-  template may have moved is unknown, so the rapid writes its own Z before any
-  XY or rotary motion, #1057), `planStepFeeds` / `inverseTimeFeedValue` and
+  block of its own, never a Z block, in either direction of Z; the caller's
+  per-axis `RapidAxisKnowledge` says which tracked axes a template may have
+  moved, and each unknown axis is restated from the target even when it equals
+  the stale value, in the existing Z → XY → angle order, #1057; a borrowed
+  motor's letter is the angle, not a coordinate, so it never invents an XY
+  block), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, where `length` is the true length of the path the tip draws in
@@ -274,7 +282,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   negative, positive-but-rounds-to-zero) blocks with
   `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while QtPlasmaC
   writes the same program whatever the drop feed.
-- `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
+- `*.test.ts` — `postprocessor.test.ts` (G-code), `templateZRetract.test.ts`
+  (a rapid after a template that moves any axis restates the unknown X, Y, Z or
+  rotary word, in both dialects, #1057), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,

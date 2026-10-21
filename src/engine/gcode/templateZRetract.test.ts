@@ -15,17 +15,25 @@
  */
 
 /**
- * A rapid after a Z-moving template must not trust the tracked Z (#1057).
+ * A rapid after a machine template that moves an axis must not trust the
+ * tracked position (#1057).
  *
  * A machine template can move the machine behind the emitter's back. The
- * emitter marks Z unknown when one can (a Z word, a canned cycle, a macro, a
- * tool change), but the next operation's first rapid used to be split against
- * the stale position. When that rapid's target Z equalled the stale one — the
- * planned retract — the Z block was dropped and the XY rapid ran at whatever
- * height the template left, below the material in the repro.
+ * emitter marks an axis unknown when one can (an axis word, a canned cycle, a
+ * macro, a tool change), but the next operation's first rapid used to be split
+ * against the stale position. When that rapid's target equalled the stale
+ * value — the planned retract, or the XY the previous operation ended at — the
+ * block was dropped and the move ran from wherever the template left the tool.
  *
  * These tests post real programs through `runPostProcessor`, in both dialects,
- * and assert the emitted order: the retract block precedes the XY rapid.
+ * and assert the emitted order: the retract block precedes the XY rapid, and a
+ * parked plane is restated before the next plunge.
+ *
+ * The same rule applies to every axis, not just Z (#1057 correction 2): a
+ * template that parks the spindle at X0 Y0, or indexes the rotary, leaves those
+ * axes unknown, and the next rapid restates each one instead of skipping it as
+ * "already there". A program with no axis-moving template stays byte-identical.
+ *
  * Mutations that must fail them:
  * - `splitRapid` trusting the tracked Z again (no `zKnown` argument from the
  *   G-code emitter) → the two-operation G-code cases write the XY block with
@@ -41,13 +49,18 @@
  * - treating a motion block with no Z as Z-moving (the pre-review rule) → the
  *   `G0 X0` byte-identity case gains a Z block its comment-twin does not;
  * - dropping `!state.zKnown` from the canned-cycle or plasma safe-Z checks →
- *   their positioning rapid is written at the template's height.
+ *   their positioning rapid is written at the template's height;
+ * - trusting the tracked X/Y again (`splitRapid` given no `xKnown`/`yKnown`) →
+ *   the parked-plane cases write no XY block, so the plunge runs from the park
+ *   position;
+ * - dropping the rotary word from the unknown-axis rule (`rotaryKnown`) → the
+ *   M6 case never restates `A45` before the next feed move.
  *
  * Run with: npx tsx src/engine/gcode/templateZRetract.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../../types/project'
 import type { Operation, Project, Tool } from '../../types/project'
 import { withBottomSetup } from '../../test/projectFixtures'
 import { exportPlasma, rectangle } from '../../test/plasmaExportFixtures'
@@ -368,9 +381,11 @@ function testControllerPlasmaZTemplate(): void {
 function testMotionTemplateWithoutZByteIdentity(): void {
   console.log('Testing a motion template naming no Z leaves the program byte-identical...')
   // A motion block is not inert by itself, but it moves only what it names.
-  // `G0 X0` names no Z, so the tracked Z is still provable and the program must
-  // be byte-identical to the same program with the template written as a
-  // comment: no Z block is added to the next rapid (#1057, Codex review item 3).
+  // `G0 X0` names no Z, so the tracked Z is still provable: the next rapid is
+  // written with no Z block, exactly as if the template were a comment. (The
+  // template does move X, so the per-axis rule of #1057 correction 2 clears X;
+  // the following rapid travels in X anyway, which is why the whole program
+  // still matches its comment twin.)
   const project = makeProject(['t1', 't1'], false)
   const motion = post(project, machineWithOperationHeader('grbl', 'G0 X0'), TOP_MOVES)
   const commented = post(project, machineWithOperationHeader('grbl', '; G0 X0'), TOP_MOVES)
@@ -380,6 +395,134 @@ function testMotionTemplateWithoutZByteIdentity(): void {
   const after = motion.slice(motion.lastIndexOf('G0 X0') + 'G0 X0'.length)
   assert.equal(codeLines(after)[0], 'X10.000 Y10.000',
     'the next rapid states no Z because the template never moved it')
+}
+
+// ── Planar and rotary tracking (#1057 correction 2) ───────────
+
+/**
+ * Two operations that end where the next begins: operation one finishes at
+ * machine (30, 10) and operation two's first rapid returns to that same XY, so
+ * a split that trusts the stale plane writes nothing and the next move runs
+ * from wherever a template parked the tool.
+ */
+const PARK_MOVES: ToolpathMove[] = [
+  { kind: 'rapid', from: { x: 30, y: 70, z: 25 }, to: { x: 30, y: 70, z: 25 } },
+  { kind: 'plunge', from: { x: 30, y: 70, z: 25 }, to: { x: 30, y: 70, z: 15 } },
+  { kind: 'cut', from: { x: 30, y: 70, z: 15 }, to: { x: 10, y: 70, z: 15 } },
+  { kind: 'rapid', from: { x: 10, y: 70, z: 15 }, to: { x: 30, y: 70, z: 25 } },
+]
+
+/** The first block after `gcode` that carries motion or an axis word. */
+function firstMotionLine(gcode: string): string | undefined {
+  return codeLines(gcode).find((line) => /^G[0-3]\b/.test(line) || /^[XY]-?\d/.test(line))
+}
+
+function testToolChangeParkXYGcode(): void {
+  console.log('Testing a tool change parking X0 Y0 restates the old plane (G-code)...')
+  // The template moves the spindle to machine X0 Y0 behind the emitter's back.
+  // Operation two's first rapid targets exactly the XY operation one ended at,
+  // so trusting the stale plane writes no block at all and the plunge that
+  // follows runs diagonally from the park position at cutting depth.
+  const project = makeProject(['t1', 't2'], false)
+  const definition = machineWithToolChange('grbl', ['M0 ; Tool change: {toolName}', 'G0 X0 Y0'])
+  const tail = afterLastTemplate(post(project, definition, PARK_MOVES), 'G0 X0 Y0').slice('G0 X0 Y0'.length)
+  const first = firstMotionLine(tail)
+  assert.equal(first, 'X30.000 Y10.000', `the parked plane is restated before the plunge\n${tail}`)
+  // Moving X and Y says nothing about the cutter height, so Z stays known: the
+  // per-axis rule must not turn into an extra retract.
+  assert.doesNotMatch(first ?? '', /Z/, 'no Z block is added for an XY-only park')
+  const after = codeLines(tail).slice(codeLines(tail).indexOf(first ?? '') + 1)
+  assert.match(after.find((line) => /^G[0-3]\b/.test(line)) ?? '', /^G1 .*Z/,
+    'the plunge follows the restated plane, not the park position')
+}
+
+function testToolChangeParkXYShopBot(): void {
+  console.log('Testing a ShopBot tool change leaves the jogs to restate the plane...')
+  // C9 is the ShopBot tool-change macro: it moves the machine, so the emitter
+  // treats the position as unknown. The first jog after it must spell both Z
+  // and XY rather than trust where the previous operation ended.
+  const project = makeProject(['t1', 't2'], false)
+  const definition = machineWithToolChange('shopbot', ['M0 ; Tool change: {toolName}'])
+  const tail = afterLastTemplate(post(project, definition, PARK_MOVES), 'C9')
+  assertOrder(tail, ['C9', 'JZ,5.000', 'J2,30.000,10.000'],
+    'the Z jog and the XY jog restate the parked plane')
+}
+
+function testMotionTemplateOnlyX(): void {
+  console.log('Testing a template that moves only X leaves Y and Z known...')
+  // `G0 X0` moves X alone. Operation two's first rapid targets the XY operation
+  // one ended at, so the stale X would drop the block; the template must have
+  // cleared X only, and the next rapid restates the XY plane with no Z block.
+  const project = makeProject(['t1', 't1'], false)
+  const gcode = post(project, machineWithOperationHeader('grbl', 'G0 X0'), PARK_MOVES)
+  const tail = afterLastTemplate(gcode, 'G0 X0').slice('G0 X0'.length)
+  const first = firstMotionLine(tail)
+  assert.equal(first, 'X30.000 Y10.000', `the parked X is restated before the plunge\n${tail}`)
+  assert.doesNotMatch(first ?? '', /Z/, 'the template moved no Z, so none is restated')
+}
+
+function testInertTemplateByteIdentity(): void {
+  console.log('Testing an inert template leaves every other byte unchanged...')
+  // `G94` is on the allowlist and can move no axis. The program must be exactly
+  // the one without the template, line for line.
+  const project = makeProject(['t1', 't1'], false)
+  const plain = post(project, bundled('grbl'), PARK_MOVES)
+  const inert = post(project, machineWithOperationHeader('grbl', 'G94'), PARK_MOVES)
+  const without = (gcode: string, line: string) => gcode.split(/\r?\n/).filter((entry) => entry !== line)
+  assert.deepEqual(without(inert, 'G94'), without(plain, 'G94'),
+    'an inert template changes nothing but its own line')
+}
+
+/** A round bar 20 mm across along project X, with the two tools the repro uses. */
+function rotaryProject(toolIds: readonly string[]): Project {
+  const base = newProject('Template rotary', 'mm')
+  base.stock = roundStock(20, 100, 'x')
+  const bounds = getStockBounds(base.stock)
+  base.origin = {
+    name: 'Origin',
+    x: bounds.minX,
+    y: (bounds.minY + bounds.maxY) / 2,
+    z: base.stock.thickness,
+    visible: true,
+  }
+  base.tools = tools()
+  base.operations = toolIds.map((toolRef, index) => makeOperation(`rop${index + 1}`, toolRef))
+  return base
+}
+
+/** A bundled grbl machine with its own A axis and a real tool change. */
+function rotaryMachine(): MachineDefinition {
+  const base = bundled('grbl')
+  return validateMachineDefinition({
+    ...structuredClone(base),
+    rotary: {
+      about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' },
+    },
+    toolChange: { ...base.toolChange, commands: ['M5', 'M6 T{toolNumber}'] },
+  })
+}
+
+/** The same pass at a constant angle: it establishes A45, cuts, and leaves A45. */
+const ROTARY_MOVES: ToolpathMove[] = [
+  { kind: 'rapid', from: { x: 0, y: 10, z: 30, a: 45 }, to: { x: 0, y: 10, z: 30, a: 45 } },
+  { kind: 'plunge', from: { x: 0, y: 10, z: 30, a: 45 }, to: { x: 0, y: 10, z: 20, a: 45 } },
+  { kind: 'cut', from: { x: 0, y: 10, z: 20, a: 45 }, to: { x: 20, y: 10, z: 20, a: 45 } },
+]
+
+function testRotaryTemplateRestatesAngle(): void {
+  console.log('Testing a tool change that may index the bar restates the angle...')
+  // M6 is not inert: a tool changer can index the spindle. Operation one ends
+  // at A45 and operation two's first rapid targets A45 as well, so the stale
+  // angle would drop the word — and the first feed move would turn the bar or
+  // cut from wherever the changer left it.
+  const project = rotaryProject(['t1', 't2'])
+  const gcode = post(project, rotaryMachine(), ROTARY_MOVES)
+  const tail = afterLastTemplate(gcode, 'M6 T2')
+  const lines = codeLines(tail)
+  const firstAngle = lines.findIndex((line) => /A45(?:\.0+)?\b/.test(line))
+  assert.ok(firstAngle >= 0, `the next rapid restates the angle\n${tail}`)
+  assert.ok(lines.slice(0, firstAngle + 1).every((line) => !/^G1\b/.test(line)),
+    'the angle is restated on a rapid, before the first feed move')
 }
 
 testTwoToolsBottomGcode()
@@ -392,5 +535,10 @@ testPlasmaOperationHeaderTemplate()
 testOwordCallTemplate()
 testControllerPlasmaZTemplate()
 testMotionTemplateWithoutZByteIdentity()
+testToolChangeParkXYGcode()
+testToolChangeParkXYShopBot()
+testMotionTemplateOnlyX()
+testInertTemplateByteIdentity()
+testRotaryTemplateRestatesAngle()
 
-console.log('gcode template Z retract tests passed')
+console.log('gcode template axis retract tests passed')

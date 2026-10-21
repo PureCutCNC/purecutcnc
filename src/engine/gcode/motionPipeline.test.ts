@@ -355,11 +355,11 @@ function testSplitRapid(): void {
   assertEqual(splitRapid(at, { ...at }), [], 'a rapid to where the tool already is writes nothing')
   // An untrusted Z (#1057): a template may have moved the cutter, so even a
   // rapid whose target Z equals the stale one restates Z before travelling.
-  assertEqual(splitRapid(at, { x: 10, y: 2, z: 5 }, false),
+  assertEqual(splitRapid(at, { x: 10, y: 2, z: 5 }, { zKnown: false }),
     [{ z: 5 }, { x: 10, y: 2 }], 'an unknown Z writes Z before the XY block')
-  assertEqual(splitRapid(at, { x: 10, y: 20, z: 30 }, false),
+  assertEqual(splitRapid(at, { x: 10, y: 20, z: 30 }, { zKnown: false }),
     [{ z: 30 }, { x: 10, y: 20 }], 'an untrusted Z still rises before it travels')
-  assertEqual(splitRapid(at, { ...at }, false),
+  assertEqual(splitRapid(at, { ...at }, { zKnown: false }),
     [{ z: 5 }], 'an unknown Z restates the target Z even when nothing else moves')
 }
 
@@ -409,12 +409,32 @@ function testSplitRapidRotary(): void {
     'an unknown start turns with no XY difference: the angle rides the written XY block')
   // An untrusted Z (#1057) turns only after the retract, in either direction,
   // even when the stale Z would otherwise have let the turn go first.
-  assertEqual(splitRapid(at(0, 0, 30, 0), at(10, 0, 5, 45), false),
+  assertEqual(splitRapid(at(0, 0, 30, 0), at(10, 0, 5, 45), { zKnown: false }),
     [{ z: 5 }, { x: 10, y: 0, a: 45 }],
     'an untrusted Z retracts before a falling turn')
-  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 5, 45), false),
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 5, 45), { zKnown: false }),
     [{ z: 5 }, { a: 45 }],
     'an untrusted Z retracts before a rotation-only rapid')
+}
+
+/**
+ * The planar and rotary half of the knowledge rule (#1057 correction 2): an
+ * axis a template may have moved is unknown, so the rapid restates it even
+ * when its target equals the stale value.
+ */
+function testSplitRapidAxisKnowledge(): void {
+  console.log('Testing an unknown planar or rotary axis is always restated...')
+  const at = { x: 1, y: 2, z: 5 }
+  assertEqual(splitRapid(at, { ...at }, { xKnown: false }), [{ x: 1, y: 2 }],
+    'an unknown X restates the XY block even when the target equals the stale one')
+  assertEqual(splitRapid(at, { ...at }, { yKnown: false }), [{ x: 1, y: 2 }],
+    'an unknown Y restates the XY block')
+  assertEqual(splitRapid(at, { ...at, z: 30 }, { xKnown: false, yKnown: false }),
+    [{ z: 30 }, { x: 1, y: 2 }], 'safe Z still precedes a restated XY plane')
+  assertEqual(splitRapid({ ...at, a: 45 }, { ...at, a: 45 }, { rotaryKnown: false }),
+    [{ a: 45 }], 'an unknown angle is written again')
+  assertEqual(splitRapid({ ...at, a: 45 }, { ...at, a: 45 }), [],
+    'a known angle stays modal')
 }
 
 function testGcodeRapidsUseTheSplit(): void {
@@ -443,6 +463,7 @@ testGcodeCoolantStartsOnce()
 testDrillCycleTransform()
 testSplitRapid()
 testSplitRapidRotary()
+testSplitRapidAxisKnowledge()
 testGcodeRapidsUseTheSplit()
 
 console.log('motion pipeline tests passed')

@@ -1456,6 +1456,20 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 }
 
 /**
+ * Which tracked axes of `current` the caller can still prove are where the
+ * controller really is. Every field defaults to known; `current` being null
+ * overrides them all.
+ */
+export interface RapidAxisKnowledge {
+  xKnown?: boolean
+  yKnown?: boolean
+  zKnown?: boolean
+  /** False when a machine template may have turned the stock. Only read when
+   *  the target carries an angle. */
+  rotaryKnown?: boolean
+}
+
+/**
  * Split one rapid into the blocks that are emitted for it.
  *
  * A rapid that does not turn keeps the split it has always had: Z first, then
@@ -1469,30 +1483,43 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
  * unchanged — emits a single block carrying only the angle, so a move that
  * turns the stock is never silently dropped (rule 1).
  *
- * `zKnown` is the caller's promise that the tracked position's Z is where the
- * controller really is. A machine template may have moved Z behind the
- * emitter's back (#1057): the stale Z must then be treated as unknown, so the
- * rapid writes its own Z before any XY or rotary motion, even when that Z
- * equals the stale one and the ordinary split would have dropped the block.
- * `current` being null is always unknown.
+ * `knowledge` is the caller's promise that each tracked axis is where the
+ * controller really is. A machine template may have moved any axis behind the
+ * emitter's back (#1057): an axis it may have moved is unknown, so the rapid
+ * restates it from the target even when it equals the stale value and the
+ * ordinary split would have dropped the block. The order is unchanged — Z
+ * first, then XY, then the angle word — so the safe retract is never dropped
+ * and the parked plane is never skipped. `current` being null is always
+ * unknown.
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
-  zKnown = true,
+  knowledge: RapidAxisKnowledge = {},
 ): Array<Partial<ToolpathPoint>> {
   const angle = target.a
-  // Only a real angle change is written; a rapid that keeps the angle produces
-  // the pre-rotary blocks unchanged.
-  const turning = angle !== undefined && angle !== current?.a
+  const xTrusted = current !== null && (knowledge.xKnown ?? true)
+  const yTrusted = current !== null && (knowledge.yKnown ?? true)
+  const zTrusted = current !== null && (knowledge.zKnown ?? true)
+  const rotaryTrusted = current !== null && (knowledge.rotaryKnown ?? true)
 
-  // An unknown Z is no position at all: a template can leave the cutter
-  // anywhere, so every rapid restates Z from the target before it travels.
-  const trustedZ = zKnown && current !== null
-  const zChanges = !trustedZ || current.z !== target.z
-  const xyChanges = current === null
-    || (target.x !== undefined && current.x !== target.x)
-    || (target.y !== undefined && current.y !== target.y)
+  // Only a real angle change is written; a rapid that keeps the angle produces
+  // the pre-rotary blocks unchanged. An angle a template moved is unknown even
+  // when it equals the stale one, so the word is restated.
+  const turning = angle !== undefined && (!rotaryTrusted || angle !== current?.a)
+
+  // An unknown axis is no position at all: a template can leave the machine
+  // anywhere, so every rapid restates that axis from the target before it
+  // travels anywhere else. An axis the target does not name has no linear
+  // travel to restate: on a machine that borrows a motor its letter carries the
+  // angle instead (issue #393), so a stale flag for it must not invent an XY
+  // block that would write the letter as a coordinate.
+  const zChanges = !zTrusted || current.z !== target.z
+  const xChanges = target.x !== undefined
+    && (current === null || !xTrusted || current.x !== target.x)
+  const yChanges = target.y !== undefined
+    && (current === null || !yTrusted || current.y !== target.y)
+  const xyChanges = xChanges || yChanges
 
   const blocks: Array<Partial<ToolpathPoint>> = []
   // A rapid that does not turn keeps the split it has always had: Z first, then
@@ -1500,8 +1527,9 @@ export function splitRapid(
   // happens at the higher of its two Z values (issue #393): Z rising is the
   // ordinary order with the angle on the XY block, and Z falling or unchanged
   // turns across first and drops afterwards. An unknown Z is never "higher":
-  // retract to the target height first, then turn.
-  const zFirst = !turning || !trustedZ || target.z >= current.z
+  // retract to the target height first, then turn. The `current === null` test
+  // narrows for the comparison below and repeats what `!zTrusted` already says.
+  const zFirst = !turning || current === null || !zTrusted || target.z >= current.z
   if (zFirst) {
     if (zChanges) blocks.push({ z: target.z })
     // The angle rides the XY block when there is one and otherwise a block of
