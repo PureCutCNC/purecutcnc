@@ -348,8 +348,11 @@ function testProgramStructure(): void {
     'C9',
     'TR,12000',
     'C6',
-    // The first rapid starts from an unknown position: Z, then XY.
+    // C9 is a macro and may have moved the machine, so the first motion
+    // re-enters (#1057 correction 4): the safe Z, then the move's own start,
+    // then the rapid to its target.
     'JZ,5.000',
+    'J2,0.000,0.000',
     'J2,10.000,-5.000',
     // 600 mm/min and 180 mm/min, in mm per second.
     'MS,10.000,3.000',
@@ -366,7 +369,7 @@ function testProgramStructure(): void {
   ], 'program')
   assert(warnings.length === 0, `expected no warnings, got ${JSON.stringify(warnings)}`)
   assert(stats.lineCount === lines.length, 'lineCount counts every physical line')
-  assert(stats.moveCount === 6, `moveCount counts jogs, moves and arcs only, got ${stats.moveCount}`)
+  assert(stats.moveCount === 7, `moveCount counts jogs, moves and arcs only, got ${stats.moveCount}`)
   assert(stats.operationCount === 1, 'operationCount')
 
   // Nothing but SBP: no G-code words, no line numbers.
@@ -1020,7 +1023,10 @@ function testSafeZSplitOfRapids(): void {
     }],
   })
   const jogs = lines.filter((line) => line.startsWith('J'))
-  assertLines(jogs, ['JZ,5.000', 'J2,10.000,-5.000', 'JZ,5.000', 'J2,40.000,-25.000'], 'jogs')
+  // The tool load's C9 is a macro, so the first motion re-enters: safe Z, the
+  // move's start, then the rapid itself (#1057 correction 4). The split still
+  // writes Z before XY for the later rapid that changes both.
+  assertLines(jogs, ['JZ,5.000', 'J2,0.000,0.000', 'J2,10.000,-5.000', 'JZ,5.000', 'J2,40.000,-25.000'], 'jogs')
 }
 
 // ── Builds that predate the dialect ───────────────────────────

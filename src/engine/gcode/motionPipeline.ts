@@ -1377,18 +1377,23 @@ export function plannedStepStart(
 }
 
 /**
- * The highest machine-coordinate Z any of the operation's planned steps
- * reaches. An emitter that must retract before an arc-first feed move uses it
- * as the provable plane: every point the operation itself travels through is
- * at or below it (#1057 correction 3).
+ * The highest machine-coordinate Z the operation's own *rapid* steps reach, or
+ * null when it has none (#1057 correction 4).
+ *
+ * An emitter that must re-enter after a machine template retracts to this
+ * height before any XY or rotary motion. The generators put every rapid that
+ * travels in the plane at their own safe/clearance height, so the value is
+ * "the operation's safeZ as the generators define it". A *cutting* point never
+ * contributes: an arc is a cut and its endpoints are not read, and an
+ * operation whose whole path runs at Z-5 has no rapid at all — the caller must
+ * fall back to the generator's formula rather than rapid through the stock at
+ * the cut height.
  */
-export function plannedTopZ(steps: readonly FittedMoveDescriptor[]): number {
-  let top = -Infinity
+export function plannedSafeZ(steps: readonly FittedMoveDescriptor[]): number | null {
+  let top: number | null = null
   for (const step of steps) {
-    const z = step.kind === 'arc'
-      ? Math.max(step.startPoint.z, step.endPoint.z)
-      : step.point.z
-    if (z > top) top = z
+    if (step.kind !== 'linear' || step.moveKind !== 'rapid') continue
+    if (top === null || step.point.z > top) top = step.point.z
   }
   return top
 }

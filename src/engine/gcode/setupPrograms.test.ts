@@ -1055,8 +1055,13 @@ function testFlatAndAroundProgramsAreUnchanged(): void {
   const mill = withBottomSetup(singleSetupProject(), { axis: 'x', operationIds: ['under'] })
   assertEqual(programHash(mill, ['rough', 'drill', 'finish'], GRBL), '3179263c634d8ec1e764a3faf8eefe2c9a444838ca729170cf728c1f775a0f1f', 'milling Top program, G-code')
   assertEqual(programHash(mill, ['under'], GRBL), '2b99f3defc62a11888f6ecfea359a152968c8c443848a388e75da4ba2c29f6be', 'milling Bottom program, G-code')
-  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], SHOPBOT), '5c83729c6b52fb60dad0c95a903cdaa6bf41a6a1f30f89a81c89b167e6f31c14', 'milling Top program, SBP')
-  assertEqual(programHash(mill, ['under'], SHOPBOT), '4e7a863ac3499b84d95a6c6502537582dc11908575d29e75ca2da2f49bb8eca4', 'milling Bottom program, SBP')
+  // The SBP pins moved for #1057 correction 4: a part file writes `C9` for
+  // the first operation, and that macro is not provably inert, so the first
+  // motion now re-enters through the safe Z and the move's own start before
+  // the program continues. The G-code pins are unchanged because GRBL's
+  // tool-change commands are inert.
+  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], SHOPBOT), 'f79e4d4becec026935051e560aa147735d213be00454ba31f18dda04188e671d', 'milling Top program, SBP')
+  assertEqual(programHash(mill, ['under'], SHOPBOT), 'd23b778d4705a16cb1fed962655ff62097c39df65922b26252f6bb7d692ac52e', 'milling Bottom program, SBP')
 
   // An Around program keeps its own header, and is not given the Top/Bottom
   // A lines.

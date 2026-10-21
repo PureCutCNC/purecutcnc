@@ -90,31 +90,36 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   only when every word on it is on an explicit allowlist (dwell, plane, units,
   distance/feed modes, cutter compensation, work-coordinate select, spindle,
   coolant, pause/end, a tool select with no change, and parameter words, plus a
-  numeric `$` selector such as QtPlasmaC's `M5 $0`): an axis word, an
-  O-word/subroutine or macro call, a canned cycle, a home, a tool change, an
-  expression or any unknown word invalidates the tracked position of every axis
-  it can move. A motion block moves only the axes it names (`G0 X0` leaves Y and
-  Z known), so a later A word is preceded by a validated retract to the travel
-  height — a header or tool-change `G0 Z-8` cannot hide the cutter below the
-  blank (#1016 C2 M1; #1057).
-  For every project type the next rapid after such a template restates every
-  axis the template may have moved, in the existing order — safe Z first, then
-  XY, then the rotary word — so a stale tracked Z never drops the retract
-  (#1057) and a template that parks the spindle at X0 Y0 or indexes the bar
-  never lets the next rapid skip that plane or angle as "already there" (#1057
-  correction 2). A program with no axis-moving template is byte-identical.
-  A feed move that begins an operation (`G1`/`G2`/`G3`, or a canned cycle's
-  positioning) has no rapid of its own to restate those axes, so it recovers
-  first: the operation's own top plane, then its declared start XY/angle, then
-  its start Z. Arc I/J are therefore always measured from a point the program
-  stated, and a cancellation template that parks the machine (`G80\nG0 X0 Y0`)
-  leaves the plane unknown instead of restoring what its own template cleared
-  (#1057 correction 3). ShopBot does the same with `JZ`/`J2` after `C9`.
-  Controller-owned piercing (QtPlasmaC) is the one path that
-  writes no Z of its own: its load filter comments out Z words, templates
-  included, and keeps the torch height, so the XY torch path needs no
-  restatement and adds none. G-code-owned piercing writes Z itself and
-  restates its safe height before every cut's XY rapid.
+  numeric `$` selector such as QtPlasmaC's `M5 $0`, and a *bare* program
+  number such as `O0001 (part.nc)`: a call/subroutine keyword after the O-word
+  is still distrusted, but the program number moves nothing): an axis word, an
+  O-word followed by a keyword or macro call, a canned cycle, a home, a tool
+  change, an expression or any unknown word makes the template non-inert. A
+  template that moves the controller off the program's modal baseline — `G91`
+  (incremental), `G18`/`G19` (a non-XY arc plane), or the other unit command —
+  is non-inert too, and the re-entry restates `G90`/`G17`/the program's units
+  before any coordinate word.
+  For every project type the next motion of any kind after such a template
+  performs one full **re-entry**, exactly as the start of an operation does
+  (#1057 correction 4, replacing the per-axis repairs of corrections 1–3):
+  a rapid to the program's safe Z, always stated — the square blank's travel
+  height, the machine-coordinate Safe Z on a bar program whose machine has that
+  move (#1054), otherwise `plannedSafeZ`'s height, the clearance the operation's
+  own rapids use, never the highest point the path happens to reach (an
+  arc-only cut at Z−5 does not become its own clearance); then the modal damage
+  restored and the motion word reset so the retract spells `G0`; then a rapid
+  in XY and the rotary word to the exact point the next move starts from, every
+  axis stated even when it is believed known. The operation's ordinary approach
+  and move follow, so an arc always has a stated start and a rapid never runs at
+  the template's height or in its stale move mode. A template that is provably
+  inert leaves the program byte-identical.
+  Both plasma piercing paths re-enter on the same rule, torch off, to the
+  pierce point before the pierce sequence: G-code piercing states its safe
+  height first, controller-owned piercing (QtPlasmaC) states XY alone. A
+  `torchOnCommand` that itself moves the machine is the one template that
+  cannot re-enter torch-off, so the pierce point is restated before the cut and
+  a following arc's I/J is never measured from the macro's park. ShopBot does
+  the same with `JZ`/`J2` after `C9`.
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -134,13 +139,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   recognise it), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
-  coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
+  coordinates, for a dialect with canned cycles), `plannedSafeZ` (the highest
+  Z the operation's own *rapid* steps reach — the clearance the generators set
+  for them, or null when the path has none, so a cutting point can never become
+  the re-entry height, #1057 correction 4), `splitRapid` (the safe-Z
   split of a rapid, carrying a rotary angle so a rotation-only rapid is never
   dropped — the angle rides the XY block when there is one and otherwise a
   block of its own, never a Z block, in either direction of Z; the caller's
-  per-axis `RapidAxisKnowledge` says which tracked axes a template may have
-  moved, and each unknown axis is restated from the target even when it equals
-  the stale value, in the existing Z → XY → angle order, #1057; a borrowed
+  per-axis `RapidAxisKnowledge` says which tracked axes are still provable, and
+  each unknown axis is restated from the target even when it equals the stale
+  value, in the existing Z → XY → angle order; after a template the emitters now
+  re-enter rather than lean on this, #1057 correction 4; a borrowed
   motor's letter is the angle, not a coordinate, so it never invents an XY
   block), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
@@ -290,8 +299,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while QtPlasmaC
   writes the same program whatever the drop feed.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `templateZRetract.test.ts`
-  (a rapid after a template that moves any axis restates the unknown X, Y, Z or
-  rotary word, in both dialects, #1057), `motionPipeline.test.ts`
+  (the full re-entry after a non-inert template, in both dialects, #1057
+  correction 4: a table over every start kind — rapid, linear feed, arc, canned
+  drill, both plasma pierce modes, rotary — and GRBL, LinuxCNC, Mach
+  N-numbers and ShopBot, asserting the safe Z, the restated `G0`, the stated
+  start plane and the approach, plus the review's four repros and the one-rule
+  mutations), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
