@@ -50,6 +50,7 @@ import { warningSeverity } from '../toolpaths/warningCodes'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { planProgramSetup } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
+import { convertProjectUnits } from '../../utils/units'
 import {
   describeRegistration,
   describeTouchOff,
@@ -722,23 +723,20 @@ function testManualIndexTurnsTheBarItself(): void {
 }
 
 /**
- * Finding 1 (#1054 fix 1): the opening retract and turn must follow the first
- * operation's tool change and its length compensation. LinuxCNC's header
- * cancels tool length with `G49`, so a retract written before `M6`/`G43` is
- * measured with no compensation and cannot establish tip clearance. The
- * alternative — a `G53` machine-coordinate retract — cannot be written: the
- * emitter works in the work coordinate system and knows no machine zero.
+ * #1054 fix 2: the opening turn no longer infers tool-length compensation from
+ * the template text. Even a LinuxCNC header (`G49`) plus a tool change (`G43`)
+ * retracts in machine coordinates before turning the bar; the work-coordinate Z
+ * is not trusted to describe the tip.
  */
-function testManualIndexTurnFollowsToolLengthCompensation(): void {
-  console.log('Testing the opening turn follows the tool change and G43...')
+function testManualIndexTurnRetractsInMachineCoordinates(): void {
+  console.log('Testing the opening turn retracts in machine coordinates despite G43...')
   const project = rotaryBarProject('x')
   const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
   const definition = validateMachineDefinition({
     ...structuredClone(LINUXCNC),
     rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
   })
-  // The 20 mm round bar's travel height is 21 mm; the origin is its top at 20,
-  // so the emitted retract is 1.000.
+  const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
   for (const face of ['top', 'bottom'] as const) {
     const angle = face === 'bottom' ? 180 : 0
     const program = post(two, [face === 'top' ? 'rough' : 'under'], definition, barMoves('x', face)).gcode
@@ -746,15 +744,19 @@ function testManualIndexTurnFollowsToolLengthCompensation(): void {
     const g49 = lines.findIndex((line) => /\bG49\b/.test(line))
     const m6 = lines.findIndex((line) => line.startsWith('M6 T1'))
     const g43 = lines.findIndex((line) => line.startsWith('G43 H1'))
-    const retractAt = lines.indexOf('G0 Z1.000')
+    const retractAt = lines.indexOf(safeLine)
     const turnAt = lines.indexOf(`G0 A${angle.toFixed(3)}`)
     assert(g49 > 0 && g49 < m6, `${face}: the header cancels tool length before the change`)
     assert(m6 > 0 && g43 > m6, `${face}: the tool change applies its length compensation`)
-    assert(g43 < retractAt, `${face}: the retract is written after G43, with the length applied`)
-    assertEqual([lines[retractAt], lines[retractAt + 1]], ['G0 Z1.000', `G0 A${angle.toFixed(3)}`], `${face}: retract, then turn`)
+    assert(retractAt > g43, `${face}: the retract is written after the tool change`)
+    assertEqual([lines[retractAt], lines[retractAt + 1]], [safeLine, `G0 A${angle.toFixed(3)}`], `${face}: machine retract, then turn`)
+    assert(
+      !lines.slice(g43 + 1, turnAt).some((line) => /^G0 Z[\d.-]+$/.test(line)),
+      `${face}: no work-coordinate retract is written for the turn`,
+    )
     assert(
       !lines.slice(0, retractAt).some((line) => /(^|\s)A[-+]?\d/.test(line)),
-      `${face}: no A word is written before the length compensation`,
+      `${face}: no A word is written before the retract`,
     )
     assert(/^Z|^X|^G[0-3]/.test(lines[turnAt + 2]), `${face}: the operation's own motion follows the turn`)
   }
@@ -813,15 +815,16 @@ function testInvertedZAxisUnwindRetracts(): void {
 }
 
 /**
- * #1054 fix 2/fix 3: a single-tool Top or Bottom program with tool changes
- * disabled has no tool-length compensation, so the opening and closing
- * bar-clearance retract cannot be a work-coordinate `G0 Z<travel>`: that Z no
- * longer describes the tip. Every bundled rotary-capable dialect must retract
- * in machine coordinates to the definition's own Safe Z instead, and a machine
- * with no machine-coordinate move must refuse the turn.
+ * #1054 fix 2/fix 3: every opening and closing turn of a bar Top/Bottom
+ * program is preceded by the machine-coordinate retract, whatever compensation
+ * a template claims. The emitter no longer scans the template text for
+ * `G43`/`G49`; only the machine frame is independent of the work offset and
+ * compensation. Every bundled rotary-capable dialect must retract to the
+ * definition's own Safe Z, and a machine with no machine-coordinate move must
+ * refuse the turn even when a `G43` claims compensation.
  */
-function testManualIndexTurnWithoutCompensation(): void {
-  console.log('Testing the bar turn without tool-length compensation...')
+function testEveryBarTurnRetractsInMachineCoordinates(): void {
+  console.log('Testing every bar turn retracts in machine coordinates...')
   const project = rotaryBarProject('x')
   const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
   const rotary: RotaryDefinition = {
@@ -841,98 +844,83 @@ function testManualIndexTurnWithoutCompensation(): void {
 
   for (const id of ['linuxcnc', 'grbl', 'grblhal', 'mach3', 'uccnc', 'generic']) {
     const definition = rotaryMachineOf(bundled(id))
-    const label = `${definition.name} without tool changes`
+    const label = `${definition.name}`
     for (const face of ['top', 'bottom'] as const) {
       const operation = face === 'top' ? 'rough' : 'under'
-      const result = post(two, [operation], definition, barMoves('x', face), false)
-      assertEqual(
-        result.warnings.filter((warning) => warningSeverity(warning.code) === 'error'),
-        [],
-        `${label}, ${face}: no refusal`,
-      )
-      const lines = result.gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
-      const angle = formatGCodeNumber(face === 'bottom' ? 180 : 0, definition, two.meta.units)
-      const turnAt = lines.indexOf(`G0 A${angle}`)
-      const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
-      assert(turnAt > 0, `${label}, ${face}: the turn is posted\n${result.gcode}`)
-      assertEqual(lines[turnAt - 1], safeLine, `${label}, ${face}: machine-coordinate Safe Z before the turn`)
-      assert(
-        !lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)),
-        `${label}, ${face}: no compensation is claimed`,
-      )
-      if (face === 'bottom') {
-        const unwindAt = lines.findLastIndex((line) => line === `G0 A${formatGCodeNumber(0, definition, two.meta.units)}`)
-        assert(unwindAt > turnAt, `${label}, ${face}: the closing unwind is posted`)
+      for (const toolChanges of [false, true]) {
+        const result = post(two, [operation], definition, barMoves('x', face), toolChanges)
+        const setting = `${label}, ${face}, tool changes ${toolChanges ? 'on' : 'off'}`
         assertEqual(
-          lines[unwindAt - 1],
-          safeLine,
-          `${label}, ${face}: machine-coordinate Safe Z before the closing unwind`,
+          result.warnings.filter((warning) => warningSeverity(warning.code) === 'error'),
+          [],
+          `${setting}: no refusal`,
         )
+        const lines = result.gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+        const angle = formatGCodeNumber(face === 'bottom' ? 180 : 0, definition, two.meta.units)
+        const turnAt = lines.indexOf(`G0 A${angle}`)
+        const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
+        assert(turnAt > 0, `${setting}: the turn is posted\n${result.gcode}`)
+        assertEqual(lines[turnAt - 1], safeLine, `${setting}: machine-coordinate Safe Z before the turn`)
+        if (face === 'bottom') {
+          const unwindAt = lines.findLastIndex((line) => line === `G0 A${formatGCodeNumber(0, definition, two.meta.units)}`)
+          assert(unwindAt > turnAt, `${setting}: the closing unwind is posted`)
+          assertEqual(
+            lines[unwindAt - 1],
+            safeLine,
+            `${setting}: machine-coordinate Safe Z before the closing unwind`,
+          )
+        }
       }
     }
   }
 
-  // With tool changes enabled, LinuxCNC/Mach3/UCCNC apply G43 and keep the
-  // historical work-coordinate retract: the compensated path is unchanged.
-  for (const id of ['linuxcnc', 'mach3', 'uccnc']) {
-    const definition = rotaryMachineOf(bundled(id))
-    const lines = post(two, ['under'], definition, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
-    const turnAt = lines.indexOf(`G0 A${formatGCodeNumber(180, definition, two.meta.units)}`)
-    assert(turnAt > 0, `${definition.name}: the turn is posted with tool changes on`)
-    assert(lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)), `${definition.name}: G43 is applied`)
+  // The reviewer's repro (#1054 fix 4): `G43` applies compensation and a later
+  // compact `G90G49` cancels it on the same word. The scanner missed that line
+  // and kept claiming compensation. The retract must not depend on the scan at
+  // all: both a plain and a compact cancellation still retract with G53.
+  const cancellingBase = bundled('linuxcnc')
+  for (const cancel of ['G49', 'G90G49']) {
+    const cancelling = validateMachineDefinition({
+      ...structuredClone(cancellingBase),
+      rotary,
+      toolChange: {
+        ...structuredClone(cancellingBase.toolChange),
+        commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}', cancel],
+      },
+    })
+    const lines = post(two, ['under'], cancelling, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+    const turnAt = lines.indexOf(`G0 A${formatGCodeNumber(180, cancelling, two.meta.units)}`)
+    assert(turnAt > 0, `${cancel}: the turn is still posted`)
+    assert(lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)), `${cancel}: G43 was applied earlier`)
     assertEqual(
       lines[turnAt - 1],
-      `G0 Z${formatGCodeNumber(1, definition, two.meta.units)}`,
-      `${definition.name}: the work-coordinate retract is unchanged`,
+      `G53 G0 Z${formatGCodeNumber(cancelling.motion.machineSafeZ, cancelling, two.meta.units)}`,
+      `${cancel}: the retract is machine-coordinate, not the work-coordinate Z`,
     )
   }
 
-  // A tool change that applies and then cancels compensation is the same as no
-  // compensation: the retract must not trust the cancelled work-coordinate Z.
-  const cancellingBase = bundled('linuxcnc')
-  const cancelling = validateMachineDefinition({
+  // A machine with no machine-coordinate move is refused rather than turned,
+  // with or without a compensation a template claims. `machineCoordinateCommand:
+  // null` declares no G53.
+  const noMachineMove = rotaryMachineOf(bundled('grbl'), { machineCoordinateCommand: null })
+  const compensated = validateMachineDefinition({
     ...structuredClone(cancellingBase),
     rotary,
+    motion: { ...structuredClone(cancellingBase.motion), machineCoordinateCommand: null },
     toolChange: {
       ...structuredClone(cancellingBase.toolChange),
-      commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}', 'G49'],
-    },
-  })
-  const cancelled = post(two, ['under'], cancelling, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
-  const cancelledTurn = cancelled.indexOf(`G0 A${formatGCodeNumber(180, cancelling, two.meta.units)}`)
-  assert(cancelledTurn > 0, 'a cancelled compensation still turns')
-  assertEqual(
-    cancelled[cancelledTurn - 1],
-    `G53 G0 Z${formatGCodeNumber(cancelling.motion.machineSafeZ, cancelling, two.meta.units)}`,
-    'the retract follows the cancellation, not G43',
-  )
-
-  // A machine with no machine-coordinate move and no compensation is refused
-  // rather than turned. `machineCoordinateCommand: null` declares no G53.
-  const noMachineMove = rotaryMachineOf(bundled('grbl'), { machineCoordinateCommand: null })
-  const refused = post(two, ['under'], noMachineMove, barMoves('x', 'bottom'), false)
-  assertEqual(refused.gcode, '', 'no program text is posted')
-  assertEqual(refused.warnings, [{ code: 'postRotaryTurnWithoutClearance', params: { operation: 'Under' } }], 'the refusal names the operation')
-  assertEqual(warningSeverity('postRotaryTurnWithoutClearance'), 'error', 'as an error, which blocks the save')
-
-  // The same machine with compensation active needs no machine move: the
-  // work-coordinate retract is still valid.
-  const compensated = validateMachineDefinition({
-    ...structuredClone(cancelling),
-    motion: { ...structuredClone(cancelling.motion), machineCoordinateCommand: null },
-    toolChange: {
-      ...structuredClone(cancelling.toolChange),
       commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}'],
     },
   })
-  const compensatedLines = post(two, ['under'], compensated, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
-  const compensatedTurn = compensatedLines.indexOf(`G0 A${formatGCodeNumber(180, compensated, two.meta.units)}`)
-  assert(compensatedTurn > 0, 'compensation alone is enough to turn')
-  assertEqual(
-    compensatedLines[compensatedTurn - 1],
-    `G0 Z${formatGCodeNumber(1, compensated, two.meta.units)}`,
-    'the work-coordinate retract is used',
-  )
+  for (const [setting, definition] of [
+    ['without tool changes', noMachineMove],
+    ['with G43 applied', compensated],
+  ] as const) {
+    const refused = post(two, ['under'], definition, barMoves('x', 'bottom'))
+    assertEqual(refused.gcode, '', `${setting}: no program text is posted`)
+    assertEqual(refused.warnings, [{ code: 'postRotaryTurnWithoutClearance', params: { operation: 'Under' } }], `${setting}: the refusal names the operation`)
+    assertEqual(warningSeverity('postRotaryTurnWithoutClearance'), 'error', `${setting}: as an error, which blocks the save`)
+  }
 
   // ShopBot part files are not G-code and cannot carry a rotary axis, so no
   // bundled ShopBot definition reaches this turn. The schema says so.
@@ -946,11 +934,14 @@ function testManualIndexTurnWithoutCompensation(): void {
 }
 
 /**
- * #1054 fix 3: the G53 retract height is a machine coordinate the definition
- * states, never one derived from the project. The default 0 is the top of
- * travel after homing; a project's origin, units and Safe Z do not change it.
+ * #1054 fix 3/fix 4: the G53 retract height is a machine coordinate the
+ * definition states in millimetres, never one derived from the project. The
+ * default 0 is the top of travel after homing; a project's origin, units and
+ * Safe Z do not change it, and the project's units conversion never touches
+ * it — the emitter converts the stored millimetres at emission.
  * Mutation checked: deriving the height from the project's Safe Z again (the
- * fix-2 behaviour) makes the custom-height assertions fail.
+ * fix-2 behaviour) makes the custom-height assertions fail, and leaving the
+ * stored millimetres unconverted in an inch program fails the -0.4921 check.
  */
 function testMachineSafeZIsAMachineCoordinate(): void {
   console.log("Testing the G53 retract height is the definition's machine Safe Z...")
@@ -987,8 +978,9 @@ function testMachineSafeZIsAMachineCoordinate(): void {
     )
   }
 
-  // Inch projects read the same machine coordinate: the top is 0 in either
-  // unit, and a stated height is written in the program's own precision.
+  // Inch projects: the definition stores the machine Z in millimetres (#1054
+  // fix 4), so the emitter converts it to the program's units. The default 0 is
+  // 0 in either unit; a stated -12.5 mm becomes -0.4921 in (G20).
   const inchBase = newProject('Inch Bar', 'inch')
   inchBase.stock = roundStock(2, 8, 'x')
   const inchBounds = getStockBounds(inchBase.stock)
@@ -1005,6 +997,18 @@ function testMachineSafeZIsAMachineCoordinate(): void {
     meta: { ...inchBase.meta, projectType: 'rotary' },
     operations: [makeOperation('rough', 'Rough')],
   })
+  const mmProgram = post(base, ['under'], custom, barMoves('x', 'bottom')).gcode
+  const inchProgram = post(inchProject, ['rough'], custom, barMoves('x', 'top')).gcode
+  assert(mmProgram.includes('G21'), 'the mm program declares G21')
+  assert(inchProgram.includes('G20'), 'the inch program declares G20')
+  assert(
+    mmProgram.includes('G53 G0 Z-12.500'),
+    'the mm program writes the definition\'s -12.5 mm machine height',
+  )
+  assert(
+    inchProgram.includes('G53 G0 Z-0.4921'),
+    'the inch program converts the same machine height to the program units',
+  )
   assertEqual(
     retractLine(inchProject, grbl, ['rough'], barMoves('x', 'top')),
     'G53 G0 Z0.0000',
@@ -1012,8 +1016,27 @@ function testMachineSafeZIsAMachineCoordinate(): void {
   )
   assertEqual(
     retractLine(inchProject, custom, ['rough'], barMoves('x', 'top')),
-    'G53 G0 Z-12.5000',
-    'inch: a stated machine height is read in the program units',
+    'G53 G0 Z-0.4921',
+    'inch: a stated machine height is converted to the program units',
+  )
+
+  // The project's own units conversion leaves the embedded machine definition
+  // (and its millimetre Safe Z) untouched; the conversion happens only when the
+  // block is emitted, so the same definition writes the right Z in either
+  // program unit (#1054 fix 4).
+  const converted: Project = convertProjectUnits(
+    { ...base, meta: { ...base.meta, machineDefinitions: [custom] } },
+    'inch',
+  )
+  assertEqual(
+    converted.meta.machineDefinitions[0].motion.machineSafeZ,
+    -12.5,
+    'converting the project to inch leaves the machine Safe Z in millimetres',
+  )
+  assertEqual(
+    retractLine(converted, custom, ['under'], barMoves('x', 'bottom')),
+    'G53 G0 Z-0.4921',
+    'and the converted inch project emits the converted height',
   )
 }
 
@@ -1075,8 +1098,8 @@ testWhatAProgramMayNotBe()
 testManualIndexingOnARotaryBar()
 testBottomFlipAxisWarning()
 testManualIndexTurnsTheBarItself()
-testManualIndexTurnFollowsToolLengthCompensation()
-testManualIndexTurnWithoutCompensation()
+testManualIndexTurnRetractsInMachineCoordinates()
+testEveryBarTurnRetractsInMachineCoordinates()
 testMachineSafeZIsAMachineCoordinate()
 testManualIndexAxisMismatchIsRefused()
 testInvertedZAxisUnwindRetracts()

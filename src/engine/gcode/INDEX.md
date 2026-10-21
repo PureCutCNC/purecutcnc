@@ -35,7 +35,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
   for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
   `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
-  height, default 0 = the top of travel after homing — `outputDialect`,
+  height in **millimetres**, converted to the program's units at emission,
+  default 0 = the top of travel after homing — `outputDialect`,
   `machineKind`, `plasma` and `rotary`
   blocks), `resolveOutputDialect`, `machineCoordinateRapidCommand`, the rotary
   helpers `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection` (which letter
@@ -68,25 +69,25 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rotary word to 0 or 180 through `rotaryDirection`, before any operation's
   moves. The header says the program does it, and X/Y are left unknown
   afterwards so the first operation writes its own position. The clearance
-  retract is compensation-independent (#1054 fix 2): while a tool-length
-  compensation is known active (`G43`/`G44`, not cancelled by `G49`) it is the
-  historical work-coordinate rapid to the generators' travel height
-  (`rotaryTravelZ`, above a square blank's corners); otherwise it is a
-  machine-coordinate rapid to the machine definition's own Safe Z
-  (`motion.machineSafeZ`, default 0 = the top of travel after homing, #1054
-  fix 3), which no work offset or compensation can change. It is never derived
-  from the project origin, units or Safe Z: `G53` is the machine's zero, which
-  the app does not know. A machine with neither a compensation nor a
-  machine-coordinate move is refused with `postRotaryTurnWithoutClearance`
-  rather than turned.
+  retract is always a machine-coordinate rapid (#1054 fix 2): the emitter no
+  longer infers tool-length compensation from template text (`G43`/`G44`/
+  `G49`, including compact spellings the old scan missed), because only the
+  machine frame is independent of the work offset and compensation. The height
+  is the machine definition's own Safe Z (`motion.machineSafeZ`, stored in
+  millimetres and converted to the program's units at emission, default 0 =
+  the top of travel after homing, #1054 fix 3/fix 4). It is never derived from
+  the project origin, units or Safe Z: `G53` is the machine's zero, which the
+  app does not know. A machine with no machine-coordinate move is refused with
+  `postRotaryTurnWithoutClearance` rather than turned.
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
   and none for a program that ends at 0 or that never carried an angle (so a
   Top manual-index program writes no unwind, and a Bottom one does). It makes
-  the same compensation-independent clearance retract first (#1054 fix 2). On a
-  square blank it also rapids to the generators' travel height whenever the
-  last emitted Z is below it or unknown, because the last operation may have
-  descended at a constant angle. A template that can move Z (a Z word, a
+  the same machine-coordinate clearance retract first (#1054 fix 2). On a
+  square blank a template Z move before an A word also rapids to the
+  generators' travel height whenever the tracked Z is unknown, because the
+  last operation may have descended at a constant angle. A template that can
+  move Z (a Z word, a
   canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
   A word is preceded by a validated retract to that height — a header or
   tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
@@ -205,8 +206,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   inverse-time mode without a positive F on its own block is what a controller
   rejects, so it takes the parser's existing downgrade path and reports
   `unsupported` rather than verified with a borrowed F; an F on a line of its
-  own does not count. A program with no rotary word and no `G93` parses exactly
-  as before.
+  own does not count. A `G53` block is a machine-coordinate move, not a work
+  position (#1054 fix 4): it is not added to the work-frame trace, it leaves the
+  tracked work Z unknown until a later block states one, and the parse reports
+  `unsupported` rather than verified. A program with no rotary word and no `G93`
+  parses exactly as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
   `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
 - `motionDebug.ts` — exported-motion debug helpers (issue #356):

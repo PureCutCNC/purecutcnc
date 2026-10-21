@@ -203,20 +203,22 @@ export const MachineDefinitionSchema = z.object({
     arcInterpolation: z.boolean().default(false),
     /**
      * The block prefix that moves an axis in machine coordinates, e.g.
-     * `G53 G0` (issue #1054). A bar-clearance retract needs it when no
-     * tool-length compensation is active, because then the work-coordinate Z
-     * the emitter writes does not describe the tip's physical height.
-     * Absent means the G-code dialect's standard move — `G53` followed by the
-     * definition's own `rapidCommand`; `null` means this machine has none, and
-     * a turn that needs one is refused rather than written.
+     * `G53 G0` (issue #1054). Every bar-clearance retract the emitter writes
+     * uses it (#1054 fix 2), because only the machine frame is independent of
+     * any work offset or tool-length compensation. Absent means the G-code
+     * dialect's standard move — `G53` followed by the definition's own
+     * `rapidCommand`; `null` means this machine has none, and a turn that needs
+     * one is refused rather than written.
      */
     machineCoordinateCommand: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.').nullable().optional(),
     /**
      * The machine-coordinate Z a bar-clearance retract rapids to with
-     * `machineCoordinateCommand` (issue #1054 fix 3), in the program's output
-     * units. It is a *machine* coordinate: `G53` is measured from the machine's
-     * own zero, which PureCutCNC knows nothing about, so this must never be
-     * derived from a project origin, the project's Safe Z or its units.
+     * `machineCoordinateCommand` (issue #1054 fix 3), in **millimetres**
+     * (#1054 fix 4). It is a *machine* coordinate: `G53` is measured from the
+     * machine's own zero, which PureCutCNC knows nothing about, so this must
+     * never be derived from a project origin or the project's Safe Z, and the
+     * project's units conversion does not touch it. The emitter converts it to
+     * the program's output units when it writes the block.
      *
      * The default 0 is the top of travel, the convention the bundled grblHAL
      * footer already uses (`G0 G53 Z0`). It assumes the machine is homed with Z

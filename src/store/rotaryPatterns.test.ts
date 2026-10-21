@@ -605,8 +605,15 @@ function assertExportedHelix(
     definition.program.commentSuffix,
     { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
   )
-  assert.equal(parsed.status, 'verified', `${label}: the program parses (${parsed.warnings.join('; ')})`)
-  assert.deepEqual(parsed.warnings, [], `${label}: the parser reconstructs every block`)
+  // The helix ends at a non-zero angle, so the program carries the closing
+  // machine-coordinate retract (#1054 fix 2). A G53 block is not a work
+  // position, so the parse is not reported as verified (#1054 fix 4); every
+  // other block must still reconstruct.
+  assert.equal(parsed.status, 'unsupported', `${label}: the program parses around the machine retract (${parsed.warnings.join('; ')})`)
+  assert.ok(
+    parsed.warnings.length > 0 && parsed.warnings.every((warning) => warning.includes('G53')),
+    `${label}: the only warnings are the machine-coordinate retract (${parsed.warnings.join('; ')})`,
+  )
 
   // 360 degrees per physical lead: over one lead (`starts * pitch`) of physical
   // travel the bar turns exactly one revolution. The posted angle carries the

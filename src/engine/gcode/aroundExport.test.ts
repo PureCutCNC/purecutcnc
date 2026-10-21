@@ -870,26 +870,29 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     OWN_X.program.commentSuffix,
     { word: rotaryWord(OWN_X)!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
-  assert.equal(parsed.status, 'verified', `the program parses: ${parsed.warnings.join('; ')}`)
+  // The program ends at a non-zero angle, so it carries the closing
+  // machine-coordinate retract (#1054 fix 2). A G53 block is not a work
+  // position, so the parse is not reported as verified (#1054 fix 4); the
+  // rest of the program must still read back.
+  assert.equal(parsed.status, 'unsupported', `the program parses around the machine retract: ${parsed.warnings.join('; ')}`)
+  assert.ok(
+    parsed.warnings.length > 0 && parsed.warnings.every((warning) => warning.includes('G53')),
+    `the only warnings are the machine-coordinate retract: ${parsed.warnings.join('; ')}`,
+  )
   assert.ok(parsed.moves.length > 0, 'and has motion')
 
   // The whole program, unwrapped with `unwrapPoint`, lies on the flat
   // toolpaths the operations were generated from.
   const flatSource = MM.operations.flatMap((entry) => unwrapToolpath(wrapped.get(entry.id)!, frame).moves)
-  const samePlace = (a: typeof parsed.moves[number]['from'], b: typeof a): boolean =>
-    a.x === b.x && a.y === b.y
   const closingUnwindAt = parsed.moves.findLastIndex((move) => move.from.a !== undefined && move.to.a === 0
     && move.from.x === move.to.x && move.from.y === move.to.y && move.from.z === move.to.z)
   let checked = 0
   for (const [index, move] of parsed.moves.entries()) {
     // The closing unwind turns the bar with the tool parked, so in stock space
     // it sweeps across the bar rather than following the flat path. It is the
-    // one motion the flat toolpath has no analogue for (rule 5).
+    // one motion the flat toolpath has no analogue for (rule 5). The machine-
+    // coordinate retract before it is not in the trace at all (#1054 fix 4).
     if (index === closingUnwindAt) continue
-    // Immediately before it, the bar-clearance retract is a Z-only move in
-    // machine coordinates (#1054 fix 2); it is not a toolpath point either.
-    if (index === closingUnwindAt - 1 && samePlace(move.from, move.to)
-      && move.from.z !== move.to.z && move.from.a === move.to.a) continue
     for (const point of [move.from, move.to]) {
       // The program also opens with a Z-only safe rapid, before any angle word
       // — the pre-existing safe-Z split, whose XY is the machine's own zero

@@ -536,9 +536,8 @@ export interface ProgramSetupPlan {
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
-  /** Whether the manual-index clearance retract is the machine-coordinate one
-   *  (#1054 fix 3). Absent means yes, the documented default when a machine
-   *  applies no tool-length compensation. */
+  /** Whether the machine can write the machine-coordinate manual-index retract
+   *  (#1054 fix 2/fix 3). Absent means yes. */
   machineCoordinateRetract = true,
 ): ProgramSetupPlan {
   const { project, operations } = input

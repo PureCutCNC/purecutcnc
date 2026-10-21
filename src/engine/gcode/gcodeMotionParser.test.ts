@@ -215,6 +215,39 @@ function testCorrectInverseTimeProgramStillVerifies(): void {
   assert(r.moves[3].inverseTimeFeed === undefined, 'G94 restores the ordinary feed')
 }
 
+function testMachineCoordinateMoveIsNotWorkZ(): void {
+  console.log('Testing a G53 move is machine-coordinate and leaves the work Z unknown...')
+  // The #1054 retract: a work Z5, then `G53 G0 Z0` to the machine's top, then
+  // the A turn. The retract's Z0 is NOT a work Z — reading it as one is what
+  // made the turn look verified at work Z0.
+  const r = parseGcodeMotion('G0 X0 Y0 Z5\nG53 G0 Z0\nG0 A180', 'ij', '(', ')', ROTARY_A)
+  assert(r.status === 'unsupported', `a machine-coordinate move is not verified, got ${r.status}`)
+  assert(r.warnings.some((warning) => warning.includes('G53')), `the reason names G53, got ${JSON.stringify(r.warnings)}`)
+  assert(
+    !r.moves.some((move) => move.from.z === 5 && move.to.z === 0),
+    'the G53 block is not emitted as a work-coordinate move to Z0',
+  )
+  const turn = r.moves.find((move) => move.to.a === 180)
+  assert(turn !== undefined, 'the A turn is still parsed')
+  assert(approx(turn!.from.z, 5) && approx(turn!.to.z, 5),
+    `the turn does not inherit the machine retract's Z0, got ${turn!.from.z}->${turn!.to.z}`)
+  assert(
+    r.warnings.some((warning) => warning.includes('does not state Z')),
+    `the unprovable work Z is reported, got ${JSON.stringify(r.warnings)}`,
+  )
+
+  // A later block that states Z re-establishes the work frame, but the program
+  // is still not verified because the G53 move itself cannot be placed there.
+  const resumed = parseGcodeMotion('G0 X0 Y0 Z5\nG53 G0 Z0\nG0 X10 Z3', 'ij', '(', ')')
+  assert(resumed.status === 'unsupported', 'the G53 still downgrades the parse')
+  assert(approx(resumed.moves[resumed.moves.length - 1].to.z, 3), 'a stated Z is read again after the G53')
+
+  // A standalone `G53` with no axis words is still a machine-coordinate block.
+  const bare = parseGcodeMotion('G53\nG0 X1 Y0 Z0', 'ij', '(', ')')
+  assert(bare.status === 'unsupported', 'the bare G53 downgrades the parse')
+  assert(bare.moves.length === 1, 'and moves nothing in the work frame itself')
+}
+
 testModalLinear()
 testArcIJ()
 testArcCCWRadius()
@@ -230,6 +263,7 @@ testInverseTimeFeedMode()
 testInverseTimeFeedIsNotModal()
 testStandaloneFeedLineDoesNotFeedTheMove()
 testCorrectInverseTimeProgramStillVerifies()
+testMachineCoordinateMoveIsNotWorkZ()
 testPlainProgramIsUnchanged()
 
 console.log('gcodeMotionParser tests passed')

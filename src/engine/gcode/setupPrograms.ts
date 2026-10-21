@@ -290,11 +290,11 @@ const RETRACT_BEFORE_TURNING_LINE = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BA
  * program's own rotary word: on a borrowed motor it is the axis the program
  * writes, not always A.
  *
- * Without tool-length compensation the retract is in machine coordinates, so
- * the line names its target and the assumption behind it: the machine is homed
- * with Z at the top of travel, which `motion.machineSafeZ` defaults to 0
- * (#1054 fix 3). With compensation active the retract is the work-coordinate
- * travel height and the line stays the neutral statement (#1054 fix 2).
+ * Every such retract is in machine coordinates (#1054 fix 2), so the line names
+ * its target and the assumption behind it: the machine is homed with Z at the
+ * top of travel, which `motion.machineSafeZ` defaults to 0 (#1054 fix 3). Only
+ * a machine with no machine-coordinate move reaches the neutral wording, and
+ * its turn is refused rather than written.
  */
 function manualIndexTurnLine(
   word: 'A' | 'X' | 'Y',
@@ -340,9 +340,10 @@ export function setupStatesManualIndexing(
  * reference — flip registration means nothing in a chuck — so its line is the
  * rotary zeroing instruction instead. `definition` is the program's machine: a
  * borrowed rotary replaces one horizontal motor, which the operator must
- * compensate for by hand. `machineCoordinateRetract` says whether the
- * manual-index retract is the machine-coordinate one, so the operator line
- * describes what the program actually writes (#1054 fix 3).
+ * compensate for by hand. `machineCoordinateRetract` says whether the machine
+ * can write the machine-coordinate manual-index retract, so the operator line
+ * describes what the program actually writes (#1054 fix 3); a machine without
+ * one is refused at emission rather than turned.
  */
 export function setupHeaderLines(
   project: Project,
