@@ -120,8 +120,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   is refused in every mode (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1), and
   a below-envelope **cut** turn is admitted only for an around-mode square
   operation whose posted motion equals the operation regenerated for the current
-  project move for move (same kinds, points within 1e-9, same order); anything
-  else is `postSquareAroundToolpathStale` (#1045 slice K). An along-mode cut turn
+  project move for move (same kinds, points exactly equal bit for bit, same
+  order); anything else is `postSquareAroundToolpathStale` (#1045 slices K and
+  L), and an around finish whose regenerated result names a licensing rough that
+  is not earlier in the same exported program is `postSquareAroundRoughMissing`
+  (slice L). An along-mode cut turn
   below the envelope keeps `postRotarySquareTurnBelowEnvelope`, and
   the inverse-time refusal keeps its own whole-operation turning-feed test,
   independent of the angle tracker, so an unestablished constant-angle feed

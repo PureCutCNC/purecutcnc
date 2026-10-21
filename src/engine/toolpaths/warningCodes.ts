@@ -481,10 +481,18 @@ export type ToolpathWarningCode =
    *  hand-edited one, or another operation's path. Around mode turns below the
    *  blank's corner envelope because the turn is the cut, so the export check
    *  proves the motion is the generator's own by regenerating the operation and
-   *  comparing it move for move (same kinds, points within a relative 1e-9, same
-   *  order). The operation is refused rather than posted (issue #1045 slice K).
-   *  Params: operation. */
+   *  comparing it move for move (same kinds, points exactly equal bit for bit,
+   *  same order). The operation is refused rather than posted (issue #1045
+   *  slices K and L). Params: operation. */
   | 'postSquareAroundToolpathStale'
+  /** A square blank's around finish depends on one or more roughs that are not
+   *  earlier in the same exported program (#1045 slice L). Its motion is
+   *  regenerated against the whole project, so the finish is licensed by those
+   *  roughs' own results; posting the finish alone (or with a rough that is
+   *  disabled, excluded from this export, in another setup/program, or later)
+   *  would make its first ring take the standing material in one pass. Params:
+   *  operation. */
+  | 'postSquareAroundRoughMissing'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -581,6 +589,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
   'postSquareAroundToolpathStale',
+  'postSquareAroundRoughMissing',
   'rotarySquareFinishNeedsRough',
 ])
 

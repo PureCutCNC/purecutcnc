@@ -259,6 +259,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': '加工操作“{operation}”未导出：其钻孔没有展开的移动，而旋转轴借用电机时机床不能使用固定循环。',
   'warnings.postRotaryAxisMismatch': '加工操作“{operation}”未导出：机床旋转轴沿 {machineAxis} 方向，而棒料沿 {stockAxis} 方向。',
   'warnings.postSquareAroundToolpathStale': '加工操作“{operation}”未导出：其刀路对于此项目已过期。请在导出前重新生成。',
+  'warnings.postSquareAroundRoughMissing': '加工操作“{operation}”未导出：为其准备材料的粗加工不在同一程序的前面。请把该粗加工放在它之前，然后重新导出。',
   'warnings.postRotarySquareTurnBelowEnvelope': '加工操作“{operation}”未导出：它在刀具低于方料角部包络时转动方料，且切削深度会超过该操作允许的深度，因此直立的角部会扫入刀具。',
   'warnings.replayNoTool': '所选加工操作未指定刀具。',
   'warnings.bookletNoTool': '此加工操作未选择刀具。',

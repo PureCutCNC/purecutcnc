@@ -255,6 +255,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': "L'opération « {operation} » n'a pas été exportée : son perçage n'a pas de mouvements développés, et les cycles fixes ne peuvent pas être utilisés sur une machine dont l'axe rotatif emprunte un moteur.",
   'warnings.postRotaryAxisMismatch': "L'opération « {operation} » n'a pas été exportée : l'axe rotatif de la machine est selon {machineAxis}, mais la barre est selon {stockAxis}.",
   'warnings.postSquareAroundToolpathStale': "L'opération « {operation} » n'a pas été exportée : son parcours d'outil est obsolète pour ce projet. Régénérez-le avant d'exporter.",
+  'warnings.postSquareAroundRoughMissing': "L'opération « {operation} » n'a pas été exportée : l'ébauche qui prépare cette finition circulaire n'est pas plus tôt dans le même programme. Placez l'ébauche avant elle, puis exportez à nouveau.",
   'warnings.postRotarySquareTurnBelowEnvelope': "L'opération « {operation} » n'a pas été exportée : elle fait tourner le brut carré alors que l'outil est sous l'enveloppe des coins et la coupe enlèverait plus que la profondeur autorisée de l'opération, si bien que les coins saillants balayeraient l'outil.",
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',

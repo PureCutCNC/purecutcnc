@@ -275,6 +275,7 @@ export const warningsEn = {
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
   'warnings.postSquareAroundToolpathStale': 'Operation "{operation}" was not exported: its toolpath is out of date for this project. Regenerate it before exporting.',
+  'warnings.postSquareAroundRoughMissing': 'Operation "{operation}" was not exported: the rough that clears this around finish is not earlier in the same program. Include the rough before it, then export again.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope and the cut would take more than the operation\'s allowed depth, so the standing corners would sweep into the cutter.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',

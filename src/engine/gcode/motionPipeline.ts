@@ -1027,19 +1027,14 @@ function emittedCoordinateHalfStep(definition: MachineDefinition, units: Units):
 }
 
 /**
- * Relative tolerance for comparing the posted motion with the same operation
- * regenerated from the current project (#1045 slice K). Regeneration is
- * deterministic, so a genuinely current path matches bit for bit; the
- * tolerance only keeps a floating-point re-evaluation from being read as an
- * edit. `max(1, ...)` gives a 1e-9 absolute floor at zero so a coordinate that
- * should be exactly zero is not compared with a pure relative ratio.
+ * Exact comparison of the posted motion with the same operation regenerated
+ * from the current project (#1045 slice L). Regeneration is deterministic, so
+ * a genuinely current path matches bit for bit; a relative tolerance let a
+ * 1e-9 mm coordinate edit through, and at a number-format rounding boundary
+ * that edit changed the emitted Z. `Object.is` keeps `NaN`/`-0` exact too.
  */
-const TOOLPATH_MATCH_TOLERANCE = 1e-9
-
 function sameSquareAroundCoordinate(a: number | undefined, b: number | undefined): boolean {
-  if (a === undefined || b === undefined) return a === b
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return Object.is(a, b)
-  return Math.abs(a - b) <= TOOLPATH_MATCH_TOLERANCE * Math.max(1, Math.abs(a), Math.abs(b))
+  return Object.is(a, b)
 }
 
 function sameSquareAroundPoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
@@ -1098,12 +1093,20 @@ function inspectRotaryOperation(args: {
    * `null` means generation produced no result for it.
    */
   staleCache: Map<string, ToolpathResult | null>
+  /**
+   * The ids of the operations already kept earlier in this same program
+   * (#1045 slice L). A square around finish is licensed by the roughs named in
+   * its regenerated result, and every one of them must be here: a rough that is
+   * disabled, excluded from this export, in another setup/program, or later in
+   * the program is not the cut that clears the material.
+   */
+  exportedIds: ReadonlySet<string>
 }): { refused: ToolpathWarning } | {
   refused: null
   trackedAngle: number | null
   borrowedCoordinate: number | null
 } {
-  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate, staleCache } = args
+  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate, staleCache, exportedIds } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   // Track the controller angle once, from the angle the program handed in
@@ -1225,6 +1228,16 @@ function inspectRotaryOperation(args: {
       if (regenerated === null || !sameSquareAroundToolpath(toolpath.moves, regenerated.moves)) {
         return { refused: { code: 'postSquareAroundToolpathStale', params: { operation: operationName } } }
       }
+      // #1045 slice L: the licensing rough must actually run earlier in **this**
+      // program. The finish's motion is regenerated against the whole project,
+      // so its licence names the rough ids whose own results cleared the
+      // material. Keeping the rough enabled in the project but exporting only
+      // the finish (or exporting it later, disabled, or in another program)
+      // posts a full-depth first ring, so the finish is refused instead.
+      const licensing = regenerated.squareRoughIds ?? []
+      if (licensing.some((id) => !exportedIds.has(id))) {
+        return { refused: { code: 'postSquareAroundRoughMissing', params: { operation: operationName } } }
+      }
     } else if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
       // Only an around-mode square operation may turn a *cut* below the height,
       // and only with the generator's own current motion (checked above). An
@@ -1284,6 +1297,9 @@ export function planRotaryRefusals(
   // the map still keeps the regenerate-and-match check (#1045 slice K) from
   // regenerating an operation twice if a caller ever repeats one.
   const staleCache = new Map<string, ToolpathResult | null>()
+  // The operations already kept earlier in this program (#1045 slice L): a
+  // square around finish's licensing roughs must all be here.
+  const exportedIds = new Set<string>()
   for (const entry of operations) {
     const verdict = inspectRotaryOperation({
       definition,
@@ -1301,6 +1317,7 @@ export function planRotaryRefusals(
       trackedAngle,
       borrowedCoordinate,
       staleCache,
+      exportedIds,
     })
     if (verdict.refused !== null) {
       warnings.push(verdict.refused)
@@ -1308,6 +1325,7 @@ export function planRotaryRefusals(
     }
     trackedAngle = verdict.trackedAngle
     borrowedCoordinate = verdict.borrowedCoordinate
+    exportedIds.add(entry.operation.id)
     kept.push(entry)
   }
   return { operations: kept, warnings }

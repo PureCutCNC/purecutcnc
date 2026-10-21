@@ -275,6 +275,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
   'warnings.postSquareAroundToolpathStale': 'Operation „{operation}" wurde nicht exportiert: Ihr Werkzeugweg ist für dieses Projekt veraltet. Erzeugen Sie ihn vor dem Export neu.',
+  'warnings.postSquareAroundRoughMissing': 'Operation „{operation}" wurde nicht exportiert: Die Schruppoperation, die diese Rundum-Schlichtung vorbereitet, steht nicht früher im selben Programm. Nehmen Sie die Schruppoperation davor auf und exportieren Sie erneut.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, und der Schnitt würde mehr als die zulässige Tiefe der Operation abtragen, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',

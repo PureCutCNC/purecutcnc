@@ -68,11 +68,49 @@ export interface DrillCycle {
   dwellTime?: number
 }
 
+/**
+ * The radial material a square-blank rotary rough leaves standing, sampled on
+ * the rough's own grid (#1045 slice L). `tips[k][i]` is the radius from the
+ * turning pivot the rough left at `angles[k]` (degrees) and `along[i]`; the
+ * values already carry the operation's radial stock to leave. An around finish
+ * is licensed only by coverage that reaches its own samples within a bounded
+ * bite (see `generateRotaryFinish`); settings alone license nothing.
+ *
+ * Runtime only: it describes one generated result and is never serialised into
+ * a `.camj` file.
+ */
+export interface SquareRoughLeft {
+  readonly angles: readonly number[]
+  readonly along: readonly number[]
+  readonly tips: readonly (readonly number[])[]
+  /** The rough's own radial layer depth, for its between-sample scallop. */
+  readonly stepdown: number
+  /** The rough's radial stock to leave, already folded into `tips`. */
+  readonly stockToLeave: number
+  /** The normalized rough cutter, for its between-sample scallop. */
+  readonly cutterRadius: number
+  readonly ball: boolean
+  /**
+   * The rough's own pass direction. An along pass cuts a line at each angle, so
+   * its sampled result does not bound a retained-end corner the around finish's
+   * ring sweeps into; such a rough cannot license an around finish over a
+   * retained end (#1045 slice L).
+   */
+  readonly passDirection: 'around' | 'along'
+}
+
 export interface ToolpathResult {
   operationId: string
   moves: ToolpathMove[]
   warnings: ToolpathWarning[]
   bounds: ToolpathBounds | null
+  /** Square-blank rotary rough only: the material it leaves, for the around
+   *  finish's licensing check (#1045 slice L). */
+  squareRoughLeft?: SquareRoughLeft
+  /** Square-blank around finish only: the ids of the roughs whose coverage
+   *  licensed it. The export requires every one of them earlier in the same
+   *  program (#1045 slice L). */
+  squareRoughIds?: string[]
   collidingClampIds?: string[]
   /** Indices into `moves` of segments that cross a clamp zone below required
    *  clearance. Refers to the final (adjusted) moves array. */

@@ -22,7 +22,7 @@ import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
-import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import type { NormalizedTool, SquareRoughLeft, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
 export interface RotaryModelMesh {
@@ -678,18 +678,24 @@ export interface RotaryFinishParams {
    */
   readonly passDirection?: RotaryPassDirection
   /**
-   * The pass direction of an earlier enabled rotary rough on the same setup and
-   * target, or `true` when the caller only knows a covering rough exists
-   * (#1045 slice E; slice K made it load-bearing on a square blank). An around
-   * finish on a square blank follows the model, so its first ring would take
-   * the standing square corner in one turning pass. Since slice K removed the
-   * export guard, the generator refuses instead of emitting that motion: no
-   * rough reads as `false`, and an **along** rough leaves the retained-end
-   * corner standing, so it does not cover the around finish there either. An
-   * along rough with no retained end covers the blank and is admitted. Never
-   * consulted on a round bar or in along mode.
+   * The radial layer depth when the operation has one (`rotary_rough` always
+   * does, a finish usually does not). An around finish on a square blank uses
+   * the larger of this and its stock-to-leave allowance as the bounded bite a
+   * rough may leave it (#1045 slice L).
    */
-  readonly squareRoughBefore?: boolean | 'around' | 'along'
+  readonly stepdown?: number
+  /**
+   * The material earlier enabled roughs on the same setup and target actually
+   * leave standing, each sampled on its own grid (#1045 slice L). An around
+   * finish on a square blank follows the model, so its first ring would take a
+   * whole standing corner in one turning pass. The finish refuses
+   * (`rotarySquareFinishNeedsRough`) unless every sample's footprint is covered
+   * by a rough's own sampled result within the finish's bounded bite: settings
+   * and operation-list metadata license nothing. Empty/absent means no rough
+   * ran, and the raw blank is judged geometrically. Never consulted on a round
+   * bar or in along mode.
+   */
+  readonly squareRoughLeft?: readonly SquareRoughLeft[]
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -2010,14 +2016,14 @@ function rotaryTargets(
 }
 
 /**
- * Whether an around finish on a **square** blank with no covering rough would
- * take more than its own stock layer plus one height-map cell out of untouched
- * blank. A ring follows the model, so on a raw blank the corners stand whole
- * layers above it and the first revolution would take the lot in one turning
- * cut. The blank itself as the model has nothing above the tip and needs no
- * rough. An along rough over a retained end is refused before this runs, so
- * this is only the no-rough case (#1045 slice E; slice K made the refusal
- * generator-owned).
+ * Whether an around finish on a **square** blank with **no rough result at
+ * all** would take more than its own stock layer plus one height-map cell out
+ * of untouched blank. A ring follows the model, so on a raw blank the corners
+ * stand whole layers above it and the first revolution would take the lot in
+ * one turning cut. The blank itself as the model has nothing above the tip and
+ * needs no rough. This is the no-coverage fallback only; an earlier rough's own
+ * sampled result licenses the finish through {@link squareFinishBiteTooDeep}
+ * (#1045 slice L).
  */
 function squareAroundFinishNeedsRough(
   stock: BarStock,
@@ -2026,7 +2032,7 @@ function squareAroundFinishNeedsRough(
   angles: readonly number[],
   tips: readonly number[][],
 ): boolean {
-  if (!isSquareStock(stock) || params.passDirection !== 'around' || params.squareRoughBefore === true) return false
+  if (!isSquareStock(stock) || params.passDirection !== 'around') return false
   const allowance = Math.max(0, params.stockToLeave) + Math.max(params.requestedCellSize, 0)
   for (let k = 0; k < angles.length; k++) {
     const top = squareRotaryTouchRadius(stock, angles[k], tool.radius, tool.type)
@@ -2038,6 +2044,183 @@ function squareAroundFinishNeedsRough(
   }
   return false
 }
+
+/** The square blank's radial surface at `angleDeg`, measured from the pivot. */
+function squareBlankRayRadius(stock: BarStock, angleDeg: number): number {
+  const halfSide = barInscribedRadius(stock)
+  const radians = angleDeg * Math.PI / 180
+  return halfSide / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+}
+
+/** The radial rise of a ball of `radius` at `offset` from its tip. */
+function ballRise(radius: number, offset: number): number {
+  return radius - Math.sqrt(Math.max(0, radius * radius - offset * offset))
+}
+
+/** The highest adjacent tip difference in a set of rows, `NaN` treated as absent. */
+function maxRowStep(rows: readonly (readonly number[])[], step: number, wrap: boolean): number {
+  let most = 0
+  for (const row of rows) {
+    const count = row.length
+    for (let i = 0; i + 1 < count; i += step) {
+      const a = row[i]
+      const b = row[i + 1]
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+      most = Math.max(most, Math.abs(b - a))
+    }
+    if (wrap && count > 1 && Number.isFinite(row[0]) && Number.isFinite(row[count - 1])) {
+      most = Math.max(most, Math.abs(row[0] - row[count - 1]))
+    }
+  }
+  return most
+}
+
+/**
+ * The largest radius a rough's sampling can leave standing *between* its own
+ * samples (#1045 slice L). The sampled tips are exact at their positions; a
+ * ball leaves its between-ring scallop there, and a flat leaves a staircase one
+ * cell tall. Both are derived from the rough's own grid, never from its
+ * settings alone.
+ */
+function squareRoughScallop(rough: SquareRoughLeft): number {
+  const angles = rough.angles
+  const along = rough.along
+  let alongStep = 0
+  for (let i = 0; i + 1 < along.length; i++) alongStep = Math.max(alongStep, Math.abs(along[i + 1] - along[i]))
+  let angleStep = 0
+  for (let k = 0; k + 1 < angles.length; k++) angleStep = Math.max(angleStep, Math.abs(angles[k + 1] - angles[k]))
+  const radius = Math.max(0, rough.cutterRadius)
+  if (rough.ball) {
+    const arc = radius > 0 ? angleStep * Math.PI / 180 * radius : 0
+    return ballRise(radius, alongStep / 2) + ballRise(radius, arc / 2)
+  }
+  // A flat's step is the surface's own change across one cell: the tallest
+  // adjacent sampled difference, along the bar and round it.
+  const alongRise = maxRowStep(rough.tips, 1, false)
+  let angularRise = 0
+  for (let k = 0; k + 1 < rough.tips.length; k++) {
+    const row = rough.tips[k]
+    const next = rough.tips[k + 1]
+    if (!row || !next) continue
+    for (let i = 0; i < row.length; i++) {
+      if (!Number.isFinite(row[i]) || !Number.isFinite(next[i])) continue
+      angularRise = Math.max(angularRise, Math.abs(next[i] - row[i]))
+    }
+  }
+  return alongRise + angularRise
+}
+
+/** The index of the last element of the sorted `values` at or below `value`. */
+function lowerIndex(values: readonly number[], value: number): number {
+  let low = 0
+  let high = values.length - 1
+  while (low < high) {
+    const mid = (low + high + 1) >> 1
+    if (values[mid] <= value) low = mid
+    else high = mid - 1
+  }
+  return low
+}
+
+/**
+ * The highest radius a rough leaves at one finish sample's own cell, or `null`
+ * when the sample lies outside what the rough covered and the effective
+ * material is the raw blank.
+ *
+ * A rough's result is only known on its own sampling grid, so the four cells
+ * bracketing the finish sample are the conservative local maximum; the scallop
+ * of that grid (added by the caller's bound) is the material the sampling
+ * cannot represent *between* those cells. A sample outside the rough's along
+ * coverage is material that rough never reached, so it reads as the blank.
+ * Material the finish cutter's rim reaches in an uncovered collar is the raw
+ * blank too: a sample beyond every rough's range hits this path, and a retained
+ * end with only an along rough is refused outright because an along pass does
+ * not bound that corner (#1045 slice L).
+ */
+function squareRoughLeftAt(
+  rough: SquareRoughLeft,
+  angle: number,
+  along: number,
+  tolerance: number,
+): number | null {
+  if (rough.along.length === 0 || rough.angles.length === 0) return null
+  const first = rough.along[0]
+  const last = rough.along[rough.along.length - 1]
+  if (along < Math.min(first, last) - tolerance || along > Math.max(first, last) + tolerance) return null
+  const angleCount = rough.angles.length
+  const normalized = ((angle % 360) + 360) % 360
+  const k0 = lowerIndex(rough.angles, normalized)
+  const k1 = (k0 + 1) % angleCount
+  const i0 = lowerIndex(rough.along, along)
+  const i1 = Math.min(rough.along.length - 1, i0 + 1)
+  let highest = Number.NEGATIVE_INFINITY
+  for (const k of k0 === k1 ? [k0] : [k0, k1]) {
+    const row = rough.tips[k]
+    if (!row) continue
+    for (const i of i0 === i1 ? [i0] : [i0, i1]) {
+      const tip = row[i]
+      if (Number.isFinite(tip)) highest = Math.max(highest, tip)
+    }
+  }
+  return highest === Number.NEGATIVE_INFINITY ? null : highest
+}
+
+/**
+ * Whether an around finish on a **square** blank would take more than its own
+ * bounded bite out of the material an earlier rough actually left (#1045 slice
+ * L). The material is derived from each rough's **own sampled result**, not
+ * from its settings or from operation-list metadata: a rough that emitted no
+ * motion contributes no coverage, and a rough whose samples sit millimetres
+ * above the finish's tip does not license it. The decision is conservative in
+ * the safe direction -- the highest of a rough's bracketing samples, the
+ * shallowest of several roughs' coverage, and a between-sample scallop derived
+ * from that rough's own grid.
+ *
+ * The finish's bound is the larger of its own `stepdown` (when it has one) and
+ * its radial stock-to-leave plus that scallop. A sample outside every rough's
+ * coverage reads as raw blank, so a support-limited rough that stops short of
+ * the finish's band licenses nothing there.
+ */
+function squareFinishBiteTooDeep(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  angles: readonly number[],
+  along: readonly number[],
+  tips: readonly number[][],
+): boolean {
+  const roughs = params.squareRoughLeft ?? []
+  if (roughs.length === 0) return false
+  const tolerance = convertLength(1e-3, 'mm', tool.units)
+  const stepdown = Number.isFinite(params.stepdown) && (params.stepdown ?? 0) > 0 ? params.stepdown! : 0
+  const covered = roughs.filter((rough) => rough.along.length > 0 && rough.angles.length > 0
+    && rough.tips.some((row) => row.some((tip) => Number.isFinite(tip))))
+  if (covered.length === 0) return false
+  // The most permissive bound across the roughs: the scallop belongs to
+  // whichever rough finished the surface, and the comparison already takes the
+  // shallowest material left.
+  let bound = Number.NEGATIVE_INFINITY
+  for (const rough of covered) {
+    const scallop = squareRoughScallop(rough)
+    bound = Math.max(bound, Math.max(stepdown, Math.max(0, params.stockToLeave) + scallop))
+  }
+  bound += tolerance
+  for (let k = 0; k < angles.length; k++) {
+    const row = tips[k]
+    for (let i = 0; i < row.length; i++) {
+      const tip = row[i]
+      if (!Number.isFinite(tip)) continue
+      let left = Number.POSITIVE_INFINITY
+      for (const rough of covered) {
+        const local = squareRoughLeftAt(rough, angles[k], along[i], tolerance)
+        left = Math.min(left, local ?? squareBlankRayRadius(stock, angles[k]))
+      }
+      if (left - tip > bound) return true
+    }
+  }
+  return false
+}
+
 
 /**
  * Rotary finishing (issue #1015 slice B): passes run along the bar and step
@@ -2115,21 +2298,24 @@ export function generateRotaryFinish(
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
-  // #1045 slice K: a square blank's around finish may not follow an **along**
-  // rough over a retained end. The export guard that used to refuse that motion
-  // is gone, and regenerate-and-match only proves the path is the generator's
-  // own, so the generator must not emit it. An along rough over a band with no
-  // retained end clears the blank all the way to each end, and an around rough
-  // covers the whole circumference; the reference test proves both
-  // (`squareAroundGenerator.property.test.ts`).
-  let squareAround = false
-  if (isSquareStock(stock) && params.passDirection === 'around') {
-    squareAround = true
+  // #1045 slice L: a square blank's around finish is licensed only by the
+  // material an earlier rough's **own sampled result** leaves, never by the
+  // operation list alone. The export guard that used to re-prove engagement is
+  // gone (slice K), and regenerate-and-match only proves the path is the
+  // generator's own, so the generator must refuse a bite deeper than its bound
+  // and emit no motion. The check runs after sampling, against the samples the
+  // finish would actually cut (`squareFinishBiteTooDeep`).
+  const squareAround = isSquareStock(stock) && params.passDirection === 'around'
+  // An **along** pass cuts a line at each angle, so its sampled result does not
+  // bound the corner a retained end leaves inside the around finish's first
+  // ring; only an around rough clears the whole circumference there. A retained
+  // end therefore needs at least one around rough's coverage (#1045 slice L).
+  if (squareAround && (params.squareRoughLeft ?? []).length > 0) {
     const bounds = getStockBounds(stock)
     const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
     const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
     const retained = params.alongStart > lower + 1e-9 || params.alongEnd < upper - 1e-9
-    if (params.squareRoughBefore === 'along' && retained) {
+    if (retained && !(params.squareRoughLeft ?? []).some((rough) => rough.passDirection === 'around')) {
       return {
         operationId,
         moves: [],
@@ -2143,10 +2329,19 @@ export function generateRotaryFinish(
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
   }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
-  // No rough at all: a near-net model needs none, but a raw blank would take its
-  // corners in one turning pass. The decision is geometric and generator-owned.
-  if (squareAround && params.squareRoughBefore !== true && params.squareRoughBefore !== 'around'
-    && params.squareRoughBefore !== 'along'
+  // No rough result at all: a near-net model needs none, but a raw blank would
+  // take its corners in one turning pass. The decision is geometric and
+  // generator-owned. With at least one rough result, that result's coverage is
+  // the licence instead.
+  if (squareAround && squareFinishBiteTooDeep(stock, tool, params, sampling.angles, sampling.along, sampling.tips)) {
+    return {
+      operationId,
+      moves: [],
+      warnings: [{ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } }],
+      bounds: null,
+    }
+  }
+  if (squareAround && (params.squareRoughLeft ?? []).length === 0
     && squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
     return {
       operationId,
@@ -2466,5 +2661,23 @@ export function generateRotaryRough(
     convertLength(0.001, 'mm', tool.units),
     params.passDirection === 'around' ? pivot : undefined,
   )
-  return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
+  // #1045 slice L: a square blank's rough reports the material it actually
+  // leaves, on its own sampling grid. The around finish licenses itself from
+  // this result -- an operation that emitted no moves contributes nothing --
+  // so the generator, not the operation list, owns the rough-before rule.
+  const squareRoughLeft: SquareRoughLeft | undefined = square ? {
+    angles, along, tips,
+    stepdown: params.stepdown,
+    stockToLeave: params.stockToLeave,
+    cutterRadius: tool.radius,
+    ball: tool.type === 'ball_endmill',
+    passDirection: params.passDirection === 'around' ? 'around' : 'along',
+  } : undefined
+  return {
+    operationId,
+    moves: merged.moves,
+    warnings,
+    bounds: boundsOf(merged.moves),
+    ...(squareRoughLeft ? { squareRoughLeft } : {}),
+  }
 }

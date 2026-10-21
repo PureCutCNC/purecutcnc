@@ -98,7 +98,7 @@ const ALL_CODES = [
   'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',
   'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis', 'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
-  'postRotarySquareTurnBelowEnvelope', 'postSquareAroundToolpathStale',
+  'postRotarySquareTurnBelowEnvelope', 'postSquareAroundToolpathStale', 'postSquareAroundRoughMissing',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
