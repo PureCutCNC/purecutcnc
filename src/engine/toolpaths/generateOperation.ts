@@ -69,7 +69,7 @@ import type { Units } from '../../utils/units'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
 import { aroundFrameForOperation, flatFaceProject, unrolledProject, wrapToolpath } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
-import { setupGenerationBlock } from '../setupTargets'
+import { operationFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
 
 export interface ComputeOperationOptions {
@@ -197,9 +197,18 @@ export function computeOperationToolpath(
     return { result: generateRotaryOperation(project, operation), raw: null }
   }
 
+  // The face this operation is cut from, read in stock space before anything
+  // is turned, and the one gate that keeps every resolver below from reading
+  // work authored on the other face as if this setup could reach it (#1079).
+  const face = operationFace(project, operation)
+
   const around = aroundFrameForOperation(project, operation)
   if (around) {
-    const envelope = computeTopDownToolpath(unrolledProject(project, around), operation, options)
+    const envelope = computeTopDownToolpath(
+      withoutUnreachableSubtracts(unrolledProject(project, around), face),
+      operation,
+      options,
+    )
     if (!envelope) return null
     // A depth the operation works out itself — an Engrave's carve depth, a
     // countersink's derived plunge — can reach the centreline although the
@@ -223,9 +232,15 @@ export function computeOperationToolpath(
 
   const frame = setupFrameForOperation(project, operation)
   const flat = flatFaceProject(project)
-  if (!frame) return computeTopDownToolpath(flat, operation, options)
+  if (!frame) {
+    return computeTopDownToolpath(withoutUnreachableSubtracts(flat, face), operation, options)
+  }
 
-  const envelope = computeTopDownToolpath(projectInSetupFrame(flat, frame), operation, options)
+  const envelope = computeTopDownToolpath(
+    withoutUnreachableSubtracts(projectInSetupFrame(flat, frame), face),
+    operation,
+    options,
+  )
   if (!envelope) return null
   return {
     result: toolpathInStockFrame(envelope.result, frame),

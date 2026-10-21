@@ -28,7 +28,7 @@ import { defaultOperationForTarget, isOperationTargetValid } from '../../../stor
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
 import { setupFace } from '../../setupOrientation'
-import { judgeTargetFromFace } from '../../setupTargets'
+import { judgeTargetFromFace, withoutUnreachableSubtracts } from '../../setupTargets'
 import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
@@ -712,10 +712,15 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
   const features = resolveFeatureInstances(project)
     .filter((feature) => judgeTargetFromFace(project, feature, face).status !== 'rejected')
   const tools = camPlanToolPool(project, libraryTools)
-  const analysisProject = {
+  // The plan's analysis reads related (non-target) features — island and
+  // non-target-subtract discovery, and the rest passes derived from them — and
+  // is not generated through `computeOperationToolpath`. Apply the same face
+  // gate generation uses (issue #1079), so a Bottom blind notch cannot show up
+  // in a Top pocket's rest regions or be reported as machined by the Top plan.
+  const analysisProject = withoutUnreachableSubtracts({
     ...project,
     tools: [...project.tools, ...tools.filter((candidate) => candidate.source === 'library').map((candidate) => candidate.tool)],
-  }
+  }, face)
   const builder: PlanBuilder = {
     project,
     analysisProject,
