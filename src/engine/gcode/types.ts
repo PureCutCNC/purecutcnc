@@ -211,6 +211,22 @@ export const MachineDefinitionSchema = z.object({
      * a turn that needs one is refused rather than written.
      */
     machineCoordinateCommand: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.').nullable().optional(),
+    /**
+     * The machine-coordinate Z a bar-clearance retract rapids to with
+     * `machineCoordinateCommand` (issue #1054 fix 3), in the program's output
+     * units. It is a *machine* coordinate: `G53` is measured from the machine's
+     * own zero, which PureCutCNC knows nothing about, so this must never be
+     * derived from a project origin, the project's Safe Z or its units.
+     *
+     * The default 0 is the top of travel, the convention the bundled grblHAL
+     * footer already uses (`G0 G53 Z0`). It assumes the machine is homed with Z
+     * at the top of travel, so Z0 is the highest reachable point and every
+     * working height is negative below it. A machine homed elsewhere must state
+     * the machine Z it can safely rapid to here: a positive value on a
+     * top-homed machine asks for travel above the limit, which a soft-limit
+     * check rejects or a hard limit crashes into.
+     */
+    machineSafeZ: z.number().finite().default(0),
   }),
   feedSpeed: z.object({
     feedCommand: z.string(),

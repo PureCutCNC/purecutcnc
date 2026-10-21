@@ -289,9 +289,21 @@ const RETRACT_BEFORE_TURNING_LINE = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BA
  * what they are and what the operator still has to check. The letter is the
  * program's own rotary word: on a borrowed motor it is the axis the program
  * writes, not always A.
+ *
+ * Without tool-length compensation the retract is in machine coordinates, so
+ * the line names its target and the assumption behind it: the machine is homed
+ * with Z at the top of travel, which `motion.machineSafeZ` defaults to 0
+ * (#1054 fix 3). With compensation active the retract is the work-coordinate
+ * travel height and the line stays the neutral statement (#1054 fix 2).
  */
-function manualIndexTurnLine(word: 'A' | 'X' | 'Y', angleDeg: 0 | 180): string {
-  return `ROTARY: THE PROGRAM TURNS ${word} TO ${angleDeg}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
+function manualIndexTurnLine(
+  word: 'A' | 'X' | 'Y',
+  angleDeg: 0 | 180,
+  machineCoordinateRetract: boolean,
+): string {
+  return machineCoordinateRetract
+    ? `ROTARY: RETRACTS TO MACHINE Z TOP WITH G53 BEFORE TURNING ${word} TO ${angleDeg}° - CHECK THE BAR IS CLAMPED`
+    : `ROTARY: THE PROGRAM TURNS ${word} TO ${angleDeg}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
 }
 
 /**
@@ -328,9 +340,16 @@ export function setupStatesManualIndexing(
  * reference — flip registration means nothing in a chuck — so its line is the
  * rotary zeroing instruction instead. `definition` is the program's machine: a
  * borrowed rotary replaces one horizontal motor, which the operator must
- * compensate for by hand.
+ * compensate for by hand. `machineCoordinateRetract` says whether the
+ * manual-index retract is the machine-coordinate one, so the operator line
+ * describes what the program actually writes (#1054 fix 3).
  */
-export function setupHeaderLines(project: Project, setup: MachiningSetup, definition: MachineDefinition): string[] {
+export function setupHeaderLines(
+  project: Project,
+  setup: MachiningSetup,
+  definition: MachineDefinition,
+  machineCoordinateRetract = true,
+): string[] {
   const number = formatProgramNumber(setupProgramNumber(project, setup.id))
   const around = isAroundSetup(setup)
   const lines = [
@@ -347,7 +366,7 @@ export function setupHeaderLines(project: Project, setup: MachiningSetup, defini
       lines.push(RETRACT_BEFORE_TURNING_LINE)
     } else {
       // The program turns the word itself after retracting (#1054 slice 2b).
-      lines.push(manualIndexTurnLine(word, manualIndexAngle(setup)))
+      lines.push(manualIndexTurnLine(word, manualIndexAngle(setup), machineCoordinateRetract))
     }
   }
   if (around && definition.rotary?.drive === 'borrowed') {

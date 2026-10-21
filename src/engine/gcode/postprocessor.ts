@@ -283,11 +283,29 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // descent or a template Z move. The height is a project coordinate; map it
   // exactly as the move's own Z is mapped, never with a second copy of the
   // origin arithmetic.
+  // The dialect's machine-coordinate rapid, or null when it has none. G-code
+  // spells it `G53 <rapid>`; ShopBot part files have no equivalent. A machine
+  // definition may override it, or set it null to declare none.
+  const machineRapidCommand = machineCoordinateRapidCommand(definition)
+  // Whether the first operation will apply tool-length compensation, mirrored
+  // from the emitter's own scan of the lines written before the manual-index
+  // turn: the header, the operation header and the tool change. The setup
+  // header must describe the retract the program will actually write (#1054
+  // fix 3), so the two decisions are taken together.
+  const compensationBeforeTurn = [
+    ...definition.program.header,
+    ...definition.program.operationHeader,
+    ...(options.emitToolChanges ? definition.toolChange.commands : []),
+  ].reduce(
+    (active, line) => applyToolLengthCompensation(line, definition.program.commentPrefix, active),
+    false,
+  )
+  const machineCoordinateRetract = machineRapidCommand !== null && !compensationBeforeTurn
   // What the program says about its setup, decided once for both the header
   // comments and the manual-index turn that follows them (#1054 slice 2b). It
   // is read here because that turn makes the program one that turns, which the
   // square guard and the template-word check below must both know.
-  const setupPlan = planProgramSetup(input)
+  const setupPlan = planProgramSetup(input, machineCoordinateRetract)
   // A manual-index turn about the bar's own axis on a machine whose rotary is
   // about the other horizontal axis would turn the stock the wrong way. The
   // planner refuses such an operation for the same reason; a program whose only
@@ -316,24 +334,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       y: 0,
       z: projectBarTravelZ,
     }, project.origin, definition).z
-  // The machine's own Safe Z (#1054 fix 2): `maxTravelZ` is the only ceiling a
-  // project carries, and the bar's travel height is the least clearance a turn
-  // may run at, so the retract uses whichever is higher. Like every other Z
-  // word this is mapped through the emitter's one origin transform; a machine
-  // whose Z axis is inverted gets the same sign flip a move would. An absent
-  // or corrupt ceiling falls back to the bar's own travel height.
-  const projectSafeZ = projectBarTravelZ === null
-    ? null
-    : Number.isFinite(project.meta.maxTravelZ)
-      ? Math.max(project.meta.maxTravelZ, projectBarTravelZ)
-      : projectBarTravelZ
-  const machineSafeZ = projectSafeZ === null
-    ? null
-    : projectToMachinePoint({ x: 0, y: 0, z: projectSafeZ }, project.origin, definition).z
-  // The dialect's machine-coordinate rapid, or null when it has none. G-code
-  // spells it `G53 <rapid>`; ShopBot part files have no equivalent. A machine
-  // definition may override it, or set it null to declare none.
-  const machineRapidCommand = machineCoordinateRapidCommand(definition)
+  // The machine-coordinate retract height is the machine definition's own
+  // (#1054 fix 3), never a project safe height mapped through the origin: G53
+  // is the machine's zero, which PureCutCNC cannot derive from a project. The
+  // default 0 is the top of travel after homing.
+  const machineSafeZ = definition.motion.machineSafeZ
   // The square blank's mid-program repair (a template that moved Z before an A
   // word) is square-only: a round bar's bytes are unchanged. The closing unwind
   // uses the same height for both shapes (#1054 fix 1, finding 2).
@@ -589,8 +594,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   /**
    * Retract in machine coordinates, where no work-coordinate offset or
    * tool-length compensation can change the physical height (#1054 fix 2).
+   * The height is the machine definition's own `motion.machineSafeZ` (#1054
+   * fix 3), never a project height mapped through the origin: G53 is measured
+   * from the machine's zero, and the definition's default 0 is the top of
+   * travel after homing.
+   *
    * G53 is non-modal, so it shares the block with the rapid word. Returns false
-   * when the dialect has no machine-coordinate move or the Safe Z is unusable;
+   * when the dialect has no machine-coordinate move or the height is unusable;
    * the caller then refuses the turn rather than writing it.
    *
    * The machine position is deliberately left unknown afterwards: G53 is not in
@@ -598,7 +608,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * first operation's coordinates.
    */
   const emitMachineCoordinateRetract = (): boolean => {
-    if (machineRapidCommand === null || machineSafeZ === null || !Number.isFinite(machineSafeZ)) return false
+    if (machineRapidCommand === null || !Number.isFinite(machineSafeZ)) return false
     leaveInverseTime()
     emitLine(`${machineRapidCommand} Z${formatGCodeNumber(machineSafeZ, definition, outputUnits)}`)
     moveCount += 1
@@ -615,7 +625,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * height, so the historical `G0 Z<travel>` stays. Without it — tool changes
    * disabled, a controller with no compensation, or a template that cancelled
    * it — that Z word no longer describes the tip, so the retract is the
-   * machine-coordinate Safe Z instead. A dialect with neither refuses the turn.
+   * machine's own Safe Z instead (`motion.machineSafeZ`). A dialect with
+   * neither refuses the turn.
    */
   const retractForBarUnwind = (): boolean => {
     if (barTravelZ === null) return true
@@ -650,9 +661,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * written without a later `G43` measures the tip with no compensation and
    * cannot establish clearance. When compensation is active the historical
    * `G0 Z<travel height>` is the correct frame; when it is not, the retract is
-   * in machine coordinates to the project's Safe Z (`G53 G0 Z…`), which no work
-   * offset or compensation can change. A machine that has neither refuses the
-   * turn rather than writing it.
+   * in machine coordinates to the machine definition's own Safe Z
+   * (`G53 G0 Z<motion.machineSafeZ>`, default 0 = the top of travel after
+   * homing), which no work offset or compensation can change. A machine that
+   * has neither refuses the turn rather than writing it.
    *
    * X/Y are deliberately left unknown afterwards: the header moved only Z and
    * the rotary, so the machine may be anywhere in the plane and the first
@@ -765,7 +777,8 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // retract and turn are written after the first operation's tool change,
   // immediately before that operation's motion (#1054 fix 1, finding 1), and
   // the retract is machine-coordinate when no compensation is active (#1054
-  // fix 2). See `emitManualIndexTurn`.
+  // fix 2), to the machine definition's own Safe Z (#1054 fix 3). See
+  // `emitManualIndexTurn`.
   let pendingManualIndexAngle = setupPlan.manualIndexAngle
 
   // 4. Operations
@@ -1349,10 +1362,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // of the bar — for a round bar as well as a square blank, and whatever the
   // templates did (#1054 fix 1, finding 2). That retract is work-coordinate
   // only while a tool-length compensation is known active; without one it is
-  // the machine-coordinate Safe Z, and a machine that has neither refuses the
-  // turn instead (#1054 fix 2). The block spells the rapid word itself rather
-  // than relying on modal motion: a command that does not move the tool must
-  // not be read as a continuation of whatever mode was left behind.
+  // the machine definition's own Safe Z, and a machine that has neither refuses
+  // the turn instead (#1054 fix 2, fix 3). The block spells the rapid word
+  // itself rather than relying on modal motion: a command that does not move
+  // the tool must not be read as a continuation of whatever mode was left
+  // behind.
   if (state.rotaryAngle !== null && state.rotaryAngle !== 0) {
     if (!retractForBarUnwind()) {
       return {

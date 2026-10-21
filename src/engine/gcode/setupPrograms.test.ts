@@ -600,15 +600,12 @@ function testManualIndexTurnsTheBarItself(): void {
   // The travel height is the blank's largest radius above the pivot plus 1 mm:
   // 21 mm on a Ø20 round bar, 11 + 10√2 on a 20 mm square blank. The origin is
   // the top of the bar, 20 mm above the pivot. These fixtures apply no
-  // tool-length compensation, so the retract is the machine-coordinate Safe Z
-  // (50 - 20 = 30 mm), above both travel heights (#1054 fix 2).
-  const travel = { round: 10 + 10 + 1, square: 10 + 20 * Math.SQRT1_2 + 1 } as const
-  // Without a tool-length compensation the retract is in machine coordinates
-  // to the project's Safe Z (`maxTravelZ`), which is above the bar's travel
-  // height here (#1054 fix 2).
-  const safeWord = (shape: 'round' | 'square'): string => (Math.max(50, travel[shape]) - 20).toFixed(3)
+  // tool-length compensation, so the retract is the machine definition's own
+  // Safe Z (default 0 = the top of travel after homing), never a project
+  // height and never the project's 50 mm Safe Z (#1054 fix 3).
+  const safeWord = '0.000'
   const turnComment = (word: string, angle: number): string =>
-    `ROTARY: THE PROGRAM TURNS ${word} TO ${angle}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
+    `ROTARY: RETRACTS TO MACHINE Z TOP WITH G53 BEFORE TURNING ${word} TO ${angle}° - CHECK THE BAR IS CLAMPED`
 
   for (const shape of ['round', 'square'] as const) {
     for (const axis of ['x', 'y'] as const) {
@@ -646,11 +643,12 @@ function testManualIndexTurnsTheBarItself(): void {
             // change (#1054 fix 1, finding 1), then the operation's own motion.
             // GRBL's tool change is `M5` plus its `M0` tool-change line and
             // pause, and it applies no tool-length compensation, so the retract
-            // is in machine coordinates to the Safe Z (#1054 fix 2).
-            const retractAt = lines.indexOf(`G53 G0 Z${safeWord(shape)}`)
+            // is in machine coordinates to the definition's Safe Z, default 0
+            // (#1054 fix 3).
+            const retractAt = lines.indexOf(`G53 G0 Z${safeWord}`)
             assert(retractAt > at, `${label}, ${face}: the opening retract is in the program`)
             assertEqual(lines.slice(retractAt, retractAt + 2), [
-              `G53 G0 Z${safeWord(shape)}`,
+              `G53 G0 Z${safeWord}`,
               `G0 ${angleWord}`,
             ], `${label}, ${face}: the retract, then the turn`)
             const changeAt = lines.findIndex((line) => line.startsWith('M0 ; Tool change'))
@@ -669,9 +667,9 @@ function testManualIndexTurnsTheBarItself(): void {
               assertEqual(turnBlocks, [`G0 ${angleWord}`, `G0 ${letter}0.000`], `${label}: Bottom turns to 180, then unwinds to 0`)
               assertEqual(lines[endsAt - 1], `G0 ${letter}0.000`, `${label}: the unwind is the last motion block`)
               // No compensation is active, so the closing retract is the
-              // machine-coordinate Safe Z too, whatever the bar's shape
-              // (#1054 fix 2).
-              assertEqual(lines[endsAt - 2], `G53 G0 Z${safeWord(shape)}`, `${label}: after retracting to the machine Safe Z`)
+              // definition's machine Safe Z too, whatever the bar's shape
+              // (#1054 fix 3).
+              assertEqual(lines[endsAt - 2], `G53 G0 Z${safeWord}`, `${label}: after retracting to the machine Safe Z`)
               assertEqual(lines[endsAt - 3], 'M5', `${label}: after the spindle stop`)
             }
           }
@@ -683,20 +681,20 @@ function testManualIndexTurnsTheBarItself(): void {
       // slice 2b does not depend on a second setup existing).
       const single = post(bar, ['rough'], rotaryMachine(axis, 'own'), barMoves(axis, 'top')).gcode
       assert(single.includes(`; ${turnComment('A', 0)}`), `${shapeName}, one Top setup: the turn comment`)
-      assert(single.includes(`\nG53 G0 Z${safeWord(shape)}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
+      assert(single.includes(`\nG53 G0 Z${safeWord}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
 
       // A machine without a rotary axis keeps slice 2 exactly: the operator
       // comment, no turn word, and no motion added.
       const plain = post(two, ['under'], GRBL, barMoves(axis, 'bottom')).gcode
       assert(plain.includes('; ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'), `${shapeName}, no rotary axis: slice 2's instruction`)
       assert(plain.includes('; ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'), `${shapeName}, no rotary axis: slice 2's retract line`)
-      assert(!plain.includes('ROTARY: THE PROGRAM TURNS'), `${shapeName}, no rotary axis: no program-turn comment`)
+      assert(!plain.includes('RETRACTS TO MACHINE Z TOP'), `${shapeName}, no rotary axis: no program-turn comment`)
       assert(!/(^|\s)A[-+]?\d/.test(programWithoutComments(plain, 'gcode')), `${shapeName}, no rotary axis: no A word`)
     }
   }
 
-  // The travel height is in the program's units: a 2 in round bar (1 in pivot,
-  // 1 in radius, 1 mm of clearance) retracts to 0.0394 in above the origin.
+  // The machine Safe Z is a machine coordinate: 0 is the top of travel in
+  // either unit, and the angle still uses the program's own precision.
   const inchBase = newProject('Inch Bar', 'inch')
   inchBase.stock = roundStock(2, 8, 'x')
   const inchBounds = getStockBounds(inchBase.stock)
@@ -720,7 +718,7 @@ function testManualIndexTurnsTheBarItself(): void {
     { kind: 'rapid', from: { x: 3, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 2.5 } },
   ]
   const inchProgram = post(inchProject, ['rough'], rotaryMachine('x', 'own'), inchMoves).gcode
-  assert(inchProgram.includes('\nG53 G0 Z0.0394\nG0 A0.0000\n'), 'inch: the machine Safe Z and the angle use the program units and precision')
+  assert(inchProgram.includes('\nG53 G0 Z0.0000\nG0 A0.0000\n'), 'inch: machine Z top is 0 in either unit; the angle keeps the program precision')
 }
 
 /**
@@ -802,12 +800,12 @@ function testInvertedZAxisUnwindRetracts(): void {
   })
   // The path ends at the cut height: no operation retract, so only the closing
   // unwind can establish clearance. GRBL applies no tool-length compensation,
-  // so the retract is the machine-coordinate Safe Z (#1054 fix 2), not the
-  // work-coordinate travel height: the project ceiling is 50 and the origin is
-  // its top at 20, so the inverted machine's value is -(50 - 20) = -30.
+  // so the retract is the definition's machine Safe Z (#1054 fix 3): a machine
+  // coordinate, untouched by the inverted `-Z` transform and by the project's
+  // origin (the default is 0, the top of travel).
   const moves = barMoves('x', 'bottom').slice(0, -1)
   const lines = post(two, ['under'], inverted, moves).gcode.split('\n')
-  const safeZ = -(50 - 20)
+  const safeZ = inverted.motion.machineSafeZ
   const unwindAt = lines.lastIndexOf('G0 A0.000')
   assert(unwindAt > 0, 'the program still unwinds the bar')
   assertEqual(lines[unwindAt - 1], `G53 G0 Z${safeZ.toFixed(3)}`, 'the unwind retracts to the machine Safe Z first')
@@ -815,19 +813,17 @@ function testInvertedZAxisUnwindRetracts(): void {
 }
 
 /**
- * #1054 fix 2: a single-tool Top or Bottom program with tool changes disabled
- * has no tool-length compensation, so the opening and closing bar-clearance
- * retract cannot be a work-coordinate `G0 Z<travel>`: that Z no longer
- * describes the tip. Every bundled rotary-capable dialect must retract in
- * machine coordinates to the Safe Z instead, and a machine with no
- * machine-coordinate move must refuse the turn.
+ * #1054 fix 2/fix 3: a single-tool Top or Bottom program with tool changes
+ * disabled has no tool-length compensation, so the opening and closing
+ * bar-clearance retract cannot be a work-coordinate `G0 Z<travel>`: that Z no
+ * longer describes the tip. Every bundled rotary-capable dialect must retract
+ * in machine coordinates to the definition's own Safe Z instead, and a machine
+ * with no machine-coordinate move must refuse the turn.
  */
 function testManualIndexTurnWithoutCompensation(): void {
   console.log('Testing the bar turn without tool-length compensation...')
   const project = rotaryBarProject('x')
   const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
-  // 50 mm Safe Z on the 20 mm bar, origin on its top at 20: machine Z 30.
-  const safeZ = Math.max(two.meta.maxTravelZ, 21) - two.origin.z
   const rotary: RotaryDefinition = {
     about: 'x',
     drive: 'own',
@@ -857,7 +853,7 @@ function testManualIndexTurnWithoutCompensation(): void {
       const lines = result.gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
       const angle = formatGCodeNumber(face === 'bottom' ? 180 : 0, definition, two.meta.units)
       const turnAt = lines.indexOf(`G0 A${angle}`)
-      const safeLine = `G53 G0 Z${formatGCodeNumber(safeZ, definition, two.meta.units)}`
+      const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
       assert(turnAt > 0, `${label}, ${face}: the turn is posted\n${result.gcode}`)
       assertEqual(lines[turnAt - 1], safeLine, `${label}, ${face}: machine-coordinate Safe Z before the turn`)
       assert(
@@ -907,7 +903,7 @@ function testManualIndexTurnWithoutCompensation(): void {
   assert(cancelledTurn > 0, 'a cancelled compensation still turns')
   assertEqual(
     cancelled[cancelledTurn - 1],
-    `G53 G0 Z${formatGCodeNumber(safeZ, cancelling, two.meta.units)}`,
+    `G53 G0 Z${formatGCodeNumber(cancelling.motion.machineSafeZ, cancelling, two.meta.units)}`,
     'the retract follows the cancellation, not G43',
   )
 
@@ -947,6 +943,78 @@ function testManualIndexTurnWithoutCompensation(): void {
     shopbotRefused = true
   }
   assert(shopbotRefused, 'ShopBot SBP cannot be given a rotary axis')
+}
+
+/**
+ * #1054 fix 3: the G53 retract height is a machine coordinate the definition
+ * states, never one derived from the project. The default 0 is the top of
+ * travel after homing; a project's origin, units and Safe Z do not change it.
+ * Mutation checked: deriving the height from the project's Safe Z again (the
+ * fix-2 behaviour) makes the custom-height assertions fail.
+ */
+function testMachineSafeZIsAMachineCoordinate(): void {
+  console.log("Testing the G53 retract height is the definition's machine Safe Z...")
+  const base = withBottomSetup(rotaryBarProject('x'), { axis: 'x', operationIds: ['under'] })
+  const grbl = rotaryMachine('x', 'own')
+  assertEqual(grbl.motion.machineSafeZ, 0, 'a definition that states nothing defaults to 0, the top of travel')
+  const retractLine = (
+    project: Project,
+    definition: MachineDefinition,
+    operationIds: string[] = ['under'],
+    moves: ToolpathMove[] = barMoves('x', 'bottom'),
+  ): string => {
+    const line = post(project, operationIds, definition, moves).gcode
+      .split('\n')
+      .find((entry) => entry.startsWith('G53 G0 Z'))
+    assert(line !== undefined, 'the program carries the machine-coordinate retract')
+    return line
+  }
+  const custom = validateMachineDefinition({
+    ...structuredClone(grbl),
+    motion: { ...structuredClone(grbl.motion), machineSafeZ: -12.5 },
+  })
+  const movedOrigin: Project = { ...base, origin: { ...base.origin, z: base.origin.z + 100 } }
+  const highCeiling: Project = { ...base, meta: { ...base.meta, maxTravelZ: 500 } }
+  for (const [label, project] of [
+    ['the fixture', base],
+    ['an origin 100 mm higher', movedOrigin],
+    ['a 500 mm project Safe Z', highCeiling],
+  ] as const) {
+    assertEqual(
+      retractLine(project, custom),
+      'G53 G0 Z-12.500',
+      `${label}: the definition's height, not a project value`,
+    )
+  }
+
+  // Inch projects read the same machine coordinate: the top is 0 in either
+  // unit, and a stated height is written in the program's own precision.
+  const inchBase = newProject('Inch Bar', 'inch')
+  inchBase.stock = roundStock(2, 8, 'x')
+  const inchBounds = getStockBounds(inchBase.stock)
+  inchBase.origin = {
+    name: 'Origin',
+    x: inchBounds.minX,
+    y: (inchBounds.minY + inchBounds.maxY) / 2,
+    z: inchBase.stock.thickness,
+    visible: true,
+  }
+  inchBase.tools = [{ ...defaultTool('inch', 1), id: 't1', name: 'Tool 1' }]
+  const inchProject = syncProjectSetups({
+    ...inchBase,
+    meta: { ...inchBase.meta, projectType: 'rotary' },
+    operations: [makeOperation('rough', 'Rough')],
+  })
+  assertEqual(
+    retractLine(inchProject, grbl, ['rough'], barMoves('x', 'top')),
+    'G53 G0 Z0.0000',
+    'inch: the machine Z top is 0, in the program precision',
+  )
+  assertEqual(
+    retractLine(inchProject, custom, ['rough'], barMoves('x', 'top')),
+    'G53 G0 Z-12.5000',
+    'inch: a stated machine height is read in the program units',
+  )
 }
 
 function normalizedProgram(program: string): string {
@@ -1009,6 +1077,7 @@ testBottomFlipAxisWarning()
 testManualIndexTurnsTheBarItself()
 testManualIndexTurnFollowsToolLengthCompensation()
 testManualIndexTurnWithoutCompensation()
+testMachineSafeZIsAMachineCoordinate()
 testManualIndexAxisMismatchIsRefused()
 testInvertedZAxisUnwindRetracts()
 testFlatAndAroundProgramsAreUnchanged()

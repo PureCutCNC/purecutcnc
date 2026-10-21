@@ -820,10 +820,11 @@ console.log('Testing the single unwind rapid...')
   const restoredAt = lines.lastIndexOf('G94', unwindAt)
   const lastInverseAt = lines.lastIndexOf('G93', unwindAt)
   assert.ok(restoredAt > lastInverseAt, 'inverse-time mode is left before the unwind')
-  // GRBL applies no tool-length compensation, so the closing retract is in
-  // machine coordinates to the project's Safe Z (#1054 fix 2), after the
-  // spindle stop and before the turn.
-  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5', 'G53 G0 Z10.000'], 'the spindle stop, then the unwind retract')
+  // GRBL applies no tool-length compensation, so the closing retract is the
+  // machine definition's own Safe Z (#1054 fix 3), after the spindle stop and
+  // before the turn: 0 by default, the top of travel after homing, never the
+  // project's Safe Z mapped through the origin.
+  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5', 'G53 G0 Z0.000'], 'the spindle stop, then the unwind retract')
 }
 
 // ── 6. the bar and the machine must agree (rule 3) ────────────

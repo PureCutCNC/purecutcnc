@@ -536,6 +536,10 @@ export interface ProgramSetupPlan {
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
+  /** Whether the manual-index clearance retract is the machine-coordinate one
+   *  (#1054 fix 3). Absent means yes, the documented default when a machine
+   *  applies no tool-length compensation. */
+  machineCoordinateRetract = true,
 ): ProgramSetupPlan {
   const { project, operations } = input
   const warnings: ToolpathWarning[] = []
@@ -609,7 +613,7 @@ export function planProgramSetup(
     })
   }
   return {
-    headerComments: setupHeaderLines(project, setup, input.definition),
+    headerComments: setupHeaderLines(project, setup, input.definition, machineCoordinateRetract),
     manualIndexAngle: turns && !turnAxisMismatch ? manualIndexAngle(setup) : null,
     warnings,
   }

@@ -1825,9 +1825,9 @@ const NINETY = Math.PI / 2
   assert.equal(raw[raw.length - 1], 'M30', 'and the program end follows it')
   // Finding 2 (#1054 fix 1): the unwind retracts clear of the bar first,
   // because the turning cut ended below it. GRBL applies no tool-length
-  // compensation, so fix 2 makes that retract the machine-coordinate Safe Z
-  // (the project ceiling is 50, the origin is the bar top at 20).
-  assert.equal(raw[raw.length - 3], 'G53 G0 Z30.000', 'the closing unwind retracts before it turns')
+  // compensation, so the retract is the machine definition's own Safe Z
+  // (#1054 fix 3): 0 by default, the top of travel after homing.
+  assert.equal(raw[raw.length - 3], 'G53 G0 Z0.000', 'the closing unwind retracts before it turns')
   // The borrowed letter carries the unwind on a borrowed-motor machine.
   const borrowed = exportProgram(project, rotaryMachine(BORROWED_Y), [{
     operation: operation('Unwind'),
@@ -1842,7 +1842,7 @@ const NINETY = Math.PI / 2
   assert.ok(!/\nG0 [AXY]0\.000\n/.test(zero.gcode), 'a program that ends at 0 writes no unwind')
   assert.equal(
     withoutUnwind(result.gcode),
-    result.gcode.replace('\nG53 G0 Z30.000\nG0 A0.000', ''),
+    result.gcode.replace('\nG53 G0 Z0.000\nG0 A0.000', ''),
     'the helper strips exactly the closing block',
   )
 }

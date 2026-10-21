@@ -237,6 +237,11 @@ interface Audit {
  * both ends of the move — the A word changes across the whole move, so a start
  * below the height is just as unsafe as an end below it. A rotary change with
  * no known Z at all is a violation (there is nothing to prove).
+ *
+ * A `G53` block is in machine coordinates (#1054 fix 3), so its Z is not a work
+ * height and is not compared with `safeZ`. It is taken as the top of travel, the
+ * documented assumption of `motion.machineSafeZ` (the machine is homed with Z at
+ * the top), so a later rotary change stays clear.
  */
 function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: number, tolerance: number): Audit {
   type Motion = 'G0' | 'G1' | 'G2' | 'G3'
@@ -265,6 +270,8 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
     let blockMotion: Motion | null = motion
     let blockZ: number | null = z
     let blockRotary: number | null = rotary
+    let blockMachineCoordinate = false
+    let blockHasZ = false
     let hasMotionWord = false
     let hasAxisWord = false
     for (const word of words) {
@@ -278,6 +285,8 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
             units = 'inch'
           } else if (code === 21) {
             units = 'mm'
+          } else if (code === 53) {
+            blockMachineCoordinate = true
           } else if (code === 90) {
             absolute = true
           } else if (code === 91) {
@@ -304,12 +313,20 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
         }
         case 'Z': {
           hasAxisWord = true
+          blockHasZ = true
           blockZ = absolute ? (word.value ?? 0) : (blockZ ?? 0) + (word.value ?? 0)
           break
         }
         default:
           break
       }
+    }
+
+    if (blockMachineCoordinate && blockHasZ) {
+      // G53 is a machine coordinate, so this Z is not a work height. Taken as
+      // the top of travel (the machineSafeZ assumption), it proves the next
+      // rotary change clear.
+      blockZ = Number.POSITIVE_INFINITY
     }
 
     if (blockMotion !== null && (hasMotionWord || hasAxisWord)) {
@@ -639,13 +656,10 @@ console.log('Testing the closing unwind retract on a square blank...')
   }])
   const roundBar = round.project.stock
   assert.ok(isBarStock(roundBar), 'fixture: the round project has bar stock')
-  // GRBL applies no tool-length compensation, so the retract is the
-  // machine-coordinate Safe Z (#1054 fix 2), not the work-coordinate travel
-  // height.
-  const roundSafe = (Math.max(
-    round.project.meta.maxTravelZ,
-    barPivotZ(roundBar) + barMaxRadius(roundBar) + convertLength(1, 'mm', 'mm'),
-  ) - round.project.origin.z).toFixed(3)
+  // GRBL applies no tool-length compensation, so the retract is the machine
+  // definition's own Safe Z (#1054 fix 3), not the work-coordinate travel
+  // height and not the project's Safe Z mapped through the origin.
+  const roundSafe = machine('own', 'x').motion.machineSafeZ.toFixed(3)
   assert.match(
     roundResult.gcode,
     new RegExp(`G53 G0 Z${roundSafe}\\nG0 A0`),

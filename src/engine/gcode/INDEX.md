@@ -34,7 +34,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
   `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
   for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
-  `null` meaning none — `outputDialect`, `machineKind`, `plasma` and `rotary`
+  `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
+  height, default 0 = the top of travel after homing — `outputDialect`,
+  `machineKind`, `plasma` and `rotary`
   blocks), `resolveOutputDialect`, `machineCoordinateRapidCommand`, the rotary
   helpers `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection` (which letter
   the program uses for rotation, which project axis a borrowed motor costs, and
@@ -70,10 +72,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   compensation is known active (`G43`/`G44`, not cancelled by `G49`) it is the
   historical work-coordinate rapid to the generators' travel height
   (`rotaryTravelZ`, above a square blank's corners); otherwise it is a
-  machine-coordinate rapid to the project's Safe Z (`maxTravelZ`, floored at
-  the bar's travel height), which no work offset or compensation can change. A
-  machine with neither a compensation nor a machine-coordinate move is refused
-  with `postRotaryTurnWithoutClearance` rather than turned.
+  machine-coordinate rapid to the machine definition's own Safe Z
+  (`motion.machineSafeZ`, default 0 = the top of travel after homing, #1054
+  fix 3), which no work offset or compensation can change. It is never derived
+  from the project origin, units or Safe Z: `G53` is the machine's zero, which
+  the app does not know. A machine with neither a compensation nor a
+  machine-coordinate move is refused with `postRotaryTurnWithoutClearance`
+  rather than turned.
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
   and none for a program that ends at 0 or that never carried an angle (so a
