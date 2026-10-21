@@ -136,39 +136,91 @@ function lineCode(line: string, commentPrefix: string): string {
 }
 
 /**
- * Commands a machine template can spell without moving any axis. Every other
- * `G`/`M` command is distrusted: a canned cycle, a macro call, a home, a tool
- * change or a coordinate-system change can move Z without naming it, and the
- * emitter must not keep believing a Z it can no longer prove.
+ * The `G`/`M` commands a machine template can spell without moving any axis.
+ * A template is inert only when every word on it is on this allowlist (or is a
+ * parameter word below): every other command is distrusted, because a canned
+ * cycle, a macro call, a home, a tool change or a coordinate-system command can
+ * move Z without naming it, and the emitter must not keep believing a Z it can
+ * no longer prove (#1057, Codex review).
  */
 const INERT_TEMPLATE_COMMANDS: ReadonlySet<string> = new Set([
-  'G4', 'G17', 'G18', 'G19', 'G20', 'G21',
+  // Dwell; plane, units, distance, feed, retract and spindle-speed modes.
+  'G4', 'G17', 'G18', 'G19', 'G20', 'G21', 'G90', 'G91', 'G93', 'G94',
+  'G96', 'G97', 'G98', 'G99',
+  // Cutter compensation, work-coordinate select, path control, cycle cancel.
   'G40', 'G41', 'G42', 'G54', 'G55', 'G56', 'G57', 'G58', 'G59',
-  'G61', 'G64', 'G80', 'G90', 'G91', 'G93', 'G94', 'G98', 'G99',
+  'G61', 'G64', 'G80',
+  // Spindle, coolant, program pause and end.
   'M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M7', 'M8', 'M9', 'M30',
 ])
 
 /**
+ * The four motion commands every bundled G-code definition writes. A motion
+ * block is not inert by itself — a later word on the same line can be a Z — but
+ * the per-word scan below decides that from the words actually present, so
+ * `G0 X0` moves only X and leaves Z known (#1057).
+ */
+const TEMPLATE_MOTION_COMMANDS: ReadonlySet<string> = new Set(['G0', 'G1', 'G2', 'G3'])
+
+/**
+ * Letters whose value cannot move Z on its own: planar and rotary coordinates,
+ * arc offsets, cycle parameters, a feed, speed, tool, tool-offset or line
+ * number. `Z` is decisive and is handled before this set is consulted.
+ */
+const INERT_TEMPLATE_LETTERS: ReadonlySet<string> = new Set([
+  'X', 'Y', 'A', 'I', 'J', 'K', 'R', 'P', 'Q', 'F', 'S', 'T', 'N', 'H', 'D', 'L',
+])
+
+/**
  * True when a rendered machine template can move the cutter in Z behind the
- * emitter's back. A Z word is decisive. Without one, a line is treated as
- * moving unless every `G`/`M` command on it is a known inert modal/program
- * command: a macro, home, tool change or canned cycle can move an axis the
- * line never names, and assuming otherwise is how the next A word gets written
- * at a height nobody proved. Comments are stripped first, so prose never
- * counts as a command.
+ * emitter's back.
+ *
+ * The rule is an allowlist (#1057, Codex review): a line is inert only when
+ * every word on it cannot move Z. A `Z` word is decisive. A motion command
+ * (`G0`–`G3`) moves only the axes it names, so a motion block with no `Z` word
+ * leaves Z known. Everything else — an O-word or macro call, a tool change, a
+ * home, a canned cycle, a coordinate-system command, an expression, or any word
+ * this allowlist does not know — leaves Z unknown.
+ *
+ * The O-word check comes first because a subroutine call is the reason for the
+ * inversion: `o<toolchange> call` has no `G`/`M` word and no `Z`, and the old
+ * "no unknown G/M command" scan therefore called it inert while it could move Z.
+ *
+ * Comments are stripped first, so prose never counts as a command.
  */
 function templateCanMoveZ(line: string, commentPrefix: string): boolean {
-  if (lineCarriesAxisWord(line, 'Z', commentPrefix)) return true
-  let code = line.replace(/\([^)]*\)/g, ' ')
-  if (commentPrefix.length > 0 && commentPrefix !== '(') {
-    const at = code.indexOf(commentPrefix)
-    if (at >= 0) code = code.slice(0, at)
+  let code = lineCode(line, commentPrefix).trim()
+  // Block delete marks an optional block; it is not a word.
+  while (code.startsWith('/')) code = code.slice(1).trimStart()
+  if (code.length === 0) return false
+  // The program delimiter cannot move an axis.
+  if (code === '%') return false
+  // An O-word is the interpreter's program/subroutine/macro syntax: `O100`,
+  // `o100 call`, `o<toolchange> call`. A subroutine can move Z without naming
+  // it, so an O-word is never inert.
+  if (/(?:^|\s)[Oo](?=\s*(?:<|\d))/.test(code)) return true
+  // Macro variables and expressions are arbitrary text; distrust them whole.
+  if (['#', '[', ']', '$', '='].some((character) => code.includes(character))) return true
+
+  let at = 0
+  for (const match of code.matchAll(/([A-Za-z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))?/g)) {
+    const start = match.index ?? at
+    // Anything between two words that is not whitespace is not a known word.
+    if (start !== at && code.slice(at, start).trim().length > 0) return true
+    at = start + match[0].length
+    const letter = match[1].toUpperCase()
+    const value = match[2]
+    // A letter with no number is not a word this allowlist knows.
+    if (value === undefined) return true
+    if (letter === 'Z') return true
+    if (letter === 'G' || letter === 'M') {
+      const command = `${letter}${Number(value)}`
+      if (!TEMPLATE_MOTION_COMMANDS.has(command) && !INERT_TEMPLATE_COMMANDS.has(command)) return true
+      continue
+    }
+    if (!INERT_TEMPLATE_LETTERS.has(letter)) return true
   }
-  for (const match of code.matchAll(/\b([GM])\s*(\d+(?:\.\d+)?)/gi)) {
-    const command = `${match[1].toUpperCase()}${Number(match[2])}`
-    if (!INERT_TEMPLATE_COMMANDS.has(command)) return true
-  }
-  return false
+  return code.slice(at).trim().length !== 0
 }
 
 /**
@@ -817,6 +869,25 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // True once a touch-off has put Z zero on the sheet. It outlives the
   // operation: a later operation in the same program starts in that frame.
   let plasmaZeroOnSheet = false
+  /**
+   * Restate a safe Z before XY motion when the program itself commands Z.
+   *
+   * Controller-owned piercing (QtPlasmaC) is the one dialect where it does not:
+   * its load filter comments out every Z word in a loaded program, machine
+   * templates included, and raises the torch below the Z axis's maximum before
+   * the first XY move (`scripts/gcode-conformance/qtplasmac/README.md`). An XY
+   * travel therefore cannot inherit a template's Z, and a Z word written here
+   * would be stripped anyway, so nothing is written: the controller keeps the
+   * torch height and `state.zKnown` stays irrelevant to that path. Every
+   * program-owned dialect writes Z itself, so a Z a template may have moved is
+   * unknown and the safe height is restated before the travel, even when the
+   * stale tracked Z happens to equal it (#1057, Codex review item 2).
+   */
+  const restateSafeZBeforeTravel = (safeZ: number | null): void => {
+    if (plasmaTorch || safeZ === null) return
+    if (state.zKnown && state.currentPosition?.z === safeZ) return
+    emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
+  }
   const emitPlasmaOperation = (
     operation: PostProcessorInput['operations'][number]['operation'],
     tool: PostProcessorInput['operations'][number]['tool'],
@@ -847,7 +918,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       captureTrace,
     })
     warnings.push(...plan.warnings)
+    // The operation's own clearance. In controller-owned piercing this is never
+    // written (the controller keeps the torch height), but the decision goes
+    // through the same place as the program-owned path, so it is not implicit.
+    const clearanceZ = plasmaSafeZ(plan.steps)
     const travelTo = (point: ToolpathPoint) => {
+      // Torch-off travel and the XY rapid to a pierce point: a template that
+      // moved Z cannot leave these at its height in controller-owned piercing,
+      // because the program may not command Z there at all. The shared helper
+      // states that decision and writes nothing for this dialect.
+      restateSafeZBeforeTravel(clearanceZ)
       const at = state.currentPosition
       if (at === null || at.x !== point.x || at.y !== point.y) {
         emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
@@ -903,9 +983,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           const safe = plasmaZeroOnSheet ? heights.sheetSafeZ : heights.safeZ
           // A template may have moved Z behind the emitter's back (#1057), so a
           // stale safe-looking Z is no proof the head is clear; restate it.
-          if (!state.zKnown || state.currentPosition?.z !== safe) {
-            emitMotionLine(definition.motion.rapidCommand, { z: safe })
-          }
+          restateSafeZBeforeTravel(safe)
           emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
           emitTemplateLine(probe)
           // G38.2 leaves the controller in its own motion mode: the pierce

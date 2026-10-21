@@ -86,14 +86,23 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the same machine-coordinate clearance retract first (#1054 fix 2). On a
   square blank a template Z move before an A word also rapids to the
   generators' travel height whenever the tracked Z is unknown, because the
-  last operation may have descended at a constant angle. A template that can
-  move Z (a Z word, a
-  canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
-  A word is preceded by a validated retract to that height — a header or
-  tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
+  last operation may have descended at a constant angle. A template is inert
+  only when every word on it is on an explicit allowlist (dwell, plane, units,
+  distance/feed modes, cutter compensation, work-coordinate select, spindle,
+  coolant, pause/end, a tool select with no change, and parameter words): a Z
+  word, an O-word/subroutine or macro call, a canned cycle, a home, a tool
+  change, an expression or any unknown word invalidates the tracked Z, and a
+  later A word is preceded by a validated retract to that height — a header or
+  tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1;
+  #1057 Codex review). A motion block whose words name no Z (`G0 X0`) moves
+  only the axes it names and leaves Z known.
   For every project type the next rapid after such a template restates its own
   Z before any XY or rotary motion, so a stale tracked Z never drops the
-  retract (#1057).
+  retract (#1057). Controller-owned piercing (QtPlasmaC) is the one path that
+  writes no Z of its own: its load filter comments out Z words, templates
+  included, and keeps the torch height, so the XY torch path needs no
+  restatement and adds none. G-code-owned piercing writes Z itself and
+  restates its safe height before every cut's XY rapid.
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
