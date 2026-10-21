@@ -47,7 +47,9 @@ import { normalizeProject } from '../../store/projectStore'
 import { projectWithFeatures, withBottomSetup } from '../../test/projectFixtures'
 import { syncProjectSetups } from '../../store/helpers/setups'
 import { withoutUnreachableSubtracts } from '../setupTargets'
+import { createCamPlan } from '../operations/camPlan/createCamPlan'
 import { computeOperationToolpath } from './generateOperation'
+import { generatePocketRestRegionDrafts } from './restRegions'
 import { NON_TARGET_SUBTRACT_GAP_TOLERANCE, resolvePocketRegions } from './resolver'
 import type { ResolvedPocketResult, ToolpathMove, ToolpathResult } from './types'
 
@@ -379,6 +381,105 @@ console.log('\n6. The face gate: same face, through and models stay; other-face 
   ], operation('op1', ['only']))
   check('a single-face project is returned as the same object', withoutUnreachableSubtracts(single, 'top') === single,
     'the gate copied a project it changed nothing in')
+}
+
+// ── Callers that resolve regions directly ────────────────────
+//
+// Rest-region drafts and CAM Plan resolve regions without going through
+// `computeOperationToolpath`, so a gate applied only there left them reading
+// the other face's work. The review's repro: a Bottom blind notch crossing the
+// Top pocket's edge made SIX Top rest regions where the filtered project makes
+// FOUR — the notch's own band contributed two exposed corners.
+
+console.log('\n7. Rest regions resolve through the same face gate (4 regions, not 6)...')
+
+/** The Top pocket, and a Bottom blind notch that overlaps its right edge. */
+function bottomNotchProject(): Project {
+  return baseProject([
+    topPocket(),
+    rect('bottom-notch', 'subtract', 70, 30, 20, 20, 14, 0, 'bottom'),
+  ], operation('op1', ['top-pocket']))
+}
+
+{
+  const project = bottomNotchProject()
+  check('fixture: the Bottom notch overlaps the Top pocket edge',
+    project.features.some((entry) => entry.id === 'bottom-notch' && entry.authoringFace === 'bottom'),
+    'the notch is missing from the project')
+
+  // The direct resolver call is the bypass shape the review found: it is not
+  // under the generation gate, so the Bottom notch is folded into a second
+  // 14..0 band. The rest entry must gate itself; the checks below are what
+  // fail when that gate is removed (the rest pass returns six regions).
+  const raw = resolvePocketRegions(project, project.operations[0]!)
+  check('fixture: the raw resolver still folds the Bottom notch (the bypass shape)',
+    raw.bands.some((band) => band.bottomZ < 14 - 1e-9),
+    `bands: ${JSON.stringify(raw.bands.map((band) => [band.topZ, band.bottomZ]))}`)
+
+  const rest = generatePocketRestRegionDrafts(project, project.operations[0]!)
+  check('the Top rest regions are the pocket\'s four corners, not six', rest.drafts.length === 4,
+    `${rest.drafts.length} rest regions: ${JSON.stringify(rest.drafts.flatMap((draft) => [
+      draft.profile.start,
+      ...draft.profile.segments.map((segment) => segment.to),
+    ]))}`)
+  check('the rest pass raises no depth extension', !hasDepthExtension(rest),
+    `unexpected warnings: ${JSON.stringify(rest.warnings)}`)
+}
+
+console.log('\n8. CAM Plan resolves the same filtered regions...')
+
+{
+  // No existing operations, so the plan proposes its own rough/finish pair and
+  // the smaller-cutter rest pass derived from it. The 3 mm cutter is the rest
+  // pass's candidate.
+  const base = bottomNotchProject()
+  const project = syncProjectSetups({
+    ...base,
+    operations: [],
+    tools: [
+      ...base.tools,
+      { ...defaultTool('mm', 1), id: 't2', name: 'Flat 3', diameter: 3, maxCutDepth: 25 },
+    ],
+  })
+  const plan = createCamPlan(project, [])
+  const rest = plan.operations.find((draft) => draft.rest !== undefined) ?? null
+  check('the plan proposes a rest pass for the pocket', rest !== null,
+    `kinds: ${JSON.stringify(plan.operations.map((draft) => draft.operation.kind))}`)
+  check('the CAM Plan rest pass has the pocket\'s four regions, not six',
+    rest?.rest?.regions.length === 4,
+    `${rest?.rest?.regions.length} plan rest regions`)
+  check('the Bottom notch is not planned as a Top feature',
+    plan.operations.every((draft) => !(draft.operation.target.source === 'features'
+      && draft.operation.target.featureIds.includes('bottom-notch'))),
+    'the plan targeted the other face\'s notch')
+
+  // And the plan's island / non-target-subtract analysis (createCamPlan's own
+  // resolver calls) must read the same filtered project. With the Bottom notch
+  // in that analysis it bridges two separate Top pockets in plan and Z, so the
+  // fold swallows the second one and coverage marks a Top feature `not_needed`
+  // — silently dropping it from the plan.
+  const gateBase = baseProject([
+    rect('pocket-a', 'subtract', 10, 30, 30, 20, THICKNESS, 14),
+    rect('pocket-b', 'subtract', 60, 30, 30, 20, THICKNESS, 14),
+    rect('bridge', 'subtract', 30, 34, 40, 12, 14, 0, 'bottom'),
+  ], operation('op1', ['pocket-a']))
+  const gatedPlan = createCamPlan(syncProjectSetups({
+    ...gateBase,
+    operations: [],
+    tools: [
+      ...gateBase.tools,
+      { ...defaultTool('mm', 1), id: 't2', name: 'Flat 3', diameter: 3, maxCutDepth: 25 },
+    ],
+  }), [])
+  const pocketB = gatedPlan.coverage.find((entry) => entry.featureId === 'pocket-b') ?? null
+  check('the Bottom notch cannot hide a Top pocket from the plan', pocketB?.status === 'planned',
+    `pocket-b coverage: ${JSON.stringify(pocketB)}`)
+  check('a Top pocket is still planned as a target',
+    gatedPlan.operations.some((draft) => draft.operation.target.source === 'features'
+      && draft.operation.target.featureIds.includes('pocket-b')),
+    `targets: ${JSON.stringify(gatedPlan.operations.map((draft) => (
+      draft.operation.target.source === 'features' ? draft.operation.target.featureIds : draft.operation.target.source
+    )))}`)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

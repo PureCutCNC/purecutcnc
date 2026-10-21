@@ -173,11 +173,16 @@ export function featureReachableFromFace(
  * face is machined around from both. Removing adds would cut through a boss
  * drawn from the far side, so only subtracts are filtered.
  *
- * Called once, in `computeOperationToolpath`, on the project the operation is
- * generated from — after the setup turn — so the same rule serves a Bottom
- * operation without any generator learning about faces. A project with nothing
- * to remove is returned as the same object, which keeps a single-face project
- * byte-identical.
+ * Called at generation (`computeOperationToolpath`, after the setup turn) and
+ * at the region entries that bypass generation — `restRegions.ts`'s two public
+ * draft entries and CAM Plan's analysis project — because rest-region drafts,
+ * CAM Plan's island/subtract discovery and rest reconciliation resolve regions
+ * directly and used to see the other face's work. The resolver itself cannot
+ * carry the gate: `setupFrameProject` deliberately zeroes every setup's turn
+ * so a generator cannot turn the stock twice, which leaves an operation in the
+ * turned project reading as Top. Applying the gate twice is a no-op, and a
+ * project with nothing to remove is returned as the same object, which keeps a
+ * single-face project byte-identical.
  */
 export function withoutUnreachableSubtracts(project: Project, face: SetupFace): Project {
   // `unrolledProject` already keeps only Around-authored features, and the
