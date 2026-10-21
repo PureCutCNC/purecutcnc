@@ -334,30 +334,6 @@ export function operationTargetKey(target: OperationTarget): string {
     : 'stock'
 }
 
-/**
- * True when an earlier **enabled** Rotary rough on the same target and setup
- * runs before this finish (#1045 slice E). The project's operation order is the
- * machining order.
- *
- * This is **advisory only**. Until slice E it was the licence the export guard
- * used to admit a finish, and Codex showed why one earlier rough is not proof:
- * a rough whose cut range or supports covered only part of the band licensed a
- * finish over the whole band. The guard now keeps a standing-material grid and
- * refuses a finish wherever the material the program actually left would be
- * taken deeper than the rough would leave; this predicate only decides whether
- * the generator adds its "rough first" note. A rough needs no predecessor.
- */
-export function rotaryRoughPrecedes(project: Project, operation: Operation): boolean {
-  if (operation.kind !== 'rotary_finish') return false
-  const index = project.operations.findIndex((entry) => entry.id === operation.id)
-  if (index <= 0) return false
-  const key = operationTargetKey(operation.target)
-  return project.operations.slice(0, index).some((entry) =>
-    entry.enabled
-    && entry.kind === 'rotary_rough'
-    && entry.setupId === operation.setupId
-    && operationTargetKey(entry.target) === key)
-}
 
 /**
  * Whether an operation may be generated in its setup, checked at generation

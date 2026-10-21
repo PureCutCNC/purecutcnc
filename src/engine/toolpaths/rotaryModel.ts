@@ -678,17 +678,18 @@ export interface RotaryFinishParams {
    */
   readonly passDirection?: RotaryPassDirection
   /**
-   * True when an earlier enabled rotary rough on the same setup and target
-   * runs before this finish (#1045 slice E). It is **advisory only**: a
-   * **square** blank's corners stand whole layers above an around finish's
-   * model-following ring, so a finish with no rough in front of it may take a
-   * full-depth corner bite. The generator now still emits the motion and warns
-   * (`rotarySquareFinishNeedsRough`); the export guard's standing-material grid
-   * is the authority, because only it can see what the program's earlier
-   * operations actually cut. Missing reads as `false`, and the field is never
+   * The pass direction of an earlier enabled rotary rough on the same setup and
+   * target, or `true` when the caller only knows a covering rough exists
+   * (#1045 slice E; slice K made it load-bearing on a square blank). An around
+   * finish on a square blank follows the model, so its first ring would take
+   * the standing square corner in one turning pass. Since slice K removed the
+   * export guard, the generator refuses instead of emitting that motion: no
+   * rough reads as `false`, and an **along** rough leaves the retained-end
+   * corner standing, so it does not cover the around finish there either. An
+   * along rough with no retained end covers the blank and is admitted. Never
    * consulted on a round bar or in along mode.
    */
-  readonly squareRoughBefore?: boolean
+  readonly squareRoughBefore?: boolean | 'around' | 'along'
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -2009,27 +2010,14 @@ function rotaryTargets(
 }
 
 /**
- * The material an around-mode finish would have to take out of a **square**
- * blank in one turning pass, and whether a rough should run first (advisory
- * since #1045 slice E).
- *
- * A ring follows the model, so at each sample the finish tip is the model plus
- * the stock it leaves. On a **raw** square blank the corners stand whole layers
- * above that surface; the first revolution would take the lot in one turning
- * cut -- the full-depth corner bite the along passes avoid by cutting one layer
- * at a time. `squareRotaryTouchRadius` is the blank material the real cutter can
- * reach at each sample's own angle, so `touch - tip` is that sample's engagement
- * into untouched blank. The operation may remove its own stock layer plus one
- * height-map cell (the sampler's own resolution) and no more;
- * `params.squareRoughBefore` is the caller saying an earlier enabled rough has
- * already cleared the bulk, which is how a square-to-round finish is reached.
- *
- * The rule is about **blank material** and is advisory since #1045 slice E: it
- * decides whether to warn, not whether to generate. The export guard owns the
- * authority, because only it sees the whole program's cuts and can tell a rough
- * that actually covered a spot from one that merely ran somewhere on the same
- * target. A round bar and along mode return false before any sample is read, so
- * their output is untouched.
+ * Whether an around finish on a **square** blank with no covering rough would
+ * take more than its own stock layer plus one height-map cell out of untouched
+ * blank. A ring follows the model, so on a raw blank the corners stand whole
+ * layers above it and the first revolution would take the lot in one turning
+ * cut. The blank itself as the model has nothing above the tip and needs no
+ * rough. An along rough over a retained end is refused before this runs, so
+ * this is only the no-rough case (#1045 slice E; slice K made the refusal
+ * generator-owned).
  */
 function squareAroundFinishNeedsRough(
   stock: BarStock,
@@ -2097,8 +2085,9 @@ function squareAroundFinishNeedsRough(
  * positions and the stub's steep along profile needs no shoulder refinement
  * here; the along *step* is the operation's own `stepover`, and the stub's
  * angular profile is resolved by `sampleSpacing`. What a finish may not do is
- * take a full-depth corner bite out of a raw blank, so
- * `squareAroundFinishNeedsRough` refuses that case (see its comment).
+ * take a full-depth corner bite out of a raw blank or out of a retained-end
+ * corner an along rough left standing, so it refuses with no motion and
+ * `rotarySquareFinishNeedsRough` (see the check before sampling, #1045 slice K).
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -2126,19 +2115,45 @@ export function generateRotaryFinish(
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
+  // #1045 slice K: a square blank's around finish may not follow an **along**
+  // rough over a retained end. The export guard that used to refuse that motion
+  // is gone, and regenerate-and-match only proves the path is the generator's
+  // own, so the generator must not emit it. An along rough over a band with no
+  // retained end clears the blank all the way to each end, and an around rough
+  // covers the whole circumference; the reference test proves both
+  // (`squareAroundGenerator.property.test.ts`).
+  let squareAround = false
+  if (isSquareStock(stock) && params.passDirection === 'around') {
+    squareAround = true
+    const bounds = getStockBounds(stock)
+    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    const retained = params.alongStart > lower + 1e-9 || params.alongEnd < upper - 1e-9
+    if (params.squareRoughBefore === 'along' && retained) {
+      return {
+        operationId,
+        moves: [],
+        warnings: [{ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } }],
+        bounds: null,
+      }
+    }
+  }
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.refusal) {
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
   }
   if (sampling.stopped) return { operationId, moves: [], warnings: [], bounds: null }
-  // A finish with no rough in front of it may still take a full corner bite out
-  // of a raw square blank. It generates -- the export check proves the posted
-  // motion is this generator's own, and the generator's safety is proven by
-  // `squareAroundGenerator.property.test.ts` -- but says so here, where the
-  // user is looking at the operation (#1045 slice E; slice K removed the export
-  // guard that used to re-prove coverage).
-  if (squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
-    warnings.push({ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } })
+  // No rough at all: a near-net model needs none, but a raw blank would take its
+  // corners in one turning pass. The decision is geometric and generator-owned.
+  if (squareAround && params.squareRoughBefore !== true && params.squareRoughBefore !== 'around'
+    && params.squareRoughBefore !== 'along'
+    && squareAroundFinishNeedsRough(stock, tool, params, sampling.angles, sampling.tips)) {
+    return {
+      operationId,
+      moves: [],
+      warnings: [{ code: 'rotarySquareFinishNeedsRough', params: { operation: operationId } }],
+      bounds: null,
+    }
   }
   const { angles, along } = sampling
   const tolerance = convertLength(0.001, 'mm', tool.units)

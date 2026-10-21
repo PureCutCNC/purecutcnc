@@ -15,8 +15,8 @@
  */
 
 import type { Operation, Project } from '../../types/project'
-import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
-import { operationFace, rotaryRoughPrecedes } from '../setupTargets'
+import { barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
+import { operationFace, operationTargetKey } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
@@ -36,6 +36,50 @@ import type { ToolpathWarningCode } from './warningCodes'
  * its own guards, and the operation-validity and active-face guards still
  * refuse square stock until the authoring slice lands.
  */
+
+/**
+ * The rough-before status for a square around finish (#1045 slice K). An around
+ * rough only covers the finish when its own along range reaches the finish's;
+ * a rough held back by chuck/tail supports (or a larger cutter) leaves raw
+ * blank at an end the finish would take in one turning pass. An along rough
+ * covers a free-ended band but never a retained-end corner. With no covering
+ * rough the status is `undefined`, so the finish generator's geometric check
+ * judges the samples it will actually cut and refuses a raw blank.
+ */
+function squareRoughStatus(
+  project: Project,
+  operation: Operation,
+  finishRange: { readonly start: number; readonly end: number },
+  modelRange: { readonly min: number; readonly max: number },
+  stock: Project['stock'],
+): 'around' | 'along' | undefined {
+  if (operation.kind !== 'rotary_finish' || !isSquareStock(stock)
+    || operation.rotaryPassDirection !== 'around') return undefined
+  const index = project.operations.findIndex((entry) => entry.id === operation.id)
+  if (index <= 0) return undefined
+  const key = operationTargetKey(operation.target)
+  let alongCovered = false
+  const covers = (roughRange: { start: number; end: number }): boolean =>
+    roughRange.start <= finishRange.start + 1e-6 && roughRange.end >= finishRange.end - 1e-6
+  for (const entry of project.operations.slice(0, index)) {
+    if (!entry.enabled || entry.kind !== 'rotary_rough') continue
+    if (entry.setupId !== operation.setupId || operationTargetKey(entry.target) !== key) continue
+    const record = project.tools.find((tool) => tool.id === entry.toolRef)
+    if (!record) continue
+    const roughTool = normalizeToolForProject(record, project)
+    if (roughTool.type !== 'ball_endmill' && roughTool.type !== 'flat_endmill') continue
+    const roughRange = rotaryAlongRange(stock, project.clamps, modelRange, roughTool, {
+      chuckEnd: entry.rotaryChuckSupport ?? 0,
+      tailEnd: entry.rotaryTailSupport ?? 0,
+    })
+    if (!roughRange || !covers(roughRange)) continue
+    if ((entry.rotaryPassDirection ?? 'along') === 'around') return 'around'
+    alongCovered = true
+  }
+  if (alongCovered) return 'along'
+  return undefined
+}
+
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
   const empty = (code: ToolpathWarningCode): ToolpathResult => ({
     operationId: operation.id, moves: [], bounds: null,
@@ -89,10 +133,10 @@ export function generateRotaryOperation(project: Project, operation: Operation):
     // Missing reads as 'along' inside the generators, so a saved operation keeps
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
-    // Advisory only since #1045 slice E: an around finish on a square blank
-    // warns when no earlier enabled rough runs before it. The export guard
-    // decides from the material the program actually leaves.
-    squareRoughBefore: rotaryRoughPrecedes(project, operation),
+    // Load-bearing on a square blank since #1045 slice K: the finish refuses
+    // when no earlier enabled rough covers this range, or when that rough was
+    // an along pass over a retained end that leaves the corner standing.
+    squareRoughBefore: squareRoughStatus(project, operation, range, { min, max }, stock),
   }
   const generator = operation.kind === 'rotary_rough' ? generateRotaryRough : generateRotaryFinish
   const result = generator(operation.id, surface.mesh, stock, tool, params, {})
