@@ -41,6 +41,7 @@ const ALL_CODES = [
   'xyLeadUnsupported', 'xyLeadRegionMask', 'xyLeadNoViablePath', 'xyLeadNeedsRampedEntry',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
   'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
+  'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',
   'vcarveWrongKind', 'vcarveNeedsVBit', 'contourSpacingPositive', 'vBitInvalidSlope', 'vcarveNoMoves',
@@ -130,6 +131,19 @@ for (const key of Object.keys(warningsEn)) {
   const code = key.slice('warnings.'.length)
   assert(codeSet.has(code), `catalog key ${key} corresponds to a ToolpathWarningCode`)
 }
+
+// The two rotary refusals added by #1045 slice O name the operation and say
+// what to change, so the message is actionable rather than a generic range.
+assert(
+  interpolate(warningsEn['warnings.rotaryStepdownBelowMinimum'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: the stepdown is below 0.01 mm'),
+  'the below-minimum stepdown message names the operation and the minimum',
+)
+assert(
+  interpolate(warningsEn['warnings.rotaryWorkBudgetExceeded'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: this would generate too many moves'),
+  'the work-budget message names the operation and the remedy',
+)
 
 // The debug passthrough renders its text verbatim in both locales.
 const debugWarning: ToolpathWarning = { code: 'debug', params: { text: 'Debug: xyz 42' } }

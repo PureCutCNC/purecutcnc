@@ -681,11 +681,13 @@ export interface RotaryFinishParams {
    * The radial layer depth of this operation's own clearing (#1045 slice M).
    * An around finish on a square blank clears the standing blank above its
    * finish surface in layers of this depth before it follows the model, so a
-   * missing or non-positive value falls back to the tool's `defaultStepdown`
-   * (the value a newly created rotary rough on the same tool is seeded with,
-   * `defaultOperationForTarget`). A finish whose saved field is 0 and whose
-   * tool has none either refuses with `stepdownPositive` rather than cutting a
-   * whole corner in one pass. Unused by the along motion.
+   * missing, zero, negative, NaN or infinite value falls back to the tool's
+   * `defaultStepdown` (#1045 slice O restores that fallback; slice N had let a
+   * zero through and refused it instead). A finish whose saved field is zero
+   * and whose tool has none either refuses with `stepdownPositive` rather than
+   * cutting a whole corner in one pass. A finite positive value below the
+   * physical minimum refuses with `rotaryStepdownBelowMinimum`. Unused by the
+   * along motion.
    */
   readonly stepdown?: number
 }
@@ -1129,6 +1131,20 @@ const MAX_ROTARY_SAMPLES = 16_000_000
 // grid, even when the touch gate ultimately skips it (#1045 slice N).
 const MAX_ROTARY_EMISSION_WORK = 16_000_000
 const MIN_ROTARY_STEPDOWN_MM = 0.01
+
+/**
+ * The layer depth a rotary operation actually uses (#1045 slice O).
+ *
+ * A saved field that is missing, zero, negative, NaN or infinite falls back to
+ * the tool's `defaultStepdown` -- exactly the value `defaultOperationForTarget`
+ * seeds a new rotary rough (and finish) on that tool with. Only a finite,
+ * positive value is used as given; the caller refuses it when it is below
+ * `MIN_ROTARY_STEPDOWN_MM`, because a finite value that small is a request for
+ * an unbounded number of layers rather than a missing one.
+ */
+function effectiveStepdown(stepdown: number | undefined, tool: NormalizedTool): number {
+  return Number.isFinite(stepdown) && (stepdown ?? 0) > 0 ? stepdown! : tool.defaultStepdown
+}
 
 /**
  * Per-shoulder cap on the extra along samples the square-blank refinement adds,
@@ -2101,9 +2117,14 @@ export function generateRotaryFinish(
   // slice M), so it needs no licence from an earlier operation: the clearing
   // layers below are the only thing between the raw blank and its finish pass.
   const squareAround = isSquareStock(stock) && params.passDirection === 'around'
-  const stepdown = params.stepdown ?? tool.defaultStepdown
-  if (squareAround && (!Number.isFinite(stepdown) || stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units))) {
-    return { operationId, moves: [], warnings: [{ code: !Number.isFinite(stepdown) || stepdown <= 0 ? 'stepdownPositive' : 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+  const stepdown = effectiveStepdown(params.stepdown, tool)
+  if (squareAround) {
+    if (!Number.isFinite(stepdown) || stepdown <= 0) {
+      return { operationId, moves: [], warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }], bounds: null }
+    }
+    if (stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
+      return { operationId, moves: [], warnings: [{ code: 'rotaryStepdownBelowMinimum', params: { operation: operationId } }], bounds: null }
+    }
   }
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.refusal) {
@@ -2169,7 +2190,7 @@ export function generateRotaryFinish(
       const layers = Math.ceil((maxRadius - lowest) / stepdown)
       // Include the finish rings, and use the actual (possibly refined) grid.
       if (!Number.isFinite(layers) || (layers + 1) * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
-        return { operationId, moves: [], warnings: [{ code: 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+        return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
       }
       const last = angles.length - 1
       let ring = 0
@@ -2184,6 +2205,7 @@ export function generateRotaryFinish(
           layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type))
         let ringEndedAtEnd = false
         for (let i = 0; i < along.length; i++, ring++) {
+          if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
           const forward = ring % 2 === 0
           const samples: (ToolpathPoint | null)[] = []
           for (let step = 0; step <= last; step++) {
@@ -2215,6 +2237,7 @@ export function generateRotaryFinish(
     // the along position, the angle and the tip alike.
     const last = angles.length - 1
     for (let ring = 0; ring < along.length; ring++) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const forward = ring % 2 === 0
       const samples: (ToolpathPoint | null)[] = []
       for (let step = 0; step <= last; step++) {
@@ -2228,6 +2251,7 @@ export function generateRotaryFinish(
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       // A `NaN` sample has no model under the tool: the finish follows the model,
       // and removing waste is the rough's job, so it is not cut. Each pass is the
       // runs of finite samples; a pass with none emits nothing at all.
@@ -2348,8 +2372,11 @@ export function generateRotaryRough(
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
-  if (!Number.isFinite(params.stepdown) || params.stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
-    return { operationId, moves: [], warnings: [{ code: !Number.isFinite(params.stepdown) || params.stepdown <= 0 ? 'stepdownPositive' : 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+  if (!Number.isFinite(params.stepdown) || params.stepdown <= 0) {
+    return { operationId, moves: [], warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }], bounds: null }
+  }
+  if (params.stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
+    return { operationId, moves: [], warnings: [{ code: 'rotaryStepdownBelowMinimum', params: { operation: operationId } }], bounds: null }
   }
   const warnings: ToolpathWarning[] = []
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
@@ -2396,7 +2423,7 @@ export function generateRotaryRough(
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
   if (!Number.isFinite(layers) || layers * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
-    return { operationId, moves: [], warnings: [{ code: 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+    return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
   }
   const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
@@ -2435,6 +2462,7 @@ export function generateRotaryRough(
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
       for (let i = 0; i < along.length; i++, ring++) {
+        if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const forward = ring % 2 === 0
         const samples: (ToolpathPoint | null)[] = []
         for (let step = 0; step <= last; step++) {
@@ -2456,6 +2484,7 @@ export function generateRotaryRough(
       // A new layer never links to the previous one, however its last pass ended.
       let previousEndedAtEnd = false
       for (let pass = 0; pass < angles.length; pass++) {
+        if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const angle = angles[pass] + (layer - 1) * 360
         const touchesMaterial = !square
           || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)

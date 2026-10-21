@@ -182,9 +182,31 @@ function modelMaxSlope(profile: readonly { along: number; radius: number }[]): n
 // intersection of every commanded sample. Written blind to `rotaryModel.ts`.
 
 export const worstCell = { depth: 0, along: 0, angle: 0, material: 0, contact: 0 }
-/** Largest cumulative interior removal from one ray during a commanded move. */
-export const interiorWorst = { depth: 0, along: 0, angle: 0, kind: '' }
+/**
+ * Largest cumulative interior removal from one ray during a commanded move,
+ * with the case and the commanded pose that produced it (#1045 slice O): a
+ * reported worst value is useless without the program it came from.
+ */
+export const interiorWorst = {
+  depth: 0, along: 0, angle: 0, kind: '', label: '', seed: -1,
+  fromAngle: 0, toAngle: 0, fromAlong: 0, toAlong: 0, fromTip: 0, toTip: 0,
+  material: 0, standing: 0, stepover: 0, diameter: 0, stepdown: 0,
+}
+/** The case whose moves are being replayed, so a worst value can name it. */
+let currentCaseLabel = ''
+let currentCaseSeed = -1
+let currentCaseStepover = 0
+let currentCaseDiameter = 0
 let moveInteriorWorst = 0
+/**
+ * Largest radial bite into the **outermost solid** any one ray took during a
+ * commanded move (#1045 slice O). A cavity below the surface makes the outer
+ * radius jump across air that an earlier pose already removed, so the raw
+ * `startMaterial - material[index]` overstates the bite; this counts only the
+ * removal from the interval that is the surface at that step.
+ */
+let moveSurfaceWorst = 0
+let moveSurfaceCell = { along: 0, angle: 0, material: 0, standing: 0 }
 const referenceStats = { moves: 0, cells: 0, steps: 0 }
 const lowestContact = { contact: Number.POSITIVE_INFINITY, along: 0, angle: 0, tip: 0, kind: '' }
 
@@ -342,6 +364,8 @@ function referenceMove(
   referenceStats.moves++
   let engagement = 0
   moveInteriorWorst = 0
+  moveSurfaceWorst = 0
+  moveSurfaceCell = { along: 0, angle: 0, material: 0, standing: 0 }
   worstCell.depth = 0
   for (let i = i0; i <= i1; i++) {
     const cellAlong = alongStart + (i + 0.5) * alongBin
@@ -356,6 +380,7 @@ function referenceMove(
       let standing = startMaterial
       let removed = 0
       let interiorRemoved = 0
+      let surfaceBite = 0
       const materialRadius = startMaterial
       // The representative of this cell's angle nearest the move's own angle
       // span: the move can sweep past 0/360 and the cell is one direction.
@@ -432,6 +457,7 @@ function referenceMove(
           // without allocating occupied/subtraction lists on this hot path.
           const next = Math.min(standing, span.contact)
           removed += standing - next
+          surfaceBite += standing - next
           standing = next
           material[index] = next
           if (removed > engagement) {
@@ -452,6 +478,7 @@ function referenceMove(
           const depth = high - low
           removed += depth
           if (high < standing - 1e-12) interiorRemoved += depth
+          else if (high >= solid.exit - 1e-12) surfaceBite += solid.exit - low
           if (solid.contact < low) next.push({ contact: solid.contact, exit: low })
           if (high < solid.exit) next.push({ contact: high, exit: solid.exit })
           if (low < lowestContact.contact) {
@@ -466,7 +493,16 @@ function referenceMove(
         else reference.occupied.set(index, occupied)
         moveInteriorWorst = Math.max(moveInteriorWorst, interiorRemoved)
         if (interiorRemoved > interiorWorst.depth) {
-          Object.assign(interiorWorst, { depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind })
+          Object.assign(interiorWorst, {
+            depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind,
+            label: currentCaseLabel, seed: currentCaseSeed, fromAngle, toAngle, fromAlong, toAlong, fromTip, toTip,
+            material: startMaterial, standing,
+            stepover: currentCaseStepover, diameter: currentCaseDiameter,
+          })
+        }
+        if (surfaceBite > moveSurfaceWorst) {
+          moveSurfaceWorst = surfaceBite
+          moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: material[index] }
         }
         if (removed > engagement) {
           engagement = removed
@@ -653,7 +689,9 @@ console.log('Testing the continuous reference against hand-computed values...')
   console.log('  continuous sweep, pure plunge, ball-shank and interior-span repros match')
 }
 
-if (process.env.SQUARE_REFERENCE_ONLY) process.exit(0)
+// #1045 slice O: the reference unit tests above are not a separate mode. The
+// seeded run always follows them; an environment variable must not be able to
+// skip the 300 programs CI is meant to check.
 interiorWorst.depth = 0
 
 // ── the seeded cases ──────────────────────────────────────────────────────
@@ -1113,11 +1151,12 @@ function estimateReplayCells(program: Program, entry: Case): number {
     const fromTip = move.from.z - pivot
     const toTip = move.to.z - pivot
     const tipMin = Math.min(fromTip, toTip)
-    const wallReach = Math.min(90, Math.asin(Math.min(1, radius / barMaxRadius(entry.stock))) * 180 / Math.PI)
-    const sphereReach = ball && tipMin + radius > 0
-      ? Math.min(90, Math.asin(Math.min(1, radius / (tipMin + radius))) * 180 / Math.PI)
-      : wallReach
-    const halfSpanDegrees = Math.max(wallReach, sphereReach)
+    // #1045 slice O: use the reference's own body reach. The old
+    // `asin(R / barMaxRadius)` window excluded interior material that a ball's
+    // shank (or a flat's bottom face at a small tip) reaches, so the estimate
+    // under-counted the replay cost of exactly the moves that are most
+    // expensive to check.
+    const halfSpanDegrees = bodyAngularReachDeg(ball, radius, tipMin, barMaxRadius(entry.stock))
     const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - radius - budget.alongStart) / budget.alongBin))
     const i1 = Math.min(budget.alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + radius - budget.alongStart) / budget.alongBin))
     if (i1 < i0) continue
@@ -1287,6 +1326,16 @@ let worstSurfaceOverLabel = ''
 let worstSurfaceUnder = Number.NEGATIVE_INFINITY
 let worstSurfaceUnderLabel = ''
 let worstAssertedInterior = 0
+let worstAssertedInteriorLabel = ''
+let worstAlongBite = 0
+let worstAlongBiteLabel = ''
+let worstAlongFlank = { depth: 0, label: '', stepover: 0, diameter: 0, stepdown: 0 }
+let closestAlongFlank = { excess: Number.NEGATIVE_INFINITY, label: '', stepover: 0, diameter: 0 }
+// Count the along-stage assertions so a change that drops one (rather than
+// making it a no-op) cannot pass silently: the seeded set must assert both the
+// radial surface bite and the flank engagement of every along program.
+let alongBiteChecks = 0
+let alongFlankChecks = 0
 let nonTurningWorst = 0
 let nonTurningLabel = ''
 
@@ -1329,6 +1378,10 @@ let worstPlunge = 0
 let worstPlungeLabel = ''
 
 for (const { entry, program } of CASES) {
+  currentCaseLabel = entry.label
+  currentCaseSeed = casesDone
+  currentCaseStepover = entry.stepover
+  currentCaseDiameter = entry.diameter
   if (process.env.SQUARE_PROFILE) {
     console.log(`  [case] ${casesDone} ${((Date.now() - startedAt) / 1000).toFixed(1)} s${entry.compact ? ' compact' : ''} `
       + `est ${estimateReplayCells(program, entry)} steps ${referenceStats.steps - profileSteps} `
@@ -1423,8 +1476,61 @@ for (const { entry, program } of CASES) {
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
         if (stage.finish || entry.roughKind === 'around') {
-          worstAssertedInterior = Math.max(worstAssertedInterior, moveInteriorWorst)
+          if (moveInteriorWorst > worstAssertedInterior) {
+            worstAssertedInterior = moveInteriorWorst
+            worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
+              + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)}`
+          }
           checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+        } else {
+          // #1045 slice O: an along pass is a **flank** cut, not a radial
+          // plunge. The overcut metric that matters is the material this move
+          // removes from the outermost solid at a ray -- one radial depth of
+          // cut, which must stay within a stepdown exactly as a turning cut's
+          // does. The reference's cumulative "interior" number is the cutter's
+          // body occupying air below an intact shell (and spans a previous pose
+          // already removed); it is not a radial depth, so it is asserted
+          // against the pass's lateral band plus the cutter footprint below.
+          if (moveSurfaceWorst > worstAlongBite) {
+            worstAlongBite = moveSurfaceWorst
+            worstAlongBiteLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
+              + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)} `
+              + `at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)}`
+          }
+          checkEngagement(moveSurfaceWorst, bound,
+            `${entry.label}: along ${move.kind} radial surface bite `
+            + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+            + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)})`)
+          alongBiteChecks++
+          // The reference's `moveInteriorWorst` is the cutter body's occupancy
+          // below an intact shell, summed over the move -- a flank cut, not a
+          // radial depth. Its bound is the pass's own lateral band plus the
+          // cutter's footprint: an along pass is spaced `stepover` from its
+          // neighbours and its cutter is `diameter` wide, so the material one
+          // pass can find standing inside its own swath is at most the two
+          // together. Asserting this (rather than a stepdown) is what makes the
+          // reported along-stage flank number a checked engagement instead of a
+          // quantity with no bound at all.
+          const flankBound = entry.stepover + entry.diameter
+            + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+          checkEngagement(moveInteriorWorst, flankBound,
+            `${entry.label}: along ${move.kind} flank engagement (stepover ${entry.stepover.toFixed(3)} `
+            + `diameter ${entry.diameter.toFixed(3)})`)
+          alongFlankChecks++
+          if (moveInteriorWorst > worstAlongFlank.depth) {
+            worstAlongFlank = {
+              depth: moveInteriorWorst,
+              label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
+              stepover: entry.stepover, diameter: entry.diameter, stepdown: entry.stepdown,
+            }
+          }
+          if (moveInteriorWorst - flankBound > closestAlongFlank.excess) {
+            closestAlongFlank = {
+              excess: moveInteriorWorst - flankBound,
+              label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
+              stepover: entry.stepover, diameter: entry.diameter,
+            }
+          }
         }
         if (move.kind === 'cut') {
           if (turns) {
@@ -1583,14 +1689,27 @@ console.log(`  finish: worst engagement ${worst.finish.peak.toFixed(4)} mm (${wo
   + `(${worst.finish.label})`)
 console.log(`  rapid turns: worst margin ${worstRapidMargin.toFixed(4)} mm above the corner envelope plus clearance `
   + `(${worstRapidLabel})`)
-console.log(`  interior engagement asserted in around stages: worst ${worstAssertedInterior.toFixed(4)} mm`)
+console.log(`  interior engagement asserted in around stages: worst ${worstAssertedInterior.toFixed(4)} mm `
+  + `(${worstAssertedInteriorLabel || 'none'})`)
 console.log(`  interior engagement including frozen along stages: worst ${interiorWorst.depth.toFixed(4)} mm `
-  + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)} (${interiorWorst.kind || 'none'})`)
+  + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)} (${interiorWorst.kind || 'none'}) `
+  + `— ${interiorWorst.label || 'none'} (seed ${interiorWorst.seed}); move A${interiorWorst.fromAngle.toFixed(2)}->${interiorWorst.toAngle.toFixed(2)} `
+  + `tip ${interiorWorst.fromTip.toFixed(3)}->${interiorWorst.toTip.toFixed(3)} `
+  + `along ${interiorWorst.fromAlong.toFixed(2)}->${interiorWorst.toAlong.toFixed(2)}; `
+  + `material ${interiorWorst.material.toFixed(3)} standing ${interiorWorst.standing.toFixed(3)}; `
+  + `stepover ${interiorWorst.stepover.toFixed(3)} diameter ${interiorWorst.diameter.toFixed(3)})`)
 console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)} mm (${worstStubLabel || 'none'})`)
 console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
   + `(${worstSurfaceOverLabel})`)
 console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
   + `(${worstSurfaceUnderLabel})`)
+console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
+console.log(`  along stage: worst flank (interior) engagement ${worstAlongFlank.depth.toFixed(4)} mm `
+  + `(${worstAlongFlank.label || 'none'}; stepover ${worstAlongFlank.stepover.toFixed(3)} `
+  + `diameter ${worstAlongFlank.diameter.toFixed(3)} stepdown ${worstAlongFlank.stepdown.toFixed(3)})`)
+console.log(`  along flank: closest to its bound ${closestAlongFlank.excess.toFixed(4)} mm excess `
+  + `(${closestAlongFlank.label || 'none'}; stepover ${closestAlongFlank.stepover.toFixed(3)} `
+  + `diameter ${closestAlongFlank.diameter.toFixed(3)})`)
 console.log(`  non-turning cuts (reported, not asserted: the along-mode square output is frozen): `
   + `worst ${nonTurningWorst.toFixed(4)} mm (${nonTurningLabel || 'none'})`)
 if (process.env.SQUARE_CASES) {
@@ -1599,6 +1718,8 @@ if (process.env.SQUARE_CASES) {
 }
 
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
+assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
+assert.ok(alongFlankChecks > 100, `the along stage's flank engagement is asserted (${alongFlankChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**

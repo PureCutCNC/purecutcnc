@@ -62,6 +62,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.targetsMissing': 'Faltan algunos elementos objetivo seleccionados',
   'warnings.stepoverRatioRange': 'La relación de paso debe estar entre 0 y 1',
   'warnings.operationStepoverRatioRange': 'La relación de paso de la operación debe estar entre 0 y 1',
+  'warnings.rotaryStepdownBelowMinimum': '{operation}: el paso es inferior a 0,01 mm; auméntelo',
+  'warnings.rotaryWorkBudgetExceeded': '{operation}: esto generaría demasiados movimientos; aumente el paso o el paso lateral',
   'warnings.vcarveMedialWrongKind': 'Solo las operaciones V-carve medial pueden resolverse con el generador de eje medial',
   'warnings.vcarveMedialNeedsVBit': 'V-carve medial requiere una herramienta de broca en V',
   'warnings.vcarveBandNoDepth': 'La banda {topZ} -> {bottomZ} no deja profundidad utilizable para V-carve',

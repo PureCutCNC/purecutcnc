@@ -62,6 +62,8 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.targetsMissing': 'Certaines entités cibles sélectionnées sont absentes',
   'warnings.stepoverRatioRange': 'Le ratio de recouvrement doit être compris entre 0 et 1',
   'warnings.operationStepoverRatioRange': 'Le ratio de recouvrement de l’opération doit être compris entre 0 et 1',
+  'warnings.rotaryStepdownBelowMinimum': '{operation}\u00A0: la profondeur de passe est inférieure à 0,01 mm\u00A0; augmentez-la',
+  'warnings.rotaryWorkBudgetExceeded': '{operation}\u00A0: cela générerait trop de mouvements\u00A0; augmentez la profondeur de passe ou le pas latéral',
   'warnings.vcarveMedialWrongKind': 'Seules les opérations de gravure en V médiale peuvent être résolues par le générateur d’axe médian',
   'warnings.vcarveMedialNeedsVBit': 'La gravure en V médiale exige une fraise en V',
   'warnings.vcarveBandNoDepth': 'La bande {topZ} -> {bottomZ} ne laisse aucune profondeur de gravure en V utilisable',

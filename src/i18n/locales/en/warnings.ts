@@ -69,6 +69,8 @@ export const warningsEn = {
   'warnings.targetsMissing': 'Some selected target features are missing',
   'warnings.stepoverRatioRange': 'Stepover ratio must be between 0 and 1',
   'warnings.operationStepoverRatioRange': 'Operation stepover ratio must be between 0 and 1',
+  'warnings.rotaryStepdownBelowMinimum': '{operation}: the stepdown is below 0.01 mm; increase it',
+  'warnings.rotaryWorkBudgetExceeded': '{operation}: this would generate too many moves; increase the stepdown or stepover',
   // v-carve medial
   'warnings.vcarveMedialWrongKind': 'Only V-carve medial operations can be resolved by the medial-axis generator',
   'warnings.vcarveMedialNeedsVBit': 'V-carve medial requires a V-bit tool',

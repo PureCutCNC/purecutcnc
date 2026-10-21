@@ -333,14 +333,14 @@ console.log('Testing the around finish\'s own clearing...')
   assert.deepEqual(roughed.moves, raw.moves,
     `the around rough (${aroundRough.moves.length} moves) does not change the finish's own motion`)
 
-  // A finish whose saved stepdown is absent falls back to the tool's default --
+  // A finish whose saved stepdown is zero falls back to the tool's default --
   // the value a new rotary rough on that tool is seeded with. A tool with no
   // default either refuses rather than taking the corner in one ring.
   const toolWithDefault: NormalizedTool = { ...FLAT, defaultStepdown: 1.5 }
   const fallback = generateRotaryFinish('finish-fallback', SQUARE_MODEL, SQUARE, toolWithDefault, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, stepdown: 0, passDirection: 'around',
   }, {})
-  assert.deepEqual(fallback.warnings, [], 'an absent saved stepdown reads the tool default')
+  assert.deepEqual(fallback.warnings, [], 'a zero saved stepdown reads the tool default')
   assert.ok(fallback.moves.length > 0, 'and the fallback clears and finishes')
   const explicit = generateRotaryFinish('finish-explicit', SQUARE_MODEL, SQUARE, toolWithDefault, {
     ...SQUARE_BASE, stepdown: 1.5, passDirection: 'around',
