@@ -1468,17 +1468,28 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
  * and the Z block after it. A rotation-only rapid — every linear coordinate
  * unchanged — emits a single block carrying only the angle, so a move that
  * turns the stock is never silently dropped (rule 1).
+ *
+ * `zKnown` is the caller's promise that the tracked position's Z is where the
+ * controller really is. A machine template may have moved Z behind the
+ * emitter's back (#1057): the stale Z must then be treated as unknown, so the
+ * rapid writes its own Z before any XY or rotary motion, even when that Z
+ * equals the stale one and the ordinary split would have dropped the block.
+ * `current` being null is always unknown.
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
+  zKnown = true,
 ): Array<Partial<ToolpathPoint>> {
   const angle = target.a
   // Only a real angle change is written; a rapid that keeps the angle produces
   // the pre-rotary blocks unchanged.
   const turning = angle !== undefined && angle !== current?.a
 
-  const zChanges = current === null || current.z !== target.z
+  // An unknown Z is no position at all: a template can leave the cutter
+  // anywhere, so every rapid restates Z from the target before it travels.
+  const trustedZ = zKnown && current !== null
+  const zChanges = !trustedZ || current.z !== target.z
   const xyChanges = current === null
     || (target.x !== undefined && current.x !== target.x)
     || (target.y !== undefined && current.y !== target.y)
@@ -1488,8 +1499,9 @@ export function splitRapid(
   // XY. A rapid that turns may not turn the bar while Z moves, so the turn
   // happens at the higher of its two Z values (issue #393): Z rising is the
   // ordinary order with the angle on the XY block, and Z falling or unchanged
-  // turns across first and drops afterwards.
-  const zFirst = !turning || current === null || target.z >= current.z
+  // turns across first and drops afterwards. An unknown Z is never "higher":
+  // retract to the target height first, then turn.
+  const zFirst = !turning || !trustedZ || target.z >= current.z
   if (zFirst) {
     if (zChanges) blocks.push({ z: target.z })
     // The angle rides the XY block when there is one and otherwise a block of

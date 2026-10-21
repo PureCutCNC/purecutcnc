@@ -901,7 +901,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // rapid is skipped unless this operation's safe height differs.
           if (item.kind !== 'cut') continue
           const safe = plasmaZeroOnSheet ? heights.sheetSafeZ : heights.safeZ
-          if (state.currentPosition?.z !== safe) {
+          // A template may have moved Z behind the emitter's back (#1057), so a
+          // stale safe-looking Z is no proof the head is clear; restate it.
+          if (!state.zKnown || state.currentPosition?.z !== safe) {
             emitMotionLine(definition.motion.rapidCommand, { z: safe })
           }
           emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
@@ -1083,7 +1085,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         const firstMachineXY = cycles[0].clear
         if (state.currentPosition) {
           const cp = state.currentPosition
-          if (cp.z !== firstMachineXY.z) {
+          // A template may have moved Z without leaving a tracked block
+          // (#1057); the stale Z is no proof the tool is at the clear plane, so
+          // restate it before the cycle positions in XY.
+          if (!state.zKnown || cp.z !== firstMachineXY.z) {
             emitMotionLine(definition.motion.rapidCommand, { z: firstMachineXY.z })
           }
           if (cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
@@ -1181,16 +1186,26 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
     if (!emittedCanned) {
       // Emit a single rapid (G0) with per-axis splitting. `splitRapid` decides
-      // which block carries the angle — never a block with Z (issue #393).
+      // which block carries the angle — never a block with Z (issue #393). It
+      // also decides whether the tracked Z may be trusted at all: a template
+      // may have moved Z behind the emitter's back (#1057), and then the rapid
+      // restates its own Z before any XY or rotary motion.
       const emitRapid = (pt: ToolpathPoint) => {
-        for (const axes of splitRapid(state.currentPosition, pt)) {
-          // A rapid that carries a new A word turns the blank. If a template
-          // moved Z since the last motion block, the height the split decided
-          // from is no longer trustworthy, so retract before writing the angle
-          // (the split already keeps the angle off any Z block).
-          if (axes.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== axes.a) {
-            retractUnknownSquareZ()
-          }
+        // A square blank's turning height is the proven clearance for an A
+        // word, so its repair runs before the split (#1016 C2 M1). The split
+        // would otherwise write the rapid's own target Z, which the generators
+        // keep above the corner envelope but not necessarily at travel height.
+        // Only a *tracked* position can be stale: at a program start or after a
+        // machine-coordinate retract there is no position at all, and the split
+        // itself writes Z first (which is also what keeps this repair from
+        // adding a block to an unchanged program).
+        if (state.currentPosition !== null
+          && pt.a !== undefined
+          && state.rotaryWord !== null
+          && state.rotaryAngle !== pt.a) {
+          retractUnknownSquareZ()
+        }
+        for (const axes of splitRapid(state.currentPosition, pt, state.zKnown)) {
           emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }

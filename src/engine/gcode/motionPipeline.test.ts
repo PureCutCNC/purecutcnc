@@ -353,6 +353,14 @@ function testSplitRapid(): void {
   assertEqual(splitRapid(at, { x: 10, y: 2, z: 5 }), [{ x: 10, y: 2 }], 'X alone moves the XY pair')
   assertEqual(splitRapid(at, { x: 1, y: 20, z: 5 }), [{ x: 1, y: 20 }], 'Y alone moves the XY pair')
   assertEqual(splitRapid(at, { ...at }), [], 'a rapid to where the tool already is writes nothing')
+  // An untrusted Z (#1057): a template may have moved the cutter, so even a
+  // rapid whose target Z equals the stale one restates Z before travelling.
+  assertEqual(splitRapid(at, { x: 10, y: 2, z: 5 }, false),
+    [{ z: 5 }, { x: 10, y: 2 }], 'an unknown Z writes Z before the XY block')
+  assertEqual(splitRapid(at, { x: 10, y: 20, z: 30 }, false),
+    [{ z: 30 }, { x: 10, y: 20 }], 'an untrusted Z still rises before it travels')
+  assertEqual(splitRapid(at, { ...at }, false),
+    [{ z: 5 }], 'an unknown Z restates the target Z even when nothing else moves')
 }
 
 /**
@@ -399,6 +407,14 @@ function testSplitRapidRotary(): void {
   assertEqual(splitRapid(null, at(0, 0, 30, 45)),
     [{ z: 30 }, { x: 0, y: 0, a: 45 }],
     'an unknown start turns with no XY difference: the angle rides the written XY block')
+  // An untrusted Z (#1057) turns only after the retract, in either direction,
+  // even when the stale Z would otherwise have let the turn go first.
+  assertEqual(splitRapid(at(0, 0, 30, 0), at(10, 0, 5, 45), false),
+    [{ z: 5 }, { x: 10, y: 0, a: 45 }],
+    'an untrusted Z retracts before a falling turn')
+  assertEqual(splitRapid(at(0, 0, 5, 0), at(0, 0, 5, 45), false),
+    [{ z: 5 }, { a: 45 }],
+    'an untrusted Z retracts before a rotation-only rapid')
 }
 
 function testGcodeRapidsUseTheSplit(): void {

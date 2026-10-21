@@ -91,6 +91,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
   A word is preceded by a validated retract to that height — a header or
   tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
+  For every project type the next rapid after such a template restates its own
+  Z before any XY or rotary motion, so a stale tracked Z never drops the
+  retract (#1057).
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -113,7 +116,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
   split of a rapid, carrying a rotary angle so a rotation-only rapid is never
   dropped — the angle rides the XY block when there is one and otherwise a
-  block of its own, never a Z block, in either direction of Z), `planStepFeeds` / `inverseTimeFeedValue` and
+  block of its own, never a Z block, in either direction of Z; a tracked Z a
+  template may have moved is unknown, so the rapid writes its own Z before any
+  XY or rotary motion, #1057), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, where `length` is the true length of the path the tip draws in
