@@ -388,10 +388,68 @@ export function subtractsMachinedElsewhere(
   )
 }
 
+/**
+ * How far a non-target subtract may sit from the material the fold already
+ * reaches, in Z, before it stops counting as contiguous (issue #1079), in
+ * project units.
+ *
+ * Small on purpose: 1 nm in a millimetre project and 25.4 nm in an inch one,
+ * far below anything a machine can express, and enough to absorb a span
+ * written as `thickness − depth` — how a depth authored from the far face
+ * lands. Anything larger would readmit a subtract that really is separated
+ * from the pocket by material.
+ */
+export const NON_TARGET_SUBTRACT_GAP_TOLERANCE = 1e-6
+
+/** One feature the fold has reached: its footprint, its Z span, and the footprint's piece count. */
+interface FoldReachEntry {
+  path: ClipperPath
+  span: Pick<ResolvedFeatureZSpan, 'min' | 'max'>
+  /** Outer pieces of the footprint, so a contact test is one union rather than three. */
+  components: number
+}
+
+/** A non-target subtract under consideration: a reach entry plus the feature it came from. */
+interface FoldCandidate extends FoldReachEntry {
+  feature: SketchFeature
+  span: ResolvedFeatureZSpan
+}
+
+function foldReachEntry(feature: SketchFeature, span: Pick<ResolvedFeatureZSpan, 'min' | 'max'>): FoldReachEntry {
+  const path = flattenFeatureToClipperPath(feature)
+  return { path, span, components: connectedComponentCount(unionPaths([path])) }
+}
+
+/** Do two Z spans overlap, or abut within {@link NON_TARGET_SUBTRACT_GAP_TOLERANCE}? */
+function spansTouchInZ(
+  left: Pick<ResolvedFeatureZSpan, 'min' | 'max'>,
+  right: Pick<ResolvedFeatureZSpan, 'min' | 'max'>,
+): boolean {
+  return left.min <= right.max + NON_TARGET_SUBTRACT_GAP_TOLERANCE
+    && left.max >= right.min - NON_TARGET_SUBTRACT_GAP_TOLERANCE
+}
+
+/**
+ * Does a candidate subtract join the fold at a feature already reached?
+ *
+ * **Both** halves are needed (issue #1079). Plan contact is the #751 §2 test
+ * and was the whole rule until a pocket picked up a subtract 1.3 below its
+ * floor: the two overlap in plan, so the fold followed that void down through
+ * solid material the cutter has no path into. Z contact is what makes them the
+ * same cavity — the subtract's span must overlap the reached feature's span or
+ * abut it within {@link NON_TARGET_SUBTRACT_GAP_TOLERANCE}.
+ */
+function joinsFold(reached: readonly FoldReachEntry[], candidate: FoldReachEntry): boolean {
+  return reached.some((entry) => (
+    spansTouchInZ(candidate.span, entry.span)
+    && connectedComponentCount(unionPaths([entry.path, candidate.path])) < entry.components + candidate.components
+  ))
+}
+
 function discoverNonTargetSubtracts(
   project: ResolvedProject,
   operation: Operation,
-  targetUnionPaths: ClipperPath[],
+  targetReach: readonly FoldReachEntry[],
   targetIdSet: Set<string>,
   warnings: ToolpathWarning[],
   operationLabel: string,
@@ -410,7 +468,10 @@ function discoverNonTargetSubtracts(
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
     .filter((feature) => featureHasClosedGeometry(feature))
-    .map((feature) => ({ feature, path: flattenFeatureToClipperPath(feature) }))
+    .map((feature): FoldCandidate => {
+      const span = resolveFeatureZSpan(project, feature)
+      return { ...foldReachEntry(feature, span), feature, span }
+    })
 
   // Qualification is transitive (#751 §3). A subtract reaching the target only
   // through another subtract is still opening material this operation will
@@ -425,15 +486,16 @@ function discoverNonTargetSubtracts(
   // subtract is never reconsidered — so this is bounded by the candidate count
   // with no cycle to detect.
   //
-  // Contact is the #751 §2 test throughout, so a second-level subtract that
-  // merely *touches* its parent qualifies exactly as one touching the target
-  // does.
+  // Contact is both tests throughout: plan contact (#751 §2) so a second-level
+  // subtract that merely *touches* its parent qualifies as one touching the
+  // target does, and Z contact (#1079) so a void separated from the material by
+  // solid stock never joins it.
   const accepted: typeof candidates = []
   let pending = candidates
-  let reach = targetUnionPaths
+  const reached: FoldReachEntry[] = [...targetReach]
   let truncated = false
   for (;;) {
-    const joined = pending.filter((candidate) => pathsTouchOrOverlap(reach, [candidate.path]))
+    const joined = pending.filter((candidate) => joinsFold(reached, candidate))
     if (joined.length === 0) {
       break
     }
@@ -442,9 +504,9 @@ function discoverNonTargetSubtracts(
       break
     }
     appendAll(accepted, joined)
+    appendAll(reached, joined)
     const joinedIds = new Set(joined.map(({ feature }) => feature.id))
     pending = pending.filter(({ feature }) => !joinedIds.has(feature.id))
-    reach = unionPaths([...reach, ...joined.map(({ path }) => path)])
   }
 
   if (truncated) {
@@ -454,10 +516,7 @@ function discoverNonTargetSubtracts(
     })
   }
 
-  return accepted.map(({ feature }) => ({
-    feature,
-    span: resolveFeatureZSpan(project, feature),
-  }))
+  return accepted.map(({ feature, span }) => ({ feature, span }))
 }
 
 /**
@@ -755,14 +814,15 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   // inside any target contour is discovered regardless of which bands it
   // overlaps.  Even-odd topology for closed Lines belongs inside each
   // band (below) where we know which Lines are simultaneously active.
-  const allTargetPathsForDiscovery = [
-    ...closedSubtractFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)),
-    ...closedLineFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)),
-  ]
-  const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
+  //
+  // The same target paths seed the non-target subtract fold (#1079): a
+  // subtract joins only where it touches one of them in plan *and* in Z.
+  const targetReach = [...closedSubtractFeatures, ...closedLineFeatures]
+    .map(({ feature, span }) => foldReachEntry(feature, span))
+  const targetUnionPaths = unionPaths(targetReach.map(({ path }) => path))
 
   const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetReach, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   // A folded subtract that bottoms out at or above the target's own floor gets
   // its own band over its own footprint, instead of splitting the whole pocket
@@ -1118,10 +1178,11 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
     }
   }
 
-  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+  const targetReach = closedTargetFeatures.map(({ feature, span }) => foldReachEntry(feature, span))
+  const targetUnionPaths = unionPaths(targetReach.map(({ path }) => path))
 
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetReach, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
