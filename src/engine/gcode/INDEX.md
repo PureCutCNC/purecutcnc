@@ -103,6 +103,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (#1057) and a template that parks the spindle at X0 Y0 or indexes the bar
   never lets the next rapid skip that plane or angle as "already there" (#1057
   correction 2). A program with no axis-moving template is byte-identical.
+  A feed move that begins an operation (`G1`/`G2`/`G3`, or a canned cycle's
+  positioning) has no rapid of its own to restate those axes, so it recovers
+  first: the operation's own top plane, then its declared start XY/angle, then
+  its start Z. Arc I/J are therefore always measured from a point the program
+  stated, and a cancellation template that parks the machine (`G80\nG0 X0 Y0`)
+  leaves the plane unknown instead of restoring what its own template cleared
+  (#1057 correction 3). ShopBot does the same with `JZ`/`J2` after `C9`.
   Controller-owned piercing (QtPlasmaC) is the one path that
   writes no Z of its own: its load filter comments out Z words, templates
   included, and keeps the torch height, so the XY torch path needs no

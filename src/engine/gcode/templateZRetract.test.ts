@@ -55,6 +55,15 @@
  *   position;
  * - dropping the rotary word from the unknown-axis rule (`rotaryKnown`) → the
  *   M6 case never restates `A45` before the next feed move.
+ * - skipping the feed-start recovery (`recoverFeedStart` not called before an
+ *   arc or a feed move) → the arc-first cases emit `G2`/`CG` with no stated
+ *   start, so their I/J are measured from the park;
+ * - restoring the canned plane after the cancellation template (the
+ *   `xKnown`/`yKnown` assignments moved back before it) → the drill-then-mill
+ *   case loses its XY rapid and plunges diagonally from the park.
+ *
+ * Removing the `plasmaTorch` guard in `restateSafeZBeforeTravel` makes the
+ * controller-owned test fail on the extra `Z` words it adds, too.
  *
  * Run with: npx tsx src/engine/gcode/templateZRetract.test.ts
  */
@@ -162,6 +171,29 @@ function post(project: Project, definition: MachineDefinition, moves: ToolpathMo
   }).gcode
 }
 
+/** Post one moves list per operation, for fixtures whose operations differ. */
+function postOperations(
+  project: Project,
+  definition: MachineDefinition,
+  movesByOperation: readonly ToolpathMove[][],
+): string {
+  return runPostProcessor({
+    project,
+    definition,
+    operations: project.operations.map((operation, index) => ({
+      operation,
+      tool: normalizeToolForProject(project.tools.find((tool) => tool.id === operation.toolRef)!, project),
+      toolpath: {
+        operationId: operation.id,
+        warnings: [],
+        bounds: null,
+        moves: movesByOperation[index] ?? [],
+      } as ToolpathResult,
+    })),
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  }).gcode
+}
+
 /** Assert each fragment appears after the previous one, in order. */
 function assertOrder(text: string, fragments: readonly string[], label: string): void {
   let at = -1
@@ -197,6 +229,15 @@ function machineWithOperationHeader(id: string, template: string): MachineDefini
   return {
     ...base,
     program: { ...base.program, operationHeader: [...base.program.operationHeader, template] },
+  }
+}
+
+/** The same bundled machine with one more program-header template. */
+function machineWithHeader(id: string, template: string): MachineDefinition {
+  const base = bundled(id)
+  return {
+    ...base,
+    program: { ...base.program, header: [...base.program.header, template] },
   }
 }
 
@@ -417,6 +458,157 @@ function firstMotionLine(gcode: string): string | undefined {
   return codeLines(gcode).find((line) => /^G[0-3]\b/.test(line) || /^[XY]-?\d/.test(line))
 }
 
+// ── Feed-first operations (#1057 correction 3) ───────────────
+
+/** The project point a fitted arc run begins at: the fixture's own start. */
+const ARC_FIRST_START = { x: 40, y: 70, z: 25 }
+
+/**
+ * A pass that ends exactly where the arc run begins, so operation two's first
+ * planned step is a fitted arc whose declared start equals the tracked point.
+ */
+const ARC_LEAD_IN: ToolpathMove[] = [
+  { kind: 'rapid', from: { x: 0, y: 0, z: 25 }, to: ARC_FIRST_START },
+  { kind: 'cut', from: ARC_FIRST_START, to: { x: 39, y: 70, z: 25 } },
+  { kind: 'rapid', from: { x: 39, y: 70, z: 25 }, to: ARC_FIRST_START },
+]
+
+/**
+ * A full circle around project (35, 70) at clearance, as 36 short cuts, so arc
+ * fitting turns the operation's *first* step into a `G2`. The run starts at
+ * project (40, 70), the point `ARC_LEAD_IN` ends at.
+ */
+const ARC_FIRST_MOVES: ToolpathMove[] = Array.from({ length: 36 }, (_, index) => {
+  const from = (index / 36) * Math.PI * 2
+  const to = ((index + 1) / 36) * Math.PI * 2
+  return {
+    kind: 'cut' as const,
+    from: { x: 35 + 5 * Math.cos(from), y: 70 + 5 * Math.sin(from), z: 25 },
+    to: { x: 35 + 5 * Math.cos(to), y: 70 + 5 * Math.sin(to), z: 25 },
+  }
+})
+
+/** The arc-first program for one operation header, in either dialect. */
+function arcFirstProgram(id: string, template: string): string {
+  return postOperations(
+    makeProject(['t1', 't1'], false),
+    machineWithOperationHeader(id, template),
+    [ARC_LEAD_IN, ARC_FIRST_MOVES],
+  )
+}
+
+function testArcFirstAfterParkedPlane(): void {
+  console.log('Testing an arc-first operation restates the parked XY before G2...')
+  // The operation begins with a fitted arc: it has no rapid of its own, so the
+  // G2 used to be written straight after the template. It then ran from the
+  // parked X0 Y0 while its I/J were measured from the previous operation's
+  // endpoint — a circle of the right shape in the wrong place.
+  const tail = afterLastTemplate(arcFirstProgram('grbl', 'G0 X0 Y0'), 'G0 X0 Y0').slice('G0 X0 Y0'.length)
+  const first = firstMotionLine(tail)
+  assert.equal(first, 'X40.000 Y10.000', `the arc's own start plane is stated first\n${tail}`)
+  assert.doesNotMatch(first ?? '', /Z/, 'an XY-only park leaves Z known, so no Z is restated')
+  assertOrder(tail, ['X40.000 Y10.000', 'G2 X35.000 Y5.000 I-5.000 J0.000'],
+    'the arc follows a stated start, and its I/J are measured from it')
+}
+
+function testArcFirstAfterZTemplate(): void {
+  console.log('Testing an arc-first operation retracts and restates its start before G2...')
+  // The template leaves Z unknown. The recovery must establish a provable
+  // plane first, then travel, then state the arc's own start — never trust the
+  // stale Z and never emit the arc from a position nobody named.
+  const tail = afterLastTemplate(arcFirstProgram('grbl', 'G0 Z-2'), 'G0 Z-2').slice('G0 Z-2'.length)
+  assertOrder(tail, ['Z5.000', 'X40.000 Y10.000', 'G2 X35.000 Y5.000 I-5.000 J0.000'],
+    'the safe plane, the start plane and then the arc are written in order')
+}
+
+function testArcFirstAfterStartTemplate(): void {
+  console.log('Testing an arc-first first operation recovers from a start template...')
+  // The program header itself moves Z, before any tracked position exists. The
+  // arc still must not be the first motion: recover through the safe plane and
+  // the arc's declared start, then cut.
+  const gcode = postOperations(
+    makeProject(['t1'], false),
+    machineWithHeader('grbl', 'G0 Z-2'),
+    [ARC_FIRST_MOVES],
+  )
+  assertOrder(gcode, ['G0 Z-2', 'G0 Z5.000', 'X40.000 Y10.000', 'G2 X35.000 Y5.000 I-5.000 J0.000'],
+    'the header template is repaired before the arc-first operation')
+}
+
+function testArcFirstShopBot(): void {
+  console.log('Testing a ShopBot tool change recovers before an arc-first operation...')
+  // C9 is a macro that moves the machine, so the tracked position is stale.
+  // The first cut is an arc: its CG block used to be the first motion after
+  // C7/C6, with I/J measured from the arc's declared start while the head was
+  // wherever C9 left it. A Z jog and an XY jog must come first.
+  const project = makeProject(['t1', 't2'], false)
+  const definition = machineWithToolChange('shopbot', ['M0 ; Tool change: {toolName}'])
+  const gcode = postOperations(project, definition, [ARC_LEAD_IN, ARC_FIRST_MOVES])
+  const tail = afterLastTemplate(gcode, 'C9')
+  assertOrder(tail, ['C9', 'JZ,5.000', 'J2,40.000,10.000', 'CG,,35.000,5.000,-5.000,0.000,T,1'],
+    'the jogs restate the arc start before its CG block')
+}
+
+function testArcFirstInertTemplateByteIdentity(): void {
+  console.log('Testing an inert template leaves an arc-first operation byte-identical...')
+  // No axis is unknown after `G94`, so the recovery writes nothing: the arc
+  // program must be exactly the one without the template, line for line.
+  const project = makeProject(['t1', 't1'], false)
+  const plain = postOperations(project, bundled('grbl'), [ARC_LEAD_IN, ARC_FIRST_MOVES])
+  const inert = postOperations(project, machineWithOperationHeader('grbl', 'G94'), [ARC_LEAD_IN, ARC_FIRST_MOVES])
+  const without = (gcode: string, line: string) => gcode.split(/\r?\n/).filter((entry) => entry !== line)
+  assert.deepEqual(without(inert, 'G94'), without(plain, 'G94'),
+    'an inert template changes nothing but its own line')
+}
+
+function testCannedCancelParkKeepsPlaneUnknown(): void {
+  console.log('Testing a canned cancel that parks X0 Y0 does not restore the old plane...')
+  // A cancellation template can move the machine (`G80\nG0 X0 Y0`). Restoring
+  // the drill plane after it hides the next operation's first XY rapid, whose
+  // target is the last hole, and the plunge then runs diagonally from the park.
+  const project = makeProject(['t1', 't1'], false)
+  project.operations = project.operations.map((operation) => ({
+    ...operation,
+    kind: 'drilling' as const,
+    drillType: 'simple' as const,
+  }))
+  const base = bundled('mach3')
+  const definition: MachineDefinition = {
+    ...base,
+    cannedCycles: { ...base.cannedCycles!, cancelCommand: 'G80\nG0 X0 Y0' },
+  }
+  // Operation two starts its rapid exactly at the last hole (machine X20 Y60),
+  // so a restored plane would drop the XY block entirely.
+  const milling: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 0, y: 0, z: 25 }, to: { x: 20, y: 20, z: 25 } },
+    { kind: 'plunge', from: { x: 20, y: 20, z: 25 }, to: { x: 20, y: 20, z: 15 } },
+    { kind: 'cut', from: { x: 20, y: 20, z: 15 }, to: { x: 30, y: 60, z: 15 } },
+    { kind: 'rapid', from: { x: 30, y: 60, z: 15 }, to: { x: 20, y: 20, z: 25 } },
+  ]
+  const cycles = [{
+    x: 20, y: 20, clearZ: 25, retractZ: 25, bottomZ: 15, drillType: 'simple' as const,
+  }]
+  const gcode = runPostProcessor({
+    project,
+    definition,
+    operations: project.operations.map((operation) => ({
+      operation,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: {
+        operationId: operation.id,
+        warnings: [],
+        bounds: null,
+        moves: operation.id === 'op1' ? [] : milling,
+        ...(operation.id === 'op1' ? { drillCycles: cycles } : {}),
+      } as ToolpathResult,
+    })),
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  }).gcode
+  const tail = afterLastTemplate(gcode, 'G0 X0 Y0')
+  assertOrder(tail, ['G0 X0 Y0', 'G0 Z5.000', 'X20.000 Y60.000', 'G1 X20.000 Y60.000 Z-5.000'],
+    'the parked plane is restated, and the plunge runs from the stated XY')
+}
+
 function testToolChangeParkXYGcode(): void {
   console.log('Testing a tool change parking X0 Y0 restates the old plane (G-code)...')
   // The template moves the spindle to machine X0 Y0 behind the emitter's back.
@@ -539,6 +731,12 @@ testToolChangeParkXYGcode()
 testToolChangeParkXYShopBot()
 testMotionTemplateOnlyX()
 testInertTemplateByteIdentity()
+testArcFirstAfterParkedPlane()
+testArcFirstAfterZTemplate()
+testArcFirstAfterStartTemplate()
+testArcFirstShopBot()
+testArcFirstInertTemplateByteIdentity()
+testCannedCancelParkKeepsPlaneUnknown()
 testRotaryTemplateRestatesAngle()
 
 console.log('gcode template axis retract tests passed')

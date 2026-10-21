@@ -35,6 +35,8 @@ import {
   createEmittedValueFormatter,
   planDrillCycles,
   planOperationMotion,
+  plannedStepStart,
+  plannedTopZ,
   planPlasmaGcodeCut,
   planPlasmaPath,
   planProgramSequence,
@@ -316,6 +318,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     rotaryKnown: false,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
+  /** True once a template may have moved an axis behind the emitter's back.
+   *  A feed move that begins an operation then has to state its own start
+   *  before it runs (#1057 correction 3). The flags alone cannot tell a stale
+   *  axis from one that was never established at a program start. */
+  let templateInvalidated = false
 
   // Count G-code motion blocks as emitted, not the input toolpath moves. The
   // latter can be reduced by arc fitting or expanded when a rapid is split
@@ -456,16 +463,19 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     templateLines.push(...physicalLines)
     emitLine(content)
     const commentPrefix = definition.program.commentPrefix
+    let movedAxis = false
     for (const line of physicalLines) {
-      if (templateMovesAxis(line, 'X', commentPrefix)) state.xKnown = false
-      if (templateMovesAxis(line, 'Y', commentPrefix)) state.yKnown = false
-      if (templateMovesAxis(line, 'Z', commentPrefix)) state.zKnown = false
+      if (templateMovesAxis(line, 'X', commentPrefix)) { state.xKnown = false; movedAxis = true }
+      if (templateMovesAxis(line, 'Y', commentPrefix)) { state.yKnown = false; movedAxis = true }
+      if (templateMovesAxis(line, 'Z', commentPrefix)) { state.zKnown = false; movedAxis = true }
       // The rotary word is `A` on its own axis and a borrowed motor's `X`/`Y`
       // otherwise, so the same scan answers both questions.
       if (state.rotaryWord !== null && templateMovesAxis(line, state.rotaryWord, commentPrefix)) {
         state.rotaryKnown = false
+        movedAxis = true
       }
     }
+    if (movedAxis) templateInvalidated = true
   }
 
   const substituteTemplates = (text: string, context: Record<string, string | number>): string => {
@@ -1304,14 +1314,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         // Reset state: canned cancel breaks motion modality
         state.motionCommand = null
 
-        // Track position as last hole's XY at clearZ (machine coords). The
-        // emitter wrote those X/Y words itself, so the plane is provable again
-        // even though the cycle lines went through the template writer, which
-        // cleared it (#1057 correction 2). Z stays unknown exactly as before.
+        // The cycle lines went through the template writer, so they cleared
+        // the plane it wrote. The emitter wrote those X/Y words itself, so the
+        // plane is provable again — but only for an axis the *cancellation*
+        // does not itself move (#1057 correction 3). A cancel template such as
+        // `G80\nG0 X0 Y0` parks the spindle, and restoring both flags after it
+        // would hide the next operation's XY rapid and leave its first feed
+        // move plunging diagonally from the park. Compute the knowledge after
+        // the template, never before. Z stays unknown exactly as before.
+        const cancelLines = cannedDef.cancelCommand.split(/\r?\n/)
+        const cancelsAxis = (axis: 'X' | 'Y') => cancelLines.some(
+          (line) => templateMovesAxis(line, axis, definition.program.commentPrefix),
+        )
         const lastMachinePos = cycles[cycles.length - 1].clear
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
-        state.xKnown = true
-        state.yKnown = true
+        state.xKnown = !cancelsAxis('X')
+        state.yKnown = !cancelsAxis('Y')
       } else {
         // Command not available for this drill type — fall back to expanded moves
         warnings.push({
@@ -1383,6 +1401,68 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           : effectiveFeed('cut', planned.feedScale, step.cutFeed, step.plungeFeed),
       })
 
+      // The highest plane the operation itself travels through. A feed move
+      // that begins the operation has no preceding rapid to establish where it
+      // starts, so this is the provable height to recover through (#1057
+      // correction 3).
+      const operationTopZ = plannedTopZ(plan.steps)
+
+      /**
+       * State the point a feed move starts from before it runs.
+       *
+       * A feed block carries no safe retract of its own: a `G2` spells only
+       * X/Y and I/J, and a linear block writes all of its words at once. When
+       * a template has made any of those axes unknown, emitting the move
+       * straight away runs it from wherever the template left the machine —
+       * and makes arc I/J relative to a position that was never stated. So
+       * retract to the operation's own top plane, rapid to the move's declared
+       * start XY/angle, then descend to its start Z. What follows starts from a
+       * point the controller has been told (#1057 correction 3).
+       *
+       * Nothing is written when every axis is still known: a program without a
+       * moving template keeps its bytes.
+       */
+      const recoverFeedStart = (start: ToolpathPoint, topZ: number): void => {
+        // Only a template that may have moved an axis is repaired here. At a
+        // plain program start every flag is unknown, but nothing was tracked
+        // that could be stale, and the move already writes its own start.
+        if (!templateInvalidated) return
+        // An axis the move does not name has no linear travel to restate: a
+        // borrowed motor's letter is the angle (issue #393), never a
+        // coordinate.
+        const xUnknown = !state.xKnown && start.x !== undefined
+        const yUnknown = !state.yKnown && start.y !== undefined
+        const zUnknown = !state.zKnown
+        const aUnknown = start.a !== undefined && state.rotaryWord !== null
+          && (!state.rotaryKnown || state.rotaryAngle !== start.a)
+        if (!xUnknown && !yUnknown && !zUnknown && !aUnknown) {
+          templateInvalidated = false
+          return
+        }
+        // Every axis this move relies on is about to be stated from its own
+        // declared start, so the invalidation is repaired.
+        templateInvalidated = false
+        // A square blank's turning height is the proven clearance for an A
+        // word, exactly as for a rapid (#1016 C2 M1).
+        if (aUnknown) retractUnknownSquareZ()
+        if (!state.zKnown) {
+          emitMotionLine(definition.motion.rapidCommand, { z: Math.max(topZ, start.z) })
+        }
+        const plane: Partial<ToolpathPoint> = {}
+        if (xUnknown && start.x !== undefined) plane.x = start.x
+        if (yUnknown && start.y !== undefined) plane.y = start.y
+        if (aUnknown) plane.a = start.a
+        if (plane.x !== undefined || plane.y !== undefined || plane.a !== undefined) {
+          emitMotionLine(definition.motion.rapidCommand, plane)
+        }
+        // An arc carries no Z, and a linear feed's own block must not be the
+        // one that moves the cutter down: descend first, then feed from the
+        // move's declared start.
+        if (state.currentPosition === null || !state.zKnown || state.currentPosition.z !== start.z) {
+          emitMotionLine(definition.motion.rapidCommand, { z: start.z })
+        }
+      }
+
       plan.steps.forEach((d, index) => {
         const directive = feeds[index] ?? { mode: 'none' as const }
         if (d.kind === 'arc') {
@@ -1390,6 +1470,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // turning moves out of arc runs), so it leaves inverse-time mode and
           // carries no angle word of its own.
           leaveInverseTime()
+          recoverFeedStart(d.startPoint, operationTopZ)
           const feed = directive.mode === 'normal'
             ? directive.feed
             : effectiveFeed('cut', d.feedScale, step.cutFeed, step.plungeFeed)
@@ -1397,6 +1478,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         } else if (d.moveKind === 'rapid') {
           emitRapid(d.point)
         } else {
+          recoverFeedStart(
+            plannedStepStart(project, definition, operation, toolpath, plan.steps, index),
+            operationTopZ,
+          )
           emitPlannedMove(d.point, directive)
         }
       })

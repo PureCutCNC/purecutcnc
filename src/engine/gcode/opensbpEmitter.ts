@@ -69,6 +69,8 @@ import {
   createArcEmitOptions,
   createEmittedValueFormatter,
   planOperationMotion,
+  plannedStepStart,
+  plannedTopZ,
   planProgramSequence,
   planProgramSetup,
   splitRapid,
@@ -121,6 +123,11 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
   const arcEmitOptions = createArcEmitOptions(definition, outputUnits, 'ij')
 
   let currentPosition: ToolpathPoint | null = null
+  // True after a template that may have moved the machine (the C9 tool-change
+  // macro) has made `currentPosition` no proof of anything. A program start
+  // also has no position, but nothing was tracked there to go stale, so the
+  // first move writes its own start as it always has.
+  let positionStale = false
   // Where the control software believes the tool is: every emitted coordinate
   // after number formatting. Arc centre offsets are measured from this, not
   // from the un-rounded position (the defect behind issue #447).
@@ -208,6 +215,7 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       emittedSpeeds = null
       currentPosition = null
       emittedPosition = null
+      positionStale = true
     }
 
     // Spindle on at this operation's speed: when it is stopped, and again
@@ -291,17 +299,38 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
     })
     warnings.push(...plan.warnings)
 
-    for (const step of plan.steps) {
+    // A feed move that starts an operation has no rapid of its own to
+    // establish where it begins. C9 is a macro that moves the machine, so the
+    // tracked position is stale after it and a `CG` or `M3` emitted straight
+    // away would run from wherever the macro left the head — and measure its
+    // I/J from a point nobody stated. Recover through the operation's own top
+    // plane and its declared start first (#1057 correction 3). Nothing is
+    // written while the position is still known, and a program start (no
+    // position, but nothing stale) keeps its first move unchanged.
+    const operationTopZ = plannedTopZ(plan.steps)
+    const recoverFeedStart = (start: ToolpathPoint): void => {
+      if (!positionStale) return
+      positionStale = false
+      const top = Math.max(operationTopZ, start.z)
+      emitJog({ z: top })
+      if (start.x !== undefined && start.y !== undefined) emitJog({ x: start.x, y: start.y })
+      if (top !== start.z) emitJog({ z: start.z })
+    }
+
+    plan.steps.forEach((step, index) => {
       if (step.kind === 'arc') {
+        recoverFeedStart(step.startPoint)
         emitArc(step, effectiveFeed('cut', step.feedScale, cutFeed, plungeFeed))
       } else if (step.moveKind === 'rapid') {
+        positionStale = false
         for (const axes of splitRapid(currentPosition, step.point)) {
           emitJog(axes)
         }
       } else {
+        recoverFeedStart(plannedStepStart(project, definition, operation, toolpath, plan.steps, index))
         emitMove(step.point, effectiveFeed(step.moveKind, step.feedScale, cutFeed, plungeFeed))
       }
-    }
+    })
 
     if (plan.trace) {
       motionTraces.push(plan.trace)

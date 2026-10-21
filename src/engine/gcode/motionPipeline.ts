@@ -1343,6 +1343,57 @@ export interface PlanOperationMotionArgs {
 }
 
 /**
+ * The machine-coordinate point a planned step starts from.
+ *
+ * A fitted arc carries its own `startPoint`; a linear step carries only its
+ * end, so its start is the previous step's end, or — for the operation's first
+ * step — the first toolpath move's own `from`. An emitter that must reposition
+ * before a feed move reaches for this rather than the tracked position, which a
+ * machine template may have invalidated (#1057 correction 3).
+ */
+export function plannedStepStart(
+  project: Project,
+  definition: MachineDefinition,
+  operation: Operation,
+  toolpath: Pick<ToolpathResult, 'moves'>,
+  steps: readonly FittedMoveDescriptor[],
+  index: number,
+): ToolpathPoint {
+  const step = steps[index]
+  if (step.kind === 'arc') return step.startPoint
+  if (index > 0) {
+    const previous = steps[index - 1]
+    return previous.kind === 'arc' ? previous.endPoint : previous.point
+  }
+  const first = toolpath.moves[0]
+  const start = first
+    ? projectToMachinePoint(first.from, project.origin, definition, setupFrameForOperation(project, operation))
+    : step.point
+  // A borrowed motor's letter is the angle, never a linear coordinate (issue
+  // #393). The planned steps suppress it; the first move's raw `from` still
+  // carries it, so it must be dropped here too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  return borrowed === 'x' || borrowed === 'y' ? suppressBorrowedAxis(start, borrowed) : start
+}
+
+/**
+ * The highest machine-coordinate Z any of the operation's planned steps
+ * reaches. An emitter that must retract before an arc-first feed move uses it
+ * as the provable plane: every point the operation itself travels through is
+ * at or below it (#1057 correction 3).
+ */
+export function plannedTopZ(steps: readonly FittedMoveDescriptor[]): number {
+  let top = -Infinity
+  for (const step of steps) {
+    const z = step.kind === 'arc'
+      ? Math.max(step.startPoint.z, step.endPoint.z)
+      : step.point.z
+    if (z > top) top = z
+  }
+  return top
+}
+
+/**
  * Turn one operation's toolpath into the machine-coordinate moves an emitter
  * writes out. Arc fitting runs when the operation asks for it and the machine
  * can interpolate arcs; otherwise every move stays linear.
