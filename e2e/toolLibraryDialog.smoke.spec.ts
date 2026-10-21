@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from './fixtures'
-import { getProject, seedProject, openRowContextMenu, rowByName, clickMenuItem, setProjectType } from './helpers'
+import { getProject, seedProject, seedProjectType, openRowContextMenu, rowByName, clickMenuItem } from './helpers'
 import { seedCamQuickOperationProject } from './camOperations.helpers'
 
 test.describe('Tool library import dialog smoke', () => {
@@ -493,9 +493,10 @@ test.describe('Tool library import dialog — tablet', () => {
 })
 
 
-test('plasma tool editor persists consumable fields and hides milling controls (#955)', async ({ app, ui }) => {
-  // Plasma is only a tool type in a plasma project (#1028).
-  await setProjectType(app.page, ui, 'Plasma')
+test('plasma tool editor persists consumable fields and hides milling controls (#955)', async ({ app }) => {
+  // Plasma is only a tool type in a plasma project (#1028); the type is chosen
+  // when a project is created (issue #1046), so this one is seeded with it.
+  await seedProjectType(app.page, 'plasma')
   await app.page.getByRole('tab', { name: 'Tools' }).click()
   await app.page.getByRole('button', { name: 'Add tool', exact: true }).click()
   const panel = app.page.locator('.cam-tool-properties')
@@ -565,9 +566,9 @@ test('milling operation selector excludes plasma consumables (#955)', async ({ a
 })
 
 
-test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app, ui }) => {
+test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app }) => {
   // The library only offers torches in a plasma project (#1028).
-  await setProjectType(app.page, ui, 'Plasma')
+  await seedProjectType(app.page, 'plasma')
   await app.page.getByRole('tab', { name: 'Tools' }).click()
   await app.page.getByRole('button', { name: /Import from library/ }).click()
   const dialog = app.page.getByRole('dialog')

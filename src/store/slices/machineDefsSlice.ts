@@ -45,8 +45,9 @@ export function machineSnapshot(definition: MachineDefinition | null): MachineDe
 
 /**
  * The project with `snapshot` embedded as its machine (or cleared), without
- * touching undo history. Shared with `setProjectType`, which selects a machine
- * in the same undo step as the type change (issue #1028).
+ * touching undo history. Used by the New Project dialog through
+ * `projectWithProjectType`, which selects a machine while the project is
+ * created (issue #1028).
  */
 export function projectWithMachine(project: Project, snapshot: MachineDefinition | null): Project {
   return {

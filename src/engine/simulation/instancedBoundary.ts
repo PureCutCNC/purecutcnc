@@ -32,7 +32,9 @@
  *
  * The underside is one full-grid quad whose fragments discard where the cell
  * has been cut through — replacing the old per-cell floor quads (which were
- * fragment-discarded anyway).
+ * fragment-discarded anyway). A flat round bar gets no underside quad at all:
+ * its flat stock bottom is not a face of a cylinder, and the static lower half
+ * is its underside (issue #1049).
  */
 
 import * as THREE from 'three'
@@ -41,11 +43,12 @@ import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundBounds, aroundShader, around
 import {
   CELL_HEIGHT_GLSL,
   LIGHTING_GLSL,
+  ROUND_BAR_SILHOUETTE_GLSL,
   SLOPE_GRADIENT_GLSL,
   STEP_GLSL,
   SURFACE_NORMAL_GLSL,
 } from './heightfieldShader'
-import type { SimulationGrid } from './types'
+import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 
 /**
  * One instance per interior + perimeter grid edge: vertical edges separate
@@ -63,14 +66,56 @@ export function wallInstanceCount(grid: Pick<SimulationGrid, 'cols' | 'rows'>): 
 // vertices keep the same shader-derived geometry with negligible dispatch
 // cost. Template vertex encodes (edge index in row, along ∈ 0|1, top ∈ 0|1);
 // gl_InstanceID supplies the row.
-const wallVertexShader = /* glsl */ `
+/**
+ * A flat round bar's wall floor: the static lower half's cylindrical surface
+ * (issue #1049). The heightfield's outer edge and the half-cylinder must meet
+ * without a gap, so a wall stops on the cylinder rather than at the equator
+ * plane — the same value at the silhouette (`|across| = radius`), a little
+ * lower where the grid boundary falls inside the bar. An outermost boundary
+ * that overshoots the radius is pulled back onto the silhouette, so the join
+ * is the bar's real circle at any grid spacing. `wallEdgeCollapsed` is the same
+ * rule the wall shader applies, written as a scalar so the tests can run this
+ * exact text.
+ */
+export const ROUND_BAR_WALL_JOIN_GLSL = /* glsl */ `
+  ${ROUND_BAR_SILHOUETTE_GLSL}
+
+  float roundBarWallFloorZ(float pivot, float radius, float across, bool alongEnd, float baseFloorZ, float stockBottomZ) {
+    if (alongEnd) return baseFloorZ;
+    float dropSquared = radius * radius - across * across;
+    float drop = dropSquared > 0.0 ? sqrt(dropSquared) : 0.0;
+    float floorZ = pivot - drop;
+    return floorZ > stockBottomZ ? floorZ : stockBottomZ;
+  }
+
+  bool wallEdgeCollapsed(float hNear, float hFar, float floorZ) {
+    float top = max(hNear, hFar);
+    float bottom = max(min(hNear, hFar), floorZ);
+    return top <= bottom + 0.000001;
+  }
+`
+
+const wallVertexShader = (flatRoundBar: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform float uStockBottomZ;
+  // The lowest Y a heightfield wall may reach. The stock bottom for every
+  // block, square and Around grid; for a flat round bar it is the equator,
+  // where the static lower half takes over (issue #1049).
+  uniform float uWallFloorZ;
   uniform vec2 uOrigin;
   uniform float uCellSize;
   // 1.0 → vertical edges (wall plane ⊥ X), 0.0 → horizontal edges (⊥ Z).
   uniform float uVertical;
-
+${flatRoundBar ? `  // Flat round-bar join (issue #1049): the lower half the walls must land on,
+  // the bar's axis (0 = X, 1 = Y) and the grid size for detecting the two
+  // along ends, whose flat end caps already reach the equator.
+  uniform float uBarPivot;
+  uniform float uBarRadius;
+  uniform float uBarCentre;
+  uniform float uBarAxis;
+  uniform int uCols;
+  uniform int uRows;
+` : ''}
   ${AROUND_FRAME_GLSL}
 #ifdef AROUND_WRAP
   out float vAcross;
@@ -86,7 +131,7 @@ const wallVertexShader = /* glsl */ `
   out vec3 vPositionInCells;
 
   ${STEP_GLSL}
-
+${flatRoundBar ? ROUND_BAR_WALL_JOIN_GLSL : ''}
   ${CELL_HEIGHT_GLSL}
 
   void main() {
@@ -122,6 +167,37 @@ const wallVertexShader = /* glsl */ `
     float hFar = cellHeight(farCell);
     float top = max(hNear, hFar);
     float bottom = max(min(hNear, hFar), uStockBottomZ);
+${flatRoundBar ? `    // A flat round bar's heightfield carries only the machinable upper half.
+    // Its walls land on the static lower half: on the cylindrical surface
+    // along the sides (the silhouette where the grid edge is the radius, a
+    // little below it where the cell boundary falls short of the radius) and
+    // on the flat end caps' equator at the two along ends. An outermost cell
+    // boundary that overshoots the radius is pulled back onto the silhouette,
+    // so the wall and the lower half meet on the bar's real circle whatever
+    // the grid spacing. Edges with no material above that surface collapse.
+    vec3 pos = edgeStart + edgeAlong * position.y;
+    float across = uBarAxis < 0.5 ? pos.z : pos.x;
+    across = roundBarSilhouetteAcross(across, uBarCentre, uBarRadius);
+    if (uBarAxis < 0.5) {
+      pos.z = across;
+    } else {
+      pos.x = across;
+    }
+    bool alongEnd = uBarAxis < 0.5
+      ? uVertical > 0.5 && (edgeCol == 0 || edgeCol == uCols)
+      : uVertical < 0.5 && (edgeRow == 0 || edgeRow == uRows);
+    float wallFloor = roundBarWallFloorZ(
+      uBarPivot, uBarRadius, across - uBarCentre, alongEnd, uWallFloorZ, uStockBottomZ
+    );
+    bottom = max(bottom, wallFloor);
+    bool collapsed = wallEdgeCollapsed(hNear, hFar, wallFloor);
+    if (collapsed) bottom = top;` : `    // A flat round bar's heightfield carries only the machinable upper half;
+    // nothing below its equator is represented, so its walls stop there and
+    // the static half-cylinder draws the rest. Edges entirely below the floor
+    // still exist in the strip template — collapse them so they discard.
+    bottom = max(bottom, uWallFloorZ);
+    bool collapsed = top <= bottom + 0.000001;
+    if (collapsed) bottom = top;`}
 
     // Risers inside a machined slope: a V-flank, a ball roundover or a finished
     // 3D surface crosses many cells, so every edge inside it has a small height
@@ -141,15 +217,17 @@ const wallVertexShader = /* glsl */ `
     float hFarBeyond = cellHeight(farCell + perpStep);
     bool isStep = edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ, uCellSize);
 
-    vec3 pos = edgeStart + edgeAlong * position.y;
-    pos.y = mix(bottom, top, position.z);
+${flatRoundBar ? '' : `    vec3 pos = edgeStart + edgeAlong * position.y;
+`}    pos.y = mix(bottom, top, position.z);
 
     // Light the face looking into the trough (away from the taller side).
     float direction = hNear >= hFar ? 1.0 : -1.0;
-    vNormal = normalize(normalMatrix * (direction * edgePerp));
+${flatRoundBar ? `    // A flat round bar lights in world space like the lower half and the tops,
+    // so the two surfaces meet at the equator under one normal (issue #1049).
+` : ''}    vNormal = normalize(${flatRoundBar ? 'mat3(modelMatrix)' : 'normalMatrix'} * (direction * edgePerp));
     vWallHeight = top - bottom;
     vHeight = pos.y;
-    vSlope = isStep ? 0.0 : 1.0;
+    vSlope = collapsed || isStep ? 0.0 : 1.0;
     vCell = farCell;
     vLocal = uVertical > 0.5 ? vec2(0.0, position.y) : vec2(position.y, 0.0);
     vPositionInCells = pos / uCellSize;
@@ -174,7 +252,7 @@ const wallVertexShader = /* glsl */ `
 
 // NOTE: with glslVersion GLSL3, three does NOT alias gl_FragColor for custom
 // ShaderMaterials — the fragment shader must declare its own out variable.
-const wallFragmentShader = /* glsl */ `
+const wallFragmentShader = (flatRoundBar: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec3 uColor;
   uniform float uStockBottomZ;
@@ -221,7 +299,9 @@ const wallFragmentShader = /* glsl */ `
       discard;
     }
     vec3 lighting = calcLighting(normalize(vNormal));
-    fragColor = vec4(uColor * lighting, 1.0);
+${flatRoundBar ? `    // A flat round bar's step wall takes the same depth darkening as the lower
+    // half it meets, so the equator join has no brightness step either (#1049).
+` : ''}    fragColor = vec4(uColor * lighting${flatRoundBar ? ' * depthDarken(vHeight, uStockTopZ)' : ''}, 1.0);
   }
 `
 
@@ -379,16 +459,29 @@ export function createInstancedWallMaterial(
   stockColor: THREE.Color,
   vertical: boolean,
   frame?: AroundFrame,
+  wallFloorZ?: number,
+  flatRoundBar?: FlatRoundBarDescriptor,
 ): THREE.ShaderMaterial {
+  const roundBar = flatRoundBar !== undefined
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
       ...sharedUniforms(heightfieldTexture, grid, stockColor),
       ...aroundUniforms(frame),
       uVertical: { value: vertical ? 1 : 0 },
+      // The along ends' floor is the equator; the sides use the bar's circle.
+      uWallFloorZ: { value: wallFloorZ ?? (flatRoundBar ? flatRoundBar.pivot : grid.stockBottomZ) },
+      ...(flatRoundBar
+        ? {
+            uBarPivot: { value: flatRoundBar.pivot },
+            uBarRadius: { value: flatRoundBar.radius },
+            uBarCentre: { value: flatRoundBar.centre },
+            uBarAxis: { value: flatRoundBar.axis === 'x' ? 0 : 1 },
+          }
+        : {}),
     },
-    vertexShader: aroundShader(wallVertexShader, frame),
-    fragmentShader: aroundShader(wallFragmentShader, frame),
+    vertexShader: aroundShader(wallVertexShader(roundBar), frame),
+    fragmentShader: aroundShader(wallFragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
@@ -412,23 +505,34 @@ export function createFloorMaterial(
 
 /**
  * Build the complete boundary as one group: two instanced wall-strip meshes
- * (vertical + horizontal edges) and the stock underside quad. All track the
- * heightfield texture, so the group is built once per grid and never rebuilt
- * while cutting.
+ * (vertical + horizontal edges) and, for every stock with a flat underside,
+ * the stock underside quad. All track the heightfield texture, so the group is
+ * built once per grid and never rebuilt while cutting. `wallFloorZ` defaults
+ * to the stock bottom; a flat round bar passes its equator, which is the floor
+ * of its two along-end walls (issue #1049).
+ *
+ * A flat round bar (`flatRoundBar`) has no flat underside at all: its stock
+ * bottom is the lower half's cylindrical surface, so the group carries no
+ * floor quad and its walls land on that surface instead of the equator plane
+ * (issue #1049 follow-up). A block, square blank or Around grid passes no
+ * descriptor and builds exactly the same three meshes it always has.
  */
 export function createInstancedBoundaryGroup(
   heightfieldTexture: THREE.DataTexture,
   grid: SimulationGrid,
   stockColor: THREE.Color,
   frame?: AroundFrame,
+  wallFloorZ?: number,
+  flatRoundBar?: FlatRoundBarDescriptor,
 ): THREE.Group {
+  const roundBar = flatRoundBar !== undefined
   const group = new THREE.Group()
   group.name = 'instancedBoundary'
 
   // Vertical edges: (cols+1) per row × rows instances.
   const verticalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols + 1, grid.rows),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ, flatRoundBar),
   )
   verticalWalls.frustumCulled = false
   group.add(verticalWalls)
@@ -436,16 +540,20 @@ export function createInstancedBoundaryGroup(
   // Horizontal edges: cols per row boundary × (rows+1) instances.
   const horizontalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols, grid.rows + 1),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ, flatRoundBar),
   )
   horizontalWalls.frustumCulled = false
   group.add(horizontalWalls)
 
-  const floor = new THREE.Mesh(
-    createFloorGeometry(grid),
-    createFloorMaterial(heightfieldTexture, grid, stockColor, frame),
-  )
-  group.add(floor)
+  // The flat stock underside. A round bar's underside is its static lower
+  // half, so drawing this quad would leave a flat sheet under the bar.
+  if (!roundBar) {
+    const floor = new THREE.Mesh(
+      createFloorGeometry(grid),
+      createFloorMaterial(heightfieldTexture, grid, stockColor, frame),
+    )
+    group.add(floor)
+  }
 
   if (frame) {
     // The bar's culling bounds reach the grid's radial envelope (the corner

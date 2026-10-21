@@ -32,8 +32,12 @@ import { uniqueName } from '../../import/normalize'
 import { isBarStock } from '../../types/barStock'
 import type { MachiningSetup, Project, FlatFace, SetupFace } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
+import { manualIndexingApplies } from './projectType'
 import { syncProjectSetups } from './setups'
 import { aroundUnavailableReason } from './activeFace'
+
+/** The project fields a provisional setup's defaults depend on. */
+type SetupProject = Partial<Pick<Project, 'stock' | 'meta'>>
 
 const PROVISIONAL_SETUPS: Readonly<Record<FlatFace, MachiningSetup>> = {
   top: {
@@ -57,11 +61,38 @@ const PROVISIONAL_SETUPS: Readonly<Record<FlatFace, MachiningSetup>> = {
 }
 
 const aroundDefaults = new Map<'x' | 'y', MachiningSetup>()
+const bottomDefaults = new Map<'x' | 'y', MachiningSetup>()
 
-/** The setup a face is seen through until the project has one of its own (Bottom: flipped about X). */
+/**
+ * A Bottom setup about one flip axis, cached per axis like the Around defaults
+ * so a store selector returning it stays stable. The default Bottom (#1054
+ * slice 2) follows the bar's axis in a rotary project: a Bottom turn on a bar
+ * is A180 about the bar, because that is the axis the bar physically turns on.
+ */
+function bottomSetupForAxis(axis: 'x' | 'y'): MachiningSetup {
+  const cached = bottomDefaults.get(axis)
+  if (cached) return cached
+  const setup: MachiningSetup = { ...PROVISIONAL_SETUPS.bottom, orientation: orientationForFace('bottom', axis) }
+  bottomDefaults.set(axis, setup)
+  return setup
+}
+
+/** The flip axis a new Bottom setup gets: the bar's axis on a rotary bar, else X. */
+function bottomFlipAxis(project?: SetupProject): 'x' | 'y' {
+  if (!project?.stock || !project.meta) return 'x'
+  return manualIndexingApplies({ stock: project.stock, meta: project.meta }) && isBarStock(project.stock)
+    ? project.stock.axis
+    : 'x'
+}
+
+/** The setup a face is seen through until the project has one of its own (Bottom: flipped about X, or about the bar's axis). */
 export function defaultSetupForFace(face: FlatFace): MachiningSetup
-export function defaultSetupForFace(face: SetupFace, project: Partial<Pick<Project, 'stock'>>): MachiningSetup
-export function defaultSetupForFace(face: SetupFace, project?: Partial<Pick<Project, 'stock'>>): MachiningSetup {
+export function defaultSetupForFace(face: SetupFace, project: SetupProject): MachiningSetup
+export function defaultSetupForFace(face: SetupFace, project?: SetupProject): MachiningSetup {
+  if (face === 'bottom') {
+    const axis = bottomFlipAxis(project)
+    return axis === 'x' ? PROVISIONAL_SETUPS.bottom : bottomSetupForAxis(axis)
+  }
   if (face !== 'around') return PROVISIONAL_SETUPS[face]
   // Either bar shape turns about its own axis (issue #1016 C2-U1): a square
   // blank's provisional Around setup is on X or Y exactly as a round bar's is.
@@ -91,11 +122,15 @@ export function provisionalSetupId(face: SetupFace): string {
  * store selector returning it stays stable.
  */
 export function provisionalSetupFor(
-  project: Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock'>>,
+  project: Pick<Project, 'setups' | 'activeSetupId'> & SetupProject,
 ): MachiningSetup | undefined {
   if (project.setups.some((setup) => setup.id === project.activeSetupId)) return undefined
   if (project.activeSetupId === provisionalSetupId('around')) return defaultSetupForFace('around', project)
-  return Object.values(PROVISIONAL_SETUPS).find((setup) => setup.id === project.activeSetupId)
+  // The flat faces are rebuilt from the project, not just looked up: a Bottom
+  // setup's flip axis follows a rotary bar's own axis (#1054 slice 2).
+  if (project.activeSetupId === provisionalSetupId('top')) return defaultSetupForFace('top')
+  if (project.activeSetupId === provisionalSetupId('bottom')) return defaultSetupForFace('bottom', project)
+  return undefined
 }
 
 /**

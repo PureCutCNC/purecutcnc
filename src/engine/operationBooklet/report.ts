@@ -29,7 +29,8 @@ import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPattern
 import { clearingControlApplies } from '../toolpaths/clearingControls'
 import { resolvedEntryStrategy, supportsEntryStrategy } from '../toolpaths/entry'
 import { supportsXyLead } from '../toolpaths/xyLead'
-import { formatProgramNumber, projectExportsPerSetup, setupProgramNumber } from '../gcode/setupPrograms'
+import { formatProgramNumber, projectExportsPerSetup, setupProgramNumber, setupStatesManualIndexing } from '../gcode/setupPrograms'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
 import { toolpathInSetupFrame } from '../setupFrameProject'
 import { setupFace, setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { crossFaceTargetIds } from '../setupTargets'
@@ -156,14 +157,19 @@ function targetFeatureNames(project: Project, operation: Operation): string[] {
 
 /**
  * The setup an operation is cut in, for a project that has more than one
- * (issue #946). A booklet is read at the machine, so it says which program
- * this is and how the stock must be turned before any setting.
+ * (issue #946), or for a Top/Bottom face of a rotary bar project, whose
+ * operator sets A by hand (#1054 slice 2). A booklet is read at the machine,
+ * so it says which program this is, how the stock must be turned and which A
+ * to set before any setting.
  */
 function setupRows(project: Project, operation: Operation): OperationBookletRow[] {
-  if (!projectExportsPerSetup(project)) return []
-  const setup = setupForOperation(project, operation)
+  if (!projectExportsPerSetup(project) && !manualIndexingApplies(project)) return []
+  // An operation without a setup reads as the first one, exactly as export
+  // places it.
+  const setup = setupForOperation(project, operation) ?? project.setups?.[0] ?? null
   if (!setup) return []
 
+  const turned = setupFace(setup)
   const rows: OperationBookletRow[] = [
     {
       label: translate('booklet.label.setup'),
@@ -171,14 +177,25 @@ function setupRows(project: Project, operation: Operation): OperationBookletRow[
     },
     {
       label: translate('booklet.label.setupTurn'),
-      value: setupFace(setup) === 'top'
+      value: turned === 'top'
         ? translate('booklet.value.setupTop')
-        : setupFace(setup) === 'around'
+        : turned === 'around'
           // The bar is not turned for an Around setup — it sits in the chuck
           // and the program wraps around it — so it is never a flip (#395).
           ? translate('booklet.value.setupAround', { axis: setup.orientation.axis.toUpperCase() })
           : translate('booklet.value.setupBottom', { axis: setup.orientation.axis.toUpperCase() }),
     },
+    // The manual A angle, on the faces of a rotary bar whose operator does
+    // the indexing (#1054 slice 2). Around has its own zeroing instruction in
+    // the program, so it is not given this one.
+    ...(setupStatesManualIndexing(project, setup)
+      ? [{
+        label: translate('booklet.label.indexing'),
+        value: turned === 'bottom'
+          ? translate('booklet.value.indexingBottom')
+          : translate('booklet.value.indexingTop'),
+      }]
+      : []),
     {
       label: translate('booklet.label.registration'),
       value: setup.registration.length === 0

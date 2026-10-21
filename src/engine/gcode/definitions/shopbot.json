@@ -45,7 +45,8 @@
     "ccwArcCommand": "' G3",
     "arcFormat": "ij",
     "modalMotion": false,
-    "arcInterpolation": true
+    "arcInterpolation": true,
+    "machineSafeZ": 0
   },
   "feedSpeed": {
     "feedCommand": "F",

@@ -23,7 +23,7 @@
 import { readFile } from 'node:fs/promises'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures, withBottomSetup } from '../../test/projectFixtures'
 import { syncProjectSetups } from '../../store/helpers/setups'
@@ -942,6 +942,47 @@ function testReportSetupSection(): void {
   assert(row(topReport.setupRows, 'booklet.label.registration') === translate('booklet.value.registrationNone'), 'and no registration declared')
   assert(row(topReport.setupRows, 'booklet.label.setupNotes') === undefined, 'no notes row without notes')
   assert(topReport.targetSummary === 'Pocket Region', 'a same-face target is not marked')
+  assert(row(report.setupRows, 'booklet.label.indexing') === undefined, 'a block setup carries no A instruction')
+
+  // A rotary bar: even a single Top setup has a section, because the operator
+  // sets A by hand (#1054 slice 2), and the row says which angle.
+  const rotary: Project = {
+    ...single,
+    meta: { ...single.meta, projectType: 'rotary' },
+    stock: roundStock(20, 100, 'x'),
+    origin: { name: 'Origin', x: 0, y: 10, z: 20, visible: true },
+  }
+  const rotaryReport = buildOperationBookletReport({
+    project: rotary,
+    operation: rotary.operations[0],
+    tool,
+    toolpath: topToolpath,
+    generatedAt,
+  })
+  assert(row(rotaryReport.setupRows, 'booklet.label.setup') === '01 · Top', 'a single-setup rotary bar gets a setup section')
+  assert(row(rotaryReport.setupRows, 'booklet.label.setupTurn') === translate('booklet.value.setupTop'), 'with the top face up')
+  assert(
+    row(rotaryReport.setupRows, 'booklet.label.indexing') === translate('booklet.value.indexingTop'),
+    `the Top row says A0: ${row(rotaryReport.setupRows, 'booklet.label.indexing')}`,
+  )
+
+  const rotaryTwo = withBottomSetup(rotary, { axis: 'x', operationIds: [operation.id], setup: { name: 'Underside' } })
+  const rotaryBottom = rotaryTwo.operations.find((entry) => entry.id === operation.id)!
+  const rotaryBottomReport = buildOperationBookletReport({
+    project: rotaryTwo,
+    operation: rotaryBottom,
+    tool,
+    toolpath: stockSpace,
+    generatedAt,
+  })
+  assert(
+    row(rotaryBottomReport.setupRows, 'booklet.label.indexing') === translate('booklet.value.indexingBottom'),
+    `the Bottom row says A180 about the bar: ${row(rotaryBottomReport.setupRows, 'booklet.label.indexing')}`,
+  )
+  assert(
+    row(rotaryBottomReport.setupRows, 'booklet.label.setupTurn') === translate('booklet.value.setupBottom', { axis: 'X' }),
+    'and the turn is still the stored flip',
+  )
 }
 
 /**

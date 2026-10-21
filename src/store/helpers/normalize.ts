@@ -39,9 +39,11 @@ import { normalizePlasmaTool, withCompatibleOperationTool } from '../../toolPoli
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isSolid } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { isImportedModelFeature } from './modelAssets'
 import { fallbackOperationTarget, defaultOperationForTarget, isOperationTargetValid } from './operationDefaults'
 import { resolveFeatureRow } from './resolveFeatures'
+import { newChuck } from './stockShape'
 
 export function normalizeAngleDegrees(angle: number): number {
   const normalized = angle % 360
@@ -561,7 +563,7 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
   }
 
   const cloned = cloneProject(template)
-  return {
+  const instantiated: Project = {
     ...cloned,
     meta: {
       ...cloned.meta,
@@ -582,6 +584,22 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
     clamps: [],
     ai_history: [],
   }
+  return withDefaultChuck(instantiated)
+}
+
+/**
+ * A template's clamps are not carried into the new project, but a bar cannot
+ * exist without its workholding: every block→bar conversion mints a chuck
+ * (`projectWithStockShape`), and a project created already on a bar — the New
+ * project dialog's rotary blank, or a template whose stock is one — would
+ * otherwise start without it (#1046). The same `newChuck` helper sizes it, so a
+ * square blank clears its corner envelope exactly as a conversion's chuck does.
+ * A block (milling/plasma) has no workholding and gets none.
+ */
+function withDefaultChuck(project: Project): Project {
+  const stock = project.stock
+  if (!isBarStock(stock)) return project
+  return { ...project, clamps: [newChuck(project, stock)] }
 }
 
 export function clearProjectMemoryCaches(): void {
@@ -593,7 +611,17 @@ export function projectsEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-export function isFirstFeatureValid(features: SketchFeature[]): boolean {
+/**
+ * Whether the feature list has a sensible base solid: the first solid row must
+ * be Add (or an imported model). A rotary project with bar stock has no
+ * base-add rule (#1054) — the bar is the material — so pass the project to
+ * apply that exception; without one the historical rule answers.
+ */
+export function isFirstFeatureValid(
+  features: SketchFeature[],
+  project?: Pick<Project, 'meta' | 'stock'>,
+): boolean {
+  if (project && barSeedsModel(project)) return true
   const firstSolidFeature = features.find(isSolid)
   if (!firstSolidFeature) return true
   return firstSolidFeature.operation === 'add' || isImportedModelFeature(firstSolidFeature)

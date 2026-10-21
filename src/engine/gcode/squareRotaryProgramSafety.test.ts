@@ -37,7 +37,10 @@
  *
  * Focused tests pin the three cases the property test is built to catch:
  * the unwind retract, the template Z-unknown rule, and the restored
- * whole-operation turning-feed precedence on a round bar.
+ * whole-operation turning-feed precedence on a round bar. The unwind retract
+ * is proven on a square blank and on a round bar, the latter also with a
+ * spindle-stop template that lowers Z (mutation: skip non-square unwind
+ * retracts → the round assertion fails).
  *
  * Run with: npx tsx src/engine/gcode/squareRotaryProgramSafety.test.ts
  */
@@ -46,7 +49,7 @@ import assert from 'node:assert/strict'
 import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SquareStock, Tool } from '../../types/project'
-import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -234,6 +237,11 @@ interface Audit {
  * both ends of the move — the A word changes across the whole move, so a start
  * below the height is just as unsafe as an end below it. A rotary change with
  * no known Z at all is a violation (there is nothing to prove).
+ *
+ * A `G53` block is in machine coordinates (#1054 fix 3), so its Z is not a work
+ * height and is not compared with `safeZ`. It is taken as the top of travel, the
+ * documented assumption of `motion.machineSafeZ` (the machine is homed with Z at
+ * the top), so a later rotary change stays clear.
  */
 function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: number, tolerance: number): Audit {
   type Motion = 'G0' | 'G1' | 'G2' | 'G3'
@@ -262,6 +270,8 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
     let blockMotion: Motion | null = motion
     let blockZ: number | null = z
     let blockRotary: number | null = rotary
+    let blockMachineCoordinate = false
+    let blockHasZ = false
     let hasMotionWord = false
     let hasAxisWord = false
     for (const word of words) {
@@ -275,6 +285,8 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
             units = 'inch'
           } else if (code === 21) {
             units = 'mm'
+          } else if (code === 53) {
+            blockMachineCoordinate = true
           } else if (code === 90) {
             absolute = true
           } else if (code === 91) {
@@ -301,12 +313,20 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
         }
         case 'Z': {
           hasAxisWord = true
+          blockHasZ = true
           blockZ = absolute ? (word.value ?? 0) : (blockZ ?? 0) + (word.value ?? 0)
           break
         }
         default:
           break
       }
+    }
+
+    if (blockMachineCoordinate && blockHasZ) {
+      // G53 is a machine coordinate, so this Z is not a work height. Taken as
+      // the top of travel (the machineSafeZ assumption), it proves the next
+      // rotary change clear.
+      blockZ = Number.POSITIVE_INFINITY
     }
 
     if (blockMotion !== null && (hasMotionWord || hasAxisWord)) {
@@ -626,18 +646,46 @@ console.log('Testing the closing unwind retract on a square blank...')
   assert.deepEqual(audit.violations, [], 'the closing unwind does not turn at the descent height')
   assert.ok(audit.turns >= 2, 'the probe actually turns twice: to A45 and back to A0')
   assert.match(result.gcode, /A0/, 'the program still unwinds the bar')
-  // The round bar's bytes are pinned by squareRotaryOutput.test.ts's
-  // ROUND_BASELINE; this square-only repair must not appear there.
+  // The round bar gets the same closing retract (#1054 fix 1, finding 2): its
+  // travel height is the crown plus 1 mm, emitted above the blank's top.
   const round = fixture({ axis: 'x', units: 'mm', round: true })
   const roundResult = post(round.project, machine('own', 'x'), [{
     operation: round.operation,
     tool: normalizedTool(round.project, round.operation),
     moves,
   }])
-  assert.ok(
-    !/\nZ3\.485\nG0 A0/.test(roundResult.gcode),
-    'a round bar is not given the square unwind retract',
+  const roundBar = round.project.stock
+  assert.ok(isBarStock(roundBar), 'fixture: the round project has bar stock')
+  // GRBL applies no tool-length compensation, so the retract is the machine
+  // definition's own Safe Z (#1054 fix 3), not the work-coordinate travel
+  // height and not the project's Safe Z mapped through the origin.
+  const roundSafe = machine('own', 'x').motion.machineSafeZ.toFixed(3)
+  assert.match(
+    roundResult.gcode,
+    new RegExp(`G53 G0 Z${roundSafe}\\nG0 A0`),
+    'a round bar also retracts to the machine Safe Z before the closing unwind',
   )
+
+  // The reviewer's repro (#1054 fix 1, finding 2): a spindle-stop template that
+  // lowers Z into cleared space behind the emitter's back. The template's Z is
+  // unknown, so the unwind must retract to the bar's travel height even though
+  // the last tracked motion ended high.
+  const base = machine('own', 'x')
+  const dropping = {
+    ...base,
+    feedSpeed: { ...base.feedSpeed, spindleOff: 'M5\nG0 Z-2' },
+  }
+  const droppingResult = post(round.project, dropping, [{
+    operation: round.operation,
+    tool: normalizedTool(round.project, round.operation),
+    moves,
+  }])
+  assert.match(
+    droppingResult.gcode,
+    new RegExp(`G0 Z-2\\nG53 G0 Z${roundSafe}\\nG0 A0`),
+    'the template Z move is repaired before the unwind turns the bar',
+  )
+  assert.match(droppingResult.gcode, /G0 Z-2/, 'the template line is still written')
 }
 
 // ── 3. a Z-moving template cannot hide the cutter height ──────

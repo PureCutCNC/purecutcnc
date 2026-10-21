@@ -27,7 +27,7 @@ import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
-import type { ProjectType, StockAxis, TabShape } from '../../types/project'
+import type { StockAxis, TabShape } from '../../types/project'
 import { barLength, isBarStock, isSquareStock } from '../../types/barStock'
 import { useProjectStore } from '../../store/projectStore'
 import { originAfterStockEdit, resizeRoundStock, resizeSquareStock } from '../../store/helpers/stockShape'
@@ -35,11 +35,9 @@ import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter }
 import {
   projectMachineMismatch,
   projectType,
-  projectTypeChangeSummary,
   stockShapesForProjectType,
 } from '../../store/helpers/projectType'
-import { ProjectTypeChangeDialog } from './ProjectTypeChangeDialog'
-import { PROJECT_TYPES, machineOptionsForType, projectTypeChangeIsEmpty, projectTypeLabelKey } from './projectTypeChoice'
+import { machineOptionsForType, projectTypeLabelKey } from './projectTypeChoice'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
@@ -82,7 +80,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const setShowFeatureInfo = useProjectStore((s) => s.setShowFeatureInfo)
   const setProjectClearances = useProjectStore((s) => s.setProjectClearances)
   const setProjectMachine = useProjectStore((s) => s.setProjectMachine)
-  const setProjectType = useProjectStore((s) => s.setProjectType)
   const { library: machineLibrary } = useMachineLibrary()
   const setOrigin = useProjectStore((s) => s.setOrigin)
   const startPlaceOrigin = useProjectStore((s) => s.startPlaceOrigin)
@@ -213,7 +210,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // application library, plus the embedded machine when it is not in it.
   const selectedMachine = getActiveMachineDefinition(project)
   const machineStatus = machineSnapshotStatus(selectedMachine, machineLibrary)
-  // One candidate list, shared with `setProjectType` (issue #1028).
+  // One candidate list for the machine picker (issue #1028).
   const machineOptionCandidates = machineCandidates(machineLibrary, selectedMachine)
   // The type's own machines come first; the rest keep their place under a
   // heading, so a machine that does not suit the type stays selectable.
@@ -225,21 +222,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     t('featureTree.properties.machine.groupOther'),
   )
   const machineMismatch = projectMachineMismatch(project)
-  // A type change opens the confirm only when it has something to say.
-  const [pendingTypeChange, setPendingTypeChange] = useState<{ to: ProjectType; summary: ReturnType<typeof projectTypeChangeSummary> } | null>(null)
-
-  /** Apply a type change, or ask first when the change is visible (issue #1028). */
-  function chooseProjectType(to: ProjectType) {
-    if (to === currentProjectType) {
-      return
-    }
-    const summary = projectTypeChangeSummary(project, to, machineOptionCandidates)
-    if (projectTypeChangeIsEmpty(summary)) {
-      setProjectType(to, machineOptionCandidates)
-      return
-    }
-    setPendingTypeChange({ to, summary })
-  }
 
   function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -337,16 +319,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               }}
             />
           </label>
-          <label className="properties-field properties-field--project-type">
+          <div className="properties-field properties-field--project-type">
             <span>{t('featureTree.properties.projectType')}</span>
-            <div data-testid="project-type">
-              <Select
-                value={currentProjectType}
-                options={PROJECT_TYPES.map((type) => ({ value: type, label: t(projectTypeLabelKey(type)) }))}
-                onChange={chooseProjectType}
-              />
-            </div>
-          </label>
+            {/* Chosen once, in the New project dialog, and stored (issue #1046). */}
+            <strong data-testid="project-type">{t(projectTypeLabelKey(currentProjectType))}</strong>
+          </div>
           <label className="properties-check">
             <input
               type="checkbox"
@@ -1510,10 +1487,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
   // don't count as base solids); imported STL models are locked as Model.
   // Subtract is withheld wherever choosing it would make this row the first
-  // solid — the store would turn it straight back into Add (#827). The other
+  // solid — the store would turn it straight back into Add (#827) — except in
+  // a rotary project, where the bar is already the material (#1054). The other
   // roles stay available.
   const subtractDisabled = selectedFeature.operation !== 'subtract'
-    && !canChooseSubtract(features, selectedFeature.id)
+    && !canChooseSubtract(features, selectedFeature.id, project)
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
@@ -1873,16 +1851,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
       {showManager && (
         <MachineDefinitionManagerDialog
           onClose={() => setShowManager(false)}
-        />
-      )}
-      {pendingTypeChange && (
-        <ProjectTypeChangeDialog
-          summary={pendingTypeChange.summary}
-          onConfirm={() => {
-            setProjectType(pendingTypeChange.to, machineOptionCandidates)
-            setPendingTypeChange(null)
-          }}
-          onCancel={() => setPendingTypeChange(null)}
         />
       )}
     </>

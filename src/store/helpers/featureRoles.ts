@@ -30,6 +30,7 @@
 
 import type { FeatureOperation, Project, SetupFace, SketchFeature } from '../../types/project'
 import { resolveFeatureInstances } from './resolveFeatures'
+import { barSeedsModel } from './projectType'
 
 /** Anything carrying an operation — SketchFeature or FeatureDefinition. */
 interface HasOperation {
@@ -85,13 +86,19 @@ export function isSolid(entity: HasOperation): boolean {
  * this row becomes Subtract. Linked copies share the definition's operation, so
  * they become Subtract too and count as this row. `features` must be in row
  * order, as `resolvedProjectFeatures` returns them.
+ *
+ * In a rotary project with bar stock there is no base-solid rule (#1054): the
+ * bar already is the material, so the first solid row may be Subtract. Pass
+ * the project to ask that question; without it the historical rule answers.
  */
 export function canChooseSubtract(
   features: ReadonlyArray<HasOperation & { id: string; definitionId?: string }>,
   targetId: string,
+  project?: Pick<Project, 'meta' | 'stock'>,
 ): boolean {
   const target = features.find((feature) => feature.id === targetId)
   if (!target) return false
+  if (project && barSeedsModel(project)) return true
   const changes = (feature: { id: string; definitionId?: string }) =>
     feature.id === targetId
     || (target.definitionId !== undefined && feature.definitionId === target.definitionId)

@@ -49,18 +49,19 @@ import {
 } from '../../engine/setupTargets'
 import { decodeProjectFormat } from './projectFormat'
 import {
+  barSeedsModel,
   inferProjectType,
   machineMatchesProjectType,
   operationCutsInProject,
   operationHiddenByProjectType,
   projectMachineMismatch,
   projectType,
-  projectTypeChangeSummary,
   stockShapesForProjectType,
 } from './projectType'
+import { squareStock } from '../../types/barStock'
+import { projectWithProjectType } from './projectTypeApply'
 import { activeFace, aroundUnavailableReason } from './activeFace'
 import { syncProjectSetups } from './setups'
-import { useProjectStore } from '../projectStore'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../test/plasmaExportFixtures'
@@ -259,17 +260,21 @@ function postOperations(
  * coherent first: the machine and the stock are what the type implies, exactly
  * as the load migration reads them.
  *
- * `around` and `aroundMoves` were re-captured for #1045 slice D: the fixture's
- * cut band ends inside the bar, so the engine's C2-F7 cutter-centre pull-in --
- * now applied to a round bar's retained ends too -- starts and ends the along
- * grid one cutter radius in. The program's structure is unchanged.
+ * `around` and `aroundMoves` were recomputed on the merged #1045 + #1054 code,
+ * so they now include both changes. #1045 slice D's C2-F7 cutter-centre
+ * pull-in, now applied to a round bar's retained ends too, starts and ends the
+ * along grid one cutter radius in because the fixture's band ends inside the
+ * bar; that moved `aroundMoves` (and therefore `around`). #1054 fix 3's
+ * machine-coordinate closing retract then changed only the program text, so
+ * `aroundMoves` is still the #1045 value while `around` carries both. The
+ * program's structure is unchanged.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '175dd0a360d07235',
+  around: '37a8b133e86b9d09',
   aroundMoves: 'e7248422dcef1683',
 } as const
 
@@ -360,10 +365,6 @@ function richProject(): Project {
 
 const CANDIDATES: readonly MachineDefinition[] = [QTPLASMAC, rotaryRouter(), PLAIN_ROUTER]
 
-function seed(project: Project): void {
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } })
-}
-
 /** The machine a change to `to` selects, given the one already selected. */
 function expectedMachineId(current: MachineDefinition, to: ProjectType): string {
   return machineMatchesProjectType(current, to)
@@ -410,6 +411,19 @@ async function main(): Promise<void> {
     assertEqual([...stockShapesForProjectType('plasma')], ['block'], 'plasma cuts a block')
     assertEqual([...stockShapesForProjectType('rotary')], ['round', 'square'], 'rotary turns either bar, round first')
     assertEqual(stockShapesForProjectType('rotary')[0], 'round', 'a new rotary project still starts on a round bar')
+  })
+
+  await test('barSeedsModel: a rotary project on either bar, and nothing else (#1054)', () => {
+    const milling = projectOfType('milling')
+    assertEqual(barSeedsModel(milling), false, 'a milling block is not a bar')
+    assertEqual(barSeedsModel(projectOfType('plasma')), false, 'a plasma block is not a bar')
+
+    const round = { ...milling, meta: { ...milling.meta, projectType: 'rotary' as const }, stock: roundStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(round), true, 'a rotary round bar is the material')
+    const square = { ...round, stock: squareStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(square), true, 'a rotary square blank is the material')
+    assertEqual(barSeedsModel({ ...milling, stock: round.stock }), false, 'a round bar in a milling project keeps the base-add rule')
+    assertEqual(barSeedsModel({ ...round, stock: milling.stock }), false, 'a rotary project without a bar has no bar to seed from')
   })
 
   await test('generated and exported programs are byte-identical to the base commit', () => {
@@ -585,141 +599,88 @@ async function main(): Promise<void> {
     assertEqual(exportHasError(okPrepared.programs), false, 'the rotary-capable router does not refuse')
   })
 
-  await test('projectTypeChangeSummary counts what each change would do', () => {
-    const project = richProject()
-    const aroundFeatures = project.features.filter((feature) => feature.authoringFace === 'around').length
-    const enabled = project.operations.filter((operation) => operation.enabled)
-
-    const toPlasma = projectTypeChangeSummary(project, 'plasma', CANDIDATES)
-    assertEqual(toPlasma.from, 'rotary', 'from is the stored type')
-    assertEqual(toPlasma.to, 'plasma', 'to is the requested type')
-    assertEqual(
-      toPlasma.inactiveOperations,
-      enabled.filter((operation) => operation.kind !== 'plasma_profile').length,
-      'plasma leaves the milling and rotary operations uncut',
-    )
-    assertEqual(toPlasma.hiddenAroundFeatures, aroundFeatures, 'leaving rotary hides the Around features')
-    assertEqual(toPlasma.stockConversion, 'toBlock', 'a plasma project takes a block')
-    assertEqual(toPlasma.machineChange, { id: QTPLASMAC.id, name: QTPLASMAC.name }, 'and selects a plasma machine')
-
-    const toMilling = projectTypeChangeSummary(project, 'milling', CANDIDATES)
-    assertEqual(
-      toMilling.inactiveOperations,
-      enabled.filter((operation) => operation.kind !== 'pocket').length,
-      'milling leaves the plasma and rotary operations uncut',
-    )
-    assertEqual(toMilling.stockConversion, 'toBlock', 'a milling project takes a block')
-    assertEqual(toMilling.machineChange, null, 'the rotary router already suits milling')
-
-    const toRotary = projectTypeChangeSummary(project, 'rotary', CANDIDATES)
-    assertEqual(
-      toRotary.inactiveOperations,
-      enabled.filter((operation) => operation.kind === 'plasma_profile').length,
-      'rotary leaves only the plasma operation uncut',
-    )
-    assertEqual(toRotary.hiddenAroundFeatures, 0, 'a rotary project hides nothing')
-    const alreadyOffRotary: Project = { ...project, meta: { ...project.meta, projectType: 'milling' } }
-    assertEqual(
-      projectTypeChangeSummary(alreadyOffRotary, 'plasma', CANDIDATES).hiddenAroundFeatures,
-      0,
-      'a project already off rotary hides nothing new',
-    )
-    assertEqual(toRotary.stockConversion, null, 'the bar already is round')
-    assertEqual(toRotary.machineChange, null, 'the rotary router suits rotary')
-  })
-
-  await test('setProjectType: all six changes keep every feature and operation, one undo step each', () => {
+  await test('projectWithProjectType: all six changes keep every feature and operation and select the type\'s stock and machine', () => {
     const types: ProjectType[] = ['milling', 'plasma', 'rotary']
+    const project = richProject()
     for (const from of types) {
       for (const to of types) {
         if (from === to) continue
         const machine = from === 'rotary' ? rotaryRouter() : from === 'plasma' ? QTPLASMAC : PLAIN_ROUTER
-        const start: Project = { ...richProject(), meta: { ...richProject().meta, projectType: from, machineDefinitions: [machine], selectedMachineId: machine.id } }
-        seed(start)
-        const before = useProjectStore.getState().project
-        useProjectStore.getState().setProjectType(to, CANDIDATES)
-        const after = useProjectStore.getState().project
+        const start: Project = { ...project, meta: { ...project.meta, projectType: from, machineDefinitions: [machine], selectedMachineId: machine.id } }
+        const after = projectWithProjectType(start, to, CANDIDATES)
 
         assertEqual(after.meta.projectType, to, `${from} -> ${to}: the type is stored`)
-        assertEqual(after.features, before.features, `${from} -> ${to}: nothing is deleted from the features`)
-        assertEqual(after.operations, before.operations, `${from} -> ${to}: nothing is deleted from the operations`)
+        assertEqual(after.features, start.features, `${from} -> ${to}: nothing is deleted from the features`)
+        assertEqual(after.operations, start.operations, `${from} -> ${to}: nothing is deleted from the operations`)
         assertEqual(after.stock.shape === 'round', to === 'rotary', `${from} -> ${to}: the stock takes the type's shape`)
         assertEqual(
           getActiveMachineDefinition(after)?.id,
           expectedMachineId(machine, to),
           `${from} -> ${to}: the machine follows the type`,
         )
-        assertEqual(useProjectStore.getState().history.past.length, 1, `${from} -> ${to}: one undo step`)
-
         // Back to where it started: features and operations are untouched.
-        useProjectStore.getState().setProjectType(from, CANDIDATES)
-        const back = useProjectStore.getState().project
-        assertEqual(back.features, before.features, `${from} -> ${to} -> ${from}: features are restored`)
-        assertEqual(back.operations, before.operations, `${from} -> ${to} -> ${from}: operations are restored`)
+        const back = projectWithProjectType(after, from, CANDIDATES)
+        assertEqual(back.features, start.features, `${from} -> ${to} -> ${from}: features are restored`)
+        assertEqual(back.operations, start.operations, `${from} -> ${to} -> ${from}: operations are restored`)
       }
     }
   })
 
-  await test('setProjectType selects the first matching candidate and leaves the machine when none matches', () => {
+  await test('projectWithProjectType selects the first matching candidate, leaves the machine when none matches, and is a no-op otherwise', () => {
     // A plasma machine on a milling project: the first candidate is the plasma
     // machine (which does not suit milling), so the plain router is picked
     // even though it is second in the list.
     const base = richProject()
-    seed({ ...base, meta: { ...base.meta, projectType: 'milling', machineDefinitions: [QTPLASMAC], selectedMachineId: QTPLASMAC.id } })
-    useProjectStore.getState().setProjectType('milling', [QTPLASMAC, PLAIN_ROUTER])
+    const mismatched: Project = { ...base, meta: { ...base.meta, projectType: 'milling', machineDefinitions: [QTPLASMAC], selectedMachineId: QTPLASMAC.id } }
     assertEqual(
-      useProjectStore.getState().project.meta.selectedMachineId,
+      projectWithProjectType(mismatched, 'milling', [QTPLASMAC, PLAIN_ROUTER]).meta.selectedMachineId,
       PLAIN_ROUTER.id,
       'the first machine that suits the type is selected',
     )
 
     // No candidate suits: the machine is left alone.
-    seed(projectOfType('rotary', PLAIN_ROUTER))
-    useProjectStore.getState().setProjectType('rotary', [PLAIN_ROUTER])
+    const rotary = projectOfType('rotary', PLAIN_ROUTER)
     assertEqual(
-      useProjectStore.getState().project.meta.selectedMachineId,
+      projectWithProjectType(rotary, 'rotary', [PLAIN_ROUTER]).meta.selectedMachineId,
       PLAIN_ROUTER.id,
       'with no matching candidate the machine stays',
     )
 
-    // A change that needs nothing moved is a no-op, not a fresh undo step.
-    seed(projectOfType('milling', PLAIN_ROUTER))
-    useProjectStore.getState().setProjectType('milling', CANDIDATES)
-    assertEqual(useProjectStore.getState().history.past.length, 0, 'an unchanged type is a no-op')
+    // A change that needs nothing moved returns the same project object.
+    const milling = projectOfType('milling', PLAIN_ROUTER)
+    assert.equal(
+      projectWithProjectType(milling, 'milling', CANDIDATES),
+      milling,
+      'an unchanged type comes back as the same project object',
+    )
 
     // A hand-built project without the field takes the write even when the
     // inference already agrees, so saving always carries the type.
-    seed(withoutProjectType(projectOfType('milling', PLAIN_ROUTER)))
-    useProjectStore.getState().setProjectType('milling', CANDIDATES)
     assertEqual(
-      useProjectStore.getState().project.meta.projectType,
+      projectWithProjectType(withoutProjectType(milling), 'milling', CANDIDATES).meta.projectType,
       'milling',
       'a project without the field gains it',
     )
   })
 
-  await test('setProjectType moves the workspace off an Around setup when the new type has no Around', () => {
+  await test('projectWithProjectType moves the workspace off an Around setup when the new type has no Around', () => {
     const rotary = richProject()
 
     // The workspace is on the project's real Around setup.
-    seed({ ...rotary, activeSetupId: AROUND_SETUP_ID })
-    useProjectStore.getState().setProjectType('milling', CANDIDATES)
-    assertEqual(activeFace(useProjectStore.getState().project), 'top', 'leaving rotary moves the workspace to Top')
-    assertEqual(useProjectStore.getState().project.activeSetupId, TOP_SETUP_ID, 'onto the project\'s own Top setup')
-    assertEqual(useProjectStore.getState().history.past.length, 1, 'in the same undo step as the type change')
-    assertEqual(useProjectStore.getState().project.features, rotary.features, 'and nothing is deleted')
+    const onAround: Project = { ...rotary, activeSetupId: AROUND_SETUP_ID }
+    const milled = projectWithProjectType(onAround, 'milling', CANDIDATES)
+    assertEqual(activeFace(milled), 'top', 'leaving rotary moves the workspace to Top')
+    assertEqual(milled.activeSetupId, TOP_SETUP_ID, 'onto the project\'s own Top setup')
+    assertEqual(milled.features, rotary.features, 'and nothing is deleted')
 
     // No Top setup to land on: the workspace still leaves Around.
     const aroundOnly: Project = { ...rotary, setups: [rotary.setups[1]], activeSetupId: 'provisional-around' }
-    seed(aroundOnly)
-    useProjectStore.getState().setProjectType('plasma', CANDIDATES)
-    assertEqual(activeFace(useProjectStore.getState().project), 'top', 'a plasma project leaves the Around workspace')
-    assertEqual(useProjectStore.getState().project.activeSetupId, 'provisional-top', 'provisionally when the project has no Top setup')
+    const plasma = projectWithProjectType(aroundOnly, 'plasma', CANDIDATES)
+    assertEqual(activeFace(plasma), 'top', 'a plasma project leaves the Around workspace')
+    assertEqual(plasma.activeSetupId, 'provisional-top', 'provisionally when the project has no Top setup')
 
     // A rotary project keeps the Around workspace: the change does not need it.
-    seed({ ...rotary, activeSetupId: AROUND_SETUP_ID })
-    useProjectStore.getState().setProjectType('rotary', CANDIDATES)
-    assertEqual(activeFace(useProjectStore.getState().project), 'around', 'a rotary project keeps the Around workspace')
+    assertEqual(activeFace(projectWithProjectType(onAround, 'rotary', CANDIDATES)), 'around', 'a rotary project keeps the Around workspace')
   })
 
   await test('the export leaves an Around setup\'s operation out of the programs when the project is not rotary', async () => {

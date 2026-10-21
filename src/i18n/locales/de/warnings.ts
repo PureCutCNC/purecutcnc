@@ -239,6 +239,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketFinishIslandWallTooTight': 'Der Fräser passt nicht zwischen eine Insel und die Taschenwand; der Schlichtgang an der Insel wurde auf den Bereich gekürzt, in den er passt, sodass dort Material stehen bleibt',
   // postprocessor
   'warnings.setupTargetNotThrough': '{features}: auf der anderen Seite gezeichnet und kein durchgehender Ausschnitt, daher kann diese Aufspannung es nicht erreichen. Nur ein Abzug, der beide Rohteilseiten erreicht, oder ein importiertes 3D-Modell kann von der anderen Seite bearbeitet werden. Es wurde nichts erzeugt.',
+  'warnings.setupFlipAxisMismatch': 'Aufspannung „{setup}" wendet das Teil um {axis}, der Stab liegt jedoch entlang {barAxis}. Stellen Sie die Wendeachse der Aufspannung auf {barAxis}, damit die A180-Drehung zum Unterseitenprogramm passt.',
   'warnings.aroundStockMismatch': '{operation}: Die Around-Seite benötigt eine Stange entlang derselben Achse wie bei der Einrichtung.',
   'warnings.aroundCentreline': '{operation}: {feature} erreicht die Mittellinie der Stange; ein Schnitt auf der Around-Seite muss davor enden.',
   'warnings.aroundCutReachesCentreline': '{operation}: Der Schnitt würde die Mittellinie der Stange erreichen. Reduziere die Tiefe, damit er vor der Mitte der Stange endet.',
@@ -277,6 +278,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
   'warnings.postSquareAroundToolpathStale': 'Operation „{operation}" wurde nicht exportiert: Ihr Werkzeugweg ist für dieses Projekt veraltet. Erzeugen Sie ihn vor dem Export neu.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, und der Schnitt würde mehr als die zulässige Tiefe der Operation abtragen, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
+  'warnings.postRotaryTurnWithoutClearance': 'Operation „{operation}" wurde nicht exportiert: Der Stab kann nicht sicher gedreht werden, weil keine Werkzeuglängenkorrektur aktiv ist und diese Maschine keine Maschinenkoordinaten-Bewegung auf ihre sichere Z-Höhe hat. Aktivieren Sie die Werkzeuglängenkorrektur oder geben Sie der Maschine einen Maschinenkoordinaten-Eilgang, und exportieren Sie erneut.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',

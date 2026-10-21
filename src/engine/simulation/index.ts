@@ -25,6 +25,10 @@ export * from './heightfieldShader'
 
 export * from './instancedBoundary'
 
+export * from './flatRoundBarLowerHalf'
+
+export * from './simulationScene'
+
 export * from './playback'
 
 export * from './toolMesh'

@@ -22,13 +22,18 @@
  * against what `updateFeature` actually does to every row, so an enabled
  * Subtract never silently comes back as Add.
  *
+ * A rotary project with bar stock is the exception (#1054 slice 1): the bar is
+ * already the material, so the first solid may be Subtract and the store keeps
+ * it. A milling project keeps the rule exactly.
+ *
  * Run with: npx tsx src/store/subtractAvailability.test.ts
  */
 
-import { newProject, rectProfile, type FeatureOperation, type Project } from '../types/project'
+import { newProject, rectProfile, roundStock, type FeatureOperation, type Project, type SketchFeature } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
 import type { LegacyFeatureRow } from './helpers/projectFormat'
 import { canChooseSubtract } from './helpers/featureRoles'
+import { isFirstFeatureValid } from './helpers/normalize'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 
@@ -64,6 +69,15 @@ function buildProject(rows: LegacyFeatureRow[]): Project {
   return projectWithFeatures(newProject('Subtract availability', 'mm'), rows)
 }
 
+/** A rotary project on a real bar: the stock is the part's material (#1054). */
+function buildRotaryProject(rows: LegacyFeatureRow[]): Project {
+  const base = newProject('Subtract availability (rotary)', 'mm')
+  return projectWithFeatures(
+    { ...base, stock: roundStock(40, 200, 'x', { x: 10, y: 30 }), meta: { ...base.meta, projectType: 'rotary' } },
+    rows,
+  )
+}
+
 function load(project: Project): void {
   useProjectStore.setState({
     project,
@@ -79,7 +93,7 @@ function operationOf(id: string): FeatureOperation {
 }
 
 function offered(project: Project, id: string): boolean {
-  return canChooseSubtract(resolvedProjectFeatures(project), id)
+  return canChooseSubtract(resolvedProjectFeatures(project), id, project)
 }
 
 /**
@@ -172,5 +186,71 @@ function sameIds(actual: string[], expected: string[], label: string): void {
 // ── No features at all ────────────────────────────────────────────
 
 assert(!canChooseSubtract([], 'missing'), 'an unknown row never offers Subtract')
+
+// ── A rotary bar is the material, so no base add is needed (#1054) ──
+
+function draft(id: string, operation: FeatureOperation): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 20, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation,
+    z_top: 5,
+    z_bottom: 0,
+    authoringFace: 'top',
+    visible: true,
+    locked: false,
+  }
+}
+
+{
+  const rotary = buildRotaryProject([row('pocket', 'line')])
+  assert(
+    canChooseSubtract(resolvedProjectFeatures(rotary), 'pocket', rotary),
+    'rotary: the first solid row offers Subtract',
+  )
+  sameIds(checkEveryRow(rotary, 'rotary'), ['pocket'], 'rotary: the only solid row keeps Subtract')
+
+  load(rotary)
+  useProjectStore.getState().updateFeature('pocket', { operation: 'subtract' })
+  assert(operationOf('pocket') === 'subtract', 'rotary: the store keeps a leading Subtract')
+  const carved = useProjectStore.getState().project
+  assert(
+    isFirstFeatureValid(resolvedProjectFeatures(carved), carved),
+    'rotary: a leading Subtract raises no first-feature warning',
+  )
+
+  // The first solid can also arrive already Subtract through addFeature.
+  load(buildRotaryProject([]))
+  useProjectStore.getState().addFeature(draft('first', 'subtract'))
+  assert(operationOf('first') === 'subtract', 'rotary: a new Subtract feature stays Subtract')
+
+  // A milling project keeps every one of those refusals.
+  const milling = buildProject([row('pocket', 'subtract')])
+  assert(
+    !canChooseSubtract(resolvedProjectFeatures(milling), 'pocket', milling),
+    'milling: the first solid row never offers Subtract',
+  )
+  assert(
+    !isFirstFeatureValid(resolvedProjectFeatures(milling), milling),
+    'milling: a leading Subtract raises the first-feature warning',
+  )
+
+  load(buildProject([row('pocket', 'line')]))
+  useProjectStore.getState().updateFeature('pocket', { operation: 'subtract' })
+  assert(operationOf('pocket') === 'add', 'milling: the store still forces the first solid to Add')
+
+  load(buildProject([]))
+  useProjectStore.getState().addFeature(draft('first', 'subtract'))
+  assert(operationOf('first') === 'add', 'milling: a new first Subtract becomes Add')
+}
 
 console.log('subtractAvailability tests passed')

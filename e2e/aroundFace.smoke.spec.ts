@@ -483,7 +483,7 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     const plasmaRow = ui.operations.addMenuUnavailableRows(page).filter({ hasText: 'Plasma through-cut' })
     await expect(plasmaRow).toHaveCount(1)
     await expect(plasmaRow.locator('.cam-operation-hint__text')).toHaveText(
-      'Needs a plasma project. Change the project type in the project properties.',
+      'Needs a plasma project. The type is chosen when the project is created.',
     )
   })
 })

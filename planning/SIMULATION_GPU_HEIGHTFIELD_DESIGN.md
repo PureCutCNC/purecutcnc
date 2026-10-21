@@ -87,11 +87,60 @@ shaders and framing are the round bar's.
 Decision: Frank, 2026-10-17, #1016 amendment — the exact square model was
 removed in favour of this shared path.
 
+## Round bars on flat setups
+
+A rotary project keeps Top and Bottom setups, and those simulate on the same
+top-down heightfield as a block (issue #1049). Seeding every cell from the
+stock's bounding box drew the round bar as a square block, so
+`buildSimulationSetupInput` also hands the grid the bar's real profile for a
+flat setup (`flatRoundBar: { axis, pivot, radius, centre, length }`), and
+`seedFlatRoundBarTopZ` fills each across cell with `pivot + sqrt(radius² − d²)`
+— `d` is the cell centre's distance across the bar from its centreline — with
+the grid's empty value where `|d| ≥ radius`. The result is snapshotted as
+`initialTopZ` exactly as a square blank's is, so a virgin bar reports zero
+removed; `grid.stockTopZ` stays the full stock thickness.
+
+A Bottom setup needs no special case: `projectInSetupFrame` has already turned
+the setup-local stock, and a round bar is symmetric about its axis, so Top and
+Bottom describe the same profile. The limit is inherent to the heightfield — it
+shows the bar's upper half only, and nothing below the equator is represented
+(a cutter from above cannot reach it).
+
+The lower half is drawn as a fixed surface instead (#1049 follow-up):
+`createFlatRoundBarLowerHalf` builds a static half-cylinder of the bar's own
+radius and length from the same descriptor — colour and light rig shared with
+the heightfield. A round bar has no flat stock underside, so the boundary group
+draws no underside quad for it: the half-cylinder is the bottom. The boundary
+walls land on that cylinder instead of floating at the equator plane — at the
+silhouette where the grid's edge reaches the radius, a little below it where a
+cell boundary falls short — and the two along ends stop at the equator, where
+the half-cylinder's flat end caps already are. A grid whose spacing does not
+divide the diameter can put the outermost material cell boundary beyond the
+radius (a Ø41 mm bar at 96 cells overshoots by 0.667 mm); the wall shader pulls
+that boundary back onto the silhouette and the surface shader discards the flat
+top beyond it, so the two surfaces join on the bar's real circle at any grid
+spacing. `buildSimulationStockScene` mounts the heightfield surface, the
+boundary and the lower half as one group, and both the static and the playback
+view use it, so neither can mount half a bar. The round-bar wall variant uses
+the lower half's world-space normals and depth darkening, so the surfaces meet
+under one continuous shade with no gap or z-fight. Empty cells outside the bar,
+and cut-through cells with no material above the cylinder, collapse their walls
+and discard; the lower half is cut by nothing: it is the surface the Top cutter
+cannot reach. The machinable upper half remains the heightfield exactly as
+before. Block and square blanks have no descriptor, so their boundary floor
+stays the stock bottom, their walls keep the established normals and their
+scenes are unchanged; cutting, playback, reset and uploads stay the shared ones.
+
 ## Invariants
 
-- A stock shape never selects a different grid, cutting kernel, playback or
-  renderer. A square blank changes only the per-cell starting heights
-  (`seedSquareTopZ`) and the radial bounding envelope (`grid.stockTopZ`).
+- A stock shape never selects a different grid, cutting kernel or playback. A
+  square blank or a flat round bar changes only the per-cell starting heights
+  (`seedSquareTopZ` / `seedFlatRoundBarTopZ`); a square blank also changes the
+  radial bounding envelope (`grid.stockTopZ`), and a flat round bar adds one
+  static render-only mesh for the lower half the heightfield cannot represent,
+  removes the flat underside quad, clips the surface and walls to the bar's
+  silhouette, and lands its walls on that lower half, with no effect on
+  simulation state.
 - GPU data is derived render state; it never becomes the simulation source of
   truth.
 - Texture updates use the smallest valid dirty rectangle when practical.

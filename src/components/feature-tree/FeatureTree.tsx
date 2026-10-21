@@ -20,6 +20,7 @@ import type { FeatureOperation, RegionMaskMode, SetupFace } from '../../types/pr
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
+import { barSeedsModel } from '../../store/helpers/projectType'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -329,8 +330,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
   const constructionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'construction')
   const firstSolidFeature = solidFeatures[0] ?? null
+  // A rotary project's bar is already the material (#1054), so a leading
+  // Subtract is valid there; a block project keeps the base-add rule.
+  const barIsMaterial = barSeedsModel(project)
   const firstFeatureInvalid =
     !!firstSolidFeature
+    && !barIsMaterial
     && firstSolidFeature.operation !== 'add'
     && !(firstSolidFeature.kind === 'stl' && firstSolidFeature.operation === 'model')
 
@@ -431,8 +436,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
         regionMaskMode={feature.regionMaskMode ?? 'include'}
-        isFirstFeature={feature.id === firstSolidFeature?.id}
-        subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id)}
+        isFirstFeature={feature.id === firstSolidFeature?.id && !barIsMaterial}
+        subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}

@@ -18,9 +18,11 @@
  * Square stock actions (#1016 C2-S2): the block/round/square conversions, the
  * square resize helper, the origin that follows a stock edit, and the real
  * store paths — `setStockShape`, `setStock`, `setRectStockDimension`,
- * `setStockSourceFeature` and `setProjectType` — on both axes, in mm and inch,
- * off-origin, across one undo/redo step, a transaction, a clamp selection and a
- * project-type change. No engine, frame, output or UI path is reached.
+ * `setStockSourceFeature` — on both axes, in mm and inch, off-origin, across
+ * one undo/redo step, a transaction, a clamp selection and a project-type
+ * change made through `projectWithProjectType` (the type is chosen at creation
+ * since #1046, so no store action changes it).
+ * No engine, frame, output or UI path is reached.
  *
  * Run with: npx tsx src/store/helpers/squareStockActions.test.ts
  */
@@ -611,39 +613,34 @@ test('leaving Rotary converts a square to a block without deleting authored feat
   assert.equal(next.meta.projectType, 'milling', 'the type moved')
 })
 
-test('the store leaves a square project square when Rotary is re-selected', () => {
+test('giving a square project Rotary again leaves it square, unchanged', () => {
   const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
-  seed({
-    ...newProject('store-type', 'mm'),
+  const project: Project = {
+    ...newProject('type-square', 'mm'),
     stock,
     origin: defaultOrigin(stock),
-    meta: { ...newProject('store-type', 'mm').meta, projectType: 'rotary' },
-  })
-  const store = useProjectStore.getState()
+    meta: { ...newProject('type-square', 'mm').meta, projectType: 'rotary' },
+  }
 
-  store.setProjectType('rotary', [])
+  const next = projectWithProjectType(project, 'rotary', [])
 
-  assert.equal(isSquareStock(stockOf()), true, 'the blank is still square')
-  assert.equal(useProjectStore.getState().history.past.length, 0, 're-selecting the same type is a no-op')
+  assert.equal(next, project, 'nothing changes, so the same project object comes back')
+  assert.equal(isSquareStock(next.stock), true, 'the blank is still square')
 })
 
-test('the store converts a square project to a block when the type leaves Rotary', () => {
+test('giving a square project Milling converts it to a block', () => {
   const block = {
-    ...newProject('store-leave', 'mm'),
-    meta: { ...newProject('store-leave', 'mm').meta, projectType: 'rotary' as const },
+    ...newProject('type-leave', 'mm'),
+    meta: { ...newProject('type-leave', 'mm').meta, projectType: 'rotary' as const },
   }
   const project = projectWithStockShape(block, 'square')
-  seed(project)
-  const store = useProjectStore.getState()
   const chuckCount = project.clamps.filter((clamp) => clamp.type === 'chuck').length
 
-  store.setProjectType('milling', [])
+  const next = projectWithProjectType(project, 'milling', [])
 
-  assert.equal('shape' in stockOf(), false, 'the blank became a block')
-  assert.equal(useProjectStore.getState().project.clamps.filter((clamp) => clamp.type === 'chuck').length, 0,
-    'the block has no chuck')
+  assert.equal('shape' in next.stock, false, 'the blank became a block')
+  assert.equal(next.clamps.filter((clamp) => clamp.type === 'chuck').length, 0, 'the block has no chuck')
   assert.equal(chuckCount, 1, 'there was exactly one to lose')
-  assert.equal(useProjectStore.getState().history.past.length, 1, 'the type change is one undo step')
 })
 
 // ── Invariant across the seams ────────────────────────────────

@@ -1182,6 +1182,12 @@
   gap: 8px;
 }
 
+/* A rotary blank has four fields — shape, size, length, axis (issue #1046). */
+.new-project-stock-dimensions--bar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-basis: 300px;
+}
+
 .new-project-stock-dimensions .properties-field {
   grid-template-columns: 1fr;
   align-items: stretch;

@@ -51,7 +51,7 @@ import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
 import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
 
-type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock'>>
+type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta'>>
 
 /**
  * The setup the workspace is on. A project always has one — but it is not
@@ -284,7 +284,7 @@ export function faceArtworkMirror(
  * off one that comes back to Top.
  */
 export function crossFaceArtworkMirror(
-  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'> & Partial<Pick<Project, 'meta'>>,
   anchor: Point,
   sourceFace?: SetupFace,
 ): (point: Point) => Point {
@@ -292,7 +292,7 @@ export function crossFaceArtworkMirror(
   if (setupFace(active) === 'around' || sourceFace === 'around') return (point) => point
   const bottom = setupFace(active) === 'bottom'
     ? active
-    : findSetupForFace(project, 'bottom') ?? defaultSetupForFace('bottom')
+    : findSetupForFace(project, 'bottom') ?? defaultSetupForFace('bottom', project)
   return flipAxisMirror(bottom, project.stock, anchor)
 }
 

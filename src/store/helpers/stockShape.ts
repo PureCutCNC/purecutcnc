@@ -227,8 +227,14 @@ function originForShape(origin: MachineOrigin, stock: Stock): MachineOrigin {
   return { ...origin, ...defaultOrigin(stock), name: origin.name, visible: origin.visible }
 }
 
-/** A clamp row, as `clampsSlice.addClamp` mints one. */
-function newChuck(project: Project, stock: BarStock): Clamp {
+/**
+ * The default chuck for a bar, as `clampsSlice.addClamp` and every block→bar
+ * conversion mint one: sized by `defaultRoundWorkholding`, which for a square
+ * blank clears its corner envelope. Exported so a project created already on a
+ * bar (the New project dialog) starts with the same chuck a conversion would
+ * have given it (#1046).
+ */
+export function newChuck(project: Project, stock: BarStock): Clamp {
   return {
     id: nextUniqueGeneratedId(project, 'cl'),
     name: 'Chuck',

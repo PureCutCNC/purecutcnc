@@ -66,6 +66,7 @@ import {
   defaultTopSetup,
   newProject,
   rectProfile,
+  roundStock,
 } from '../types/project'
 import type { Operation, Project, SketchFeature } from '../types/project'
 import { setupFace } from '../engine/setupOrientation'
@@ -753,12 +754,54 @@ function testTargetRules(): void {
   assertEqual(store().history.past.length, steps, 'and is not an undo step')
 }
 
+/**
+ * A new Bottom setup of a rotary bar flips about the bar's axis (#1054 slice
+ * 2): the operator's A180 turns the bar, not the other horizontal axis. An
+ * existing setup is never rewritten — export warns about one that disagrees,
+ * which `setupPrograms.test.ts` covers.
+ */
+function testNewBottomSetupFollowsTheBar(): void {
+  console.log('Testing a new Bottom setup follows the bar axis...')
+  const rotary: Project = {
+    ...makeProject(),
+    meta: { ...makeProject().meta, projectType: 'rotary' },
+    stock: roundStock(20, 100, 'y'),
+  }
+  seed(rotary)
+  const onY = store().createSetup({ orientation: { axis: 'x', angleDeg: 180 } })
+  assert(onY, 'fixture: a Bottom setup is created')
+  assertEqual(
+    store().project.setups.find((setup) => setup.id === onY)?.orientation,
+    { axis: 'y', angleDeg: 180 },
+    'a Y bar flips about Y, whatever axis the request carried',
+  )
+  assertEqual(store().project.setups.find((setup) => setup.id === onY)?.name, 'Bottom', 'and is still named Bottom')
+
+  seed({ ...rotary, stock: roundStock(20, 100, 'x') })
+  const onX = store().createSetup({ orientation: { axis: 'y', angleDeg: 180 } })
+  assertEqual(
+    store().project.setups.find((setup) => setup.id === onX)?.orientation,
+    { axis: 'x', angleDeg: 180 },
+    'an X bar flips about X',
+  )
+
+  // A block keeps the requested axis, exactly as before.
+  seed(makeProject())
+  const flat = store().createSetup({ orientation: { axis: 'y', angleDeg: 180 } })
+  assertEqual(
+    store().project.setups.find((setup) => setup.id === flat)?.orientation,
+    { axis: 'y', angleDeg: 180 },
+    'a block is untouched',
+  )
+}
+
 testLegacyMigration()
 testFixtureFilesMigrate()
 testBottomRoundTrip()
 testStrictDecode()
 testSync()
 testStoreActions()
+testNewBottomSetupFollowsTheBar()
 testTargetRules()
 testImportKeepsOperationFace()
 testActiveSetupStaysOutOfHistory()

@@ -820,7 +820,11 @@ console.log('Testing the single unwind rapid...')
   const restoredAt = lines.lastIndexOf('G94', unwindAt)
   const lastInverseAt = lines.lastIndexOf('G93', unwindAt)
   assert.ok(restoredAt > lastInverseAt, 'inverse-time mode is left before the unwind')
-  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5'], 'only the spindle stop sits between G94 and the unwind')
+  // GRBL applies no tool-length compensation, so the closing retract is the
+  // machine definition's own Safe Z (#1054 fix 3), after the spindle stop and
+  // before the turn: 0 by default, the top of travel after homing, never the
+  // project's Safe Z mapped through the origin.
+  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5', 'G53 G0 Z0.000'], 'the spindle stop, then the unwind retract')
 }
 
 // ── 6. the bar and the machine must agree (rule 3) ────────────
@@ -866,19 +870,29 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     OWN_X.program.commentSuffix,
     { word: rotaryWord(OWN_X)!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
-  assert.equal(parsed.status, 'verified', `the program parses: ${parsed.warnings.join('; ')}`)
+  // The program ends at a non-zero angle, so it carries the closing
+  // machine-coordinate retract (#1054 fix 2). A G53 block is not a work
+  // position, so the parse is not reported as verified (#1054 fix 4); the
+  // rest of the program must still read back.
+  assert.equal(parsed.status, 'unsupported', `the program parses around the machine retract: ${parsed.warnings.join('; ')}`)
+  assert.ok(
+    parsed.warnings.length > 0 && parsed.warnings.every((warning) => warning.includes('G53')),
+    `the only warnings are the machine-coordinate retract: ${parsed.warnings.join('; ')}`,
+  )
   assert.ok(parsed.moves.length > 0, 'and has motion')
 
   // The whole program, unwrapped with `unwrapPoint`, lies on the flat
   // toolpaths the operations were generated from.
   const flatSource = MM.operations.flatMap((entry) => unwrapToolpath(wrapped.get(entry.id)!, frame).moves)
+  const closingUnwindAt = parsed.moves.findLastIndex((move) => move.from.a !== undefined && move.to.a === 0
+    && move.from.x === move.to.x && move.from.y === move.to.y && move.from.z === move.to.z)
   let checked = 0
-  for (const move of parsed.moves) {
+  for (const [index, move] of parsed.moves.entries()) {
     // The closing unwind turns the bar with the tool parked, so in stock space
     // it sweeps across the bar rather than following the flat path. It is the
-    // one motion the flat toolpath has no analogue for (rule 5).
-    if (move.from.a !== undefined && move.to.a === 0
-      && move.from.x === move.to.x && move.from.y === move.to.y && move.from.z === move.to.z) continue
+    // one motion the flat toolpath has no analogue for (rule 5). The machine-
+    // coordinate retract before it is not in the trace at all (#1054 fix 4).
+    if (index === closingUnwindAt) continue
     for (const point of [move.from, move.to]) {
       // The program also opens with a Z-only safe rapid, before any angle word
       // — the pre-existing safe-Z split, whose XY is the machine's own zero

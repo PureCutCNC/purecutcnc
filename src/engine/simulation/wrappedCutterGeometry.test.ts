@@ -70,7 +70,7 @@ import { normalizeToolForProject } from '../toolpaths/geometry'
 import { resolveFinishModelSurface } from '../toolpaths/finishModelSurface'
 import { createSimulationGrid } from './grid'
 import { PlaybackController, cloneSimulationGrid } from './playback'
-import { applyMoveToGrid, moveIsMaterialRemoving } from './replay'
+import { applyMoveToGrid, moveIsMaterialRemoving, wrappedSweepSampleFractions } from './replay'
 import type { SimulationGrid } from './types'
 import type { AroundFrame } from '../aroundFrame'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
@@ -172,25 +172,34 @@ function oracleApplyMove(
   const lengthSq = segDx * segDx + segDy * segDy
   const stationary = lengthSq <= 1e-12
   const stationaryZ = Math.min(move.from.z, move.to.z)
+  // A ramp is the union of the cutter over its swept poses, not just the
+  // nearest one (issue #1048 review): on an ascending move the disk edge cuts
+  // lower than the closest approach. The sample poses are the kernel's, so the
+  // oracle checks the solid and the union policy, not a re-derived schedule.
+  const samples = wrappedSweepSampleFractions(grid, move, toolRadius)
 
   for (let row = 0; row < grid.rows; row += 1) {
     const y = grid.originY + (row + 0.5) * grid.cellSize
     for (let col = 0; col < grid.cols; col += 1) {
       const x = grid.originX + (col + 0.5) * grid.cellSize
-      let t = 0
-      if (!stationary) {
-        t = ((x - x0) * segDx + (y - y0) * segDy) / lengthSq
-        if (t < 0) t = 0
-        else if (t > 1) t = 1
-      }
-      const tip = stationary ? stationaryZ : move.from.z + segDz * t
       const alongCell = acrossIsX ? y : x
       const acrossCell = acrossIsX ? x : y
-      const alongOffset = alongCell - (acrossIsX ? y0 + segDy * t : x0 + segDx * t)
-      const angle = (acrossCell - (acrossIsX ? x0 + segDx * t : y0 + segDy * t)) / frameRadius
       const idx = row * grid.cols + col
-      const next = oracleTop(toolType, toolRadius, tip, vBitAngle, alongOffset, angle, topZ[idx], grid.stockBottomZ)
-      if (next < topZ[idx] - 1e-9) topZ[idx] = next
+      const cutAt = (t: number): void => {
+        const tip = stationary ? stationaryZ : move.from.z + segDz * t
+        const alongOffset = alongCell - (acrossIsX ? y0 + segDy * t : x0 + segDx * t)
+        const angle = (acrossCell - (acrossIsX ? x0 + segDx * t : y0 + segDy * t)) / frameRadius
+        const next = oracleTop(toolType, toolRadius, tip, vBitAngle, alongOffset, angle, topZ[idx], grid.stockBottomZ)
+        if (next < topZ[idx] - 1e-9) topZ[idx] = next
+      }
+      let nearest = 0
+      if (!stationary) {
+        nearest = ((x - x0) * segDx + (y - y0) * segDy) / lengthSq
+        if (nearest < 0) nearest = 0
+        else if (nearest > 1) nearest = 1
+      }
+      cutAt(nearest)
+      for (const t of samples) cutAt(t)
     }
   }
 }
@@ -1000,18 +1009,22 @@ function testPartialPlaybackClipsElapsedFootprint(): void {
 // does the same replay on the same moves and grid through the flat, non-wrapped
 // kernel, which never enters the wrapped across box — so only the wrapped
 // kernel's own search box can move the ratio. Both details land on the same
-// baseline ratio (2.4–2.7), so this measures the kernel's constant factor, not
-// the fixture size.
+// baseline ratio, so this measures the kernel's constant factor, not the
+// fixture size. The lane replays only the program's constant-Z passes, so the
+// swept-Z ramp union (issue #1048 review) does not enter this across-box
+// measurement; the circumferential ramp's own cost is guarded by test 11, and
+// the ramp path has the playback and physical-oracle coverage above. Filtered
+// tight-reach runs on this machine (2026-10-19, `cpuRatio`,
+// subject 5 reps / reference 3) measured 1.76 at detail 280 and 2.78 at 1120.
 //
 // The old full flat `π/2 · R0` across reach is the regression this guards: it
 // widens the wrapped box to the whole half sheet, so the wrapped column grows
-// while the flat reference stays fixed. Repeated runs on this machine
-// (2026-10-18, `cpuRatio`, subject 5 reps / reference 3):
-//   tight ball reach:       ratio 2.44–2.74 (wrapped 19–323 ms, flat 7.7–123 ms)
-//   full flat box mutation: ratio 11.98–14.39 (wrapped 94–1,634 ms, flat 7.2–121 ms)
-// The flat reference stayed put across the mutation, so it is not contaminated.
+// while the flat reference stays fixed. It widens the box on every pass, so the
+// filter does not weaken the guard; the unfiltered mutation measured
+// 11.98–14.39 (2026-10-18: wrapped 94–1,634 ms, flat 7.2–121 ms). The flat
+// reference stayed put across the mutation, so it is not contaminated.
 // Limit 5.7 is the geometric midpoint of the worst pair,
-// sqrt(2.74 × 11.98) = 5.73: about 2.1x headroom either side.
+// sqrt(2.78 × 11.98) = 5.77: about 2x headroom either side.
 const BALL_REPLAY_RATIO_LIMIT = 5.7
 
 function ballReplayLanes(fixture: StubFixture, detail: number): {
@@ -1033,7 +1046,10 @@ function ballReplayLanes(fixture: StubFixture, detail: number): {
     const toolpath = fixture.setupInput.toolpaths.get(operation.id)
     if (!toolpath) continue
     for (const move of toolpath.moves) {
-      if (moveIsMaterialRemoving(move)) moves.push(move)
+      // This lane measures the wrapped across box's constant factor. Constant-Z
+      // passes exercise it without the swept-Z ramp union (issue #1048 review),
+      // which has its own correctness and playback coverage.
+      if (moveIsMaterialRemoving(move) && Math.abs(move.to.z - move.from.z) < 1e-9) moves.push(move)
     }
   }
   assert(moves.length > 0, 'fixture: the replay has cutting moves')
@@ -1074,6 +1090,79 @@ function testBallReplayTiming(): void {
   }
 }
 
+// ── 11. circumferential ramp sweep timing (issue #1048 review) ───────
+//
+// Ratio against invariant work, never an absolute budget. The subject is the
+// reviewer's circumferential ramp at detail 1120 on radius-12.5 stock with a
+// radius-1 cutter: (12.5, 0, 12.5) → (12.5, 1, 2), where the along coordinate
+// is stationary and only the rotation and Z move. Its per-cell sample range is
+// computed from the cell's current top (along reach, then the across reach that
+// the widening fixed point allows), so each cell evaluates only the poses that
+// can actually reach it. The reference is the *same* XY motion at a constant
+// Z = 2: it has the same outer across box (the deepest tip is the same) through
+// the same wrapped kernel, but it has no sweep samples, so it cannot benefit
+// from the index range. Removing the range (scanning every sample per cell)
+// moves only the subject.
+//
+// Measured on this machine (2026-10-19, `cpuRatio`, subject 5 reps / reference
+// 3): index range 5.8–8.1 (subject 25.5–29.9 ms, reference 3.5–4.4 ms); the
+// scan-every-sample mutation measured 613.1 through this lane (subject
+// 1,113.3 ms, reference 1.8 ms) and 377.3–379.2 on a scratch harness (subject
+// 1,031.6–1,043.1 ms, reference 2.7–2.8 ms). The reference stayed put across
+// the mutation, so it is not contaminated. Limit 50 sits between the worst
+// baseline (8.1) and the lowest mutation (377.3); their geometric midpoint is
+// sqrt(8.1 × 377.3) = 55.3, leaving ~6x headroom below and ~7.5x above. Before
+// the range, the reviewer measured 2.52 s against 5–18 ms with sweeping
+// disabled.
+const CIRCUMFERENTIAL_RAMP_RATIO_LIMIT = 50
+
+function testCircumferentialRampTiming(): void {
+  console.log('Testing the circumferential ramp sweep cost at detail 1120...')
+  const radius = 12.5
+  const period = 2 * Math.PI * radius
+  const grid = roundGrid(period, 30, 1120, 'x')
+  assert(Math.abs(grid.stockTopZ - radius) < 1e-12, `fixture: stock radius ${grid.stockTopZ}`)
+  const rampMove: ToolpathMove = {
+    kind: 'cut',
+    from: { x: 12.5, y: 0, z: 12.5 },
+    to: { x: 12.5, y: 1, z: 2 },
+  }
+  // Same XY footprint and same deepest tip (so the same outer across box), no
+  // Z change: the nearest-pose path, which never evaluates a sweep sample.
+  const flatMove: ToolpathMove = {
+    ...rampMove,
+    from: { ...rampMove.from, z: 2 },
+    to: { ...rampMove.to, z: 2 },
+  }
+  const subject = cloneSimulationGrid(grid)
+  const reference = cloneSimulationGrid(grid)
+  const reset = (target: SimulationGrid) => (): void => { target.topZ.set(grid.topZ) }
+  const subjectLane = {
+    setup: reset(subject),
+    run: (): void => { applyMoveToGrid(subject, rampMove, 1, 'flat_endmill', null) },
+  }
+  const referenceLane = {
+    setup: reset(reference),
+    run: (): void => { applyMoveToGrid(reference, flatMove, 1, 'flat_endmill', null) },
+  }
+  // Warm the JIT outside the measured region.
+  subjectLane.run()
+  referenceLane.run()
+  const { ratio, subjectMs, referenceMs } = cpuRatio(subjectLane, referenceLane)
+  console.log(
+    `  circumferential ramp: ${subjectMs.toFixed(1)} ms vs nearest-pose reference `
+    + `${referenceMs.toFixed(1)} ms (ratio ${ratio.toFixed(2)})`,
+  )
+  assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
+  assert(
+    ratio < CIRCUMFERENTIAL_RAMP_RATIO_LIMIT,
+    `the circumferential ramp cost ${ratio.toFixed(2)}x the nearest-pose reference `
+    + `(limit ${CIRCUMFERENTIAL_RAMP_RATIO_LIMIT}x; ${subjectMs.toFixed(1)} ms vs `
+    + `${referenceMs.toFixed(1)} ms CPU) — check that the ramp path still evaluates only `
+    + 'the sample poses whose cutter footprint can reach each cell',
+  )
+}
+
 testRandomMovesMatchTheOracle()
 testRayMiddleKeepsTheOuterShell()
 testBallShank()
@@ -1086,4 +1175,5 @@ testSeamCopies()
 testFinishedPlaybackMatchesBatchAtSeamOverlap()
 testPartialPlaybackClipsElapsedFootprint()
 testBallReplayTiming()
+testCircumferentialRampTiming()
 console.log('\nAll wrapped cutter geometry tests PASSED.')

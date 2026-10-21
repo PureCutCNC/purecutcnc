@@ -9,6 +9,7 @@ The existing Engrave generator emits **882,899 moves with no warnings**.
 This is a rendering surrogate, not a pocket-clearing or machining-safety test.
 
 ## Files
+- `csg-block-baseline.json` — the block-project CSG model-mesh positions captured on the base commit (`integration` @ f14e0ed3) for one milling add/subtract/island project and one plasma subtract/island project, used by `csgRotaryBarSeed.test.ts` to prove a block's flat CSG is byte-identical after the rotary bar-seeded model landed (#1054 slice 1)
 - `3d-imported-block-test3.camj` — imported-surface regression project used by `toolpaths/finishSurface.test.ts` and `toolpaths/finishSurfaceCleanup.test.ts`
 - `model-in-pocket.camj` — imported-model-in-containing-pocket regression project used by `toolpaths/finishSurfaceCleanup.test.ts`
 - `v-carve-noise-test.camj` — linked small/large Droid Serif `gA` regression project used to keep medial V-carve sampling and corner filtering free of glyph noise

@@ -27,9 +27,10 @@
  *
  * Output is in machine coordinates — the caller maps back to project space via
  * `machineToProjectPoint`. Unsupported syntax (canned cycles, incremental
- * coordinates, subroutines, macros) yields an explicit `unsupported` status;
- * a structural parse error yields `failed`. The parser never reports `verified`
- * for a partial or unsupported parse.
+ * coordinates, subroutines, macros, and machine-coordinate `G53` moves, whose
+ * endpoint is not a work position — #1054 fix 4) yields an explicit
+ * `unsupported` status; a structural parse error yields `failed`. The parser
+ * never reports `verified` for a partial or unsupported parse.
  */
 
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -96,6 +97,13 @@ interface ParseState {
   motionMode: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | null
   /** True while the definition's inverse-time command is in force (issue #393). */
   inverseTime: boolean
+  /**
+   * True when `pos.z` is still a work-coordinate Z the parse can prove. A
+   * `G53` block moves in machine coordinates (#1054 fix 4), so after it the
+   * work-frame Z is unknown until a later block states one. X/Y are left as
+   * they were: the emitter's machine-coordinate retract is Z-only.
+   */
+  workZKnown: boolean
 }
 
 interface Word {
@@ -105,24 +113,22 @@ interface Word {
 
 const EPS = 1e-9
 
-/** Parse a single G-code word like "X12.5" into { letter: 'X', value: 12.5 }. */
-function parseWord(token: string): Word | null {
-  if (token.length < 2) return null
-  const letter = token[0].toUpperCase()
-  if (!/[A-Z]/.test(letter)) return null
-  const valueStr = token.slice(1)
-  if (valueStr.length === 0) return null
-  const value = Number(valueStr)
-  if (!Number.isFinite(value)) return null
-  return { letter, value }
+interface TokenizedLine {
+  words: Word[]
+  /**
+   * Text that is not a G-code word. Reported rather than dropped: a block the
+   * tokenizer cannot fully read may state a position, so the caller must not
+   * keep calling the read-back verified (#1054 fix 5).
+   */
+  unparsed: string[]
 }
 
-/** Tokenise a line: strip comments + line numbers, split into words. */
+/** Tokenise a line: strip comments + line numbers, then read its words. */
 function tokenizeLine(
   line: string,
   commentPrefix: string,
   commentSuffix: string,
-): Word[] {
+): TokenizedLine {
   let s = line
   // Strip parenthesised comments: ( ... )
   s = s.replace(/\([^)]*\)/g, ' ')
@@ -136,27 +142,55 @@ function tokenizeLine(
   // comment marker (e.g. ';' to end of line when commentSuffix is empty).
   s = s.replace(/;.*$/, ' ')
   s = s.trim()
-  if (s.length === 0) return []
-  const tokens = s.split(/\s+/)
+
+  // `%` is the program delimiter the UCCNC and Mach3 definitions write. A line
+  // that is only that delimiter (optionally with its line number) is neither a
+  // word nor unreadable text; a stray `%` inside a block stays unparsed.
+  if (/^(?:N\d+\s*)?%$/.test(s)) return { words: [], unparsed: [] }
+
   const words: Word[] = []
-  for (const token of tokens) {
-    // Strip an optional N-line-number prefix word like "N10".
-    const word = parseWord(token)
-    if (!word) continue
-    if (word.letter === 'N') continue
-    words.push(word)
+  const unparsed: string[] = []
+  if (s.length === 0) return { words, unparsed }
+
+  // A word is a letter immediately followed by its numeric value — the way a
+  // controller reads a block, with whitespace only separating words. Splitting
+  // on whitespace silently dropped a compact block like `G53G0Z0`: the whole
+  // machine-coordinate retract vanished and the read-back stayed "verified"
+  // (#1054 fix 5). `X1.5Y-2` and `G90G49` are read the same way.
+  const pattern = /[A-Za-z][+-]?(?:\d+(?:\.\d*)?|\.\d+)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(s)) !== null) {
+    const gap = s.slice(lastIndex, match.index).trim()
+    if (gap.length > 0) unparsed.push(gap)
+    const letter = match[0][0].toUpperCase()
+    const value = Number(match[0].slice(1))
+    if (!Number.isFinite(value)) {
+      // A numerically absurd word is unreadable, not a coordinate.
+      unparsed.push(match[0])
+      lastIndex = pattern.lastIndex
+      continue
+    }
+    // `N` is a line number, not a command: it is a word, so it is read and then
+    // ignored rather than reported as unreadable text.
+    if (letter !== 'N') words.push({ letter, value })
+    lastIndex = pattern.lastIndex
   }
-  return words
+  const tail = s.slice(lastIndex).trim()
+  if (tail.length > 0) unparsed.push(tail)
+  return { words, unparsed }
 }
 
 /** Classify a G-word for plan-view parsing. Motion words (G0-G3) drive a move;
  *  a small set of motion constructs we cannot flatten (canned cycles, incremental
- *  coordinates, non-XY arc planes) are `unsupported`; every other G-word is a
- *  non-motion setting (units, WCS, tool-length/cutter compensation, home,
- *  feed/spindle modes, dwell, …) that is skipped without affecting the trace.
- *  Skipping a setting cannot corrupt the motion trace; any genuinely missing
- *  motion is caught by the segment-count diagnostic. */
-function motionModeForG(gValue: number): 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | 'non-motion' | 'unsupported' {
+ *  coordinates, non-XY arc planes) are `unsupported`; `G53` is a machine-
+ *  coordinate move, which this parser tracks separately so it is never read as
+ *  a work position (#1054 fix 4); every other G-word is a non-motion setting
+ *  (units, WCS, tool-length/cutter compensation, home, feed/spindle modes,
+ *  dwell, …) that is skipped without affecting the trace. Skipping a setting
+ *  cannot corrupt the motion trace; any genuinely missing motion is caught by
+ *  the segment-count diagnostic. */
+function motionModeForG(gValue: number): 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | 'machine' | 'non-motion' | 'unsupported' {
   switch (gValue) {
     case 0: return 'rapid'
     case 1: return 'linear'
@@ -167,8 +201,13 @@ function motionModeForG(gValue: number): 'rapid' | 'linear' | 'arc_cw' | 'arc_cc
     // reconstruct as a flat absolute planar trace — flag them explicitly.
     case 73: case 81: case 82: case 83: case 91: case 18: case 19:
       return 'unsupported'
+    // A machine-coordinate move: the words name the machine's own position, not
+    // the work frame, so the block cannot be added to the work-frame trace and
+    // the work Z afterwards is unknown (#1054 fix 4).
+    case 53:
+      return 'machine'
     default:
-      // G20/G21 (units), G90 (absolute), G17 (XY plane), G53-59 (WCS),
+      // G20/G21 (units), G90 (absolute), G17 (XY plane), G54-59 (WCS),
       // G43/G44/G49 (tool-length comp), G40-42 (cutter comp), G28/G30 (home),
       // G80 (cancel canned), G98/G99 (retract mode), G94/G95/G97 (feed/spindle
       // modes), G4 (dwell), and any other setting — non-motion, skipped.
@@ -299,16 +338,26 @@ export function parseGcodeMotion(
     pos: { x: 0, y: 0, z: 0 },
     motionMode: null,
     inverseTime: false,
+    workZKnown: true,
   }
 
   const lines = gcode.split(/\r?\n/)
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const words = tokenizeLine(lines[lineIndex], commentPrefix, commentSuffix)
+    const { words, unparsed } = tokenizeLine(lines[lineIndex], commentPrefix, commentSuffix)
+    // Text the tokenizer cannot read is never silently dropped (#1054 fix 5).
+    // The block may state a position, so the whole read-back is downgraded —
+    // even when the words it did read are enough to draw a segment.
+    if (unparsed.length > 0) {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(
+        `line ${lineIndex + 1}: unparsed G-code text ${unparsed.map((text) => `"${text}"`).join(', ')}; the block is not fully understood`,
+      )
+    }
     if (words.length === 0) continue
 
     // Resolve the motion mode for this line: an explicit G0/G1/G2/G3 wins;
     // otherwise the line is modal and continues the last mode.
-    let explicitMode: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | 'non-motion' | 'unsupported' | null = null
+    let explicitMode: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | 'machine' | 'non-motion' | 'unsupported' | null = null
     let iWord: number | undefined
     let jWord: number | undefined
     let rWord: number | undefined
@@ -320,6 +369,12 @@ export function parseGcodeMotion(
     // The definition's own inverse-time commands, applied after the line's
     // words are read so G93/G94 and an F on the same block both take effect.
     let inverseSwitch: boolean | null = null
+    // A G53 anywhere on the line makes the block a machine-coordinate move,
+    // whatever motion word shares it (#1054 fix 4).
+    let machineCoordinate = false
+    // The block's own motion word, if it has one. G53 is non-modal, so a
+    // `G53 G0` block still leaves G0 in force for the following blocks.
+    let lineMotion: 'rapid' | 'linear' | 'arc_cw' | 'arc_ccw' | null = null
 
     for (const word of words) {
       // The definition's own inverse-time commands may be any letter; they are
@@ -328,7 +383,12 @@ export function parseGcodeMotion(
       else if (inverseOff !== null && word.letter === inverseOff.letter && word.value === inverseOff.value) inverseSwitch = false
       switch (word.letter) {
         case 'G':
+          if (word.value === 53) machineCoordinate = true
           explicitMode = motionModeForG(word.value)
+          if (explicitMode === 'rapid' || explicitMode === 'linear'
+            || explicitMode === 'arc_cw' || explicitMode === 'arc_ccw') {
+            lineMotion = explicitMode
+          }
           break
         case 'I': iWord = word.value; break
         case 'J': jWord = word.value; break
@@ -367,6 +427,20 @@ export function parseGcodeMotion(
     const inverseTimeFeed = state.inverseTime && feedWord !== undefined && feedWord > 0
       ? feedWord
       : undefined
+
+    // A G53 block moves in machine coordinates (#1054 fix 4). Its words are not
+    // a work-frame position, so the block is not added to the trace and its Z is
+    // never taken as the tracked work Z — that is exactly how the retract used
+    // to reappear as a work "Z0". The work Z is unknown until a later block
+    // states one, and the parse can no longer be called verified: the block is
+    // a construct this viewer cannot place in the work frame.
+    if (machineCoordinate || explicitMode === 'machine') {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(`line ${lineIndex + 1}: G53 machine-coordinate move; the work-frame Z afterwards is unknown`)
+      if (lineMotion !== null) state.motionMode = lineMotion
+      state.workZKnown = false
+      continue
+    }
 
     if (explicitMode === 'unsupported') {
       if (status === 'verified') status = 'unsupported'
@@ -414,6 +488,16 @@ export function parseGcodeMotion(
       warnings.push(`line ${lineIndex + 1}: feed move in inverse-time mode without its own F word`)
     }
 
+    // A modal move after a G53 retract inherits no provable work Z (#1054 fix
+    // 4): the retract moved the machine, not the work frame, so the block's
+    // tracked Z would be a number the program does not state. The move is still
+    // emitted so the plan view keeps its continuity, but the parse is not
+    // verified and the unproven Z is reported.
+    if (z === undefined && !state.workZKnown) {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(`line ${lineIndex + 1}: move after a G53 block does not state Z; the work-frame Z is unknown`)
+    }
+
     const from = { ...state.pos }
     const to: ToolpathPoint = {
       x: x ?? state.pos.x,
@@ -448,6 +532,9 @@ export function parseGcodeMotion(
     }
 
     state.pos = to
+    // A block that states Z re-establishes the work frame, whatever a previous
+    // machine-coordinate move did.
+    if (z !== undefined) state.workZKnown = true
   }
 
   return { moves, status, warnings }

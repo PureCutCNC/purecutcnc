@@ -23,12 +23,13 @@
  * (`aroundUnavailableReason`). The user now chooses a **project type** and
  * everything else follows it.
  *
- * This module is pure: no React, no store access, no mutation. The store
- * action that changes the type lives in `workpieceSlice.ts` and the confirm
- * dialog's summary is built here.
+ * This module is pure: no React, no store access, no mutation. The type is
+ * chosen when the project is created, in the New Project dialog
+ * (`projectTypeApply.ts`), and never changes afterwards (issue #1046), so
+ * nothing here writes it.
  */
 
-import { isRotaryOperationKind, isRoundStock } from '../../types/project'
+import { isRotaryOperationKind } from '../../types/project'
 import { isBarStock, isSquareStock } from '../../types/barStock'
 import { resolveMachineKind } from '../../engine/gcode/types'
 import { setupFace } from '../../engine/setupOrientation'
@@ -102,17 +103,6 @@ export function machineMatchesProjectType(definition: MachineDefinition, type: P
 }
 
 /**
- * The first machine in `candidates` that suits `type`, or null when none does.
- * `candidates` is the list the machine picker shows.
- */
-function firstMatchingMachine(
-  candidates: readonly MachineDefinition[],
-  type: ProjectType,
-): MachineDefinition | null {
-  return candidates.find((definition) => machineMatchesProjectType(definition, type)) ?? null
-}
-
-/**
  * `null` when the active machine suits the project type (or there is no
  * machine). `expected` is the project's own type: it is the machine that has
  * to change, and the warning says so.
@@ -145,6 +135,32 @@ export function stockShapesForProjectType(type: ProjectType): ReadonlyArray<'blo
  */
 export function aroundFeaturesActive(project: Pick<Project, 'meta' | 'stock'>): boolean {
   return projectType(project) === 'rotary'
+}
+
+/**
+ * Whether the bar itself is the part's material on every face (#1054 slice 1).
+ *
+ * A rotary project's stock is its model: a Top or Bottom subtract cuts the bar
+ * directly, so the first solid feature needs no base add and the 3D model
+ * starts from the bar solid (round or square). A block project — milling or
+ * plasma — keeps the base-add rule exactly as it was. A rotary project that
+ * carries a block has no bar to seed from and is treated as a block too.
+ */
+export function barSeedsModel(project: Pick<Project, 'meta' | 'stock'>): boolean {
+  return aroundFeaturesActive(project) && isBarStock(project.stock)
+}
+
+/**
+ * Whether Top and Bottom are manual-indexing faces of the project (#1054
+ * slice 2): a rotary project whose stock is a bar — round or square — turns
+ * the bar by hand to A0 for a Top program and A180 for a Bottom one, about
+ * the bar's own axis. Every Top/Bottom program and setup sheet of such a
+ * project must state that angle and the retract before turning A, and a new
+ * Bottom setup flips about the bar's axis. A block (milling, plasma) has no A
+ * and no bar axis, so nothing about it changes.
+ */
+export function manualIndexingApplies(project: Pick<Project, 'meta' | 'stock'>): boolean {
+  return projectType(project) === 'rotary' && isBarStock(project.stock)
 }
 
 /**
@@ -220,54 +236,4 @@ function nonRotaryOperationOnSquareAround(
   if (isRotaryOperationKind(operation.kind)) return false
   const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
   return setup !== null && setupFace(setup) === 'around'
-}
-
-/** What changing the type would do, for the confirm dialog (slice B). Nothing is deleted. */
-export interface ProjectTypeChangeSummary {
-  readonly from: ProjectType
-  readonly to: ProjectType
-  /** enabled operations that would not be cut under the new type (plasma ops in milling/rotary, milling ops in plasma, rotary ops outside rotary) */
-  readonly inactiveOperations: number
-  /** Around features kept but hidden and not exported (leaving rotary) */
-  readonly hiddenAroundFeatures: number
-  readonly stockConversion: null | 'toBlock' | 'toRound'
-  /** the machine that will be selected, or null when the current one matches or none matches */
-  readonly machineChange: null | { id: string; name: string }
-}
-
-/** {@link ProjectTypeChangeSummary}, read off the project without changing it. */
-export function projectTypeChangeSummary(
-  project: Project,
-  to: ProjectType,
-  candidates: readonly MachineDefinition[],
-): ProjectTypeChangeSummary {
-  const from = projectType(project)
-  const wantsRound = stockShapesForProjectType(to).includes('round')
-  const round = isRoundStock(project.stock)
-  const current = activeMachine(project)
-  const replacement = current && !machineMatchesProjectType(current, to)
-    ? firstMatchingMachine(candidates, to)
-    : null
-  // Counted against the project as it would stand after the change: an
-  // operation in an Around setup stops being cut too when the new type is not
-  // rotary, and the confirm must not understate that.
-  const after: Pick<Project, 'meta' | 'stock' | 'setups'> = {
-    meta: { ...project.meta, projectType: to },
-    stock: project.stock,
-    setups: project.setups,
-  }
-  return {
-    from,
-    to,
-    inactiveOperations: project.operations.filter((operation) => (
-      operation.enabled && !operationCutsInProject(after, operation)
-    )).length,
-    // Only leaving rotary hides anything: a project that is already not
-    // rotary has its Around features hidden whatever this change does.
-    hiddenAroundFeatures: from === 'rotary' && to !== 'rotary'
-      ? project.features.filter((feature) => feature.authoringFace === 'around').length
-      : 0,
-    stockConversion: wantsRound === round ? null : wantsRound ? 'toRound' : 'toBlock',
-    machineChange: replacement ? { id: replacement.id, name: replacement.name } : null,
-  }
 }
