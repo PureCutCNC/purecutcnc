@@ -49,6 +49,7 @@ import {
 } from '../../engine/setupTargets'
 import { decodeProjectFormat } from './projectFormat'
 import {
+  barSeedsModel,
   inferProjectType,
   machineMatchesProjectType,
   operationCutsInProject,
@@ -57,6 +58,7 @@ import {
   projectType,
   stockShapesForProjectType,
 } from './projectType'
+import { squareStock } from '../../types/barStock'
 import { projectWithProjectType } from './projectTypeApply'
 import { activeFace, aroundUnavailableReason } from './activeFace'
 import { syncProjectSetups } from './setups'
@@ -256,14 +258,16 @@ function postOperations(
  * `normalizeGeneratedDate`), so a change that alters any other byte of the
  * generated program of a consistent fixture fails here. The projects are made
  * coherent first: the machine and the stock are what the type implies, exactly
- * as the load migration reads them.
+ * as the load migration reads them. `around` was recaptured on the #1054
+ * branch for fix 2's machine-coordinate closing retract (the generated moves,
+ * `aroundMoves`, are unchanged); the original hash was `ea243dcd26bac24e`.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: 'ea243dcd26bac24e',
+  around: '07d8ff7e8f6bd135',
   aroundMoves: '1ae454fc6597c367',
 } as const
 
@@ -400,6 +404,19 @@ async function main(): Promise<void> {
     assertEqual([...stockShapesForProjectType('plasma')], ['block'], 'plasma cuts a block')
     assertEqual([...stockShapesForProjectType('rotary')], ['round', 'square'], 'rotary turns either bar, round first')
     assertEqual(stockShapesForProjectType('rotary')[0], 'round', 'a new rotary project still starts on a round bar')
+  })
+
+  await test('barSeedsModel: a rotary project on either bar, and nothing else (#1054)', () => {
+    const milling = projectOfType('milling')
+    assertEqual(barSeedsModel(milling), false, 'a milling block is not a bar')
+    assertEqual(barSeedsModel(projectOfType('plasma')), false, 'a plasma block is not a bar')
+
+    const round = { ...milling, meta: { ...milling.meta, projectType: 'rotary' as const }, stock: roundStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(round), true, 'a rotary round bar is the material')
+    const square = { ...round, stock: squareStock(40, 200, 'x', { x: 10, y: 30 }) }
+    assertEqual(barSeedsModel(square), true, 'a rotary square blank is the material')
+    assertEqual(barSeedsModel({ ...milling, stock: round.stock }), false, 'a round bar in a milling project keeps the base-add rule')
+    assertEqual(barSeedsModel({ ...round, stock: milling.stock }), false, 'a rotary project without a bar has no bar to seed from')
   })
 
   await test('generated and exported programs are byte-identical to the base commit', () => {

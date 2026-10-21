@@ -15,10 +15,10 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { Project } from '../../types/project'
+import type { Point, Project } from '../../types/project'
 import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
-import { createEntryPolicy, withEntryHandoffFeedScale } from './entry'
+import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import {
   appendResidualCoreGuides,
   applyLevelFeed,
@@ -60,7 +60,7 @@ import {
   warnXyLeadDeclined,
 } from './xyLead'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
-import { applyContourDirection, DEFAULT_CLIPPER_SCALE } from './geometry'
+import { applyContourDirection, DEFAULT_CLIPPER_SCALE, getOperationClearance } from './geometry'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import { appendUniqueWarning } from './warningDedup'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
@@ -68,6 +68,12 @@ import { createSharedEngagementTelemetry } from './pocket'
 import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 import { clearingControlApplies } from './clearingControls'
 import { appendAll } from './appendAll'
+import { barEntryStartZ } from './barSection'
+
+/** Every closed loop of a region set, for the bar section's own tests. */
+function roughRegionLoops(regions: readonly ResolvedPocketRegion[]): Point[][] {
+  return regions.flatMap((region) => [region.outer, ...region.islands])
+}
 
 /**
  * Whether every part of a per-feature split would still carry a mesh to rough.
@@ -269,13 +275,15 @@ function generateRoughSurfaceToolpathSingle(
         (warning) => appendUniqueWarning(warnings, warning),
       )
 
-    // No withEntryStartZ() here, unlike pocket and surface clearing. Those
+    // No previous-level start here, unlike pocket and surface clearing. Those
     // reuse one XY footprint for every level, so the previous level's floor is
     // guaranteed cleared and the entry can start just above it. 3D roughing
     // recomputes the clearable region per level, so a level can expose area the
     // level above never cut — descending to the previous cut Z there would
-    // drive the tool through standing stock. Entry stays at the global safe Z
-    // until that containment is proven per level.
+    // drive the tool through standing stock. Each branch below instead starts
+    // its entry at the bar's surface over that level's region plus clearance
+    // (#1054 slice 3), which is the same global safe Z for anything that is not
+    // a round bar.
     //
     // That protection is pattern-independent and guards every branch below:
     // entries synthesize against this level's own regions, and every link that
@@ -300,14 +308,19 @@ function generateRoughSurfaceToolpathSingle(
       }
       // The entry hands off at the reduced feed when one applies, so the first
       // cut after a plunge is not run at full feed into a slot.
-      const entryPolicy = withEntryHandoffFeedScale(
-        createEntryPolicy(
-          operation,
-          resolved.tool.diameter,
-          orderedRegions,
-          (warning) => appendUniqueWarning(warnings, warning),
+      const entryPolicy = withEntryStartZ(
+        withEntryHandoffFeedScale(
+          createEntryPolicy(
+            operation,
+            resolved.tool.diameter,
+            orderedRegions,
+            (warning) => appendUniqueWarning(warnings, warning),
+          ),
+          slotScale,
         ),
-        slotScale,
+        // A round bar's surface over this level's region is the highest material
+        // the entry has to reach (#1054 slice 3); `safeZ` for anything else.
+        barEntryStartZ(project, level.z, roughRegionLoops(orderedRegions), getOperationClearance(project), resolved.safeZ, resolved.tool.diameter / 2),
       )
       // Raster clearing has no ring for a lead to join, so a request here is
       // answered rather than dropped (issue #695).
@@ -386,14 +399,20 @@ function generateRoughSurfaceToolpathSingle(
     if (coverage.trochoidal && !levelTrochoidalPlan) break
 
     for (const region of orderedRegions) {
-      const entryPolicy = withEntryHandoffFeedScale(
-        createEntryPolicy(
-          operation,
-          resolved.tool.diameter,
-          [region],
-          (warning) => appendUniqueWarning(warnings, warning),
+      const entryPolicy = withEntryStartZ(
+        withEntryHandoffFeedScale(
+          createEntryPolicy(
+            operation,
+            resolved.tool.diameter,
+            [region],
+            (warning) => appendUniqueWarning(warnings, warning),
+          ),
+          slotScale,
         ),
-        slotScale,
+        // Each region starts from the bar's surface over it, never the box top
+        // (#1054 slice 3). 3D roughing recomputes its regions per level, so this
+        // is per region rather than the pocket's per level.
+        barEntryStartZ(project, level.z, roughRegionLoops([region]), getOperationClearance(project), resolved.safeZ, resolved.tool.diameter / 2),
       )
       const cutRingsForRegion = (
         target: ResolvedPocketRegion,

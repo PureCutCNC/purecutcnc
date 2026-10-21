@@ -22,10 +22,19 @@
  * each program is given a name that says which setup it is and a header that
  * tells the operator how the part must sit before it runs.
  *
- * A project with a single setup is not split, named or annotated: it exports
- * exactly what it did before setups existed, under the same file name. That
- * is the legacy-parity rule, and it is why every decision below is keyed on
- * the project having more than one setup.
+ * A project with a single setup is not split, named or annotated by default:
+ * it exports exactly what it did before setups existed, under the same file
+ * name. That is the legacy-parity rule, and it is why the per-setup decisions
+ * below are keyed on the project having more than one setup.
+ *
+ * The exceptions are the faces that need an operator instruction even on
+ * their own (#1054 slices 2 and 2b): an Around setup (#395) and, in a rotary
+ * project on a bar, a Top or Bottom setup. Slices 2 and 2b split on the
+ * machine: without a rotary axis the header tells the operator which A to set
+ * by hand and to retract before turning it; with one, the header says the
+ * program turns the bar itself after retracting, and the emitter writes those
+ * two rapids (`manualIndexAngle` in `motionPipeline.ts`). Those headers are
+ * added without changing the single-setup file name.
  *
  * The header is plain text lines. Each output dialect writes them as comments
  * in its own syntax (`planProgramSetup` in `motionPipeline.ts` hands them to
@@ -37,6 +46,7 @@
 import { getStockBounds, isAroundSetup } from '../../types/project'
 import type { MachiningSetup, Project, RegistrationReference, SetupFace } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
 import { rotaryWord } from './types'
 import type { MachineDefinition } from './types'
 
@@ -259,17 +269,88 @@ export function describeSetupTurn(setup: Pick<MachiningSetup, 'orientation' | 'k
 const ROTARY_ZERO_LINE = 'ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY'
 
 /**
+ * The manual A angle a Top program expects (#1054 slice 2): the bar's own
+ * zero, which the operator sets by hand when the machine has no rotary axis.
+ */
+const MANUAL_INDEX_TOP_LINE = 'ROTARY: SET A TO 0° BEFORE RUNNING'
+
+/**
+ * The same for a Bottom program: the bar turned half way round, which is
+ * A180 about the bar's own axis — not about the other horizontal one.
+ */
+const MANUAL_INDEX_BOTTOM_LINE = 'ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'
+
+/** Turning A with the cutter down would drag it through the bar. */
+const RETRACT_BEFORE_TURNING_LINE = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'
+
+/**
+ * The operator line of a program that turns the bar itself (#1054 slice 2b).
+ * The retract and the turn are in the motion that follows, so the comment says
+ * what they are and what the operator still has to check. The letter is the
+ * program's own rotary word: on a borrowed motor it is the axis the program
+ * writes, not always A.
+ *
+ * Every such retract is in machine coordinates (#1054 fix 2), so the line names
+ * its target and the assumption behind it: the machine is homed with Z at the
+ * top of travel, which `motion.machineSafeZ` defaults to 0 (#1054 fix 3). Only
+ * a machine with no machine-coordinate move reaches the neutral wording, and
+ * its turn is refused rather than written.
+ */
+function manualIndexTurnLine(
+  word: 'A' | 'X' | 'Y',
+  angleDeg: 0 | 180,
+  machineCoordinateRetract: boolean,
+): string {
+  return machineCoordinateRetract
+    ? `ROTARY: RETRACTS TO MACHINE Z TOP WITH G53 BEFORE TURNING ${word} TO ${angleDeg}° - CHECK THE BAR IS CLAMPED`
+    : `ROTARY: THE PROGRAM TURNS ${word} TO ${angleDeg}° AFTER RETRACTING - CHECK THE BAR IS CLAMPED`
+}
+
+/**
+ * The angle a manual-index program turns to before its first operation
+ * (#1054 slice 2b): the bar's own zero for Top, half a turn for Bottom. When
+ * the machine has a rotary axis this is posted as motion; without one the
+ * slice 2 comments above say it and nothing turns.
+ */
+export function manualIndexAngle(setup: Pick<MachiningSetup, 'kind' | 'orientation'>): 0 | 180 {
+  return setupFace(setup) === 'bottom' ? 180 : 0
+}
+
+/**
+ * True when a Top or Bottom program must say which A the operator sets by
+ * hand, even when it is the project's only setup (#1054 slice 2): a rotary
+ * project on a bar. An Around program has its own rotary-zeroing line and is
+ * deliberately not given these.
+ */
+export function setupStatesManualIndexing(
+  project: Pick<Project, 'meta' | 'stock'>,
+  setup: Pick<MachiningSetup, 'kind'>,
+): boolean {
+  return manualIndexingApplies(project) && !isAroundSetup(setup)
+}
+
+/**
  * The lines written at the top of a setup's program: which setup it is and
  * how the stock is turned, what locates the part, where to touch off, and the
  * operator's own notes. Plain text; a dialect makes comments of them.
  *
- * An Around setup (issue #395) is not located by a registration reference —
- * flip registration means nothing in a chuck — so its line is the rotary
- * zeroing instruction instead. `definition` is the program's machine: a
+ * A Top or Bottom setup of a rotary bar project adds the manual A angle and
+ * the retract before turning, because the operator does the indexing (#1054
+ * slice 2). An Around setup (issue #395) is not located by a registration
+ * reference — flip registration means nothing in a chuck — so its line is the
+ * rotary zeroing instruction instead. `definition` is the program's machine: a
  * borrowed rotary replaces one horizontal motor, which the operator must
- * compensate for by hand.
+ * compensate for by hand. `machineCoordinateRetract` says whether the machine
+ * can write the machine-coordinate manual-index retract, so the operator line
+ * describes what the program actually writes (#1054 fix 3); a machine without
+ * one is refused at emission rather than turned.
  */
-export function setupHeaderLines(project: Project, setup: MachiningSetup, definition: MachineDefinition): string[] {
+export function setupHeaderLines(
+  project: Project,
+  setup: MachiningSetup,
+  definition: MachineDefinition,
+  machineCoordinateRetract = true,
+): string[] {
   const number = formatProgramNumber(setupProgramNumber(project, setup.id))
   const around = isAroundSetup(setup)
   const lines = [
@@ -277,6 +358,18 @@ export function setupHeaderLines(project: Project, setup: MachiningSetup, defini
     around ? ROTARY_ZERO_LINE : `REGISTRATION: ${describeRegistration(project, setup)}`,
     `TOUCH OFF: ${describeTouchOff(project, setupFace(setup))}`,
   ]
+  if (setupStatesManualIndexing(project, setup)) {
+    const word = rotaryWord(definition)
+    if (word === null) {
+      // No rotary axis: the operator turns the bar by hand and the header is
+      // slice 2's unchanged instruction (#1054 slice 2).
+      lines.push(setupFace(setup) === 'bottom' ? MANUAL_INDEX_BOTTOM_LINE : MANUAL_INDEX_TOP_LINE)
+      lines.push(RETRACT_BEFORE_TURNING_LINE)
+    } else {
+      // The program turns the word itself after retracting (#1054 slice 2b).
+      lines.push(manualIndexTurnLine(word, manualIndexAngle(setup), machineCoordinateRetract))
+    }
+  }
   if (around && definition.rotary?.drive === 'borrowed') {
     lines.push(`THE ${rotaryWord(definition)} MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND`)
   }

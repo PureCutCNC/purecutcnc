@@ -252,8 +252,15 @@ function testRotaryProgramReadback(): void {
     ]
     const { gcode, trace } = exportRotary(definition, moves)
     const parsed = parseExportedMotion(gcode, definition)
-    assert(parsed.status === 'verified', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
-    assert(parsed.warnings.length === 0, `${drive}: the rotary word is not reported as unsupported`)
+    // The program ends at 90°, so it carries the closing machine-coordinate
+    // retract (#1054 fix 2). That block is not a work position, so the parse
+    // cannot be reported as verified (#1054 fix 4); everything else must read
+    // back unchanged.
+    assert(parsed.status === 'unsupported', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
+    assert(
+      parsed.warnings.length === 2 && parsed.warnings.every((warning) => warning.includes('G53')),
+      `${drive}: the only warnings are the machine-coordinate retract, got ${JSON.stringify(parsed.warnings)}`,
+    )
 
     const feedMoves = parsed.moves.filter((m) => m.kind !== 'rapid')
     assert(feedMoves.length === 3, `${drive}: plunge + turning cut + straight cut, got ${feedMoves.length}`)
@@ -277,9 +284,14 @@ function testRotaryProgramReadback(): void {
     const angles = feedMoves.map((m) => m.to.a)
     assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)
 
-    // The view's own comparison accepts it — endpoints, angles and all.
+    // The view's own comparison still matches every endpoint and angle; the
+    // only diagnostic is that the machine-coordinate retract cannot be placed
+    // in the work frame (#1054 fix 4).
     const diagnostic = compareMotionTraces(parsed, trace, tolerance)
-    assert(diagnostic.warnings.length === 0, `${drive}: ${JSON.stringify(diagnostic.warnings)}`)
+    assert(
+      diagnostic.warnings.length === 1 && diagnostic.warnings[0].kind === 'unsupported',
+      `${drive}: ${JSON.stringify(diagnostic.warnings)}`,
+    )
 
     if (drive === 'borrowed') {
       for (const m of parsed.moves) {
@@ -287,6 +299,34 @@ function testRotaryProgramReadback(): void {
       }
     }
   }
+}
+
+/**
+ * The #1054 fix 5 repro through the real exporter: a definition whose accepted
+ * machine-coordinate command is the compact `G53G0`. The exporter writes
+ * `G53G0 Z...`; read back, that block must still be recognised as a machine
+ * move. Whitespace-only tokenisation silently dropped it, so the machine
+ * retract became a work-coordinate move and the read-back stayed verified.
+ */
+function testCompactMachineCoordinateReadback(): void {
+  console.log('Testing a compact G53G0 retract read back through the exporter...')
+  const definition = rotaryGrbl('own')
+  definition.motion = { ...definition.motion, machineCoordinateCommand: 'G53G0' }
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 30, 0) },
+    { kind: 'cut', from: rpt(0, 10, 30, 0), to: rpt(10, 10, 30, 90) },
+  ]
+  const { gcode } = exportRotary(definition, moves)
+  assert(gcode.includes('G53G0'), `the exporter writes the compact machine-coordinate command:\n${gcode}`)
+  const parsed = parseExportedMotion(gcode, definition)
+  assert(
+    parsed.status === 'unsupported',
+    `the compact machine retract is not verified, got ${parsed.status}: ${parsed.warnings.join('; ')}`,
+  )
+  assert(
+    parsed.warnings.some((warning) => warning.includes('G53')),
+    `the reason names G53, got ${JSON.stringify(parsed.warnings)}`,
+  )
 }
 
 function makeTrace(): ToolpathGenerationTrace {
@@ -640,6 +680,7 @@ testEligibility()
 testInverseTransform()
 testRotaryAngleInverse()
 testRotaryProgramReadback()
+testCompactMachineCoordinateReadback()
 testArcDirectionFlipParity()
 testMirroredMachineFlipsExportedArc()
 testBuildModelVerified()

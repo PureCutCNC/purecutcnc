@@ -237,6 +237,7 @@ export const warningsEn = {
   'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
   'warnings.setupTargetNotThrough': '{features}: drawn on the other face and not a cut that goes through the stock, so this setup cannot reach it. Only a subtract that reaches both stock faces, or an imported 3D model, can be machined from the other side. Nothing was generated.',
+  'warnings.setupFlipAxisMismatch': 'Setup "{setup}" flips the part about {axis}, but the bar lies along {barAxis}. Set the setup\'s flip axis to {barAxis} so its 180° A turn matches the bottom program.',
   'warnings.aroundStockMismatch': '{operation}: the around face needs a bar lying along the same axis as when it was set up.',
   'warnings.aroundCentreline': "{operation}: {feature} reaches the bar's centreline; a cut on the around face must stop short of it.",
   'warnings.aroundCutReachesCentreline': "{operation}: the cut would reach the bar's centreline. Reduce its depth so it stops short of the middle of the bar.",
@@ -274,6 +275,7 @@ export const warningsEn = {
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope, so the standing corners would sweep into the cutter.',
+  'warnings.postRotaryTurnWithoutClearance': 'Operation "{operation}" was not exported: the bar cannot be turned safely because no tool-length compensation is active and this machine has no machine-coordinate move to its safe Z. Apply tool-length compensation or give the machine a machine-coordinate rapid, then export again.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',

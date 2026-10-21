@@ -201,6 +201,34 @@ export const MachineDefinitionSchema = z.object({
     arcFormat: z.enum(['ij', 'r']),
     modalMotion: z.boolean(),
     arcInterpolation: z.boolean().default(false),
+    /**
+     * The block prefix that moves an axis in machine coordinates, e.g.
+     * `G53 G0` (issue #1054). Every bar-clearance retract the emitter writes
+     * uses it (#1054 fix 2), because only the machine frame is independent of
+     * any work offset or tool-length compensation. Absent means the G-code
+     * dialect's standard move — `G53` followed by the definition's own
+     * `rapidCommand`; `null` means this machine has none, and a turn that needs
+     * one is refused rather than written.
+     */
+    machineCoordinateCommand: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.').nullable().optional(),
+    /**
+     * The machine-coordinate Z a bar-clearance retract rapids to with
+     * `machineCoordinateCommand` (issue #1054 fix 3), in **millimetres**
+     * (#1054 fix 4). It is a *machine* coordinate: `G53` is measured from the
+     * machine's own zero, which PureCutCNC knows nothing about, so this must
+     * never be derived from a project origin or the project's Safe Z, and the
+     * project's units conversion does not touch it. The emitter converts it to
+     * the program's output units when it writes the block.
+     *
+     * The default 0 is the top of travel, the convention the bundled grblHAL
+     * footer already uses (`G0 G53 Z0`). It assumes the machine is homed with Z
+     * at the top of travel, so Z0 is the highest reachable point and every
+     * working height is negative below it. A machine homed elsewhere must state
+     * the machine Z it can safely rapid to here: a positive value on a
+     * top-homed machine asks for travel above the limit, which a soft-limit
+     * check rejects or a hard limit crashes into.
+     */
+    machineSafeZ: z.number().finite().default(0),
   }),
   feedSpeed: z.object({
     feedCommand: z.string(),
@@ -276,6 +304,25 @@ export function resolveMachineKind(definition: Pick<MachineDefinition, 'machineK
 /** The dialect a definition exports; a definition without the field is G-code. */
 export function resolveOutputDialect(definition: Pick<MachineDefinition, 'outputDialect'>): OutputDialect {
   return definition.outputDialect ?? 'gcode'
+}
+
+/**
+ * The block prefix for a rapid in machine coordinates, or null when this
+ * machine has no such move (issue #1054). G-code's non-modal machine-
+ * coordinate move is `G53`, and every bundled G-code definition supports it;
+ * an explicit `motion.machineCoordinateCommand` overrides that, and `null`
+ * declares the dialect has none. ShopBot part files are not G-code and have no
+ * equivalent, which is why an `opensbp` definition never gets one.
+ */
+export function machineCoordinateRapidCommand(
+  definition: Pick<MachineDefinition, 'motion' | 'outputDialect'>,
+): string | null {
+  if (definition.motion.machineCoordinateCommand !== undefined) {
+    return definition.motion.machineCoordinateCommand
+  }
+  return resolveOutputDialect(definition) === 'gcode'
+    ? `G53 ${definition.motion.rapidCommand}`
+    : null
 }
 
 /**

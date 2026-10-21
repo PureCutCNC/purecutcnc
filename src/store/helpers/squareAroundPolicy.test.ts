@@ -30,6 +30,8 @@
  * - `defaultSetupForFace` / `syncProjectSetups` defaulting a square blank's
  *   Around axis to `'x'` → the Y-axis provisional and axis-repair assertions
  *   fail;
+ * - `defaultSetupForFace` defaulting a Bottom setup to `'x'` on a Y bar
+ *   (#1054 slice 2) → the Bottom flip-axis assertions fail;
  * - `operationCutsInProject` letting a non-rotary operation on a square
  *   blank's Around setup count → the disabled-retained assertion fails.
  *
@@ -45,7 +47,7 @@ import {
   aroundSketchAuthoringRefused,
   aroundUnavailableReason,
 } from './activeFace'
-import { defaultSetupForFace } from './provisionalSetup'
+import { defaultSetupForFace, provisionalSetupFor, realizeProvisionalSetup } from './provisionalSetup'
 import { syncProjectSetups } from './setups'
 import { defaultOperationForTarget } from './operationDefaults'
 import { operationCutsInProject, stockShapesForProjectType } from './projectType'
@@ -195,5 +197,47 @@ assert.equal(
   false,
   'a non-rotary project already hides it, and is untouched',
 )
+
+// ── 4. The Bottom flip axis follows the bar (#1054 slice 2) ───
+
+log('Testing the Bottom flip axis on a rotary bar...')
+
+assert.deepEqual(defaultSetupForFace('bottom').orientation, { axis: 'x', angleDeg: 180 }, 'without a project the old X default stays')
+assert.deepEqual(
+  defaultSetupForFace('bottom', projectOfType('rotary', ROUND_Y)).orientation,
+  { axis: 'y', angleDeg: 180 },
+  'a Y rotary bar flips about Y',
+)
+assert.deepEqual(
+  defaultSetupForFace('bottom', projectOfType('rotary', SQUARE_Y)).orientation,
+  { axis: 'y', angleDeg: 180 },
+  'a Y square blank flips about Y too',
+)
+assert.deepEqual(
+  defaultSetupForFace('bottom', projectOfType('rotary', ROUND_X)).orientation,
+  { axis: 'x', angleDeg: 180 },
+  'an X bar stays on X',
+)
+assert.deepEqual(
+  defaultSetupForFace('bottom', projectOfType('milling', ROUND_Y)).orientation,
+  { axis: 'x', angleDeg: 180 },
+  'a non-rotary project keeps the X default',
+)
+assert.deepEqual(
+  defaultSetupForFace('bottom', projectOfType('rotary', BLOCK)).orientation,
+  { axis: 'x', angleDeg: 180 },
+  'a block is not a bar',
+)
+assert.equal(
+  defaultSetupForFace('bottom', projectOfType('rotary', ROUND_Y)),
+  defaultSetupForFace('bottom', projectOfType('rotary', SQUARE_Y)),
+  'one cached Bottom setup per axis, so a selector stays stable',
+)
+
+const yProvisional = provisionalSetupFor({ ...projectOfType('rotary', ROUND_Y), activeSetupId: 'provisional-bottom' })
+assert.deepEqual(yProvisional?.orientation, { axis: 'y', angleDeg: 180 }, 'the provisional Bottom follows the Y bar')
+const realized = realizeProvisionalSetup({ ...projectOfType('rotary', ROUND_Y), activeSetupId: 'provisional-bottom' })
+assert.equal(realized.project.setups.at(-1)?.orientation.axis, 'y', 'so does a new setup made from it')
+assert.equal(realized.project.setups.at(-1)?.name, 'Bottom', 'and it is still named Bottom')
 
 log('squareAroundPolicy: all assertions passed.')

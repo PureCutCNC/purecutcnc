@@ -1487,10 +1487,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
   // don't count as base solids); imported STL models are locked as Model.
   // Subtract is withheld wherever choosing it would make this row the first
-  // solid — the store would turn it straight back into Add (#827). The other
+  // solid — the store would turn it straight back into Add (#827) — except in
+  // a rotary project, where the bar is already the material (#1054). The other
   // roles stay available.
   const subtractDisabled = selectedFeature.operation !== 'subtract'
-    && !canChooseSubtract(features, selectedFeature.id)
+    && !canChooseSubtract(features, selectedFeature.id, project)
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length

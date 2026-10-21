@@ -317,6 +317,13 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
+  /** A Bottom setup of a rotary bar project flips the part about the other
+   *  horizontal axis than the bar lies along, so its A180 instruction (which
+   *  turns the bar about its own axis) does not describe the turn its
+   *  transform applies. The stored setup is left as the user made it and the
+   *  export names it; the fix is the setup's flip axis (#1054 slice 2). A
+   *  warning, not an error: the program is still the user's to run. */
+  | 'setupFlipAxisMismatch'
   /** Around needs a bar — round or square — lying along the setup's axis for
    *  the operation to cut. A warning, as it always was: the operation produces
    *  no motion, but the code's severity is part of the frozen round/flat
@@ -462,6 +469,12 @@ export type ToolpathWarningCode =
    *  corners through the cutter, so the operation is refused rather than
    *  posted (issue #1016 C2 correction M1). */
   | 'postRotarySquareTurnBelowEnvelope'
+  /** A bar turn (the manual-index opening turn or the closing unwind) has no
+   *  honest clearance retract: no tool-length compensation is active, so a
+   *  work-coordinate retract would not describe the tip, and the machine has
+   *  no machine-coordinate rapid to the Safe Z. The program is refused rather
+   *  than turned with a clearance nobody can prove (issue #1054 fix 2). */
+  | 'postRotaryTurnWithoutClearance'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -521,11 +534,11 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
  *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
- *   `postRotaryAxisMismatch` and `postRotarySquareTurnBelowEnvelope` — a rotary
- *   operation the machine cannot run is left out of the program (issues #393,
- *   #1016 C2 M1). The file would otherwise be saved without that pass, and
- *   approximating any of them would cut the stock at the wrong angle, the
- *   wrong feed, or through the square blank's standing corners.
+ *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope` and
+ *   `postRotaryTurnWithoutClearance` — a rotary operation or turn the machine
+ *   cannot run safely is left out of the program (issues #393, #1016 C2 M1,
+ *   #1054 fix 2). The file would otherwise be saved without that pass, or
+ *   turned at a height nobody can prove.
  *
  * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
  * round bar or a block in an Around setup is a note about a job the setup does
@@ -555,6 +568,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
+  'postRotaryTurnWithoutClearance',
 ])
 
 /**

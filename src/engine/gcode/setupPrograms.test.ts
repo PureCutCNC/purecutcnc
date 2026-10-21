@@ -19,23 +19,38 @@
  * is called, what its header tells the operator, and what a program may not
  * be — one that runs across a manual turn, or one missing a refused pass.
  *
- * The stock is 100 × 80 × 20 at (0, 0); the default origin is its front-left
- * corner on the face that is up: (0, 80, 20).
+ * The flat stock is 100 × 80 × 20 at (0, 0); the default origin is its
+ * front-left corner on the face that is up: (0, 80, 20). The rotary bar the
+ * manual-indexing cases use is a 20 mm round bar 100 mm long, with its origin
+ * on the centreline and the top of the bar (#1054 slice 2). Mutations those
+ * assertions were checked against: dropping the header for a single setup →
+ * the single-setup header assertions fail; flipping a Bottom setup about X on
+ * a Y bar → the flip-axis assertion fails; giving a block or an Around program
+ * the A lines → the byte-identical baselines fail. For the program's own turn
+ * (#1054 slice 2b): writing the turn before the retract → the exact
+ * retract-then-turn lines fail; ignoring `reversed` → the bottom-program
+ * blocks fail. For #1054 fix 1: writing the opening turn before the first
+ * tool change → the LinuxCNC G43-order assertion fails; posting the turn on a
+ * mismatched rotary axis → the refusal assertion fails; comparing the closing
+ * unwind in machine Z → the `-Z` assertion fails.
  *
  * Run with: npx tsx src/engine/gcode/setupPrograms.test.ts
  */
 
-import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { createHash } from 'node:crypto'
+import { squareStock } from '../../types/barStock'
+import { circleProfile, defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../../types/project'
 import type { MachineOrigin, MachiningSetup, Operation, Project, SketchFeature } from '../../types/project'
 import { suggestGcodeFileName } from '../../components/export/exportOperationSelection'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
 import { syncProjectSetups } from '../../store/helpers/setups'
 import { normalizeToolForProject } from '../toolpaths/geometry'
-import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
+import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import { warningSeverity } from '../toolpaths/warningCodes'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { planProgramSetup } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
+import { convertProjectUnits } from '../../utils/units'
 import {
   describeRegistration,
   describeTouchOff,
@@ -44,7 +59,8 @@ import {
   setupHeaderLines,
 } from './setupPrograms'
 import { validateMachineDefinition } from './types'
-import type { MachineDefinition, PostProcessorResult } from './types'
+import { formatGCodeNumber } from './utils'
+import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -140,17 +156,23 @@ const MOVES: ToolpathMove[] = [
   { kind: 'cut', from: { x: 10, y: 70, z: 15 }, to: { x: 30, y: 70, z: 15 } },
 ]
 
-function post(project: Project, operationIds: string[], definition: MachineDefinition): PostProcessorResult {
+function post(
+  project: Project,
+  operationIds: string[],
+  definition: MachineDefinition,
+  moves: ToolpathMove[] = MOVES,
+  emitToolChanges = true,
+): PostProcessorResult {
   const tool = normalizeToolForProject(project.tools[0], project)
   return runPostProcessor({
     project,
     definition,
     operations: operationIds.map((id) => {
       const operation = project.operations.find((entry) => entry.id === id)!
-      const toolpath: ToolpathResult = { operationId: id, warnings: [], bounds: null, moves: MOVES }
+      const toolpath: ToolpathResult = { operationId: id, warnings: [], bounds: null, moves }
       return { operation, tool, toolpath }
     }),
-    options: { emitToolChanges: true, emitCoolant: false },
+    options: { emitToolChanges, emitCoolant: false },
   })
 }
 
@@ -338,7 +360,7 @@ function testSingleSetupProgramIsUnchanged(): void {
     setups: [{ ...project.setups[0], notes: 'Mind the clamp.', registration: [{ id: 'r', kind: 'corner', target: { type: 'point', point: { x: 0, y: 0 } } }] }],
   }
   assertEqual(post(annotated, ['rough'], GRBL).gcode, post(project, ['rough'], GRBL).gcode, 'a single annotated setup still exports the legacy program')
-  assertEqual(planProgramSetup({ project, operations: [], definition: GRBL }), { headerComments: [], warnings: [] }, 'and plans nothing')
+  assertEqual(planProgramSetup({ project, operations: [], definition: GRBL }), { headerComments: [], manualIndexAngle: null, warnings: [] }, 'and plans nothing')
 }
 
 function testWhatAProgramMayNotBe(): void {
@@ -382,6 +404,690 @@ function testWhatAProgramMayNotBe(): void {
   assert(!post(allowed, ['under'], GRBL).warnings.some((warning) => warning.code === 'postSetupOperationRefused'), 'a cross-face through target is not refused')
 }
 
+// ── Manual indexing on a rotary bar (#1054 slice 2) ───────────
+
+/** A rotary project on a 20 mm round or square bar along `axis`, with the flat fixture's operations. */
+function rotaryBarProjectOf(shape: 'round' | 'square', axis: 'x' | 'y' = 'x'): Project {
+  const project = singleSetupProject()
+  const bar = shape === 'round' ? roundStock(20, 100, axis) : squareStock(20, 100, axis)
+  const bounds = getStockBounds(bar)
+  const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+  return syncProjectSetups({
+    ...project,
+    meta: { ...project.meta, projectType: 'rotary' },
+    stock: bar,
+    origin: {
+      name: 'Origin',
+      x: axis === 'x' ? bounds.minX : centre,
+      y: axis === 'x' ? centre : bounds.maxY,
+      z: bar.thickness,
+      visible: true,
+    },
+  })
+}
+
+/** The slice-2 fixture: a 20 mm round bar along `axis`. */
+function rotaryBarProject(axis: 'x' | 'y' = 'x'): Project {
+  return rotaryBarProjectOf('round', axis)
+}
+
+/** The program's lines with every comment removed, so an A search sees motion only. */
+function programWithoutComments(program: string, dialect: 'gcode' | 'sbp'): string {
+  return program
+    .split(dialect === 'sbp' ? '\r\n' : '\n')
+    .filter((line) => {
+      const trimmed = line.trim()
+      if (trimmed.length === 0) return false
+      return dialect === 'sbp' ? !trimmed.startsWith("'") : !/^[;(%]/.test(trimmed)
+    })
+    .join('\n')
+}
+
+function testManualIndexingOnARotaryBar(): void {
+  console.log('Testing the manual A angle in a rotary bar program...')
+  const A0 = 'ROTARY: SET A TO 0° BEFORE RUNNING'
+  const A180 = 'ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'
+  const RETRACT = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'
+  const touch = {
+    x: 'CENTRE OF THE LEFT EDGE OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
+    y: 'CENTRE OF THE FRONT EDGE OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
+  } as const
+
+  for (const axis of ['x', 'y'] as const) {
+    const project = rotaryBarProject(axis)
+    // One Top setup: still not a per-setup export, and the file name is the
+    // legacy one — only the header is added.
+    assert(!projectExportsPerSetup(project), `${axis}: one Top setup is not a per-setup export`)
+    assertEqual(planSetupPrograms(project, ['rough'])[0].fileStem, 'Pin_Plate_Rough', `${axis}: the single-setup file name is unchanged`)
+    assertEqual(setupHeaderLines(project, project.setups[0], GRBL), [
+      'SETUP 01: Top - TOP FACE UP',
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis]}`,
+      A0,
+      RETRACT,
+    ], `${axis}: the Top lines, even with one setup`)
+
+    const gcode = post(project, ['rough'], GRBL).gcode.split('\n')
+    const at = gcode.findIndex((line) => line.includes('SETUP 01'))
+    assert(at > 0, `${axis}: the header is in the program`)
+    assertEqual(gcode.slice(at, at + 5), [
+      '; SETUP 01: Top - TOP FACE UP',
+      '; REGISTRATION: NONE DECLARED',
+      `; TOUCH OFF: ${touch[axis]}`,
+      `; ${A0}`,
+      `; ${RETRACT}`,
+    ], `${axis}: G-code writes the exact lines`)
+
+    const sbp = post(project, ['rough'], SHOPBOT).gcode.split('\r\n')
+    const sbpAt = sbp.findIndex((line) => line.includes('SETUP 01'))
+    assertEqual(sbp.slice(sbpAt, sbpAt + 5), [
+      "' SETUP 01: Top - TOP FACE UP",
+      "' REGISTRATION: NONE DECLARED",
+      `' TOUCH OFF: ${touch[axis]}`,
+      `' ${A0}`,
+      `' ${RETRACT}`,
+    ], `${axis}: SBP writes the same lines as part-file comments`)
+
+    // The program says which A to set but never moves it (#394 owns that).
+    for (const [dialect, program] of [
+      ['gcode', post(project, ['rough'], GRBL).gcode],
+      ['sbp', post(project, ['rough'], SHOPBOT).gcode],
+    ] as const) {
+      const motion = programWithoutComments(program, dialect)
+      assert(!/(^|\s)A[-+]?\d/.test(motion), `${axis}: ${dialect} emits no A word:\n${motion}`)
+    }
+
+    // A project whose only setup is Bottom is headed as program 01 too.
+    const top = project.setups[0]
+    const onlyBottom: MachiningSetup = { ...top, id: 'only-bottom', name: 'Bottom', orientation: { axis, angleDeg: 180 } }
+    const bottomOnly = syncProjectSetups({
+      ...project,
+      setups: [onlyBottom],
+      activeSetupId: onlyBottom.id,
+      operations: project.operations.map((operation) => ({ ...operation, setupId: onlyBottom.id })),
+    })
+    assert(!projectExportsPerSetup(bottomOnly), `${axis}: one Bottom setup is not a per-setup export`)
+    assertEqual(setupHeaderLines(bottomOnly, bottomOnly.setups[0], GRBL), [
+      `SETUP 01: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`,
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis].replace('TOP', 'BOTTOM')}`,
+      A180,
+      RETRACT,
+    ], `${axis}: the single Bottom setup is headed too`)
+
+    // Two setups: each program is numbered and headed as before, plus A.
+    const two = withBottomSetup(project, { axis, operationIds: ['under'] })
+    assertEqual(setupHeaderLines(two, two.setups[1], GRBL), [
+      `SETUP 02: Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`,
+      'REGISTRATION: NONE DECLARED',
+      `TOUCH OFF: ${touch[axis].replace('TOP', 'BOTTOM')}`,
+      A180,
+      RETRACT,
+    ], `${axis}: the Bottom program's lines`)
+    const postedBottom = post(two, ['under'], GRBL).gcode
+    assert(postedBottom.includes(`\n; ${A180}\n`), `${axis}: the posted Bottom program carries A180`)
+    assert(postedBottom.includes(`\n; ${RETRACT}\n`), `${axis}: and the retract before turning`)
+  }
+}
+
+function testBottomFlipAxisWarning(): void {
+  console.log('Testing a Bottom setup whose flip axis is not the bar\'s warns...')
+  const yBar = rotaryBarProject('y')
+  const mismatched = withBottomSetup(yBar, { axis: 'x', operationIds: ['under'] })
+  const program = post(mismatched, ['under'], GRBL)
+  assertEqual(
+    program.warnings.find((warning) => warning.code === 'setupFlipAxisMismatch'),
+    { code: 'setupFlipAxisMismatch', params: { setup: 'Bottom', axis: 'X', barAxis: 'Y' } },
+    'the warning names the setup and both axes',
+  )
+  assertEqual(warningSeverity('setupFlipAxisMismatch'), 'warning', 'as a warning: the stored setup is not rewritten')
+  assert(program.gcode.includes('FLIP STOCK ABOUT X'), 'the program still describes the flip the setup stores')
+  assert(program.gcode.includes('ROTARY: SET A TO 180°'), 'and still states A180 about the bar')
+
+  const matching = withBottomSetup(yBar, { axis: 'y', operationIds: ['under'] })
+  assert(
+    !post(matching, ['under'], GRBL).warnings.some((warning) => warning.code === 'setupFlipAxisMismatch'),
+    'a Y bar with a Y flip is not warned about',
+  )
+
+  // A block is not a bar: no A line, no flip-axis warning.
+  const flatProgram = post(twoSetupProject({}, 'x'), ['under'], GRBL)
+  assert(
+    !flatProgram.warnings.some((warning) => warning.code === 'setupFlipAxisMismatch'),
+    'a block project is not warned about',
+  )
+  assert(!flatProgram.gcode.includes('ROTARY: SET A'), 'and gets no A line')
+}
+
+// ── The program turns the bar itself (#1054 slice 2b) ─────────
+
+/** The bundled grbl definition plus a rotary block the program can turn. */
+function rotaryMachine(
+  about: 'x' | 'y',
+  drive: 'own' | 'borrowed',
+  reversed = false,
+): MachineDefinition {
+  const rotary: RotaryDefinition = {
+    about,
+    drive,
+    reversed,
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  }
+  return validateMachineDefinition({ ...structuredClone(GRBL), rotary })
+}
+
+/**
+ * A pass that travels only along the bar, so a borrowed across motor never
+ * moves as a linear axis (which the planner refuses). `clearance` is above the
+ * top face for Top and under the bottom face for Bottom, as the toolpaths are
+ * stored in stock space.
+ */
+function barMoves(axis: 'x' | 'y', face: 'top' | 'bottom'): ToolpathMove[] {
+  const clearance = face === 'top' ? 25 : -5
+  const cut = face === 'top' ? 15 : 5
+  const at = (along: number, z: number): ToolpathPoint => (
+    axis === 'x' ? { x: along, y: 10, z } : { x: 10, y: along, z }
+  )
+  return [
+    { kind: 'rapid', from: at(0, clearance), to: at(10, clearance) },
+    { kind: 'plunge', from: at(10, clearance), to: at(10, cut) },
+    { kind: 'cut', from: at(10, cut), to: at(30, cut) },
+    { kind: 'rapid', from: at(30, cut), to: at(30, clearance) },
+  ]
+}
+
+function testManualIndexTurnsTheBarItself(): void {
+  console.log('Testing the program turns the bar itself when the machine can...')
+  // The travel height is the blank's largest radius above the pivot plus 1 mm:
+  // 21 mm on a Ø20 round bar, 11 + 10√2 on a 20 mm square blank. The origin is
+  // the top of the bar, 20 mm above the pivot. These fixtures apply no
+  // tool-length compensation, so the retract is the machine definition's own
+  // Safe Z (default 0 = the top of travel after homing), never a project
+  // height and never the project's 50 mm Safe Z (#1054 fix 3).
+  const safeWord = '0.000'
+  const turnComment = (word: string, angle: number): string =>
+    `ROTARY: RETRACTS TO MACHINE Z TOP WITH G53 BEFORE TURNING ${word} TO ${angle}° - CHECK THE BAR IS CLAMPED`
+
+  for (const shape of ['round', 'square'] as const) {
+    for (const axis of ['x', 'y'] as const) {
+      const bar = rotaryBarProjectOf(shape, axis)
+      const two = withBottomSetup(bar, { axis, operationIds: ['under'] })
+      const letters = { own: 'A', borrowed: axis === 'x' ? 'Y' : 'X' } as const
+      const shapeName = `${shape} bar along ${axis.toUpperCase()}`
+
+      for (const reversed of [false, true]) {
+        for (const drive of ['own', 'borrowed'] as const) {
+          const definition = rotaryMachine(axis, drive, reversed)
+          const letter = letters[drive]
+          const label = `${shapeName}, ${drive} ${letter}${reversed ? ', reversed' : ''}`
+
+          for (const face of ['top', 'bottom'] as const) {
+            const angle = face === 'bottom' ? 180 : 0
+            // The same sign handling the Around output uses: a reversed axis
+            // (or a mirrored borrowed motor) writes the negative angle.
+            const angleWord = `${letter}${(angle * (reversed ? -1 : 1)).toFixed(3)}`
+            const program = post(two, [face === 'top' ? 'rough' : 'under'], definition, barMoves(axis, face)).gcode
+            const lines = program.split('\n')
+            const at = lines.findIndex((line) => /SETUP \d\d:/.test(line))
+            const turn = `SETUP ${face === 'top' ? '01' : '02'}: ${face === 'top'
+              ? 'Top - TOP FACE UP'
+              : `Bottom - BOTTOM FACE UP - FLIP STOCK ABOUT ${axis.toUpperCase()}`}`
+            assert(at > 0, `${label}, ${face}: the header is in the program`)
+            assertEqual(lines.slice(at, at + 4), [
+              `; ${turn}`,
+              '; REGISTRATION: NONE DECLARED',
+              `; TOUCH OFF: ${describeTouchOff(two, face)}`,
+              `; ${turnComment(letter, angle)}`,
+            ], `${label}, ${face}: the header comments, including what the program does`)
+            assert(lines[at + 4].startsWith('; Operation'), `${label}, ${face}: before the first operation's header`)
+            // The opening retract and turn follow the first operation's tool
+            // change (#1054 fix 1, finding 1), then the operation's own motion.
+            // GRBL's tool change is `M5` plus its `M0` tool-change line and
+            // pause, and it applies no tool-length compensation, so the retract
+            // is in machine coordinates to the definition's Safe Z, default 0
+            // (#1054 fix 3).
+            const retractAt = lines.indexOf(`G53 G0 Z${safeWord}`)
+            assert(retractAt > at, `${label}, ${face}: the opening retract is in the program`)
+            assertEqual(lines.slice(retractAt, retractAt + 2), [
+              `G53 G0 Z${safeWord}`,
+              `G0 ${angleWord}`,
+            ], `${label}, ${face}: the retract, then the turn`)
+            const changeAt = lines.findIndex((line) => line.startsWith('M0 ; Tool change'))
+            assert(changeAt > at && changeAt < retractAt, `${label}, ${face}: after the tool change`)
+            assert(!lines.slice(0, retractAt).includes('G93'), `${label}, ${face}: the turn is a rapid, still in G94`)
+            const firstMotionAt = lines.findIndex((line, index) => index > retractAt + 1 && /^(G0|G1|G2|G3|X|Y|Z)/.test(line))
+            assert(firstMotionAt > retractAt + 1, `${label}, ${face}: the turn is before the first operation's motion`)
+
+            const motion = programWithoutComments(program, 'gcode').split('\n')
+            const turnBlocks = motion.filter((line) => line.startsWith(`G0 ${letter}`))
+            const endsAt = lines.lastIndexOf('M30')
+            if (face === 'top') {
+              assertEqual(turnBlocks, [`G0 ${angleWord}`], `${label}: Top turns once and never unwinds`)
+              assertEqual(lines[endsAt - 1], 'M5', `${label}: nothing is posted after the last operation but the spindle stop`)
+            } else {
+              assertEqual(turnBlocks, [`G0 ${angleWord}`, `G0 ${letter}0.000`], `${label}: Bottom turns to 180, then unwinds to 0`)
+              assertEqual(lines[endsAt - 1], `G0 ${letter}0.000`, `${label}: the unwind is the last motion block`)
+              // No compensation is active, so the closing retract is the
+              // definition's machine Safe Z too, whatever the bar's shape
+              // (#1054 fix 3).
+              assertEqual(lines[endsAt - 2], `G53 G0 Z${safeWord}`, `${label}: after retracting to the machine Safe Z`)
+              assertEqual(lines[endsAt - 3], 'M5', `${label}: after the spindle stop`)
+            }
+          }
+        }
+      }
+
+      // The project's only setup is a Top one, and it is not a per-setup
+      // export: the header and the opening turn are still posted (#1054
+      // slice 2b does not depend on a second setup existing).
+      const single = post(bar, ['rough'], rotaryMachine(axis, 'own'), barMoves(axis, 'top')).gcode
+      assert(single.includes(`; ${turnComment('A', 0)}`), `${shapeName}, one Top setup: the turn comment`)
+      assert(single.includes(`\nG53 G0 Z${safeWord}\nG0 A0.000\n`), `${shapeName}, one Top setup: the retract and the turn`)
+
+      // A machine without a rotary axis keeps slice 2 exactly: the operator
+      // comment, no turn word, and no motion added.
+      const plain = post(two, ['under'], GRBL, barMoves(axis, 'bottom')).gcode
+      assert(plain.includes('; ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING'), `${shapeName}, no rotary axis: slice 2's instruction`)
+      assert(plain.includes('; ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'), `${shapeName}, no rotary axis: slice 2's retract line`)
+      assert(!plain.includes('RETRACTS TO MACHINE Z TOP'), `${shapeName}, no rotary axis: no program-turn comment`)
+      assert(!/(^|\s)A[-+]?\d/.test(programWithoutComments(plain, 'gcode')), `${shapeName}, no rotary axis: no A word`)
+    }
+  }
+
+  // The machine Safe Z is a machine coordinate: 0 is the top of travel in
+  // either unit, and the angle still uses the program's own precision.
+  const inchBase = newProject('Inch Bar', 'inch')
+  inchBase.stock = roundStock(2, 8, 'x')
+  const inchBounds = getStockBounds(inchBase.stock)
+  inchBase.origin = {
+    name: 'Origin',
+    x: inchBounds.minX,
+    y: (inchBounds.minY + inchBounds.maxY) / 2,
+    z: inchBase.stock.thickness,
+    visible: true,
+  }
+  inchBase.tools = [{ ...defaultTool('inch', 1), id: 't1', name: 'Tool 1' }]
+  const inchProject = syncProjectSetups({
+    ...inchBase,
+    meta: { ...inchBase.meta, projectType: 'rotary' },
+    operations: [makeOperation('rough', 'Rough')],
+  })
+  const inchMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 0, y: 1, z: 2.5 }, to: { x: 1, y: 1, z: 2.5 } },
+    { kind: 'plunge', from: { x: 1, y: 1, z: 2.5 }, to: { x: 1, y: 1, z: 1.5 } },
+    { kind: 'cut', from: { x: 1, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 1.5 } },
+    { kind: 'rapid', from: { x: 3, y: 1, z: 1.5 }, to: { x: 3, y: 1, z: 2.5 } },
+  ]
+  const inchProgram = post(inchProject, ['rough'], rotaryMachine('x', 'own'), inchMoves).gcode
+  assert(inchProgram.includes('\nG53 G0 Z0.0000\nG0 A0.0000\n'), 'inch: machine Z top is 0 in either unit; the angle keeps the program precision')
+}
+
+/**
+ * #1054 fix 2: the opening turn no longer infers tool-length compensation from
+ * the template text. Even a LinuxCNC header (`G49`) plus a tool change (`G43`)
+ * retracts in machine coordinates before turning the bar; the work-coordinate Z
+ * is not trusted to describe the tip.
+ */
+function testManualIndexTurnRetractsInMachineCoordinates(): void {
+  console.log('Testing the opening turn retracts in machine coordinates despite G43...')
+  const project = rotaryBarProject('x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  const definition = validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+  const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
+  for (const face of ['top', 'bottom'] as const) {
+    const angle = face === 'bottom' ? 180 : 0
+    const program = post(two, [face === 'top' ? 'rough' : 'under'], definition, barMoves('x', face)).gcode
+    const lines = program.split('\n')
+    const g49 = lines.findIndex((line) => /\bG49\b/.test(line))
+    const m6 = lines.findIndex((line) => line.startsWith('M6 T1'))
+    const g43 = lines.findIndex((line) => line.startsWith('G43 H1'))
+    const retractAt = lines.indexOf(safeLine)
+    const turnAt = lines.indexOf(`G0 A${angle.toFixed(3)}`)
+    assert(g49 > 0 && g49 < m6, `${face}: the header cancels tool length before the change`)
+    assert(m6 > 0 && g43 > m6, `${face}: the tool change applies its length compensation`)
+    assert(retractAt > g43, `${face}: the retract is written after the tool change`)
+    assertEqual([lines[retractAt], lines[retractAt + 1]], [safeLine, `G0 A${angle.toFixed(3)}`], `${face}: machine retract, then turn`)
+    assert(
+      !lines.slice(g43 + 1, turnAt).some((line) => /^G0 Z[\d.-]+$/.test(line)),
+      `${face}: no work-coordinate retract is written for the turn`,
+    )
+    assert(
+      !lines.slice(0, retractAt).some((line) => /(^|\s)A[-+]?\d/.test(line)),
+      `${face}: no A word is written before the retract`,
+    )
+    assert(/^Z|^X|^G[0-3]/.test(lines[turnAt + 2]), `${face}: the operation's own motion follows the turn`)
+  }
+}
+
+/**
+ * Finding 4 (#1054 fix 1): an automatic header turn about the bar's axis is
+ * refused with `postRotaryAxisMismatch` when the machine's rotary is about the
+ * other horizontal axis. Falling back to the comment-only header would post a
+ * program that silently never turns the bar.
+ */
+function testManualIndexAxisMismatchIsRefused(): void {
+  console.log('Testing a header turn on the wrong rotary axis is refused...')
+  const xBar = rotaryBarProject('x')
+  const refused = post(xBar, ['rough'], rotaryMachine('y', 'own'), barMoves('x', 'top'))
+  assertEqual(refused.gcode, '', 'no program text: a comment-only header is not an acceptable fallback')
+  assertEqual(refused.warnings, [{
+    code: 'postRotaryAxisMismatch',
+    params: { operation: 'Rough', machineAxis: 'Y', stockAxis: 'X' },
+  }], 'the refusal names both axes')
+  assertEqual(warningSeverity('postRotaryAxisMismatch'), 'error', 'as an error, which blocks the save')
+
+  // The matching machine still posts the turn, and the same mismatch on a
+  // machine whose operation carries its own angle is refused by the planner
+  // (its own code path, unchanged).
+  assert(post(xBar, ['rough'], rotaryMachine('x', 'own'), barMoves('x', 'top')).gcode.includes('G0 A0.000'), 'the matching axis still turns')
+}
+
+/**
+ * Finding 3 (#1054 fix 1): the closing unwind judges clearance in project
+ * space, not machine-signed coordinates. With `zAxis: '-Z'` a cut height is a
+ * large positive machine Z, so comparing it raw against the negative travel
+ * coordinate called it clear and unwound without retracting.
+ */
+function testInvertedZAxisUnwindRetracts(): void {
+  console.log('Testing the closing unwind retracts on an inverted Z machine...')
+  const project = rotaryBarProjectOf('square', 'x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  const base = rotaryMachine('x', 'own')
+  const inverted = validateMachineDefinition({
+    ...base,
+    coordinateSystem: { ...base.coordinateSystem, zAxis: '-Z' },
+  })
+  // The path ends at the cut height: no operation retract, so only the closing
+  // unwind can establish clearance. GRBL applies no tool-length compensation,
+  // so the retract is the definition's machine Safe Z (#1054 fix 3): a machine
+  // coordinate, untouched by the inverted `-Z` transform and by the project's
+  // origin (the default is 0, the top of travel).
+  const moves = barMoves('x', 'bottom').slice(0, -1)
+  const lines = post(two, ['under'], inverted, moves).gcode.split('\n')
+  const safeZ = inverted.motion.machineSafeZ
+  const unwindAt = lines.lastIndexOf('G0 A0.000')
+  assert(unwindAt > 0, 'the program still unwinds the bar')
+  assertEqual(lines[unwindAt - 1], `G53 G0 Z${safeZ.toFixed(3)}`, 'the unwind retracts to the machine Safe Z first')
+  assertEqual(lines[unwindAt - 2], 'M5', 'after the spindle stop, before the turn')
+}
+
+/**
+ * #1054 fix 2/fix 3: every opening and closing turn of a bar Top/Bottom
+ * program is preceded by the machine-coordinate retract, whatever compensation
+ * a template claims. The emitter no longer scans the template text for
+ * `G43`/`G49`; only the machine frame is independent of the work offset and
+ * compensation. Every bundled rotary-capable dialect must retract to the
+ * definition's own Safe Z, and a machine with no machine-coordinate move must
+ * refuse the turn even when a `G43` claims compensation.
+ */
+function testEveryBarTurnRetractsInMachineCoordinates(): void {
+  console.log('Testing every bar turn retracts in machine coordinates...')
+  const project = rotaryBarProject('x')
+  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
+  const rotary: RotaryDefinition = {
+    about: 'x',
+    drive: 'own',
+    reversed: false,
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  }
+  const rotaryMachineOf = (
+    base: MachineDefinition,
+    overrides: Partial<MachineDefinition['motion']> = {},
+  ): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(base),
+    rotary,
+    motion: { ...structuredClone(base.motion), ...overrides },
+  })
+
+  for (const id of ['linuxcnc', 'grbl', 'grblhal', 'mach3', 'uccnc', 'generic']) {
+    const definition = rotaryMachineOf(bundled(id))
+    const label = `${definition.name}`
+    for (const face of ['top', 'bottom'] as const) {
+      const operation = face === 'top' ? 'rough' : 'under'
+      for (const toolChanges of [false, true]) {
+        const result = post(two, [operation], definition, barMoves('x', face), toolChanges)
+        const setting = `${label}, ${face}, tool changes ${toolChanges ? 'on' : 'off'}`
+        assertEqual(
+          result.warnings.filter((warning) => warningSeverity(warning.code) === 'error'),
+          [],
+          `${setting}: no refusal`,
+        )
+        const lines = result.gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+        const angle = formatGCodeNumber(face === 'bottom' ? 180 : 0, definition, two.meta.units)
+        const turnAt = lines.indexOf(`G0 A${angle}`)
+        const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
+        assert(turnAt > 0, `${setting}: the turn is posted\n${result.gcode}`)
+        assertEqual(lines[turnAt - 1], safeLine, `${setting}: machine-coordinate Safe Z before the turn`)
+        if (face === 'bottom') {
+          const unwindAt = lines.findLastIndex((line) => line === `G0 A${formatGCodeNumber(0, definition, two.meta.units)}`)
+          assert(unwindAt > turnAt, `${setting}: the closing unwind is posted`)
+          assertEqual(
+            lines[unwindAt - 1],
+            safeLine,
+            `${setting}: machine-coordinate Safe Z before the closing unwind`,
+          )
+        }
+      }
+    }
+  }
+
+  // The reviewer's repro (#1054 fix 4): `G43` applies compensation and a later
+  // compact `G90G49` cancels it on the same word. The scanner missed that line
+  // and kept claiming compensation. The retract must not depend on the scan at
+  // all: both a plain and a compact cancellation still retract with G53.
+  const cancellingBase = bundled('linuxcnc')
+  for (const cancel of ['G49', 'G90G49']) {
+    const cancelling = validateMachineDefinition({
+      ...structuredClone(cancellingBase),
+      rotary,
+      toolChange: {
+        ...structuredClone(cancellingBase.toolChange),
+        commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}', cancel],
+      },
+    })
+    const lines = post(two, ['under'], cancelling, barMoves('x', 'bottom')).gcode.split('\n').map((line) => line.replace(/^N\d+\s+/, ''))
+    const turnAt = lines.indexOf(`G0 A${formatGCodeNumber(180, cancelling, two.meta.units)}`)
+    assert(turnAt > 0, `${cancel}: the turn is still posted`)
+    assert(lines.slice(0, turnAt).some((line) => /^G43\b/.test(line)), `${cancel}: G43 was applied earlier`)
+    assertEqual(
+      lines[turnAt - 1],
+      `G53 G0 Z${formatGCodeNumber(cancelling.motion.machineSafeZ, cancelling, two.meta.units)}`,
+      `${cancel}: the retract is machine-coordinate, not the work-coordinate Z`,
+    )
+  }
+
+  // A machine with no machine-coordinate move is refused rather than turned,
+  // with or without a compensation a template claims. `machineCoordinateCommand:
+  // null` declares no G53.
+  const noMachineMove = rotaryMachineOf(bundled('grbl'), { machineCoordinateCommand: null })
+  const compensated = validateMachineDefinition({
+    ...structuredClone(cancellingBase),
+    rotary,
+    motion: { ...structuredClone(cancellingBase.motion), machineCoordinateCommand: null },
+    toolChange: {
+      ...structuredClone(cancellingBase.toolChange),
+      commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}'],
+    },
+  })
+  for (const [setting, definition] of [
+    ['without tool changes', noMachineMove],
+    ['with G43 applied', compensated],
+  ] as const) {
+    const refused = post(two, ['under'], definition, barMoves('x', 'bottom'))
+    assertEqual(refused.gcode, '', `${setting}: no program text is posted`)
+    assertEqual(refused.warnings, [{ code: 'postRotaryTurnWithoutClearance', params: { operation: 'Under' } }], `${setting}: the refusal names the operation`)
+    assertEqual(warningSeverity('postRotaryTurnWithoutClearance'), 'error', `${setting}: as an error, which blocks the save`)
+  }
+
+  // ShopBot part files are not G-code and cannot carry a rotary axis, so no
+  // bundled ShopBot definition reaches this turn. The schema says so.
+  let shopbotRefused = false
+  try {
+    validateMachineDefinition({ ...structuredClone(SHOPBOT), rotary })
+  } catch {
+    shopbotRefused = true
+  }
+  assert(shopbotRefused, 'ShopBot SBP cannot be given a rotary axis')
+}
+
+/**
+ * #1054 fix 3/fix 4: the G53 retract height is a machine coordinate the
+ * definition states in millimetres, never one derived from the project. The
+ * default 0 is the top of travel after homing; a project's origin, units and
+ * Safe Z do not change it, and the project's units conversion never touches
+ * it — the emitter converts the stored millimetres at emission.
+ * Mutation checked: deriving the height from the project's Safe Z again (the
+ * fix-2 behaviour) makes the custom-height assertions fail, and leaving the
+ * stored millimetres unconverted in an inch program fails the -0.4921 check.
+ */
+function testMachineSafeZIsAMachineCoordinate(): void {
+  console.log("Testing the G53 retract height is the definition's machine Safe Z...")
+  const base = withBottomSetup(rotaryBarProject('x'), { axis: 'x', operationIds: ['under'] })
+  const grbl = rotaryMachine('x', 'own')
+  assertEqual(grbl.motion.machineSafeZ, 0, 'a definition that states nothing defaults to 0, the top of travel')
+  const retractLine = (
+    project: Project,
+    definition: MachineDefinition,
+    operationIds: string[] = ['under'],
+    moves: ToolpathMove[] = barMoves('x', 'bottom'),
+  ): string => {
+    const line = post(project, operationIds, definition, moves).gcode
+      .split('\n')
+      .find((entry) => entry.startsWith('G53 G0 Z'))
+    assert(line !== undefined, 'the program carries the machine-coordinate retract')
+    return line
+  }
+  const custom = validateMachineDefinition({
+    ...structuredClone(grbl),
+    motion: { ...structuredClone(grbl.motion), machineSafeZ: -12.5 },
+  })
+  const movedOrigin: Project = { ...base, origin: { ...base.origin, z: base.origin.z + 100 } }
+  const highCeiling: Project = { ...base, meta: { ...base.meta, maxTravelZ: 500 } }
+  for (const [label, project] of [
+    ['the fixture', base],
+    ['an origin 100 mm higher', movedOrigin],
+    ['a 500 mm project Safe Z', highCeiling],
+  ] as const) {
+    assertEqual(
+      retractLine(project, custom),
+      'G53 G0 Z-12.500',
+      `${label}: the definition's height, not a project value`,
+    )
+  }
+
+  // Inch projects: the definition stores the machine Z in millimetres (#1054
+  // fix 4), so the emitter converts it to the program's units. The default 0 is
+  // 0 in either unit; a stated -12.5 mm becomes -0.4921 in (G20).
+  const inchBase = newProject('Inch Bar', 'inch')
+  inchBase.stock = roundStock(2, 8, 'x')
+  const inchBounds = getStockBounds(inchBase.stock)
+  inchBase.origin = {
+    name: 'Origin',
+    x: inchBounds.minX,
+    y: (inchBounds.minY + inchBounds.maxY) / 2,
+    z: inchBase.stock.thickness,
+    visible: true,
+  }
+  inchBase.tools = [{ ...defaultTool('inch', 1), id: 't1', name: 'Tool 1' }]
+  const inchProject = syncProjectSetups({
+    ...inchBase,
+    meta: { ...inchBase.meta, projectType: 'rotary' },
+    operations: [makeOperation('rough', 'Rough')],
+  })
+  const mmProgram = post(base, ['under'], custom, barMoves('x', 'bottom')).gcode
+  const inchProgram = post(inchProject, ['rough'], custom, barMoves('x', 'top')).gcode
+  assert(mmProgram.includes('G21'), 'the mm program declares G21')
+  assert(inchProgram.includes('G20'), 'the inch program declares G20')
+  assert(
+    mmProgram.includes('G53 G0 Z-12.500'),
+    'the mm program writes the definition\'s -12.5 mm machine height',
+  )
+  assert(
+    inchProgram.includes('G53 G0 Z-0.4921'),
+    'the inch program converts the same machine height to the program units',
+  )
+  assertEqual(
+    retractLine(inchProject, grbl, ['rough'], barMoves('x', 'top')),
+    'G53 G0 Z0.0000',
+    'inch: the machine Z top is 0, in the program precision',
+  )
+  assertEqual(
+    retractLine(inchProject, custom, ['rough'], barMoves('x', 'top')),
+    'G53 G0 Z-0.4921',
+    'inch: a stated machine height is converted to the program units',
+  )
+
+  // The project's own units conversion leaves the embedded machine definition
+  // (and its millimetre Safe Z) untouched; the conversion happens only when the
+  // block is emitted, so the same definition writes the right Z in either
+  // program unit (#1054 fix 4).
+  const converted: Project = convertProjectUnits(
+    { ...base, meta: { ...base.meta, machineDefinitions: [custom] } },
+    'inch',
+  )
+  assertEqual(
+    converted.meta.machineDefinitions[0].motion.machineSafeZ,
+    -12.5,
+    'converting the project to inch leaves the machine Safe Z in millimetres',
+  )
+  assertEqual(
+    retractLine(converted, custom, ['under'], barMoves('x', 'bottom')),
+    'G53 G0 Z-0.4921',
+    'and the converted inch project emits the converted height',
+  )
+}
+
+function normalizedProgram(program: string): string {
+  return program.replace(/Generated by PureCutCNC on \d{4}-\d{2}-\d{2}/g, 'Generated by PureCutCNC on <date>')
+}
+
+function programHash(project: Project, operationIds: string[], definition: MachineDefinition): string {
+  return createHash('sha256').update(normalizedProgram(post(project, operationIds, definition).gcode)).digest('hex')
+}
+
+function testFlatAndAroundProgramsAreUnchanged(): void {
+  console.log('Testing flat and Around programs are byte-identical to the base...')
+  // A milling project with a Top and a Bottom setup: no bar, so no A lines
+  // and no flip-axis warning may appear.
+  const mill = withBottomSetup(singleSetupProject(), { axis: 'x', operationIds: ['under'] })
+  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], GRBL), '3179263c634d8ec1e764a3faf8eefe2c9a444838ca729170cf728c1f775a0f1f', 'milling Top program, G-code')
+  assertEqual(programHash(mill, ['under'], GRBL), '2b99f3defc62a11888f6ecfea359a152968c8c443848a388e75da4ba2c29f6be', 'milling Bottom program, G-code')
+  assertEqual(programHash(mill, ['rough', 'drill', 'finish'], SHOPBOT), '5c83729c6b52fb60dad0c95a903cdaa6bf41a6a1f30f89a81c89b167e6f31c14', 'milling Top program, SBP')
+  assertEqual(programHash(mill, ['under'], SHOPBOT), '4e7a863ac3499b84d95a6c6502537582dc11908575d29e75ca2da2f49bb8eca4', 'milling Bottom program, SBP')
+
+  // An Around program keeps its own header, and is not given the Top/Bottom
+  // A lines.
+  const base = newProject('Around Bar', 'mm')
+  base.stock = roundStock(20, 100, 'x')
+  base.meta.projectType = 'rotary'
+  base.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Tool 1' }]
+  const aroundSetup: MachiningSetup = {
+    ...base.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+  }
+  const aroundProject = syncProjectSetups({
+    ...base,
+    setups: [aroundSetup],
+    activeSetupId: aroundSetup.id,
+    operations: [makeOperation('pocket', 'Pocket', { setupId: aroundSetup.id })],
+  })
+  const aroundPosted = post(aroundProject, ['pocket'], GRBL).gcode
+  assertEqual(
+    createHash('sha256').update(normalizedProgram(aroundPosted)).digest('hex'),
+    '3ad70b17d2b26498020109b5cb8c04657a756202ad9af8fd30e544905dd8a84e',
+    'Around program, G-code',
+  )
+  assert(!aroundPosted.includes('ROTARY: SET A'), 'an Around program is not given a Top/Bottom A line')
+  assert(aroundPosted.includes('; SETUP 01: Around - AROUND THE BAR, BAR ALONG X'), 'and keeps its own header')
+}
+
 testSingleSetupIsNotSplit()
 testTwoSetupsAreSplit()
 testTouchOff()
@@ -389,5 +1095,14 @@ testHeaderLines()
 testProgramHeaderInBothDialects()
 testSingleSetupProgramIsUnchanged()
 testWhatAProgramMayNotBe()
+testManualIndexingOnARotaryBar()
+testBottomFlipAxisWarning()
+testManualIndexTurnsTheBarItself()
+testManualIndexTurnRetractsInMachineCoordinates()
+testEveryBarTurnRetractsInMachineCoordinates()
+testMachineSafeZIsAMachineCoordinate()
+testManualIndexAxisMismatchIsRefused()
+testInvertedZAxisUnwindRetracts()
+testFlatAndAroundProgramsAreUnchanged()
 
 console.log('setup program tests passed')

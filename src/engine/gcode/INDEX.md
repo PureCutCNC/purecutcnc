@@ -32,11 +32,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 
 - `index.ts` — public API.
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
-  `arcFormat`, the optional `outputDialect`, `machineKind`, `plasma` and
-  `rotary` blocks), `resolveOutputDialect`, the rotary helpers `rotaryWord` /
-  `rotaryBorrowedAxis` / `rotaryDirection` (which letter the program uses for
-  rotation, which project axis a borrowed motor costs, and the sign a positive
-  angle is multiplied by),
+  `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
+  for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
+  `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
+  height in **millimetres**, converted to the program's units at emission,
+  default 0 = the top of travel after homing — `outputDialect`,
+  `machineKind`, `plasma` and `rotary`
+  blocks), `resolveOutputDialect`, `machineCoordinateRapidCommand`, the rotary
+  helpers `rotaryWord` / `rotaryBorrowedAxis` / `rotaryDirection` (which letter
+  the program uses for rotation, which project axis a borrowed motor costs, and
+  the sign a positive angle is multiplied by),
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
@@ -59,12 +64,30 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the program end. It refuses a program whose own templates write the machine's
   rotary word, judged on the rendered lines the program actually writes
   (`postRotaryTemplateUsesBorrowedAxis`).
+  A Top or Bottom program of a manual-index rotary bar starts with the bar's
+  own turn (#1054 slice 2b): a rapid clear of the bar, then a rapid of the
+  rotary word to 0 or 180 through `rotaryDirection`, before any operation's
+  moves. The header says the program does it, and X/Y are left unknown
+  afterwards so the first operation writes its own position. The clearance
+  retract is always a machine-coordinate rapid (#1054 fix 2): the emitter no
+  longer infers tool-length compensation from template text (`G43`/`G44`/
+  `G49`, including compact spellings the old scan missed), because only the
+  machine frame is independent of the work offset and compensation. The height
+  is the machine definition's own Safe Z (`motion.machineSafeZ`, stored in
+  millimetres and converted to the program's units at emission, default 0 =
+  the top of travel after homing, #1054 fix 3/fix 4). It is never derived from
+  the project origin, units or Safe Z: `G53` is the machine's zero, which the
+  app does not know. A machine with no machine-coordinate move is refused with
+  `postRotaryTurnWithoutClearance` rather than turned.
   A program that turned the bar and ends at a non-zero angle gets one closing
   unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
-  and none for a program that ends at 0 or that never carried an angle. On a
-  square blank it first rapids to the generators' travel height whenever the
-  last emitted Z is below it or unknown, because the last operation may have
-  descended at a constant angle. A template that can move Z (a Z word, a
+  and none for a program that ends at 0 or that never carried an angle (so a
+  Top manual-index program writes no unwind, and a Bottom one does). It makes
+  the same machine-coordinate clearance retract first (#1054 fix 2). On a
+  square blank a template Z move before an A word also rapids to the
+  generators' travel height whenever the tracked Z is unknown, because the
+  last operation may have descended at a constant angle. A template that can
+  move Z (a Z word, a
   canned cycle, a macro, a tool change) invalidates the tracked Z, and a later
   A word is preceded by a validated retract to that height — a header or
   tool-change `G0 Z-8` cannot hide the cutter below the blank (#1016 C2 M1).
@@ -135,11 +158,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   setup's frame is resolved once per operation and passed to the transform,
   for moves and drill cycles alike. `planDrillCycles` takes the operation for
   that reason. `planProgramSetup` (issue #946) decides what a program says
-  about its setup, for every dialect: the header comment lines, an error when
-  a program holds operations of more than one setup or one its setup refused
-  to cut, and a warning for a second setup with no registration. It returns
-  nothing for a project with a single setup, except an Around one (#395), which
-  is always annotated.
+  about its setup, for every dialect: the header comment lines, the angle a
+  manual-index program turns to before its first operation (or null when the
+  machine cannot turn it), an error when a program holds operations of more
+  than one setup or one its setup refused to cut, and a warning for a second
+  setup with no registration. It returns no header for a project with a single
+  setup, except an Around one (#395) and a Top/Bottom one of a rotary bar
+  (#1054 slices 2 and 2b), which are always annotated.
 - `setupPrograms.ts` — one program per setup (issue #946):
   `planSetupPrograms` splits an export's operations by setup and names each
   file (`<project>_01_top`; a single-setup project keeps exactly today's
@@ -150,6 +175,20 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   in place of registration and, on a borrowed-motor machine, the line telling
   the operator to set the tool over the centreline by hand;
   `setupLacksRegistration` is false for it (a chuck locates the bar).
+  A Top or Bottom setup of a rotary project on a bar (#1054 slices 2 and 2b)
+  carries a header even when it is the only setup, and adds the manual
+  indexing. On a machine with no rotary axis it is the operator's own move —
+  `ROTARY: SET A TO 0° BEFORE RUNNING` on Top,
+  `ROTARY: SET A TO 180° - TURN THE BAR ABOUT ITS AXIS - BEFORE RUNNING` on
+  Bottom, and `ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A`
+  — and no A word is emitted. On a machine with a rotary axis the program
+  turns the bar itself, so one line says so instead:
+  `ROTARY: THE PROGRAM TURNS <word> TO 0°/180° AFTER RETRACTING - CHECK THE
+  BAR IS CLAMPED`, where `<word>` is `rotaryWord` (A, or the borrowed motor's
+  letter), and the emitter writes the retract and the turn under it. The
+  single-setup file name is unchanged, and `planProgramSetup` warns (naming
+  the setup) when a Bottom setup flips about the other axis than the bar lies
+  along instead of rewriting it.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -167,8 +206,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   inverse-time mode without a positive F on its own block is what a controller
   rejects, so it takes the parser's existing downgrade path and reports
   `unsupported` rather than verified with a borrowed F; an F on a line of its
-  own does not count. A program with no rotary word and no `G93` parses exactly
-  as before.
+  own does not count. A `G53` block is a machine-coordinate move, not a work
+  position (#1054 fix 4): it is not added to the work-frame trace, it leaves the
+  tracked work Z unknown until a later block states one, and the parse reports
+  `unsupported` rather than verified. A program with no rotary word and no `G93`
+  parses exactly as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
   `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
 - `motionDebug.ts` — exported-motion debug helpers (issue #356):

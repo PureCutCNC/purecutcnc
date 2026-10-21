@@ -215,6 +215,102 @@ function testCorrectInverseTimeProgramStillVerifies(): void {
   assert(r.moves[3].inverseTimeFeed === undefined, 'G94 restores the ordinary feed')
 }
 
+function testMachineCoordinateMoveIsNotWorkZ(): void {
+  console.log('Testing a G53 move is machine-coordinate and leaves the work Z unknown...')
+  // The #1054 retract: a work Z5, then `G53 G0 Z0` to the machine's top, then
+  // the A turn. The retract's Z0 is NOT a work Z — reading it as one is what
+  // made the turn look verified at work Z0.
+  const r = parseGcodeMotion('G0 X0 Y0 Z5\nG53 G0 Z0\nG0 A180', 'ij', '(', ')', ROTARY_A)
+  assert(r.status === 'unsupported', `a machine-coordinate move is not verified, got ${r.status}`)
+  assert(r.warnings.some((warning) => warning.includes('G53')), `the reason names G53, got ${JSON.stringify(r.warnings)}`)
+  assert(
+    !r.moves.some((move) => move.from.z === 5 && move.to.z === 0),
+    'the G53 block is not emitted as a work-coordinate move to Z0',
+  )
+  const turn = r.moves.find((move) => move.to.a === 180)
+  assert(turn !== undefined, 'the A turn is still parsed')
+  assert(approx(turn!.from.z, 5) && approx(turn!.to.z, 5),
+    `the turn does not inherit the machine retract's Z0, got ${turn!.from.z}->${turn!.to.z}`)
+  assert(
+    r.warnings.some((warning) => warning.includes('does not state Z')),
+    `the unprovable work Z is reported, got ${JSON.stringify(r.warnings)}`,
+  )
+
+  // A later block that states Z re-establishes the work frame, but the program
+  // is still not verified because the G53 move itself cannot be placed there.
+  const resumed = parseGcodeMotion('G0 X0 Y0 Z5\nG53 G0 Z0\nG0 X10 Z3', 'ij', '(', ')')
+  assert(resumed.status === 'unsupported', 'the G53 still downgrades the parse')
+  assert(approx(resumed.moves[resumed.moves.length - 1].to.z, 3), 'a stated Z is read again after the G53')
+
+  // A standalone `G53` with no axis words is still a machine-coordinate block.
+  const bare = parseGcodeMotion('G53\nG0 X1 Y0 Z0', 'ij', '(', ')')
+  assert(bare.status === 'unsupported', 'the bare G53 downgrades the parse')
+  assert(bare.moves.length === 1, 'and moves nothing in the work frame itself')
+}
+
+function testCompactWordsWithoutWhitespace(): void {
+  console.log('Testing compact G-code words are read without whitespace...')
+  // The reviewer's repro (#1054 fix 5): controllers write `G53G0Z0` with no
+  // spaces. Splitting on whitespace dropped the whole block, so the machine
+  // retract became a work-coordinate move to Z0 and the read-back stayed
+  // verified. Both spellings must downgrade.
+  const spaced = parseGcodeMotion('G0 Z5\nG53 G0 Z0\nG0 A180', 'ij', '(', ')', ROTARY_A)
+  const compact = parseGcodeMotion('G0 Z5\nG53G0 Z0\nG0 A180', 'ij', '(', ')', ROTARY_A)
+  for (const [label, parsed] of [['spaced', spaced], ['compact', compact]] as const) {
+    assert(parsed.status === 'unsupported', `${label}: a machine-coordinate retract is not verified, got ${parsed.status}`)
+    assert(
+      parsed.warnings.some((warning) => warning.includes('G53')),
+      `${label}: the reason names G53, got ${JSON.stringify(parsed.warnings)}`,
+    )
+    const turn = parsed.moves.find((move) => move.to.a === 180)
+    assert(turn !== undefined, `${label}: the A turn is parsed`)
+    assert(
+      approx(turn!.from.z, 5) && approx(turn!.to.z, 5),
+      `${label}: the turn is not placed at the machine retract's Z0, got ${turn!.from.z}->${turn!.to.z}`,
+    )
+  }
+
+  // Compact settings and axis words are read as words, not dropped or refused.
+  const settings = parseGcodeMotion('G0 X0 Y0 Z0\nG90G49\nG1 X1.5Y-2 Z-1 F100', 'ij', '(', ')')
+  assert(
+    settings.status === 'verified',
+    `compact G90G49 and X1.5Y-2 are understood, got ${settings.status} ${JSON.stringify(settings.warnings)}`,
+  )
+  assert(settings.moves.length === 2, `move count ${settings.moves.length}`)
+  assert(
+    approx(settings.moves[1].to.x, 1.5) && approx(settings.moves[1].to.y, -2) && approx(settings.moves[1].to.z, -1),
+    'compact axis words land on the same point',
+  )
+
+  // The UCCNC/Mach3 program delimiter and program name are not unreadable text.
+  const delimited = parseGcodeMotion('%\nO0001 (program)\nG0 X0 Y0 Z0\nG1 X5 Z-1 F100\n%', 'ij', '(', ')')
+  assert(
+    delimited.status === 'verified',
+    `a %-delimited program still verifies, got ${delimited.status} ${JSON.stringify(delimited.warnings)}`,
+  )
+
+  // Anything the tokenizer cannot read downgrades the read-back instead of
+  // being silently dropped.
+  const unknown = parseGcodeMotion('G0 X0 Y0 Z0\nG1 X5 HELLO\nG1 X10', 'ij', '(', ')')
+  assert(unknown.status === 'unsupported', `an unknown word is not verified, got ${unknown.status}`)
+  assert(
+    unknown.warnings.some((warning) => warning.includes('HELLO')),
+    `the unknown text is reported, got ${JSON.stringify(unknown.warnings)}`,
+  )
+
+  // An unterminated comment is text the tokenizer cannot read, not a clean
+  // comment that may be skipped.
+  const brokenComment = parseGcodeMotion('G0 X0 Y0 Z0\n(unterminated comment\nG1 X5', 'ij', '(', ')')
+  assert(
+    brokenComment.status === 'unsupported',
+    `an unterminated comment is not verified, got ${brokenComment.status}`,
+  )
+  assert(
+    brokenComment.warnings.some((warning) => warning.includes('unterminated comment')),
+    `the unreadable text is reported, got ${JSON.stringify(brokenComment.warnings)}`,
+  )
+}
+
 testModalLinear()
 testArcIJ()
 testArcCCWRadius()
@@ -230,6 +326,8 @@ testInverseTimeFeedMode()
 testInverseTimeFeedIsNotModal()
 testStandaloneFeedLineDoesNotFeedTheMove()
 testCorrectInverseTimeProgramStillVerifies()
+testMachineCoordinateMoveIsNotWorkZ()
+testCompactWordsWithoutWhitespace()
 testPlainProgramIsUnchanged()
 
 console.log('gcodeMotionParser tests passed')

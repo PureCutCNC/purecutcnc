@@ -15,9 +15,10 @@
  */
 
 /**
- * The default operation of a shape drawn on the Around face (issue #395): the
- * bar is already solid, so every shape there is a cut into its surface — never
- * a base solid, whatever the project holds. Top and Bottom are unchanged.
+ * The default operation of a shape drawn on a bar (#395, #1054 slice 1): the
+ * bar is already solid on every face of a rotary project, so a shape there is a
+ * cut into its surface — never a base solid, whatever the project holds. A
+ * block project keeps the inferred base-solid role.
  *
  * Run with: npx tsx src/store/helpers/manualFeatureOperation.test.ts
  */
@@ -66,9 +67,18 @@ function aroundFeature(id: string, operation: 'add' | 'subtract'): SketchFeature
 function barProject(face: SetupFace, features: SketchFeature[] = []): Project {
   const base = newProject('manual-operation', 'mm')
   base.stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
+  base.meta = { ...base.meta, projectType: 'rotary' }
   base.tools = [{ ...defaultTool('mm', 1), id: 't1', diameter: 3, maxCutDepth: 40 }]
   const setup = setupFor(face)
   return projectWithFeatures({ ...base, setups: [setup], activeSetupId: setup.id }, features)
+}
+
+/** The same face on a block, so the base-solid rule still answers. */
+function blockProject(face: SetupFace): Project {
+  const base = newProject('manual-operation-block', 'mm')
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', diameter: 3, maxCutDepth: 40 }]
+  const setup = setupFor(face)
+  return projectWithFeatures({ ...base, setups: [setup], activeSetupId: setup.id }, [])
 }
 
 const box = rectProfile(30, 45, 8, 8)
@@ -81,10 +91,17 @@ assert.equal(inferManualFeatureOperation(barProject('around', [aroundFeature('a1
 assert.equal(inferManualFeatureOperation(barProject('around', [aroundFeature('a2', 'subtract')]), box), 'subtract',
   'and over an Around subtract')
 
-// Top and Bottom keep the base-solid rule untouched.
-assert.equal(inferManualFeatureOperation(barProject('top'), box), 'add',
-  'the first shape drawn on Top is still add')
-assert.equal(inferManualFeatureOperation(barProject('bottom'), box), 'add',
-  'the first shape drawn on Bottom is still add')
+// #1054 slice 1: the bar is the material on Top and Bottom too, so the first
+// shape there is a pocket cut into it.
+assert.equal(inferManualFeatureOperation(barProject('top'), box), 'subtract',
+  'the first shape drawn on a bar Top is a subtract')
+assert.equal(inferManualFeatureOperation(barProject('bottom'), box), 'subtract',
+  'the first shape drawn on a bar Bottom is a subtract')
+
+// A block keeps the base-solid rule untouched.
+assert.equal(inferManualFeatureOperation(blockProject('top'), box), 'add',
+  'the first shape drawn on a block Top is still add')
+assert.equal(inferManualFeatureOperation(blockProject('bottom'), box), 'add',
+  'the first shape drawn on a block Bottom is still add')
 
 console.log('manualFeatureOperation.test.ts passed')

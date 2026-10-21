@@ -19,10 +19,17 @@
 /**
  * Around features in the 3D scene (#395 slice G1).
  *
- * An Around subtract is a cut in the bar, its shape wound onto the round solid;
- * an Around add is an island standing inside a surrounding cut and nothing on
- * its own. A project with no visible Around feature produces the scene it
- * always did, exactly.
+ * An Around subtract is a cut in the bar, its shape wound onto the round solid.
+ * Since #1054 slice 1 the bar itself is the model on every face of a rotary
+ * project, so an Around add restores material clipped to the bar and, on its
+ * own, leaves the uncut bar. A project with no visible Around feature produces
+ * the scene it always did, exactly.
+ *
+ * Cross-face feature order (#1054 fix 1, finding 6): a flat and an Around
+ * feature apply in the project's own order, so an Around add written before a
+ * Top subtract cannot restore the later cut. Mutation: fold the flat features
+ * as a batch before the Around ones (the previous code) → the order assertion
+ * fails by the add's own volume.
  *
  * Volumes are compared against the bar solid the model itself starts from
  * (`roundBarSolid`), so the comparison is against the same faceting, not an
@@ -274,12 +281,12 @@ const ISLAND_VOLUME = sectorVolume(AROUND_ISLAND)
     'the pocket floor vertices are at the pocket angle',
   )
 
-  // The flat pad really stays in the union (issue #395 G3): dropping it and
-  // keeping the Around solid alone left every assertion above green, because
-  // the pocket floor is part of the Around solid too. The pad spans its full
+  // The flat pad is clipped to the bar (#1054 slice 1): an add restores material
+  // inside the bar, it never draws a pad beside it. The pad spans its full
   // height at across 40..70, where the 40 mm bar's circle is narrower, so its
-  // corners stand outside the bar and can only come from the flat solid. Scene
-  // coordinates are X = project x, Y = project z (height), Z = project y.
+  // corners used to stand outside the bar and can only have come from the flat
+  // solid. Scene coordinates are X = project x, Y = project z (height),
+  // Z = project y.
   const modelWorld = worldVertices(withAround.modelMesh)
   const hasVertexAt = (corner: THREE.Vector3): boolean =>
     modelWorld.some((vertex) => vertex.distanceTo(corner) <= 1e-4)
@@ -287,23 +294,29 @@ const ISLAND_VOLUME = sectorVolume(AROUND_ISLAND)
     for (const along of [20, 80]) {
       const outside = Math.hypot(across - BAR_FRAME.centre, 0 - BAR_FRAME.radius) > BAR_FRAME.radius
       assert(outside, 'fixture: the pad corner is outside the bar cylinder')
-      assert(hasVertexAt(new THREE.Vector3(along, 0, across)), `the model keeps the pad's corner at x=${along}, y=${across}`)
-      assert(hasVertexAt(new THREE.Vector3(along, BAR.thickness, across)), `the model keeps the pad's top corner at x=${along}, y=${across}`)
+      assert(
+        !hasVertexAt(new THREE.Vector3(along, 0, across)),
+        `the model clips the pad's corner at x=${along}, y=${across}`,
+      )
+      assert(
+        !hasVertexAt(new THREE.Vector3(along, BAR.thickness, across)),
+        `the model clips the pad's top corner at x=${along}, y=${across}`,
+      )
     }
+  }
+  // Nothing the model keeps stands outside the bar's own surface.
+  for (const vertex of modelVertices(withAround.modelMesh, BAR)) {
+    assert(
+      vertex.radius <= BAR_FRAME.radius + 0.01,
+      `added material stands outside the bar (radius ${vertex.radius})`,
+    )
   }
   const modelBox = sceneBox(withAround.modelMesh)
-  const covers = (outer: THREE.Box3, inner: THREE.Box3, label: string): void => {
-    for (const key of ['x', 'y', 'z'] as const) {
-      assert(outer.min[key] <= inner.min[key] + 1e-3, `${label}: reaches ${key} min`)
-      assert(outer.max[key] >= inner.max[key] - 1e-3, `${label}: reaches ${key} max`)
-    }
+  const barBox = sceneBox(withAround.stockMesh)
+  for (const key of ['x', 'y', 'z'] as const) {
+    assertClose(modelBox.min[key], barBox.min[key], 1e-4, `the model box reaches ${key} min with the bar's own`)
+    assertClose(modelBox.max[key], barBox.max[key], 1e-4, `the model box reaches ${key} max with the bar's own`)
   }
-  covers(modelBox, sceneBox(withAround.stockMesh), 'the model covers the whole bar')
-  covers(
-    modelBox,
-    new THREE.Box3(new THREE.Vector3(20, 0, 40), new THREE.Vector3(80, BAR.thickness, 70)),
-    'the model covers the whole flat pad',
-  )
 }
 
 // ── 2. An Around subtract alone, on both bar axes ────────────────────────────
@@ -328,15 +341,28 @@ for (const bar of [BAR, Y_BAR]) {
   assertClose(meshVolume(scene.modelMesh!), expected, BAR_VOLUME * 0.005, `axis ${bar.axis}: bar minus the pocket sector`)
 }
 
-// ── 3. An Around add alone shows nothing ─────────────────────────────────────
+// ── 3. An Around add alone leaves the bar exactly as it was ──────────────────
 
 {
+  // #1054 slice 1: the bar is the model, so an Around add alone restores
+  // material that was never removed — the solid is the uncut bar.
   const addScene = await buildScene(barProject(BAR, [draft('island', AROUND_ISLAND, 'around')]), threePalette)
   const bareScene = await buildScene(barProject(BAR, []), threePalette)
-  assert(addScene.modelMesh === null, 'an Around add alone produces no model solid')
+  assert(addScene.modelMesh, 'the bar seeds a model, so an Around add alone shows the bar')
+  assertClose(meshVolume(addScene.modelMesh!), BAR_VOLUME, BAR_VOLUME * 0.002, 'an Around add alone leaves the bar volume')
+  for (const vertex of modelVertices(addScene.modelMesh!, BAR)) {
+    assert(vertex.radius <= BAR_FRAME.radius + 0.01, 'the add is clipped to the bar')
+  }
+  const addBox = sceneBox(addScene.modelMesh!)
+  const barBox = sceneBox(addScene.stockMesh)
+  for (const key of ['x', 'y', 'z'] as const) {
+    assertClose(addBox.min[key], barBox.min[key], 1e-4, `the add-only model box reaches ${key} min with the bar's own`)
+    assertClose(addBox.max[key], barBox.max[key], 1e-4, `the add-only model box reaches ${key} max with the bar's own`)
+  }
+  assert(bareScene.modelMesh === null, 'a bar with no feature still draws no model over its stock')
   assert(
-    JSON.stringify(sceneSummary(addScene)) === JSON.stringify(sceneSummary(bareScene)),
-    'an Around add alone leaves the scene exactly as the bare bar',
+    JSON.stringify(positionsOf(addScene.stockMesh)) === JSON.stringify(positionsOf(bareScene.stockMesh)),
+    'the stock mesh itself is unchanged',
   )
 }
 
@@ -387,6 +413,41 @@ for (const bar of [BAR, Y_BAR]) {
       )
     }
   }
+}
+
+// ── 4b. Cross-face features apply in project order (#1054 fix 1) ────────────
+
+{
+  // The reviewer's repro (finding 6): an Around add that precedes an
+  // overlapping Top subtract. The add is made after the cut if the two faces
+  // are folded in batches, restoring material the later cut removed. The
+  // project's feature order must decide: [add, subtract] leaves the cut,
+  // [subtract, add] restores the add.
+  const ORDER_ADD = { profile: rectProfile(100, 38, 30, 10), operation: 'add' as const, zTop: 40, zBottom: 32 }
+  const ORDER_CUT = { profile: rectProfile(95, 30, 40, 20), operation: 'subtract' as const, zTop: 40, zBottom: 20 }
+  const addVolume = sectorVolume(ORDER_ADD)
+  assert(addVolume > 1800 && addVolume < 2100, `fixture: the add restores about 1,800 mm³ (${addVolume})`)
+
+  const addedThenCut = await buildScene(
+    topProject(BAR, [draft('order-add', ORDER_ADD, 'around'), draft('order-cut', ORDER_CUT, 'top')]),
+    threePalette,
+  )
+  const cutThenAdded = await buildScene(
+    topProject(BAR, [draft('order-cut', ORDER_CUT, 'top'), draft('order-add', ORDER_ADD, 'around')]),
+    threePalette,
+  )
+  const cutOnly = await buildScene(topProject(BAR, [draft('order-cut', ORDER_CUT, 'top')]), threePalette)
+  assert(addedThenCut.modelMesh && cutThenAdded.modelMesh && cutOnly.modelMesh, 'fixture: every order builds a model')
+
+  const cutVolume = meshVolume(cutOnly.modelMesh!)
+  const cutAfterAdd = meshVolume(addedThenCut.modelMesh!)
+  const addAfterCut = meshVolume(cutThenAdded.modelMesh!)
+  // The later cut stands: adding first must give the cut-only solid.
+  assertClose(cutAfterAdd, cutVolume, BAR_VOLUME * 0.002, 'an earlier add does not survive the later subtract')
+  // The reverse order really restores the add, so the order is observable and
+  // the assertion above is not vacuous.
+  assertClose(addAfterCut, cutVolume + addVolume, BAR_VOLUME * 0.005, 'add after the cut restores its material')
+  assert(addAfterCut - cutAfterAdd > 1500, `the two orders differ by the add (${addAfterCut - cutAfterAdd})`)
 }
 
 // ── 5. No visible Around feature draws nothing extra ─────────────────────────

@@ -69,6 +69,12 @@ import {
   type ContourTurnTransition,
 } from './offsetSmoothing'
 import { coverageReachLoops, floorCoverage, regionAreaPaths, restrictFloorRoot } from './finishFloorCoverage'
+import {
+  barEntryStartZ,
+  barSectionAtZ,
+  barSectionContains,
+  clipPathsToBarSection,
+} from './barSection'
 import { buildSweptCoverage, sweptRegionIsCovered } from './sweptCoverage'
 import {
   buildOffsetDomainCheck,
@@ -174,6 +180,65 @@ function pocketRegionsAtLevel(
     band.targetFeatureIds,
     band.islandFeatureIds,
   )
+}
+
+/** Every closed loop of a region set, for the bar section's own tests. */
+function regionLoops(regions: readonly ResolvedPocketRegion[]): Point[][] {
+  return regions.flatMap((region) => [region.outer, ...region.islands])
+}
+
+/**
+ * A clearing level's material region restricted to the bar's real section at
+ * that Z (#1054 slice 3). A round bar is narrower near its crown, so a shallow
+ * level's whole footprint is mostly air; intersecting the **material** region
+ * (never the tool-centre path) keeps the offset semantics the generators
+ * already have — the cutter's edge still reaches the bar's surface, and the
+ * pocket's own walls, which are boundaries inside the bar, do not move.
+ *
+ * Returns the input regions themselves when the section already contains them,
+ * so a level the bar does not narrow keeps its previous byte-for-byte path.
+ * `null` for a non-bar project (a block, a square blank's full side, an Around
+ * sheet), `[]` for a level above the crown or outside the bar.
+ */
+function clipRegionsToBarSection(
+  project: Pick<Project, 'meta' | 'stock'>,
+  z: number,
+  regions: ResolvedPocketRegion[],
+): ResolvedPocketRegion[] {
+  if (regions.length === 0) return regions
+  const section = barSectionAtZ(project, z)
+  if (!section) return regions
+  if (section.halfWidth <= 0) return []
+  if (barSectionContains(section, regionLoops(regions))) return regions
+  const clipped = clipPathsToBarSection(section, regionAreaPaths(regions))
+  if (clipped.length === 0) return []
+  return polyTreeToRegions(
+    executeDifference(clipped, []),
+    [...new Set(regions.flatMap((region) => region.targetFeatureIds))],
+    [...new Set(regions.flatMap((region) => region.islandFeatureIds))],
+  ).filter((region) => region.outer.length >= 3)
+}
+
+/** {@link pocketRegionsAtLevel}, restricted to the bar's section at `z`. */
+function pocketRegionsAtLevelClipped(
+  project: Pick<Project, 'meta' | 'stock'>,
+  band: ResolvedPocketBand,
+  z: number,
+  modelKeepOutPaths: ClipperPath[],
+): ResolvedPocketRegion[] {
+  return clipRegionsToBarSection(project, z, pocketRegionsAtLevel(band, modelKeepOutPaths))
+}
+
+/** Whether clipping this level to the bar's section would change its regions. */
+function barClipChangesLevel(
+  project: Pick<Project, 'meta' | 'stock'>,
+  z: number,
+  regions: readonly ResolvedPocketRegion[],
+): boolean {
+  const section = barSectionAtZ(project, z)
+  if (!section) return false
+  if (section.halfWidth <= 0) return true
+  return !barSectionContains(section, regionLoops(regions))
 }
 
 function resolvePocketModelSections(
@@ -3830,6 +3895,7 @@ export function cutSeedLeftoverExcursions(
 }
 
 function generateRoughBandMoves(
+  project: Project,
   band: ResolvedPocketBand,
   operation: Operation,
   safeZ: number,
@@ -3873,6 +3939,10 @@ function generateRoughBandMoves(
       operation,
       toolRadius,
       radialLeave,
+      // Resolved against the band's own footprint, not the bar-clipped level:
+      // whether a channel *fits* is a property of the pocket, and the clipped
+      // level at the crown is narrower than the channel the depths below can
+      // take. The per-level regions the orbits run in are still clipped.
       regions: stepLevels.length > 0
         ? pocketRegionsAtLevel(band, modelKeepOutsByLevel.get(stepLevels[0]) ?? [])
         : [],
@@ -3897,7 +3967,7 @@ function generateRoughBandMoves(
 
     for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
       const z = stepLevels[levelIndex]
-      const levelRegions = pocketRegionsAtLevel(band, modelKeepOutsByLevel.get(z) ?? [])
+      const levelRegions = pocketRegionsAtLevelClipped(project, band, z, modelKeepOutsByLevel.get(z) ?? [])
       const roughRegions = levelRegions.flatMap((region) => buildInsetRegions(region, initialInset))
       if (roughRegions.length === 0) {
         appendUniqueWarning(warnings, { code: 'pocketNoFloorRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
@@ -3923,7 +3993,13 @@ function generateRoughBandMoves(
       }
       const levelEntryPolicy = withEntryStartZ(
         entryPolicy,
-        levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+        levelIndex === 0
+          // A bar's surface over this region is the highest material the first
+          // entry has to reach, so it can start there instead of at the box top
+          // (#1054 slice 3). `barEntryStartZ` is the stock top's own safe Z for
+          // anything this does not cover, so a block takes the previous path.
+          ? barEntryStartZ(project, z, regionLoops(roughRegions), entryClearance, safeZ, toolRadius)
+          : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
       )
       const levelStartIndex = moves.length
       for (const contour of boundaryContours) {
@@ -4002,7 +4078,7 @@ function generateRoughBandMoves(
     : undefined
   const engagementCaches = new Map<string, OffsetBandEngagementClassification>()
   const buildOffsetPlan = (z: number) => {
-    const centreRegions = pocketRegionsAtLevel(band, modelKeepOutsByLevel.get(z) ?? [])
+    const centreRegions = pocketRegionsAtLevelClipped(project, band, z, modelKeepOutsByLevel.get(z) ?? [])
       .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
     const regionTrees = centreRegions.map((region) => {
@@ -4068,7 +4144,17 @@ function generateRoughBandMoves(
   // Legacy pockets reuse the immutable band plan at every level. Only a model
   // can change the domain as Z descends, so keep that established fast path
   // rather than paying to rebuild every ring tree for normal jobs.
-  const staticOffsetPlan = modelSections.length === 0 && stepLevels.length > 0
+  //
+  // A round bar's section changes with Z too (#1054 slice 3): the crown is
+  // narrow and the belly is not. Reuse is still safe when the *shallowest*
+  // level already fits inside the section, because the section only grows as Z
+  // descends — a pocket that fits at the top fits at every level below it.
+  const staticPlanLevelRegions = stepLevels.length > 0
+    ? pocketRegionsAtLevel(band, modelKeepOutsByLevel.get(stepLevels[0]) ?? [])
+    : []
+  const staticOffsetPlan = modelSections.length === 0
+    && stepLevels.length > 0
+    && !barClipChangesLevel(project, stepLevels[0], staticPlanLevelRegions)
     ? buildOffsetPlan(stepLevels[0])
     : null
 
@@ -4077,12 +4163,21 @@ function generateRoughBandMoves(
   // spends most of its helix cutting air. Safe because the ring tree above is
   // built once and reused, so every level clears the same XY footprint and the
   // level above has already emptied everything down to stepLevels[i - 1]. The
-  // first level of each band has no cleared floor yet and stays at safe Z.
+  // first level of each band has no cleared floor yet and starts at the bar's
+  // surface over its region (#1054 slice 3) — the box top for anything that is
+  // not a round bar.
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
     const plan = staticOffsetPlan ?? buildOffsetPlan(z)
     const levelEntryStartZ = levelIndex === 0
-      ? safeZ
+      ? barEntryStartZ(
+        project,
+        z,
+        plan.regionTrees.flatMap((tree) => [tree.region.outer, ...tree.region.islands]),
+        entryClearance,
+        safeZ,
+        toolRadius,
+      )
       : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
     const levelEntryPolicy = withEntryStartZ(plan.entryPolicy, levelEntryStartZ)
     // The orbit entry takes the same start height as the contour entry above.
@@ -4397,6 +4492,7 @@ function restrictFloorRoots(
 }
 
 function generateFinishBandMoves(
+  project: Project,
   band: ResolvedPocketBand,
   operation: Operation,
   safeZ: number,
@@ -4435,14 +4531,21 @@ function generateFinishBandMoves(
   const finishLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(modelSections, finishLevels, warnings)
   const modelKeepOutPaths = modelKeepOutsByLevel.get(effectiveBottom) ?? []
-  const regions = pocketRegionsAtLevel(band, modelKeepOutPaths)
+  // The finish pass cuts at the floor, where the bar is at its widest, so the
+  // clip is usually the identity; it still keeps a finish-only pocket from
+  // tracing a floor the bar never had (#1054 slice 3).
+  const regions = clipRegionsToBarSection(project, effectiveBottom, pocketRegionsAtLevel(band, modelKeepOutPaths))
   const protectedNextBandRegions = nextBandRegions === null
     ? null
-    : subtractModelKeepOutsFromPocketRegions(
-      nextBandRegions,
-      modelKeepOutPaths,
-      band.targetFeatureIds,
-      band.islandFeatureIds,
+    : clipRegionsToBarSection(
+      project,
+      band.bottomZ,
+      subtractModelKeepOutsFromPocketRegions(
+        nextBandRegions,
+        modelKeepOutPaths,
+        band.targetFeatureIds,
+        band.islandFeatureIds,
+      ),
     )
   const finishDelta = toolRadius + radialLeave
   const shouldRoundPocketWalls = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
@@ -4459,6 +4562,13 @@ function generateFinishBandMoves(
       (warning) => appendUniqueWarning(warnings, warning),
     ),
     slotScale,
+  )
+  // The floor's first entry starts from the bar's surface over it rather than
+  // from the box top (#1054 slice 3): a finish-only pocket would otherwise
+  // descend through air the bar does not occupy. `safeZ` for a non-bar project.
+  const levelEntryPolicy = withEntryStartZ(
+    entryPolicy,
+    barEntryStartZ(project, effectiveBottom, regionLoops(finishRegions), getOperationClearance(project), safeZ, toolRadius),
   )
   // XY leads on the wall contours (issue #695). This is the pass the feature
   // exists for: the wall contour IS the finished wall, and without a lead the
@@ -4754,7 +4864,7 @@ function generateFinishBandMoves(
             loops: 'all',
             smoothRadius: floorSmoothRadius,
             depth: 0,
-            entryPolicy,
+            entryPolicy: levelEntryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
             trochoidal: floorTrochoidalRingOptions,
@@ -4794,7 +4904,7 @@ function generateFinishBandMoves(
             safeZ,
             maxLinkDistance,
             undefined,
-            entryPolicy,
+            levelEntryPolicy,
           )
           let circleMoves = toClosedCutMoves(circle, z)
           const tangentSplice = spliceTangentSLink(
@@ -4847,7 +4957,7 @@ function generateFinishBandMoves(
             loops: 'all',
             smoothRadius: floorSmoothRadius,
             depth: unit.depth,
-            entryPolicy,
+            entryPolicy: levelEntryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
             parent: unit.parent ?? undefined,
@@ -4877,7 +4987,7 @@ function generateFinishBandMoves(
         z,
         safeZ,
         currentPosition,
-        entryPolicy,
+        levelEntryPolicy,
       )
     }
 
@@ -4894,7 +5004,7 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
       )
       const cutMoves = toOpenCutMoves(segment, z)
       appendAll(moves, cutMoves)
@@ -4920,7 +5030,7 @@ function generateFinishBandMoves(
         wallRotationPreserved,
         direction,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
         undefined,
         wallCornerCleanupEnabled,
         levelWallLead,
@@ -4953,7 +5063,7 @@ function generateFinishBandMoves(
           safeZ,
           maxLinkDistance,
           undefined,
-          entryPolicy,
+          levelEntryPolicy,
         )
         if (leadPlan && levelWallLead) {
           currentPosition = emitXyLead(moves, currentPosition, leadPlan, z, levelWallLead.options, 'lead_in')
@@ -4973,7 +5083,7 @@ function generateFinishBandMoves(
         false,
         direction,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
         undefined,
         false,
         levelWallLead,
@@ -4989,7 +5099,7 @@ function generateFinishBandMoves(
         false,
         direction,
         undefined,
-        entryPolicy,
+        levelEntryPolicy,
         undefined,
         false,
         levelWallLead,
@@ -5369,6 +5479,7 @@ function generatePocketToolpathSingle(
       : null
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
+        project,
         band,
         operation,
         safeZ,
@@ -5385,6 +5496,7 @@ function generatePocketToolpathSingle(
         modelSections,
       )
       : generateRoughBandMoves(
+        project,
         band,
         operation,
         safeZ,

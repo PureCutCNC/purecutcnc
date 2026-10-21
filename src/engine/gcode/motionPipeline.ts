@@ -55,11 +55,12 @@ import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from 
 import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
 import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
-import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
+import { setupForOperation, setupFace, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
-import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
+import { manualIndexAngle, projectExportsPerSetup, setupHeaderLines, setupLacksRegistration, setupStatesManualIndexing } from './setupPrograms'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
 /** Largest sweep a single emitted arc may cover, in degrees. */
@@ -504,10 +505,17 @@ export interface ProgramSetupPlan {
   /**
    * Lines to write as comments after the program header, in order: which
    * setup this is and how the stock is turned, what locates the part, where
-   * to touch off, and the operator's notes. Empty for a project with a single
-   * setup, whose program is exactly what it was before setups existed.
+   * to touch off, the manual-index instruction of a rotary bar, and the
+   * operator's notes. Empty for a flat single-setup project, whose program is
+   * exactly what it was before setups existed.
    */
   headerComments: string[]
+  /**
+   * The angle the program turns the rotary to before its first operation
+   * (#1054 slice 2b), or null when it turns nothing: an Around program turns
+   * through its own toolpath, and a machine with no rotary axis cannot.
+   */
+  manualIndexAngle: 0 | 180 | null
   /** Raised for the program as a whole; the caller appends them to its own. */
   warnings: ToolpathWarning[]
 }
@@ -519,9 +527,18 @@ export interface ProgramSetupPlan {
  * between setups, and nothing in a program does it for them. Operations of
  * two setups in one program are therefore reported as an error and the header
  * is left out, rather than a header written for one of them.
+ *
+ * A single-setup project normally carries no header (the legacy-parity rule),
+ * except an Around setup and a Top/Bottom setup of a rotary bar project,
+ * which say how the bar is turned (#1054 slices 2 and 2b): by the operator
+ * when the machine cannot, and by the program's own opening rapids when it
+ * can.
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
+  /** Whether the machine can write the machine-coordinate manual-index retract
+   *  (#1054 fix 2/fix 3). Absent means yes. */
+  machineCoordinateRetract = true,
 ): ProgramSetupPlan {
   const { project, operations } = input
   const warnings: ToolpathWarning[] = []
@@ -534,23 +551,71 @@ export function planProgramSetup(
     }
   }
 
-  if (!projectExportsPerSetup(project)) return { headerComments: [], warnings }
+  if (!projectExportsPerSetup(project) && !manualIndexingApplies(project)) {
+    return { headerComments: [], manualIndexAngle: null, warnings }
+  }
 
-  const setups = [...new Set(operations.map(({ operation }) => setupForOperation(project, operation)))]
+  // An operation without a setup reads as the first one, exactly as
+  // `planSetupPrograms` places it, so the header names the program it is in.
+  const setups = [...new Set(operations.map(({ operation }) => (
+    setupForOperation(project, operation) ?? project.setups?.[0] ?? null
+  )))]
   if (setups.length > 1) {
     warnings.push({
       code: 'postMixedSetups',
       params: { setups: setups.map((setup) => setup?.name ?? 'Top').join(', ') },
     })
-    return { headerComments: [], warnings }
+    return { headerComments: [], manualIndexAngle: null, warnings }
   }
   const setup = setups[0]
-  if (!setup) return { headerComments: [], warnings }
+  if (!setup) return { headerComments: [], manualIndexAngle: null, warnings }
+
+  // A Bottom setup whose flip axis is not the bar's describes a different
+  // turn than the program's A180 about the bar (whether the operator or the
+  // program makes it). The stored setup is not silently rewritten: it is
+  // named, and the user decides (#1054 slice 2).
+  if (manualIndexingApplies(project) && isBarStock(project.stock)
+    && setupFace(setup) === 'bottom' && setup.orientation.axis !== project.stock.axis) {
+    warnings.push({
+      code: 'setupFlipAxisMismatch',
+      params: {
+        setup: setup.name,
+        axis: setup.orientation.axis.toUpperCase(),
+        barAxis: project.stock.axis.toUpperCase(),
+      },
+    })
+  }
 
   if (setupLacksRegistration(project, setup)) {
     warnings.push({ code: 'postSetupNoRegistration', params: { setup: setup.name } })
   }
-  return { headerComments: setupHeaderLines(project, setup, input.definition), warnings }
+  // A manual-index program turns the bar itself when the machine has a rotary
+  // axis (#1054 slice 2b); without one the header keeps slice 2's instruction
+  // and nothing is posted. The turn is about the bar's own axis, so a machine
+  // whose rotary is about the other horizontal axis cannot make it: it is
+  // refused with the code the planner already uses for a mismatched rotary
+  // operation, never silently reduced to the comment-only header (#1054 fix 1,
+  // finding 4).
+  const turns = setupStatesManualIndexing(project, setup) && rotaryWord(input.definition) !== null
+  const rotary = input.definition.rotary
+  const bar = project.stock
+  let turnAxisMismatch = false
+  if (turns && rotary != null && isBarStock(bar) && rotary.about !== bar.axis) {
+    turnAxisMismatch = true
+    warnings.push({
+      code: 'postRotaryAxisMismatch',
+      params: {
+        operation: operations[0]?.operation.name ?? 'program',
+        machineAxis: rotary.about.toUpperCase(),
+        stockAxis: bar.axis.toUpperCase(),
+      },
+    })
+  }
+  return {
+    headerComments: setupHeaderLines(project, setup, input.definition, machineCoordinateRetract),
+    manualIndexAngle: turns && !turnAxisMismatch ? manualIndexAngle(setup) : null,
+    warnings,
+  }
 }
 // ── Rotary axis (#393) ────────────────────────────────────────
 

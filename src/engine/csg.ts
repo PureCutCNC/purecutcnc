@@ -18,10 +18,10 @@ import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
 import { barCentre, barPivotZ, isBarStock } from '../types/barStock'
-import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, SquareStock, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
-import { aroundFeaturesActive } from '../store/helpers/projectType'
+import { aroundFeaturesActive, barSeedsModel } from '../store/helpers/projectType'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh, orientImportedMesh } from './importedMesh'
 import {
@@ -994,74 +994,162 @@ export function roundBarSolid(module: ManifoldToplevel, stock: RoundStock): Mani
 }
 
 /**
- * The Around model solid (issue #395): the bar with every visible Around
- * feature applied in project order. A subtract is a difference; an add is
- * `union(current, intersection(slab, bar))`, so restored material ends exactly
- * at the bar's own surface and an island stands inside a surrounding cut.
- *
- * `null` unless at least one visible Around subtract yields a slab: an Around
- * add alone leaves the bar as it already is. The bar itself stays whole for the
- * adds' intersections and is released at the end.
+ * The square blank as a Manifold prism in project coordinates (#1054 slice 1):
+ * the blank's box, `thickness` up, lying along its axis. Its box is the stock's
+ * own, so the uncut prism sits exactly on the stock mesh drawn over it, and its
+ * pivot is the same true turning pivot as the round bar's (`barPivotZ` =
+ * side / 2, the box centre across).
  */
-export function buildAroundModelSolid(
+export function squareBarSolid(module: ManifoldToplevel, stock: SquareStock): ManifoldSolid {
+  const bounds = getStockBounds(stock)
+  const cube = module.Manifold.cube(
+    [
+      bounds.maxX - bounds.minX,
+      bounds.maxY - bounds.minY,
+      stock.thickness,
+    ],
+    true,
+  )
+  try {
+    return cube.translate([
+      (bounds.minX + bounds.maxX) / 2,
+      (bounds.minY + bounds.maxY) / 2,
+      stock.thickness / 2,
+    ])
+  } finally {
+    // The caller owns the translated solid; the cube is WASM-backed.
+    cube.delete()
+  }
+}
+
+/**
+ * The bar as the part's own material on every face (#1054 slice 1): the round
+ * cylinder or the square prism, about the true turning pivot and the bar's
+ * length. Both shapes share one box, so a round bar and a square blank of the
+ * same stock differ only in the shape of their surface.
+ */
+export function barStockSolid(module: ManifoldToplevel, stock: BarStock): ManifoldSolid {
+  return isRoundStock(stock) ? roundBarSolid(module, stock) : squareBarSolid(module, stock)
+}
+
+/** `base ∪ (solid ∩ bar)`; added material never stands outside the bar. */
+function unionClippedToBar(
+  module: ManifoldToplevel,
+  base: ManifoldSolid,
+  solid: ManifoldSolid,
+  bar: ManifoldSolid,
+): ManifoldSolid {
+  const island = module.Manifold.intersection(solid, bar)
+  try {
+    return module.Manifold.union(base, island)
+  } finally {
+    island.delete()
+  }
+}
+
+/**
+ * The part's solid in a rotary project (#1054 slice 1): the bar each face cuts
+ * into.
+ *
+ * The bar is the material, so there is no base add. A Top or Bottom subtract
+ * cuts the bar directly and an add unions material back, clipped to the bar.
+ * The Around sheet's wrapped slabs run on that **same** solid, so one model
+ * shows every face. Every feature — flat and Around — is applied in the
+ * project's own feature order (#1054 fix 1, finding 6): a feature's position in
+ * the tree is the order the user expects the material to change, and applying
+ * one face's features as a later batch would let an earlier Around add restore
+ * a cut a later Top/Bottom subtract had made. An Around add alone still leaves
+ * the bar as it was.
+ *
+ * The Around slabs are built before the fold, and a failure to wrap one is
+ * caught so it cannot take the flat faces down with it (the previous fallback).
+ * Groups of features expanded from one project row (text shapes) keep that
+ * row's position and their own order.
+ *
+ * Returns `null` for a non-bar stock. Block projects never call this: their
+ * flat model is built exactly as it always was.
+ */
+export function buildBarModelSolid(
   module: ManifoldToplevel,
   project: Project,
+  visibleFlatFeatures: SketchFeature[],
   visibleAroundFeatures: SketchFeature[],
   arcStepRadians: number = DEFAULT_ARC_STEP_RADIANS,
 ): ManifoldSolid | null {
-  if (!isRoundStock(project.stock)) return null
-  const options: AroundSlabOptions = { minHeight: minRenderHeight(project.meta.units), arcStepRadians }
+  if (!isBarStock(project.stock)) return null
+  const bar = barStockSolid(module, project.stock)
+  let current: ManifoldSolid = bar
+  let handedOver = false
+  // Replacing `current` releases the previous solid, unless it is still the
+  // bar: that stays whole for every add's intersection until the end.
+  const replace = (next: ManifoldSolid): void => {
+    if (current !== bar) current.delete()
+    current = next
+  }
 
-  const features: SketchFeature[] = []
-  const slabs: ManifoldSolid[] = []
+  // One ordered list of the boolean features, flat and Around alike. A row's
+  // position comes from the project's own feature list; its expanded shapes
+  // stay together, in their own order, because the sort is stable.
+  const rowIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
+  const stages: Array<{ index: number; around: boolean; feature: SketchFeature }> = []
+  for (const around of [false, true] as const) {
+    for (const source of around ? visibleAroundFeatures : visibleFlatFeatures) {
+      const index = rowIndex.get(source.id) ?? Number.MAX_SAFE_INTEGER
+      for (const feature of expandFeatureGeometry(source, false)) {
+        stages.push({ index, around, feature })
+      }
+    }
+  }
+  stages.sort((a, b) => a.index - b.index)
+
+  // The Around sheet's slabs are wrapped up front. A failure here is caught so
+  // it cannot take the flat faces down with it.
+  const options: AroundSlabOptions = { minHeight: minRenderHeight(project.meta.units), arcStepRadians }
+  const slabs = new Map<SketchFeature, ManifoldSolid>()
+  let aroundFailed = false
   try {
-    for (const feature of visibleAroundFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))) {
+    for (const stage of stages) {
+      if (!stage.around) continue
+      const { feature } = stage
       if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
       const slab = buildAroundFeatureSolid(module, project, feature, options)
-      if (slab) {
-        features.push(feature)
-        slabs.push(slab)
-      }
+      if (slab) slabs.set(feature, slab)
     }
   } catch (error) {
-    for (const slab of slabs) slab.delete()
-    throw error
+    aroundFailed = true
+    console.error('Failed to apply the Around features to the bar model, showing the flat faces only.', error)
   }
 
-  if (!features.some((feature) => feature.operation === 'subtract')) {
-    for (const slab of slabs) slab.delete()
-    return null
-  }
-
-  const bar = roundBarSolid(module, project.stock)
-  let current: ManifoldSolid | null = null
-  let handedOver = false
   try {
-    for (let index = 0; index < features.length; index += 1) {
-      const slab = slabs[index]
-      const base: ManifoldSolid = current ?? bar
-      if (features[index].operation === 'subtract') {
-        const next: ManifoldSolid = module.Manifold.difference(base, slab)
-        current?.delete()
-        current = next
-      } else {
-        const island = module.Manifold.intersection(slab, bar)
-        let next: ManifoldSolid | null = null
-        try {
-          next = module.Manifold.union(base, island)
-        } finally {
-          island.delete()
-        }
-        current?.delete()
-        current = next
+    for (const stage of stages) {
+      const { feature, around } = stage
+      if (around && aroundFailed) continue
+      if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
+      // A wrapped slab is owned by `slabs`; a flat solid is built and released
+      // here. Neither is deleted before the boolean that consumes it returns.
+      const solid = around ? slabs.get(feature) ?? null : buildFeatureSolid(module, project, feature)
+      if (!solid) continue
+      try {
+        const next = feature.operation === 'subtract'
+          ? module.Manifold.difference(current, solid)
+          : unionClippedToBar(module, current, solid, bar)
+        replace(next)
+      } finally {
+        if (!around) solid.delete()
       }
     }
+
     handedOver = true
     return current
   } finally {
-    for (const slab of slabs) slab.delete()
-    bar.delete()
-    if (!handedOver) current?.delete()
+    for (const slab of slabs.values()) slab.delete()
+    if (handedOver) {
+      // The returned solid owns its own object; only the seed is released.
+      if (current !== bar) bar.delete()
+    } else {
+      if (current !== bar) current.delete()
+      bar.delete()
+    }
   }
 }
 
@@ -1174,11 +1262,14 @@ function solidToModelMesh(solid: ManifoldSolid, threePalette: ThreeThemePalette)
 }
 
 /**
- * The scene's one model mesh (issue #395): the flat solid exactly as before,
- * and — when a visible Around subtract yields one — the Around solid beside it,
- * unioned into that same mesh. A failure in the Around part is caught here so
- * it cannot take the flat model down. A flat model with no Around content takes
- * exactly the path it always did.
+ * The scene's one model mesh.
+ *
+ * In a rotary project the bar is the material on every face (#1054 slice 1), so
+ * the flat and Around features build one solid seeded from the bar itself. Any
+ * other project — a block for milling or plasma — takes the flat path exactly
+ * as it always did, with no bar seed, no clipping and no Around content
+ * (issue #395's rule that only a rotary round bar models Around features still
+ * holds).
  */
 async function buildBooleanModel(
   project: Project,
@@ -1187,35 +1278,23 @@ async function buildBooleanModel(
   threePalette: ThreeThemePalette,
 ): Promise<THREE.Mesh | null> {
   const module = await getManifoldModule()
-  const flat = buildFlatModelSolid(module, project, visibleFeatures)
-  let around: ManifoldSolid | null = null
-  if (aroundFeatures.length > 0 && isRoundStock(project.stock)) {
+  let combined: ManifoldSolid | null
+  if (barSeedsModel(project)) {
     try {
-      around = buildAroundModelSolid(module, project, aroundFeatures)
+      combined = buildBarModelSolid(module, project, visibleFeatures, aroundFeatures)
     } catch (error) {
-      console.error('Failed to build the Around 3D model, showing the flat model only.', error)
+      console.error('Failed to build the rotary 3D model from the bar, showing the flat model only.', error)
+      combined = buildFlatModelSolid(module, project, visibleFeatures)
     }
+  } else {
+    combined = buildFlatModelSolid(module, project, visibleFeatures)
   }
 
-  let combined: ManifoldSolid | null = flat
+  if (!combined) return null
   try {
-    if (flat && around) {
-      combined = module.Manifold.union(flat, around)
-      flat.delete()
-      around.delete()
-      around = null
-    } else if (around) {
-      combined = around
-      around = null
-    }
-
-    if (!combined) {
-      return null
-    }
     return solidToModelMesh(combined, threePalette)
   } finally {
-    combined?.delete()
-    around?.delete()
+    combined.delete()
   }
 }
 
