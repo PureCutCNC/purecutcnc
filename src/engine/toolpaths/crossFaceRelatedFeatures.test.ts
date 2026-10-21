@@ -183,7 +183,7 @@ console.log("1. Frank's Top/Bottom file: each pocket stops at its own floor...")
 
 {
   const project = normalizeProject(
-    JSON.parse(readFileSync(new URL('../../../scripts/fixtures-1079/round-stock-top-bottom.camj', import.meta.url), 'utf8')) as Project,
+    JSON.parse(readFileSync(new URL('./crossFaceRelatedFeatures.fixture.camj', import.meta.url), 'utf8')) as Project,
   )
   const topOperation = project.operations.find((entry) => entry.id === 'op0008')
   const bottomOperation = project.operations.find((entry) => entry.id === 'op0019')
