@@ -245,7 +245,6 @@ export const warningsEn = {
   'warnings.rotaryBelowCentreline': "{operation}: the model reaches below the bar's centreline near {along} along the bar, at {angle}°. The tool stops at the centreline there.",
   'warnings.rotaryModelOutsideBar': '{operation}: part of the model lies outside the bar. Those parts are not machined.',
   'warnings.rotaryStockToLeaveInvalid': '{operation}: the radial stock to leave must be a finite value of zero or more and must leave a usable sampling radius. No motion is generated.',
-  'warnings.rotarySquareFinishNeedsRough': 'Operation "{operation}" was not generated: an around finish on a square blank needs an around rough before it in the same setup. With no rough, or with only an along rough over a retained end, its first ring would cut the standing square corner in one pass.',
   'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',
   'warnings.postSetupOperationRefused': 'Operation "{operation}" has no toolpath because its setup cannot cut it. Fix or remove the operation before exporting.',
   'warnings.workholdingDiameter': "{operation}: the {clamp} diameter {diameter} is smaller than the square blank's corners ({required}); enlarge it or reset its type to Chuck.",
@@ -275,7 +274,6 @@ export const warningsEn = {
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
   'warnings.postSquareAroundToolpathStale': 'Operation "{operation}" was not exported: its toolpath is out of date for this project. Regenerate it before exporting.',
-  'warnings.postSquareAroundRoughMissing': 'Operation "{operation}" was not exported: the rough that clears this around finish is not earlier in the same program. Include the rough before it, then export again.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope and the cut would take more than the operation\'s allowed depth, so the standing corners would sweep into the cutter.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',

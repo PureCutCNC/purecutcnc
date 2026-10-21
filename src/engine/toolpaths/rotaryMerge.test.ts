@@ -263,8 +263,7 @@ console.log('Testing that a generated around ring merges and still posts...')
     ...base, stepdown: 2, passDirection: 'around',
   }, {})
   const finish = generateRotaryFinish('merge-finish', model, stock, normalized, {
-    ...base, passDirection: 'around',
-    squareRoughLeft: rough.squareRoughLeft ? [rough.squareRoughLeft] : undefined,
+    ...base, passDirection: 'around', stepdown: 2,
   }, {})
   // A constant-tip ring is one straight line in (along, A, Z): the merge must
   // collapse each ring to its own ends rather than one move per sample.

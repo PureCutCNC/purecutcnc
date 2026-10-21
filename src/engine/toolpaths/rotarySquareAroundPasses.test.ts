@@ -31,12 +31,14 @@
  *    at its angle: a layer is exactly one `stepdown` below the layer above, and
  *    that layer either cut there (one stepdown lower) or skipped the sample
  *    because its standing material was already below its radius;
- *  - an around finish with no covering rough is refused with no motion
- *    (`rotarySquareFinishNeedsRough`): a **raw** blank would take a full-depth
- *    corner bite in its first ring, and an along rough over a retained end
- *    leaves that corner standing. Since #1045 slice K the export check does not
- *    attempt to re-prove coverage from the program; the generator's safety is
- *    proven by `squareAroundGenerator.property.test.ts`.
+ *  - an around finish **protects itself** (#1045 slice M): before it follows
+ *    the model it clears the standing blank above its own finish surface in the
+ *    around rough's layered rings, one `stepdown` per layer from the corner
+ *    radius down. It therefore depends on no other operation: a raw blank, a
+ *    disabled rough, a rough later in the list and an along rough over a
+ *    retained end all generate the same finish motion. The export check does
+ *    not re-prove coverage from the program; the generator's safety is proven
+ *    by `squareAroundGenerator.property.test.ts`.
  *
  * The export check (`motionPipeline.ts`, #1045 slice K) regenerates an
  * around-mode square operation for the current project and requires the motion
@@ -188,8 +190,7 @@ console.log('Testing that a square blank generates around passes...')
   assert.ok(rough.moves.length > 0, 'the square around rough cuts')
   assert.ok(rough.bounds !== null, 'the square around rough has bounds')
   const finish = generateRotaryFinish('square-finish', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
-    squareRoughLeft: rough.squareRoughLeft ? [rough.squareRoughLeft] : undefined,
+    ...SQUARE_BASE, passDirection: 'around', stepdown: 2,
   }, {})
   assert.deepEqual(finish.warnings, [], 'the square around finish has no warning')
   assert.ok(finish.moves.length > 0, 'the square around finish cuts')
@@ -275,71 +276,93 @@ console.log('Testing the square touch-radius gate on every cut point...')
 }
 
 // ---------------------------------------------------------------------------
-// 3. The around finish refusal (#1045 slice K; licensed by coverage in L).
+// 3. The around finish protects itself (#1045 slice M).
 //
 //    A finish follows the model. On a **raw** square blank the corners stand
-//    whole layers above it, so its first ring would take a full-depth corner
-//    bite. Slice E let it generate and warned because the export guard decided;
-//    slice K removed that guard, so the generator refuses with no motion and
-//    the error code. Since slice L the licence is the **material an earlier
-//    rough's own result leaves**: a covering around rough's `squareRoughLeft`
-//    admits the finish, a model equal to the blank's own surface still needs no
-//    rough, an **along** rough over a retained end leaves that corner standing
-//    and is refused, and over a band with no retained end it clears the blank
-//    and is admitted.
+//    whole layers above it, so a single model-following first ring would take a
+//    full-depth corner bite. Since slice M the finish first clears its own
+//    standing material in the around rough's layered rings -- one `stepdown`
+//    per layer from the blank's corner radius down to its lowest tip -- and
+//    only then makes its finish pass. It therefore needs no licence from an
+//    earlier operation: no rough, a disabled rough, a rough on another target
+//    and an along rough over a retained end all generate the same motion.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the around finish refusal...')
+console.log('Testing the around finish\'s own clearing...')
 {
   const raw = generateRotaryFinish('finish-raw', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, passDirection: 'around', stepdown: 2,
   }, {})
-  assert.deepEqual(raw.moves, [], 'a finish on a raw square blank emits no motion')
-  assert.deepEqual(raw.warnings.map((warning) => warning.code),
-    ['rotarySquareFinishNeedsRough'], 'and refuses with the rough-first code')
-  assert.equal(raw.bounds, null, 'and has no bounds')
+  assert.deepEqual(raw.warnings, [], 'a finish on a raw square blank warns about nothing')
+  assert.ok(raw.moves.length > 0, 'and cuts')
+  assert.ok(raw.bounds !== null, 'and has bounds')
 
+  // The **highest** cut at every angle is within one stepdown of the blank
+  // there: the first clearing layer starts at the corner radius, not at the
+  // model. The finish pass afterwards cuts at the model, far below it, so only
+  // each angle's highest cut tests the first layer.
+  const highestTip = new Map<number, number>()
+  for (const move of raw.moves) {
+    if (move.kind !== 'cut') continue
+    for (const point of [move.from, move.to]) {
+      const tip = tipOf(point)
+      if (tip >= TRAVEL_TIP - 1e-9) continue
+      const angle = angleOf(point)
+      const previous = highestTip.get(angle)
+      if (previous === undefined || tip > previous) highestTip.set(angle, tip)
+    }
+  }
+  let highest = Number.NEGATIVE_INFINITY
+  for (const [angle, tip] of highestTip) {
+    const material = squareRotaryTouchRadius(SQUARE, angle, FLAT.radius, FLAT.type)
+    highest = Math.max(highest, material - tip)
+  }
+  assert.ok(highest <= 2 + 0.06,
+    `the finish's first clearing layer takes at most one stepdown of blank (${highest.toFixed(3)} mm)`)
+  assert.ok(highest > 1, `and it clears a real layer of blank at the corner (${highest.toFixed(3)} mm)`)
+
+  // The finish with a rough before it is the same operation: generated motion
+  // does not depend on the operation list.
   const aroundRough = generateRotaryRough('finish-roughed-rough', SQUARE_MODEL, SQUARE, FLAT, {
     ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
   }, {})
-  assert.ok(aroundRough.squareRoughLeft, 'the around rough reports the material it leaves')
-
   const roughed = generateRotaryFinish('finish-roughed', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
-    squareRoughLeft: aroundRough.squareRoughLeft ? [aroundRough.squareRoughLeft] : undefined,
+    ...SQUARE_BASE, passDirection: 'around', stepdown: 2,
   }, {})
-  assert.deepEqual(roughed.warnings, [], 'the same finish with an around rough warns about nothing')
-  assert.ok(roughed.moves.length > 0, 'and cuts')
+  assert.deepEqual(roughed.warnings, [], 'the same finish after a rough warns about nothing')
+  assert.deepEqual(roughed.moves, raw.moves,
+    `the around rough (${aroundRough.moves.length} moves) does not change the finish's own motion`)
 
-  const alongEndedRough = generateRotaryRough('finish-along-ended-rough', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown: 2, passDirection: 'along',
+  // A finish whose saved stepdown is zero falls back to the tool's default --
+  // the value a new rotary rough on that tool is seeded with. A tool with no
+  // default either refuses rather than taking the corner in one ring.
+  const toolWithDefault: NormalizedTool = { ...FLAT, defaultStepdown: 1.5 }
+  const fallback = generateRotaryFinish('finish-fallback', SQUARE_MODEL, SQUARE, toolWithDefault, {
+    ...SQUARE_BASE, stepdown: 0, passDirection: 'around',
   }, {})
-  const alongEnded = generateRotaryFinish('finish-along-ended', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
-    squareRoughLeft: alongEndedRough.squareRoughLeft ? [alongEndedRough.squareRoughLeft] : undefined,
+  assert.deepEqual(fallback.warnings, [], 'a zero saved stepdown reads the tool default')
+  assert.ok(fallback.moves.length > 0, 'and the fallback clears and finishes')
+  const explicit = generateRotaryFinish('finish-explicit', SQUARE_MODEL, SQUARE, toolWithDefault, {
+    ...SQUARE_BASE, stepdown: 1.5, passDirection: 'around',
   }, {})
-  assert.deepEqual(alongEnded.moves, [], 'an along rough over a retained end does not cover the around finish')
-  assert.deepEqual(alongEnded.warnings.map((warning) => warning.code),
-    ['rotarySquareFinishNeedsRough'], 'so the finish is refused')
+  assert.deepEqual(fallback.moves, explicit.moves, "the fallback is the tool's `defaultStepdown` exactly")
 
-  const alongOpenRough = generateRotaryRough('finish-along-open-rough', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, alongStart: 0, alongEnd: 40, stepdown: 2, passDirection: 'along',
+  const noDefault: NormalizedTool = { ...FLAT, defaultStepdown: 0 }
+  const refused = generateRotaryFinish('finish-no-stepdown', SQUARE_MODEL, SQUARE, noDefault, {
+    ...SQUARE_BASE, stepdown: 0, passDirection: 'around',
   }, {})
-  const alongOpen = generateRotaryFinish('finish-along-open', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, alongStart: 0, alongEnd: 40, passDirection: 'around',
-    squareRoughLeft: alongOpenRough.squareRoughLeft ? [alongOpenRough.squareRoughLeft] : undefined,
-  }, {})
-  assert.deepEqual(alongOpen.warnings, [], 'an along rough over a band with no retained end is admitted')
-  assert.ok(alongOpen.moves.length > 0, 'and cuts')
+  assert.deepEqual(refused.moves, [], 'a finish with no stepdown anywhere emits no motion')
+  assert.deepEqual(refused.warnings.map((warning) => warning.code), ['stepdownPositive'],
+    'and refuses with the same code a rough uses')
 
   // The blank itself as the model: no material stands above the tip beyond the
-  // stock the operation leaves, so no rough is needed.
+  // stock the operation leaves, so there are no clearing layers to emit.
   const blankModel = prism(SQUARE, SQUARE_SECTION, [0, 40])
   const nearNet = generateRotaryFinish('finish-near-net', blankModel, SQUARE, FLAT, {
     stepover: 4, sampleSpacing: 2, stockToLeave: 0, alongStart: 0, alongEnd: 40,
-    safeRadius: 40, requestedCellSize: 0.2, passDirection: 'around',
+    safeRadius: 40, requestedCellSize: 0.2, passDirection: 'around', stepdown: 2,
   }, {})
-  assert.deepEqual(nearNet.warnings, [], 'a finish on a blank already at its model needs no rough and warns about nothing')
+  assert.deepEqual(nearNet.warnings, [], 'a finish on a blank already at its model warns about nothing')
   assert.ok(nearNet.moves.length > 0, 'and cuts')
 }
 
@@ -664,8 +687,7 @@ console.log('Testing the retained-square shoulders on both ring directions...')
     ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
   }, {})
   const finish = generateRotaryFinish('shoulder-finish', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
-    squareRoughLeft: rough.squareRoughLeft ? [rough.squareRoughLeft] : undefined,
+    ...SQUARE_BASE, passDirection: 'around', stepdown: 2,
   }, {})
   const pulled = { start: SQUARE_BASE.alongStart + FLAT.radius, end: SQUARE_BASE.alongEnd - FLAT.radius }
   let forwardRings = 0
@@ -845,12 +867,14 @@ function post(
 }
 
 // ---------------------------------------------------------------------------
-// 6. Generation through the production adapter: the rough-before status is
-//    derived from the operation list, and a finish without a covering rough is
-//    refused (#1045 slice K). An along rough over a retained end is not cover.
+// 6. Generation through the production adapter (#1045 slice M): a square
+//    around finish clears its own standing material, so its motion is
+//    identical whether an earlier rough exists, is disabled, sits on another
+//    target, comes later, or is an along rough over a retained end. Nothing in
+//    the operation list can make the finish's first ring take the corner.
 // ---------------------------------------------------------------------------
 
-console.log('Testing the adapter\'s rough-before status and the generated programs...')
+console.log('Testing the adapter\'s self-protecting around finish...')
 {
   const { project } = fixture()
   const [rough, finish] = project.operations
@@ -861,62 +885,34 @@ console.log('Testing the adapter\'s rough-before status and the generated progra
 
   const finishEnvelope = computeOperationToolpath(project, finish)
   assert.ok(finishEnvelope, 'the around finish generates through the dispatch')
-  assert.deepEqual(finishEnvelope!.result.warnings, [], 'the finish warns about nothing because the around rough precedes it')
-  assert.ok(finishEnvelope!.result.moves.length > 0, 'the around finish cuts')
+  assert.deepEqual(finishEnvelope!.result.warnings, [], 'the finish warns about nothing')
+  assert.ok(finishEnvelope!.result.moves.length > 0, 'the around finish clears its blank and cuts')
+  const expected = finishEnvelope!.result.moves
 
-  const refused = (result: { warnings: Array<{ code: string }>; moves: ToolpathMove[] }, label: string) => {
-    assert.deepEqual(result.moves, [], `${label} emits no motion`)
-    assert.deepEqual(result.warnings.map((warning) => warning.code),
-      ['rotarySquareFinishNeedsRough'], `${label} is refused`)
+  const same = (candidate: Project, label: string): void => {
+    const result = computeOperationToolpath(candidate, finish)
+    assert.ok(result, `${label}: the finish is a result, not a missing envelope`)
+    assert.deepEqual(result!.result.warnings, [], `${label}: the finish still warns about nothing`)
+    assert.deepEqual(result!.result.moves, expected, `${label}: the finish's own motion is unchanged`)
   }
 
-  // Remove the rough: the same finish on the raw blank is refused.
-  const rawProject: Project = { ...project, operations: [finish] }
-  const rawFinish = computeOperationToolpath(rawProject, finish)
-  assert.ok(rawFinish, 'the finish is a result, not a missing envelope')
-  refused(rawFinish!.result, 'the finish on a raw blank')
-
-  // A disabled rough is not a rough.
-  const disabled: Project = {
-    ...project,
-    operations: [{ ...rough, enabled: false }, finish],
-  }
-  refused(computeOperationToolpath(disabled, finish)!.result, 'a disabled rough')
-  // A rough on another target does not count for this one.
-  const otherTarget: Project = {
-    ...project,
-    operations: [{ ...rough, target: { source: 'stock' } }, finish],
-  }
-  refused(computeOperationToolpath(otherTarget, finish)!.result, 'a rough on another target')
-  // A rough that comes after the finish does not precede it.
-  const reordered: Project = { ...project, operations: [finish, rough] }
-  refused(computeOperationToolpath(reordered, finish)!.result, 'a rough later in the list')
-  // An **along** rough over the retained end leaves its corner standing: not cover.
-  const alongRough: Project = {
-    ...project,
-    operations: [{ ...rough, rotaryPassDirection: 'along' as const }, finish],
-  }
-  refused(computeOperationToolpath(alongRough, finish)!.result, 'an along rough over a retained end')
-  // A rough held back by its chuck support only reaches the supported band; the
-  // finish over the whole band would take the un-roughed corner at the far end.
+  // Remove the rough: the finish is the same operation on the raw blank.
+  same({ ...project, operations: [finish] }, 'no rough at all')
+  // A disabled rough, one on another target, and one later in the list.
+  same({ ...project, operations: [{ ...rough, enabled: false }, finish] }, 'a disabled rough')
+  same({ ...project, operations: [{ ...rough, target: { source: 'stock' } }, finish] }, 'a rough on another target')
+  same({ ...project, operations: [finish, rough] }, 'a rough later in the list')
+  // An **along** rough over the retained end leaves its corner standing, and a
+  // rough held back by its chuck support never reaches the far end. Neither can
+  // change the finish, because nothing is licensed from them.
+  same({ ...project, operations: [{ ...rough, rotaryPassDirection: 'along' as const }, finish] },
+    'an along rough over a retained end')
   const supported = fixture('x', 'around', 20)
-  refused(computeOperationToolpath(supported.project, supported.project.operations[1])!.result,
-    'a rough held back by its chuck support')
-
-  // #1045 slice L, finding 1: an ineffective rough licenses nothing. A zero
-  // stepdown makes the rough refuse with no motion, so the finish has no
-  // coverage; a rough that leaves 5 mm above a zero-allowance finish exceeds
-  // the finish's bounded bite.
-  const zeroStepdown: Project = {
-    ...project,
-    operations: [{ ...rough, stepdown: 0 }, finish],
-  }
-  refused(computeOperationToolpath(zeroStepdown, finish)!.result, 'a zero-stepdown rough')
-  const mismatched: Project = {
-    ...project,
-    operations: [{ ...rough, stockToLeaveRadial: 5 }, { ...finish, stockToLeaveRadial: 0 }],
-  }
-  refused(computeOperationToolpath(mismatched, mismatched.operations[1])!.result,
+  same({ ...supported.project, operations: [supported.project.operations[1]] }, 'a rough held back by its chuck support')
+  // An ineffective rough (zero stepdown) and a mismatched allowance are
+  // likewise irrelevant: the finish clears its own stock.
+  same({ ...project, operations: [{ ...rough, stepdown: 0 }, finish] }, 'a zero-stepdown rough')
+  same({ ...project, operations: [{ ...rough, stockToLeaveRadial: 5 }, { ...finish, stockToLeaveRadial: 0 }] },
     'a rough leaving 5 mm above a zero-allowance finish')
 }
 
@@ -994,17 +990,15 @@ console.log('Testing the square around export check...')
   assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: rough, moves: nudged }])),
     ['postSquareAroundToolpathStale'], 'a 1e-9 mm coordinate edit is refused as stale')
 
-  // #1045 slice L, finding 2: the licensing rough must be earlier in the same
-  // exported program. The finish's regenerated motion names the rough that
-  // licensed it, so exporting the finish alone is refused.
+  // #1045 slice M: the finish clears itself, so exporting it without its rough
+  // (or with the rough after it) is a legitimate program. Regenerate-and-match
+  // still proves each posted path is the generator's own current motion.
   assert.deepEqual(codesOf(post(project, ROTARY, [{ operation: finish, moves: finishResult.moves }])),
-    ['postSquareAroundRoughMissing'], 'the finish without its rough is refused')
+    [], 'the finish without its rough posts')
   assert.deepEqual(codesOf(post(project, ROTARY, [
     { operation: finish, moves: finishResult.moves },
     { operation: rough, moves: roughResult.moves },
-  ])), ['postSquareAroundRoughMissing'], 'a rough exported after the finish does not license it')
-  assert.deepEqual(finishResult.squareRoughIds, [rough.id],
-    'the finish names the rough its coverage came from')
+  ])), [], 'a rough exported after the finish posts too')
 
   // An along-mode operation is never regenerate-and-matched: its turns are all
   // at the travel height. Its generated moves post unchanged.
@@ -1018,17 +1012,14 @@ console.log('Testing the square around export check...')
   )
 
   // An along rough followed by an around finish over the retained end: the
-  // generator refuses the finish, so the mixed program has no finish motion to
-  // post. (Slice K's property test found the 6.28 mm corner bite this used to
-  // emit; the export check alone cannot see it.)
+  // finish clears its own corner, so the mixed program posts both operations.
   const mixedProject: Project = {
     ...project,
     operations: [{ ...rough, rotaryPassDirection: 'along' as const }, finish],
   }
   const mixedFinish = computeOperationToolpath(mixedProject, finish)
-  assert.deepEqual(mixedFinish!.result.moves, [], 'the around finish after an along rough emits no motion')
-  assert.deepEqual(mixedFinish!.result.warnings.map((warning) => warning.code),
-    ['rotarySquareFinishNeedsRough'], 'and is refused as uncovered')
+  assert.deepEqual(mixedFinish!.result.warnings, [], 'the around finish after an along rough warns about nothing')
+  assert.ok(mixedFinish!.result.moves.length > 0, 'and cuts')
 
   // A turning **rapid** below the travel height is refused in every mode: it
   // removes nothing and swings the standing corner into the cutter.

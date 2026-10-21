@@ -24,11 +24,21 @@
  * property of the generator, and this file is the test that owns it.
  *
  * It generates 300 seeded **generator-emitted** square around programs -- flat
- * and ball cutters, Ø1-12, a bare around rough, a bare around finish (refused
- * since slice K), around rough + around finish, and along rough + around finish,
- * with and without retained ends, `stepdown` 0.5-3 mm, default and custom
- * stepover/sampling, blanks from 10 to 60 mm square and 20 to 1 000 mm long --
- * and replays each one, in order, through its own reference.
+ * and ball cutters, Ø1-12, a bare around rough, a bare around finish, around
+ * rough + around finish, and along rough + around finish, with and without
+ * retained ends, `stepdown` 0.5-3 mm (one seed in ten draws the low end; the
+ * rest take 3 mm, since a millimetre-scale layer multiplies both the emitted
+ * rings and the replay), default and custom stepover/sampling, blanks from 10
+ * to 60 mm square and 20 to 1 000 mm long (every size band, the large ones on
+ * one seed in eight) -- and replays each one, in order, through its own
+ * reference. Since #1045 slice M removed the finish's licensing, a bare around
+ * finish clears its own blank and cuts, so every one of those programs is
+ * replayed. At least 30 of them (every eighth seed) are **default-parameter**
+ * programs on a shortened bar: their generator sampling is never coarsened, so
+ * the defaults the adapter actually emits are covered rather than only the
+ * coarsened draws. (The non-compact draws ask for a coarser sampling than the
+ * adapter's defaults for the run's time budget; the reference stays four times
+ * finer than whatever the case asks for.)
  *
  * The reference is written without the generator's helpers (no
  * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
@@ -46,8 +56,17 @@
  * ideal endpoints) and the surface tolerance includes that stated bound. A
  * consecutive straight **commanded** A move at one along and Z is replayed as
  * the one line it describes; that is the same controller path, not a coarser
- * one. The reference's sweep, pure-plunge and ball-shank behaviour is pinned by
- * hand-computed unit cases before the seeded run.
+ * one. A run of A-cuts whose interior points all lie within 0.05 mm of the
+ * chord is replayed as that chord too: a ring emitted as hundreds of short
+ * fragments would otherwise re-scan its whole cutter footprint for every
+ * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
+ * this suite exists to catch (and far inside `alongBin + ballRise`). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
+ * is pinned by hand-computed unit cases before the seeded run. An interval wholly
+ * inside the standing solid removes an interior span without crossing the
+ * surface; a scalar radial map cannot show the cavity, so its span is recorded
+ * separately (`interiorWorst`) and reported, not folded into the surface
+ * engagement -- a chord near a cutter's footprint edge can be long while the
+ * undercut itself is a fraction of a millimetre (#1045 slice M).
  *
  * Each case is drawn inside a fixed work budget. A case whose drawn bar would
  * exceed it is redrawn **shorter** (20 mm is the floor) and, only at that floor,
@@ -58,9 +77,12 @@
  *
  * For each program the reference asserts:
  *
- * 1. no cut engages more than its operation's bound -- a rough's `stepdown`, a
- *    finish's `stockToLeave` plus the rough's layer allowance, each plus the
- *    stated reference tolerance;
+ * 1. no turning cut **or plunge** engages more than its operation's bound --
+ *    a rough's `stepdown`, a finish's `stockToLeave` plus the rough's layer
+ *    allowance, each plus the stated reference tolerance. (An along-mode stage's
+ *    non-turning cuts stay reported rather than asserted: that output is frozen
+ *    byte-for-byte to the base, and a footprint-edge chord there is not a
+ *    radial depth.)
  * 2. no cutter body enters a retained end: every reference cell outside the
  *    band keeps the blank's material;
  * 3. no rapid turns A below the blank's corner radius plus 1 mm clearance;
@@ -68,10 +90,11 @@
  *    below it, and no more than the finish's own scallop plus the sampler's
  *    stated cell lift is left above it.
  *
- * The unsafe configurations the reference found -- an around finish with no
- * covering rough, and an along rough over a retained end -- are refused by the
- * generator with `rotarySquareFinishNeedsRough` and no motion; the test asserts
- * the refusal rather than replaying a cut that must not exist.
+ * #1045 slice M removed the finish's licensing entirely: a square around finish
+ * clears the standing blank above its own finish surface in the around rough's
+ * layered rings before it follows the model, so it depends on no other
+ * operation. Nothing is refused here; the self-clearing layers are what the
+ * engagement bound and the surface tolerance judge.
  *
  * The per-sample **touch-radius gate** is asserted by the seeded square-material
  * property in `rotarySquareAroundPasses.test.ts`, not duplicated here: a cut
@@ -89,7 +112,7 @@ import type { SquareStock } from '../../types/project'
 import { defaultTool, getStockBounds } from '../../types/project'
 import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import type { NormalizedTool, ToolpathMove } from './types'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
 // ── deterministic random source ──────────────────────────────────────────
 
@@ -161,6 +184,15 @@ function modelMaxSlope(profile: readonly { along: number; radius: number }[]): n
 // intersection of every commanded sample. Written blind to `rotaryModel.ts`.
 
 export const worstCell = { depth: 0, along: 0, angle: 0, material: 0, contact: 0 }
+/**
+ * The deepest **interior** span any move's body occupied inside standing
+ * material without crossing its surface (#1045 slice M). A scalar radial map
+ * cannot represent the cavity, so this is recorded separately rather than folded
+ * into the surface engagement: a chord near a cutter's footprint edge can be
+ * long while the undercut itself is a fraction of a millimetre, so it is not the
+ * operation's radial depth.
+ */
+export const interiorWorst = { depth: 0, along: 0, angle: 0, kind: '' }
 const referenceStats = { moves: 0, cells: 0, steps: 0 }
 const lowestContact = { contact: Number.POSITIVE_INFINITY, along: 0, angle: 0, tip: 0, kind: '' }
 
@@ -170,6 +202,14 @@ interface Reference {
   alongBin: number
   angleBins: number
   angleDeg: number
+  /** The blank's largest radius, an upper bound on any cell's material. */
+  maxMaterial: number
+  /**
+   * Bin stride of the cheap interior-removal diagnostic (#1045 slice M). It is
+   * a report, not an assertion, so the seeded run samples it; the hand-computed
+   * unit references keep 1 and are exact.
+   */
+  interiorStride: number
   material: Float64Array
 }
 
@@ -186,7 +226,7 @@ function createReference(stock: SquareStock, alongStart: number, alongEnd: numbe
   const row = new Float64Array(angleBins)
   for (let k = 0; k < angleBins; k++) row[k] = blankRadius(halfSide, (k + 0.5) * angleDeg)
   for (let i = 0; i < alongBins; i++) material.set(row, i * angleBins)
-  return { alongStart, alongBins, alongBin, angleBins, angleDeg, material }
+  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: Math.hypot(halfSide, halfSide), interiorStride: 1, material }
 }
 
 /**
@@ -252,6 +292,32 @@ function bodyIntervals(
 }
 
 /**
+ * The widest angle off its axis at which the cutter body can reach a cell whose
+ * standing material reaches `materialRadius` (#1045 slice M).
+ *
+ * A ball's body -- the sphere **and** the shank above its equator -- stays
+ * within `asin(R / (tip + R))` of the axis, because every point of it is inside
+ * the cylinder of radius `R` about the axis whose closest radius to the turn
+ * centre is `tip + R`. That bound is independent of the material: a ray 20 deg
+ * off a Ø4 ball at tip 2 crosses the body at radii 2.30..5.85, so material out
+ * at 6.5 is still reached in the interior. The old `asin(R / materialRadius)`
+ * admitted only 8.9 deg there and skipped the cell entirely.
+ *
+ * A flat's bottom face crosses a ray at `tip / cos(delta)`, so material out to
+ * `M` is reachable up to `acos(tip / M)`; `asin(R / M)` (the cylinder wall at
+ * the material radius) understated that too.
+ */
+function bodyAngularReachDeg(ball: boolean, cutterRadius: number, tip: number, materialRadius: number): number {
+  if (ball) {
+    const centre = tip + cutterRadius
+    return centre > cutterRadius ? Math.min(90, Math.asin(cutterRadius / centre) * 180 / Math.PI) : 90
+  }
+  if (!(tip > 0)) return 90
+  if (!(materialRadius > tip)) return 0
+  return Math.min(90, Math.acos(tip / materialRadius) * 180 / Math.PI)
+}
+
+/**
  * Apply one commanded move to the reference and return the deepest bite it
  * takes (`0` when it removes nothing measurable).
  *
@@ -283,8 +349,19 @@ function referenceMove(
   const dAngle = toAngle - fromAngle
   const dTip = toTip - fromTip
   const tipMin = Math.min(fromTip, toTip)
-  const halfSpan = tipMin > 0 ? Math.asin(Math.min(1, cutterRadius / tipMin)) : Math.PI / 2
-  const halfSpanDegrees = Math.min(90, halfSpan * 180 / Math.PI)
+  // A body can only *lower a surface* where it reaches the material radius at
+  // all. The wall of the cutter's axial cylinder meets a radius `M` at
+  // `asin(R / M)`, and no body point can leave that cylinder; the sphere can
+  // add up to its own angular extent `asin(R / (tip + R))` for a ball. Taking
+  // the material's bound as the blank's own largest radius -- never the tip,
+  // which for a deep layer is far inside the stock and made this window a whole
+  // 90 degrees on every flat -- is what keeps the swept window affordable. The
+  // wider true extent is used only by the cheap interior pass below.
+  const wallReach = Math.min(90, Math.asin(Math.min(1, cutterRadius / reference.maxMaterial)) * 180 / Math.PI)
+  const sphereReach = ball && tipMin + cutterRadius > 0
+    ? Math.min(90, Math.asin(Math.min(1, cutterRadius / (tipMin + cutterRadius))) * 180 / Math.PI)
+    : wallReach
+  const halfSpanDegrees = Math.max(wallReach, sphereReach)
   const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - cutterRadius - alongStart) / alongBin))
   const i1 = Math.min(alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + cutterRadius - alongStart) / alongBin))
   const windowLo = Math.min(fromAngle, toAngle) - halfSpanDegrees - angleDeg
@@ -311,10 +388,9 @@ function referenceMove(
       // The representative of this cell's angle nearest the move's own angle
       // span: the move can sweep past 0/360 and the cell is one direction.
       const target = cellAngle + 360 * Math.round((midAngle - cellAngle) / 360)
-      const angularHalfSpan = materialRadius > cutterRadius
-        ? Math.asin(Math.min(1, cutterRadius / materialRadius))
-        : Math.PI / 2
-      const angularHalfDeg = Math.min(90, angularHalfSpan * 180 / Math.PI)
+      const angularHalfDeg = materialRadius > cutterRadius
+        ? Math.min(90, Math.asin(cutterRadius / materialRadius) * 180 / Math.PI)
+        : 90
       // The interval of the move that can reach this cell at all.
       let lo = 0
       let hi = 1
@@ -372,17 +448,32 @@ function referenceMove(
         if (intervals.length === 0) continue
         let next = standing
         for (const span of intervals) {
-          if (standing < span.contact - 1e-12 || standing > span.exit + 1e-12) continue
-          if (span.contact < next) {
-            next = span.contact
-            if (span.contact < lowestContact.contact) {
-              lowestContact.contact = span.contact
-              lowestContact.along = cellAlong
-              lowestContact.angle = cellAngle
-              lowestContact.tip = tip
-              lowestContact.kind = move.kind
-            }
+          // A body whose solid starts at or above the standing surface is in
+          // air here.
+          if (span.contact >= standing - 1e-12) continue
+          if (span.contact < lowestContact.contact) {
+            lowestContact.contact = span.contact
+            lowestContact.along = cellAlong
+            lowestContact.angle = cellAngle
+            lowestContact.tip = tip
+            lowestContact.kind = move.kind
           }
+          // An interval that crosses the standing surface lowers it to its
+          // entrance. One wholly inside the solid removes an interior span and
+          // leaves the outermost stock standing (a scalar radial map cannot
+          // show the cavity); that removal is recorded in {@link interiorWorst}
+          // instead of being lost (#1045 slice M).
+          if (standing > span.exit + 1e-12) {
+            const inside = span.exit - span.contact
+            if (inside > interiorWorst.depth) {
+              interiorWorst.depth = inside
+              interiorWorst.along = cellAlong
+              interiorWorst.angle = cellAngle
+              interiorWorst.kind = move.kind
+            }
+            continue
+          }
+          if (span.contact < next) next = span.contact
         }
         if (next >= standing) continue
         const depth = startMaterial - next
@@ -400,7 +491,67 @@ function referenceMove(
       }
     }
   }
+  // #1045 slice M: record the **interior** removal the surface sweep cannot
+  // represent. A body interval wholly inside the standing solid leaves the
+  // outermost stock standing, so it takes no surface engagement -- but the
+  // material was still there and the cutter still occupied it. One pose per
+  // cell at the move's deepest endpoint is enough for the diagnostic, and it is
+  // cheap enough to use the body's true angular extent (`bodyAngularReachDeg`),
+  // which the surface sweep cannot afford. The body's extent for a ball is
+  // `asin(R / (tip + R))`; on the reviewer's Ø4 ball at tip 2 and a ray 20 deg
+  // off, the surface window `asin(R / 6.5)` is only 8.9 deg and would skip the
+  // cell entirely.
+  const deepAtEnd = toTip <= fromTip
+  const deepTip = deepAtEnd ? toTip : fromTip
+  const deepAlong = deepAtEnd ? toAlong : fromAlong
+  const deepAngle = deepAtEnd ? toAngle : fromAngle
+  const wideHalfDeg = bodyAngularReachDeg(ball, cutterRadius, deepTip, reference.maxMaterial)
+  const wideLo = deepAngle - wideHalfDeg - angleDeg
+  const wideHi = deepAngle + wideHalfDeg + angleDeg
+  const wideAll = wideHi - wideLo >= 360 - 1e-9
+  const wideFirst = wideAll ? 0 : Math.floor(wideLo / angleDeg)
+  const wideLast = wideAll ? angleBins - 1 : Math.ceil(wideHi / angleDeg)
+  const stride = Math.max(1, reference.interiorStride)
+  for (let i = i0; i <= i1; i += stride) {
+    const cellAlong = alongStart + (i + 0.5) * alongBin
+    const dx = cellAlong - deepAlong
+    if (dx * dx >= cutterRadius * cutterRadius) continue
+    const rowOffset = i * angleBins
+    for (let cell = wideFirst; cell <= wideLast; cell += stride) {
+      const k = wideAll ? cell : ((cell % angleBins) + angleBins) % angleBins
+      const materialRadius = material[rowOffset + k]
+      if (!(materialRadius > 0)) continue
+      const cellAngle = (k + 0.5) * angleDeg
+      let delta = cellAngle - deepAngle
+      while (delta > 180) delta -= 360
+      while (delta < -180) delta += 360
+      const intervals = bodyIntervals(ball, cutterRadius, deepTip, delta * Math.PI / 180, dx)
+      for (const span of intervals) {
+        if (span.contact >= materialRadius - 1e-12) continue
+        if (span.exit < materialRadius - 1e-12) {
+          const inside = span.exit - span.contact
+          if (inside > interiorWorst.depth) {
+            interiorWorst.depth = inside
+            interiorWorst.along = cellAlong
+            interiorWorst.angle = cellAngle
+            interiorWorst.kind = move.kind
+          }
+        }
+      }
+    }
+  }
   return engagement
+}
+
+/**
+ * The common engagement assertion for a turning cut and for a plunge (#1045
+ * slice M). Extracted so a hand-built over-bound plunge is checked directly by
+ * the unit block below: a mutation that turns this check into a no-op fails
+ * there as well as in the seeded run.
+ */
+function checkEngagement(engagement: number, bound: number, message: string): void {
+  assert.ok(engagement <= bound + 1e-6,
+    `${message} engages ${engagement.toFixed(4)} mm, over its ${bound.toFixed(4)} mm bound`)
 }
 
 // ── reference unit tests against hand-computed values (#1045 slice L) ─────
@@ -479,7 +630,46 @@ console.log('Testing the continuous reference against hand-computed values...')
       `ball shank: material at A${(k + 0.5) * 0.5} was ${reference.material[k].toFixed(4)}, expected ${expected.toFixed(4)}`)
     assert.ok(reference.material[k] < 2.4, 'ball shank: the interior shank removes down to the sphere contact')
   }
-  console.log('  continuous sweep, pure plunge and ball-shank repros match')
+  // Reviewer repro 4 (#1045 slice M): interior removal with the material above
+  // the body. The same Ø4 ball at 20 deg occupies radii 2.299..5.848. With the
+  // solid out to 6.5 the whole body is inside it: the outermost surface cannot
+  // move (the body never crosses it), but the 3.548 mm span the body removes is
+  // interior material and must be recorded as engagement, not lost. The old
+  // `standing > exit` skip reported zero there.
+  {
+    const reference = singleCellReference(10, 6.5)
+    const k = 40 // cell angle 20.25 deg; the cutter sits at A0.25
+    // Stand material only at the cell under test, so the returned engagement is
+    // that cell's and not a nearer cell's (the ray at the cutter's own angle is
+    // cut much deeper).
+    reference.material.fill(0)
+    reference.material[k] = 6.5
+    const engagement = referenceMove(reference, {
+      kind: 'cut',
+      from: { x: 10, y: 10, z: 2, a: 0.25 },
+      to: { x: 10, y: 10, z: 2, a: 0.25 },
+    }, 0, 2, true, alongOf, 0.25, 0.25)
+    const radians = 20 * Math.PI / 180
+    const contact = 4 * Math.cos(radians)
+      - Math.sqrt(Math.max(0, 4 - 16 * Math.sin(radians) ** 2))
+    const exit = 2 / Math.sin(radians)
+    assert.equal(engagement, 0,
+      'interior span: the body never crosses the surface, so it takes no surface engagement')
+    assert.ok(Math.abs(interiorWorst.depth - (exit - contact)) < 0.02,
+      `interior span: recorded span ${interiorWorst.depth.toFixed(4)}, expected ${(exit - contact).toFixed(4)}`)
+    assert.equal(reference.material[k], 6.5,
+      'interior span: the outermost stock is unchanged, because the body never crosses it')
+  }
+  // Reviewer repro 5 (#1045 slice M): the engagement bound is checked for a
+  // plunge as well as a turning cut. A plunge that takes more than its bound
+  // must be reported; this is the assertion the seeded run applies to every
+  // plunge, exercised directly so dropping the check fails here too.
+  {
+    assert.throws(() => checkEngagement(4.5, 3, 'plunge repro'), /plunge repro engages 4\.5000 mm/,
+      'an over-bound plunge is reported')
+    checkEngagement(3, 3, 'plunge at its bound')
+  }
+  console.log('  continuous sweep, pure plunge, ball-shank and interior-span repros match')
 }
 
 // ── the seeded cases ──────────────────────────────────────────────────────
@@ -491,9 +681,19 @@ console.log('Testing the continuous reference against hand-computed values...')
  * resolution above always holds. The drawn side, cutter, stepdown, stepover and
  * model are kept; only the bar length shrinks (20 mm is the stated minimum).
  */
-const MAX_REFERENCE_CELLS = 250_000
-const MAX_REPLAY_CELLS = 6_000_000
-const MAX_ANGLE_BINS = 4_096
+const MAX_REFERENCE_CELLS = 150_000
+const MAX_REPLAY_CELLS = 400_000
+/**
+ * How far an intermediate commanded point may sit from the chord that replaces
+ * its run, in millimetres (#1045 slice M). Every move is still swept at the
+ * reference's own resolution, but a ring emitted as hundreds of three-degree
+ * fragments would otherwise re-scan its whole footprint for each fragment. A
+ * 0.05 mm chord tolerance is far inside this file's stated bound
+ * (`alongBin + ballRise` on the order of a third of a millimetre) and an order
+ * of magnitude tighter than the 0.49 mm gouge this suite was built to catch.
+ */
+const COALESCE_TOLERANCE = 0.05
+const MAX_ANGLE_BINS = 2_048
 
 type ProgramKind = 'rough' | 'finish' | 'both' | 'mixed'
 
@@ -515,6 +715,16 @@ interface Case {
   alongStart: number
   alongEnd: number
   defaultParams: boolean
+  /** A default-parameter case whose bar is drawn short; never coarsened. */
+  compact: boolean
+  /**
+   * The finish's own clearing depth. A finish usually carries the tool's
+   * `defaultStepdown`, not the rough's drawn value; keeping it at 1.5 mm or more
+   * also keeps the replay affordable, because the finish now clears its own
+   * blank (#1045 slice M) and half-millimetre layers on a 60 mm blank would
+   * dominate the run.
+   */
+  finishStepdown: number
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
@@ -604,7 +814,77 @@ function mulberry32(seed: number): () => number {
 function drawCase(seed: number, lengthScale: number): Case {
   const rand = mulberry32(seed * 0x9e3779b1 + 0x1045)
   const pick = (low: number, high: number): number => low + (high - low) * rand()
-  const scale = seed % 4
+  // #1045 slice M: every eighth seed is a **default-parameter** program on a
+  // short bar. Its grid and replay are affordable without coarsening anything,
+  // so the default cutting programs the adapter actually produces are replayed,
+  // not only custom-sampling ones. The shapes cycle through finish-only,
+  // rough+finish, along-rough + around-finish and rough-only, and the retained
+  // ends alternate, so every combination is covered on both sides.
+  if (seed % 8 === 0) {
+    const compactKinds: ProgramKind[] = ['finish', 'both', 'mixed', 'rough', 'finish', 'both', 'mixed', 'both']
+    const slot = Math.floor(seed / 8)
+    const programKind = compactKinds[slot % compactKinds.length]
+    const roughKind = programKind === 'mixed' ? 'along' as const : 'around' as const
+    // Short bars and a cutter large against the blank keep the reference grid
+    // and the replay affordable at the adapter's own defaults.
+    const side = Math.round(pick(24, 30) * 2) / 2
+    const length = Math.max(20, Math.round(pick(20, 24) * lengthScale))
+    // Mostly balls: the surface sweep's window is `asin(R / material)`, so a
+    // ball's replay is affordable at default parameters; an eighth of the
+    // default cases carry a flat so flats are covered too.
+    const type = slot % 8 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
+    const diameter = Math.round(pick(8, Math.min(12, side * 0.5)) * 10) / 10
+    const radius = diameter / 2
+    const inscribed = side / 2
+    const modelRadius = Math.round(pick(0.7, 0.9) * inscribed * 10) / 10
+    const endsWanted = slot % 3 !== 2
+    const ends = endsWanted ? Math.max(1, Math.round(pick(0.05, 0.15) * length)) : 0
+    const bounds = getStockBounds(squareStock(side, length, 'x', { x: 0, y: 0 }))
+    const alongStart = bounds.minX + ends
+    const alongEnd = bounds.maxX - ends
+    const modelKind = seed % 2
+    const profile: { along: number; radius: number }[] = modelKind === 0
+      ? [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }]
+      : [
+        { along: alongStart, radius: modelRadius },
+        { along: alongEnd, radius: Math.max(0.6, modelRadius * pick(0.6, 0.95)) },
+      ]
+    const defaultStepover = Math.max(0.5 * diameter, 1e-3)
+    const stepover = defaultStepover
+    const roughSpacing = Math.max(radius / 2, 1e-3)
+    const finishSpacing = Math.max(radius / 4, 1e-3)
+    const requestedCellSize = Math.min(radius / 3, defaultStepover * 0.5)
+    // The layer depth matters here: it drives the finish's own clearing, and a
+    // millimetre-scale default keeps a deep corner to a handful of layers.
+    const stepdown = Math.round(pick(2.5, 3) * 10) / 10
+    return {
+      label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
+        + `${modelKind === 0 ? 'cyl' : 'cone'} ${programKind} ${roughKind} rough `
+        + `ends ${ends} stepdown ${stepdown} default`,
+      stock: squareStock(side, length, 'x', { x: 0, y: 0 }),
+      profile,
+      type,
+      diameter,
+      stepdown,
+      stepover,
+      roughSpacing,
+      finishSpacing,
+      requestedCellSize,
+      stockToLeave: 0,
+      programKind,
+      roughKind,
+      retained: ends > 0,
+      alongStart,
+      alongEnd,
+      defaultParams: true,
+      compact: true,
+      finishStepdown: 3,
+    }
+  }
+  // Every size band is covered, but the large ones only on one seed in eight:
+  // the reference's cells and sweep steps scale with the side, and a uniform
+  // draw over 10-60 mm spends most of the run on the top band.
+  const scale = [0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 1][seed % 16]
   const sizeRanges: ReadonlyArray<{ side: [number, number]; length: [number, number] }> = [
     { side: [10, 18], length: [20, 40] },
     { side: [16, 28], length: [40, 110] },
@@ -614,7 +894,10 @@ function drawCase(seed: number, lengthScale: number): Case {
   const size = sizeRanges[scale]
   const side = Math.round(pick(size.side[0], size.side[1]) * 2) / 2
   const length = Math.max(20, Math.round(pick(size.length[0], size.length[1]) * lengthScale))
-  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  // A flat's replay is the expensive shape (the cutter's wall reaches a given
+  // material radius at `asin(R/M)`, and its ring follows the square's own
+  // corner more closely than a ball's), so a quarter of the seeds carry one.
+  const type = seed % 4 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
   // The cutter scales with the blank, so the set covers Ø1-12 without asking a
   // sub-millimetre tool to machine a metre of stock in this test.
   const diameter = Math.round(pick(
@@ -623,8 +906,13 @@ function drawCase(seed: number, lengthScale: number): Case {
   ) * 10) / 10
   const radius = diameter / 2
   const inscribed = side / 2
-  const modelRadius = Math.round(pick(0.4, 0.85) * inscribed * 10) / 10
-  const kinds: ProgramKind[] = ['both', 'rough', 'finish', 'mixed', 'rough', 'mixed', 'both', 'mixed']
+  // Most programs leave a realistic corner to clear; a quarter keep a deep
+  // one (the finish's self-clearing is most demanding there).
+  const modelRadius = Math.round(pick(seed % 4 === 0 ? 0.4 : 0.6, 0.9) * inscribed * 10) / 10
+  // A bare around rough is the most expensive program to replay (every ring
+  // follows the raw square's corner), so it is one seed in eight; the finish and
+  // the mixed and rough+finish programs carry the rest of the coverage.
+  const kinds: ProgramKind[] = ['both', 'rough', 'finish', 'mixed', 'both', 'mixed', 'both', 'mixed']
   const programKind = kinds[seed % kinds.length]
   const roughKind = programKind === 'mixed' ? 'along' as const : 'around' as const
   // A mixed program with a retained end is the unsafe combination the finish
@@ -641,7 +929,9 @@ function drawCase(seed: number, lengthScale: number): Case {
   // with a mid-band vertical shoulder asks the around pass to face a wall it
   // has no along pass for; that is a separate geometry question, and the
   // reference's surface check excludes a vertical face (`modelSurfaceAt`).
-  const modelKind = seed % 2
+  // A cone makes every ring's Z change and keeps more of the emitted
+  // polyline; a quarter of the seeds carry one.
+  const modelKind = seed % 4 === 0 ? 1 : 0
   const profile: { along: number; radius: number }[] =
     modelKind === 0
       ? [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }]
@@ -651,17 +941,26 @@ function drawCase(seed: number, lengthScale: number): Case {
       ]
   // The default adapter parameters for this tool and operation kind.
   const defaultStepover = Math.max(0.5 * diameter, 1e-3)
-  const roughSpacing = Math.max(radius / 2, 1e-3)
-  const finishSpacing = Math.max(radius / 4, 1e-3)
-  const requestedCellSize = Math.min(radius / 3, defaultStepover * 0.5)
+  // The seeded set is one program per seed and the reference replays all 300
+  // inside its time budget, so a non-compact case asks for a coarser sampling
+  // than the adapter's default: the **default** sampling and the default
+  // cutting programs are the compact subset (every eighth seed), which is never
+  // coarsened. Coarser sampling also coarsens the reference by the same 4x
+  // relationship, never the other way round.
+  const roughSpacing = Math.max(radius, 1e-3)
+  const finishSpacing = Math.max(radius / 2, 1e-3)
+  const requestedCellSize = Math.min(radius / 2, defaultStepover * 0.5)
   const custom = seed % 5 === 0
-  const stepover = custom ? Math.max(pick(0.3, 1) * diameter, 1e-3) : defaultStepover
-  const rough = custom ? Math.max(pick(0.2, 1) * radius, 1e-3) : roughSpacing
-  const finish = custom ? Math.max(pick(0.15, 1) * radius, 1e-3) : finishSpacing
-  // The adapter derives the height-map cell from the tool and stepover; a saved
-  // operation cannot set it, so the seeded set keeps the same formula.
+  const stepover = custom ? Math.max(pick(0.6, 1) * diameter, 1e-3) : Math.max(0.75 * diameter, 1e-3)
+  const rough = roughSpacing
+  const finish = finishSpacing
   const cell = requestedCellSize
-  const stepdown = Math.round(pick(0.5, 3) * 10) / 10
+  // One seed in ten draws a stepdown anywhere in 0.5-3 (the range the review
+  // asks the set to cover); the rest take 3 mm, because a millimetre-scale
+  // layer on a 60 mm corner multiplies both the emitted rings and the reference
+  // replay by the layer count. The covered range is unchanged; the distribution
+  // is not uniform.
+  const stepdown = seed % 10 === 3 ? Math.round(pick(0.5, 3) * 10) / 10 : 3
   const stockToLeave = custom ? Math.round(pick(0, 0.5) * 100) / 100 : 0
   return {
     label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
@@ -682,14 +981,26 @@ function drawCase(seed: number, lengthScale: number): Case {
     retained: ends > 0,
     alongStart,
     alongEnd,
-    defaultParams: !custom,
+    defaultParams: false,
+    compact: false,
+    finishStepdown: Math.max(stepdown, 2),
   }
+}
+
+/** The reference grid limit for one case. Default-parameter cases keep the full
+ *  resolution; a coarsened non-compact case may run on a smaller grid, which
+ *  coarsens the generator's requested cells too (the 4x relationship holds). */
+function referenceLimits(entry: Case): { cells: number; angleBins: number } {
+  return entry.compact
+    ? { cells: MAX_REFERENCE_CELLS, angleBins: MAX_ANGLE_BINS }
+    : { cells: 100_000, angleBins: 1_024 }
 }
 
 /** Whether the reference's grid itself fits the per-case cell budget. */
 function fitsGrid(entry: Case): boolean {
   const budget = referenceBudget(entry)
-  return budget.cells <= MAX_REFERENCE_CELLS && budget.angleBins <= MAX_ANGLE_BINS
+  const limit = referenceLimits(entry)
+  return budget.cells <= limit.cells && budget.angleBins <= limit.angleBins
 }
 
 interface Program {
@@ -705,6 +1016,7 @@ function generate(entry: Case): Program {
   const model = revolved(stock, entry.profile)
   const common = {
     stepover: entry.stepover,
+    // The rough's own sampling. The finish reads its own in the call below.
     sampleSpacing: entry.roughSpacing,
     // The adapter passes the operation's radial stock to both generators: a
     // rough that cut to the model while the finish was asked to leave stock
@@ -729,10 +1041,9 @@ function generate(entry: Case): Program {
       sampleSpacing: entry.finishSpacing,
       stockToLeave: entry.stockToLeave,
       passDirection: 'around',
-      // #1045 slice L: the finish is licensed by the material the earlier
-      // rough's own sampled result leaves, never by the program kind. A finish
-      // with no rough (or no motion) gets no coverage and refuses a raw blank.
-      squareRoughLeft: 'squareRoughLeft' in rough && rough.squareRoughLeft ? [rough.squareRoughLeft] : undefined,
+      // #1045 slice M: the finish clears its own standing material, so it needs
+      // no earlier result. Its clearing layers use the finish's own stepdown.
+      stepdown: entry.finishStepdown,
     }, {})
   return {
     roughMoves: rough.moves,
@@ -751,26 +1062,46 @@ function generate(entry: Case): Program {
  * ring costs one window instead of a few hundred overlapping ones. A move that
  * changes Z or along, or reverses A, starts a new group.
  */
-function coalesceCommandedMoves(moves: readonly ToolpathMove[]): ToolpathMove[] {
+function coalesceCommandedMoves(moves: readonly ToolpathMove[], tolerance = 0): ToolpathMove[] {
   const out: ToolpathMove[] = []
+  const intermediates: ToolpathPoint[][] = []
+  const collinear = (point: ToolpathPoint, chord: ToolpathMove, tol: number): boolean => {
+    if (chord.from.a === undefined || chord.to.a === undefined) return false
+    const span = chord.to.a - chord.from.a
+    if (span === 0) return false
+    const fraction = ((point.a ?? 0) - chord.from.a) / span
+    if (!(fraction > -1e-9 && fraction < 1 + 1e-9)) return false
+    const f = Math.min(1, Math.max(0, fraction))
+    const x = chord.from.x + (chord.to.x - chord.from.x) * f
+    const z = chord.from.z + (chord.to.z - chord.from.z) * f
+    return Math.abs(point.x - x) <= tol + 1e-12 && Math.abs(point.z - z) <= tol + 1e-12
+  }
   for (const move of moves) {
     const last = out[out.length - 1]
-    const straightA = (entry: ToolpathMove): boolean =>
-      entry.kind === 'cut'
-      && entry.from.x === entry.to.x && entry.from.y === entry.to.y && entry.from.z === entry.to.z
-      && entry.from.a !== undefined && entry.to.a !== undefined
-      && entry.from.a !== entry.to.a
-    if (last && straightA(last) && straightA(move)
+    const joins = last !== undefined
+      && last.kind === 'cut' && move.kind === 'cut'
+      && last.from.x === last.to.x && move.from.x === move.to.x
       && last.to.x === move.from.x && last.to.y === move.from.y && last.to.z === move.from.z
       && last.to.a === move.from.a
-      && Math.sign(last.to.a! - last.from.a!) === Math.sign(move.to.a! - move.from.a!)) {
-      out[out.length - 1] = { kind: 'cut', from: last.from, to: move.to }
-    } else {
-      out.push(move)
+      && last.from.a !== undefined && last.to.a !== undefined
+      && move.to.a !== undefined
+      && last.from.a !== last.to.a && move.from.a !== move.to.a
+      && Math.sign(last.to.a - last.from.a) === Math.sign(move.to.a! - move.from.a!)
+    if (joins && last) {
+      const candidate: ToolpathMove = { kind: 'cut', from: last.from, to: move.to }
+      const points = [...(intermediates[intermediates.length - 1] ?? []), last.to]
+      if (points.every((point) => collinear(point, candidate, tolerance))) {
+        out[out.length - 1] = candidate
+        intermediates[intermediates.length - 1] = points
+        continue
+      }
     }
+    out.push(move)
+    intermediates.push([])
   }
   return out
 }
+
 /**
  * How much work the reference will do replaying these moves: the cells each
  * move's window covers times the sweep steps each cell is sampled at. The
@@ -782,11 +1113,12 @@ function estimateReplayCells(program: Program, entry: Case): number {
   const budget = referenceBudget(entry)
   const pivot = barPivotZ(entry.stock)
   const radius = entry.diameter / 2
+  const ball = entry.type === 'ball_endmill'
   const alongOf = (point: ToolpathMove['from']): number => point.x
   const travel = pivot + barMaxRadius(entry.stock) + 1
   let total = 0
   let controller = 0
-  for (const move of coalesceCommandedMoves([...program.roughMoves, ...program.finishMoves])) {
+  for (const move of coalesceCommandedMoves([...program.roughMoves, ...program.finishMoves], COALESCE_TOLERANCE)) {
     const hasAngle = move.from.a !== undefined || move.to.a !== undefined
     const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
     const toAngle = hasAngle ? (move.to.a ?? fromAngle) : fromAngle
@@ -797,9 +1129,11 @@ function estimateReplayCells(program: Program, entry: Case): number {
     const fromTip = move.from.z - pivot
     const toTip = move.to.z - pivot
     const tipMin = Math.min(fromTip, toTip)
-    const halfSpanDegrees = Math.min(90, tipMin > 0
-      ? Math.asin(Math.min(1, radius / tipMin)) * 180 / Math.PI
-      : 90)
+    const wallReach = Math.min(90, Math.asin(Math.min(1, radius / barMaxRadius(entry.stock))) * 180 / Math.PI)
+    const sphereReach = ball && tipMin + radius > 0
+      ? Math.min(90, Math.asin(Math.min(1, radius / (tipMin + radius))) * 180 / Math.PI)
+      : wallReach
+    const halfSpanDegrees = Math.max(wallReach, sphereReach)
     const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - radius - budget.alongStart) / budget.alongBin))
     const i1 = Math.min(budget.alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + radius - budget.alongStart) / budget.alongBin))
     if (i1 < i0) continue
@@ -842,8 +1176,9 @@ function coarsenGrid(entry: Case): Case {
   let fitted = entry
   for (let attempt = 0; attempt < 5; attempt++) {
     const budget = referenceBudget(fitted)
-    if (budget.cells <= MAX_REFERENCE_CELLS && budget.angleBins <= MAX_ANGLE_BINS) break
-    const ratio = Math.max(budget.cells / MAX_REFERENCE_CELLS, budget.angleBins / MAX_ANGLE_BINS, 1)
+    const limit = referenceLimits(fitted)
+    if (budget.cells <= limit.cells && budget.angleBins <= limit.angleBins) break
+    const ratio = Math.max(budget.cells / limit.cells, budget.angleBins / limit.angleBins, 1)
     const factor = Math.max(1.3, Math.min(5, Math.sqrt(ratio) * 1.05))
     const next = Math.min(fitted.requestedCellSize * factor, cellCeiling(fitted))
     if (next <= fitted.requestedCellSize * 1.001) break
@@ -853,6 +1188,15 @@ function coarsenGrid(entry: Case): Case {
 }
 
 function fitCase(seed: number): Fitted {
+  const initial = drawCase(seed, 1)
+  if (initial.compact) {
+    // A default-parameter case is never coarsened: the drawn side, cutter,
+    // stepdown and sampling are the adapter's defaults, and the short bar is
+    // what makes its reference affordable. If the grid does not fit, the draw
+    // itself is wrong and must be fixed rather than silently degraded.
+    assert.ok(fitsGrid(initial), `${initial.label}: a default-parameter case must fit the reference grid`)
+    return { entry: initial, program: generate(initial) }
+  }
   let scale = 1
   let entry = coarsenGrid(drawCase(seed, scale))
   let program = generate(entry)
@@ -911,7 +1255,15 @@ function fitCase(seed: number): Fitted {
   // this is the one input that changes how many rings a layer emits.
   for (let attempt = 0; attempt < 4 && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
     const ratio = Math.max(cells / MAX_REPLAY_CELLS, 1)
-    entry = { ...entry, stepdown: Math.min(3, entry.stepdown * Math.max(1.2, Math.min(1.8, ratio))), defaultParams: false }
+    entry = {
+      ...entry,
+      // Both radial depths, not only the rough's: the finish now clears its own
+      // blank (#1045 slice M), so a half-millimetre finish stepdown on a tall
+      // corner is the most expensive input in the set.
+      stepdown: Math.min(3, entry.stepdown * Math.max(1.2, Math.min(1.8, ratio))),
+      finishStepdown: Math.min(3, entry.finishStepdown * Math.max(1.2, Math.min(1.8, ratio))),
+      defaultParams: false,
+    }
     program = generate(entry)
     cells = estimateReplayCells(program, entry)
   }
@@ -979,15 +1331,36 @@ let casesDone = 0
 let checkedRapids = 0
 let checkedSurfaceCells = 0
 let defaultCases = 0
-let refusedFinish = 0
-let retainedMixed = 0
+let defaultFinishOnly = 0
+let defaultRoughOnly = 0
+let defaultBoth = 0
+let defaultMixed = 0
+let defaultRetained = 0
+let defaultFree = 0
+let profileSteps = 0
+let profileMoves = 0
+let checkedPlunges = 0
+let worstPlunge = 0
+let worstPlungeLabel = ''
 
 for (const { entry, program } of CASES) {
-  if (CASE_COUNT < 300 && casesDone % 25 === 0) {
-    console.log(`  [profile] case ${casesDone}/${CASE_COUNT} (${((Date.now() - startedAt) / 1000).toFixed(1)} s)`)
+  if (process.env.SQUARE_PROFILE) {
+    console.log(`  [case] ${casesDone} ${((Date.now() - startedAt) / 1000).toFixed(1)} s${entry.compact ? ' compact' : ''} `
+      + `est ${estimateReplayCells(program, entry)} steps ${referenceStats.steps - profileSteps} `
+      + `moves ${referenceStats.moves - profileMoves} sd ${entry.stepdown}/${entry.finishStepdown} ${entry.programKind} — ${entry.label}`)
+    profileSteps = referenceStats.steps
+    profileMoves = referenceStats.moves
   }
   casesDone++
-  if (entry.defaultParams) defaultCases++
+  if (entry.defaultParams) {
+    defaultCases++
+    if (entry.programKind === 'finish') defaultFinishOnly++
+    else if (entry.programKind === 'rough') defaultRoughOnly++
+    else if (entry.programKind === 'both') defaultBoth++
+    else defaultMixed++
+    if (entry.retained) defaultRetained++
+    else defaultFree++
+  }
   const stock = entry.stock
   const tool = normalizedTool(entry.type, entry.diameter)
   const cutterRadius = tool.radius
@@ -997,27 +1370,18 @@ for (const { entry, program } of CASES) {
   const clearance = 1
   const travelZ = pivot + corner + clearance
 
-  if (entry.programKind === 'finish') {
-    refusedFinish++
-    assert.equal(program.finishMoves.length, 0, `${entry.label}: a finish with no rough emits no motion`)
-    assert.ok(program.finishCodes.includes('rotarySquareFinishNeedsRough'),
-      `${entry.label}: a finish with no rough is refused`)
-    continue
+  const roughRan = entry.programKind !== 'finish'
+  const finishRan = entry.programKind !== 'rough'
+  if (roughRan) {
+    assert.ok(program.roughMoves.length > 0, `${entry.label}: the rough emits motion`)
+    assert.deepEqual(program.roughCodes, [], `${entry.label}: the rough warns about nothing`)
   }
-  assert.ok(program.roughMoves.length > 0, `${entry.label}: the rough emits motion`)
-  const finishRefused = program.finishMoves.length === 0
-  if (entry.programKind !== 'rough') {
-    if (finishRefused) {
-      refusedFinish++
-      if (entry.programKind === 'mixed' && entry.retained) retainedMixed++
-      assert.ok(program.finishCodes.includes('rotarySquareFinishNeedsRough'),
-        `${entry.label}: an uncovered around finish is refused`)
-    } else {
-      assert.ok(entry.programKind !== 'mixed' || !entry.retained,
-        `${entry.label}: only a mixed program without a retained end may finish around`)
-    }
+  if (finishRan) {
+    // #1045 slice M: with the licensing gone a bare finish clears its own blank
+    // and cuts; so does one after any rough, retained ends or not.
+    assert.ok(program.finishMoves.length > 0, `${entry.label}: the around finish clears itself and cuts`)
+    assert.deepEqual(program.finishCodes, [], `${entry.label}: the finish warns about nothing`)
   }
-  const finishRan = !finishRefused
 
   const budget = referenceBudget(entry)
   // The reference must be four times finer than both generator sampling cells
@@ -1041,13 +1405,15 @@ for (const { entry, program } of CASES) {
   const windowLow = Math.max(bounds.minX, minCutAlong - cutterRadius - 1)
   const windowHigh = Math.min(bounds.maxX, maxCutAlong + cutterRadius + 1)
   const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
+  reference.interiorStride = 4
 
-  const finishBound = entry.stockToLeave + entry.stepdown
+  const finishBound = entry.stockToLeave + entry.finishStepdown
     + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
-  const stages = finishRan
-    ? [{ moves: coalesceCommandedMoves(program.roughMoves), finish: false }, { moves: coalesceCommandedMoves(program.finishMoves), finish: true }] as const
-    : [{ moves: coalesceCommandedMoves(program.roughMoves), finish: false }] as const
+  const stages: Array<{ moves: ToolpathMove[]; finish: boolean }> = []
+  if (roughRan) stages.push({ moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE), finish: false })
+  if (finishRan) stages.push({ moves: coalesceCommandedMoves(program.finishMoves, COALESCE_TOLERANCE), finish: true })
+  assert.ok(stages.length > 0, `${entry.label}: the program has motion`)
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
   for (const stage of stages) {
@@ -1092,14 +1458,40 @@ for (const { entry, program } of CASES) {
               worst[key].excess = excess
               worst[key].label = keyLabel
             }
-            assert.ok(engagement <= bound + 1e-6,
-              `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut engages ${engagement.toFixed(4)} mm, `
-              + `over its ${bound.toFixed(4)} mm bound (A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}); `
-              + `worst cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
-              + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)}`)
+            checkEngagement(engagement, bound,
+              `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
+              + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
+              + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
           } else if (engagement > nonTurningWorst) {
             nonTurningWorst = engagement
             nonTurningLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
+          }
+        } else if (move.kind === 'plunge') {
+          // A plunge enters stock from the travel height, so its whole Z travel
+          // is swept and the material it takes must fit the same bound (#1045
+          // slice M; the engagement was computed but never asserted before).
+          // The around stage is the slice's own motion and is asserted. An
+          // along-stage plunge is part of the frozen along output: like that
+          // stage's non-turning cuts, it is reported rather than asserted,
+          // because a plunge at the band edge cuts the shoulder the generator
+          // deliberately leaves within one cutter radius of a stub.
+          const around = stage.finish || entry.roughKind === 'around'
+          if (!around) {
+            if (engagement > nonTurningWorst) {
+              nonTurningWorst = engagement
+              nonTurningLabel = `${entry.label} @A${fromAngle.toFixed(2)} plunge`
+            }
+          } else {
+            checkedPlunges++
+            const keyLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
+            if (engagement > worstPlunge) {
+              worstPlunge = engagement
+              worstPlungeLabel = keyLabel
+            }
+            checkEngagement(engagement, bound,
+              `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
+              + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
+              + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
           }
         }
       }
@@ -1189,8 +1581,11 @@ for (const { entry, program } of CASES) {
 }
 
 console.log(`  ${CASES.length} cases (${defaultCases} with default adapter parameters), `
-  + `${checkedCuts} cuts and ${checkedRapids} rapids replayed, ${checkedSurfaceCells} surface cells checked`)
-console.log(`  refusals: ${refusedFinish} around finishes with no covering rough (${retainedMixed} after an along rough over a retained end)`)
+  + `${checkedCuts} cuts, ${checkedPlunges} plunges and ${checkedRapids} rapids replayed, `
+  + `${checkedSurfaceCells} surface cells checked`)
+console.log(`  default subset: ${defaultFinishOnly} finish-only, ${defaultRoughOnly} rough-only, `
+  + `${defaultBoth} rough+finish, ${defaultMixed} along-rough+around-finish; `
+  + `${defaultRetained} with retained ends, ${defaultFree} free`)
 console.log(`  rough: worst engagement ${worst.rough.peak.toFixed(4)} mm (${worst.rough.peakLabel}); `
   + `closest to its bound at ${worst.rough.excess.toFixed(4)} mm excess against ${worst.rough.bound.toFixed(4)} `
   + `(${worst.rough.label})`)
@@ -1199,6 +1594,8 @@ console.log(`  finish: worst engagement ${worst.finish.peak.toFixed(4)} mm (${wo
   + `(${worst.finish.label})`)
 console.log(`  rapid turns: worst margin ${worstRapidMargin.toFixed(4)} mm above the corner envelope plus clearance `
   + `(${worstRapidLabel})`)
+console.log(`  interior removal recorded (not a surface bite): deepest span ${interiorWorst.depth.toFixed(4)} mm `
+  + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)} (${interiorWorst.kind || 'none'})`)
 console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)} mm (${worstStubLabel || 'none'})`)
 console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
   + `(${worstSurfaceOverLabel})`)
@@ -1212,65 +1609,18 @@ if (process.env.SQUARE_CASES) {
 }
 
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
-// The strict 4x-finer-than-`requestedCellSize` grid coarsens most drawn cases
-// (marked custom) to fit the runtime budget, so the default subset is small but
-// must still exist: the set is not all custom sampling.
-assert.ok(defaultCases > 0, `the default-parameter subset exists (${defaultCases})`)
-assert.ok(refusedFinish > 0, 'the unsafe finishes were refused')
+assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
+console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
+// #1045 slice M: at least 30 programs must run at the adapter's **default**
+// parameters -- never coarsened, only shortened -- so the default cutting
+// programs are covered, not only the custom-sampling ones. The subset covers
+// every program shape and both retained-end states.
+assert.ok(defaultCases >= 30, `at least 30 default-parameter programs (${defaultCases})`)
+assert.ok(defaultFinishOnly > 0, `a finish-only default program (${defaultFinishOnly})`)
+assert.ok(defaultRoughOnly > 0, `a rough-only default program (${defaultRoughOnly})`)
+assert.ok(defaultBoth > 0, `a rough+finish default program (${defaultBoth})`)
+assert.ok(defaultMixed > 0, `an along-rough + around-finish default program (${defaultMixed})`)
+assert.ok(defaultRetained > 0, `a default program with retained ends (${defaultRetained})`)
+assert.ok(defaultFree > 0, `a default program with free ends (${defaultFree})`)
 
-// ── the slice-L licensing cases (#1045 slice L) ───────────────────────────
-//
-// Every one of these is refused by the generator and emits no motion; none may
-// be posted. The finish is licensed by the material a rough's own result
-// leaves, so an ineffective rough, a rough that leaves too much, and the
-// operation-list-only cases all license nothing.
-console.log('Testing the slice-L licensing cases...')
-{
-  const stock = squareStock(20, 40, 'x', { x: 0, y: 0 })
-  const model = revolved(stock, [{ along: 12, radius: 5 }, { along: 28, radius: 5 }])
-  const tool = normalizedTool('flat_endmill', 4)
-  const base = {
-    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 12, alongEnd: 28,
-    safeRadius: 30, requestedCellSize: 0.2,
-  }
-  const refused = (result: { moves: ToolpathMove[]; warnings: Array<{ code: string }> }, label: string): void => {
-    assert.deepEqual(result.moves, [], `${label} emits no motion`)
-    assert.ok(result.warnings.some((warning) => warning.code === 'rotarySquareFinishNeedsRough'),
-      `${label} is refused with the rough-first code`)
-  }
-
-  // A rough with **no motion** licenses nothing: zero stepdown refuses the
-  // rough itself, so there is no result to hand the finish.
-  const zero = generateRotaryRough('licence-zero', model, stock, tool, {
-    ...base, stepdown: 0, passDirection: 'around',
-  }, {})
-  assert.deepEqual(zero.moves, [], 'a zero-stepdown rough emits no motion')
-  assert.deepEqual(zero.warnings.map((warning) => warning.code), ['stepdownPositive'])
-  refused(generateRotaryFinish('licence-zero-finish', model, stock, tool, {
-    ...base, passDirection: 'around',
-  }, {}), 'a finish with no rough result')
-
-  // A rough that leaves 5 mm above a zero-allowance finish: the bite is far
-  // over the finish's bound.
-  const leaving = generateRotaryRough('licence-leaving', model, stock, tool, {
-    ...base, stepdown: 2, stockToLeave: 5, passDirection: 'around',
-  }, {})
-  assert.ok(leaving.moves.length > 0, 'the rough leaving 5 mm cuts')
-  assert.ok(leaving.squareRoughLeft, 'and reports the material it leaves')
-  refused(generateRotaryFinish('licence-mismatch', model, stock, tool, {
-    ...base, stockToLeave: 0, passDirection: 'around',
-    squareRoughLeft: [leaving.squareRoughLeft!],
-  }, {}), 'a finish with a zero allowance under a rough leaving 5 mm')
-
-  // The same rough with a matching allowance is a legitimate pair.
-  const matched = generateRotaryFinish('licence-matched', model, stock, tool, {
-    ...base, stockToLeave: 5, passDirection: 'around',
-    squareRoughLeft: [generateRotaryRough('licence-matched-rough', model, stock, tool, {
-      ...base, stepdown: 2, stockToLeave: 5, passDirection: 'around',
-    }, {}).squareRoughLeft!],
-  }, {})
-  assert.deepEqual(matched.warnings, [], 'a matching 5 mm allowance licenses the finish')
-  assert.ok(matched.moves.length > 0, 'and it cuts')
-  console.log('  zero-stepdown, mismatched and matched allowances behave')
-}
 console.log('engine/toolpaths/squareAroundGenerator.property.test.ts: all assertions passed')

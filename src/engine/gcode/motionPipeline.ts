@@ -1093,20 +1093,12 @@ function inspectRotaryOperation(args: {
    * `null` means generation produced no result for it.
    */
   staleCache: Map<string, ToolpathResult | null>
-  /**
-   * The ids of the operations already kept earlier in this same program
-   * (#1045 slice L). A square around finish is licensed by the roughs named in
-   * its regenerated result, and every one of them must be here: a rough that is
-   * disabled, excluded from this export, in another setup/program, or later in
-   * the program is not the cut that clears the material.
-   */
-  exportedIds: ReadonlySet<string>
 }): { refused: ToolpathWarning } | {
   refused: null
   trackedAngle: number | null
   borrowedCoordinate: number | null
 } {
-  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate, staleCache, exportedIds } = args
+  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate, staleCache } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   // Track the controller angle once, from the angle the program handed in
@@ -1228,16 +1220,6 @@ function inspectRotaryOperation(args: {
       if (regenerated === null || !sameSquareAroundToolpath(toolpath.moves, regenerated.moves)) {
         return { refused: { code: 'postSquareAroundToolpathStale', params: { operation: operationName } } }
       }
-      // #1045 slice L: the licensing rough must actually run earlier in **this**
-      // program. The finish's motion is regenerated against the whole project,
-      // so its licence names the rough ids whose own results cleared the
-      // material. Keeping the rough enabled in the project but exporting only
-      // the finish (or exporting it later, disabled, or in another program)
-      // posts a full-depth first ring, so the finish is refused instead.
-      const licensing = regenerated.squareRoughIds ?? []
-      if (licensing.some((id) => !exportedIds.has(id))) {
-        return { refused: { code: 'postSquareAroundRoughMissing', params: { operation: operationName } } }
-      }
     } else if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
       // Only an around-mode square operation may turn a *cut* below the height,
       // and only with the generator's own current motion (checked above). An
@@ -1297,9 +1279,6 @@ export function planRotaryRefusals(
   // the map still keeps the regenerate-and-match check (#1045 slice K) from
   // regenerating an operation twice if a caller ever repeats one.
   const staleCache = new Map<string, ToolpathResult | null>()
-  // The operations already kept earlier in this program (#1045 slice L): a
-  // square around finish's licensing roughs must all be here.
-  const exportedIds = new Set<string>()
   for (const entry of operations) {
     const verdict = inspectRotaryOperation({
       definition,
@@ -1317,7 +1296,6 @@ export function planRotaryRefusals(
       trackedAngle,
       borrowedCoordinate,
       staleCache,
-      exportedIds,
     })
     if (verdict.refused !== null) {
       warnings.push(verdict.refused)
@@ -1325,7 +1303,6 @@ export function planRotaryRefusals(
     }
     trackedAngle = verdict.trackedAngle
     borrowedCoordinate = verdict.borrowedCoordinate
-    exportedIds.add(entry.operation.id)
     kept.push(entry)
   }
   return { operations: kept, warnings }

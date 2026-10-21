@@ -15,15 +15,15 @@
  */
 
 import type { BarStock, Operation, Project } from '../../types/project'
-import { barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../types/barStock'
-import { operationFace, operationTargetKey } from '../setupTargets'
+import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
+import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
 import { splitFeatureTargets } from './regions'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
 import type { RotaryFinishParams } from './rotaryModel'
-import type { NormalizedTool, SquareRoughLeft, ToolpathResult } from './types'
+import type { NormalizedTool, ToolpathResult } from './types'
 import type { ToolpathWarningCode } from './warningCodes'
 
 /**
@@ -43,8 +43,6 @@ interface RotaryContext {
   readonly surface: NonNullable<ReturnType<typeof resolveFinishModelSurface>>
   readonly tool: NormalizedTool
   readonly params: RotaryFinishParams
-  /** The ids of the roughs whose own results licensed this finish (#1045 slice L). */
-  readonly squareRoughIds: readonly string[]
 }
 
 function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
@@ -53,11 +51,10 @@ function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
 
 /**
  * The generator parameters for one saved operation, or the warning code that
- * says why it cannot run. The roughness of an operation's own result is what
- * licenses a square around finish (#1045 slice L): each earlier rough on the
- * same setup and target is generated through this same function and hands back
- * the material it actually leaves. Nothing is licensed from the operation list
- * or from a setting.
+ * says why it cannot run. A square around finish needs no licence from an
+ * earlier operation since #1045 slice M: it clears its own standing material in
+ * stepdown layers before it follows the model, so this adapter hands the
+ * generators nothing but the operation's own settings.
  */
 function rotaryContext(project: Project, operation: Operation): RotaryContext | { code: ToolpathWarningCode } {
   const stock = project.stock
@@ -101,14 +98,6 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   const rapidRadius = project.meta.maxTravelZ - pivot
   const safeRadius = rapidRadius > maxRadius ? rapidRadius : maxRadius + tool.diameter
   const stepover = Math.max((operation.stepover ?? 0.5) * tool.diameter, 1e-3)
-  // #1045 slice L: a square around finish's licence is the material the earlier
-  // roughs' own results leave, never the operation list. A rough that emits no
-  // motion contributes nothing; a rough that leaves too much makes the finish
-  // refuse in its generator.
-  const coverage = operation.kind === 'rotary_finish' && isSquareStock(stock)
-    && operation.rotaryPassDirection === 'around'
-    ? squareRoughCoverage(project, operation, stock)
-    : { left: [] as SquareRoughLeft[], ids: [] as string[] }
   const params: RotaryFinishParams = {
     stepover, stepdown: operation.stepdown,
     stockToLeave: operation.stockToLeaveRadial,
@@ -118,42 +107,8 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // Missing reads as 'along' inside the generators, so a saved operation keeps
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
-    ...(coverage.left.length > 0 ? { squareRoughLeft: coverage.left } : {}),
   }
-  return { stock, surface, tool, params, squareRoughIds: coverage.ids }
-}
-
-/**
- * The material earlier enabled roughs on the same setup and target leave,
- * obtained by generating each through the same adapter and reading its own
- * sampled `squareRoughLeft`. Only a rough that actually emitted motion is a
- * licence: a zero-stepdown rough produces an empty path and contributes
- * nothing (#1045 slice L).
- */
-function squareRoughCoverage(
-  project: Project,
-  finish: Operation,
-  stock: BarStock,
-): { left: SquareRoughLeft[]; ids: string[] } {
-  const index = project.operations.findIndex((entry) => entry.id === finish.id)
-  if (index <= 0) return { left: [], ids: [] }
-  const key = operationTargetKey(finish.target)
-  const left: SquareRoughLeft[] = []
-  const ids: string[] = []
-  for (const entry of project.operations.slice(0, index)) {
-    if (!entry.enabled || entry.kind !== 'rotary_rough') continue
-    if (entry.setupId !== finish.setupId || operationTargetKey(entry.target) !== key) continue
-    const built = rotaryContext(project, entry)
-    if ('code' in built) continue
-    const result = generateRotaryRough(entry.id, built.surface.mesh, stock, built.tool, {
-      ...built.params,
-      stepdown: entry.stepdown,
-    }, {})
-    if (result.moves.length === 0 || !result.squareRoughLeft) continue
-    left.push(result.squareRoughLeft)
-    ids.push(entry.id)
-  }
-  return { left, ids }
+  return { stock, surface, tool, params }
 }
 
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
@@ -163,16 +118,13 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   })
   const built = rotaryContext(project, operation)
   if ('code' in built) return empty(built.code)
-  const { stock, surface, tool, params, squareRoughIds } = built
+  const { stock, surface, tool, params } = built
   const result = operation.kind === 'rotary_rough'
     ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: params.stepdown ?? 0 }, {})
     : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
-  const withIds: ToolpathResult = squareRoughIds.length > 0
-    ? { ...result, squareRoughIds: [...squareRoughIds] }
-    : result
   return {
-    ...withIds,
-    warnings: withIds.warnings.map((warning) => ({
+    ...result,
+    warnings: result.warnings.map((warning) => ({
       ...warning, params: { ...warning.params, operation: operation.name },
     })),
   }

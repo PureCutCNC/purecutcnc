@@ -350,14 +350,6 @@ export type ToolpathWarningCode =
    *  own surface there, so those parts are machined as air; the operation still
    *  runs and says so (issue #1015). */
   | 'rotaryModelOutsideBar'
-  /** An around-mode finish on a square blank has no covering Rotary rough
-   *  before it in the same setup, so its first ring would take the standing
-   *  square corner in one turning pass: either no rough runs before it, or the
-   *  only one is an along pass over a retained end, which leaves that corner
-   *  standing. Since #1045 slice K removed the export standing-material guard,
-   *  the generator refuses with no motion rather than emit the cut (#1045
-   *  slices E and K). Params: operation. */
-  | 'rotarySquareFinishNeedsRough'
   /** The operation's radial stock to leave is not a usable allowance: it is
    *  not finite, it is negative, or it makes the sampler's tool radius zero or
    *  negative. Sampling with that radius would read "no model" everywhere, and
@@ -485,14 +477,6 @@ export type ToolpathWarningCode =
    *  same order). The operation is refused rather than posted (issue #1045
    *  slices K and L). Params: operation. */
   | 'postSquareAroundToolpathStale'
-  /** A square blank's around finish depends on one or more roughs that are not
-   *  earlier in the same exported program (#1045 slice L). Its motion is
-   *  regenerated against the whole project, so the finish is licensed by those
-   *  roughs' own results; posting the finish alone (or with a rough that is
-   *  disabled, excluded from this export, in another setup/program, or later)
-   *  would make its first ring take the standing material in one pass. Params:
-   *  operation. */
-  | 'postSquareAroundRoughMissing'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -589,8 +573,6 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
   'postSquareAroundToolpathStale',
-  'postSquareAroundRoughMissing',
-  'rotarySquareFinishNeedsRough',
 ])
 
 /**

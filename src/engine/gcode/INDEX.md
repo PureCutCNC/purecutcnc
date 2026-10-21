@@ -122,10 +122,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   operation whose posted motion equals the operation regenerated for the current
   project move for move (same kinds, points exactly equal bit for bit, same
   order); anything else is `postSquareAroundToolpathStale` (#1045 slices K and
-  L), and an around finish whose regenerated result names a licensing rough that
-  is not earlier in the same exported program is `postSquareAroundRoughMissing`
-  (slice L). An along-mode cut turn
-  below the envelope keeps `postRotarySquareTurnBelowEnvelope`, and
+  M -- slice M removed the rough-before licensing, because the finish clears its
+  own blank, so a finish exported without its rough is legitimate). An along-mode
+  cut turn below the envelope keeps `postRotarySquareTurnBelowEnvelope`, and
   the inverse-time refusal keeps its own whole-operation turning-feed test,
   independent of the angle tracker, so an unestablished constant-angle feed
   cannot hide a later turning feed and change which refusal a round bar reports

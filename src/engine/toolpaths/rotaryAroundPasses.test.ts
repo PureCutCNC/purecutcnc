@@ -179,17 +179,9 @@ function prism(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
-/**
- * The frozen-motion digest. The licensing metadata a square result now carries
- * (`squareRoughLeft`'s sampled grid, and the finish's rough ids) is runtime
- * bookkeeping, not output: stripping it keeps every recorded hash a statement
- * about the emitted motion, warnings and bounds (#1045 slice L).
- */
+/** A SHA-256 of a generated result, recorded so a motion change fails loudly. */
 function digest(value: unknown): string {
-  const { squareRoughLeft: _left, squareRoughIds: _ids, ...rest } = value as Record<string, unknown>
-  void _left
-  void _ids
-  return createHash('sha256').update(JSON.stringify(rest)).digest('hex')
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
 const alongOf = (point: { x: number; y: number }): number => point.x
@@ -751,8 +743,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
     ...params, stepdown: 3, passDirection: 'around',
   }, {})
   const finish = generateRotaryFinish('square-around', mesh, DIGEST_SQUARE, FLAT, {
-    ...params, passDirection: 'around',
-    squareRoughLeft: rough.squareRoughLeft ? [rough.squareRoughLeft] : undefined,
+    ...params, passDirection: 'around', stepdown: 3,
   }, {})
   for (const [label, result] of [['finish', finish], ['rough', rough]] as const) {
     assert.ok(result.moves.length > 0, `${label} square around emits motion`)
