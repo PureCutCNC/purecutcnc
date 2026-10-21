@@ -49,8 +49,8 @@ import { syncProjectSetups } from '../../store/helpers/setups'
 import { withoutUnreachableSubtracts } from '../setupTargets'
 import { createCamPlan } from '../operations/camPlan/createCamPlan'
 import { computeOperationToolpath } from './generateOperation'
-import { generatePocketRestRegionDrafts } from './restRegions'
-import { NON_TARGET_SUBTRACT_GAP_TOLERANCE, resolvePocketRegions } from './resolver'
+import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from './restRegions'
+import { NON_TARGET_SUBTRACT_GAP_TOLERANCE, resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import type { ResolvedPocketResult, ToolpathMove, ToolpathResult } from './types'
 
 let passed = 0
@@ -394,11 +394,11 @@ console.log('\n6. The face gate: same face, through and models stay; other-face 
 console.log('\n7. Rest regions resolve through the same face gate (4 regions, not 6)...')
 
 /** The Top pocket, and a Bottom blind notch that overlaps its right edge. */
-function bottomNotchProject(): Project {
+function bottomNotchProject(kind: Operation['kind'] = 'pocket'): Project {
   return baseProject([
     topPocket(),
     rect('bottom-notch', 'subtract', 70, 30, 20, 20, 14, 0, 'bottom'),
-  ], operation('op1', ['top-pocket']))
+  ], operation('op1', ['top-pocket'], kind))
 }
 
 {
@@ -426,7 +426,37 @@ function bottomNotchProject(): Project {
     `unexpected warnings: ${JSON.stringify(rest.warnings)}`)
 }
 
-console.log('\n8. CAM Plan resolves the same filtered regions...')
+// ── Inside-edge-route rest entries ──────────────────────────
+//
+// The edge-route rest entry has the same bypass: it resolves through
+// `resolveInsideEdgeRegions`, not `resolvePocketRegions`, so it must apply the
+// face gate itself. Without it the Bottom notch folds the Top route's bands to
+// Z 0, exposing the notch's two interior corners as extra regions and raising
+// a depth-extension warning.
+
+console.log('\n8. Inside-edge-route rest resolves through the same face gate (4 regions, not 6)...')
+
+{
+  const project = bottomNotchProject('edge_route_inside')
+
+  // As in section 7: the direct resolver call is the ungated shape. It folds
+  // the notch to Z 0 and reports the extension, so the rest entry's four clean
+  // regions can only come from its own gate.
+  const raw = resolveInsideEdgeRegions(project, project.operations[0]!)
+  check('fixture: the raw edge resolver still folds the Bottom notch (the bypass shape)',
+    raw.bands.some((band) => band.bottomZ < 14 - 1e-9),
+    `bands: ${JSON.stringify(raw.bands.map((band) => [band.topZ, band.bottomZ]))}`)
+  check('fixture: the ungated edge rest reports the depth extension', hasDepthExtension(raw),
+    `unexpected warnings: ${JSON.stringify(raw.warnings)}`)
+
+  const rest = generateEdgeRestRegionDrafts(project, project.operations[0]!)
+  check('the Top inside-edge-route rest is the route\'s four corners, not six', rest.drafts.length === 4,
+    `${rest.drafts.length} rest regions`)
+  check('the edge rest pass raises no depth extension', !hasDepthExtension(rest),
+    `unexpected warnings: ${JSON.stringify(rest.warnings)}`)
+}
+
+console.log('\n9. CAM Plan resolves the same filtered regions...')
 
 {
   // No existing operations, so the plan proposes its own rough/finish pair and
