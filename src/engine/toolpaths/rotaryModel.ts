@@ -1125,6 +1125,11 @@ function aroundGrid(
  */
 const MAX_ROTARY_SAMPLES = 16_000_000
 
+// Bound emission as well as sampling: every layer revisits the entire sampled
+// grid, even when the touch gate ultimately skips it (#1045 slice N).
+const MAX_ROTARY_EMISSION_WORK = 16_000_000
+const MIN_ROTARY_STEPDOWN_MM = 0.01
+
 /**
  * Per-shoulder cap on the extra along samples the square-blank refinement adds,
  * so a very small requested cell under a large cutter still cannot allocate an
@@ -2096,6 +2101,10 @@ export function generateRotaryFinish(
   // slice M), so it needs no licence from an earlier operation: the clearing
   // layers below are the only thing between the raw blank and its finish pass.
   const squareAround = isSquareStock(stock) && params.passDirection === 'around'
+  const stepdown = params.stepdown ?? tool.defaultStepdown
+  if (squareAround && (!Number.isFinite(stepdown) || stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units))) {
+    return { operationId, moves: [], warnings: [{ code: !Number.isFinite(stepdown) || stepdown <= 0 ? 'stepdownPositive' : 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+  }
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.refusal) {
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
@@ -2148,31 +2157,24 @@ export function generateRotaryFinish(
     // undercut. The finish rings below then take the stock-to-leave layer.
     //
     // An effective stepdown is taken from the operation's own field, and a
-    // missing or non-positive one falls back to the tool's `defaultStepdown`
+    // missing one falls back to the tool's `defaultStepdown`
     // -- exactly the value `defaultOperationForTarget` seeds a new rotary rough
-    // (and finish) on that tool with. A tool with no default either refuses with
-    // `stepdownPositive`, the same code a rough uses, rather than taking a
-    // whole standing corner in one ring.
+    // (and finish) on that tool with. Invalid or sub-minimum values refuse
+    // before sampling rather than taking a whole standing corner in one ring.
     let lowest = Number.POSITIVE_INFINITY
     for (const row of sampling.tips) for (const tip of row) {
       if (Number.isFinite(tip)) lowest = Math.min(lowest, tip)
     }
     if (Number.isFinite(lowest) && lowest < maxRadius) {
-      const stepdown = Number.isFinite(params.stepdown) && (params.stepdown ?? 0) > 0
-        ? params.stepdown!
-        : tool.defaultStepdown
-      if (!(stepdown > 0) || !Number.isFinite(stepdown)) {
-        return {
-          operationId,
-          moves: [],
-          warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }],
-          bounds: null,
-        }
-      }
       const layers = Math.ceil((maxRadius - lowest) / stepdown)
+      // Include the finish rings, and use the actual (possibly refined) grid.
+      if (!Number.isFinite(layers) || (layers + 1) * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
+        return { operationId, moves: [], warnings: [{ code: 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+      }
       const last = angles.length - 1
       let ring = 0
       for (let layer = 1; layer <= layers; layer++) {
+        if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const previousRadius = maxRadius - (layer - 1) * stepdown
         const layerRadius = Math.max(lowest, maxRadius - layer * stepdown)
         // The blank material the cutter can reach at a sample's own angle: a
@@ -2346,8 +2348,8 @@ export function generateRotaryRough(
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
-  if (!Number.isFinite(params.stepdown) || params.stepdown <= 0) {
-    return { operationId, moves: [], warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }], bounds: null }
+  if (!Number.isFinite(params.stepdown) || params.stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
+    return { operationId, moves: [], warnings: [{ code: !Number.isFinite(params.stepdown) || params.stepdown <= 0 ? 'stepdownPositive' : 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
   }
   const warnings: ToolpathWarning[] = []
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
@@ -2393,6 +2395,9 @@ export function generateRotaryRough(
   let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
+  if (!Number.isFinite(layers) || layers * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
+    return { operationId, moves: [], warnings: [{ code: 'operationStepoverRatioRange', params: { operation: operationId } }], bounds: null }
+  }
   const forceStep = retainedStubStepForced(stock, params, tool)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
@@ -2421,6 +2426,7 @@ export function generateRotaryRough(
     const last = angles.length - 1
     let ring = 0
     for (let layer = 1; layer <= layers; layer++) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
       const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
       const touchesMaterial = square
@@ -2444,6 +2450,7 @@ export function generateRotaryRough(
     }
   } else {
     for (let layer = 1; layer <= layers; layer++) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
       const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
       // A new layer never links to the previous one, however its last pass ended.

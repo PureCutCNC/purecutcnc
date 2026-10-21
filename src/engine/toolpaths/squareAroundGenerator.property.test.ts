@@ -33,7 +33,7 @@
  * one seed in eight) -- and replays each one, in order, through its own
  * reference. Since #1045 slice M removed the finish's licensing, a bare around
  * finish clears its own blank and cuts, so every one of those programs is
- * replayed. At least 30 of them (every eighth seed) are **default-parameter**
+ * replayed. At least 38 of them (every eighth seed) are **default-parameter**
  * programs on a shortened bar: their generator sampling is never coarsened, so
  * the defaults the adapter actually emits are covered rather than only the
  * coarsened draws. (The non-compact draws ask for a coarser sampling than the
@@ -61,12 +61,10 @@
  * fragments would otherwise re-scan its whole cutter footprint for every
  * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
  * this suite exists to catch (and far inside `alongBin + ballRise`). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
- * is pinned by hand-computed unit cases before the seeded run. An interval wholly
- * inside the standing solid removes an interior span without crossing the
- * surface; a scalar radial map cannot show the cavity, so its span is recorded
- * separately (`interiorWorst`) and reported, not folded into the surface
- * engagement -- a chord near a cutter's footprint edge can be long while the
- * undercut itself is a fraction of a millimetre (#1045 slice M).
+ * is pinned by hand-computed unit cases before the seeded run. Every ray keeps
+ * all occupied intervals, including cavities below an unchanged outer surface.
+ * Engagement sums newly removed material over the whole swept move; interior
+ * material counts against the same bound and retained ends must keep every span.
  *
  * Each case is drawn inside a fixed work budget. A case whose drawn bar would
  * exceed it is redrawn **shorter** (20 mm is the floor) and, only at that floor,
@@ -78,7 +76,7 @@
  * For each program the reference asserts:
  *
  * 1. no turning cut **or plunge** engages more than its operation's bound --
- *    a rough's `stepdown`, a finish's `stockToLeave` plus the rough's layer
+ *    a rough's `stepdown`, a finish's `stockToLeave` plus its own layer
  *    allowance, each plus the stated reference tolerance. (An along-mode stage's
  *    non-turning cuts stay reported rather than asserted: that output is frozen
  *    byte-for-byte to the base, and a footprint-edge chord there is not a
@@ -184,15 +182,9 @@ function modelMaxSlope(profile: readonly { along: number; radius: number }[]): n
 // intersection of every commanded sample. Written blind to `rotaryModel.ts`.
 
 export const worstCell = { depth: 0, along: 0, angle: 0, material: 0, contact: 0 }
-/**
- * The deepest **interior** span any move's body occupied inside standing
- * material without crossing its surface (#1045 slice M). A scalar radial map
- * cannot represent the cavity, so this is recorded separately rather than folded
- * into the surface engagement: a chord near a cutter's footprint edge can be
- * long while the undercut itself is a fraction of a millimetre, so it is not the
- * operation's radial depth.
- */
+/** Largest cumulative interior removal from one ray during a commanded move. */
 export const interiorWorst = { depth: 0, along: 0, angle: 0, kind: '' }
+let moveInteriorWorst = 0
 const referenceStats = { moves: 0, cells: 0, steps: 0 }
 const lowestContact = { contact: Number.POSITIVE_INFINITY, along: 0, angle: 0, tip: 0, kind: '' }
 
@@ -204,12 +196,8 @@ interface Reference {
   angleDeg: number
   /** The blank's largest radius, an upper bound on any cell's material. */
   maxMaterial: number
-  /**
-   * Bin stride of the cheap interior-removal diagnostic (#1045 slice M). It is
-   * a report, not an assertion, so the seeded run samples it; the hand-computed
-   * unit references keep 1 and are exact.
-   */
-  interiorStride: number
+  /** Non-scalar occupied rays; all others are the interval [0, material[index]]. */
+  occupied: Map<number, Array<{ contact: number; exit: number }>>
   material: Float64Array
 }
 
@@ -226,7 +214,7 @@ function createReference(stock: SquareStock, alongStart: number, alongEnd: numbe
   const row = new Float64Array(angleBins)
   for (let k = 0; k < angleBins; k++) row[k] = blankRadius(halfSide, (k + 0.5) * angleDeg)
   for (let i = 0; i < alongBins; i++) material.set(row, i * angleBins)
-  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: Math.hypot(halfSide, halfSide), interiorStride: 1, material }
+  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: Math.hypot(halfSide, halfSide), occupied: new Map(), material }
 }
 
 /**
@@ -234,61 +222,52 @@ function createReference(stock: SquareStock, alongStart: number, alongEnd: numbe
  * `dx` along it, as the interval(s) of solid the ray passes through. A flat is
  * the solid `radial ≥ tip` inside its cylinder; a ball is its sphere **plus**
  * the shank above the ball's equator, exactly the emitted body. The intervals
- * are returned separately so a material radius is lowered to the boundary of
- * the interval that actually contains it, never to a different part of the body
- * (#1045 slice L).
+ * are united into the convex body interval before subtracting it from every
+ * occupied stock interval, including spans below an intact outer surface.
  */
-function bodyIntervals(
+function bodyInterval(
   ball: boolean,
   cutterRadius: number,
   tip: number,
   dTheta: number,
   dx: number,
-): Array<{ contact: number; exit: number }> {
+): { contact: number; exit: number } | null {
   const cos = Math.cos(dTheta)
   const sin = Math.sin(dTheta)
   const alongSq = dx * dx
   const radiusSq = cutterRadius * cutterRadius
   const reachSq = radiusSq - alongSq
-  if (cos <= 0) return []
-  const intervals: Array<{ contact: number; exit: number }> = []
+  if (cos <= 0) return null
   if (!ball) {
     // The solid is the cylinder `radial ≥ tip`: the ray enters at the bottom
     // face's own radius and leaves through the cylindrical wall.
-    if (reachSq < 0) return []
+    if (reachSq < 0) return null
     const contact = Math.max(0, tip / cos)
     const exit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
-    if (exit >= contact) intervals.push({ contact, exit })
-    return intervals
+    return exit >= contact ? { contact, exit } : null
   }
   const centre = tip + cutterRadius
-  if (!(centre > 0)) return []
-  const sinSq = sin * sin
-  const discriminant = reachSq - centre * centre * sinSq
+  if (!(centre > 0)) return null
+  const discriminant = reachSq - centre * centre * sin * sin
+  let contact = Number.POSITIVE_INFINITY
+  let exit = Number.NEGATIVE_INFINITY
   if (discriminant >= 0) {
     const root = Math.sqrt(discriminant)
-    const contact = Math.max(0, centre * cos - root)
-    const exit = centre * cos + root
-    if (exit >= contact) intervals.push({ contact, exit })
+    contact = Math.max(0, centre * cos - root)
+    exit = centre * cos + root
   }
-  // The shank is the cylinder of the same radius above the ball's equator. Its
-  // interval is separate here even though the real body is continuous there;
-  // the removal below uses whichever interval contains the material radius.
   if (reachSq >= 0) {
     const shankStart = centre / cos
     const shankExit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
-    if (shankExit >= shankStart) intervals.push({ contact: shankStart, exit: shankExit })
+    if (shankExit >= shankStart) {
+      contact = Math.min(contact, shankStart)
+      exit = Math.max(exit, shankExit)
+    }
   }
-  // Merge overlapping intervals: the solid is the union, and material inside
-  // the overlap is reached at the lowest boundary of the union.
-  intervals.sort((a, b) => a.contact - b.contact)
-  const merged: Array<{ contact: number; exit: number }> = []
-  for (const interval of intervals) {
-    const last = merged[merged.length - 1]
-    if (last && interval.contact <= last.exit) last.exit = Math.max(last.exit, interval.exit)
-    else merged.push({ ...interval })
-  }
-  return merged
+  // Sphere plus shank is convex: their ray intervals overlap whenever both
+  // exist. Their union is one interval; avoid sorting/allocating a second list
+  // for every swept pose. Stock can still contain arbitrarily many intervals.
+  return exit >= contact ? { contact, exit } : null
 }
 
 /**
@@ -301,10 +280,10 @@ function bodyIntervals(
  * centre is `tip + R`. That bound is independent of the material: a ray 20 deg
  * off a Ø4 ball at tip 2 crosses the body at radii 2.30..5.85, so material out
  * at 6.5 is still reached in the interior. The old `asin(R / materialRadius)`
- * admitted only 8.9 deg there and skipped the cell entirely.
+ * admitted only 17.9 deg there and skipped the cell entirely.
  *
  * A flat's bottom face crosses a ray at `tip / cos(delta)`, so material out to
- * `M` is reachable up to `acos(tip / M)`; `asin(R / M)` (the cylinder wall at
+ * `M` is reachable up to `min(atan(R / tip), acos(tip / M))`; `asin(R / M)` (the cylinder wall at
  * the material radius) understated that too.
  */
 function bodyAngularReachDeg(ball: boolean, cutterRadius: number, tip: number, materialRadius: number): number {
@@ -314,7 +293,7 @@ function bodyAngularReachDeg(ball: boolean, cutterRadius: number, tip: number, m
   }
   if (!(tip > 0)) return 90
   if (!(materialRadius > tip)) return 0
-  return Math.min(90, Math.acos(tip / materialRadius) * 180 / Math.PI)
+  return Math.min(Math.atan(cutterRadius / tip), Math.acos(tip / materialRadius)) * 180 / Math.PI
 }
 
 /**
@@ -349,19 +328,9 @@ function referenceMove(
   const dAngle = toAngle - fromAngle
   const dTip = toTip - fromTip
   const tipMin = Math.min(fromTip, toTip)
-  // A body can only *lower a surface* where it reaches the material radius at
-  // all. The wall of the cutter's axial cylinder meets a radius `M` at
-  // `asin(R / M)`, and no body point can leave that cylinder; the sphere can
-  // add up to its own angular extent `asin(R / (tip + R))` for a ball. Taking
-  // the material's bound as the blank's own largest radius -- never the tip,
-  // which for a deep layer is far inside the stock and made this window a whole
-  // 90 degrees on every flat -- is what keeps the swept window affordable. The
-  // wider true extent is used only by the cheap interior pass below.
-  const wallReach = Math.min(90, Math.asin(Math.min(1, cutterRadius / reference.maxMaterial)) * 180 / Math.PI)
-  const sphereReach = ball && tipMin + cutterRadius > 0
-    ? Math.min(90, Math.asin(Math.min(1, cutterRadius / (tipMin + cutterRadius))) * 180 / Math.PI)
-    : wallReach
-  const halfSpanDegrees = Math.max(wallReach, sphereReach)
+  // Bound the whole cutter body, including interior contact. The blank's
+  // radius cannot bound the cutter wall's angular reach at smaller radii.
+  const halfSpanDegrees = bodyAngularReachDeg(ball, cutterRadius, tipMin, reference.maxMaterial)
   const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - cutterRadius - alongStart) / alongBin))
   const i1 = Math.min(alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + cutterRadius - alongStart) / alongBin))
   const windowLo = Math.min(fromAngle, toAngle) - halfSpanDegrees - angleDeg
@@ -372,6 +341,7 @@ function referenceMove(
   const midAngle = fromAngle + dAngle / 2
   referenceStats.moves++
   let engagement = 0
+  moveInteriorWorst = 0
   worstCell.depth = 0
   for (let i = i0; i <= i1; i++) {
     const cellAlong = alongStart + (i + 0.5) * alongBin
@@ -384,13 +354,13 @@ function referenceMove(
       const startMaterial = material[index]
       if (!(startMaterial > 0)) continue
       let standing = startMaterial
+      let removed = 0
+      let interiorRemoved = 0
       const materialRadius = startMaterial
       // The representative of this cell's angle nearest the move's own angle
       // span: the move can sweep past 0/360 and the cell is one direction.
       const target = cellAngle + 360 * Math.round((midAngle - cellAngle) / 360)
-      const angularHalfDeg = materialRadius > cutterRadius
-        ? Math.min(90, Math.asin(cutterRadius / materialRadius) * 180 / Math.PI)
-        : 90
+      const angularHalfDeg = bodyAngularReachDeg(ball, cutterRadius, tipMin, materialRadius)
       // The interval of the move that can reach this cell at all.
       let lo = 0
       let hi = 1
@@ -428,14 +398,24 @@ function referenceMove(
       hi = Math.min(1, hi)
       // Steps no coarser than the reference's own resolution in angle, along
       // and Z.
-      const steps = Math.max(1, Math.ceil(Math.max(
+      // At fixed along and tip, ray/body intervals nest as |delta| grows:
+      // contact rises and exit falls. The closest angle therefore gives the
+      // exact union over a turning move. A pure plunge has the same nesting
+      // as tip rises, so its deepest endpoint is the exact swept union too.
+      // Slanted moves still require the full fine-grid continuous sweep.
+      const fixedRing = dAlong === 0 && dTip === 0
+      const purePlunge = dAlong === 0 && dAngle === 0
+      const exactT = fixedRing && dAngle !== 0
+        ? Math.max(lo, Math.min(hi, (target - fromAngle) / dAngle))
+        : dTip <= 0 ? hi : lo
+      const steps = fixedRing || purePlunge ? 0 : Math.max(1, Math.ceil(Math.max(
         Math.abs(dAngle) * (hi - lo) / angleDeg,
         Math.abs(dAlong) * (hi - lo) / alongBin,
         Math.abs(dTip) * (hi - lo) / alongBin,
       )))
       referenceStats.steps += steps + 1
       for (let step = 0; step <= steps; step++) {
-        const t = steps === 0 ? lo : lo + (hi - lo) * step / steps
+        const t = steps === 0 ? exactT : lo + (hi - lo) * step / steps
         const toolAlong = fromAlong + dAlong * t
         const dx = cellAlong - toolAlong
         if (dx * dx >= cutterRadius * cutterRadius) continue
@@ -444,103 +424,68 @@ function referenceMove(
         while (delta > 180) delta -= 360
         while (delta < -180) delta += 360
         const tip = fromTip + dTip * t
-        const intervals = bodyIntervals(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
-        if (intervals.length === 0) continue
-        let next = standing
-        for (const span of intervals) {
-          // A body whose solid starts at or above the standing surface is in
-          // air here.
-          if (span.contact >= standing - 1e-12) continue
+        const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
+        if (!span || span.contact >= standing - 1e-12) continue
+        const cavity = reference.occupied.get(index)
+        if (!cavity && span.exit >= standing) {
+          // Most samples lower one solid surface. Preserve the scalar form
+          // without allocating occupied/subtraction lists on this hot path.
+          const next = Math.min(standing, span.contact)
+          removed += standing - next
+          standing = next
+          material[index] = next
+          if (removed > engagement) {
+            engagement = removed
+            Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: next })
+          }
           if (span.contact < lowestContact.contact) {
-            lowestContact.contact = span.contact
-            lowestContact.along = cellAlong
-            lowestContact.angle = cellAngle
-            lowestContact.tip = tip
-            lowestContact.kind = move.kind
+            Object.assign(lowestContact, { contact: span.contact, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
           }
-          // An interval that crosses the standing surface lowers it to its
-          // entrance. One wholly inside the solid removes an interior span and
-          // leaves the outermost stock standing (a scalar radial map cannot
-          // show the cavity); that removal is recorded in {@link interiorWorst}
-          // instead of being lost (#1045 slice M).
-          if (standing > span.exit + 1e-12) {
-            const inside = span.exit - span.contact
-            if (inside > interiorWorst.depth) {
-              interiorWorst.depth = inside
-              interiorWorst.along = cellAlong
-              interiorWorst.angle = cellAngle
-              interiorWorst.kind = move.kind
-            }
-            continue
+          continue
+        }
+        let occupied = cavity ?? [{ contact: 0, exit: standing }]
+        const next: Array<{ contact: number; exit: number }> = []
+        for (const solid of occupied) {
+          const low = Math.max(solid.contact, span.contact)
+          const high = Math.min(solid.exit, span.exit)
+          if (high <= low + 1e-12) { next.push(solid); continue }
+          const depth = high - low
+          removed += depth
+          if (high < standing - 1e-12) interiorRemoved += depth
+          if (solid.contact < low) next.push({ contact: solid.contact, exit: low })
+          if (high < solid.exit) next.push({ contact: high, exit: solid.exit })
+          if (low < lowestContact.contact) {
+            Object.assign(lowestContact, { contact: low, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
           }
-          if (span.contact < next) next = span.contact
         }
-        if (next >= standing) continue
-        const depth = startMaterial - next
-        if (depth > engagement) {
-          engagement = depth
-          worstCell.depth = depth
-          worstCell.along = cellAlong
-          worstCell.angle = cellAngle
-          worstCell.material = startMaterial
-          worstCell.contact = next
+        occupied = next
+        standing = occupied.length ? occupied[occupied.length - 1].exit : 0
+        material[index] = standing
+        // A single interval starting at zero needs only the scalar fast path.
+        if (occupied.length <= 1 && (!occupied.length || occupied[0].contact === 0)) reference.occupied.delete(index)
+        else reference.occupied.set(index, occupied)
+        moveInteriorWorst = Math.max(moveInteriorWorst, interiorRemoved)
+        if (interiorRemoved > interiorWorst.depth) {
+          Object.assign(interiorWorst, { depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind })
         }
-        material[index] = next
-        standing = next
+        if (removed > engagement) {
+          engagement = removed
+          Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: standing })
+        }
         if (!(standing > 0)) break
       }
     }
   }
-  // #1045 slice M: record the **interior** removal the surface sweep cannot
-  // represent. A body interval wholly inside the standing solid leaves the
-  // outermost stock standing, so it takes no surface engagement -- but the
-  // material was still there and the cutter still occupied it. One pose per
-  // cell at the move's deepest endpoint is enough for the diagnostic, and it is
-  // cheap enough to use the body's true angular extent (`bodyAngularReachDeg`),
-  // which the surface sweep cannot afford. The body's extent for a ball is
-  // `asin(R / (tip + R))`; on the reviewer's Ø4 ball at tip 2 and a ray 20 deg
-  // off, the surface window `asin(R / 6.5)` is only 8.9 deg and would skip the
-  // cell entirely.
-  const deepAtEnd = toTip <= fromTip
-  const deepTip = deepAtEnd ? toTip : fromTip
-  const deepAlong = deepAtEnd ? toAlong : fromAlong
-  const deepAngle = deepAtEnd ? toAngle : fromAngle
-  const wideHalfDeg = bodyAngularReachDeg(ball, cutterRadius, deepTip, reference.maxMaterial)
-  const wideLo = deepAngle - wideHalfDeg - angleDeg
-  const wideHi = deepAngle + wideHalfDeg + angleDeg
-  const wideAll = wideHi - wideLo >= 360 - 1e-9
-  const wideFirst = wideAll ? 0 : Math.floor(wideLo / angleDeg)
-  const wideLast = wideAll ? angleBins - 1 : Math.ceil(wideHi / angleDeg)
-  const stride = Math.max(1, reference.interiorStride)
-  for (let i = i0; i <= i1; i += stride) {
-    const cellAlong = alongStart + (i + 0.5) * alongBin
-    const dx = cellAlong - deepAlong
-    if (dx * dx >= cutterRadius * cutterRadius) continue
-    const rowOffset = i * angleBins
-    for (let cell = wideFirst; cell <= wideLast; cell += stride) {
-      const k = wideAll ? cell : ((cell % angleBins) + angleBins) % angleBins
-      const materialRadius = material[rowOffset + k]
-      if (!(materialRadius > 0)) continue
-      const cellAngle = (k + 0.5) * angleDeg
-      let delta = cellAngle - deepAngle
-      while (delta > 180) delta -= 360
-      while (delta < -180) delta += 360
-      const intervals = bodyIntervals(ball, cutterRadius, deepTip, delta * Math.PI / 180, dx)
-      for (const span of intervals) {
-        if (span.contact >= materialRadius - 1e-12) continue
-        if (span.exit < materialRadius - 1e-12) {
-          const inside = span.exit - span.contact
-          if (inside > interiorWorst.depth) {
-            interiorWorst.depth = inside
-            interiorWorst.along = cellAlong
-            interiorWorst.angle = cellAngle
-            interiorWorst.kind = move.kind
-          }
-        }
-      }
-    }
-  }
   return engagement
+}
+
+/** Count cavities as well as surface loss when judging retained stock. */
+function retainedRemoval(reference: Reference, index: number, blank: number): number {
+  const occupied = reference.occupied.get(index)
+  const remaining = occupied
+    ? occupied.reduce((sum, span) => sum + span.exit - span.contact, 0)
+    : reference.material[index]
+  return blank - remaining
 }
 
 /**
@@ -611,6 +556,21 @@ console.log('Testing the continuous reference against hand-computed values...')
     assert.ok(Math.abs(engagement - 1.95) < 0.01,
       `pure plunge: engagement ${engagement.toFixed(4)}, expected 1.95`)
   }
+  // Pass-8 repro: a pure plunge reaches the ray ten degrees off-axis,
+  // even though the blank-radius window would exclude it.
+  {
+    const reference = singleCellReference(10, 0)
+    const k = 20
+    reference.material[k] = 9.95
+    const engagement = referenceMove(reference, {
+      kind: 'plunge', from: { x: 10, y: 10, z: 10, a: 0.25 },
+      to: { x: 10, y: 10, z: 8, a: 0.25 },
+    }, 0, 2, false, alongOf, 0.25, 0.25)
+    const contact = 8 / Math.cos(10 * Math.PI / 180)
+    assert.ok(Math.abs(reference.material[k] - contact) < 1e-9)
+    assert.ok(Math.abs(engagement - 1.826587104914) < 1e-9)
+    assert.throws(() => checkEngagement(engagement, 1, 'off-axis plunge'), /off-axis plunge engages/)
+  }
   // Reviewer repro 3: interior ball-shank removal. A Ø4 ball (tip 2, centre 4)
   // at dTheta = 20° removes material at 5.5 mm: the sphere ends at 5.218, the
   // shank covers 4.257..5.848, and the union's lower boundary is the sphere's
@@ -653,12 +613,33 @@ console.log('Testing the continuous reference against hand-computed values...')
     const contact = 4 * Math.cos(radians)
       - Math.sqrt(Math.max(0, 4 - 16 * Math.sin(radians) ** 2))
     const exit = 2 / Math.sin(radians)
-    assert.equal(engagement, 0,
-      'interior span: the body never crosses the surface, so it takes no surface engagement')
+    assert.ok(Math.abs(engagement - (exit - contact)) < 0.0001,
+      'interior span: the complete occupied span counts as engagement')
+    assert.throws(() => checkEngagement(engagement, 1, 'ball interior repro'), /ball interior repro engages/)
+    assert.deepEqual(reference.occupied.get(k), [{ contact: 0, exit: contact }, { contact: exit, exit: 6.5 }])
+    assert.equal(referenceMove(reference, {
+      kind: 'cut', from: { x: 10, y: 10, z: 2, a: 0.25 }, to: { x: 10, y: 10, z: 2, a: 0.25 },
+    }, 0, 2, true, alongOf, 0.25, 0.25), 0, 'a second identical pose removes no cavity material twice')
     assert.ok(Math.abs(interiorWorst.depth - (exit - contact)) < 0.02,
       `interior span: recorded span ${interiorWorst.depth.toFixed(4)}, expected ${(exit - contact).toFixed(4)}`)
+    assert.ok(Math.abs(retainedRemoval(reference, k, 6.5) - (exit - contact)) < 1e-9,
+      'retained-end exclusion detects the cavity despite its intact outer surface')
     assert.equal(reference.material[k], 6.5,
       'interior span: the outermost stock is unchanged, because the body never crosses it')
+  }
+  // A fixed-height ring reaches a ray deepest in the middle of its A span,
+  // not at an endpoint. Its exact swept union must preserve that minimum.
+  for (const ball of [false, true]) {
+    const reference = singleCellReference(10, 0)
+    const k = 40
+    reference.material[k] = 6.5
+    const engagement = referenceMove(reference, {
+      kind: 'cut', from: { x: 10, y: 10, z: 2, a: 0.25 },
+      to: { x: 10, y: 10, z: 2, a: 40.25 },
+    }, 0, 2, ball, alongOf, 0.25, 40.25)
+    assert.ok(Math.abs(engagement - 4.5) < 1e-9)
+    assert.ok(Math.abs(reference.material[k] - 2) < 1e-9,
+      'a ring includes its closest-angle pose inside the commanded sweep')
   }
   // Reviewer repro 5 (#1045 slice M): the engagement bound is checked for a
   // plunge as well as a turning cut. A plunge that takes more than its bound
@@ -671,6 +652,9 @@ console.log('Testing the continuous reference against hand-computed values...')
   }
   console.log('  continuous sweep, pure plunge, ball-shank and interior-span repros match')
 }
+
+if (process.env.SQUARE_REFERENCE_ONLY) process.exit(0)
+interiorWorst.depth = 0
 
 // ── the seeded cases ──────────────────────────────────────────────────────
 
@@ -1302,12 +1286,14 @@ let worstSurfaceOver = Number.NEGATIVE_INFINITY
 let worstSurfaceOverLabel = ''
 let worstSurfaceUnder = Number.NEGATIVE_INFINITY
 let worstSurfaceUnderLabel = ''
+let worstAssertedInterior = 0
 let nonTurningWorst = 0
 let nonTurningLabel = ''
 
 // `SQUARE_CASES` is a profiling aid only: the committed run uses all 300 seeded
 // cases, and the assertions below still require the full set.
 const CASE_COUNT = process.env.SQUARE_CASES ? Number(process.env.SQUARE_CASES) : 300
+const startedAt = Date.now()
 const CASES = Array.from({ length: CASE_COUNT }, (_, seed) => fitCase(seed))
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -1326,7 +1312,6 @@ if (process.env.SQUARE_ESTIMATE_ONLY) {
 
 console.log(`Testing ${CASES.length} seeded generator-emitted square around programs...`)
 let checkedCuts = 0
-const startedAt = Date.now()
 let casesDone = 0
 let checkedRapids = 0
 let checkedSurfaceCells = 0
@@ -1405,7 +1390,6 @@ for (const { entry, program } of CASES) {
   const windowLow = Math.max(bounds.minX, minCutAlong - cutterRadius - 1)
   const windowHigh = Math.min(bounds.maxX, maxCutAlong + cutterRadius + 1)
   const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
-  reference.interiorStride = 4
 
   const finishBound = entry.stockToLeave + entry.finishStepdown
     + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
@@ -1438,6 +1422,10 @@ for (const { entry, program } of CASES) {
         }
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
+        if (stage.finish || entry.roughKind === 'around') {
+          worstAssertedInterior = Math.max(worstAssertedInterior, moveInteriorWorst)
+          checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+        }
         if (move.kind === 'cut') {
           if (turns) {
             // The bound is about a **turning** cut taking material out of the
@@ -1508,7 +1496,8 @@ for (const { entry, program } of CASES) {
     for (let k = 0; k < reference.angleBins; k++) {
       const angle = (k + 0.5) * reference.angleDeg
       const blank = blankRadius(stock.thickness / 2, angle)
-      const drop = blank - reference.material[i * reference.angleBins + k]
+      const index = i * reference.angleBins + k
+      const drop = retainedRemoval(reference, index, blank)
       if (drop > worstStubDrop) {
         worstStubDrop = drop
         worstStubLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`
@@ -1594,7 +1583,8 @@ console.log(`  finish: worst engagement ${worst.finish.peak.toFixed(4)} mm (${wo
   + `(${worst.finish.label})`)
 console.log(`  rapid turns: worst margin ${worstRapidMargin.toFixed(4)} mm above the corner envelope plus clearance `
   + `(${worstRapidLabel})`)
-console.log(`  interior removal recorded (not a surface bite): deepest span ${interiorWorst.depth.toFixed(4)} mm `
+console.log(`  interior engagement asserted in around stages: worst ${worstAssertedInterior.toFixed(4)} mm`)
+console.log(`  interior engagement including frozen along stages: worst ${interiorWorst.depth.toFixed(4)} mm `
   + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)} (${interiorWorst.kind || 'none'})`)
 console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)} mm (${worstStubLabel || 'none'})`)
 console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
@@ -1611,11 +1601,11 @@ if (process.env.SQUARE_CASES) {
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
-// #1045 slice M: at least 30 programs must run at the adapter's **default**
+// #1045 slice N: at least 38 programs must run at the adapter's **default**
 // parameters -- never coarsened, only shortened -- so the default cutting
 // programs are covered, not only the custom-sampling ones. The subset covers
 // every program shape and both retained-end states.
-assert.ok(defaultCases >= 30, `at least 30 default-parameter programs (${defaultCases})`)
+assert.ok(defaultCases >= 38, `at least 38 default-parameter programs (${defaultCases})`)
 assert.ok(defaultFinishOnly > 0, `a finish-only default program (${defaultFinishOnly})`)
 assert.ok(defaultRoughOnly > 0, `a rough-only default program (${defaultRoughOnly})`)
 assert.ok(defaultBoth > 0, `a rough+finish default program (${defaultBoth})`)
@@ -1623,4 +1613,4 @@ assert.ok(defaultMixed > 0, `an along-rough + around-finish default program (${d
 assert.ok(defaultRetained > 0, `a default program with retained ends (${defaultRetained})`)
 assert.ok(defaultFree > 0, `a default program with free ends (${defaultFree})`)
 
-console.log('engine/toolpaths/squareAroundGenerator.property.test.ts: all assertions passed')
+console.log(`engine/toolpaths/squareAroundGenerator.property.test.ts: all assertions passed in ${((Date.now() - startedAt) / 1000).toFixed(1)} s (including generation)`)
