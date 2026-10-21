@@ -301,6 +301,34 @@ function testRotaryProgramReadback(): void {
   }
 }
 
+/**
+ * The #1054 fix 5 repro through the real exporter: a definition whose accepted
+ * machine-coordinate command is the compact `G53G0`. The exporter writes
+ * `G53G0 Z...`; read back, that block must still be recognised as a machine
+ * move. Whitespace-only tokenisation silently dropped it, so the machine
+ * retract became a work-coordinate move and the read-back stayed verified.
+ */
+function testCompactMachineCoordinateReadback(): void {
+  console.log('Testing a compact G53G0 retract read back through the exporter...')
+  const definition = rotaryGrbl('own')
+  definition.motion = { ...definition.motion, machineCoordinateCommand: 'G53G0' }
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 30, 0) },
+    { kind: 'cut', from: rpt(0, 10, 30, 0), to: rpt(10, 10, 30, 90) },
+  ]
+  const { gcode } = exportRotary(definition, moves)
+  assert(gcode.includes('G53G0'), `the exporter writes the compact machine-coordinate command:\n${gcode}`)
+  const parsed = parseExportedMotion(gcode, definition)
+  assert(
+    parsed.status === 'unsupported',
+    `the compact machine retract is not verified, got ${parsed.status}: ${parsed.warnings.join('; ')}`,
+  )
+  assert(
+    parsed.warnings.some((warning) => warning.includes('G53')),
+    `the reason names G53, got ${JSON.stringify(parsed.warnings)}`,
+  )
+}
+
 function makeTrace(): ToolpathGenerationTrace {
   const raw = {
     operationId: 'op',
@@ -652,6 +680,7 @@ testEligibility()
 testInverseTransform()
 testRotaryAngleInverse()
 testRotaryProgramReadback()
+testCompactMachineCoordinateReadback()
 testArcDirectionFlipParity()
 testMirroredMachineFlipsExportedArc()
 testBuildModelVerified()

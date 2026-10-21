@@ -113,24 +113,22 @@ interface Word {
 
 const EPS = 1e-9
 
-/** Parse a single G-code word like "X12.5" into { letter: 'X', value: 12.5 }. */
-function parseWord(token: string): Word | null {
-  if (token.length < 2) return null
-  const letter = token[0].toUpperCase()
-  if (!/[A-Z]/.test(letter)) return null
-  const valueStr = token.slice(1)
-  if (valueStr.length === 0) return null
-  const value = Number(valueStr)
-  if (!Number.isFinite(value)) return null
-  return { letter, value }
+interface TokenizedLine {
+  words: Word[]
+  /**
+   * Text that is not a G-code word. Reported rather than dropped: a block the
+   * tokenizer cannot fully read may state a position, so the caller must not
+   * keep calling the read-back verified (#1054 fix 5).
+   */
+  unparsed: string[]
 }
 
-/** Tokenise a line: strip comments + line numbers, split into words. */
+/** Tokenise a line: strip comments + line numbers, then read its words. */
 function tokenizeLine(
   line: string,
   commentPrefix: string,
   commentSuffix: string,
-): Word[] {
+): TokenizedLine {
   let s = line
   // Strip parenthesised comments: ( ... )
   s = s.replace(/\([^)]*\)/g, ' ')
@@ -144,17 +142,43 @@ function tokenizeLine(
   // comment marker (e.g. ';' to end of line when commentSuffix is empty).
   s = s.replace(/;.*$/, ' ')
   s = s.trim()
-  if (s.length === 0) return []
-  const tokens = s.split(/\s+/)
+
+  // `%` is the program delimiter the UCCNC and Mach3 definitions write. A line
+  // that is only that delimiter (optionally with its line number) is neither a
+  // word nor unreadable text; a stray `%` inside a block stays unparsed.
+  if (/^(?:N\d+\s*)?%$/.test(s)) return { words: [], unparsed: [] }
+
   const words: Word[] = []
-  for (const token of tokens) {
-    // Strip an optional N-line-number prefix word like "N10".
-    const word = parseWord(token)
-    if (!word) continue
-    if (word.letter === 'N') continue
-    words.push(word)
+  const unparsed: string[] = []
+  if (s.length === 0) return { words, unparsed }
+
+  // A word is a letter immediately followed by its numeric value — the way a
+  // controller reads a block, with whitespace only separating words. Splitting
+  // on whitespace silently dropped a compact block like `G53G0Z0`: the whole
+  // machine-coordinate retract vanished and the read-back stayed "verified"
+  // (#1054 fix 5). `X1.5Y-2` and `G90G49` are read the same way.
+  const pattern = /[A-Za-z][+-]?(?:\d+(?:\.\d*)?|\.\d+)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(s)) !== null) {
+    const gap = s.slice(lastIndex, match.index).trim()
+    if (gap.length > 0) unparsed.push(gap)
+    const letter = match[0][0].toUpperCase()
+    const value = Number(match[0].slice(1))
+    if (!Number.isFinite(value)) {
+      // A numerically absurd word is unreadable, not a coordinate.
+      unparsed.push(match[0])
+      lastIndex = pattern.lastIndex
+      continue
+    }
+    // `N` is a line number, not a command: it is a word, so it is read and then
+    // ignored rather than reported as unreadable text.
+    if (letter !== 'N') words.push({ letter, value })
+    lastIndex = pattern.lastIndex
   }
-  return words
+  const tail = s.slice(lastIndex).trim()
+  if (tail.length > 0) unparsed.push(tail)
+  return { words, unparsed }
 }
 
 /** Classify a G-word for plan-view parsing. Motion words (G0-G3) drive a move;
@@ -319,7 +343,16 @@ export function parseGcodeMotion(
 
   const lines = gcode.split(/\r?\n/)
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const words = tokenizeLine(lines[lineIndex], commentPrefix, commentSuffix)
+    const { words, unparsed } = tokenizeLine(lines[lineIndex], commentPrefix, commentSuffix)
+    // Text the tokenizer cannot read is never silently dropped (#1054 fix 5).
+    // The block may state a position, so the whole read-back is downgraded —
+    // even when the words it did read are enough to draw a segment.
+    if (unparsed.length > 0) {
+      if (status === 'verified') status = 'unsupported'
+      warnings.push(
+        `line ${lineIndex + 1}: unparsed G-code text ${unparsed.map((text) => `"${text}"`).join(', ')}; the block is not fully understood`,
+      )
+    }
     if (words.length === 0) continue
 
     // Resolve the motion mode for this line: an explicit G0/G1/G2/G3 wins;
