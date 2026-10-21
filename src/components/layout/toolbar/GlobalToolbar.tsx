@@ -15,6 +15,7 @@
  */
 
 import { useProjectStore } from '../../../store/projectStore'
+import { CommandPaletteButton } from './CommandPaletteButton'
 import { GlobalActions } from './GlobalActions'
 import { MeasureActions } from './MeasureActions'
 import { ProjectNameControl } from './ProjectNameControl'
@@ -89,6 +90,9 @@ export function GlobalToolbar({
           onDeleteDimension={toolbar.sketchCommands.dimension.deleteDimension.onActivate}
           onToggleShowDimensions={toolbar.sketchCommands.dimension.showDimensions.onActivate}
         />
+        <div className="toolbar-group">
+          <CommandPaletteButton />
+        </div>
         <div className="toolbar-group toolbar-group--appearance">
           <AppearanceControl />
           <LanguageControl />

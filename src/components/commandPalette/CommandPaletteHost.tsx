@@ -1,5 +1,5 @@
 /**
- * Copyright 2026 Franja (Frank) Povazanj
+ * Copyright 2026 Maik Rolf
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CommandPalette } from './CommandPalette'
+import { COMMAND_PALETTE_OPEN_EVENT } from './events'
 
 export interface CommandPaletteHostProps {
   onNewProject: () => void
@@ -26,25 +27,65 @@ export interface CommandPaletteHostProps {
   onZoomToModel: () => void
 }
 
+interface CloseOptions {
+  restoreFocus?: boolean
+}
+
 /**
  * Keeps the palette's store-backed command hooks unmounted while it is closed,
- * and owns the global Ctrl/Cmd+K toggle.
+ * owns the global Ctrl/Cmd+K toggle, and returns focus to whatever opened it.
  */
 export function CommandPaletteHost(props: CommandPaletteHostProps) {
   const [open, setOpen] = useState(false)
-  const close = useCallback(() => setOpen(false), [])
+  const openRef = useRef(false)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const restoreFocusOnCloseRef = useRef(true)
+
+  const openPalette = useCallback(() => {
+    if (openRef.current) return
+    const active = document.activeElement
+    returnFocusRef.current = active instanceof HTMLElement ? active : null
+    restoreFocusOnCloseRef.current = true
+    openRef.current = true
+    setOpen(true)
+  }, [])
+
+  const close = useCallback((options?: CloseOptions) => {
+    openRef.current = false
+    restoreFocusOnCloseRef.current = options?.restoreFocus !== false
+    setOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (open || !restoreFocusOnCloseRef.current) return
+    const target = returnFocusRef.current
+    if (target?.isConnected) {
+      target.focus({ preventScroll: true })
+    }
+  }, [open])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setOpen((value) => !value)
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
+      event.preventDefault()
+      if (openRef.current) {
+        close()
+      } else {
+        openPalette()
       }
     }
 
+    function handleOpen() {
+      openPalette()
+    }
+
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+    window.addEventListener(COMMAND_PALETTE_OPEN_EVENT, handleOpen)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener(COMMAND_PALETTE_OPEN_EVENT, handleOpen)
+    }
+  }, [close, openPalette])
 
   return open ? <CommandPalette {...props} onClose={close} /> : null
 }

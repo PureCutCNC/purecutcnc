@@ -1,5 +1,5 @@
 /**
- * Copyright 2026 Franja (Frank) Povazanj
+ * Copyright 2026 Maik Rolf
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import {
   type CommandSpec,
 } from '../../commands/commandRegistry'
 import { useAppCommands } from '../../commands/useAppCommands'
-import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
+import { formatShortcutHint } from '../../commands/shortcutHint'
 import './commandPalette.css'
 
 const GROUP_LABEL_KEYS: Record<CommandGroup, MessageKey> = {
@@ -50,7 +50,7 @@ export interface CommandPaletteProps {
   onPrintDesign?: () => void
   onRequestText?: () => void
   onZoomToModel: () => void
-  onClose: () => void
+  onClose: (options?: { restoreFocus?: boolean }) => void
 }
 
 export function CommandPalette({
@@ -63,7 +63,6 @@ export function CommandPalette({
   onClose,
 }: CommandPaletteProps) {
   const { t } = useI18n()
-  useRestoreCanvasFocus()
 
   const commands = useAppCommands({
     onNewProject,
@@ -91,14 +90,17 @@ export function CommandPalette({
 
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
+      if (event.key !== 'Escape') return
+      // Capture phase: the palette sits above any open dialog, so Escape must
+      // close the palette only. A bubble listener would let the dialog's own
+      // Escape handler run first and discard its draft.
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
     }
 
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
+    window.addEventListener('keydown', handleEscape, true)
+    return () => window.removeEventListener('keydown', handleEscape, true)
   }, [onClose])
 
   useEffect(() => {
@@ -107,7 +109,9 @@ export function CommandPalette({
   }, [activeOptionId])
 
   async function execute(command: CommandSpec) {
-    onClose()
+    // The command owns focus after it runs (the text dialog autoFocuses its
+    // textarea, for example). Restoring the canvas here would steal it back.
+    onClose({ restoreFocus: false })
     const result = await registry.run(command.id)
     if (!result.ok && result.reason === 'error') {
       console.error(`Command palette: ${command.id} failed`, result.error)
@@ -120,6 +124,13 @@ export function CommandPalette({
   }
 
   function handleInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Tab') {
+      // The input is the only tab stop; keep focus inside the modal instead of
+      // letting Tab reach the controls behind the backdrop.
+      event.preventDefault()
+      return
+    }
+
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex((index) => filtered.length === 0 ? 0 : (index + 1) % filtered.length)
@@ -139,7 +150,7 @@ export function CommandPalette({
   }
 
   return (
-    <div className="command-palette-backdrop" onMouseDown={onClose}>
+    <div className="command-palette-backdrop" onMouseDown={() => onClose()}>
       <div
         className="command-palette"
         role="dialog"
@@ -192,7 +203,7 @@ export function CommandPalette({
                     <span className="command-palette-label">{command.label}</span>
                     <span className="command-palette-meta">
                       {t(GROUP_LABEL_KEYS[command.group])}
-                      {command.shortcut ? <kbd>{command.shortcut}</kbd> : null}
+                      {command.shortcut ? <kbd>{formatShortcutHint(command.shortcut)}</kbd> : null}
                     </span>
                   </button>
                 </li>
