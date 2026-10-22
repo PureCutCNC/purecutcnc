@@ -127,6 +127,7 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': 'Wird berechnet ({count})',
   'appShell.generation.paused': 'Berechnung pausiert',
   'appShell.generation.failed': 'Berechnung fehlgeschlagen',
+  'appShell.generation.workerFallback': 'Hintergrundthread nicht verfügbar; der Hauptthread wird verwendet.',
   'appShell.generation.stop': 'Stopp',
   'appShell.generation.stopUnavailable': 'Stopp kann eine bereits im Hauptthread laufende Operation nicht unterbrechen.',
   'appShell.generation.resume': 'Fortsetzen',

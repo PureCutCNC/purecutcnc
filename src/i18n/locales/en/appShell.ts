@@ -132,6 +132,7 @@ export const appShellEn = {
   'appShell.generation.working': 'Generating ({count})',
   'appShell.generation.paused': 'Generation paused',
   'appShell.generation.failed': 'Generation failed',
+  'appShell.generation.workerFallback': 'Background thread unavailable; using the main thread.',
   'appShell.generation.stop': 'Stop',
   'appShell.generation.stopUnavailable': 'Stop cannot interrupt an operation already running on the main thread.',
   'appShell.generation.resume': 'Resume',

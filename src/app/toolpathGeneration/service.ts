@@ -148,6 +148,7 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
   let activeJob: Job | null = null
   let activeStage: GenerationStage | null = null
   let executorFailure: GenerationFailure | null = null
+  let executorFallback: GenerationFailure | null = null
   let automaticPaused = false
   let disposed = false
   let nextRequestId = 1
@@ -169,6 +170,7 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
       queuedCount: queue.length,
       automaticPaused,
       executorFailure,
+      executorFallback,
       executorKind,
     }
   }
@@ -325,6 +327,34 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
     } else if (outcome.status === 'superseded') {
       setStatus(job.operationId, 'stale')
       settleJob(job, outcome)
+    } else if (executorKind === 'worker' && outcome.failure.category === 'worker-startup') {
+      // The worker could not start at all — a runtime without module workers,
+      // a blocked worker script, a locked-down webview. With `worker` as the
+      // shipped default (issue #1087), leaving this as a failed operation would
+      // make the application look broken on a machine where the main thread
+      // still works, so fall back once and run the same job there. The failure
+      // is kept as `executorFallback` (not `executorFailure`) so the UI can say
+      // where generation moved without offering a Retry that is already done.
+      //
+      // Only `worker-startup` qualifies: a crash *while* computing may be a
+      // generator fault, and re-running it inline would block the only thread
+      // rather than recover. A fallback that somehow fails again is an inline
+      // failure, so this cannot become a retry loop.
+      executorFallback = outcome.failure
+      executorKind = 'inline'
+      replaceExecutor()
+      job.identity = {
+        ...job.identity,
+        workerEpoch: epoch,
+        requestId: nextRequestId,
+        snapshotId: snapshotIdFor(job.project),
+      }
+      nextRequestId += 1
+      queue.unshift(job)
+      setStatus(job.operationId, 'queued')
+      emit()
+      pump()
+      return
     } else {
       // A failure stays a failure until a new relevant request or an explicit
       // Retry. Re-queueing on staleness alone is how a broken worker becomes an
@@ -612,6 +642,9 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
       cache.clear()
       statuses.clear()
       executorFailure = null
+      // An explicit backend choice is a fresh attempt, so a fallback notice
+      // from an earlier session inside this one no longer describes anything.
+      executorFallback = null
 
       // The cache was just cleared, so the demand has to be acted on again or
       // the preview shows a spinner for every operation and nothing queues.

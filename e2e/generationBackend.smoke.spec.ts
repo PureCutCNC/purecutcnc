@@ -37,6 +37,7 @@ import { exportDialog, exportPreview, generation } from './selectors'
 
 const WORKER_OPTION = /Background thread/
 const MAIN_THREAD_OPTION = /Main thread/
+const EXECUTOR_STORAGE_KEY = 'purecut.generation.executor'
 
 async function chooseBackend(page: Parameters<typeof generation.backendTrigger>[0], option: RegExp): Promise<void> {
   await generation.backendTrigger(page).click()
@@ -59,26 +60,26 @@ async function readExportedProgram(
 }
 
 test.describe('Generation execution backend smoke', () => {
-  test('defaults to the main thread and says Stop cannot interrupt it', async ({ app }) => {
+  test('a fresh profile runs on the background thread and the GPU layer', async ({ app }) => {
     // The gear is always present; the status it carries is readable without
     // opening it.
     await expect(generation.root(app.page)).toBeVisible()
-    // The shipped default, and what a user who never opens the menu gets.
-    const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
-    expect(stored === null || stored === 'inline').toBe(true)
+    // The shipped defaults (issue #1087): what a user who never opens a menu
+    // gets. The preference is written on first load, so it is `worker`, not
+    // an absent key.
+    const stored = await app.page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)
+    expect(stored).toBe('worker')
+    await expect(app.page.locator('canvas.sketch-canvas'))
+      .toHaveAttribute('data-toolpath-renderer', 'gpu')
 
     await generation.backendTrigger(app.page).click()
-    await expect(generation.backendOption(app.page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'true')
-    await expect(generation.backendOption(app.page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'false')
-    await app.page.keyboard.press('Escape')
-
-    // Offered but honest: it is disabled here rather than quietly ineffective.
-    await generation.backendTrigger(app.page).click()
-    await expect(generation.stopButton(app.page)).toHaveAttribute(
-      'title',
-      /cannot interrupt an operation already running on the main thread/,
-    )
+    await expect(generation.backendOption(app.page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'false')
+    await expect(generation.backendOption(app.page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'true')
+    // Stop is not refused for the main thread's reason: this backend can
+    // interrupt work already running, so it is only disabled while idle.
+    await expect(generation.stopButton(app.page)).not.toHaveAttribute('title', /cannot interrupt/)
     await expect(generation.stopButton(app.page)).toBeDisabled()
+    await app.page.keyboard.press('Escape')
   })
 
   test('the backend menu opens on screen', async ({ app }) => {
@@ -102,13 +103,12 @@ test.describe('Generation execution backend smoke', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width)
   })
 
-  test('choosing the background thread starts a real worker and persists', async ({ app }) => {
+  test('a fresh profile starts a real worker and persists the default', async ({ app }) => {
     const workerUrls: string[] = []
     app.page.on('worker', (worker) => workerUrls.push(worker.url()))
     const pageErrors: string[] = []
     app.page.on('pageerror', (error) => pageErrors.push(error.message))
 
-    await chooseBackend(app.page, WORKER_OPTION)
     await seedGcodeExportProject(app.page)
     await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
@@ -116,57 +116,119 @@ test.describe('Generation execution backend smoke', () => {
     expect(workerUrls.some((url) => /toolpath\.worker/.test(url))).toBe(true)
     expect(pageErrors).toEqual([])
 
-    const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
+    const stored = await app.page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)
     expect(stored).toBe('worker')
   })
 
-  test('the program a worker produces is the program the main thread produces', async ({ app, ui }) => {
-    await seedGcodeExportProject(app.page)
-    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-    const inline = await readExportedProgram(app.page, ui)
+  test.describe('with a stored main-thread preference', () => {
+    // The explicit opt-out is a user preference, not an absence of one. It must
+    // survive the new default, and it is the baseline the parity comparison
+    // needs — comparing two worker runs would prove nothing (issue #1087).
+    test.use({ preferences: { [EXECUTOR_STORAGE_KEY]: 'inline' } })
 
-    await chooseBackend(app.page, WORKER_OPTION)
-    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-    const worker = await readExportedProgram(app.page, ui)
+    test('is kept on load, across a reload, and still generates', async ({ app }) => {
+      const page = app.page
+      expect(await page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)).toBe('inline')
+      await generation.backendTrigger(page).click()
+      await expect(generation.backendOption(page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'true')
+      await expect(generation.backendOption(page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'false')
+      await page.keyboard.press('Escape')
 
-    // Byte-for-byte on what the dialog shows, and identical move and line
-    // counts. A backend that changed the program would move one of these.
-    expect(worker.preview).toBe(inline.preview)
-    expect(worker.summary).toBe(inline.summary)
-    expect(inline.preview.length).toBeGreaterThan(0)
-  })
+      await seedGcodeExportProject(page)
+      await expect(generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
-  test('switching backends leaves real toolpaths, in both directions', async ({ app, ui }) => {
-    // Asserted on the **exported program**, not on the status line. The status
-    // line is what let an earlier version of this test pass while the feature
-    // was broken: a backend switch cleared the cache and the demand, nothing
-    // re-queued, so the queue was empty and the summary happily read "up to
-    // date" while every operation still showed a spinner. A program can only be
-    // produced from toolpaths that actually exist.
-    await seedGcodeExportProject(app.page)
-    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-    const before = await readExportedProgram(app.page, ui)
-    expect(before.preview.length).toBeGreaterThan(0)
+      // A reload must not rewrite the stored choice to the new default.
+      await page.reload()
+      expect(await page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)).toBe('inline')
+      await generation.backendTrigger(page).click()
+      await expect(generation.backendOption(page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'true')
+      await expect(generation.backendOption(page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'false')
+    })
 
-    for (const option of [WORKER_OPTION, MAIN_THREAD_OPTION, WORKER_OPTION]) {
-      await generation.backendTrigger(app.page).click()
-      await generation.backendOption(app.page, option).click()
+    test('the program a worker produces is the program the main thread produces', async ({ app, ui }) => {
+      await seedGcodeExportProject(app.page)
       await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+      const inline = await readExportedProgram(app.page, ui)
 
-      // The load-bearing assertion. Opening the export dialog issues an
-      // *explicit* request, which bypasses automatic demand entirely — so an
-      // export can succeed while preview generation is dead, which is precisely
-      // the state the bug produced. These badges come from cache validity, so
-      // they only clear when the preview really regenerated.
-      await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 30_000 })
+      await chooseBackend(app.page, WORKER_OPTION)
+      await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+      const worker = await readExportedProgram(app.page, ui)
 
-      const after = await readExportedProgram(app.page, ui)
-      expect(after.preview).toBe(before.preview)
-      expect(after.summary).toBe(before.summary)
-    }
+      // Byte-for-byte on what the dialog shows, and identical move and line
+      // counts. A backend that changed the program would move one of these.
+      expect(worker.preview).toBe(inline.preview)
+      expect(worker.summary).toBe(inline.summary)
+      expect(inline.preview.length).toBeGreaterThan(0)
+    })
 
-    const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
-    expect(stored).toBe('worker')
+    test('switching backends leaves real toolpaths, in both directions', async ({ app, ui }) => {
+      // Asserted on the **exported program**, not on the status line. The status
+      // line is what let an earlier version of this test pass while the feature
+      // was broken: a backend switch cleared the cache and the demand, nothing
+      // re-queued, so the queue was empty and the summary happily read "up to
+      // date" while every operation still showed a spinner. A program can only be
+      // produced from toolpaths that actually exist.
+      await seedGcodeExportProject(app.page)
+      await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+      const before = await readExportedProgram(app.page, ui)
+      expect(before.preview.length).toBeGreaterThan(0)
+
+      for (const option of [WORKER_OPTION, MAIN_THREAD_OPTION, WORKER_OPTION]) {
+        await generation.backendTrigger(app.page).click()
+        await generation.backendOption(app.page, option).click()
+        await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+
+        // The load-bearing assertion. Opening the export dialog issues an
+        // *explicit* request, which bypasses automatic demand entirely — so an
+        // export can succeed while preview generation is dead, which is precisely
+        // the state the bug produced. These badges come from cache validity, so
+        // they only clear when the preview really regenerated.
+        await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 30_000 })
+
+        const after = await readExportedProgram(app.page, ui)
+        expect(after.preview).toBe(before.preview)
+        expect(after.summary).toBe(before.summary)
+      }
+
+      const stored = await app.page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)
+      expect(stored).toBe('worker')
+    })
+  })
+
+  test('a worker that cannot start falls back to the main thread with a visible status', async ({ app }) => {
+    const page = app.page
+    const workerUrls: string[] = []
+    page.on('worker', (worker) => workerUrls.push(worker.url()))
+    // A runtime where a worker exists but cannot start — a locked-down webview,
+    // a blocked script. Only the generation worker is refused, so nothing else
+    // in the app is affected. Registered before the reload that actually boots
+    // with it in place.
+    await page.addInitScript(() => {
+      const Original = window.Worker
+      class GuardedWorker extends Original {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          if (/toolpath\.worker/.test(String(url))) throw new Error('worker start blocked by the test')
+          super(url, options)
+        }
+      }
+      Object.defineProperty(window, 'Worker', { configurable: true, value: GuardedWorker })
+    })
+    await page.reload()
+
+    await seedGcodeExportProject(page)
+    // The fallback runs the same job inline, so the work still completes.
+    await expect(generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+    expect(workerUrls.some((url) => /toolpath\.worker/.test(url))).toBe(false)
+    // The user's stored choice is kept: the next session may have a worker.
+    expect(await page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)).toBe('worker')
+
+    // Visible without opening the menu, and stated in the menu with its reason.
+    await expect(generation.gearStatus(page)).toHaveAttribute('aria-label', /Background thread unavailable/)
+    await generation.backendTrigger(page).click()
+    await expect(generation.summary(page)).toContainText(/Background thread unavailable/)
+    await expect(generation.summary(page)).toContainText(/could not be created/)
+    // Not a failure: the work is done, so the status never says it failed.
+    await expect(generation.summary(page)).not.toContainText(/Generation failed/)
   })
 
   test('Resume brings the preview back after Stop', async ({ app }) => {

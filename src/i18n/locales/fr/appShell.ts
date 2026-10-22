@@ -94,6 +94,7 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': 'Génération en cours ({count})',
   'appShell.generation.paused': 'Génération en pause',
   'appShell.generation.failed': 'Échec de la génération',
+  'appShell.generation.workerFallback': 'Thread en arrière-plan indisponible ; le thread principal est utilisé.',
   'appShell.generation.stop': 'Arrêter',
   'appShell.generation.stopUnavailable': 'Arrêter ne peut pas interrompre une opération déjà en cours sur le thread principal.',
   'appShell.generation.resume': 'Reprendre',

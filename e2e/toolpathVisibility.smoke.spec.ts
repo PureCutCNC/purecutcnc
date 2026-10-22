@@ -16,8 +16,43 @@
 
 import { test, expect } from './fixtures'
 import { installSlowCanvasClock, panForGpuSuggestion, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
+import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
+
+/**
+ * The GPU layer is the shipped default (issue #1087), and this file is the
+ * deliberate Canvas lane: it starts from a stored Canvas choice so the opt-in
+ * toggle, the suggestion, and the Canvas-only instrumentation below keep
+ * testing the fallback rather than accidentally toggling the default off. The
+ * fresh-profile default is covered in its own describe, and the rest of the
+ * suite runs on the default.
+ */
+test.use({ preferences: { [TOOLPATH_RENDERER_STORAGE_KEY]: 'canvas' } })
+
+test.describe('shipped renderer default', () => {
+  test.use({ preferences: {} })
+
+  test('a fresh profile uses the GPU layer and a stored Canvas choice survives', async ({ app }) => {
+    const page = app.page
+    const base = page.locator('canvas.sketch-canvas')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+    expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+
+    // An explicit Canvas choice is a user preference, not an override of the
+    // default, so it is kept as it was — including across a reload.
+    await page.getByRole('button', { name: 'GPU', exact: true }).click()
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('canvas')
+    await page.reload()
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
+  })
+})
 
 for (const action of ['enable', 'dismiss'] as const) {
   test.describe(`GPU suggestion ${action}`, () => {

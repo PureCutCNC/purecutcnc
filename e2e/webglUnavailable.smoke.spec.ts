@@ -69,10 +69,13 @@ test('opens into a usable Sketch and says each 3D view is unavailable', async ({
   await expect(sketchTab).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByText("PureCutCNC couldn't start on this device")).toHaveCount(0)
 
-  // Sketch does real work without WebGL: a project loads and its toolpaths draw with Canvas.
+  // Sketch does real work without WebGL. The GPU layer is the default since
+  // issue #1087, so a fresh profile here exercises the automatic fallback: a
+  // project loads, its toolpaths draw with Canvas, and the panel says why.
   await seedToolpathVisProject(page)
   await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible()
-  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })).toBeVisible()
 
   await ui.viewMenu.tab3d(page).click()
   await expect(page.locator('#workspace-panel-preview3d').getByRole('status')

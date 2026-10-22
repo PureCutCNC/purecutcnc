@@ -18,6 +18,16 @@ import type { StorageCodec } from '../../hooks/useLocalStorageState'
 
 export type ToolpathRendererChoice = 'canvas' | 'gpu'
 export type ToolpathRendererStatus = 'canvas' | 'loading' | 'gpu' | 'fallback'
+
+/**
+ * The shipped default (issue #1087).
+ *
+ * GPU is the path a fresh profile takes: it was built and measured as the
+ * faster one (#683). A stored `canvas` choice is kept as it was, and a runtime
+ * without WebGL2 falls back automatically — the renderer's existing
+ * availability check reports it and Canvas draws the paths instead.
+ */
+export const DEFAULT_TOOLPATH_RENDERER: ToolpathRendererChoice = 'gpu'
 export interface ToolpathRendererControl {
   choice: ToolpathRendererChoice
   status: ToolpathRendererStatus

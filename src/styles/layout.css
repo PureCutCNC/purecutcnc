@@ -525,6 +525,13 @@
   color: var(--danger, var(--text-dim));
 }
 
+/* Not a failure: generation moved to the main thread and is still running. */
+.cam-generation-menu__fallback {
+  display: block;
+  margin-top: 3px;
+  color: var(--warning-text, var(--text-dim));
+}
+
 .cam-generation-menu__actions {
   display: flex;
   gap: 6px;

@@ -133,6 +133,7 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': '正在生成（{count}）',
   'appShell.generation.paused': '生成已暂停',
   'appShell.generation.failed': '生成失败',
+  'appShell.generation.workerFallback': '后台线程不可用，改用主线程。',
   'appShell.generation.stop': '停止',
   'appShell.generation.stopUnavailable': '“停止”无法中断已在主线程上运行的操作。',
   'appShell.generation.resume': '继续',

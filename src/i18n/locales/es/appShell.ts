@@ -94,6 +94,7 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': 'Generando ({count})',
   'appShell.generation.paused': 'Generación en pausa',
   'appShell.generation.failed': 'Error de generación',
+  'appShell.generation.workerFallback': 'Hilo en segundo plano no disponible; se usa el hilo principal.',
   'appShell.generation.stop': 'Detener',
   'appShell.generation.stopUnavailable': 'Detener no puede interrumpir una operación que ya se está ejecutando en el hilo principal.',
   'appShell.generation.resume': 'Reanudar',

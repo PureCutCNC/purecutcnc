@@ -19,8 +19,8 @@ PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enth
     - **2D (Clipper):** Uses `clipper-lib` for polygon clipping. Region masks are composed in `src/engine/toolpaths/regions.ts` (`buildRegionMask`) and resolved into typed operation domains by the area/centre/curve resolvers in `src/engine/toolpaths/regionDomain.ts` (`resolveRegionDomainArea` / `resolveRegionDomainCentre` / `resolveRegionDomainCurve`); the resolver table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md) owns which operation kind uses which resolver. `src/engine/toolpaths/resolver.ts` resolves features and operations into Clipper input regions (V-carve line/subtract acceptance, even-odd nesting) — it does not resolve region masks.
     - **3D (Manifold):** Uses `manifold-3d` WASM to perform CSG (Constructive Solid Geometry) for the 3D preview.
 - **Rendering:**
-    - **Sketch View (2D):** `src/components/canvas/SketchCanvas.tsx` owns input, navigation and frame scheduling. Canvas is the default renderer; the sketch toolpath panel offers an application-local GPU opt-in (`purecutcnc.toolpathRenderer`, never part of `.camj`, history or CAM invalidation). `useSketchToolpathRenderer` lazy-loads one WebGL2 surface plus a foreground Canvas, disposes both on switch/unmount, and preserves GPU preference while visibly falling back to Canvas on failure. Context restoration or explicit Retry recovers GPU output.
-    - **Toolpath backend contract:** `renderSketchToolpaths` passes the same ordered results, view transform, backing dimensions, visibility and emphasis to both backends. `gpuToolpathRenderer` retains full XY segments, uses shared layer/style rules, and resolves opaque coverage before applying alpha once per layer/feed bucket. `gpuToolpathAnnotations` composites the shared Canvas arrow/debug raster in each operation's painter slot; it reuses cached arrow placement and navigation deferral. Final sketch interaction overlays stay above paths. Booklet snapshots always use full-detail Canvas independently of the selected live renderer. GPU default enablement and Canvas retirement remain separate maintainer gates.
+    - **Sketch View (2D):** `src/components/canvas/SketchCanvas.tsx` owns input, navigation and frame scheduling. The GPU toolpath layer is the default since 0.6.0 (issue #1087); the sketch toolpath panel keeps an application-local choice (`purecutcnc.toolpathRenderer`, never part of `.camj`, history or CAM invalidation), so a stored Canvas preference stays Canvas. `useSketchToolpathRenderer` lazy-loads one WebGL2 surface plus a foreground Canvas, disposes both on switch/unmount, and preserves GPU preference while visibly falling back to Canvas when WebGL2 is unavailable or a context is lost. Context restoration or explicit Retry recovers GPU output.
+    - **Toolpath backend contract:** `renderSketchToolpaths` passes the same ordered results, view transform, backing dimensions, visibility and emphasis to both backends. `gpuToolpathRenderer` retains full XY segments, uses shared layer/style rules, and resolves opaque coverage before applying alpha once per layer/feed bucket. `gpuToolpathAnnotations` composites the shared Canvas arrow/debug raster in each operation's painter slot; it reuses cached arrow placement and navigation deferral. Final sketch interaction overlays stay above paths. Booklet snapshots always use full-detail Canvas independently of the selected live renderer. Canvas remains fully supported as the stored choice and the automatic fallback; retiring it is a separate maintainer decision.
     - **3D Preview:** Three.js viewport rendering the CSG-derived model (`src/components/viewport3d/Viewport3D.tsx`).
     - **Simulation:** Voxel-based material removal playback (`src/components/simulation/SimulationViewport.tsx`).
     - **WebGL failure (both 3D views):** renderers are created through `createViewportRenderer` (`src/components/viewport3d/webglRenderer.ts`), which returns `null` rather than throwing when the browser denies a WebGL2 context, and `WebglStatusOverlay` explains an unavailable or lost context in place of the scene. No WebGL failure may reach the app error boundary: a browser without WebGL still opens the 2D workspace (issue #786).
@@ -178,13 +178,17 @@ area `INDEX.md` files rather than being restated here.
    (`src/store/projectStore.ts`, slices under `src/store/slices/`). Operation
    target selection filters with `isMachinable` in `operationsSlice.ts` — this
    is where construction geometry stops being eligible for CAM (§3).
-2. **Generation dispatch is engine-level.**
+2. **Generation dispatch is engine-level; the app owns execution.**
    `computeOperationToolpath` (`src/engine/toolpaths/generateOperation.ts`) is
-   the single entry point and dispatches on `operation.kind` to exactly one
-   generator. The app still decides *when* it runs: the service in
-   `src/app/toolpathGeneration/` owns the queue and cache and runs through the
-   inline or worker backend. Cache validity lives in
-   `toolpathGeneration/cacheInputs.ts`; `isCacheHit` remains a wrapper.
+   the single synchronous entry point and dispatches on `operation.kind` to
+   exactly one generator. It is engine code: it knows nothing about React, the
+   store, scheduling or threads. Execution belongs to the service in
+   `src/app/toolpathGeneration/`, which owns the queue, the authoritative cache
+   and the commit rules, and runs every job through one of the two backends —
+   the **worker**, the default since 0.6.0 (issue #1087), or **inline**, which
+   is an explicit stored choice and the automatic fallback when a worker cannot
+   start. Cache validity lives in `toolpathGeneration/cacheInputs.ts`;
+   `isCacheHit` remains a wrapper.
 
    **Toolpath-cache contract.** `isCacheHit` is deliberately only the app-level
    wrapper around `cacheInputsValid`. `buildToolpathCacheEntry` captures

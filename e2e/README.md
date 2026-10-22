@@ -35,7 +35,7 @@ uploaded on every run; the HTML report is uploaded on failures.
 | Settings and import | `npm run test:e2e:settings` | Appearance, localization, themes, units, machines, tool library, geometry import |
 | Project editing | `npm run test:e2e:project-input` | Feature references, bulk edits, model orientation, distribution, nesting, text and sketch sessions |
 | CAM and interaction | `npm run test:e2e:workflow-ui` | CAM operations and surface finish, export, selection, panels, simulation and WebGL recovery |
-| Generation and rendering | `npm run test:e2e:generation` | Main/worker generation, parity, stop and resume, GPU/toolpath display |
+| Generation and rendering | `npm run test:e2e:generation` | Default worker/GPU on a fresh profile, stored inline/Canvas choices, worker↔inline parity, Stop/Resume, worker-startup fallback, GPU/Canvas display |
 
 The CAM surface-finish tests live in `camSurfaceFinish.smoke.spec.ts` so they can
 run beside other CAM interactions. Lane assignments were balanced from PR #930's per-file timings; future moves should use fresh CI reports.
@@ -47,7 +47,7 @@ remains the full local-suite command.
 
 | File | Role |
 |------|------|
-| `fixtures.ts` | Playwright `test` extension. Every spec imports `test` / `expect` from **here**, not `@playwright/test`. Provides `app` (booted page + error guard) and `ui` (selector module). |
+| `fixtures.ts` | Playwright `test` extension. Every spec imports `test` / `expect` from **here**, not `@playwright/test`. Provides `app` (booted page + error guard), `ui` (selector module), and the `preferences` option for seeding machine-local localStorage entries before the first load. |
 | `selectors.ts` | **Single source of truth** for DOM selectors. Logical name → `Locator`. When the UI moves a class, update it **here** — every spec picks it up. |
 | `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getHoveredFeatureId`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
 | `constructionReferences.helpers.ts` | Canonical two-face fixture and mirrored pointer mapping for #994 construction reference smoke checks. |
@@ -86,6 +86,7 @@ The canonical shape for a new feature-area smoke:
 5. **Drive wiring via real clicks** through helpers (`openRowContextMenu`, `clickMenuItem`)
 6. **Assert via the DOM** — never canvas contents, never geometry values
 7. **Console-error guard is automatic** (from the fixture — no per-test boilerplate)
+8. **State the preference lane when the test needs one.** The worker backend and the GPU toolpath layer are the shipped defaults (#1087). A spec that needs the inline backend or Canvas — pixel reads of the base canvas, Canvas-only instrumentation, the opt-in GPU controls — declares `test.use({ preferences: { 'purecutcnc.toolpathRenderer': 'canvas' } })` or the executor key rather than clicking the UI first. The seed is one-shot, so a preference the test changes and reloads is not overwritten.
 8. **Area-specific selectors** that don't yet exist in `selectors.ts` are added there; everything else is handled by the existing scaffolding.
 
 User-facing UI or workflow changes should add or extend an e2e smoke when the
