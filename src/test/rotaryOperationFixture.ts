@@ -56,3 +56,28 @@ export function rotaryOperationFixture(axis: 'x' | 'y' = 'x', kind: OperationKin
   project.operations = [{ ...defaultOperationForTarget(project, kind, 'rough', { source: 'features', featureIds: ['model'] }, 0), setupId: 'around', stockToLeaveRadial: 0.4 }]
   return project
 }
+
+/**
+ * The same fixture with a second imported model (`second`) and a Region mask
+ * (`region`) available, for the per-model preceding-rough rule and its cache
+ * dependency (#1045 slice V). Both models share the one mesh asset.
+ */
+export function rotaryMultiModelFixture(axis: 'x' | 'y' = 'x', kind: OperationKind = 'rotary_finish'): Project {
+  const project = rotaryOperationFixture(axis, kind)
+  const model = project.features.find((feature) => feature.id === 'model')
+  const definition = model ? project.featureDefinitions[model.definitionId] : undefined
+  if (!model || !definition) throw new Error('rotaryOperationFixture is missing its model definition')
+  const second = { ...model, id: 'second', name: 'Second' }
+  const region: SketchFeature = {
+    id: 'region', name: 'Region', kind: 'rect', operation: 'region', authoringFace: 'around', folderId: null,
+    sketch: {
+      profile: definition.profile,
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: definition.dimensions,
+      constraints: [],
+    },
+    z_top: 10, z_bottom: 0, visible: true, locked: false,
+  }
+  return projectWithFeatures(project, [...project.features, second, region])
+}

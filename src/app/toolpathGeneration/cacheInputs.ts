@@ -46,6 +46,10 @@ import {
   type OperationFootprint,
 } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
+import {
+  rotaryPrecedingRoughs,
+  type RotaryRoughDependency,
+} from '../../engine/toolpaths/rotaryOperation'
 import type { Clamp, Operation, Project, SetupOrientation, Stock, Tab, Tool } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
 
@@ -88,6 +92,17 @@ export interface ToolpathCacheInputs {
    * setup has now.
    */
   setupOrientation: (SetupOrientation & { kind?: 'around' }) | null
+  /**
+   * The rotary finish's preceding-rough dependency (issue #1045).
+   *
+   * `rotaryFinishWithoutRough` reads every enabled `rotary_rough` before the
+   * finish in the setup and the STL models each one targets, so enabling,
+   * disabling, adding, removing, reordering or moving a rough changes the
+   * finish's advisory without moving a feature. Empty for every other
+   * operation kind: they never read it, and comparing it for them would
+   * invalidate on unrelated operation edits.
+   */
+  rotaryPrecedingRoughs: readonly RotaryRoughDependency[]
 }
 
 /** Captured inputs plus the result they produced. */
@@ -195,7 +210,21 @@ export function captureCacheInputs(project: Project, operation: Operation): Tool
     clamps: project.clamps,
     machinedElsewhere: subtractsMachinedElsewhere(project, operation),
     setupOrientation: operationSetupOrientation(project, operation),
+    rotaryPrecedingRoughs: rotaryPrecedingRoughs(project, operation),
   }
+}
+
+/** Whether two captured preceding-rough dependency lists are the same inputs. */
+function sameRotaryPrecedingRoughs(
+  before: readonly RotaryRoughDependency[],
+  after: readonly RotaryRoughDependency[],
+): boolean {
+  return before.length === after.length && before.every((entry, index) => {
+    const other = after[index]
+    return entry.setupId === other.setupId
+      && entry.modelIds.length === other.modelIds.length
+      && entry.modelIds.every((modelId, modelIndex) => modelId === other.modelIds[modelIndex])
+  })
 }
 
 /** Ids in exactly one of the two sets — the ownership that gained or lost an owner. */
@@ -265,6 +294,19 @@ export function cacheInputsValid(
   if (
     operation.kind === 'plasma_profile'
     && plasmaCutOrderInputs(inputs.project, inputs.operation) !== plasmaCutOrderInputs(project, operation)
+  ) {
+    return false
+  }
+
+  // A rotary finish's missing-rough advisory reads the roughs before it (issue
+  // #1045). Placed ahead of the feature diff for the same reason as the
+  // ownership check below: an operations-only edit moves no feature, so
+  // `changedFeatureIds` is empty and the early return would serve a stale
+  // warning. Only a finish has this input; every other kind keeps its cache
+  // behaviour unchanged.
+  if (
+    operation.kind === 'rotary_finish'
+    && !sameRotaryPrecedingRoughs(inputs.rotaryPrecedingRoughs, rotaryPrecedingRoughs(project, operation))
   ) {
     return false
   }

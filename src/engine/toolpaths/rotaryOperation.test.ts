@@ -16,13 +16,14 @@
 
 import assert from 'node:assert/strict'
 import { isDeepStrictEqual } from 'node:util'
-import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
-import { isRoundStock, roundStockCentre } from '../../types/project'
+import { rotaryMultiModelFixture, rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { isRoundStock, roundStockCentre, type Operation } from '../../types/project'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel } from './rotaryModel'
+import { rotaryFinishWithoutRough, rotaryTargetModelIds } from './rotaryOperation'
 
 for (const axis of ['x', 'y'] as const) {
   for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
@@ -172,5 +173,57 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   }, { ...finish, stepdown: 0 })!.result
   assert.deepEqual(zeroDepth.warnings, [], 'a zero saved stepdown does not refuse or warn the finish')
   assert.deepEqual(zeroDepth.moves, alone.moves, 'the finish ignores the saved stepdown entirely')
+}
+
+// #1045 slice V: the advisory is per STL model. A finish cutting A and B is
+// unprotected while either model has no enabled rough before it in the setup,
+// and a Region id is not a model even when the finish's target also carries it.
+{
+  const project = rotaryMultiModelFixture('x', 'rotary_finish')
+  const finish = {
+    ...project.operations[0],
+    target: { source: 'features' as const, featureIds: ['model', 'second'] },
+  }
+  const withRegion = {
+    ...finish,
+    target: { source: 'features' as const, featureIds: ['model', 'second', 'region'] },
+  }
+  const rough = (id: string, featureIds: string[]) => ({
+    ...finish, id, name: id, kind: 'rotary_rough' as const, pass: 'rough' as const,
+    target: { source: 'features' as const, featureIds },
+  })
+  const targets = rotaryTargetModelIds(project, finish)
+  assert.deepEqual(targets, ['model', 'second'], 'only the two STL targets are models')
+  assert.deepEqual(
+    rotaryTargetModelIds(project, withRegion), ['model', 'second'],
+    'a region id in the target is not a model',
+  )
+  assert.equal(
+    rotaryFinishWithoutRough([rough('b', ['second']), finish], finish, targets), true,
+    'a rough on B only leaves A unprotected',
+  )
+  assert.equal(
+    rotaryFinishWithoutRough([rough('ab', ['model', 'second']), finish], finish, targets), false,
+    'one rough on both models protects both',
+  )
+  assert.equal(
+    rotaryFinishWithoutRough([rough('a', ['model']), rough('b', ['second']), finish], finish, targets), false,
+    'separate roughs on each model protect both',
+  )
+  assert.equal(
+    rotaryFinishWithoutRough([rough('region', ['region']), withRegion], withRegion, targets), true,
+    'a shared region id does not stand in for a model',
+  )
+  assert.equal(
+    rotaryFinishWithoutRough([rough('all', ['model', 'second', 'region']), withRegion], withRegion, targets), false,
+    'a rough on both models plus the region protects both',
+  )
+  const warned = (operations: Operation[]) => computeOperationToolpath({
+    ...project, operations,
+  }, finish)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
+  assert.equal(warned([rough('b', ['second']), finish]).length, 1,
+    'the adapter warns when only one of two targeted models has a preceding rough')
+  assert.deepEqual(warned([rough('ab', ['model', 'second']), finish]), [],
+    'the adapter stays quiet when both targeted models have one')
 }
 console.log('rotaryOperation integration tests passed')

@@ -20,7 +20,7 @@ import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
-import { splitFeatureTargets } from './regions'
+import { splitFeatureTargets, type SplitFeatureTargets } from './regions'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
 import type { RotaryFinishParams } from './rotaryModel'
 import type { NormalizedTool, ToolpathResult } from './types'
@@ -44,10 +44,30 @@ interface RotaryContext {
   readonly surface: NonNullable<ReturnType<typeof resolveFinishModelSurface>>
   readonly tool: NormalizedTool
   readonly params: RotaryFinishParams
+  /** STL model feature ids this operation targets, in target order. */
+  readonly modelIds: string[]
 }
 
 function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
   return { code }
+}
+
+/** The STL model features among an operation's resolved targets. */
+function targetModels(targets: SplitFeatureTargets): SplitFeatureTargets['machiningFeatures'] {
+  return targets.machiningFeatures.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+}
+
+/**
+ * The STL model feature ids an operation targets, in target order.
+ *
+ * Regions and every other target kind are deliberately absent: only the
+ * imported models are surfaces a rotary finish cuts, so an id shared with a
+ * region mask must never stand in for a model in the preceding-rough advisory
+ * (#1045 slice V).
+ */
+export function rotaryTargetModelIds(project: Project, operation: Operation): string[] {
+  if (operation.target.source !== 'features') return []
+  return targetModels(splitFeatureTargets(project, operation.target.featureIds)).map((feature) => feature.id)
 }
 
 /**
@@ -64,7 +84,7 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   if (operation.target.source !== 'features' || operation.target.featureIds.length === 0) return failure('finishNeedsModel')
   const targets = splitFeatureTargets(project, operation.target.featureIds)
   if (targets.missingFeatureIds.length > 0) return failure('targetsNotFound')
-  const models = targets.machiningFeatures.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+  const models = targetModels(targets)
   if (models.length === 0) return failure('finishNotMesh')
   const record = project.tools.find((tool) => tool.id === operation.toolRef)
   if (!record) return failure('noToolAssigned')
@@ -109,42 +129,79 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
   }
-  return { stock, surface, tool, params }
+  return { stock, surface, tool, params, modelIds: models.map((feature) => feature.id) }
 }
 
 /** The operation fields the preceding-rough advisory reads. */
 export type RotaryOrderOperation = Pick<Operation, 'id' | 'setupId' | 'kind' | 'enabled' | 'target'>
 
+/** One enabled rotary rough that precedes a finish, and the STL models it targets. */
+export interface RotaryRoughDependency {
+  readonly setupId: string | null
+  readonly modelIds: readonly string[]
+}
+
 /**
- * True when this finish has no enabled rotary rough on the same model feature
- * earlier in the same setup's operation order (2026-10-22 decision).
+ * The preceding-rough advisory's inputs, for the toolpath cache (#1045 slice V).
+ *
+ * Every enabled `rotary_rough` earlier in `operations` than `operation`, when
+ * it shares the finish's setup, with the STL model ids it targets. Order is
+ * operation order. The finish's own models are not here: they are its target,
+ * which the cache compares on the operation row itself.
+ */
+export function rotaryPrecedingRoughs(project: Project, operation: Operation): RotaryRoughDependency[] {
+  if (operation.kind !== 'rotary_finish') return []
+  const index = project.operations.findIndex((candidate) => candidate.id === operation.id)
+  if (index < 0) return []
+  const setup = operation.setupId ?? null
+  const dependencies: RotaryRoughDependency[] = []
+  for (let i = 0; i < index; i++) {
+    const candidate = project.operations[i]
+    if (!candidate.enabled || candidate.kind !== 'rotary_rough') continue
+    if ((candidate.setupId ?? null) !== setup) continue
+    // Sorted: the order of a rough's own targets is not something the advisory
+    // reads, so reordering them must not invalidate this finish's cache.
+    dependencies.push({ setupId: setup, modelIds: rotaryTargetModelIds(project, candidate).sort() })
+  }
+  return dependencies
+}
+
+/**
+ * True when any STL model this finish targets has no enabled rotary rough on
+ * that same model earlier in the same setup's operation order (2026-10-22
+ * decision).
  *
  * The rule is advisory only: it decides a warning, never motion. Order is the
  * project's own `operations` array, which is the order the program is posted
  * in. A rough in another setup, a disabled rough, a rough on another model and
  * a rough after the finish all leave the finish unprotected, so each of them
- * counts as no rough. The shared feature id is the model instance the finish
- * targets; a rough whose target includes it is machining the same model.
+ * counts as no rough. The rule is per model: a rough on B does not protect A
+ * when the finish cuts both. `modelIds` must already be the target's **STL
+ * models**, so a region mask id shared with the operation target cannot stand
+ * in for a model.
  */
 export function rotaryFinishWithoutRough(
   operations: readonly RotaryOrderOperation[],
   operation: RotaryOrderOperation,
+  modelIds: readonly string[],
 ): boolean {
   if (operation.kind !== 'rotary_finish') return false
-  if (operation.target.source !== 'features') return false
-  const models = new Set(operation.target.featureIds)
+  const models = new Set(modelIds)
   if (models.size === 0) return false
   const index = operations.findIndex((candidate) => candidate.id === operation.id)
   if (index < 0) return false
   const setup = operation.setupId ?? null
+  const covered = new Set<string>()
   for (let i = 0; i < index; i++) {
     const candidate = operations[i]
     if (!candidate.enabled || candidate.kind !== 'rotary_rough') continue
     if ((candidate.setupId ?? null) !== setup) continue
     if (candidate.target.source !== 'features') continue
-    if (candidate.target.featureIds.some((featureId) => models.has(featureId))) return false
+    for (const featureId of candidate.target.featureIds) {
+      if (models.has(featureId)) covered.add(featureId)
+    }
   }
-  return true
+  return [...models].some((modelId) => !covered.has(modelId))
 }
 
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
@@ -154,7 +211,7 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   })
   const built = rotaryContext(project, operation)
   if ('code' in built) return empty(built.code)
-  const { stock, surface, tool, params } = built
+  const { stock, surface, tool, params, modelIds } = built
   const result = operation.kind === 'rotary_rough'
     ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
     : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
@@ -163,7 +220,7 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   }))
   // Advisory only: the finish still emits exactly the model-following motion
   // above, and this warning changes nothing about it.
-  if (operation.kind === 'rotary_finish' && rotaryFinishWithoutRough(project.operations, operation)) {
+  if (operation.kind === 'rotary_finish' && rotaryFinishWithoutRough(project.operations, operation, modelIds)) {
     warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name } })
   }
   return { ...result, warnings }
