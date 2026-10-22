@@ -70,29 +70,37 @@ assert.ok(!('thcOnCommand' in padded.plasma!))
 assert.ok(!('thcOffCommand' in padded.plasma!))
 
 // The QtPlasmaC forms the machine editor and e2e write survive validation
-// (#1057 slice I): the `$` spindle selector, the documented material sequence
-// and its trailing comments.
+// (#1057 slice I/J): the `$` spindle selector, the documented material
+// sequence and its trailing comments, a real `Q` on the M66/M67 commands, and
+// a lowercase feed letter.
 const documented = validateMachineDefinition({
   ...plasma,
   plasma: {
     ...block,
     torchOffCommand: 'M5 $-1',
     materialWaitCommand: 'M66 P3 L3 Q2',
-    materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)',
+    materialFeedCommand: 'f#<_hal[plasmac.cut-feed-rate]> (loaded)',
     materialSelectCommand: 'M190 P{materialNumber} (selected)',
+    thcOnCommand: 'M67 E3 Q0.5',
   },
 })
 assert.equal(documented.plasma?.torchOffCommand, 'M5 $-1')
 assert.equal(documented.plasma?.materialWaitCommand, 'M66 P3 L3 Q2')
-assert.equal(documented.plasma?.materialFeedCommand, 'F#<_hal[plasmac.cut-feed-rate]> (loaded)')
+assert.equal(documented.plasma?.materialFeedCommand, 'f#<_hal[plasmac.cut-feed-rate]> (loaded)')
 assert.equal(documented.plasma?.materialSelectCommand, 'M190 P{materialNumber} (selected)')
+assert.equal(documented.plasma?.thcOnCommand, 'M67 E3 Q0.5')
 for (const [key, value] of [
+  ['torchOnCommand', 'M3 $-1'],
+  ['torchOffCommand', 'M5 $3'],
   ['torchOffCommand', 'M5 $-2'],
   ['torchOffCommand', 'M5 $0.5'],
   ['materialFeedCommand', 'F#<_hal[other]>'],
   ['materialFeedCommand', 'F#1'],
   ['materialWaitCommand', 'M66 P3 G0'],
+  ['materialWaitCommand', 'M66 P3 L3 Q2 F100'],
   ['materialSelectCommand', 'M190 L3'],
+  ['materialSelectCommand', 'M190 P{toolNumber}'],
+  ['materialSelectCommand', 'M190 $0 P3'],
 ] as const) {
   assert.equal(
     MachineDefinitionSchema.safeParse({ ...plasma, plasma: { ...block, [key]: value } }).success,

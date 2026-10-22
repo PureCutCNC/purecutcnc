@@ -71,12 +71,22 @@
  *
  * Slice I (2026-10-21) accepts the forms QtPlasmaC documents, and no more:
  *
- * - the torch template's `$` selector is a LinuxCNC spindle number, so it is a
- *   non-negative integer (`$0`, `$1`, `$2`) or `-1` to stop every tool;
+ * - the torch template's `$` selector is a LinuxCNC spindle number;
  * - the material feed template is exactly the controller-owned
  *   `F#<_hal[plasmac.cut-feed-rate]>`, optionally followed by a comment;
  * - a material/THC command carries only the parameter words its own LinuxCNC
- *   or QtPlasmaC command defines, as integers.
+ *   or QtPlasmaC command defines.
+ *
+ * Slice J (2026-10-21) corrects the three behaviours slice I got wrong:
+ *
+ * - `Q` is a real number on `M66` (a timeout in seconds) and `M67` (the analog
+ *   value to set), so a decimal `Q` is valid; `P`, `L` and `E` stay integers
+ *   as LinuxCNC defines them;
+ * - `$-1` stops every tool and is valid on `M5` only; `$n` is valid on `M3`,
+ *   `M4` and `M5` only for QtPlasmaC's documented tools 0 (torch), 1 (scribe)
+ *   and 2 (spotting);
+ * - the material feed expression's `F` is case-insensitive like every G-code
+ *   letter; the HAL pin name itself stays exact.
  *
  * The documentation for each form is cited beside the constant that enforces
  * it.
@@ -368,7 +378,10 @@ const PARAMETER_LETTERS: ReadonlySet<string> = new Set([
  * be borrowed from a different command. `M190 Pn` selects a QtPlasmaC
  * material; `P-1` returns to the default material
  * (https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:material-handling).
- * A parameter word must carry its integer value, never a bare letter.
+ *
+ * A parameter word always carries its value, never a bare letter. `Q` is a
+ * real number on `M66` (a timeout in seconds) and `M67` (the analog value to
+ * set); every other word is an integer.
  */
 const MATERIAL_COMMAND_LETTERS: Readonly<Record<string, ReadonlySet<string>>> = {
   M62: new Set(['P']),
@@ -382,6 +395,21 @@ const MATERIAL_COMMAND_LETTERS: Readonly<Record<string, ReadonlySet<string>>> = 
 }
 
 /**
+ * True when `value` is one of the words `command` defines for `letter`.
+ *
+ * LinuxCNC's `Q` is a seconds timeout on `M66` and the analog value on `M67`,
+ * so it accepts a decimal (https://linuxcnc.org/docs/2.9/html/gcode/m-code.html#mcode:m66,
+ * https://linuxcnc.org/docs/2.9/html/gcode/m-code.html#mcode:m67). The digital
+ * or analog number (`P`, `E`), the wait mode (`L`) and the QtPlasmaC material
+ * number are integers.
+ */
+function isMaterialParameter(command: string, letter: string, value: string | undefined): boolean {
+  if (value === undefined || !MATERIAL_COMMAND_LETTERS[command]?.has(letter)) return false
+  const real = (command === 'M66' || command === 'M67') && letter === 'Q'
+  return (real ? /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/ : /^[-+]?\d+$/).test(value)
+}
+
+/**
  * The one controller-owned feed expression a material template may contain.
  *
  * QtPlasmaC's Automatic Material Handling section documents it as the way to
@@ -390,20 +418,42 @@ const MATERIAL_COMMAND_LETTERS: Readonly<Record<string, ReadonlySet<string>>> = 
  * https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:material-handling
  *
  * No other HAL pin, macro variable or arithmetic expression is accepted: this
- * is the only parameter use the material-feed template has.
+ * is the only parameter use the material-feed template has. G-code letters are
+ * case-insensitive, so the leading `F` is matched in either case; the HAL pin
+ * name is exact.
  */
 const MATERIAL_FEED_EXPRESSION = 'F#<_hal[plasmac.cut-feed-rate]>'
 
 /**
  * The torch command words. A torch on/off template is nothing else.
  *
- * QtPlasmaC's Mandatory Codes and Multi-Tool sections define the `$` selector:
- * `M3 $0 S1` starts the torch, `M5 $0` stops it, and `M5 $-1` stops every
- * tool. The selector is a LinuxCNC spindle number, so it is a non-negative
- * integer (`$0`, `$1`, `$2`), with `-1` for "all tools":
+ * QtPlasmaC's Multiple Tools section defines the `$` selector: tool 0 is the
+ * plasma torch, 1 the scribe and 2 the spotting torch, and `M5 $-1` stops all
+ * tools. The manual permits `$-1` *in lieu of* the `M5 $n` codes only, so the
+ * sign belongs to the stop command; `$0`/`$1`/`$2` are the starting commands'
+ * own selectors:
  * https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:multi-tool
+ *
+ * The Mandatory Codes section keeps `M3 S1` and `M5` with no selector valid
+ * for a cutting job: https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html
  */
 const TORCH_COMMANDS: ReadonlySet<string> = new Set(['M3', 'M4', 'M5'])
+
+/** The spindle numbers QtPlasmaC's Multiple Tools section documents. */
+const TORCH_TOOL_NUMBERS: ReadonlySet<string> = new Set(['0', '1', '2'])
+
+/**
+ * True when `value` is a `$` selector QtPlasmaC documents for `command`.
+ *
+ * `$-1` stops every tool and is valid only on `M5`; 0, 1 and 2 are the torch,
+ * scribe and spotting tools. Any other spindle number is not documented and a
+ * sign or decimal is not a spindle number at all.
+ */
+function isTorchSelector(command: string, value: string | undefined): boolean {
+  if (value === undefined) return false
+  if (value === '-1') return command === 'M5'
+  return TORCH_TOOL_NUMBERS.has(value)
+}
 
 /**
  * Placeholders that carry text the operator typed: the project name, an
@@ -681,26 +731,30 @@ function scanTemplateLine(
   }
   // A numeric selector is an argument of the command, not an expression, and
   // it names no axis. QtPlasmaC's selector is a LinuxCNC spindle number:
-  // `$0`, `$1`, `$2` … or `$-1` for all tools. Every other `$` (a system
-  // command, a macro variable, `$-2`, a decimal) is not a selector and is
-  // refused by the character check below.
-  if (options.allowSelectors) code = code.replace(/\$(?:-1|\d+)/g, ' ')
-  for (const character of ['#', '[', ']', '$', '=']) {
+  // `$0`, `$1`, `$2` … or `$-1` for all tools. It stays in the scan as a `$`
+  // word so the torch rule can judge it against the command before it; every
+  // other `$` (a system command, a macro variable, `$+1`, `$-2`, a decimal) is
+  // refused by the character check or the word scan.
+  for (const character of options.allowSelectors ? ['#', '[', ']', '='] : ['#', '[', ']', '$', '=']) {
     if (code.includes(character)) return { word: character }
   }
 
   const words: ScannedWord[] = []
   let at = 0
-  for (const match of code.matchAll(/([A-Za-z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))?/g)) {
+  for (const match of code.matchAll(/\$(-?\d+)|([A-Za-z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))?/g)) {
     const start = match.index ?? at
     // Anything between two words that is not whitespace is not a known word.
     if (start !== at && code.slice(at, start).trim().length > 0) {
       return { word: code.slice(at, start).trim() }
     }
     at = start + match[0].length
-    const letter = match[1].toUpperCase()
-    if (match[2] === undefined) return { word: letter }
-    words.push({ letter, value: match[2] })
+    if (match[1] !== undefined) {
+      words.push({ letter: '$', value: match[1] })
+      continue
+    }
+    const letter = match[2].toUpperCase()
+    if (match[3] === undefined) return { word: letter }
+    words.push({ letter, value: match[3] })
   }
   const tail = code.slice(at).trim()
   if (tail.length > 0) return { word: tail }
@@ -822,10 +876,15 @@ function checkCommandText(text: string, rule: TemplateRule): LineRefusal | null 
  * followed by a comment. Comments are removed first, so `(loaded)` or
  * `; loaded` after the expression is harmless; anything else — a different
  * HAL pin, an arithmetic expression, an extra word, a bare `F` — is not.
+ *
+ * G-code letters are case-insensitive, so `f#<_hal[plasmac.cut-feed-rate]>` is
+ * the same word; the HAL pin name after the letter is exact.
  */
 function checkMaterialFeedLine(line: string, syntax: CommentSyntax): LineRefusal | null {
   const code = lineCode(line, syntax).trim()
-  if (code.length === 0 || code === MATERIAL_FEED_EXPRESSION) return null
+  if (code.length === 0) return null
+  const normalized = code.slice(0, 1).toUpperCase() + code.slice(1)
+  if (normalized === MATERIAL_FEED_EXPRESSION) return null
   return { word: code, kind: 'word' }
 }
 
@@ -858,6 +917,7 @@ function checkTemplateLine(
   if ('word' in scan) return { word: scan.word, kind: 'word' }
 
   let materialCommand: string | null = null
+  let torchCommand: string | null = null
   for (const word of scan.words) {
     const command = commandOf(word)
     switch (rule.kind) {
@@ -894,28 +954,34 @@ function checkTemplateLine(
       case 'inverse-time-off':
         if (command !== 'G94') return { word: showWord(word), kind: 'word' }
         continue
-      case 'torch':
+      case 'torch': {
         if (command !== null) {
           if (!TORCH_COMMANDS.has(command)) return { word: showWord(word), kind: 'word' }
+          torchCommand = command
+          continue
+        }
+        // A `$` selector names the spindle the preceding command acts on.
+        // `$-1` stops every tool and belongs to M5 alone; `$0`/`$1`/`$2` are
+        // the torch, scribe and spotting tools QtPlasmaC documents.
+        if (word.letter === '$') {
+          if (torchCommand === null || !isTorchSelector(torchCommand, word.value)) {
+            return { word: showWord(word), kind: 'word' }
+          }
           continue
         }
         if (word.letter !== 'S') return { word: showWord(word), kind: 'word' }
         continue
+      }
       case 'material': {
         if (command !== null) {
           if (!MATERIAL_COMMANDS.has(command)) return { word: showWord(word), kind: 'word' }
           materialCommand = command
           continue
         }
-        // The command defines which parameter letters it takes, and every
-        // parameter is an integer word (`P3`, `L3`, `Q2`, `E0`), never a bare
-        // letter, a decimal or a word before any command.
-        if (
-          materialCommand === null
-          || word.value === undefined
-          || !/^[-+]?\d+$/.test(word.value)
-          || !MATERIAL_COMMAND_LETTERS[materialCommand].has(word.letter)
-        ) {
+        // The command defines which parameter letters it takes, and each one
+        // must carry its value: an integer, except `Q` on M66/M67, which
+        // LinuxCNC defines as a real number.
+        if (materialCommand === null || !isMaterialParameter(materialCommand, word.letter, word.value)) {
           return { word: showWord(word), kind: 'word' }
         }
         continue
@@ -958,12 +1024,12 @@ function describeRule(rule: TemplateRule): { label: string, hint: string } {
     case 'torch':
       return {
         label: 'plasma torch template',
-        hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and a $ selector ($0, $1, $2 … or $-1 for all tools)',
+        hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and a $ selector ($0 torch, $1 scribe, $2 spotting; $-1 stops all tools on M5)',
       }
     case 'material':
       return {
         label: 'material/THC template',
-        hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands and the integer P/L/Q/E words those commands define',
+        hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands and the P/L/Q/E words those commands define (Q may be decimal on M66/M67)',
       }
     case 'material-feed':
       return {

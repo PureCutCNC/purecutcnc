@@ -44,6 +44,12 @@
  * - split a command field into lines before matching → `F\nF`, `F\nG91` and
  *   `Q\nG0` pass and the sweep fails.
  *
+ * Slice J adds the QtPlasmaC form tables in § 2b and their own mutations:
+ * - make the material `Q` integer-only again → `M67 E3 Q0.5` is refused and
+ *   the sweep fails;
+ * - accept `$-1` on any torch command → `M3 $-1` and `M4 $-1` pass and the
+ *   sweep fails.
+ *
  * Run with: npx tsx src/engine/gcode/templateInjectionSweep.test.ts
  */
 
@@ -339,33 +345,50 @@ interface PlasmaFormCase {
 
 /**
  * QtPlasmaC's documented forms, each cited in `templateRules.ts`:
- * - the `$` selector is a spindle number, non-negative or -1 for all tools
- *   (Multi-Tool and Mandatory Codes sections of the QtPlasmaC manual);
+ * - the `$` selector names one of the documented tools (0 torch, 1 scribe,
+ *   2 spotting) and `$-1` stops all tools on `M5` only (Multiple Tools and
+ *   Mandatory Codes sections of the QtPlasmaC manual);
  * - `M190 Pn`, the `M66 P3 L3 Qn` wait, and the controller-owned feed
  *   expression (Automatic Material Handling section);
- * - LinuxCNC's `M62`-`M67` integer parameter words (M-code reference).
+ * - LinuxCNC's `M62`-`M67` parameter words: integer `P`/`L`/`E`, and a `Q`
+ *   that is real on `M66`/`M67` (M-code reference).
+ *
+ * The refusal table pins the variants too: a placeholder where the command
+ * defines a plain number, a selector on a command that does not take one, a
+ * borrowed `F`/`S` word on `M66`, and the lowercase/compact spellings of each.
  */
 const ACCEPTED_PLASMA_FORMS: PlasmaFormCase[] = [
   { label: 'torch on: M3 $0 S1', path: ['plasma', 'torchOnCommand'], value: 'M3 $0 S1' },
   { label: 'torch on: M3 S1 (backwards-compatible)', path: ['plasma', 'torchOnCommand'], value: 'M3 S1' },
-  { label: 'torch on: M4 $1 S1', path: ['plasma', 'torchOnCommand'], value: 'M4 $1 S1' },
+  { label: 'torch on: M4 $1 S1 (scribe)', path: ['plasma', 'torchOnCommand'], value: 'M4 $1 S1' },
+  { label: 'torch on: M4 $2 S1 (spotting)', path: ['plasma', 'torchOnCommand'], value: 'M4 $2 S1' },
   { label: 'torch off: M5 $0', path: ['plasma', 'torchOffCommand'], value: 'M5 $0' },
   { label: 'torch off: M5 $1 (scribe)', path: ['plasma', 'torchOffCommand'], value: 'M5 $1' },
   { label: 'torch off: M5 $2 (spotting)', path: ['plasma', 'torchOffCommand'], value: 'M5 $2' },
   { label: 'torch off: M5 $-1 (all tools)', path: ['plasma', 'torchOffCommand'], value: 'M5 $-1' },
+  { label: 'torch off: M5$-1 (compact)', path: ['plasma', 'torchOffCommand'], value: 'M5$-1' },
   { label: 'torch off: M5 (backwards-compatible)', path: ['plasma', 'torchOffCommand'], value: 'M5' },
   { label: 'material select: M190 P{materialNumber}', path: ['plasma', 'materialSelectCommand'], value: 'M190 P{materialNumber}' },
   { label: 'material select: M190 P3', path: ['plasma', 'materialSelectCommand'], value: 'M190 P3' },
+  { label: 'material select: M190P3 (compact)', path: ['plasma', 'materialSelectCommand'], value: 'M190P3' },
+  { label: 'material select: m190 p3 (lowercase)', path: ['plasma', 'materialSelectCommand'], value: 'm190 p3' },
   { label: 'material select: M190 P-1 (default material)', path: ['plasma', 'materialSelectCommand'], value: 'M190 P-1' },
+  { label: 'THC on: M63 P2', path: ['plasma', 'thcOnCommand'], value: 'M63 P2' },
+  { label: 'THC on: M67 E3 Q0.5 (real analog value)', path: ['plasma', 'thcOnCommand'], value: 'M67 E3 Q0.5' },
   { label: 'material wait: M66 P3 L3 Q2', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2' },
+  { label: 'material wait: M66 P3 L3 Q0.5 (real timeout)', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q0.5' },
   { label: 'material feed: the controller feed expression', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]>' },
+  { label: 'material feed: lowercase f letter', path: ['plasma', 'materialFeedCommand'], value: 'f#<_hal[plasmac.cut-feed-rate]>' },
   { label: 'material feed: expression with a trailing comment', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)' },
   { label: 'material feed: expression with a trailing semicolon comment', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> ; loaded' },
-  { label: 'THC on: M63 P2', path: ['plasma', 'thcOnCommand'], value: 'M63 P2' },
   { label: 'THC off: M62 P2', path: ['plasma', 'thcOffCommand'], value: 'M62 P2' },
 ]
 
 const REFUSED_PLASMA_FORMS: PlasmaFormCase[] = [
+  { label: 'torch on: $-1 stops all tools on M5 only', path: ['plasma', 'torchOnCommand'], value: 'M3 $-1' },
+  { label: 'torch on: $-1 is not a spindle to start', path: ['plasma', 'torchOnCommand'], value: 'M4 $-1' },
+  { label: 'torch off: $3 is not a documented tool', path: ['plasma', 'torchOffCommand'], value: 'M5 $3' },
+  { label: 'torch on: $3 is not a documented tool', path: ['plasma', 'torchOnCommand'], value: 'M3 $3' },
   { label: 'torch off: $-2 is not a spindle number', path: ['plasma', 'torchOffCommand'], value: 'M5 $-2' },
   { label: 'torch off: a bare $ is not a selector', path: ['plasma', 'torchOffCommand'], value: 'M5 $' },
   { label: 'torch off: a decimal selector', path: ['plasma', 'torchOffCommand'], value: 'M5 $0.5' },
@@ -380,9 +403,24 @@ const REFUSED_PLASMA_FORMS: PlasmaFormCase[] = [
   { label: 'material wait: a motion word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 G0' },
   { label: 'material wait: an axis word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 X0' },
   { label: 'material wait: a T word M66 does not define', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 T1' },
+  { label: 'material wait: a borrowed F word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 F100' },
+  { label: 'material wait: a borrowed S word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 S1' },
   { label: 'material wait: a decimal L word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3.5 Q2' },
+  { label: 'material wait: a decimal E word', path: ['plasma', 'materialWaitCommand'], value: 'M66 E1.5 Q2' },
+  { label: 'material select: a decimal P word', path: ['plasma', 'materialSelectCommand'], value: 'M190 P3.5' },
   { label: 'material select: an L word M190 does not define', path: ['plasma', 'materialSelectCommand'], value: 'M190 L3' },
   { label: 'material select: an axis word', path: ['plasma', 'materialSelectCommand'], value: 'M190 P3 X0' },
+  { label: 'material select: a selector M190 does not take', path: ['plasma', 'materialSelectCommand'], value: 'M190 $0 P3' },
+  { label: 'material select: a toolNumber placeholder is not P', path: ['plasma', 'materialSelectCommand'], value: 'M190 P{toolNumber}' },
+  { label: 'material select: a feed placeholder is not P', path: ['plasma', 'materialSelectCommand'], value: 'M190 P{feed}' },
+  // The same refusals in lowercase and compact spellings: the rule must not
+  // depend on capitalisation or on whitespace between words.
+  { label: 'material select: lowercase toolNumber placeholder', path: ['plasma', 'materialSelectCommand'], value: 'm190 p{toolNumber}' },
+  { label: 'material select: compact toolNumber placeholder', path: ['plasma', 'materialSelectCommand'], value: 'M190P{toolNumber}' },
+  { label: 'material select: lowercase compact selector', path: ['plasma', 'materialSelectCommand'], value: 'm190$0p3' },
+  { label: 'material select: compact selector', path: ['plasma', 'materialSelectCommand'], value: 'M190$0P3' },
+  { label: 'material wait: lowercase compact borrowed F word', path: ['plasma', 'materialWaitCommand'], value: 'm66p3l3q2f100' },
+  { label: 'material wait: compact borrowed S word', path: ['plasma', 'materialWaitCommand'], value: 'M66P3L3Q2S1' },
 ]
 
 for (const form of ACCEPTED_PLASMA_FORMS) {
