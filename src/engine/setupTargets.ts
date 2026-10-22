@@ -152,6 +152,50 @@ export function featureReachableFromFace(
   return reach.through || reach.model
 }
 
+/**
+ * A project as an operation's setup reads the features the operation does not
+ * target (issue #1079).
+ *
+ * Generation hands every toolpath resolver the whole project, so a resolver
+ * that reads *related* features — the band resolver's non-target subtracts,
+ * model protection's related subtracts, the edge route's obstacle holes — used
+ * to see work authored on the other face as if this setup's cutter could reach
+ * it. On a Top/Bottom project that is wrong: a blind void on the far face is
+ * enclosed from this side, so it belongs to the other setup's program.
+ *
+ * The rule is exactly {@link featureReachableFromFace}, applied to related
+ * features: a subtract stays only where it is reachable from the operation's
+ * face — drawn on that face, a true through-cut, or an imported model.
+ *
+ * **Adds always stay.** An add is solid material wherever it was drawn: the
+ * cutter meets that volume from either side, which is why every feature is in
+ * the setup's frame project at all and why a full-height island on the other
+ * face is machined around from both. Removing adds would cut through a boss
+ * drawn from the far side, so only subtracts are filtered.
+ *
+ * Called at generation (`computeOperationToolpath`, after the setup turn) and
+ * at the region entries that bypass generation — `restRegions.ts`'s two public
+ * draft entries and CAM Plan's analysis project — because rest-region drafts,
+ * CAM Plan's island/subtract discovery and rest reconciliation resolve regions
+ * directly and used to see the other face's work. The resolver itself cannot
+ * carry the gate: `setupFrameProject` deliberately zeroes every setup's turn
+ * so a generator cannot turn the stock twice, which leaves an operation in the
+ * turned project reading as Top. Applying the gate twice is a no-op, and a
+ * project with nothing to remove is returned as the same object, which keeps a
+ * single-face project byte-identical.
+ */
+export function withoutUnreachableSubtracts(project: Project, face: SetupFace): Project {
+  // `unrolledProject` already keeps only Around-authored features, and the
+  // Around targeting rule is not this one (a wrapped 2D path has no through
+  // exception), so its frame is left exactly as it is.
+  if (face === 'around') return project
+  const features = project.features.filter((feature) => (
+    project.featureDefinitions[feature.definitionId]?.operation !== 'subtract'
+    || featureReachableFromFace(project, feature, face)
+  ))
+  return features.length === project.features.length ? project : { ...project, features }
+}
+
 export type TargetRejection =
   /** Authored on the other face and does not reach this one. */
   | 'crossFaceNotThrough'

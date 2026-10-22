@@ -40,6 +40,7 @@ import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipp
 import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
+import { operationFace, withoutUnreachableSubtracts } from '../setupTargets'
 import { significantSilhouettePaths } from './silhouette'
 import type { ClipperPath, ClipperPoint, ResolvedPocketRegion, ResolvedPocketResult } from './types'
 import { appendAll } from './appendAll'
@@ -577,14 +578,21 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
     }
   }
 
-  const resolved = resolvePocketRegions(project, operation)
-  const toolRecord = findOperationTool(project, operation)
+  // A rest pass is derived from a source operation in a setup, and it is a
+  // public entry: the store, CAM Plan and its rest reconciler call it directly,
+  // never through `computeOperationToolpath`'s gate. So it applies the same
+  // face rule itself (issue #1079): a rest pass over a Top pocket must not see
+  // a Bottom blind notch's own band as leftover material. A single-face project
+  // comes back as the same object, so its regions are untouched.
+  const gated = withoutUnreachableSubtracts(project, operationFace(project, operation))
+  const resolved = resolvePocketRegions(gated, operation)
+  const toolRecord = findOperationTool(gated, operation)
 
   if (!toolRecord) {
     return { drafts: [], warnings: [...resolved.warnings, { code: 'noToolAssigned' }] }
   }
 
-  const tool = normalizeToolForProject(toolRecord, project)
+  const tool = normalizeToolForProject(toolRecord, gated)
   if (!(tool.diameter > 0)) {
     return { drafts: [], warnings: [...resolved.warnings, { code: 'toolDiameterPositive' }] }
   }
@@ -684,24 +692,27 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
     }
   }
 
-  const toolRecord = findOperationTool(project, operation)
+  // Same face gate as the pocket entry above: an inside route's rest pass reads
+  // the operation's related subtracts directly (issue #1079).
+  const gated = withoutUnreachableSubtracts(project, operationFace(project, operation))
+  const toolRecord = findOperationTool(gated, operation)
 
   if (!toolRecord) {
     return { drafts: [], warnings: [{ code: 'noToolAssigned' }] }
   }
 
-  const tool = normalizeToolForProject(toolRecord, project)
+  const tool = normalizeToolForProject(toolRecord, gated)
   if (!(tool.diameter > 0)) {
     return { drafts: [], warnings: [{ code: 'toolDiameterPositive' }] }
   }
 
   if (operation.kind === 'edge_route_outside') {
-    return generateOutsideEdgeRestRegionDrafts(project, operation, tool.radius)
+    return generateOutsideEdgeRestRegionDrafts(gated, operation, tool.radius)
   }
 
-  const resolved = resolveInsideEdgeRegions(project, operation)
+  const resolved = resolveInsideEdgeRegions(gated, operation)
   const splitTargets = operation.target.source === 'features'
-    ? splitFeatureTargets(project, operation.target.featureIds)
+    ? splitFeatureTargets(gated, operation.target.featureIds)
     : null
   const regionMask = splitTargets ? buildRegionMask(splitTargets.regionFeatures) : null
   const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask)
