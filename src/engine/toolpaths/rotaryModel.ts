@@ -22,7 +22,7 @@ import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
-import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import type { NormalizedTool, RotaryRoughLeft, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
 export interface RotaryModelMesh {
@@ -678,7 +678,7 @@ export interface RotaryFinishParams {
    */
   readonly passDirection?: RotaryPassDirection
   /**
-   * The radial layer depth of this operation's own clearing (#1045 slices M/P).
+   * The radial layer depth of this operation's own clearing (#1045 slices M/P/R).
    * An **around** finish clears the standing blank above its finish surface in
    * layers of this depth before it follows the model -- from a square blank's
    * corner radius, or from a round bar's radius -- so a missing, zero, negative,
@@ -687,10 +687,27 @@ export interface RotaryFinishParams {
    * it instead). A finish whose saved field is zero and whose tool has none
    * either refuses with `stepdownPositive` rather than cutting the whole
    * standing radius in one pass. A finite positive value below the physical
-   * minimum refuses with `rotaryStepdownBelowMinimum`. Unused by the along
-   * motion, which still relies on a rough on a raw bar (#1045 slice P).
+   * minimum refuses with `rotaryStepdownBelowMinimum`.
+   *
+   * An **along** finish uses the same fallback and clears in layers of this
+   * depth since #1045 slice R. When neither the operation nor the tool has a
+   * usable depth there is no layer rule to apply, so it keeps the pre-slice-R
+   * motion (the finish pass alone) rather than refusing: a hand-built tool with
+   * no `defaultStepdown` is the only way to reach that case, and refusing would
+   * change an along finish that generated before this slice.
    */
   readonly stepdown?: number
+  /**
+   * The material earlier enabled roughs on the same setup and target actually
+   * leave, each sampled on its own grid (#1045 slice R). An **along** finish
+   * clears from this standing material rather than from the raw blank, so a
+   * rough that already brought the bar within one stepdown of the finish
+   * surface leaves the finish motion unchanged and only spots that rough left
+   * deeper are cleared. With no result (a finish-only job) the finish clears
+   * the raw blank, so it never depends on another operation having run.
+   * Never consulted in around mode.
+   */
+  readonly roughLeft?: readonly RotaryRoughLeft[]
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -2034,6 +2051,198 @@ function rotaryTargets(
   return { angles, along, tips, stubFloor, stopped: false, refusal: null }
 }
 
+/** The radial rise of a ball of `radius` at `offset` from its tip. */
+function roughBallRise(radius: number, offset: number): number {
+  return radius - Math.sqrt(Math.max(0, radius * radius - offset * offset))
+}
+
+/**
+ * The largest radius a rough's sampling can leave standing **between** its own
+ * samples (#1045 slice L, reused by slice R). The sampled tips are exact at
+ * their positions; a ball leaves its between-ring scallop there, and a flat
+ * leaves a staircase one cell tall. Both are derived from the rough's own grid,
+ * never from its settings alone.
+ */
+function roughLeftScallop(left: RotaryRoughLeft): number {
+  let alongStep = 0
+  for (let i = 0; i + 1 < left.along.length; i++) {
+    alongStep = Math.max(alongStep, Math.abs(left.along[i + 1] - left.along[i]))
+  }
+  let angleStep = 0
+  for (let k = 0; k + 1 < left.angles.length; k++) {
+    angleStep = Math.max(angleStep, Math.abs(left.angles[k + 1] - left.angles[k]))
+  }
+  const radius = Math.max(0, left.cutterRadius)
+  if (left.ball) {
+    const arc = radius > 0 ? angleStep * Math.PI / 180 * radius : 0
+    return roughBallRise(radius, alongStep / 2) + roughBallRise(radius, arc / 2)
+  }
+  // A flat's step is the surface's own change across one cell: the tallest
+  // adjacent sampled difference, along the bar and round it.
+  let rise = 0
+  for (const row of left.tips) {
+    for (let i = 0; i + 1 < row.length; i++) {
+      if (Number.isFinite(row[i]) && Number.isFinite(row[i + 1])) {
+        rise = Math.max(rise, Math.abs(row[i + 1] - row[i]))
+      }
+    }
+  }
+  for (let k = 0; k + 1 < left.tips.length; k++) {
+    const row = left.tips[k]
+    const next = left.tips[k + 1]
+    for (let i = 0; i < row.length; i++) {
+      if (Number.isFinite(row[i]) && Number.isFinite(next[i])) {
+        rise = Math.max(rise, Math.abs(next[i] - row[i]))
+      }
+    }
+  }
+  return rise
+}
+
+/** The index of the last element of the ascending `values` at or below `value`. */
+function sortedIndex(values: readonly number[], value: number): number {
+  let low = 0
+  let high = values.length - 1
+  while (low < high) {
+    const mid = (low + high + 1) >> 1
+    if (values[mid] <= value) low = mid
+    else high = mid - 1
+  }
+  return low
+}
+
+/** The largest adjacent spacing in an ascending grid, or 0 when it has one entry. */
+function maxGridStep(values: readonly number[]): number {
+  let step = 0
+  for (let i = 0; i + 1 < values.length; i++) step = Math.max(step, Math.abs(values[i + 1] - values[i]))
+  return step
+}
+
+/**
+ * How many of a rough's grid cells on each side of a finish sample the finish
+ * cutter's footprint covers. The visit is bounded because a rough's angular
+ * step can be tiny and its reach a large fraction of the circle; eight cells
+ * each way is far beyond any grid the adapter produces and still trivial.
+ */
+function roughLeftWindowCells(left: RotaryRoughLeft, tool: NormalizedTool): { angle: number; along: number } {
+  const alongStep = maxGridStep(left.along)
+  const angleStep = maxGridStep(left.angles)
+  const along = Math.max(1, Math.min(8, Math.ceil(tool.radius / Math.max(alongStep, 1e-9))))
+  let lowest = Number.POSITIVE_INFINITY
+  for (const row of left.tips) for (const tip of row) if (Number.isFinite(tip)) lowest = Math.min(lowest, tip)
+  let reach = 90
+  if (Number.isFinite(lowest)) {
+    // The widest angle at which the **finish** body reaches a ray at the lowest
+    // material the rough leaves: a ball's `asin(R / (tip + R))`, a flat's bottom
+    // face `atan(R / tip)`. Using the lowest tip takes the widest reach.
+    reach = tool.type === 'ball_endmill'
+      ? Math.asin(Math.min(1, tool.radius / Math.max(1e-9, lowest + tool.radius))) * 180 / Math.PI
+      : Math.atan(tool.radius / Math.max(1e-9, lowest)) * 180 / Math.PI
+  }
+  const angle = Math.max(1, Math.min(8, Math.ceil(reach / Math.max(angleStep, 1e-9))))
+  return { angle, along }
+}
+
+/**
+ * The highest radius a rough leaves around one finish sample, or `null` when
+ * the sample lies outside the rough's along coverage (that spot is raw blank).
+ *
+ * A rough's result is only known on its own grid, so the window is the
+ * conservative local maximum over the finish cutter's footprint (in rough
+ * cells): reading only the four bracketing cells would miss material the
+ * cutter reaches one cell away. The between-cell scallop is added by the
+ * caller. A sample outside the rough's own along range is material that rough
+ * never reached, so it reads as the blank.
+ */
+function roughLeftAt(
+  left: RotaryRoughLeft,
+  angle: number,
+  along: number,
+  cells: { angle: number; along: number },
+  tolerance: number,
+): number | null {
+  const angleCount = left.angles.length
+  const rowCount = left.along.length
+  if (angleCount === 0 || rowCount === 0) return null
+  const first = left.along[0]
+  const last = left.along[rowCount - 1]
+  if (along < Math.min(first, last) - tolerance || along > Math.max(first, last) + tolerance) return null
+  const normalized = ((angle % 360) + 360) % 360
+  const k0 = sortedIndex(left.angles, normalized)
+  const i0 = sortedIndex(left.along, along)
+  let highest = Number.NEGATIVE_INFINITY
+  for (let dk = -cells.angle; dk <= cells.angle; dk++) {
+    const k = ((k0 + dk) % angleCount + angleCount) % angleCount
+    const row = left.tips[k]
+    if (!row) continue
+    for (let di = -cells.along; di <= cells.along; di++) {
+      const i = Math.min(rowCount - 1, Math.max(0, i0 + di))
+      const tip = row[i]
+      if (Number.isFinite(tip)) highest = Math.max(highest, tip)
+    }
+  }
+  return highest === Number.NEGATIVE_INFINITY ? null : highest
+}
+
+/**
+ * The standing material and clearing-layer count at every finish sample for an
+ * **along** finish's own clearing (#1045 slice R).
+ *
+ * The standing material is the highest radius earlier enabled roughs leave
+ * within the finish cutter's footprint, raised by their between-sample scallop,
+ * or the raw blank where no rough covers the sample. A finish-only job
+ * therefore clears the blank; a rough that already brought the bar within one
+ * stepdown of the finish surface contributes no layer. The finish's own tip
+ * already includes its stock to leave and the retained-stub floor, so the count
+ * is per sample and local: `ceil((standing - tip) / stepdown) - 1` one-stepdown
+ * passes, leaving the finish pass a remainder of at most one stepdown at every
+ * sample. That is why a turned shape whose rough was within one stepdown
+ * everywhere produces no clearing motion at all.
+ */
+function alongClearingLayers(
+  stock: BarStock,
+  tool: NormalizedTool,
+  angles: readonly number[],
+  along: readonly number[],
+  tips: readonly (readonly number[])[],
+  roughs: readonly RotaryRoughLeft[],
+  stepdown: number,
+): { standing: number[][]; layers: number[][]; count: number } {
+  const square = isSquareStock(stock)
+  const maxRadius = barMaxRadius(stock)
+  const tolerance = convertLength(1e-3, 'mm', tool.units)
+  const scallops = roughs.map(roughLeftScallop)
+  const windows = roughs.map((left) => roughLeftWindowCells(left, tool))
+  let count = 0
+  const standing = tips.map((row, k) => {
+    const blank = square
+      ? squareRotaryTouchRadius(stock, angles[k], tool.radius, tool.type)
+      : maxRadius
+    return row.map((tip, i) => {
+      if (!Number.isFinite(tip)) return NaN
+      let material = blank
+      let highest = Number.NEGATIVE_INFINITY
+      for (let r = 0; r < roughs.length; r++) {
+        const left = roughLeftAt(roughs[r], angles[k], along[i], windows[r], tolerance)
+        if (left !== null) highest = Math.max(highest, left + scallops[r])
+      }
+      if (highest > Number.NEGATIVE_INFINITY) material = Math.min(blank, Math.max(0, highest))
+      return Math.max(tip, material)
+    })
+  })
+  const layers = standing.map((row, k) => row.map((material, i) => {
+    const tip = tips[k][i]
+    if (!Number.isFinite(tip) || !Number.isFinite(material) || material <= tip) return 0
+    const required = Math.ceil((material - tip) / stepdown) - 1
+    // A finite positive stepdown makes this finite; `MIN_VALUE`-sized values
+    // overflow to Infinity and the caller's work budget refuses them.
+    const layer = Number.isFinite(required) ? Math.max(0, required) : Number.POSITIVE_INFINITY
+    if (layer > count) count = layer
+    return layer
+  }))
+  return { standing, layers, count }
+}
+
 /**
  * Rotary finishing (issue #1015 slice B): passes run along the bar and step
  * round it, so a ball nose leaves its best surface along a long part.
@@ -2094,11 +2303,21 @@ function rotaryTargets(
  * other operation: a rough that never ran, never posted, or stopped short
  * cannot license a deep first ring, because there is no first ring at depth.
  *
- * An **along** finish is unchanged (#1045 slice P), by decision: on a raw bar
- * along mode still relies on a rough. Its pass follows the model at one fixed
- * angle and would take the standing radius in a single cut, and extending these
- * layers to it would change frozen along-mode output. The manager is asking
- * Frank about along mode separately.
+ * An **along** finish is self-protecting too since #1045 slice R, on a round bar
+ * and a square blank alike. Before its passes it clears the standing material
+ * above its own finish surface in its own `stepdown` layers -- the same
+ * per-sample rule as the along rough (the square's per-angle touch radius, the
+ * retained-stub floor, the C2-F7 pull-in, air skipped per sample and travel
+ * between runs at the blank plus a clearance) -- and every sample that is
+ * already within one stepdown of the finish surface emits nothing, so a rough
+ * that brought the bar close leaves the finish motion unchanged. The standing
+ * material is what earlier enabled roughs on the same setup and target actually
+ * left (`params.roughLeft`, sampled on their own grids); with no such result
+ * the finish clears the raw blank, so it depends on no other operation having
+ * run. Each clearing pass is one stepdown below the local standing material and
+ * never below the finish tip, so no sample takes more than one stepdown out of
+ * what was standing at its own angle, and the finish pass then removes at most
+ * one stepdown.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -2134,10 +2353,10 @@ export function generateRotaryFinish(
   // radius leaves the bar standing above its own finish surface, and that is
   // exactly what these layers remove.
   //
-  // An **along** finish is deliberately unchanged: on a raw bar it still relies
-  // on a rough, because the along pass follows the model at fixed angles and
-  // would take the whole standing radius in one cut. The manager is asking
-  // Frank about along mode separately; do not extend these layers to it here.
+  // An **along** finish clears the same way since #1045 slice R, with
+  // `alongClearingLayers` deciding a per-sample layer count from the material
+  // earlier roughs left (or the raw blank when none ran). Around mode is
+  // unchanged by that addition.
   const aroundClearing = params.passDirection === 'around'
   const stepdown = effectiveStepdown(params.stepdown, tool)
   if (aroundClearing) {
@@ -2279,6 +2498,76 @@ export function generateRotaryFinish(
       previousEndedAtEnd = emitted.endedAtEnd
     }
   } else {
+    // #1045 slice R: the along finish protects itself. Before it follows the
+    // model it removes the standing material above its own finish surface in
+    // its own `stepdown` layers -- one pass per layer and angle, each sample
+    // cut only where the material left by earlier roughs (or the raw blank
+    // when none ran) stands more than one stepdown above its tip. The layer
+    // heights are per sample and local (`standing - layer * stepdown`), so a
+    // rough that already brought the bar within one stepdown everywhere emits
+    // no clearing at all and the finish motion is unchanged. Every cut is at
+    // or above the finish tip, so it never undercuts the surface, and the
+    // retained-stub floor and pull-in are already carried by the sampled tips.
+    // `stepdown` is the operation's own field with the tool default fallback
+    // (#1045 slices O/R); without a usable depth there is no layer rule and
+    // the finish follows the model as it did before this slice.
+    if (Number.isFinite(stepdown) && stepdown > 0) {
+      const clearing = alongClearingLayers(
+        stock, tool, angles, along, sampling.tips, params.roughLeft ?? [], stepdown)
+      if (clearing.count > 0) {
+        // The budget bounds the new work; along mode's *rough* remains exempt
+        // (slice P) because refusing it would change frozen along-rough output.
+        if (!Number.isFinite(clearing.count)
+          || (clearing.count + 1) * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
+          return {
+            operationId,
+            moves: [],
+            warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }],
+            bounds: null,
+          }
+        }
+        for (let layer = 1; layer <= clearing.count; layer++) {
+          if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+          // A new layer never links to the previous one, exactly as the rough's
+          // layers do not; A continues round across layers like the rough's.
+          let layerEndedAtEnd = false
+          const angleOffset = (layer - 1) * 360
+          for (let pass = 0; pass < angles.length; pass++) {
+            if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+            const angle = angles[pass] + angleOffset
+            const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
+            const needsCut = (i: number): boolean => {
+              const index = indexAt(i)
+              return clearing.layers[pass][index] >= layer
+            }
+            const at = (i: number): ToolpathPoint => {
+              const index = indexAt(i)
+              return point(along[index],
+                Math.max(sampling.tips[pass][index], clearing.standing[pass][index] - layer * stepdown),
+                angle)
+            }
+            const runs: RotaryRun[] = []
+            let i = 0
+            while (i < along.length) {
+              if (!needsCut(i)) { i++; continue }
+              const start = i
+              while (i + 1 < along.length && needsCut(i + 1)) i++
+              const end = i
+              const points: ToolpathPoint[] = []
+              for (let j = start; j <= end; j++) points.push(at(j))
+              runs.push({ points, atStart: start === 0, atEnd: end === along.length - 1 })
+              i++
+            }
+            const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, layerEndedAtEnd, forceStep)
+            here = emitted.here
+            layerEndedAtEnd = emitted.endedAtEnd
+          }
+        }
+        // The finish pass is a new layer: it never links to the last clearing
+        // pass, exactly as one rough layer never links to the next.
+        previousEndedAtEnd = false
+      }
+    }
     for (let k = 0; k < angles.length; k++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       // A `NaN` sample has no model under the tool: the finish follows the model,
@@ -2568,5 +2857,18 @@ export function generateRotaryRough(
     moves: merged.moves,
     warnings,
     bounds: boundsOf(merged.moves),
+    // #1045 slice R: the material this rough leaves, on its own sampled grid,
+    // so an along finish can clear only what is actually standing. Runtime
+    // only; it is never serialised and never changes this operation's moves.
+    roughLeft: {
+      angles,
+      along,
+      tips,
+      stepdown: params.stepdown,
+      stockToLeave: params.stockToLeave,
+      cutterRadius: tool.radius,
+      ball: tool.type === 'ball_endmill',
+      passDirection: params.passDirection === 'around' ? 'around' : 'along',
+    },
   }
 }

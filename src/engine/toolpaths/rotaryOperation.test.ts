@@ -114,4 +114,30 @@ const op = unionProject.operations[0]
 const singlePath = computeOperationToolpath(unionProject, op)!.result
 const combinedPath = computeOperationToolpath(unionProject, { ...op, target: { source: 'features', featureIds: ['model', 'second'] } })!.result
 assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transformed model reaches rotary sampling')
+
+// #1045 slice R: an along finish is handed the material an earlier rough on the
+// same setup and target actually left, so a rough that brought the bar within
+// one stepdown contributes no clearing layers; with no rough the finish clears
+// the raw bar.
+{
+  const fixture = rotaryOperationFixture('x', 'rotary_finish')
+  const finish = fixture.operations[0]
+  const rough = { ...finish, id: 'rough', name: 'rough', kind: 'rotary_rough' as const, pass: 'rough' as const }
+  const withRough = computeOperationToolpath({ ...fixture, operations: [rough, finish] }, finish)!.result
+  const alone = computeOperationToolpath(fixture, finish)!.result
+  assert.deepEqual(withRough.warnings, [], 'the finish after a rough warns about nothing')
+  assert.ok(withRough.moves.length > 0, 'the finish after a rough still cuts')
+  assert.notDeepEqual(withRough.moves, alone.moves,
+    'the rough before the finish supplies the standing material the finish clears')
+  // Only an earlier enabled rough is standing material: the same rough after
+  // the finish changes nothing.
+  const later = computeOperationToolpath({ ...fixture, operations: [finish, rough] }, finish)!.result
+  assert.deepEqual(later.moves, alone.moves, 'a rough after the finish is not standing material')
+  // A disabled rough is not standing material either.
+  const disabled = computeOperationToolpath({
+    ...fixture,
+    operations: [rough, finish].map((operation) => operation.id === rough.id ? { ...operation, enabled: false } : operation),
+  }, finish)!.result
+  assert.deepEqual(disabled.moves, alone.moves, 'a disabled rough is not standing material')
+}
 console.log('rotaryOperation integration tests passed')

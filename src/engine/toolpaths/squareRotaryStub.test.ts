@@ -1017,6 +1017,10 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 // cutter-centre pull-in now -- a round pass on the band edge gouged its
 // retained end -- so each fixture that ends inside the bar starts and ends one
 // cutter radius in. The floor and the step predicate are still square-only.
+//
+// Re-captured for #1045 slice R: an along finish is self-protecting too, so the
+// two round **finish** fingerprints move (the finish now clears the standing bar
+// in its own stepdown layers). The round roughs are unchanged.
 
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
@@ -1026,9 +1030,9 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 }
 
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|',
+  'x/mm/flat_endmill/finish/chuck-model': '08a62650895b137d|',
   'x/mm/ball_endmill/rough/model-model': '9361d06fdb459cd8|',
-  'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|',
+  'y/mm/flat_endmill/finish/chuck-model': '5937d7d5750428fe|',
   'y/inch/ball_endmill/rough/model-model': '795c6fdd5fa34d27|',
 }
 

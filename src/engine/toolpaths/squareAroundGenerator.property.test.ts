@@ -30,8 +30,9 @@
  * rest take 3 mm, since a millimetre-scale layer multiplies both the emitted
  * rings and the replay), default and custom stepover/sampling, blanks from 10
  * to 60 mm square and 20 to 1 000 mm long (every size band, the large ones on
- * one seed in eight) -- and replays each one, in order, through its own
- * reference. Since #1045 slice M removed the finish's licensing, a bare around
+ * one seed in eight) -- plus, since #1045 slice R, eight along-finish programs
+ * (a bare along finish and an along rough + along finish, on a round bar and a
+ * square blank) -- and replays each one, in order, through its own reference. Since #1045 slice M removed the finish's licensing, a bare around
  * finish clears its own blank and cuts, so every one of those programs is
  * replayed. At least 38 of them (every eighth seed) are **default-parameter**
  * programs on a shortened bar: their generator sampling is never coarsened, so
@@ -84,7 +85,9 @@
  *    solid at a ray, is asserted against the cutter's **exact geometry**
  *    (#1045 slice Q): the largest radial bite one stepdown can take, derived
  *    from the ball's sphere cap (or the flat's bottom face) at the ray's
- *    offset from the axis -- see `alongRadialBiteBound`. The reference's
+ *    offset from the axis -- see `alongRadialBiteBound`. An along **finish**
+ *    stage (#1045 slice R) uses the same bound with the finish's own stepdown,
+ *    which is what its clearing layers and finish pass descend by. The reference's
  *    interior number -- material below an intact shell -- is reported as a
  *    diagnostic and deliberately **not** asserted (#1045 slice P): it is not a
  *    radial depth and has no geometric bound, so the old stepover + diameter
@@ -114,8 +117,8 @@
  */
 import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
-import type { SquareStock } from '../../types/project'
-import { defaultTool, getStockBounds } from '../../types/project'
+import type { BarStock } from '../../types/project'
+import { defaultTool, getStockBounds, roundStock } from '../../types/project'
 import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
@@ -126,7 +129,7 @@ import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
 /** A closed revolved surface: one ring per profile entry, quads between them. */
 function revolved(
-  stock: SquareStock,
+  stock: BarStock,
   profile: readonly { along: number; radius: number }[],
   segments = 96,
 ): RotaryModelMesh {
@@ -231,20 +234,21 @@ interface Reference {
   material: Float64Array
 }
 
-function blankRadius(halfSide: number, angleDeg: number): number {
+/** The blank's radius along the radial ray at `angleDeg`: round is constant, square is its flat. */
+function blankRadius(stock: BarStock, angleDeg: number): number {
+  if (stock.shape === 'round') return stock.thickness / 2
   const radians = angleDeg * Math.PI / 180
-  return halfSide / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+  return stock.thickness / 2 / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
 }
 
-function createReference(stock: SquareStock, alongStart: number, alongEnd: number, alongBin: number, angleBins: number): Reference {
+function createReference(stock: BarStock, alongStart: number, alongEnd: number, alongBin: number, angleBins: number): Reference {
   const alongBins = Math.max(1, Math.ceil((alongEnd - alongStart) / alongBin))
   const material = new Float64Array(alongBins * angleBins)
-  const halfSide = stock.thickness / 2
   const angleDeg = 360 / angleBins
   const row = new Float64Array(angleBins)
-  for (let k = 0; k < angleBins; k++) row[k] = blankRadius(halfSide, (k + 0.5) * angleDeg)
+  for (let k = 0; k < angleBins; k++) row[k] = blankRadius(stock, (k + 0.5) * angleDeg)
   for (let i = 0; i < alongBins; i++) material.set(row, i * angleBins)
-  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: Math.hypot(halfSide, halfSide), occupied: new Map(), material }
+  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: barMaxRadius(stock), occupied: new Map(), material }
 }
 
 /**
@@ -744,7 +748,7 @@ type ProgramKind = 'rough' | 'finish' | 'both' | 'mixed'
 
 interface Case {
   label: string
-  stock: SquareStock
+  stock: BarStock
   profile: { along: number; radius: number }[]
   type: 'flat_endmill' | 'ball_endmill'
   diameter: number
@@ -756,6 +760,8 @@ interface Case {
   stockToLeave: number
   programKind: ProgramKind
   roughKind: 'around' | 'along'
+  /** The finish's own pass direction (#1045 slice R adds along finishes). */
+  finishKind: 'around' | 'along'
   retained: boolean
   alongStart: number
   alongEnd: number
@@ -797,12 +803,29 @@ function aroundArcStep(cornerRadius: number, sampleSpacing: number): number {
  */
 function generatorCells(entry: Case): { along: number; arc: number } {
   const corner = barMaxRadius(entry.stock)
-  const aroundAngle = aroundArcStep(corner, entry.finishSpacing)
-  const roughAngle = aroundArcStep(corner, entry.roughSpacing)
-  return {
-    along: entry.roughKind === 'along' ? Math.min(entry.stepover, entry.roughSpacing) : entry.stepover,
-    arc: entry.roughKind === 'along' ? Math.min(aroundAngle, entry.stepover) : Math.min(aroundAngle, roughAngle),
+  let along = Number.POSITIVE_INFINITY
+  let arc = Number.POSITIVE_INFINITY
+  const roughRan = entry.programKind !== 'finish'
+  const finishRan = entry.programKind !== 'rough'
+  if (roughRan) {
+    if (entry.roughKind === 'along') {
+      along = Math.min(along, entry.roughSpacing)
+      arc = Math.min(arc, entry.stepover)
+    } else {
+      along = Math.min(along, entry.stepover)
+      arc = Math.min(arc, aroundArcStep(corner, entry.roughSpacing))
+    }
   }
+  if (finishRan) {
+    if (entry.finishKind === 'along') {
+      along = Math.min(along, entry.finishSpacing)
+      arc = Math.min(arc, entry.stepover)
+    } else {
+      along = Math.min(along, entry.stepover)
+      arc = Math.min(arc, aroundArcStep(corner, entry.finishSpacing))
+    }
+  }
+  return { along, arc }
 }
 
 /** The reference's grid for one case: bins, start, and cell count. */
@@ -918,6 +941,7 @@ function drawCase(seed: number, lengthScale: number): Case {
       stockToLeave: 0,
       programKind,
       roughKind,
+      finishKind: 'around',
       retained: ends > 0,
       alongStart,
       alongEnd,
@@ -1023,12 +1047,73 @@ function drawCase(seed: number, lengthScale: number): Case {
     stockToLeave,
     programKind,
     roughKind,
+    finishKind: 'around',
     retained: ends > 0,
     alongStart,
     alongEnd,
     defaultParams: false,
     compact: false,
     finishStepdown: Math.max(stepdown, 2),
+  }
+}
+
+/**
+ * One seeded **along-finish** case (#1045 slice R): a short bar, a cutter large
+ * against it and a deep model corner, on a round bar and a square blank, both a
+ * bare along finish and an along rough + along finish. The finish-only cases
+ * clear the raw blank; the rough + finish cases carry the rough's own left
+ * material, so their finish is the skip-air (unchanged) path.
+ */
+function drawAlongCase(seed: number): Case {
+  const rand = mulberry32(seed * 0x9e3779b1 + 0x52)
+  const pick = (low: number, high: number): number => low + (high - low) * rand()
+  const square = seed % 2 === 1
+  const kind: ProgramKind = seed < 4 ? 'finish' : 'both'
+  // Balls on most seeds: the reference's surface sweep is affordable at the
+  // adapter's default sampling, and a flat covers the staircase scallop.
+  const type = seed % 3 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
+  const side = Math.round(pick(22, 26) * 2) / 2
+  const length = Math.max(20, Math.round(pick(20, 22)))
+  const diameter = Math.round(pick(6, 8) * 10) / 10
+  const radius = diameter / 2
+  const inscribed = side / 2
+  const modelRadius = Math.round(pick(0.6, 0.75) * inscribed * 10) / 10
+  const ends = seed >= 4 && seed % 3 === 0 ? 0 : Math.max(1, Math.round(pick(0.05, 0.1) * length))
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const bounds = getStockBounds(stock)
+  const alongStart = bounds.minX + ends
+  const alongEnd = bounds.maxX - ends
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const stepover = Math.max(0.5 * diameter, 1e-3)
+  const roughSpacing = Math.max(radius / 2, 1e-3)
+  const finishSpacing = Math.max(radius / 4, 1e-3)
+  const requestedCellSize = Math.min(radius / 3, stepover * 0.5)
+  const stepdown = seed >= 4 ? 3 : 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
+      + `${square ? 'square' : 'round'} cyl ${kind} along-clear ends ${ends} stepdown ${stepdown}`,
+    stock,
+    profile,
+    type,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing,
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind: kind,
+    roughKind: 'along',
+    finishKind: 'along',
+    retained: ends > 0,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    finishStepdown: 2,
   }
 }
 
@@ -1072,23 +1157,28 @@ function generate(entry: Case): Program {
     safeRadius: barMaxRadius(stock) * 2,
     requestedCellSize: entry.requestedCellSize,
   }
-  const rough = entry.programKind === 'finish'
-    ? { moves: [] as ToolpathMove[], warnings: [] as { code: string }[] }
+  const roughResult = entry.programKind === 'finish'
+    ? null
     : generateRotaryRough(`${entry.label} rough`, model, stock, tool, {
       ...common,
       stepdown: entry.stepdown,
       passDirection: entry.roughKind,
     }, {})
+  const rough = roughResult ?? { moves: [] as ToolpathMove[], warnings: [] as { code: string }[] }
   const finish = entry.programKind === 'rough'
     ? { moves: [] as ToolpathMove[], warnings: [] as { code: string }[] }
     : generateRotaryFinish(`${entry.label} finish`, model, stock, tool, {
       ...common,
       sampleSpacing: entry.finishSpacing,
       stockToLeave: entry.stockToLeave,
-      passDirection: 'around',
-      // #1045 slice M: the finish clears its own standing material, so it needs
-      // no earlier result. Its clearing layers use the finish's own stepdown.
+      passDirection: entry.finishKind,
+      // #1045 slice M: an around finish clears its own standing material, so it
+      // needs no earlier result. #1045 slice R: an along finish clears the
+      // material earlier roughs really left -- here the rough generated above,
+      // exactly what the adapter derives from it -- and the raw blank when there
+      // is none.
       stepdown: entry.finishStepdown,
+      ...(entry.finishKind === 'along' && roughResult?.roughLeft ? { roughLeft: [roughResult.roughLeft] } : {}),
     }, {})
   return {
     roughMoves: rough.moves,
@@ -1234,8 +1324,11 @@ function coarsenGrid(entry: Case): Case {
 }
 
 function fitCase(seed: number): Fitted {
-  const initial = drawCase(seed, 1)
-  if (initial.compact) {
+  return fitEntry(drawCase(seed, 1), (scale) => drawCase(seed, scale))
+}
+
+function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
+  if (initial.defaultParams) {
     // A default-parameter case is never coarsened: the drawn side, cutter,
     // stepdown and sampling are the adapter's defaults, and the short bar is
     // what makes its reference affordable. If the grid does not fit, the draw
@@ -1244,17 +1337,18 @@ function fitCase(seed: number): Fitted {
     return { entry: initial, program: generate(initial) }
   }
   let scale = 1
-  let entry = coarsenGrid(drawCase(seed, scale))
+  let entry = coarsenGrid(initial)
   let program = generate(entry)
   let cells = estimateReplayCells(program, entry)
-  for (let attempt = 0; attempt < 8 && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
+  for (let attempt = 0; attempt < 8 && redraw !== undefined
+    && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
     const length = entry.alongEnd - entry.alongStart
     if (length <= 20.5) break
     const ratio = cells > 0 ? MAX_REPLAY_CELLS / cells : 0.8
     const nextScale = scale * Math.max(0.1, Math.min(0.9, ratio * 0.95))
     if (nextScale >= scale * 0.999) break
     scale = nextScale
-    entry = coarsenGrid(drawCase(seed, scale))
+    entry = coarsenGrid(redraw(scale))
     program = generate(entry)
     cells = estimateReplayCells(program, entry)
   }
@@ -1432,7 +1526,13 @@ let nonTurningLabel = ''
 // cases, and the assertions below still require the full set.
 const CASE_COUNT = process.env.SQUARE_CASES ? Number(process.env.SQUARE_CASES) : 300
 const startedAt = Date.now()
-const CASES = Array.from({ length: CASE_COUNT }, (_, seed) => fitCase(seed))
+const CASES = [
+  ...Array.from({ length: CASE_COUNT }, (_, seed) => fitCase(seed)),
+  // #1045 slice R's along-finish cases are always in the set, whatever the
+  // profiling count: a finish-only along program on a round bar and a square
+  // blank, and the same with a rough in front of it.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawAlongCase(seed))),
+]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
     seed,
@@ -1450,6 +1550,9 @@ if (process.env.SQUARE_ESTIMATE_ONLY) {
 
 console.log(`Testing ${CASES.length} seeded generator-emitted square around programs...`)
 let checkedCuts = 0
+let alongFinishStages = 0
+let alongFinishOnlyRound = 0
+let alongFinishOnlySquare = 0
 let casesDone = 0
 let checkedRapids = 0
 let checkedSurfaceCells = 0
@@ -1505,9 +1608,17 @@ for (const { entry, program } of CASES) {
   }
   if (finishRan) {
     // #1045 slice M: with the licensing gone a bare finish clears its own blank
-    // and cuts; so does one after any rough, retained ends or not.
-    assert.ok(program.finishMoves.length > 0, `${entry.label}: the around finish clears itself and cuts`)
+    // and cuts; so does one after any rough, retained ends or not. Slice R
+    // extends that to an along finish.
+    assert.ok(program.finishMoves.length > 0, `${entry.label}: the finish clears itself and cuts`)
     assert.deepEqual(program.finishCodes, [], `${entry.label}: the finish warns about nothing`)
+    if (entry.finishKind === 'along') {
+      alongFinishStages++
+      if (entry.programKind === 'finish') {
+        if (entry.stock.shape === 'round') alongFinishOnlyRound++
+        else alongFinishOnlySquare++
+      }
+    }
   }
 
   const budget = referenceBudget(entry)
@@ -1536,9 +1647,17 @@ for (const { entry, program } of CASES) {
   const finishBound = entry.stockToLeave + entry.finishStepdown
     + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
-  const stages: Array<{ moves: ToolpathMove[]; finish: boolean }> = []
-  if (roughRan) stages.push({ moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE), finish: false })
-  if (finishRan) stages.push({ moves: coalesceCommandedMoves(program.finishMoves, COALESCE_TOLERANCE), finish: true })
+  const stages: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
+  if (roughRan) stages.push({
+    moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE),
+    finish: false,
+    direction: entry.roughKind,
+  })
+  if (finishRan) stages.push({
+    moves: coalesceCommandedMoves(program.finishMoves, COALESCE_TOLERANCE),
+    finish: true,
+    direction: entry.finishKind,
+  })
   assert.ok(stages.length > 0, `${entry.label}: the program has motion`)
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
@@ -1564,7 +1683,7 @@ for (const { entry, program } of CASES) {
         }
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
-        if (stage.finish || entry.roughKind === 'around') {
+        if (stage.direction === 'around') {
           if (moveInteriorWorst > worstAssertedInterior) {
             worstAssertedInterior = moveInteriorWorst
             worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
@@ -1598,7 +1717,11 @@ for (const { entry, program } of CASES) {
           // reference resolves. `alongRadialBiteBound` derives that maximum in
           // closed form; `tip` is the move's lowest tip, at which the bound is
           // largest.
-          const alongBound = alongRadialBiteBound(ball, cutterRadius, entry.stepdown,
+          // An along finish's clearing and finish passes descend by the
+          // finish's own stepdown (slice R); the rough's by its own. Both use
+          // slice Q's exact geometry.
+          const alongBound = alongRadialBiteBound(ball, cutterRadius,
+            stage.finish ? entry.finishStepdown : entry.stepdown,
             Math.min(move.from.z - pivot, move.to.z - pivot))
           const alongMargin = alongBound - moveSurfaceWorst
           if (alongMargin < worstAlongMargin) {
@@ -1621,7 +1744,8 @@ for (const { entry, program } of CASES) {
             alongInteriorDiagnostic = {
               depth: moveInteriorWorst,
               label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
-              stepover: entry.stepover, diameter: entry.diameter, stepdown: entry.stepdown,
+              stepover: entry.stepover, diameter: entry.diameter,
+              stepdown: stage.finish ? entry.finishStepdown : entry.stepdown,
             }
           }
         }
@@ -1662,7 +1786,7 @@ for (const { entry, program } of CASES) {
           // stage's non-turning cuts, it is reported rather than asserted,
           // because a plunge at the band edge cuts the shoulder the generator
           // deliberately leaves within one cutter radius of a stub.
-          const around = stage.finish || entry.roughKind === 'around'
+          const around = stage.direction === 'around'
           if (!around) {
             if (engagement > nonTurningWorst) {
               nonTurningWorst = engagement
@@ -1694,7 +1818,7 @@ for (const { entry, program } of CASES) {
     if (along < bounds.minX || along > bounds.maxX) continue
     for (let k = 0; k < reference.angleBins; k++) {
       const angle = (k + 0.5) * reference.angleDeg
-      const blank = blankRadius(stock.thickness / 2, angle)
+      const blank = blankRadius(stock, angle)
       const index = i * reference.angleBins + k
       const drop = retainedRemoval(reference, index, blank)
       if (drop > worstStubDrop) {
@@ -1709,13 +1833,18 @@ for (const { entry, program } of CASES) {
   // finish's own scallop above model + stock.
   if (!finishRan) continue
   const slope = modelMaxSlope(entry.profile)
-  // A ball leaves its between-ring scallop; a flat leaves a staircase one full
-  // ring step tall on a sloped surface, because each ring's bottom is a
-  // horizontal plane at that ring's model height.
+  // A ball leaves its between-pass scallop; a flat leaves a staircase one full
+  // step tall on a sloped surface, because each pass's bottom is a horizontal
+  // plane at that pass's model height. An around finish steps `stepover` along
+  // and `sampleSpacing` round; an along finish steps `stepover` round and
+  // `sampleSpacing` along, so the two motions swap the two scallops.
+  const alongStep = entry.finishKind === 'along' ? entry.finishSpacing : entry.stepover
   const alongScallop = ball
-    ? ballRiseAt(cutterRadius, entry.stepover / 2)
-    : slope * entry.stepover
-  const angleArc = aroundArcStep(corner, entry.finishSpacing)
+    ? ballRiseAt(cutterRadius, alongStep / 2)
+    : slope * alongStep
+  const angleArc = entry.finishKind === 'along'
+    ? entry.stepover
+    : aroundArcStep(corner, entry.finishSpacing)
   const angularScallop = ball ? (angleArc * angleArc) / (8 * cutterRadius) : 0
   const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
   // The generator's conservative cell lift (`angleLifts`, capped at
@@ -1806,14 +1935,19 @@ console.log(`  along stage: interior removal below an intact shell ${alongInteri
   + `(${alongInteriorDiagnostic.label || 'none'}; stepover ${alongInteriorDiagnostic.stepover.toFixed(3)} `
   + `diameter ${alongInteriorDiagnostic.diameter.toFixed(3)} stepdown ${alongInteriorDiagnostic.stepdown.toFixed(3)}) `
   + '— diagnostic only, not a bound')
-console.log(`  non-turning cuts (reported, not asserted: the along-mode square output is frozen): `
+console.log(`  non-turning cuts (reported, not asserted: the along-mode rough output is frozen): `
   + `worst ${nonTurningWorst.toFixed(4)} mm (${nonTurningLabel || 'none'})`)
 if (process.env.SQUARE_CASES) {
   console.log(`  [profile] ${referenceStats.moves} reference moves, ${referenceStats.cells} cell visits, `
     + `${referenceStats.steps} sweep steps; ${((Date.now() - startedAt) / 1000).toFixed(1)} s`)
 }
 
+console.log(`  along finishes: ${alongFinishStages} stages (${alongFinishOnlyRound} finish-only round, `
+  + `${alongFinishOnlySquare} finish-only square) — the radial bound is asserted with the finish's own stepdown`)
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
+assert.ok(alongFinishStages >= 8, `the along-finish stages are in the seeded set (${alongFinishStages})`)
+assert.ok(alongFinishOnlyRound >= 1, `a finish-only along program on a round bar (${alongFinishOnlyRound})`)
+assert.ok(alongFinishOnlySquare >= 1, `a finish-only along program on a square blank (${alongFinishOnlySquare})`)
 assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)

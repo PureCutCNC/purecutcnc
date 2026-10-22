@@ -68,11 +68,39 @@ export interface DrillCycle {
   dwellTime?: number
 }
 
+/**
+ * The radial material a rotary rough leaves standing, sampled on the rough's
+ * own grid (#1045 slice R). `tips[k][i]` is the radius from the turning pivot
+ * the rough left at `angles[k]` (degrees) and `along[i]`, after the rough's
+ * radial stock to leave and its retained-stub floor, with `NaN` samples turned
+ * into the axis/stub contact the rough actually cut to.
+ *
+ * Runtime only: it describes one generated result and is never serialised into
+ * a `.camj` file. An along finish reads it to clear only the material an
+ * earlier rough really left; with no such result it clears the raw blank.
+ */
+export interface RotaryRoughLeft {
+  readonly angles: readonly number[]
+  readonly along: readonly number[]
+  readonly tips: readonly (readonly number[])[]
+  /** The rough's own radial layer depth, for its between-sample scallop. */
+  readonly stepdown: number
+  /** The rough's radial stock to leave, already folded into `tips`. */
+  readonly stockToLeave: number
+  /** The normalized rough cutter, for its between-sample scallop. */
+  readonly cutterRadius: number
+  readonly ball: boolean
+  readonly passDirection: 'around' | 'along'
+}
+
 export interface ToolpathResult {
   operationId: string
   moves: ToolpathMove[]
   warnings: ToolpathWarning[]
   bounds: ToolpathBounds | null
+  /** Rotary rough only: the material it leaves, for an along finish's own
+   *  clearing layers (#1045 slice R). */
+  roughLeft?: RotaryRoughLeft
   collidingClampIds?: string[]
   /** Indices into `moves` of segments that cross a clamp zone below required
    *  clearance. Refers to the final (adjusted) moves array. */

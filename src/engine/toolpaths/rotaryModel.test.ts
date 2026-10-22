@@ -25,7 +25,7 @@ import { toolSpacePoint } from '../rotaryFrame'
 import { buildHeightMap, chooseHeightMapCellSize, computeXYBounds, safeToolTipZAt } from './finishSurfaceParallel'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel, turnedModelPositions } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
+import type { NormalizedTool, RotaryRoughLeft, ToolpathMove, ToolpathPoint } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
 const BALL: NormalizedTool = {
@@ -1622,6 +1622,70 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   assert.equal(result.moves.length, 8844, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
     'e9067d81a3ad5bc657224f7f908db815dd16aaa8fefdd48de885211025d706e6', 'finish fixture keeps its exact points')
+}
+
+// ---------------------------------------------------------------------------
+// Slice R: an along finish clears the material above its own finish surface in
+// its own stepdown layers, unless an earlier rough already left it within one
+// stepdown.
+// ---------------------------------------------------------------------------
+{
+  const stock = roundStock(20, 20)
+  const pivot = stock.thickness / 2
+  const cylinder = lathe(stock, () => 5, 0, 20, 80, 64)
+  const params = {
+    stepover: 20, sampleSpacing: 1, stockToLeave: 0,
+    alongStart: 0, alongEnd: 20, safeRadius: 30, requestedCellSize: CELL,
+  }
+  const clearing = generateRotaryFinish('along-clear', cylinder, stock, FINISH_PASS_MM,
+    { ...params, stepdown: 1 }, {})
+  assert.deepEqual(clearing.warnings, [], 'along clear warns about nothing')
+  // 10 mm bar radius, 5 mm finish surface, 1 mm layers: 9, 8, 7 and 6 are the
+  // clearing layers, then the finish pass at 5.
+  const alongCuts = (moves: readonly ToolpathMove[]): ToolpathMove[] => moves.filter((move) =>
+    move.kind === 'cut' && move.from.a === move.to.a && move.from.x !== move.to.x)
+  const tips = new Set(alongCuts(clearing.moves)
+    .map((move) => Math.round((move.to.z - pivot) * 1e6) / 1e6))
+  const hasTip = (value: number): boolean => [...tips].some((tip) => Math.abs(tip - value) <= 0.02)
+  for (const layer of [9, 8, 7, 6]) assert.ok(hasTip(layer), `along clear cuts layer ${layer}`)
+  assert.ok(hasTip(5), 'the finish pass follows the model at the finish surface')
+  const lowest = Math.min(...clearing.moves
+    .filter((move) => move.kind !== 'rapid')
+    .flatMap((move) => [move.from.z, move.to.z]))
+  assert.ok(lowest >= pivot + 5 - TOLERANCE, 'along clear never cuts below the finish surface')
+  // The entry plunges straight to the first clearing layer, one stepdown below
+  // the bar, not to the finish surface.
+  const entry = clearing.moves.find((move) => move.kind === 'plunge')
+  assert.ok(entry, 'along clear has an entry plunge')
+  approx(entry!.to.z - pivot, 9, 'the entry plunges to the first clearing layer')
+
+  // A rough that already left the finish surface plus 0.4 mm (less than one
+  // 1 mm stepdown) contributes no clearing: the finish motion is the finish
+  // pass alone, which is exactly the pre-slice-R motion.
+  const left: RotaryRoughLeft = {
+    angles: [0, 90, 180, 270], along: [0, 20],
+    tips: [[5.4, 5.4], [5.4, 5.4], [5.4, 5.4], [5.4, 5.4]],
+    stepdown: 3, stockToLeave: 0, cutterRadius: 2, ball: false, passDirection: 'along',
+  }
+  const skipped = generateRotaryFinish('along-rough-left', cylinder, stock, FINISH_PASS_MM,
+    { ...params, stepdown: 1, roughLeft: [left] }, {})
+  assert.deepEqual(skipped.warnings, [], 'rough-left finish warns about nothing')
+  const skippedLayers = new Set(alongCuts(skipped.moves)
+    .map((move) => Math.round((move.to.z - pivot) * 1e6) / 1e6))
+  assert.ok([...skippedLayers].length > 0, 'the rough-left finish still cuts')
+  assert.ok([...skippedLayers].every((tip) => Math.abs(tip - 5) <= 0.02),
+    'a rough within one stepdown emits no clearing layer above the finish surface')
+  const finishSurface = (moves: readonly ToolpathMove[]): ToolpathMove[] =>
+    alongCuts(moves).filter((move) => (move.from.a ?? 0) < 360
+      && Math.abs(move.to.z - pivot - 5) <= 0.02)
+  assert.deepEqual(finishSurface(skipped.moves), finishSurface(clearing.moves),
+    'the finish pass itself is unchanged by the clearing layers above it')
+  // Captured from the generator at 39cecfef (before slice R): a finish whose
+  // earlier rough left the surface within one stepdown is byte-identical to the
+  // pre-slice finish pass.
+  assert.equal(createHash('sha256').update(JSON.stringify(skipped.moves)).digest('hex'),
+    'd36dab1914ef17ea275c14ea1392bbcc4458dd650ff27dc8c8905c4584717ac9',
+    'a rough that left less than one stepdown keeps the finish byte-identical')
 }
 
 // ---------------------------------------------------------------------------

@@ -459,20 +459,29 @@ console.log('Testing the cutter centre starts and ends one radius inside Frank\'
         `every emitted point is inside the pulled-in span (${along})`)
     }
   }
-  // The measured shape of the pass: rapid at travel height, one straight plunge,
-  // one feed across the span at the target radius, and a straight retract.
+  // The measured shape of the pass: rapid at travel height, straight plunges,
+  // one feed across the span at the target radius, and a straight retract. Since
+  // #1045 slice R the finish first clears the standing square corner in its own
+  // stepdown layers, so the *finish* pass is the feed at the target radius and
+  // its plunge sits immediately before it.
   const first = result.moves[0]
   assert.equal(first.kind, 'rapid', 'the pass opens with a rapid')
-  const plunge = result.moves[1]
-  assert.equal(plunge.kind, 'plunge', 'a straight plunge follows it')
-  approx(alongOf(finish.stock, plunge.from), spanStart, 'the plunge is at the span start')
-  approx(alongOf(finish.stock, plunge.to), spanStart, 'the plunge is vertical')
+  assert.equal(result.moves[1].kind, 'plunge', 'a straight plunge follows it')
   const feed = result.moves.find((move) => move.kind === 'cut'
+    && move.from.a === 0
     && Math.abs(alongOf(finish.stock, move.to) - alongOf(finish.stock, move.from)) > 1e-9)
-  assert.ok(feed, 'the pass feeds along the bar')
+  assert.ok(feed, 'the finish pass feeds along the bar')
   approx(alongOf(finish.stock, feed.from), spanStart, 'the feed starts at the span start')
   approx(alongOf(finish.stock, feed.to), spanEnd, 'the feed ends at the span end')
   approx(feed.from.z - barPivotZ(finish.stock), finish.targetRadius, 'the feed cuts at the target radius', 0.01)
+  const finishPlunge = result.moves[result.moves.indexOf(feed) - 1]
+  assert.equal(finishPlunge.kind, 'plunge', 'the finish pass plunges immediately before its feed')
+  approx(alongOf(finish.stock, finishPlunge.from), spanStart, 'the finish plunge is at the span start')
+  approx(alongOf(finish.stock, finishPlunge.to), spanStart, 'the finish plunge is vertical')
+  assert.ok(result.moves.some((move) => move.kind === 'cut'
+    && Math.abs(alongOf(finish.stock, move.to) - alongOf(finish.stock, move.from)) > 1e-9
+    && move.to.z - barPivotZ(finish.stock) > finish.targetRadius + 1e-6),
+  'the finish clears the standing corner above its own surface')
   const retract = result.moves[result.moves.length - 1]
   assert.equal(retract.kind, 'rapid', 'the pass ends with the final retract')
   assert.equal(alongOf(finish.stock, retract.from), alongOf(finish.stock, retract.to),

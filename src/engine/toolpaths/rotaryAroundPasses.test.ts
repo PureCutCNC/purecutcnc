@@ -179,9 +179,15 @@ function prism(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
-/** A SHA-256 of a generated result, recorded so a motion change fails loudly. */
+/**
+ * A SHA-256 of a generated result's **output**, recorded so a motion change
+ * fails loudly. `roughLeft` is the runtime material map an along finish reads
+ * (#1045 slice R), not output: it is stripped so the recorded digests keep
+ * pinning the moves, warnings and bounds alone.
+ */
 function digest(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  const { roughLeft: _runtimeOnly, ...output } = value as Record<string, unknown>
+  return createHash('sha256').update(JSON.stringify(output)).digest('hex')
 }
 
 const alongOf = (point: { x: number; y: number }): number => point.x

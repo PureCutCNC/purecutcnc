@@ -257,6 +257,17 @@ export function cacheInputsValid(
   // ownership and the check below cannot have anything to say.
   if (inputs.project === project) return true
 
+  // #1045 slice R: an along rotary finish's self-clearing layers depend on the
+  // material earlier enabled roughs on the same setup and target actually left,
+  // and no other stamp compares another operation's row, tool or placement. Any
+  // project change can alter that material, so the finish regenerates rather
+  // than serving a path that clears too little. Conservative by design: a
+  // display-only edit costs one regeneration, a stale clearing path could take
+  // more than one stepdown in a pass.
+  if (operation.kind === 'rotary_finish' && (operation.rotaryPassDirection ?? 'along') === 'along') {
+    return false
+  }
+
   // Plasma cut order (issue #958) reads two things no check here covers: the
   // machine origin, where the first cut is chosen from, and what later plasma
   // operations cut, which decides the outline-before-hole warning. Neither
