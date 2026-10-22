@@ -23,6 +23,12 @@
  *  - the emission budget refuses with its own `rotaryWorkBudgetExceeded` text,
  *    and a sub-minimum but finite stepdown with `rotaryStepdownBelowMinimum`,
  *    instead of both borrowing the stepover message;
+ *  - (#1045 slice P) both bounds are **around-mode** bounds: along mode keeps
+ *    the emission it always had. A saved 0.009 mm along rough that generated
+ *    27,804 moves at 9345c132 is accepted again, and the 16M emission cap --
+ *    which can refuse an along job that used to run, however slowly -- is not
+ *    applied to along mode. A non-finite layer count still refuses, because no
+ *    version of this generator ever finished that job;
  *  - a saved stepdown of 0, a negative number or NaN falls back to the tool's
  *    `defaultStepdown` again (slice N had begun refusing it); only a finite
  *    positive value below the minimum is refused;
@@ -84,8 +90,9 @@ if (process.env.ROTARY_WORK_BUDGET_CHILD) {
     assert.equal(child.error, undefined, `${kind}: generation must refuse excessive work, never hang (${child.error?.message})`)
     assert.equal(child.status, 0, `${kind}: ${child.stdout} ${child.stderr}`)
   }
-  // A finite, positive stepdown below the physical minimum is its own refusal:
-  // the value is not missing, it is a request for an unbounded layer count.
+  // A finite, positive stepdown below the physical minimum is its own refusal
+  // in **around** mode: the value is not missing, it is a request for an
+  // unbounded layer count in the self-protecting layers.
   for (const generate of [generateRotaryFinish, generateRotaryRough]) {
     for (const stepdown of [Number.MIN_VALUE, 0.009]) {
       let sampled = 0
@@ -101,6 +108,38 @@ if (process.env.ROTARY_WORK_BUDGET_CHILD) {
     assert.deepEqual(result.moves, [])
     assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryStepdownBelowMinimum'])
   }
+
+  // #1045 slice P: along mode is exempt from both around-mode bounds. The
+  // review's fixture -- a finite 0.009 mm stepdown that generated 27,804 moves
+  // at 9345c132 -- must generate again, not refuse.
+  const coarseAlong = { ...base, passDirection: 'along' as const, stepover: 10, sampleSpacing: 5 }
+  const alongMinimum = generateRotaryRough('along-minimum', mesh, stock, tool, { ...coarseAlong, stepdown: 0.009 }, {})
+  assert.deepEqual(alongMinimum.warnings, [], 'along mode accepts a 0.009 mm stepdown')
+  assert.ok(alongMinimum.moves.length > 0, 'and generates motion for it')
+  const inchAlong = generateRotaryRough('along-inch-minimum', mesh, stock, { ...tool, units: 'inch' },
+    { ...coarseAlong, stepdown: 0.009 / 25.4 }, {})
+  assert.deepEqual(inchAlong.warnings, [], 'along mode accepts the same depth in inch units')
+  assert.ok(inchAlong.moves.length > 0)
+  // The 16M emission cap would otherwise refuse an along job that used to run.
+  // This one asks for ~40M layer visits; around refuses before emission, along
+  // is allowed to start and is stopped by cancellation instead.
+  // A valid (at the floor) stepdown with a fine grid: ~500 layers x ~629 angles
+  // x ~201 along positions is about 63M layer visits.
+  const huge = { ...base, stepdown: 0.01, stepover: 0.1, sampleSpacing: 0.1 }
+  const aroundCap = generateRotaryRough('around-cap', mesh, stock, tool, huge, {})
+  assert.deepEqual(aroundCap.moves, [])
+  assert.deepEqual(aroundCap.warnings.map((warning) => warning.code), ['rotaryWorkBudgetExceeded'],
+    'around mode still refuses a job over the emission cap')
+  const alongNoCap = generateRotaryRough('along-cap', mesh, stock, tool,
+    { ...coarseAlong, stepdown: 4e-6 }, { shouldStop: () => true })
+  assert.deepEqual(alongNoCap, { operationId: 'along-cap', moves: [], warnings: [], bounds: null },
+    'along mode is not refused by the emission cap; it starts and honours cancellation')
+  // A non-finite layer count is still refused: that job never finished on any
+  // version, and the layer loop would never terminate.
+  const alongInfinite = generateRotaryRough('along-infinite', mesh, stock, tool,
+    { ...coarseAlong, stepdown: Number.MIN_VALUE }, {})
+  assert.deepEqual(alongInfinite.moves, [])
+  assert.deepEqual(alongInfinite.warnings.map((warning) => warning.code), ['rotaryWorkBudgetExceeded'])
 
   // #1045 slice O restores the fallback: a saved stepdown of zero, a negative
   // number, NaN or infinity is not a depth, so the operation reads the tool's

@@ -331,6 +331,11 @@ const RING_MESH = revolved(RING_STOCK, [
 const RING_PARAMS = {
   stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 10, alongEnd: 30,
   safeRadius: 30, requestedCellSize: CELL,
+  // One clearing layer (#1045 slice P): the value is above the bar radius, so
+  // the finish's self-protecting layer lands at the lowest finish tip and this
+  // block still measures the ring shape rather than the layering. The layered
+  // round-around behaviour has its own block below.
+  stepdown: 100,
 }
 
 /**
@@ -358,9 +363,12 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     }
   }
   const rings = cutRings(result.moves)
-  // `stepover` is the along step: 20 mm over 2 mm makes 11 rings. The angular
-  // step is `sampleSpacing` round the bar's circumference, capped by slice D.
-  assert.equal(rings.length, 11, 'one ring per along position, `stepover` apart')
+  // `stepover` is the along step: 20 mm over 2 mm makes 11 rings. Since #1045
+  // slice P an around finish on a round bar first clears the blank above its own
+  // finish surface, so there are two 11-ring passes: one clearing layer (the
+  // stepdown is above the bar radius) and the finish pass. The angular step is
+  // `sampleSpacing` round the bar's circumference, capped by slice D.
+  assert.equal(rings.length, 22, 'one clearing layer + one finish ring per along position, `stepover` apart')
   // 141 samples per ring under the slice-D angle cap (both ends of the turn).
   // Slice G's merge drops the interior points of a run that is straight in
   // (along, A, Z), so a ring's emitted points are that grid or fewer; the run
@@ -370,11 +378,15 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   assert.ok(rings[0].angles.length <= angularIntervals * 2,
     'a ring sweeps no more points than the capped angle count')
   assert.ok(rings[0].angles.length >= 2, 'and it still turns')
+  // Two passes of 11 rings: the clearing layer, then the finish. Alternation
+  // runs inside each pass; the finish starts a new layer and begins forward, so
+  // the boundary between the two passes is not an alternation step.
+  const ringsPerPass = rings.length / 2
   for (let i = 0; i < rings.length; i++) {
+    const forward = (i % ringsPerPass) % 2 === 0
     const direction = ringDirection(rings[i])
-    assert.equal(direction, i % 2 === 0 ? 1 : -1, `ring ${i} runs ${i % 2 === 0 ? 'forward' : 'reversed'}`)
-    const forward = i % 2 === 0
-    assert.equal(rings[i].angles[0], forward ? 0 : 360, `ring ${i} starts where the previous one ended`)
+    assert.equal(direction, forward ? 1 : -1, `ring ${i} runs ${forward ? 'forward' : 'reversed'}`)
+    assert.equal(rings[i].angles[0], forward ? 0 : 360, `ring ${i} starts where its pass's previous ring ended`)
     assert.equal(rings[i].angles[rings[i].angles.length - 1], forward ? 360 : 0, `ring ${i} closes the turn`)
   }
 }
@@ -412,6 +424,50 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   for (let i = 11; i < rings.length; i++) {
     approx(rings[i].along, rings[i - 11].along, `rough ring ${i} returns to the same along position`, 1e-12)
   }
+}
+
+// ---------------------------------------------------------------------------
+// 2b. A round around finish protects itself (#1045 slice P).
+//
+//     Codex pass 9: Ø20 round stock, a Ø10 model turned down to radius 5, a Ø4
+//     flat cutter and a 1 mm finish stepdown. A raw bar has 5 mm standing above
+//     the finish surface, and the old around finish took it in its first ring.
+//     It must now clear in its own 1 mm layers from the bar radius down: the
+//     emitted cut tips are exactly 9, 8, 7, 6, 5. The mutation this block
+//     exists for removes the finish's clearing layers and leaves a single
+//     full-depth ring at 5.
+// ---------------------------------------------------------------------------
+
+{
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const barRadius = barMaxRadius(stock)
+  const model = revolved(stock, [{ along: 0, radius: 5 }, { along: 20, radius: 5 }], 64)
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
+  }
+  const result = generateRotaryFinish('round-clears', model, stock, FLAT, params, {})
+  assert.deepEqual(result.warnings, [], 'the self-clearing round around finish has no warning')
+  const pivot = barPivotZ(stock)
+  const tips = result.moves
+    .filter((move) => move.kind === 'cut')
+    .flatMap((move) => [move.from, move.to])
+    .map((point) => point.z - pivot)
+  // One layer per millimetre from the bar radius down to the finish surface:
+  // 9, 8, 7, 6, then the finish surface itself. A cut tip at 9 is the signature
+  // of the first self-protecting layer; without the clearing layers the highest
+  // emitted tip is the finish surface (~5) and the first ring takes 5 mm.
+  const highest = Math.max(...tips)
+  approx(highest, barRadius - params.stepdown, 'the first clearing layer is one stepdown below the bar radius', 0.01)
+  for (const layer of [9, 8, 7, 6]) {
+    assert.ok(tips.some((tip) => Math.abs(tip - layer) <= 0.01),
+      `a cut at the ${layer} mm layer exists (highest ${highest.toFixed(3)})`)
+  }
+  // The last layer lands on the sampled finish surface, which the conservative
+  // cell read puts at 5 plus its own cell lift (the requested 0.5 mm cell).
+  const lowest = Math.min(...tips)
+  assert.ok(lowest >= 5 - 1e-6 && lowest <= 5 + params.requestedCellSize + 0.05,
+    `the clearing reaches the finish surface at ~5 (lowest ${lowest.toFixed(3)})`)
 }
 
 // ---------------------------------------------------------------------------
@@ -556,6 +612,10 @@ function propertyAllowance(tool: NormalizedTool): number {
       safeRadius: 20,
       requestedCellSize: PROP_CELL,
       passDirection: 'around',
+      // Above the bar radius, so the finish's one self-protecting layer lands at
+      // its lowest tip and this block checks every emitted sample against the
+      // reference without adding a second measured surface (#1045 slice P).
+      stepdown: 100,
     }, {})
     assert.deepEqual(result.warnings, [], `seed ${seed}: no warning`)
     const allowance = propertyAllowance(tool)
@@ -626,7 +686,7 @@ const HEX_SECTION = Array.from({ length: 6 }, (_, i): readonly [number, number] 
   const mesh = prism(HEX_STOCK, HEX_SECTION, [10, 30])
   const result = generateRotaryFinish('hex', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', stepdown: 100,
   }, {})
   assert.deepEqual(result.warnings, [], 'the hex finish has no warning')
   const points = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
@@ -673,7 +733,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = prism(HEX_STOCK, HEX_SECTION, [10, 30])
   const result = generateRotaryFinish('hex-steps', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', stepdown: 100,
   }, {})
   const cuts = result.moves.filter((move) => move.kind === 'cut')
   const vertical = cuts.filter((move) => Math.abs(move.to.z - move.from.z) > 1e-9
@@ -700,7 +760,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = prism(HEX_STOCK, bumpSection, [10, 30])
   const result = generateRotaryFinish('bump', mesh, HEX_STOCK, { ...BALL, radius: 0.25, diameter: 0.5 }, {
     stepover: 20, sampleSpacing: 1, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', stepdown: 100,
   }, {})
   const cuts = result.moves.filter((move) => move.kind === 'cut')
   const pivot = barPivotZ(HEX_STOCK)
@@ -722,7 +782,11 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = digestCone()
   const params = { ...DIGEST_FINISH, sampleSpacing: 1 }
   const along = generateRotaryFinish('change', mesh, DIGEST_STOCK, FLAT, params, {})
-  const around = generateRotaryFinish('change', mesh, DIGEST_STOCK, FLAT, { ...params, passDirection: 'around' }, {})
+  // The around finish clears its own blank (#1045 slice P), so it needs a
+  // stepdown; one layer above the bar radius keeps the comparison about the
+  // direction field.
+  const around = generateRotaryFinish('change', mesh, DIGEST_STOCK, FLAT,
+    { ...params, passDirection: 'around', stepdown: 100 }, {})
   assert.ok(along.moves.length > 0 && around.moves.length > 0, 'both directions cut')
   assert.notDeepEqual(around.moves, along.moves, 'around and along produce different motion')
   assert.ok(around.moves.every((move) => angleOf(move.from) >= 0 && angleOf(move.to) <= 360),
@@ -969,6 +1033,9 @@ console.log('Testing the retained round ends on around and along passes...')
   const params = {
     stepover: 2.7, sampleSpacing: 0.75, stockToLeave: 0, alongStart: 18, alongEnd: 42,
     safeRadius: 30, requestedCellSize: 1,
+    // Used only by the around case's self-protecting layers (#1045 slice P);
+    // along mode never reads it.
+    stepdown: 3,
   }
   const travel = barMaxRadius(stock) + 1
   // Along mode at 0.75 happens to sample the stub before the rim reaches it, so
@@ -1126,7 +1193,7 @@ console.log('Testing the emitted around sweep on the hex prism...')
   const mesh = prism(HEX_STOCK, section, [10, 30])
   const reference = generateRotaryFinish('hex-cap', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', stepdown: 100,
   }, {})
   assert.deepEqual(reference.warnings, [], 'the capped hex finish has no warning')
 
@@ -1207,7 +1274,7 @@ console.log('Testing the angle cap in inch units...')
   }
   const result = generateRotaryFinish('inch-cap', mesh, stock, tool, {
     stepover: 1, sampleSpacing: 0.06, stockToLeave: 0, alongStart: 0, alongEnd: 4,
-    safeRadius: 2, requestedCellSize: 0.005, passDirection: 'around',
+    safeRadius: 2, requestedCellSize: 0.005, passDirection: 'around', stepdown: 100,
   }, {})
   assert.deepEqual(result.warnings, [], 'the inch around finish has no warning')
   const angles = [...new Set(result.moves.flatMap((move) => [angleOf(move.from), angleOf(move.to)]))].sort((a, b) => a - b)

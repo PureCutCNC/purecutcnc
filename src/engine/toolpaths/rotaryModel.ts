@@ -678,16 +678,17 @@ export interface RotaryFinishParams {
    */
   readonly passDirection?: RotaryPassDirection
   /**
-   * The radial layer depth of this operation's own clearing (#1045 slice M).
-   * An around finish on a square blank clears the standing blank above its
-   * finish surface in layers of this depth before it follows the model, so a
-   * missing, zero, negative, NaN or infinite value falls back to the tool's
-   * `defaultStepdown` (#1045 slice O restores that fallback; slice N had let a
-   * zero through and refused it instead). A finish whose saved field is zero
-   * and whose tool has none either refuses with `stepdownPositive` rather than
-   * cutting a whole corner in one pass. A finite positive value below the
-   * physical minimum refuses with `rotaryStepdownBelowMinimum`. Unused by the
-   * along motion.
+   * The radial layer depth of this operation's own clearing (#1045 slices M/P).
+   * An **around** finish clears the standing blank above its finish surface in
+   * layers of this depth before it follows the model -- from a square blank's
+   * corner radius, or from a round bar's radius -- so a missing, zero, negative,
+   * NaN or infinite value falls back to the tool's `defaultStepdown` (#1045
+   * slice O restores that fallback; slice N had let a zero through and refused
+   * it instead). A finish whose saved field is zero and whose tool has none
+   * either refuses with `stepdownPositive` rather than cutting the whole
+   * standing radius in one pass. A finite positive value below the physical
+   * minimum refuses with `rotaryStepdownBelowMinimum`. Unused by the along
+   * motion, which still relies on a rough on a raw bar (#1045 slice P).
    */
   readonly stepdown?: number
 }
@@ -1128,7 +1129,10 @@ function aroundGrid(
 const MAX_ROTARY_SAMPLES = 16_000_000
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
-// grid, even when the touch gate ultimately skips it (#1045 slice N).
+// grid, even when the touch gate ultimately skips it (#1045 slice N). Both this
+// budget and `MIN_ROTARY_STEPDOWN_MM` are **around-mode** bounds (#1045 slice
+// P): along mode keeps the emission it always had, because those caps can
+// refuse a job along mode used to accept (the 0.009 mm fixture below).
 const MAX_ROTARY_EMISSION_WORK = 16_000_000
 const MIN_ROTARY_STEPDOWN_MM = 0.01
 
@@ -1140,7 +1144,9 @@ const MIN_ROTARY_STEPDOWN_MM = 0.01
  * seeds a new rotary rough (and finish) on that tool with. Only a finite,
  * positive value is used as given; the caller refuses it when it is below
  * `MIN_ROTARY_STEPDOWN_MM`, because a finite value that small is a request for
- * an unbounded number of layers rather than a missing one.
+ * an unbounded number of layers rather than a missing one. That floor applies
+ * to around mode, which is the path whose layer count the value drives
+ * (#1045 slice P); along mode is exempt.
  */
 function effectiveStepdown(stepdown: number | undefined, tool: NormalizedTool): number {
   return Number.isFinite(stepdown) && (stepdown ?? 0) > 0 ? stepdown! : tool.defaultStepdown
@@ -2075,17 +2081,24 @@ function rotaryTargets(
  * here; the along *step* is the operation's own `stepover`, and the stub's
  * angular profile is resolved by `sampleSpacing`.
  *
- * An around finish on a square blank is **self-protecting** (#1045 slice M): it
- * first clears the standing blank above its own finish surface in the same
+ * An around finish is **self-protecting** (#1045 slices M/P): on a square blank
+ * it first clears the standing blank above its own finish surface in the same
  * layered rings the around rough emits -- one layer per `stepdown` from the
  * blank's corner radius down to the lowest finish tip, each sample gated by
  * `squareRotaryTouchRadius` at its own angle, with the retained-stub floor and
  * the C2-F7 pull-in already applied to the sampled tips -- and only then makes
- * its finish pass. It therefore depends on no other operation: a rough that
- * never ran, never posted, or stopped short cannot license a deep first ring,
- * because there is no first ring at depth. A round bar is unchanged: its blank
- * is already the turned surface's envelope, so the finish's own model-following
- * ring is the same single pass it always was.
+ * its finish pass. On a round bar the same layers start at the bar radius and
+ * use the finish's own stepdown: a model turned down from the bar leaves the
+ * bar standing above its own finish surface, and without them the first ring
+ * would take that whole standing radius in one cut. It therefore depends on no
+ * other operation: a rough that never ran, never posted, or stopped short
+ * cannot license a deep first ring, because there is no first ring at depth.
+ *
+ * An **along** finish is unchanged (#1045 slice P), by decision: on a raw bar
+ * along mode still relies on a rough. Its pass follows the model at one fixed
+ * angle and would take the standing radius in a single cut, and extending these
+ * layers to it would change frozen along-mode output. The manager is asking
+ * Frank about along mode separately.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -2113,12 +2126,21 @@ export function generateRotaryFinish(
   if (params.alongEnd <= params.alongStart) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryNoRoom', params: { operation: operationId } }], bounds: null }
   }
-  // A square blank's around finish clears its own standing material (#1045
-  // slice M), so it needs no licence from an earlier operation: the clearing
-  // layers below are the only thing between the raw blank and its finish pass.
-  const squareAround = isSquareStock(stock) && params.passDirection === 'around'
+  // An **around** finish clears its own standing material (#1045 slice M for a
+  // square blank, slice P for a round bar), so it needs no licence from an
+  // earlier operation: the clearing layers below are the only thing between the
+  // raw blank and its finish pass. A round bar's blank is the turned surface's
+  // envelope only where the model meets it; a model turned down to a smaller
+  // radius leaves the bar standing above its own finish surface, and that is
+  // exactly what these layers remove.
+  //
+  // An **along** finish is deliberately unchanged: on a raw bar it still relies
+  // on a rough, because the along pass follows the model at fixed angles and
+  // would take the whole standing radius in one cut. The manager is asking
+  // Frank about along mode separately; do not extend these layers to it here.
+  const aroundClearing = params.passDirection === 'around'
   const stepdown = effectiveStepdown(params.stepdown, tool)
-  if (squareAround) {
+  if (aroundClearing) {
     if (!Number.isFinite(stepdown) || stepdown <= 0) {
       return { operationId, moves: [], warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }], bounds: null }
     }
@@ -2164,24 +2186,29 @@ export function generateRotaryFinish(
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
-  if (squareAround) {
-    // #1045 slice M: the finish protects itself. Before it follows the model it
-    // removes the standing blank above its own finish surface in the around
+  if (aroundClearing) {
+    // #1045 slices M/P: the finish protects itself. Before it follows the model
+    // it removes the standing blank above its own finish surface in the around
     // rough's own layered rings -- one `stepdown` per layer from the blank's
-    // corner radius down to the lowest finish tip, every sample gated by the
-    // blank material the real cutter reaches at that sample's angle, rings
-    // alternating direction with one counter across the layers. The sampled
-    // tips already carry the retained-stub floor (applied by `rotaryTargets`)
-    // and the C2-F7 cutter-centre pull-in, so these layers cannot enter a stub
-    // either. Each layer cuts down to `max(tip, layerRadius)` at worst: a
-    // sample's tip, i.e. the finish surface plus its stock to leave, is never
-    // undercut. The finish rings below then take the stock-to-leave layer.
+    // largest radius (a square's corner, a round bar's surface) down to the
+    // lowest finish tip, every sample gated by the blank material the real
+    // cutter reaches at that sample's angle, rings alternating direction with
+    // one counter across the layers. On a square blank that gate is
+    // `squareRotaryTouchRadius`; on a round bar the blank's surface is the same
+    // radius at every angle, so the gate is simply `layerRadius < maxRadius`.
+    // The sampled tips already carry the retained-stub floor (applied by
+    // `rotaryTargets`) and the C2-F7 cutter-centre pull-in, so these layers
+    // cannot enter a stub either. Each layer cuts down to `max(tip,
+    // layerRadius)` at worst: a sample's tip, i.e. the finish surface plus its
+    // stock to leave, is never undercut. The finish rings below then take the
+    // stock-to-leave layer.
     //
     // An effective stepdown is taken from the operation's own field, and a
     // missing one falls back to the tool's `defaultStepdown`
     // -- exactly the value `defaultOperationForTarget` seeds a new rotary rough
     // (and finish) on that tool with. Invalid or sub-minimum values refuse
     // before sampling rather than taking a whole standing corner in one ring.
+    const square = isSquareStock(stock)
     let lowest = Number.POSITIVE_INFINITY
     for (const row of sampling.tips) for (const tip of row) {
       if (Number.isFinite(tip)) lowest = Math.min(lowest, tip)
@@ -2202,7 +2229,9 @@ export function generateRotaryFinish(
         // layer is air there when it sits above that. It depends on the layer
         // radius, never on the along position, so it is computed once.
         const touchesMaterial = angles.map((angle) =>
-          layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type))
+          layerRadius < (square
+            ? squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
+            : maxRadius))
         let ringEndedAtEnd = false
         for (let i = 0; i < along.length; i++, ring++) {
           if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
@@ -2375,7 +2404,14 @@ export function generateRotaryRough(
   if (!Number.isFinite(params.stepdown) || params.stepdown <= 0) {
     return { operationId, moves: [], warnings: [{ code: 'stepdownPositive', params: { operation: operationId } }], bounds: null }
   }
-  if (params.stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
+  // The 0.01 mm floor and the emission budget below exist for the **around**
+  // path, whose layer count is derived from the stepdown and whose rings revisit
+  // the whole sampled grid (#1045 slices N/P). Along mode keeps the emission it
+  // had before slice N: a saved 0.009 mm job that generated 27,804 moves at
+  // 9345c132 is accepted here again, and a job that was slow before is slow, not
+  // refused. Both bounds are therefore around-only.
+  const around = params.passDirection === 'around'
+  if (around && params.stepdown < convertLength(MIN_ROTARY_STEPDOWN_MM, 'mm', tool.units)) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryStepdownBelowMinimum', params: { operation: operationId } }], bounds: null }
   }
   const warnings: ToolpathWarning[] = []
@@ -2422,7 +2458,15 @@ export function generateRotaryRough(
   let lowest = maxRadius
   for (const row of tips) for (const tip of row) lowest = Math.min(lowest, tip)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
-  if (!Number.isFinite(layers) || layers * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
+  // A non-finite layer count is not a job any version of this generator ever
+  // finished: it is `Number.MIN_VALUE`-sized stepdown, and the loop would never
+  // terminate. Refusing that is a hang guard, not the work budget (#1045 slice
+  // P keeps the 16M cap for around mode only: along mode used to accept larger
+  // jobs, so capping it would refuse output that worked before).
+  if (!Number.isFinite(layers)) {
+    return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
+  }
+  if (around && layers * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
   }
   const forceStep = retainedStubStepForced(stock, params, tool)

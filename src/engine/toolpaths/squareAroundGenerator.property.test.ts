@@ -77,10 +77,14 @@
  *
  * 1. no turning cut **or plunge** engages more than its operation's bound --
  *    a rough's `stepdown`, a finish's `stockToLeave` plus its own layer
- *    allowance, each plus the stated reference tolerance. (An along-mode stage's
- *    non-turning cuts stay reported rather than asserted: that output is frozen
- *    byte-for-byte to the base, and a footprint-edge chord there is not a
- *    radial depth.)
+ *    allowance, each plus the stated reference tolerance. An along-mode stage's
+ *    non-turning cuts are judged on a different metric (#1045 slice O): the
+ *    **radial surface bite**, the material one move removes from the outermost
+ *    solid at a ray, is asserted against the same bound. The reference's
+ *    interior number -- material below an intact shell -- is reported as a
+ *    diagnostic and deliberately **not** asserted (#1045 slice P): it is not a
+ *    radial depth and has no geometric bound, so the old stepover + diameter
+ *    "flank bound" was removed.
  * 2. no cutter body enters a retained end: every reference cell outside the
  *    band keeps the blank's material;
  * 3. no rapid turns A below the blank's corner radius plus 1 mm clearance;
@@ -467,6 +471,15 @@ function referenceMove(
           if (span.contact < lowestContact.contact) {
             Object.assign(lowestContact, { contact: span.contact, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
           }
+          // The fast path is the ordinary case (material removed from the
+          // outermost solid), so it must update the same radial-bite counter the
+          // slow path does (#1045 slice P, Codex pass 9): a 1.95 mm removal was
+          // reporting zero here because this branch jumped straight back to the
+          // next step.
+          if (surfaceBite > moveSurfaceWorst) {
+            moveSurfaceWorst = surfaceBite
+            moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: next }
+          }
           continue
         }
         let occupied = cavity ?? [{ contact: 0, exit: standing }]
@@ -591,6 +604,11 @@ console.log('Testing the continuous reference against hand-computed values...')
       `pure plunge: material at A0.25 was ${reference.material[k].toFixed(4)}, expected 8`)
     assert.ok(Math.abs(engagement - 1.95) < 0.01,
       `pure plunge: engagement ${engagement.toFixed(4)}, expected 1.95`)
+    // #1045 slice P (Codex pass 9): this removal takes the reference's ordinary
+    // (no-cavity) fast path, which used to `continue` before updating the
+    // radial-bite counter, so a 1.95 mm surface removal reported zero.
+    assert.ok(Math.abs(moveSurfaceWorst - 1.95) < 0.01,
+      `pure plunge: the radial surface bite is recorded (${moveSurfaceWorst.toFixed(4)}, expected 1.95)`)
   }
   // Pass-8 repro: a pure plunge reaches the ray ten degrees off-axis,
   // even though the blank-radius window would exclude it.
@@ -1329,13 +1347,13 @@ let worstAssertedInterior = 0
 let worstAssertedInteriorLabel = ''
 let worstAlongBite = 0
 let worstAlongBiteLabel = ''
-let worstAlongFlank = { depth: 0, label: '', stepover: 0, diameter: 0, stepdown: 0 }
-let closestAlongFlank = { excess: Number.NEGATIVE_INFINITY, label: '', stepover: 0, diameter: 0 }
-// Count the along-stage assertions so a change that drops one (rather than
-// making it a no-op) cannot pass silently: the seeded set must assert both the
-// radial surface bite and the flank engagement of every along program.
+// Diagnostic only, never asserted (#1045 slice P): interior removal an along
+// move finds below an intact shell. It is not a radial depth and has no bound.
+let alongInteriorDiagnostic = { depth: 0, label: '', stepover: 0, diameter: 0, stepdown: 0 }
+// Count the along-stage assertion so a change that drops it (rather than making
+// it a no-op) cannot pass silently: the seeded set must assert the radial
+// surface bite of every along program.
 let alongBiteChecks = 0
-let alongFlankChecks = 0
 let nonTurningWorst = 0
 let nonTurningLabel = ''
 
@@ -1483,14 +1501,18 @@ for (const { entry, program } of CASES) {
           }
           checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
         } else {
-          // #1045 slice O: an along pass is a **flank** cut, not a radial
-          // plunge. The overcut metric that matters is the material this move
+          // #1045 slice O/P: an along pass is a **flank** cut, not a radial
+          // plunge. The radial metric that matters is the material this move
           // removes from the outermost solid at a ray -- one radial depth of
           // cut, which must stay within a stepdown exactly as a turning cut's
           // does. The reference's cumulative "interior" number is the cutter's
           // body occupying air below an intact shell (and spans a previous pose
-          // already removed); it is not a radial depth, so it is asserted
-          // against the pass's lateral band plus the cutter footprint below.
+          // already removed); it is **not** a radial depth and has no geometric
+          // bound: a Ø4 flat sweeping at tip 2 with a 10° ray offset removes
+          // 9.4867 mm internally, so the stepover + diameter "flank bound" this
+          // file used to assert (4.1 mm there) was not a bound at all. It is
+          // reported as a diagnostic below and deliberately not asserted
+          // (#1045 slice P, Codex pass 9).
           if (moveSurfaceWorst > worstAlongBite) {
             worstAlongBite = moveSurfaceWorst
             worstAlongBiteLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
@@ -1502,33 +1524,15 @@ for (const { entry, program } of CASES) {
             + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
             + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)})`)
           alongBiteChecks++
-          // The reference's `moveInteriorWorst` is the cutter body's occupancy
-          // below an intact shell, summed over the move -- a flank cut, not a
-          // radial depth. Its bound is the pass's own lateral band plus the
-          // cutter's footprint: an along pass is spaced `stepover` from its
-          // neighbours and its cutter is `diameter` wide, so the material one
-          // pass can find standing inside its own swath is at most the two
-          // together. Asserting this (rather than a stepdown) is what makes the
-          // reported along-stage flank number a checked engagement instead of a
-          // quantity with no bound at all.
-          const flankBound = entry.stepover + entry.diameter
-            + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
-          checkEngagement(moveInteriorWorst, flankBound,
-            `${entry.label}: along ${move.kind} flank engagement (stepover ${entry.stepover.toFixed(3)} `
-            + `diameter ${entry.diameter.toFixed(3)})`)
-          alongFlankChecks++
-          if (moveInteriorWorst > worstAlongFlank.depth) {
-            worstAlongFlank = {
+          // Diagnostic only: the interior removal an along move finds below an
+          // intact shell. It has no asserted bound (see above); recording the
+          // worst is what lets the report show how much it is, without claiming
+          // that number is safe or unsafe.
+          if (moveInteriorWorst > alongInteriorDiagnostic.depth) {
+            alongInteriorDiagnostic = {
               depth: moveInteriorWorst,
               label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
               stepover: entry.stepover, diameter: entry.diameter, stepdown: entry.stepdown,
-            }
-          }
-          if (moveInteriorWorst - flankBound > closestAlongFlank.excess) {
-            closestAlongFlank = {
-              excess: moveInteriorWorst - flankBound,
-              label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
-              stepover: entry.stepover, diameter: entry.diameter,
             }
           }
         }
@@ -1704,12 +1708,13 @@ console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above t
 console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
   + `(${worstSurfaceUnderLabel})`)
 console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
-console.log(`  along stage: worst flank (interior) engagement ${worstAlongFlank.depth.toFixed(4)} mm `
-  + `(${worstAlongFlank.label || 'none'}; stepover ${worstAlongFlank.stepover.toFixed(3)} `
-  + `diameter ${worstAlongFlank.diameter.toFixed(3)} stepdown ${worstAlongFlank.stepdown.toFixed(3)})`)
-console.log(`  along flank: closest to its bound ${closestAlongFlank.excess.toFixed(4)} mm excess `
-  + `(${closestAlongFlank.label || 'none'}; stepover ${closestAlongFlank.stepover.toFixed(3)} `
-  + `diameter ${closestAlongFlank.diameter.toFixed(3)})`)
+// Diagnostic only, explicitly not a bound (#1045 slice P). The old
+// stepover + diameter "flank bound" is gone: a hand-built Ø4 flat sweep at tip 2
+// with a 10° ray offset removes 9.4867 mm internally, far past it.
+console.log(`  along stage: interior removal below an intact shell ${alongInteriorDiagnostic.depth.toFixed(4)} mm `
+  + `(${alongInteriorDiagnostic.label || 'none'}; stepover ${alongInteriorDiagnostic.stepover.toFixed(3)} `
+  + `diameter ${alongInteriorDiagnostic.diameter.toFixed(3)} stepdown ${alongInteriorDiagnostic.stepdown.toFixed(3)}) `
+  + '— diagnostic only, not a bound')
 console.log(`  non-turning cuts (reported, not asserted: the along-mode square output is frozen): `
   + `worst ${nonTurningWorst.toFixed(4)} mm (${nonTurningLabel || 'none'})`)
 if (process.env.SQUARE_CASES) {
@@ -1719,7 +1724,6 @@ if (process.env.SQUARE_CASES) {
 
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
 assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
-assert.ok(alongFlankChecks > 100, `the along stage's flank engagement is asserted (${alongFlankChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**
