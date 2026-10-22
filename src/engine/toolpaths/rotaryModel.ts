@@ -1761,8 +1761,9 @@ function aroundSegmentationTolerance(
  * a pair whose mid contact stands more than {@link aroundSegmentationTolerance}
  * above the chord is bisected. Only the failing mid angle is kept, so a smooth
  * ring pays one extra sampling pass and a sharp feature pays one round per
- * halving it needs. The extra pass is the cost: one height map per existing
- * angle per round, and each round's kept angles grow only by the failures.
+ * halving it needs. The extra pass is the cost: one height-map row per
+ * never-sampled midpoint, cached and reused in later rounds, and each round's
+ * kept angles grow only by the failures.
  *
  * The pair is only checked when both ends sample the model (`NaN` means "no
  * model under the tool", which the finish does not cut and the rough replaces

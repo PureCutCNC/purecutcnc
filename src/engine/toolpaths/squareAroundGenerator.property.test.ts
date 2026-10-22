@@ -1261,7 +1261,7 @@ function generate(entry: Case): Program {
       target: { source: 'features', featureIds: ['model'] },
     }
     const operations = entry.programKind === 'finish' ? [finishOperation] : [roughOperation, finishOperation]
-    if (rotaryFinishWithoutRough(operations, finishOperation)) finishCodes.push('rotaryFinishWithoutRough')
+    if (rotaryFinishWithoutRough(operations, finishOperation, ['model'])) finishCodes.push('rotaryFinishWithoutRough')
   }
   return {
     roughMoves: rough.moves,
@@ -2220,12 +2220,6 @@ for (const { entry, program } of CASES) {
           // did reach, the standing material is at most its contact, so the
           // second term cannot exceed the first and the exact bound is
           // unchanged.
-          // layer's reach (#1045 slice Q extension): on a ray that layer did
-          // **not** reach, the standing material is not its contact, so the
-          // allowance is measured from the material actually standing at that
-          // ray down to this body's own contact. Where the previous layer did
-          // reach, the standing material is at most its contact, so the second
-          // term cannot exceed the first and the exact bound is unchanged.
           const tip = Math.min(move.from.z - pivot, move.to.z - pivot)
           const stepdown = entry.stepdown
           const cellDelta = (() => {
