@@ -103,7 +103,7 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.menuAria': 'Ajustes de generación de trayectorias',
   'appShell.generation.backendInline': 'Hilo principal',
   'appShell.generation.backendInlineDetail': 'La ventana no responde mientras se genera una operación, y Detener tiene que esperar a que termine.',
-  'appShell.generation.backendWorker': 'Hilo en segundo plano (experimental)',
+  'appShell.generation.backendWorker': 'Hilo en segundo plano',
   'appShell.generation.backendWorkerDetail': 'Mantiene la ventana receptiva durante la generación y hace que Detener surta efecto de inmediato.',
   'appShell.status.about': 'Acerca de PureCutCNC',
   'appShell.status.shellMode': 'Modo Shell (solo para desarrolladores)',

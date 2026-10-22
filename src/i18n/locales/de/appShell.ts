@@ -136,7 +136,7 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.menuAria': 'Einstellungen zur Werkzeugweg-Berechnung',
   'appShell.generation.backendInline': 'Hauptthread',
   'appShell.generation.backendInlineDetail': 'Das Fenster reagiert während einer Berechnung nicht, und Stopp muss deren Ende abwarten.',
-  'appShell.generation.backendWorker': 'Hintergrundthread (experimentell)',
+  'appShell.generation.backendWorker': 'Hintergrundthread',
   'appShell.generation.backendWorkerDetail': 'Hält das Fenster während der Berechnung bedienbar und lässt Stopp sofort wirken.',
   'appShell.status.about': 'Über PureCutCNC',
   'appShell.status.shellMode': 'Shell-Modus (nur Entwicklung)',

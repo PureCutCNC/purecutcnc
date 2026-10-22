@@ -103,7 +103,7 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.menuAria': 'Paramètres de génération des parcours',
   'appShell.generation.backendInline': 'Thread principal',
   'appShell.generation.backendInlineDetail': 'La fenêtre ne répond pas pendant une génération, et l’arrêt doit attendre la fin de l’opération.',
-  'appShell.generation.backendWorker': 'Thread en arrière-plan (expérimental)',
+  'appShell.generation.backendWorker': 'Thread en arrière-plan',
   'appShell.generation.backendWorkerDetail': 'Garde la fenêtre réactive pendant la génération et rend Arrêter immédiat.',
   'appShell.status.about': 'À propos de PureCutCNC',
   'appShell.status.shellMode': 'Mode shell (développement seulement)',
