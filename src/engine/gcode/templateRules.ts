@@ -25,6 +25,22 @@
  * post-processor prevents that, and it is what this module enforces at the
  * schema boundary.
  *
+ * Slice H closed three holes Codex found in the first cut (2026-10-21):
+ *
+ * - the definition's own `commentPrefix` was used as the comment marker while
+ *   validating, so a free-text prefix (`commentPrefix: "G91"`) could turn
+ *   `spindleOnCW: "G91"` into a "comment" that the emitter then wrote as code.
+ *   Comment syntax is now an exact per-dialect allowlist and validation uses
+ *   the dialect's real comment forms, never the user-set field.
+ * - a numeric placeholder was expanded to `1` before judging the line, so
+ *   `M{toolNumber}` validated as `M1` and could emit `M6`. A placeholder is
+ *   now judged where it stands: a fixed word letter it may follow, never a G
+ *   or M number, never joined to another word, and never at an unknown
+ *   position.
+ * - single-command fields were split into lines before matching, so
+ *   `feedCommand: "F\nF"` passed one line at a time. A command field is now
+ *   one line and one command, judged whole.
+ *
  * Three classes, decided by Frank on 2026-10-21:
  *
  * - **Program header** — written before any motion, so modal setup is allowed:
@@ -57,11 +73,15 @@
 /**
  * The rule a template field is held to.
  *
- * `anything` covers the tool-change block and the end of the program; every
- * other kind is a closed allowlist and names the reason in its message.
+ * `anything` covers the end of the program, and `tool-change` the tool-change
+ * block; every other kind is a closed allowlist and names the reason in its
+ * message. The tool change is separate from the footer because it is the one
+ * template the emitter restarts after, so it may state a tool-length offset
+ * (`G43 H{toolNumber}`) that nothing after the footer could compensate for.
  */
 export type TemplateRule =
   | { kind: 'anything' }
+  | { kind: 'tool-change' }
   | { kind: 'header' }
   | { kind: 'inert', label: string }
   | { kind: 'units' }
@@ -99,13 +119,15 @@ type CommandField =
  * What every string field of the machine definition schema is, so a new field
  * cannot reach the emitter unclassified (Codex review of slice F, finding 1).
  *
- * `metadata`/`enum`/`comment` are not program text and are only here so the
- * enumeration is complete. `template` and `command` are validated.
+ * `metadata`/`enum` are not program text and are only here so the enumeration
+ * is complete. `comment-syntax` is the comment marker pair, checked against the
+ * dialect's exact allowlist rather than against a template class. `template`
+ * and `command` are validated as program text.
  */
 export type StringFieldClass =
   | { kind: 'metadata' }
   | { kind: 'enum' }
-  | { kind: 'comment' }
+  | { kind: 'comment-syntax' }
   | { kind: 'template', rule: TemplateRule }
   | { kind: 'command', command: CommandField }
 
@@ -124,11 +146,14 @@ export interface MachineStringFieldSpec {
  * it; the schema's parsed output satisfies it.
  */
 export interface TemplateRuleDefinition {
+  /** Absent means G-code, exactly as `resolveOutputDialect` reads it. */
+  outputDialect?: 'gcode' | 'opensbp'
   program: {
     header: readonly string[]
     operationHeader: readonly string[]
     footer: readonly string[]
     commentPrefix: string
+    commentSuffix: string
   }
   units: {
     mmCommand: string | null
@@ -188,6 +213,52 @@ export interface TemplateRuleDefinition {
   stop: {
     programEndCommand: string
   }
+}
+
+/**
+ * The comment syntax a definition may declare, by output dialect.
+ *
+ * These are the only forms the bundled definitions use and the only forms the
+ * emitters know how to write: a G-code program comments with `( … )` or `;`,
+ * and a ShopBot part file with `'`. The pair is *exact* — no free text, no
+ * newline — because the marker is also what the emitter wraps operator text
+ * in and what the validator strips before reading code (Codex review of #1057
+ * slice H, finding 1).
+ */
+export type CommentDialect = 'gcode' | 'opensbp'
+
+interface CommentSyntax {
+  /** Markers that start a comment running to the end of the physical line. */
+  lineMarkers: readonly string[]
+  /** True when `( … )` is a comment. */
+  parenthesized: boolean
+  /** The `(prefix, suffix)` pairs a definition of this dialect may declare. */
+  pairs: readonly { prefix: string, suffix: string }[]
+  /** A marker a single-command field may carry in front of its command. */
+  commandMarker: string | null
+}
+
+const COMMENT_SYNTAX: Readonly<Record<CommentDialect, CommentSyntax>> = {
+  gcode: {
+    lineMarkers: [';'],
+    parenthesized: true,
+    pairs: [{ prefix: '(', suffix: ')' }, { prefix: ';', suffix: '' }],
+    // G-code command fields are bare commands. The ShopBot exception below
+    // exists because its G-code words are written as comments in the bundled
+    // definition, for a build that predates `outputDialect`.
+    commandMarker: null,
+  },
+  opensbp: {
+    lineMarkers: ["'"],
+    parenthesized: false,
+    pairs: [{ prefix: "'", suffix: '' }],
+    commandMarker: "'",
+  },
+}
+
+/** The dialect a definition exports; a definition without the field is G-code. */
+function commentDialectOf(outputDialect: string | undefined): CommentDialect {
+  return outputDialect === 'opensbp' ? 'opensbp' : 'gcode'
 }
 
 /** One refused template: the field it lives in and why. */
@@ -290,6 +361,36 @@ const NUMERIC_PLACEHOLDERS: ReadonlySet<string> = new Set([
   'operationTarget', 'toolNumber', 'feed', 'plungeFeed', 'rpm', 'materialNumber',
 ])
 
+/**
+ * A numeric placeholder that may be the value of a fixed word letter.
+ *
+ * The letter list is deliberately short: the value has to be safe as that
+ * word in every template class that accepts the letter. `toolNumber` may be a
+ * `T` word anywhere the class accepts one, but an `H` offset only in a
+ * tool-change/footer template, which the emitter restarts after or the program
+ * ends in. A placeholder that is not here is comment-only (`date`, `units`,
+ * `operationIndex`, `operationKind`, `operationPass`, `operationTarget`): it
+ * renders text or a number that no word letter may carry.
+ *
+ * Codex review of #1057 slice H, finding 2: `M{toolNumber}` used to expand to
+ * `M1` for validation and to `M6` for the sixth tool.
+ */
+function placeholderWordLetters(key: string, rule: TemplateRule): readonly string[] {
+  switch (key) {
+    case 'toolNumber':
+      return rule.kind === 'tool-change' ? ['T', 'H'] : ['T']
+    case 'rpm':
+      return ['S']
+    case 'feed':
+    case 'plungeFeed':
+      return ['F']
+    case 'materialNumber':
+      return ['P']
+    default:
+      return []
+  }
+}
+
 /** The exact per-field shape a single-word command field must have. */
 const COMMAND_CORES: Record<CommandField, { core: string, label: string, hint: string }> = {
   rapid: {
@@ -344,10 +445,15 @@ const COMMAND_CORES: Record<CommandField, { core: string, label: string, hint: s
   },
 }
 
-/** A regex that matches `core` alone, with the definition's comment marker optional. */
-function commandPattern(command: CommandField, commentPrefix: string): RegExp {
-  const marker = commentPrefix.length > 0
-    ? `(?:${commentPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*)?`
+/**
+ * A regex that matches `core` alone, with the dialect's command marker
+ * optional (ShopBot's apostrophe, which comments out the G-code words of a
+ * `.sbp` definition). The marker comes from the dialect, never from the
+ * definition's `commentPrefix` field.
+ */
+function commandPattern(command: CommandField, syntax: CommentSyntax): RegExp {
+  const marker = syntax.commandMarker !== null
+    ? `(?:${syntax.commandMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*)?`
     : ''
   return new RegExp(`^\\s*${marker}${COMMAND_CORES[command].core}\\s*$`, 'i')
 }
@@ -399,8 +505,8 @@ export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
   { path: ['program', 'header'], array: true, class: template({ kind: 'header' }) },
   { path: ['program', 'operationHeader'], array: true, class: template({ kind: 'inert', label: 'operation header' }) },
   { path: ['program', 'footer'], array: true, class: template({ kind: 'anything' }) },
-  { path: ['program', 'commentPrefix'], class: { kind: 'comment' } },
-  { path: ['program', 'commentSuffix'], class: { kind: 'comment' } },
+  { path: ['program', 'commentPrefix'], class: { kind: 'comment-syntax' } },
+  { path: ['program', 'commentSuffix'], class: { kind: 'comment-syntax' } },
 
   { path: ['workCoordinates', 'selectCommand'], class: template({ kind: 'header' }) },
 
@@ -417,7 +523,7 @@ export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
   { path: ['feedSpeed', 'spindleOnCCW'], class: template({ kind: 'inert', label: 'spindle-on' }) },
   { path: ['feedSpeed', 'spindleOff'], class: template({ kind: 'inert', label: 'spindle-off' }) },
 
-  { path: ['toolChange', 'commands'], array: true, class: template({ kind: 'anything' }) },
+  { path: ['toolChange', 'commands'], array: true, class: template({ kind: 'tool-change' }) },
   { path: ['toolChange', 'pauseCommand'], class: template({ kind: 'inert', label: 'pause' }) },
 
   { path: ['cannedCycles', 'drillCommand'], class: template({ kind: 'canned-cycle' }) },
@@ -450,23 +556,20 @@ interface ScannedWord {
 }
 
 /**
- * One program line with its comments removed: an embedded or leading
- * `( … )` comment, a standard `;` line comment, and everything from the
- * definition's own line-comment prefix to the end of the line. Code after a
- * parenthesised comment is still code, which is why a line is never skipped
- * just because it starts with one.
+ * One program line with the *dialect's* comments removed: a `( … )` comment in
+ * G-code, and everything from a line-comment marker (`;` in G-code, `'` in a
+ * ShopBot part file) to the end of the line. Code after a parenthesised
+ * comment is still code, which is why a line is never skipped just because it
+ * starts with one.
+ *
+ * The markers come from the dialect, never from the definition's
+ * `commentPrefix` field: a definition that could choose its own marker could
+ * hide executable words behind it (Codex review of #1057 slice H, finding 1).
  */
-function lineCode(line: string, commentPrefix: string): string {
-  let code = line.replace(/\([^)]*\)/g, ' ')
-  // `;` is a comment in every bundled G-code dialect, including the two whose
-  // definition prefix is `(` and whose own fields comment with `;`
-  // (QtPlasmaC's unused-router-speed lines). A comment cannot move an axis.
-  const semicolon = code.indexOf(';')
-  if (semicolon >= 0) code = code.slice(0, semicolon)
-  // `(` is the parenthesised-comment marker, already removed above; slicing at
-  // it would throw away the code that follows.
-  if (commentPrefix.length > 0 && commentPrefix !== '(') {
-    const at = code.indexOf(commentPrefix)
+function lineCode(line: string, syntax: CommentSyntax): string {
+  let code = syntax.parenthesized ? line.replace(/\([^)]*\)/g, ' ') : line
+  for (const marker of syntax.lineMarkers) {
+    const at = code.indexOf(marker)
     if (at >= 0) code = code.slice(0, at)
   }
   return code
@@ -485,10 +588,10 @@ function lineCode(line: string, commentPrefix: string): string {
  */
 function scanTemplateLine(
   line: string,
-  commentPrefix: string,
+  syntax: CommentSyntax,
   options: ScanOptions,
 ): { words: ScannedWord[] } | { word: string } {
-  let code = lineCode(line, commentPrefix).trim()
+  let code = lineCode(line, syntax).trim()
   // Block delete marks an optional block; it is not a word.
   while (code.startsWith('/')) code = code.slice(1).trimStart()
   if (code.length === 0) return { words: [] }
@@ -555,57 +658,127 @@ function commandOf(word: ScannedWord): string | null {
   return `${word.letter}${Number(word.value)}`
 }
 
-/** Why a line was refused: a word, or one of the two placeholder mistakes. */
-type LineRefusalKind = 'word' | 'user-placeholder' | 'unknown-placeholder'
+/** Why a line was refused: a word, or one of the placeholder mistakes. */
+type LineRefusalKind =
+  | 'word'
+  | 'user-placeholder'
+  | 'unknown-placeholder'
+  | 'misplaced-placeholder'
 
 interface LineRefusal {
   word: string
   kind: LineRefusalKind
 }
 
+/** True when `at` is the start of a word: line start, whitespace or block delete. */
+function startsWord(code: string, at: number): boolean {
+  if (at <= 0) return true
+  const before = code[at - 1]
+  return /\s/.test(before) || before === '/'
+}
+
+/** True when `at` ends a word: end of code or whitespace. */
+function endsWord(code: string, at: number): boolean {
+  const after = code[at]
+  return after === undefined || /\s/.test(after)
+}
+
 /**
- * A placeholder in *code* that the emitter cannot safely fill: operator text
- * (which may close a comment or start a new line) or a placeholder the emitter
- * does not know at all. Inside a comment both are harmless, which is why the
- * line's comments are removed before this check.
+ * A placeholder in *code* that the emitter cannot safely fill.
+ *
+ * - Operator text may close a comment or start a new line, so it may only be
+ *   written inside one.
+ * - A numeric placeholder may only be the value of a fixed word letter
+ *   (`T{toolNumber}`, `H{toolNumber}` in a tool change, `S{rpm}`, `F{feed}`,
+ *   `P{materialNumber}`). It may never be the number of a `G` or
+ *   `M` word, never be joined to another word, and any position not in that
+ *   list is forbidden. `M{toolNumber}` therefore cannot validate as `M1` and
+ *   emit `M6` (Codex review of #1057 slice H, finding 2).
+ * - `{unitsCommand}`/`{wcsCommand}` expand to whole commands, so they must
+ *   occupy a whole word too.
+ * - An unknown placeholder is refused.
+ *
+ * Comments are removed first: inside one every placeholder is harmless.
  */
-function placeholderRefusal(line: string, commentPrefix: string): LineRefusal | null {
-  const code = lineCode(line, commentPrefix)
+function placeholderRefusal(
+  line: string,
+  rule: TemplateRule,
+  syntax: CommentSyntax,
+): LineRefusal | null {
+  const code = lineCode(line, syntax)
   for (const match of code.matchAll(/\{(\w+)\}/g)) {
     const key = match[1]
+    const whole = match[0]
+    const at = match.index ?? 0
     if (USER_TEXT_PLACEHOLDERS.has(key)) {
-      return { word: match[0], kind: 'user-placeholder' }
+      return { word: whole, kind: 'user-placeholder' }
     }
-    if (!NUMERIC_PLACEHOLDERS.has(key) && key !== 'unitsCommand' && key !== 'wcsCommand') {
-      return { word: match[0], kind: 'unknown-placeholder' }
+    if (key === 'unitsCommand' || key === 'wcsCommand') {
+      if (!startsWord(code, at) || !endsWord(code, at + whole.length)) {
+        return { word: whole, kind: 'misplaced-placeholder' }
+      }
+      continue
+    }
+    if (!NUMERIC_PLACEHOLDERS.has(key)) {
+      return { word: whole, kind: 'unknown-placeholder' }
+    }
+    const letters = placeholderWordLetters(key, rule)
+    const letter = at > 0 ? code[at - 1]?.toUpperCase() : undefined
+    if (
+      letters.length === 0
+      || letter === undefined
+      || !letters.includes(letter)
+      // The fixed letter must itself start a word, so `#T{…}` and `M8T{…}`
+      // are not a `T` word at all.
+      || !startsWord(code, at - 1)
+      || !endsWord(code, at + whole.length)
+    ) {
+      return { word: whole, kind: 'misplaced-placeholder' }
     }
   }
   return null
 }
 
 /**
+ * A single-command field is one line and one command. A newline, a carriage
+ * return, a semicolon or extra whitespace-separated content is rejected before
+ * the pattern is matched, so `feedCommand: "F\nF"` cannot pass one line at a
+ * time (Codex review of #1057 slice H, finding 3).
+ */
+function checkCommandText(text: string, rule: TemplateRule): LineRefusal | null {
+  if (rule.kind !== 'command') return null
+  if (/[\r\n;]/.test(text)) {
+    const offending = text.split(/\r?\n/).find((line) => !rule.pattern.test(line.trim()))
+    return { word: (offending ?? text).trim() || '(blank)', kind: 'word' }
+  }
+  const trimmed = text.trim()
+  return rule.pattern.test(trimmed)
+    ? null
+    : { word: trimmed.length > 0 ? trimmed : '(blank)', kind: 'word' }
+}
+
+/**
  * The first word on one line that breaks `rule`, or null when the line is
- * acceptable. `anything` still checks placeholders (operator text may not be
- * written as code anywhere), but is otherwise unchecked.
+ * acceptable. `anything` and `tool-change` still check placeholders (operator
+ * text may not be written as code anywhere, and a placeholder may not spell a
+ * G/M word), but are otherwise unchecked.
  */
 function checkTemplateLine(
   line: string,
   rule: TemplateRule,
-  commentPrefix: string,
+  syntax: CommentSyntax,
+  unitsCommand: string,
+  wcsCommand: string,
 ): LineRefusal | null {
-  const placeholder = placeholderRefusal(line, commentPrefix)
+  const placeholder = placeholderRefusal(line, rule, syntax)
   if (placeholder !== null) return placeholder
-  if (rule.kind === 'anything') return null
+  if (rule.kind === 'anything' || rule.kind === 'tool-change') return null
   // A command field is one line matched whole: a rapid word, a feed letter, a
   // probe. Nothing about it is free text, so a second word, a newline or a
   // mode change makes the field wrong as a whole.
-  if (rule.kind === 'command') {
-    const text = line.trim()
-    return rule.pattern.test(text)
-      ? null
-      : { word: text.length > 0 ? text : '(blank)', kind: 'word' }
-  }
-  const scan = scanTemplateLine(line, commentPrefix, {
+  if (rule.kind === 'command') return checkCommandText(line, rule)
+  const expanded = expandPlaceholders(line, unitsCommand, wcsCommand)
+  const scan = scanTemplateLine(expanded, syntax, {
     parameterExpressions: rule.kind === 'material',
     assignment: rule.kind === 'header',
     allowSelectors: rule.kind === 'torch' || rule.kind === 'material',
@@ -718,6 +891,8 @@ function describeRule(rule: TemplateRule): { label: string, hint: string } {
       return { label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
     case 'anything':
       return { label: 'template', hint: 'this template may contain anything' }
+    case 'tool-change':
+      return { label: 'tool-change template', hint: 'this template may contain anything' }
     case 'command':
       return { label: rule.label, hint: rule.hint }
   }
@@ -753,11 +928,14 @@ function expandPlaceholders(text: string, unitsCommand: string, wcsCommand: stri
 }
 
 /** The rule a classified field must satisfy, or null when it is not program text. */
-function fieldRule(fieldClass: StringFieldClass, definition: TemplateRuleDefinition): TemplateRule | null {
+function fieldRule(
+  fieldClass: StringFieldClass,
+  syntax: CommentSyntax,
+): TemplateRule | null {
   switch (fieldClass.kind) {
     case 'metadata':
     case 'enum':
-    case 'comment':
+    case 'comment-syntax':
       return null
     case 'template':
       return fieldClass.rule
@@ -766,7 +944,7 @@ function fieldRule(fieldClass: StringFieldClass, definition: TemplateRuleDefinit
       return {
         kind: 'command',
         label: command.label,
-        pattern: commandPattern(fieldClass.command, definition.program.commentPrefix),
+        pattern: commandPattern(fieldClass.command, syntax),
         hint: command.hint,
       }
     }
@@ -791,8 +969,9 @@ function readPath(root: unknown, path: readonly string[]): unknown {
  */
 function templateFields(definition: TemplateRuleDefinition): TemplateField[] {
   const fields: TemplateField[] = []
+  const syntax = COMMENT_SYNTAX[commentDialectOf(definition.outputDialect)]
   for (const spec of MACHINE_STRING_FIELDS) {
-    const rule = fieldRule(spec.class, definition)
+    const rule = fieldRule(spec.class, syntax)
     if (rule === null) continue
     const value = readPath(definition, spec.path)
     if (value === null || value === undefined) continue
@@ -817,21 +996,34 @@ function templateFields(definition: TemplateRuleDefinition): TemplateField[] {
  * translating a vendor preamble, which must not build a definition the schema
  * will reject. `unitsCommand`/`wcsCommand` are what the emitter would expand
  * `{unitsCommand}`/`{wcsCommand}` into; the defaults are legal header words.
+ * The dialect decides the comment markers, never a caller-supplied prefix.
  */
 export function refusedTemplateWords(
   text: string,
   rule: TemplateRule,
-  commentPrefix: string,
+  dialect: CommentDialect = 'gcode',
   unitsCommand = 'G21',
   wcsCommand = 'G54',
 ): string[] {
+  const syntax = COMMENT_SYNTAX[dialect]
+  if (rule.kind === 'command') {
+    const refusal = checkCommandText(text, rule)
+    return refusal === null ? [] : [refusal.word]
+  }
   const words: string[] = []
   for (const rawLine of text.split(/\r?\n/)) {
-    const line = expandPlaceholders(rawLine, unitsCommand, wcsCommand)
-    const refusal = checkTemplateLine(line, rule, commentPrefix)
+    const refusal = checkTemplateLine(rawLine, rule, syntax, unitsCommand, wcsCommand)
     if (refusal !== null) words.push(refusal.word)
   }
   return words
+}
+
+/** Escape the control characters a refusal word can carry into one line. */
+function visibleWord(word: string): string {
+  return word
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
 }
 
 /** The refusal as a person reads it, naming the field and saying why. */
@@ -841,30 +1033,101 @@ function refusalMessage(
   refusal: LineRefusal,
 ): string {
   const field = fieldName(path)
+  const word = visibleWord(refusal.word)
   if (refusal.kind === 'user-placeholder') {
-    return `${field}: the placeholder "${refusal.word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
+    return `${field}: the placeholder "${word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
   }
   if (refusal.kind === 'unknown-placeholder') {
-    return `${field}: the placeholder "${refusal.word}" is not one the emitter fills in; remove it or use a supported placeholder.`
+    return `${field}: the placeholder "${word}" is not one the emitter fills in; remove it or use a supported placeholder.`
+  }
+  if (refusal.kind === 'misplaced-placeholder') {
+    const key = refusal.word.replace(/^\{/, '').replace(/\}$/, '')
+    const letters = placeholderWordLetters(key, rule)
+    if (letters.length === 0) {
+      return `${field}: the placeholder "${word}" may only be used inside a comment; outside one there is no fixed word letter that can safely carry its value.`
+    }
+    const list = letters.length === 1
+      ? letters[0]
+      : `${letters.slice(0, -1).join(', ')} or ${letters[letters.length - 1]}`
+    return `${field}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to another word.`
   }
   const { label, hint } = describeRule(rule)
-  return `${field}: the word "${refusal.word}" is not allowed in the ${label}; ${hint}.`
+  return `${field}: the word "${word}" is not allowed in the ${label}; ${hint}.`
+}
+
+/** The allowlisted comment forms, spelled for a refusal message. */
+function describeCommentPairs(syntax: CommentSyntax): string {
+  return syntax.pairs.map((pair) => (
+    pair.suffix.length > 0
+      ? `${JSON.stringify(pair.prefix)} with ${JSON.stringify(pair.suffix)}`
+      : `${JSON.stringify(pair.prefix)} with an empty suffix`
+  )).join(', or ')
+}
+
+/**
+ * The definition's comment markers against the dialect's exact allowlist.
+ *
+ * The marker is also what the emitter wraps operator text in, so free text
+ * there is code injection: `commentPrefix: "G91"` made `spindleOnCW: "G91"`
+ * read as a comment and emit executable `G91 S…` (Codex review of #1057 slice
+ * H, finding 1). Nothing about the marker may contain a newline, and the pair
+ * must be one the dialect actually uses.
+ */
+function commentSyntaxViolation(
+  definition: TemplateRuleDefinition,
+  dialect: CommentDialect,
+  syntax: CommentSyntax,
+): TemplateRuleViolation | null {
+  const prefix = definition.program.commentPrefix
+  const suffix = definition.program.commentSuffix
+  const dialectName = dialect === 'opensbp' ? 'ShopBot' : 'G-code'
+  const allowed = describeCommentPairs(syntax)
+  const pair = syntax.pairs.find((entry) => entry.prefix === prefix)
+  if (pair === undefined) {
+    return {
+      path: ['program', 'commentPrefix'],
+      message: `program.commentPrefix: ${JSON.stringify(prefix)} is not a comment form the ${dialectName} dialect uses; use ${allowed}.`,
+    }
+  }
+  if (pair.suffix !== suffix) {
+    return {
+      path: ['program', 'commentSuffix'],
+      message: `program.commentSuffix: ${JSON.stringify(suffix)} does not close ${JSON.stringify(prefix)}; use ${JSON.stringify(pair.suffix)}.`,
+    }
+  }
+  return null
 }
 
 /**
  * Every template in the definition that breaks its class rule, one violation
- * per field (the first offending line wins). The schema turns each into an
- * issue on the field's path, so the editor and machine import can say which
- * template and which word are wrong.
+ * per field (the first offending line wins), plus a comment marker that is not
+ * one of the dialect's exact forms. The schema turns each into an issue on the
+ * field's path, so the editor and machine import can say which template and
+ * which word are wrong.
  */
 export function templateRuleViolations(definition: TemplateRuleDefinition): TemplateRuleViolation[] {
+  const dialect = commentDialectOf(definition.outputDialect)
+  const syntax = COMMENT_SYNTAX[dialect]
   const unitsCommand = definition.units.mmCommand ?? definition.units.inchCommand ?? ''
   const wcsCommand = definition.workCoordinates.selectCommand ?? ''
   const violations: TemplateRuleViolation[] = []
+  const comment = commentSyntaxViolation(definition, dialect, syntax)
+  if (comment !== null) violations.push(comment)
   for (const field of templateFields(definition)) {
+    // A command field is one line and one command: the whole field is judged
+    // once, never split into lines that each match on their own.
+    if (field.rule.kind === 'command') {
+      const refusal = checkCommandText(field.text, field.rule)
+      if (refusal !== null) {
+        violations.push({
+          path: field.path,
+          message: refusalMessage(field.path, field.rule, refusal),
+        })
+      }
+      continue
+    }
     for (const rawLine of field.text.split(/\r?\n/)) {
-      const line = expandPlaceholders(rawLine, unitsCommand, wcsCommand)
-      const refusal = checkTemplateLine(line, field.rule, definition.program.commentPrefix)
+      const refusal = checkTemplateLine(rawLine, field.rule, syntax, unitsCommand, wcsCommand)
       if (refusal !== null) {
         violations.push({
           path: field.path,

@@ -1414,13 +1414,27 @@ const NINETY = Math.PI / 2
   // `{feed}` is only a word once the tool-change context renders it, so this
   // one is written by a real tool change.
   const one = operation('One')
-  const rendered = runPostProcessor({
-    project,
-    definition: validateMachineDefinition({
+  const renderedText = 'G0 X0 Y{feed}'
+  // Slice H: a feed value may not become an axis coordinate, so the schema
+  // refuses the placeholder position outright.
+  assert.throws(
+    () => validateMachineDefinition({
       ...structuredClone(GRBL),
       rotary: BORROWED_Y,
-      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, 'G0 X0 Y{feed}'] },
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
     }),
+    (error: unknown) => error instanceof Error && error.message.includes('{feed}'),
+    'the schema refuses a feed placeholder in an axis word',
+  )
+  const rendered = runPostProcessor({
+    project,
+    // The emitter is the last line of defence and does not validate; a
+    // definition loaded from an old project snapshot predates the schema rule.
+    definition: {
+      ...structuredClone(GRBL),
+      rotary: BORROWED_Y,
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
+    } as MachineDefinition,
     operations: [{
       operation: one,
       tool: normalizeToolForProject(project.tools[0], project),

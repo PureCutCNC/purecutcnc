@@ -53,7 +53,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   a definition that breaks a class. It expands the emitter's `{placeholder}`
   syntax before judging a line, so `{unitsCommand}` is judged by the command it
   becomes and a controller-owned feed expression (`F#<_hal[...]>`) is still a
-  feed word.
+  feed word. Slice H adds three boundaries: the comment marker pair is an exact
+  per-dialect allowlist (`(`+`)`, `;`+empty in G-code, `'`+empty in ShopBot) and
+  templates are scanned with the *dialect's* comment syntax, never the
+  definition's own field; a numeric placeholder may only be the value of a
+  fixed word letter it is safe under (`T`/`H` tool number, `S` RPM, `F` feed,
+  `P` material number), never a G/M number and never joined to a word; and a
+  single-command field is judged whole, so a newline or semicolon cannot split
+  it into separately-valid commands. `templateInjectionSweep.test.ts` runs every
+  field against every injection pattern.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
   #960) and the G-code emitter: templates, modal tracking, canned drill cycles,

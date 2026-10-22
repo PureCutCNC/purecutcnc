@@ -269,7 +269,7 @@ export const ecamAdapter: SourceAdapter = {
         // slot — the tool-change block runs per change, the footer at the
         // end — so it is dropped rather than folded in, and the report says
         // so. The operator homes the machine instead.
-        if (refusedTemplateWords(trimmed, { kind: 'header' }, '(').length > 0) {
+        if (refusedTemplateWords(trimmed, { kind: 'header' }, 'gcode').length > 0) {
           droppedMoves.push(trimmed)
           continue
         }

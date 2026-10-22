@@ -315,8 +315,16 @@ function testDelegationByDialect(): void {
   assert(explicit === asGcode, 'outputDialect "gcode" must not change the program')
 
   // The dialect — not the definition's id, name or extension — selects SBP.
+  // An `opensbp` definition must also declare the dialect's own comment syntax
+  // and templates (slice H), so the G-code fields that name the definition are
+  // swapped for the ShopBot ones; the emitter reads neither.
   const grblAsSbp = run({
-    definition: validateMachineDefinition({ ...grbl, outputDialect: 'opensbp' }),
+    definition: validateMachineDefinition({
+      ...grbl,
+      outputDialect: 'opensbp',
+      program: structuredClone(bundled('shopbot').program),
+      toolChange: structuredClone(bundled('shopbot').toolChange),
+    }),
     operations: [{ moves }],
   }).lines
   const shopbotLines = run({ operations: [{ moves }] }).lines
@@ -1040,7 +1048,17 @@ function testOlderBuildWritesNoMotion(): void {
   // What such a build keeps of the definition: everything but the field it
   // does not know. It then takes the G-code path with these command words.
   const { outputDialect: _dropped, ...legacyView } = bundled('shopbot')
-  const legacy = validateMachineDefinition(legacyView)
+  // Slice H refuses that shape at the schema boundary (an apostrophe comment
+  // prefix is not a G-code form); the emitter must still behave for a project
+  // snapshot that predates the rule, so it gets the unvalidated view.
+  let refused = false
+  try {
+    validateMachineDefinition(legacyView)
+  } catch {
+    refused = true
+  }
+  assert(refused, 'the schema refuses the apostrophe comment prefix on a G-code definition')
+  const legacy = legacyView as MachineDefinition
   assert(resolveOutputDialect(legacy) === 'gcode', 'fixture: the legacy view takes the G-code path')
 
   const program = run({
