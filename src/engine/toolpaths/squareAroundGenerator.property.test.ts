@@ -43,6 +43,16 @@
  * adapter's defaults for the run's time budget; the reference stays four times
  * finer than whatever the case asks for.)
  *
+ * #1093 adds the around ring-to-ring link to the proof. A full ring's end and
+ * the next ring's start share one physical angle, so the emitter feeds along
+ * the bar instead of retracting. The finish follows the model at that angle;
+ * the rough rises only to the material its own earlier layers left, plus the
+ * 1 mm clearance. Ten **round-bar** around cases (a bare rough, a rough +
+ * finish and a bare finish, with and without retained ends) join the seeded
+ * set, so the same link is replayed on both cross-sections. Every rough link
+ * is checked against the reference's standing material: it must remove
+ * nothing. A split ring still retracts through the old travel path.
+ *
  * The reference is written without the generator's helpers (no
  * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
  * a square cross-section sampled into dense polar slices per along position,
@@ -1191,6 +1201,67 @@ function drawAlongCase(seed: number): Case {
   }
 }
 
+/**
+ * One seeded **round-bar around** case (#1093). The square set above proves
+ * the blank's corner rules; these prove the same ring links on a bar whose
+ * cross-section is a circle, where the blank's support is its radius at every
+ * angle and the finish's between-ring link has no corner to clear. Both a bare
+ * around rough and a rough + around finish are drawn, with and without retained
+ * ends, and a bare around finish (which carries the no-rough advisory) on every
+ * fourth seed.
+ */
+function drawRoundCase(seed: number, lengthScale = 1): Case {
+  const rand = mulberry32(seed * 0x9e3779b1 + 0x1093)
+  const pick = (low: number, high: number): number => low + (high - low) * rand()
+  const kinds: ProgramKind[] = ['both', 'rough', 'finish', 'both', 'rough', 'both', 'finish', 'both']
+  const programKind = kinds[seed % kinds.length]
+  // Balls on most seeds: a ball's replay window is the affordable one, and a
+  // flat covers the staircase link height.
+  const type = seed % 3 === 1 ? 'flat_endmill' as const : 'ball_endmill' as const
+  const side = Math.round(pick(16, 22) * 2) / 2
+  const length = Math.max(20, Math.round(pick(20, 24) * lengthScale))
+  const diameter = Math.round(pick(3, 6) * 10) / 10
+  const radius = diameter / 2
+  const modelRadius = Math.round(pick(0.55, 0.8) * (side / 2) * 10) / 10
+  const ends = seed % 2 === 0 ? Math.max(1, Math.round(pick(0.05, 0.12) * length)) : 0
+  const stock = roundStock(side, length)
+  const bounds = getStockBounds(stock)
+  const alongStart = bounds.minX + ends
+  const alongEnd = bounds.maxX - ends
+  const cone = seed % 4 === 0
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: cone ? Math.max(0.6, modelRadius * pick(0.6, 0.95)) : modelRadius },
+  ]
+  const stepover = Math.max(0.75 * diameter, 1e-3)
+  const roughSpacing = Math.max(radius / 2, 1e-3)
+  const finishSpacing = Math.max(radius / 4, 1e-3)
+  const requestedCellSize = Math.min(radius / 3, stepover * 0.5)
+  const stepdown = Math.round(pick(1, 3) * 10) / 10
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `${cone ? 'cone' : 'cyl'} ${programKind} around ends ${ends} stepdown ${stepdown}`,
+    stock,
+    profile,
+    type,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing,
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind,
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: ends > 0,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
 /** The reference grid limit for one case. Default-parameter cases keep the full
  *  resolution; a coarsened non-compact case may run on a smaller grid, which
  *  coarsens the generator's requested cells too (the 4x relationship holds). */
@@ -1967,12 +2038,16 @@ let nonTurningLabel = ''
 // cases, and the assertions below still require the full set.
 const CASE_COUNT = process.env.SQUARE_CASES ? Number(process.env.SQUARE_CASES) : 300
 const startedAt = Date.now()
+const ROUND_CASES = 10
 const CASES = [
   ...Array.from({ length: CASE_COUNT }, (_, seed) => fitCase(seed)),
   // #1045 slice R's along-finish cases are always in the set, whatever the
   // profiling count: a finish-only along program on a round bar and a square
   // blank, and the same with a rough in front of it.
   ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawAlongCase(seed))),
+  // #1093: the round-bar around equivalent of the square set, always present.
+  ...Array.from({ length: ROUND_CASES }, (_, seed) =>
+    fitEntry(drawRoundCase(seed), (scale) => drawRoundCase(seed, scale))),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -2009,6 +2084,15 @@ let profileMoves = 0
 let checkedPlunges = 0
 let worstPlunge = 0
 let worstPlungeLabel = ''
+// #1093: rough link moves (a cut at one angle that changes along) replayed
+// against the reference's remaining material. A link must rise above what the
+// operation's own earlier layers left, so it removes nothing; a mutation that
+// sizes it from the model instead of the leftover terrace takes a bite.
+let roughLinkChecks = 0
+let roundRoughLinkChecks = 0
+let roundAroundCases = 0
+let worstRoughLinkBite = 0
+let worstRoughLinkLabel = ''
 
 for (const { entry, program } of CASES) {
   currentCaseLabel = entry.label
@@ -2023,6 +2107,7 @@ for (const { entry, program } of CASES) {
     profileMoves = referenceStats.moves
   }
   casesDone++
+  if (entry.stock.shape === 'round' && entry.roughKind === 'around') roundAroundCases++
   if (entry.defaultParams) {
     defaultCases++
     if (entry.programKind === 'finish') defaultFinishOnly++
@@ -2098,6 +2183,10 @@ for (const { entry, program } of CASES) {
   // finish has no clearing layers, and its single model-following ring can meet
   // the rough's between-pass ridge frontally, which is not a radial depth.
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+  // #1093: a rough link is sized from the material its own earlier layers left
+  // plus the 1 mm clearance, so it is in air. The reference's cell and ball
+  // discretisation is the only removal it may report.
+  const linkBiteAllowance = budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
   if (roughRan) stageSpecs.push({
     moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE),
@@ -2173,6 +2262,29 @@ for (const { entry, program } of CASES) {
         }
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
+        // #1093: a rough link is a feed at one angle that changes along. Its
+        // height came from what this operation's earlier layers left, so the
+        // reference should lose nothing to it; a link sized from the model
+        // instead would cut the terrace between the two rings.
+        // Only an around stage's constant-angle along feed is a #1093 link; an
+        // along-mode pass is a constant-angle cut by construction.
+        const linkMove = stage.direction === 'around'
+          && fromAngle === toAngle && alongOf(move.from) !== alongOf(move.to)
+        if (linkMove && !stage.finish) {
+          roughLinkChecks++
+          if (entry.stock.shape === 'round') roundRoughLinkChecks++
+          if (moveSurfaceWorst > worstRoughLinkBite) {
+            worstRoughLinkBite = moveSurfaceWorst
+            worstRoughLinkLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+              + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+          }
+          assert.ok(moveSurfaceWorst <= linkBiteAllowance,
+            `${entry.label}: a rough link at A${fromAngle.toFixed(2)} along `
+            + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
+            + `${moveSurfaceWorst.toFixed(4)} mm of the material the earlier layers left `
+            + `(allowed ${linkBiteAllowance.toFixed(4)})`)
+        }
         if (stage.direction === 'around') {
           if (!stage.finish) {
             if (moveInteriorWorst > worstAssertedInterior) {
@@ -2509,6 +2621,12 @@ assert.ok(aroundDescentChecks > 1000, `the emitted around descent is asserted ($
 assert.ok(roughDescentChecks > 1000, `the emitted rough descent is asserted (${roughDescentChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
+console.log(`  #1093 rough links: ${roughLinkChecks} replayed (${roundRoughLinkChecks} on round bars), `
+  + `worst removal ${worstRoughLinkBite.toFixed(4)} mm (${worstRoughLinkLabel || 'none'})`)
+assert.ok(roundAroundCases >= ROUND_CASES,
+  `the round-bar around set is in the seeded run (${roundAroundCases} >= ${ROUND_CASES})`)
+assert.ok(roughLinkChecks > 0, `the rough links are replayed against the reference (${roughLinkChecks})`)
+assert.ok(roundRoughLinkChecks > 0, `a round-bar rough link is replayed (${roundRoughLinkChecks})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**
 // parameters -- never coarsened, only shortened -- so the default cutting
 // programs are covered, not only the custom-sampling ones. The subset covers

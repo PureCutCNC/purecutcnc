@@ -133,6 +133,50 @@ function cylinder(stock: BarStock, radius: number, from: number, to: number, seg
   return revolved(stock, [{ along: from, radius }, { along: to, radius }], segments)
 }
 
+/**
+ * A closed box inside the blank, offset from the turning axis: material the
+ * tool meets near one angle and misses at others, so a ring is genuinely split
+ * rather than a full turn (#1093's A-changing link).
+ */
+function box(
+  stock: BarStock,
+  alongFrom: number,
+  alongTo: number,
+  acrossMin: number,
+  acrossMax: number,
+  upMin: number,
+  upMax: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const across = [acrossMin, acrossMax]
+  const up = [upMin, upMax]
+  const positions: number[] = []
+  for (const along of [alongFrom, alongTo]) {
+    for (const u of up) {
+      for (const v of across) {
+        if (stock.axis === 'x') positions.push(along, centre + v, pivot + u)
+        else positions.push(centre + v, along, pivot + u)
+      }
+    }
+  }
+  // Vertex order: (along index, up index, across index) flattened.
+  const vertex = (alongIndex: number, u: number, v: number): number => alongIndex * 4 + u * 2 + v
+  const index = new Uint32Array([
+    // alongFrom face
+    vertex(0, 0, 0), vertex(0, 0, 1), vertex(0, 1, 1), vertex(0, 0, 0), vertex(0, 1, 1), vertex(0, 1, 0),
+    // alongTo face
+    vertex(1, 0, 0), vertex(1, 1, 1), vertex(1, 0, 1), vertex(1, 0, 0), vertex(1, 1, 0), vertex(1, 1, 1),
+    // across faces
+    vertex(0, 0, 0), vertex(1, 0, 0), vertex(1, 1, 0), vertex(0, 0, 0), vertex(1, 1, 0), vertex(0, 1, 0),
+    vertex(0, 0, 1), vertex(0, 1, 1), vertex(1, 1, 1), vertex(0, 0, 1), vertex(1, 1, 1), vertex(1, 0, 1),
+    // up faces
+    vertex(0, 0, 0), vertex(0, 1, 0), vertex(1, 1, 0), vertex(0, 0, 0), vertex(1, 1, 0), vertex(1, 0, 0),
+    vertex(0, 0, 1), vertex(1, 0, 1), vertex(1, 1, 1), vertex(0, 0, 1), vertex(1, 1, 1), vertex(0, 1, 1),
+  ])
+  return { positions: new Float32Array(positions), index }
+}
+
 const SQUARE = squareStock(20, 40, 'x', { x: 0, y: 0 })
 const ROUND_RADIUS = 5
 const SQUARE_MODEL = cylinder(SQUARE, ROUND_RADIUS, 12, 28)
@@ -147,6 +191,16 @@ const angleOf = (point: ToolpathPoint): number => {
   assert.ok(point.a !== undefined, 'every rotary point carries A')
   return point.a
 }
+/**
+ * A #1093 link leg: a cut at one angle. A ring's own vertical step is also one
+ * angle; both are excluded from the ring-shape and touch-gate walks, which are
+ * about the layer's turning cuts.
+ */
+const isConstantAngleCut = (move: ToolpathMove): boolean => move.kind === 'cut'
+  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
+/** A ring-to-ring link's along feed: a cut at one angle that changes along. */
+const isAlongLink = (move: ToolpathMove): boolean => isConstantAngleCut(move)
+  && (move.from.x !== move.to.x || move.from.y !== move.to.y)
 
 // ---------------------------------------------------------------------------
 // 1. The slice-A refusal is gone: a square blank generates around passes.
@@ -175,9 +229,9 @@ console.log('Testing that a square blank generates around passes...')
   // Every ring is one along coordinate, and consecutive rings alternate.
   const rings: Array<{ along: number; direction: number }> = []
   for (const move of rough.moves) {
-    if (move.kind !== 'cut') continue
+    if (move.kind !== 'cut' || isConstantAngleCut(move)) continue
     const along = move.from.x
-    assert.equal(move.to.x, along, 'a cut move never leaves its ring')
+    assert.equal(move.to.x, along, 'a ring cut never leaves its ring')
     const last = rings[rings.length - 1]
     const direction = Math.sign(angleOf(move.to) - angleOf(move.from))
     if (last && last.along === along) {
@@ -220,7 +274,9 @@ console.log('Testing the square touch-radius gate on every cut point...')
     }, {})
     let checked = 0
     for (const move of rough.moves) {
-      if (move.kind !== 'cut') continue
+      // A link leg travels above the material this layer already left; the
+      // touch gate is about a layer's own turning cut, not about the link.
+      if (move.kind !== 'cut' || isConstantAngleCut(move)) continue
       for (const point of [move.from, move.to]) {
         const tip = tipOf(point)
         // The emitter's links are cuts at the travel height, above the blank;
@@ -244,6 +300,43 @@ console.log('Testing the square touch-radius gate on every cut point...')
     probedTools++
   }
   assert.equal(probedTools, 2, 'both supported cutters were probed')
+}
+
+// ---------------------------------------------------------------------------
+// 3. #1093: a split ring cannot stay down, so it retracts. Only a link that
+//    joins a run ending at a ring end to a run starting at a ring start may
+//    stay down; anything else keeps the old rapid/plunge, and an A-changing
+//    link is never emitted by the new surface path (the link callback requires
+//    the same physical angle). On a square blank that is also the corner
+//    rule: a turn stays at the travel height.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a split square ring retracts instead of linking low...')
+{
+  // A small box offset above the axis: angle 0 meets it, most angles miss it,
+  // so a ring is split into runs and cannot be linked end to end.
+  const model = box(SQUARE, 12, 28, -1, 1, 6, 10)
+  const finish = generateRotaryFinish('split-link', model, SQUARE, FLAT, {
+    ...SQUARE_BASE, passDirection: 'around',
+  }, {})
+  // The offset box reaches below the turning centre at some angles, which is
+  // the advisory this fixture legitimately carries; no other warning is.
+  assert.ok(finish.warnings.every((warning) => warning.code === 'rotaryBelowCentreline'),
+    'the split-ring finish carries only the below-centreline advisory')
+  const plunges = finish.moves.filter((move) => move.kind === 'plunge').length
+  assert.ok(plunges > 1,
+    `a split ring retracts and plunges again rather than feeding at the surface (${plunges} plunges)`)
+  const pivot = barPivotZ(SQUARE)
+  for (const move of finish.moves) {
+    if (!isAlongLink(move)) continue
+    // The new link keeps the shared physical angle of the two ring ends (A0 or
+    // A360); any other A change is the old travel link, which must stay at the
+    // blank's corner envelope.
+    if (move.from.a !== 0 && move.from.a !== 360) {
+      assert.ok(move.from.z - pivot >= TRAVEL_TIP - 1e-9,
+        `an A-changing square link turns at the corner envelope (${(move.from.z - pivot).toFixed(4)})`)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +605,9 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
       const toAlong = alongOf(move.to)
       const fromAngle = angleOf(move.from)
       const toAngle = angleOf(move.to)
+      // A #1093 ring-to-ring link travels above the material the earlier layers
+      // left, so its destination is not a layer cut at the blank's support.
+      const linkMove = isConstantAngleCut(move)
       const steps = Math.max(8,
         Math.ceil(Math.abs(toAngle - fromAngle) / referenceAngleBin),
         Math.ceil(Math.abs(toAlong - fromAlong) / alongBin))
@@ -532,7 +628,7 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
         // The touch gate is a question about a *cut's* destination, exactly as
         // before: a plunge's or a link's straight leg passes above the blank on
         // its way down from the travel height, and that is not a cut there.
-        if (step === steps) {
+        if (step === steps && !linkMove) {
           assert.ok(tip < support(angle) + supportStep + 1e-9,
             `seed ${seed}: cut at x ${x.toFixed(3)} A ${angle.toFixed(2)} reaches ${tip.toFixed(4)}, above the blank material ${support(angle).toFixed(4)}`)
         }
