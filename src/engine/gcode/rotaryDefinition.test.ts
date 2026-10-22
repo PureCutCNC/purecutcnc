@@ -148,11 +148,13 @@ const explicitFeed = withRotary(ROUTER, {
   about: 'x',
   drive: 'own',
   reversed: true,
-  inverseTimeFeed: { on: 'G93.1', off: 'G94.1' },
+  // A comment is allowed on a purpose template (#1057 slice F); the mode word
+  // itself must be its own G93/G94.
+  inverseTimeFeed: { on: 'G93 (inverse time)', off: 'G94 (feed per minute)' },
 })
 assert.deepEqual(
   explicitFeed.rotary,
-  { about: 'x', drive: 'own', reversed: true, inverseTimeFeed: { on: 'G93.1', off: 'G94.1' } },
+  { about: 'x', drive: 'own', reversed: true, inverseTimeFeed: { on: 'G93 (inverse time)', off: 'G94 (feed per minute)' } },
   'explicit commands and reversed round-trip',
 )
 

@@ -177,8 +177,14 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
 
 {
   // The output dialect has no form field (issue #953): editing a ShopBot
-  // machine in the focused form must not turn it into a G-code machine.
-  const def = makeTestDef({ outputDialect: 'opensbp', fileExtension: 'sbp' })
+  // machine in the focused form must not turn it into a G-code machine. An
+  // `opensbp` definition must also use the dialect's comment syntax (#1057
+  // slice H).
+  const def = makeTestDef({
+    outputDialect: 'opensbp',
+    fileExtension: 'sbp',
+    program: { ...makeTestDef().program, commentPrefix: "'", commentSuffix: '' },
+  })
   const form = toFormData(def)
   form.name = 'Shop ShopBot'
   const merged = mergeFormData(def, form)
@@ -376,6 +382,7 @@ for (const about of ['x', 'y'] as const) {
   const def = makeTestDef({
     outputDialect: 'opensbp',
     fileExtension: 'sbp',
+    program: { ...makeTestDef().program, commentPrefix: "'", commentSuffix: '' },
     rotary: makeRotary(),
   })
   const merged = mergeFormData(def, toFormData(def))

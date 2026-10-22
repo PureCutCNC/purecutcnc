@@ -1,0 +1,122 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Template restrictions leave every program without a tool change
+ * byte-identical to the base (#1057 slice F).
+ *
+ * Every bundled definition's templates are inert under the new class rules, so
+ * the machinery slices B–E added for non-inert templates must not change a
+ * single byte of a program that has no tool change. The fingerprints below were
+ * captured from `origin/integration/0.6.0` (before slices B–F) for the same
+ * fixture, one program per bundled definition, with tool changes disabled.
+ *
+ * The clock is the only thing normalized: every other byte is compared.
+ *
+ * Run with: npx tsx src/engine/gcode/templateByteIdentity.test.ts
+ */
+
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { defaultTool, newProject, rectProfile } from '../../types/project'
+import type { Operation, Project } from '../../types/project'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import type { ToolpathResult } from '../toolpaths/types'
+import { BUNDLED_DEFINITIONS } from './definitions'
+import { runPostProcessor } from './postprocessor'
+import { validateMachineDefinition } from './types'
+
+/**
+ * The fingerprints, captured from the base commit with exactly this fixture.
+ * qtplasmac and grbl-plasma write the same program because a no-tool-change
+ * router-only fixture never reaches their torch path; the hashes differ, so the
+ * plasma rejection path is exercised too.
+ */
+const BASE_SHA256: Record<string, string> = {
+  generic: '956b67edef0f12afa07ba3d46ebf0a5b9b563b180b99212ce92413b94902fd42',
+  grbl: '63335a9a926e297e39dbef82fd633e4ea4d5ebd09ec0954c96f860f2b040bb70',
+  grblhal: 'ffade76a2bccd8517c01b49c78d494540892e150d6045915ef56315b53ef6b05',
+  mach3: '92f527316d75cb2aff97a93031d625fa0ce18ea8fdb34bc2c48eac4810f06244',
+  uccnc: '92f527316d75cb2aff97a93031d625fa0ce18ea8fdb34bc2c48eac4810f06244',
+  linuxcnc: '53bfe1d2b66577c6ce06921642a8f78e1e22b7df4a14988338d6350defa1d7d1',
+  shopbot: '1ea2f5c3c7e9e8ff675ebc2ac94d5d93078ad12eb284298b418b6877a125e3ee',
+  qtplasmac: '419f668d0891f53a0584379fc8ca8081c50611b8dfa67691bbd6dd86efde7e22',
+  'grbl-plasma': '522d28e2b54ec2f42709164ed11e378a4e1f6fd2584375e753e2b982e4528d14',
+}
+
+function makeProject(): Project {
+  const base = newProject('Byte identity', 'mm')
+  base.stock = { ...base.stock, profile: rectProfile(0, 0, 100, 80), thickness: 20 }
+  base.origin = { name: 'Origin', x: 0, y: 80, z: 20, visible: true }
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Tool 1' }]
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Op op1',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    setupId: base.activeSetupId,
+  }
+  base.operations = [operation]
+  return base
+}
+
+const MOVES = [
+  { kind: 'rapid' as const, from: { x: 0, y: 0, z: 25 }, to: { x: 10, y: 70, z: 25 } },
+  { kind: 'plunge' as const, from: { x: 10, y: 70, z: 25 }, to: { x: 10, y: 70, z: 15 } },
+  { kind: 'cut' as const, from: { x: 10, y: 70, z: 15 }, to: { x: 30, y: 70, z: 15 } },
+  { kind: 'rapid' as const, from: { x: 30, y: 70, z: 15 }, to: { x: 30, y: 70, z: 25 } },
+]
+
+console.log('Testing every bundled definition posts a tool-change-free program byte-identically...')
+
+for (const bundled of BUNDLED_DEFINITIONS) {
+  const expected = BASE_SHA256[bundled.id]
+  assert.ok(expected, `fixture: ${bundled.id} has a captured fingerprint`)
+  const definition = validateMachineDefinition(structuredClone(bundled))
+  const project = makeProject()
+  const gcode = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation: project.operations[0],
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: { operationId: 'op1', warnings: [], bounds: null, moves: MOVES } as ToolpathResult,
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  }).gcode.replace(/Generated by PureCutCNC on \d{4}-\d{2}-\d{2}/g, 'Generated by PureCutCNC on <date>')
+  const actual = createHash('sha256').update(gcode).digest('hex')
+  assert.equal(actual, expected, `${bundled.id}: the program is byte-identical to the base (${actual})`)
+}
+
+console.log('gcode template byte-identity tests passed')

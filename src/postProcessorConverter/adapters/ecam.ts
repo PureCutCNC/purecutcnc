@@ -15,6 +15,7 @@
  */
 
 import { DOMParser } from 'linkedom'
+import { refusedTemplateWords } from '../../engine/gcode/templateRules'
 import type { AdapterResult, ConversionFinding, SourceAdapter } from '../types'
 
 /**
@@ -253,6 +254,7 @@ export const ecamAdapter: SourceAdapter = {
     const initProgram = textOf(post, 'Template_InitNewProgram')
     if (initProgram) {
       const header: string[] = []
+      const droppedMoves: string[] = []
       let droppedLines = 0
       for (const rawLine of initProgram.split('\n')) {
         const { text, unmapped } = translateCurlyTokens(rawLine, TARGET_TOKENS)
@@ -261,7 +263,17 @@ export const ecamAdapter: SourceAdapter = {
           continue
         }
         const trimmed = text.trim()
-        if (trimmed.length > 0) header.push(trimmed)
+        if (trimmed.length === 0) continue
+        // #1057 slice F: a program header may only set up modals. A startup
+        // reference move (`G0 G53`, `G0 G28 G91 Z0`) has no legal template
+        // slot — the tool-change block runs per change, the footer at the
+        // end — so it is dropped rather than folded in, and the report says
+        // so. The operator homes the machine instead.
+        if (refusedTemplateWords(trimmed, { kind: 'header' }, 'gcode').length > 0) {
+          droppedMoves.push(trimmed)
+          continue
+        }
+        header.push(trimmed)
       }
       if (header.length > 0) overrides.program!.header = header
       findings.push({
@@ -271,6 +283,15 @@ export const ecamAdapter: SourceAdapter = {
         message: `Translated ${header.length} line(s) to: ${JSON.stringify(header)}. Dropped ${droppedLines} line(s) referencing values with no static PureCutCNC placeholder (e.g. {TOOL_SUMMARY}).`,
         blocksStrict: false,
       })
+      if (droppedMoves.length > 0) {
+        findings.push({
+          status: 'unsupported',
+          sourceField: 'Post/Template_InitNewProgram',
+          targetField: 'program.header',
+          message: `Dropped ${droppedMoves.length} startup line(s) that move the machine: ${JSON.stringify(droppedMoves)}. Since #1057 a program header may only set up modals (no motion or axis word), and a startup move has no template slot. Home the machine before running a program from this definition, or add the move at the controller.`,
+          blocksStrict: false,
+        })
+      }
     }
 
     const endProgram = textOf(post, 'Template_EndProgram')
