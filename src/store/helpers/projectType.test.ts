@@ -268,13 +268,18 @@ function postOperations(
  * machine-coordinate closing retract then changed only the program text, so
  * `aroundMoves` is still the #1045 value while `around` carries both. The
  * program's structure is unchanged.
+ *
+ * `around` was recaptured once more for #1091, which removes the closing
+ * unwind: the trailing machine-coordinate retract and the closing `G0 A0` are
+ * gone, so the program text loses its last two motion lines. `aroundMoves` is
+ * unchanged — #1091 adds and removes no generated move.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '37a8b133e86b9d09',
+  around: '5619215fdfe922df',
   aroundMoves: 'e7248422dcef1683',
 } as const
 
