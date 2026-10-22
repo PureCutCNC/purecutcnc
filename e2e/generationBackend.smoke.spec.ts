@@ -32,7 +32,7 @@
 import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
-import { seedProject } from './helpers'
+import { seedProject, allowSoftwareToolpathWebgl } from './helpers'
 import { exportDialog, exportPreview, generation } from './selectors'
 
 const WORKER_OPTION = /Background thread/
@@ -61,25 +61,30 @@ async function readExportedProgram(
 
 test.describe('Generation execution backend smoke', () => {
   test('a fresh profile runs on the background thread and the GPU layer', async ({ app }) => {
+    const page = app.page
+    // This test asserts the fresh profile's GPU layer, so on CI's SwiftShader
+    // it asks the dev-only seam for plain WebGL2 before the app boots (#1087).
+    await allowSoftwareToolpathWebgl(page)
+    await page.goto('/')
     // The gear is always present; the status it carries is readable without
     // opening it.
-    await expect(generation.root(app.page)).toBeVisible()
+    await expect(generation.root(page)).toBeVisible()
     // The shipped defaults (issue #1087): what a user who never opens a menu
     // gets. The preference is written on first load, so it is `worker`, not
     // an absent key.
-    const stored = await app.page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)
+    const stored = await page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)
     expect(stored).toBe('worker')
-    await expect(app.page.locator('canvas.sketch-canvas'))
+    await expect(page.locator('canvas.sketch-canvas'))
       .toHaveAttribute('data-toolpath-renderer', 'gpu')
 
-    await generation.backendTrigger(app.page).click()
-    await expect(generation.backendOption(app.page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'false')
-    await expect(generation.backendOption(app.page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'true')
+    await generation.backendTrigger(page).click()
+    await expect(generation.backendOption(page, MAIN_THREAD_OPTION)).toHaveAttribute('aria-checked', 'false')
+    await expect(generation.backendOption(page, WORKER_OPTION)).toHaveAttribute('aria-checked', 'true')
     // Stop is not refused for the main thread's reason: this backend can
     // interrupt work already running, so it is only disabled while idle.
-    await expect(generation.stopButton(app.page)).not.toHaveAttribute('title', /cannot interrupt/)
-    await expect(generation.stopButton(app.page)).toBeDisabled()
-    await app.page.keyboard.press('Escape')
+    await expect(generation.stopButton(page)).not.toHaveAttribute('title', /cannot interrupt/)
+    await expect(generation.stopButton(page)).toBeDisabled()
+    await page.keyboard.press('Escape')
   })
 
   test('the backend menu opens on screen', async ({ app }) => {

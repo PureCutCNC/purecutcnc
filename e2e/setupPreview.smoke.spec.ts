@@ -25,7 +25,7 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
-import { getProject, seedProject } from './helpers'
+import { getProject, seedProject, allowSoftwareToolpathWebgl } from './helpers'
 import { rectProfile, type Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
 
@@ -157,6 +157,7 @@ test('a single-setup project simulates as before, with no picker and no note', a
 })
 
 test('the sketch draws both setups, the other muted, on Canvas and on GPU in a mirrored Bottom view', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
   const result = await app.page.evaluate(async () => {
     const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
@@ -220,6 +221,7 @@ test('the sketch draws both setups, the other muted, on Canvas and on GPU in a m
 
 test('the GPU renderer keeps drawing when the workspace turns to Bottom', async ({ app, ui }, testInfo) => {
   const { page } = app
+  await allowSoftwareToolpathWebgl(page)
   await page.goto('/?toolpathRenderer=gpu')
   await seedTwoSetups(page)
   const base = page.locator('canvas.sketch-canvas')
