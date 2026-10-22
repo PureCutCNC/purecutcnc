@@ -346,13 +346,14 @@ function testProgramStructure(): void {
     "' Tool 1: Tool A",
     '&Tool=1',
     'C9',
-    'TR,12000',
-    'C6',
-    // C9 is a macro and may have moved the machine, so the first motion
-    // re-enters (#1057 correction 4): the safe Z, then the move's own start,
-    // then the rapid to its target.
+    // The restart block after the tool change (#1057 slice F): absolute mode,
+    // a jog to the safe Z, then a jog to the point the first move starts from.
+    'SA',
     'JZ,5.000',
     'J2,0.000,0.000',
+    'TR,12000',
+    'C6',
+    // From that stated position the first rapid only has to travel in XY.
     'J2,10.000,-5.000',
     // 600 mm/min and 180 mm/min, in mm per second.
     'MS,10.000,3.000',
@@ -822,13 +823,16 @@ function testPositionIsUnknownAfterToolChange(): void {
   })
   const change = lines.indexOf('&Tool=2')
   assert(change > 0, 'fixture should change tool')
-  assertLines(lines.slice(change, change + 9), [
+  assertLines(lines.slice(change, change + 10), [
     '&Tool=2',
     'C9',
-    'TR,12000',
-    'C6',
+    // The restart block (#1057 slice F) states the safe Z and the start plane
+    // before the operation moves; the no-op rapid that follows writes nothing.
+    'SA',
     'JZ,5.000',
     'J2,20.000,-15.000',
+    'TR,12000',
+    'C6',
     'MS,10.000,3.000',
     'M3,20.000,-15.000,-1.000',
     'M3,30.000,-15.000,-1.000',
@@ -1023,9 +1027,9 @@ function testSafeZSplitOfRapids(): void {
     }],
   })
   const jogs = lines.filter((line) => line.startsWith('J'))
-  // The tool load's C9 is a macro, so the first motion re-enters: safe Z, the
-  // move's start, then the rapid itself (#1057 correction 4). The split still
-  // writes Z before XY for the later rapid that changes both.
+  // The restart after the tool load (#1057 slice F) states the safe Z and the
+  // start plane; the first rapid then only travels in XY. The later rapid that
+  // changes Z and XY together still splits Z first.
   assertLines(jogs, ['JZ,5.000', 'J2,0.000,0.000', 'J2,10.000,-5.000', 'JZ,5.000', 'J2,40.000,-25.000'], 'jogs')
 }
 
@@ -1049,9 +1053,15 @@ function testOlderBuildWritesNoMotion(): void {
   }).gcode
   const lines = program.split('\n')
   assert(lines.length > 20, 'fixture should produce a real program')
+  // The restart block's modal baseline (#1057 slice F) is emitter-owned G-code
+  // and is written whatever the definition's templates are; it carries no
+  // motion and no axis word. Everything else, motion included, stays a
+  // comment, because every template and command word in this definition is
+  // one.
+  const MODAL_BASELINE = 'G90 G94 G17'
   for (const line of lines) {
-    assert(line.startsWith("'") || line === 'END',
-      `an older build would write "${line}" into a .sbp: every line must be a comment or END`)
+    assert(line.startsWith("'") || line === 'END' || line === MODAL_BASELINE,
+      `an older build would write "${line}" into a .sbp: every line must be a comment, the modal baseline or END`)
   }
 }
 

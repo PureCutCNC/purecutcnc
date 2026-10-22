@@ -125,14 +125,6 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
   const arcEmitOptions = createArcEmitOptions(definition, outputUnits, 'ij')
 
   let currentPosition: ToolpathPoint | null = null
-  // True after a macro that may have moved the machine behind the emitter's
-  // back — the `C9` tool change is the part-file template that can. The next
-  // motion of any kind then performs a full re-entry (`JZ` to the safe Z, then
-  // `J2` to the move's own start) exactly as the G-code emitter does (#1057
-  // correction 4). A program start also has no position, but nothing was
-  // tracked there to go stale, so the first move writes its own start as it
-  // always has.
-  let reentryPending = false
   // Where the control software believes the tool is: every emitted coordinate
   // after number formatting. Arc centre offsets are measured from this, not
   // from the un-rounded position (the defect behind issue #447).
@@ -223,10 +215,30 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
     }
     emitComment(`Tool ${toolNumber}: ${commentText(tool.name)}`)
 
+    // ── Motion plan (shared by every dialect) ──
+    // Drilling takes this path too: there are no canned cycles to emit, so a
+    // drill cycle is written as the expanded moves the toolpath already holds.
+    // It is made before the tool change so the restart block below can state
+    // the point the operation's first move starts from. A change leaves the
+    // control's position unknown, which is what the plan is validated from,
+    // exactly as it was when the plan was made after `C9`.
+    const plan = planOperationMotion({
+      project,
+      definition,
+      operation,
+      toolpath,
+      arcEmitOptions,
+      startPosition: step.changeTool ? null : emittedPosition,
+      captureTrace,
+    })
+    const operationSafeZ = plannedSafeZ(plan.steps) ?? generatorSafeZ(operation)
+    const restartStart = plan.steps.length > 0
+      ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0)
+      : null
+
     // Tool change. C9 is a macro: it moves the machine and may set speeds of
-    // its own, so neither is assumed afterwards. The next motion re-enters
-    // through the safe Z and the move's own start, and the next fed move
-    // restates `MS`.
+    // its own, so neither is assumed afterwards. The next rapid restates Z
+    // before it travels and the next fed move restates `MS`.
     if (step.changeTool) {
       if (step.spindleRunningAtToolChange) {
         emit('C7')
@@ -236,7 +248,25 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       emittedSpeeds = null
       currentPosition = null
       emittedPosition = null
-      reentryPending = true
+    }
+
+    // One full restart block after every emitted tool change (#1057 slice F),
+    // including the first operation's tool load, the part-file equivalent of
+    // the G-code emitter's: absolute mode (`SA`), a jog to a proven safe Z,
+    // then a jog to the point the operation's first move starts from. A feed
+    // or an arc that starts the operation jogs to its own plane first; a
+    // rapid's split writes Z itself.
+    if (step.changeTool) {
+      emit('SA')
+      if (restartStart !== null) {
+        emitJog({ z: operationSafeZ })
+        emitJog({ x: restartStart.x, y: restartStart.y })
+        const first = plan.steps[0]
+        if (first !== undefined && restartStart.z !== operationSafeZ
+          && (first.kind === 'arc' || first.moveKind !== 'rapid')) {
+          emitJog({ z: restartStart.z })
+        }
+      }
     }
 
     // Spindle on at this operation's speed: when it is stopped, and again
@@ -306,67 +336,19 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       trackPosition({ x: arc.endPoint.x, y: arc.endPoint.y })
     }
 
-    // ── Motion plan (shared by every dialect) ──
-    // Drilling takes this path too: there are no canned cycles to emit, so a
-    // drill cycle is written as the expanded moves the toolpath already holds.
-    const plan = planOperationMotion({
-      project,
-      definition,
-      operation,
-      toolpath,
-      arcEmitOptions,
-      startPosition: emittedPosition,
-      captureTrace,
-    })
     warnings.push(...plan.warnings)
 
-    // The operation's safe Z (#1057 correction 4): the height its own rapids
-    // travel at, which the generators set to their clearance. It is never a
-    // cutting point — an operation whose whole path runs low has no rapid at
-    // all, and the generator formula is used instead.
-    const operationSafeZ = plannedSafeZ(plan.steps) ?? generatorSafeZ(operation)
-
-    /**
-     * The full re-entry after a macro that is not provably inert (`C9`), the
-     * part-file equivalent of the G-code emitter's: `JZ` to the program's safe
-     * Z, then `J2` to the point the next move starts from, both axes stated
-     * even when they are believed known. What follows is the operation's
-     * ordinary approach. Nothing is written while the position is still known,
-     * and a program start (no position, but nothing stale) keeps its first
-     * move unchanged.
-     */
-    const reenterBeforeMotion = (start: ToolpathPoint): boolean => {
-      if (!reentryPending) return false
-      reentryPending = false
-      emitJog({ z: operationSafeZ })
-      emitJog({ x: start.x, y: start.y })
-      return true
-    }
-
-    plan.steps.forEach((step, index) => {
+    for (const step of plan.steps) {
       if (step.kind === 'arc') {
-        if (reenterBeforeMotion(step.startPoint) && currentPosition !== null
-          && currentPosition.z !== step.startPoint.z) {
-          // An arc carries no Z of its own: descend from the safe height to its
-          // plane before its `CG` block.
-          emitJog({ z: step.startPoint.z })
-        }
         emitArc(step, effectiveFeed('cut', step.feedScale, cutFeed, plungeFeed))
       } else if (step.moveKind === 'rapid') {
-        reenterBeforeMotion(plannedStepStart(project, definition, operation, toolpath, plan.steps, index))
         for (const axes of splitRapid(currentPosition, step.point)) {
           emitJog(axes)
         }
       } else {
-        const start = plannedStepStart(project, definition, operation, toolpath, plan.steps, index)
-        if (reenterBeforeMotion(start) && currentPosition !== null && currentPosition.z !== start.z) {
-          // A fed move writes its end all at once, so descend to its own start
-          // Z before it runs.
-          emitJog({ z: start.z })
-        }
         emitMove(step.point, effectiveFeed(step.moveKind, step.feedScale, cutFeed, plungeFeed))
       }
-    })
+    }
 
     if (plan.trace) {
       motionTraces.push(plan.trace)

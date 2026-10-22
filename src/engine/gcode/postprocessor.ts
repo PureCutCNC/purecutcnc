@@ -79,16 +79,6 @@ interface ModalState {
    *  template that can move Z clears this until a motion block writes Z again
    *  (issue #1016 C2 correction M1). */
   zKnown: boolean
-  /** Planar and rotary equivalents of `zKnown` (#1057 correction 2): a template
-   *  can park the spindle at X0 Y0, or index the bar, without the emitter
-   *  seeing a motion block. Each axis the template may have moved is unknown
-   *  until a motion block writes it, and an unknown axis is always restated by
-   *  the next rapid rather than skipped as "already there". */
-  xKnown: boolean
-  yKnown: boolean
-  /** True when the last written angle is still where the controller is. Only
-   *  meaningful when `rotaryWord` is not null. */
-  rotaryKnown: boolean
   lineNumber: number
 }
 
@@ -97,6 +87,25 @@ function operationTargetSummary(target: OperationTarget): string {
     return 'Stock'
   }
   return `${target.featureIds.length} feature${target.featureIds.length === 1 ? '' : 's'}`
+}
+
+/**
+ * The canned-cycle command word for one drill type, or null when the
+ * definition has none for it. A null command falls back to the expanded moves
+ * the toolpath already carries, exactly as on a machine with canned cycles
+ * off.
+ */
+function cannedCommandFor(
+  canned: NonNullable<MachineDefinition['cannedCycles']>,
+  drillType: string,
+): string | null {
+  switch (drillType) {
+    case 'simple': return canned.drillCommand
+    case 'dwell': return canned.drillWithDwellCommand
+    case 'peck': return canned.peckDrillCommand
+    case 'chip_breaking': return canned.chipBreakDrillCommand
+    default: return null
+  }
 }
 
 function safeCommentText(text: string): string {
@@ -150,166 +159,39 @@ function lineCode(line: string, commentPrefix: string): string {
 }
 
 /**
- * The `G`/`M` commands a machine template can spell without moving any axis.
- * A template is inert only when every word on it is on this allowlist (or is a
- * parameter word below): every other command is distrusted, because a canned
- * cycle, a macro call, a home, a tool change or a coordinate-system command can
- * move Z without naming it, and the emitter must not keep believing a Z it can
- * no longer prove (#1057, Codex review).
+ * Commands a machine template can spell without moving any axis. Every other
+ * `G`/`M` command is distrusted: a canned cycle, a macro call, a home, a tool
+ * change or a coordinate-system change can move Z without naming it, and the
+ * emitter must not keep believing a Z it can no longer prove.
  */
 const INERT_TEMPLATE_COMMANDS: ReadonlySet<string> = new Set([
-  // Dwell; plane, units, distance, feed, retract and spindle-speed modes.
-  'G4', 'G17', 'G18', 'G19', 'G20', 'G21', 'G90', 'G91', 'G93', 'G94',
-  'G96', 'G97', 'G98', 'G99',
-  // Cutter compensation, work-coordinate select, path control, cycle cancel.
-  // `G49` is a tool-length *cancel*: like a work-coordinate select it redefines
-  // the frame a later absolute word is measured in, but it moves no axis now,
-  // and the every-move restatement of WCS is already trusted the same way
-  // (`G54`–`G59`). `G43`/`G44` apply an offset and stay distrusted.
-  'G40', 'G41', 'G42', 'G49', 'G54', 'G55', 'G56', 'G57', 'G58', 'G59',
-  'G61', 'G64', 'G80',
-  // Spindle, coolant, program pause and end.
+  'G4', 'G17', 'G18', 'G19', 'G20', 'G21',
+  'G40', 'G41', 'G42', 'G54', 'G55', 'G56', 'G57', 'G58', 'G59',
+  'G61', 'G64', 'G80', 'G90', 'G91', 'G93', 'G94', 'G98', 'G99',
   'M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M7', 'M8', 'M9', 'M30',
 ])
 
 /**
- * The four motion commands every bundled G-code definition writes. A motion
- * block is not inert by itself — a later word on the same line can be an axis —
- * but the per-word scan below decides that from the words actually present, so
- * `G0 X0` moves only X and leaves Y and Z known (#1057).
+ * True when a rendered machine template can move the cutter in Z behind the
+ * emitter's back. A Z word is decisive. Without one, a line is treated as
+ * moving unless every `G`/`M` command on it is a known inert modal/program
+ * command: a macro, home, tool change or canned cycle can move an axis the
+ * line never names, and assuming otherwise is how the next A word gets written
+ * at a height nobody proved. Comments are stripped first, so prose never
+ * counts as a command.
  */
-const TEMPLATE_MOTION_COMMANDS: ReadonlySet<string> = new Set(['G0', 'G1', 'G2', 'G3'])
-
-/**
- * Letters whose value cannot move the machine's linear or rotary axes on its
- * own: planar and rotary coordinates, arc offsets, cycle parameters, a feed,
- * speed, tool, tool-offset or line number. The axis being asked about is
- * decisive and is handled before this set is consulted.
- */
-const INERT_TEMPLATE_LETTERS: ReadonlySet<string> = new Set([
-  'X', 'Y', 'A', 'I', 'J', 'K', 'R', 'P', 'Q', 'F', 'S', 'T', 'N', 'H', 'D', 'L',
-])
-
-/**
- * True when a rendered machine template can move `axis` behind the emitter's
- * back.
- *
- * The rule is an allowlist (#1057, Codex review): a line is inert for an axis
- * only when every word on it cannot move that axis. An axis word is decisive.
- * A motion command (`G0`–`G3`) moves only the axes it names, so a motion block
- * naming Y leaves X and Z known. Everything else — an O-word or macro call, a
- * tool change, a home, a canned cycle, a coordinate-system command, an
- * expression, or any word this allowlist does not know — can move any axis, so
- * it leaves all of them unknown.
- *
- * The O-word check comes first because a subroutine call is the reason for the
- * inversion: `o<toolchange> call` has no `G`/`M` word and no axis word, and the
- * old "no unknown G/M command" scan therefore called it inert while it could
- * move the machine.
- *
- * Comments are stripped first, so prose never counts as a command.
- */
-function templateMovesAxis(line: string, axis: 'X' | 'Y' | 'Z' | 'A', commentPrefix: string): boolean {
-  let code = lineCode(line, commentPrefix).trim()
-  // Block delete marks an optional block; it is not a word.
-  while (code.startsWith('/')) code = code.slice(1).trimStart()
-  if (code.length === 0) return false
-  // The program delimiter cannot move an axis.
-  if (code === '%') return false
-  // An O-word is the interpreter's program/subroutine/macro syntax: `O100`,
-  // `o100 call`, `o<toolchange> call`. A subroutine or macro can move an axis
-  // without naming it, so an O-word followed by any keyword is never inert. A
-  // *bare* O-word names the program (`O0001 (part.nc)`) or a block label and
-  // moves nothing: it is removed before the word scan rather than distrusted
-  // whole, which is what keeps LinuxCNC/Mach program-number headers inert.
-  const oWord = /(?:^|\s)[Oo]\s*(?:<[^>]*>|\d+(?:\.\d+)?)/.exec(code)
-  if (oWord) {
-    const after = code.slice((oWord.index ?? 0) + oWord[0].length).trim()
-    if (after.length > 0) return true
-    code = `${code.slice(0, oWord.index ?? 0)} ${code.slice((oWord.index ?? 0) + oWord[0].length)}`.trim()
-    if (code.length === 0) return false
+function templateCanMoveZ(line: string, commentPrefix: string): boolean {
+  if (lineCarriesAxisWord(line, 'Z', commentPrefix)) return true
+  let code = line.replace(/\([^)]*\)/g, ' ')
+  if (commentPrefix.length > 0 && commentPrefix !== '(') {
+    const at = code.indexOf(commentPrefix)
+    if (at >= 0) code = code.slice(0, at)
   }
-  // A numeric selector — QtPlasmaC's `M3 $0 S1` / `M5 $0` — is an argument of
-  // the command, not an expression, and it names no axis. Remove it before the
-  // word scan. Every other `$` (a grbl `$H` system command, a macro variable)
-  // is arbitrary text and is distrusted whole.
-  code = code.replace(/\$\d+(?:\.\d+)?/g, ' ')
-  // Macro variables and expressions are arbitrary text; distrust them whole.
-  if (['#', '[', ']', '$', '='].some((character) => code.includes(character))) return true
-
-  let at = 0
-  for (const match of code.matchAll(/([A-Za-z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))?/g)) {
-    const start = match.index ?? at
-    // Anything between two words that is not whitespace is not a known word.
-    if (start !== at && code.slice(at, start).trim().length > 0) return true
-    at = start + match[0].length
-    const letter = match[1].toUpperCase()
-    const value = match[2]
-    // A letter with no number is not a word this allowlist knows.
-    if (value === undefined) return true
-    if (letter === axis) return true
-    if (letter === 'G' || letter === 'M') {
-      const command = `${letter}${Number(value)}`
-      if (!TEMPLATE_MOTION_COMMANDS.has(command) && !INERT_TEMPLATE_COMMANDS.has(command)) return true
-      continue
-    }
-    if (!INERT_TEMPLATE_LETTERS.has(letter)) return true
+  for (const match of code.matchAll(/\b([GM])\s*(\d+(?:\.\d+)?)/gi)) {
+    const command = `${match[1].toUpperCase()}${Number(match[2])}`
+    if (!INERT_TEMPLATE_COMMANDS.has(command)) return true
   }
-  return code.slice(at).trim().length !== 0
-}
-
-/**
- * The modal state every program this emitter writes assumes: absolute
- * coordinates on the XY plane, in the project's own units. It is not stored on
- * the definition because no bundled definition — or the motion planner — ever
- * writes incremental coordinates or a non-XY arc plane; the header templates
- * declare it (`G90`, `G17`) rather than configure it.
- *
- * A machine template that moves the controller away from any of these is not
- * inert (#1057 correction 4), exactly as one that names an axis is not, and the
- * re-entry that follows restates the baseline before any coordinate word the
- * program relies on it for.
- */
-const MODAL_DISTANCE_COMMAND = 'G90'
-const MODAL_PLANE_COMMAND = 'G17'
-
-/** Which parts of the program's modal baseline a template moved away from. */
-interface TemplateModalDamage {
-  plane: boolean
-  distance: boolean
-  units: boolean
-}
-
-/**
- * The modal state a rendered machine template leaves behind, judged on the
- * words it actually writes. Comments are stripped first, so prose never counts.
- *
- * `G90`/`G17`/the program's own units command restore the baseline and clear
- * the corresponding damage; `G91`, `G18`/`G19`, and the other unit command set
- * it. Last word wins, so a template that temporarily switches and switches back
- * on a later physical line is inert.
- */
-function templateModalDamage(
-  lines: readonly string[],
-  commentPrefix: string,
-  programUnits: 'mm' | 'inch',
-): TemplateModalDamage {
-  const damage: TemplateModalDamage = { plane: false, distance: false, units: false }
-  for (const line of lines) {
-    for (const match of lineCode(line, commentPrefix).matchAll(/([Gg])\s*(\d+)/g)) {
-      switch (Number(match[2])) {
-        case 17: damage.plane = false; break
-        case 18:
-        case 19: damage.plane = true; break
-        case 90: damage.distance = false; break
-        case 91: damage.distance = true; break
-        case 20: damage.units = programUnits !== 'inch'; break
-        case 21: damage.units = programUnits !== 'mm'; break
-        default: break
-      }
-    }
-  }
-  return damage
+  return false
 }
 
 /**
@@ -365,6 +247,17 @@ function emitProgramForDialect(input: PostProcessorInput): PostProcessorResult {
   }
 }
 
+/**
+ * The modal baseline every program this emitter writes assumes: absolute
+ * coordinates, constant feed mode, on the XY plane. The header templates
+ * declare it rather than configure it, and the restart block after a tool
+ * change restates it, because a tool-change template is free to leave the
+ * controller in any other state (`G91`, `G93`, `G18`).
+ */
+const MODAL_DISTANCE_COMMAND = 'G90'
+const MODAL_FEED_COMMAND = 'G94'
+const MODAL_PLANE_COMMAND = 'G17'
+
 function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const { project, operations, definition, options } = input
   const lines: string[] = []
@@ -382,21 +275,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     inverseTime: false,
     currentPosition: null,
     zKnown: false,
-    xKnown: false,
-    yKnown: false,
-    rotaryKnown: false,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
-  /** True once a machine template may have moved an axis or a modal mode
-   *  behind the emitter's back. The next motion of any kind then performs a
-   *  full re-entry — safe Z, a restated rapid mode, then the move's own start —
-   *  before it runs (#1057 correction 4). This replaces the per-axis patching
-   *  of corrections 1–3: one rule after every non-inert template, whatever kind
-   *  of move comes next. */
-  let reentryPending = false
-  /** The parts of the program's modal baseline a template moved away from, and
-   *  that the re-entry must restate before trusting a coordinate word. */
-  const modalDamage: TemplateModalDamage = { plane: false, distance: false, units: false }
+  /** True once a tool-change template may have moved the bar and nothing
+   *  restated the angle. The closing unwind still returns the bar to 0 then:
+   *  the last tracked angle is no longer proof of where the stock is. */
+  let rotaryAngleLost = false
 
   // Count G-code motion blocks as emitted, not the input toolpath moves. The
   // latter can be reduced by arc fitting or expanded when a rapid is split
@@ -451,6 +335,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
+  /** A bar's manual-index program: its own opening turn names the face, so its
+   *  retracts are in machine coordinates (#1054 slices 2 and 2b). An Around
+   *  program works above the whole bar and needs no such frame. */
+  const barSetupProgram = setupPlan.manualIndexAngle !== null
   const projectBarTravelZ = isBarStock(project.stock)
     ? rotaryTravelZ(project.stock, project.meta.units)
     : null
@@ -515,73 +403,25 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    *
    * A template can move the machine behind the emitter's back (`G0 Z-8`, a
    * tool-change macro, a canned cycle), and nothing corrects the emitter's
-   * tracked position when it does. A line that can move an axis clears that
-   * axis's known flag, and a line that moves the controller off the program's
-   * modal baseline (incremental coordinates, a non-XY plane, the other unit
-   * system) records the damage. Either makes the template *not inert*, and the
-   * next motion of any kind then performs a full re-entry before it runs
-   * (#1057 correction 4). An inert line (`M5`, `G94`, a comment) leaves every
-   * axis provable and the baseline intact, so a program whose templates are all
-   * inert keeps its bytes.
-   *
-   * A template the *emitter itself* writes from a definition value — the
-   * inverse-time mode, the probe, the touch-off, a canned-cycle line — passes
-   * `mayMoveMachine: false`. Those lines are the program's own sequencing, not
-   * a machine template: the code below already places the motion they precede,
-   * and treating them as a template would re-enter in the middle of a pierce
-   * or a cycle.
+   * tracked Z when it does. For a square blank that matters: the next A word
+   * would be written as if the cutter were still where the emitter left it. So
+   * a line that can move Z clears the known Z, and a later motion block
+   * re-establishes it; an inert line (`M5`, `G94`, a comment) leaves it
+   * provable. Round and non-rotary programs never read the flag, so their
+   * bytes do not move.
    *
    * A template may hold several physical lines (`"; note\nG0 Y0"`). The
-   * program carries them as one entry, but they are judged one physical line at
-   * a time: the axis-word scan drops everything after a line's comment
+   * program carries them as one entry, but they are judged one physical line
+   * at a time: the axis-word scan drops everything after a line's comment
    * marker, so scanning the joined text would lose the code on every line
    * after the first.
    */
-  const emitTemplateLine = (content: string, mayMoveMachine = true) => {
+  const emitTemplateLine = (content: string) => {
     const physicalLines = content.split(/\r?\n/)
     templateLines.push(...physicalLines)
     emitLine(content)
-    const commentPrefix = definition.program.commentPrefix
-    let movedAxis = false
-    for (const line of physicalLines) {
-      if (templateMovesAxis(line, 'X', commentPrefix)) { state.xKnown = false; movedAxis = true }
-      if (templateMovesAxis(line, 'Y', commentPrefix)) { state.yKnown = false; movedAxis = true }
-      if (templateMovesAxis(line, 'Z', commentPrefix)) { state.zKnown = false; movedAxis = true }
-      // The rotary word is `A` on its own axis and a borrowed motor's `X`/`Y`
-      // otherwise, so the same scan answers both questions.
-      if (state.rotaryWord !== null && templateMovesAxis(line, state.rotaryWord, commentPrefix)) {
-        state.rotaryKnown = false
-        movedAxis = true
-      }
-    }
-    if (!mayMoveMachine) return
-    const damage = templateModalDamage(physicalLines, commentPrefix, outputUnits)
-    if (damage.plane) modalDamage.plane = true
-    if (damage.distance) modalDamage.distance = true
-    if (damage.units) modalDamage.units = true
-    if (movedAxis || damage.plane || damage.distance || damage.units) {
-      reentryPending = true
-    }
-  }
-
-  /**
-   * Restate the parts of the program's modal baseline a template moved away
-   * from, before any coordinate word the program expects it to apply to.
-   * Units come first (a coordinate means nothing until the unit is right),
-   * then the distance mode, then the plane.
-   */
-  const restoreTemplateModalState = (): void => {
-    if (modalDamage.units) {
-      modalDamage.units = false
-      if (unitsCommand) emitLine(unitsCommand)
-    }
-    if (modalDamage.distance) {
-      modalDamage.distance = false
-      emitLine(MODAL_DISTANCE_COMMAND)
-    }
-    if (modalDamage.plane) {
-      modalDamage.plane = false
-      emitLine(MODAL_PLANE_COMMAND)
+    if (physicalLines.some((line) => templateCanMoveZ(line, definition.program.commentPrefix))) {
+      state.zKnown = false
     }
   }
 
@@ -614,24 +454,21 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * `rotaryDirection` — it is already the program's angle, done in the
    * transform — and is never reduced to 0–360, so a move from 350 to 370 writes
    * 370. A machine with no rotary axis writes nothing.
-   *
-   * An angle a template may have moved is unknown even when it equals the last
-   * one this emitter wrote: the word is then restated rather than skipped
-   * (#1057 correction 2), and writing it makes the angle provable again.
    */
   const emitRotaryAxisWord = (segments: string[], angle: number | undefined) => {
     if (angle === undefined || state.rotaryWord === null) return
-    if (state.rotaryKnown && state.rotaryAngle === angle) return
+    if (state.rotaryAngle === angle) return
     segments.push(`${state.rotaryWord}${formatGCodeNumber(angle, definition, outputUnits)}`)
     state.rotaryAngle = angle
-    state.rotaryKnown = true
+    // The controller has been told the angle, so the last one is proof again.
+    rotaryAngleLost = false
   }
 
   /** Turn inverse-time feed off, if it is on (issue #393, rule 4). */
   const leaveInverseTime = () => {
     if (!state.inverseTime) return
     const off = definition.rotary?.inverseTimeFeed?.off
-    if (off) emitTemplateLine(off, false)
+    if (off) emitTemplateLine(off)
     state.inverseTime = false
     // The controller's modal F is no longer the feed the emitter tracks (it is
     // a 1/min value, or a command the controller replaced), so the next normal
@@ -701,8 +538,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         : state.currentPosition?.a !== undefined ? { a: state.currentPosition.a } : null),
     }
     if (axes.z !== undefined) state.zKnown = true
-    if (axes.x !== undefined) state.xKnown = true
-    if (axes.y !== undefined) state.yKnown = true
 
     emittedPosition = {
       x: axes.x !== undefined ? formatValue(axes.x) : emittedPosition?.x ?? 0,
@@ -764,9 +599,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     state.motionCommand = null
     state.currentPosition = null
     state.zKnown = false
-    state.xKnown = false
-    state.yKnown = false
-    state.rotaryKnown = false
     emittedPosition = null
     return true
   }
@@ -818,30 +650,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    */
   const emitManualIndexTurn = (angleDeg: 0 | 180) => {
     if (!isBarStock(project.stock) || state.rotaryWord === null) return
-    // The turn is a re-entry of its own (it retracts in machine coordinates and
-    // states the angle), so it also settles whatever modal damage the templates
-    // before it left: an incremental mode must not be in force when the turn is
-    // written.
-    restoreTemplateModalState()
     leaveInverseTime()
     if (!emitMachineCoordinateRetract()) {
       refuseTurnClearance()
       return
     }
     state.motionCommand = null
+    // State the angle even when it equals the last one written: the restart
+    // block that follows a tool change may already have stated the operation's
+    // start angle, and the turn must still be a turn the controller is told
+    // about rather than a bare `G0`.
+    state.rotaryAngle = null
     emitMotionLine(definition.motion.rapidCommand, {
       a: angleDeg * rotaryDirection(definition),
     })
     state.currentPosition = null
-    state.xKnown = false
-    state.yKnown = false
-    state.zKnown = false
     emittedPosition = null
-    // This retract-and-turn is itself a safe re-entry for a bar program: the
-    // cutter is in machine coordinates at the top of travel and the angle is
-    // stated, and the XY left unknown makes the first operation write both
-    // coordinates again. A re-entry after the first motion would retract twice.
-    reentryPending = false
   }
 
   /**
@@ -852,14 +676,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * modal-feed rules exactly as before.
    */
   const emitPlannedMove = (point: ToolpathPoint, directive: FeedDirective) => {
-    if (point.a !== undefined && state.rotaryWord !== null
-      && (!state.rotaryKnown || state.rotaryAngle !== point.a)) {
+    if (point.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== point.a) {
       retractUnknownSquareZ()
     }
     if (directive.mode === 'inverse') {
       if (!state.inverseTime) {
         const on = definition.rotary?.inverseTimeFeed?.on
-        if (on) emitTemplateLine(on, false)
+        if (on) emitTemplateLine(on)
         state.inverseTime = true
       }
       const axes: Partial<ToolpathPoint> = {
@@ -1017,10 +840,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       z: state.currentPosition?.z ?? 0,
       ...(arc.endPoint.a !== undefined ? { a: arc.endPoint.a } : null),
     }
-    // The block spelled both planar coordinates, so both are provable again
-    // (the arc is at a constant angle, so it writes no rotary word).
-    state.xKnown = true
-    state.yKnown = true
 
     emittedPosition = {
       x: formatValue(arc.endPoint.x),
@@ -1028,13 +847,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
   }
 
+  const comment = (text: string) => {
+    const suffix = definition.program.commentSuffix
+    emitLine(`${definition.program.commentPrefix} ${safeCommentText(text)}${suffix ? ` ${suffix}` : ''}`)
+  }
+
   /**
    * The program's fallback safe Z for one operation: the stock top plus the
    * project's operation clearance, the formula every generator uses
    * (`getOperationSafeZ`), mapped into the emitted machine frame exactly as a
-   * move's own Z is. It is used only for an operation whose planned path
-   * carries no rapid of its own, where there is no generator clearance
-   * expressed in the path to read.
+   * move's own Z is. It is read only when the operation's own planned rapids
+   * give no height to use.
    *
    * The generators work in the setup-local frame (a turned setup's project is
    * turned top-down before generation), and `getOperationSafeZ` is a height
@@ -1050,59 +873,85 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   /**
-   * The full RE-ENTRY the program performs before the next motion after a
-   * machine template that is not provably inert (#1057 correction 4).
+   * One full restart block after a tool change (#1057 slice F).
    *
-   * The per-axis repairs of corrections 1–3 restated only the axes they
-   * believed stale, which let four hazards survive: a retract to the highest
-   * *cutting* point (an arc-only operation's Z), a start plane the template
-   * parked one axis of, a movement mode the template left in arc mode, and a
-   * piercing path that skipped all of it. One rule replaces them: after any
-   * non-inert template the program behaves exactly as it does at the start of
-   * an operation.
+   * A tool-change template is the one machine text allowed to do anything:
+   * move any axis, index the bar, select incremental coordinates or
+   * inverse-time feed, call a macro. Every tracked position and modal mode is
+   * therefore stale when it returns, and the program starts over before the
+   * operation's own approach:
    *
-   * a. Rapid to the program's safe Z, always stated: the square blank's travel
-   *    height while it turns (the proven clearance for an A word), the machine
-   *    definition's own machine-coordinate Safe Z on a bar program whose
-   *    machine has that move (#1054), otherwise the operation's own rapids'
-   *    height (`plannedSafeZ`, the generators' clearance) — never a cutting
-   *    point.
-   * b. Restore any modal state the template moved (units, distance mode,
-   *    plane), then reset the tracked motion word so the block above spells
-   *    `G0` and a template that left the controller in `G2` cannot be
-   *    continued as an arc.
-   * c. Rapid in XY (and the rotary word) to the exact point the next move
-   *    starts from, every axis stated even when it is believed known.
+   * a. `G90 G94 G17` restores the distance, feed and plane modes every
+   *    coordinate below depends on, then the units word restates the frame the
+   *    numbers are in.
+   * b. One rapid to a proven safe Z, always stated: a square blank that turns
+   *    uses its travel height (#1016); a bar's manual-index program uses the
+   *    machine-coordinate Safe Z (#1054), which no work offset or tool-length
+   *    compensation can change. Any other program — including a round bar's
+   *    Around program — uses the operation's own rapid clearance
+   *    (`plannedSafeZ`, never a cutting point).
+   * c. One rapid with X, Y and — when the first move carries an angle — the
+   *    rotary word, all stated, to the exact point the operation's first move
+   *    starts from. The angle is written even when it equals the last one:
+   *    a tool-change macro may have moved it.
+   * d. When that first move is a feed or an arc (not a rapid, whose own split
+   *    states Z first), one rapid to its start plane (`startPlane`), so it
+   *    never feeds diagonally down from the restart height.
    *
-   * What follows is the operation's ordinary motion: a rapid to its target, or
-   * a descent to a feed/arc start. Arcs therefore always have a stated start,
-   * and a rapid never runs at the template's height or in its move mode.
+   * `start` is null when the operation has no motion at all: the block then
+   * still restores the modal baseline, and there is nothing to place.
+   * `placeStart: false` writes only that baseline: a manual-index program's own
+   * opening turn follows immediately and is itself the machine-coordinate
+   * retract plus a stated angle (#1054), so a second retract would be noise.
    */
-  const reenterBeforeMotion = (start: ToolpathPoint, safeZ: number): boolean => {
-    if (!reentryPending) return false
-    reentryPending = false
-    restoreTemplateModalState()
-    // `G0` must be spelled by the retract below: the template may have left the
-    // controller in arc or linear mode, and every block from here is a rapid.
+  const restartAfterToolChange = (
+    start: ToolpathPoint | null,
+    safeZ: number,
+    startPlane: number | null,
+    placeStart: boolean,
+  ): void => {
+    emitLine(`${MODAL_DISTANCE_COMMAND} ${MODAL_FEED_COMMAND} ${MODAL_PLANE_COMMAND}`)
+    state.inverseTime = false
+    state.feedRate = null
+    // Every block below is a rapid: the tool-change template may have left the
+    // controller in arc or linear mode.
     state.motionCommand = null
-    if (squareRetractZ !== null) {
+    if (unitsCommand) emitLine(unitsCommand)
+    if (start === null) return
+    // A manual-index program's own opening turn follows this block and is
+    // itself a machine-coordinate retract plus a stated angle (#1054), so it
+    // places the tool: writing the retract and the plane here as well would
+    // retract twice. Only the modal baseline above is written then.
+    if (!placeStart) return
+    if (programTurns && squareRetractZ !== null) {
+      // A square blank turns only at its proven travel height (#1016).
       emitMotionLine(definition.motion.rapidCommand, { z: squareRetractZ })
-    } else if (barTravelZ !== null && machineRapidCommand !== null) {
-      if (!emitMachineCoordinateRetract()) {
-        emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
-      }
+    } else if (barSetupProgram && barTravelZ !== null && machineRapidCommand !== null && emitMachineCoordinateRetract()) {
+      // A manual-index program of a bar retracts in machine coordinates, as its
+      // opening turn does (#1054). That leaves the work frame unknown, so the
+      // tracking below is deliberately not trusted as a work height: the next
+      // motion restates Z before it cuts, and an A word repairs a square
+      // blank's height through `retractUnknownSquareZ`.
+      state.zKnown = false
     } else {
       emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
     }
+    // Force the angle word: a tool-change macro may have moved the bar even
+    // when the next move keeps the last angle. The tracked angle is restored
+    // when the move carries none, and the program then owes a closing unwind
+    // if it had already turned.
     const plane: Partial<ToolpathPoint> = { x: start.x, y: start.y }
     if (start.a !== undefined && state.rotaryWord !== null) plane.a = start.a
+    const trackedAngle = state.rotaryAngle
+    state.rotaryAngle = null
     emitMotionLine(definition.motion.rapidCommand, plane)
-    return true
-  }
-
-  const comment = (text: string) => {
-    const suffix = definition.program.commentSuffix
-    emitLine(`${definition.program.commentPrefix} ${safeCommentText(text)}${suffix ? ` ${suffix}` : ''}`)
+    if (plane.a === undefined) {
+      state.rotaryAngle = trackedAngle
+      if (trackedAngle !== null) rotaryAngleLost = true
+    }
+    if (startPlane !== null) {
+      emitMotionLine(definition.motion.rapidCommand, { z: startPlane })
+    }
   }
 
   // One plasma operation whose torch path is written. Controller piercing
@@ -1119,69 +968,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // True once a touch-off has put Z zero on the sheet. It outlives the
   // operation: a later operation in the same program starts in that frame.
   let plasmaZeroOnSheet = false
-  /**
-   * Restate a safe Z before XY motion when the program itself commands Z.
-   *
-   * Controller-owned piercing (QtPlasmaC) is the one dialect where it does not:
-   * its load filter comments out every Z word in a loaded program, machine
-   * templates included, and raises the torch below the Z axis's maximum before
-   * the first XY move (`scripts/gcode-conformance/qtplasmac/README.md`). An XY
-   * travel therefore cannot inherit a template's Z, and a Z word written here
-   * would be stripped anyway, so nothing is written: the controller keeps the
-   * torch height and `state.zKnown` stays irrelevant to that path. Every
-   * program-owned dialect writes Z itself, so a Z a template may have moved is
-   * unknown and the safe height is restated before the travel, even when the
-   * stale tracked Z happens to equal it (#1057, Codex review item 2).
-   */
-  const restateSafeZBeforeTravel = (safeZ: number | null): void => {
-    if (plasmaTorch || safeZ === null) return
-    if (state.zKnown && state.currentPosition?.z === safeZ) return
-    emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
-  }
-  /**
-   * The plasma re-entry (#1057 correction 4, Codex review item 2).
-   *
-   * A torch path follows a template like any other motion: both piercing modes
-   * re-enter before the first cut's travel, so the torch is moved with the
-   * torch OFF to the pierce point before the pierce sequence starts. There is
-   * never an arc immediately after a template.
-   *
-   * G-code piercing states its safe height first, exactly as the per-cut
-   * sequence does. Controller-owned piercing commands no Z at all (the load
-   * filter strips it), so its re-entry is the stated XY travel alone — no Z is
-   * invented for a dialect that must not write one.
-   *
-   * Every axis is stated here even when it is believed known, and the motion
-   * word is reset so the travel spells the rapid: a template may have parked
-   * the torch anywhere or left the controller in `G2`.
-   */
-  const reenterPlasmaBeforeMotion = (point: ToolpathPoint, safeZ: number | null): void => {
-    if (!reentryPending) return
-    reentryPending = false
-    restoreTemplateModalState()
-    state.motionCommand = null
-    if (!plasmaTorch && safeZ !== null) {
-      emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
-    }
-    emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
-  }
-  /**
-   * The one template the program cannot re-enter torch-off: a `torchOnCommand`
-   * that itself moves the machine (a definition may carry a multi-line macro
-   * there). The torch is already lit, so the repair is the smallest one that
-   * keeps the cut where it belongs — state the pierce point again, every planar
-   * axis, before the first cut, so a following `G3` is never measured from
-   * wherever the macro parked the torch (Codex review item 2). The height is
-   * left to the normal pierce sequence: a G-code pierce drops to cut height
-   * from wherever it is, and the controller pierce must not be given a Z.
-   */
-  const restatePierceAfterTorchOn = (point: ToolpathPoint): void => {
-    if (!reentryPending) return
-    reentryPending = false
-    restoreTemplateModalState()
-    state.motionCommand = null
-    emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
-  }
   const emitPlasmaOperation = (
     operation: PostProcessorInput['operations'][number]['operation'],
     tool: PostProcessorInput['operations'][number]['tool'],
@@ -1212,28 +998,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       captureTrace,
     })
     warnings.push(...plan.warnings)
-    // The operation's own clearance. In controller-owned piercing this is never
-    // written (the controller keeps the torch height), but the decision goes
-    // through the same place as the program-owned path, so it is not implicit.
-    const clearanceZ = plasmaSafeZ(plan.steps)
     const travelTo = (point: ToolpathPoint) => {
-      // A template that is not inert is re-entered before the torch travels
-      // (torch off): safe Z where this dialect commands Z, then every axis
-      // stated (#1057 correction 4).
-      if (reentryPending) {
-        reenterPlasmaBeforeMotion(point, clearanceZ)
-        return
-      }
-      // Torch-off travel and the XY rapid to a pierce point: a template that
-      // moved Z cannot leave these at its height in controller-owned piercing,
-      // because the program may not command Z there at all. The shared helper
-      // states that decision and writes nothing for this dialect.
-      restateSafeZBeforeTravel(clearanceZ)
       const at = state.currentPosition
-      // A template may have parked the torch at another XY (#1057 correction
-      // 2): the stale plane is no proof the torch is at the pierce point, so
-      // an unknown X or Y is written even when it matches the tracked value.
-      if (at === null || !state.xKnown || !state.yKnown || at.x !== point.x || at.y !== point.y) {
+      if (at === null || at.x !== point.x || at.y !== point.y) {
         emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
       }
     }
@@ -1285,19 +1052,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // rapid is skipped unless this operation's safe height differs.
           if (item.kind !== 'cut') continue
           const safe = plasmaZeroOnSheet ? heights.sheetSafeZ : heights.safeZ
-          if (reentryPending) {
-            // The first cut after a template re-enters torch-off: safe Z, then
-            // the pierce point with every axis stated. The normal pierce
-            // sequence follows, so no arc is ever written straight after the
-            // template (#1057 correction 4).
-            reenterPlasmaBeforeMotion(item.pierce, safe)
-          } else {
-            // A template may have moved Z behind the emitter's back (#1057), so a
-            // stale safe-looking Z is no proof the head is clear; restate it.
-            restateSafeZBeforeTravel(safe)
-            emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
+          if (state.currentPosition?.z !== safe) {
+            emitMotionLine(definition.motion.rapidCommand, { z: safe })
           }
-          emitTemplateLine(probe, false)
+          emitMotionLine(definition.motion.rapidCommand, { x: item.pierce.x, y: item.pierce.y })
+          emitTemplateLine(probe)
           // G38.2 leaves the controller in its own motion mode: the pierce
           // rapid must spell G0 rather than continue the modal one.
           state.motionCommand = null
@@ -1306,11 +1065,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // probe feed into it: the drop below must spell its configured plunge
           // F even when that feed equals the probe feed (issue #983).
           state.feedRate = null
-          emitTemplateLine(setZero, false)
+          emitTemplateLine(setZero)
           plasmaZeroOnSheet = true
           emitMotionLine(definition.motion.rapidCommand, { z: heights.pierceHeight })
           emitTemplateLine(block.torchOnCommand)
-          restatePierceAfterTorchOn(item.pierce)
           // A dwell is not a turning move: never written inside inverse time.
           leaveInverseTime()
           emitLine(dwell)
@@ -1336,7 +1094,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         }
         travelTo(item.pierce)
         emitTemplateLine(block.torchOnCommand)
-        restatePierceAfterTorchOn(item.pierce)
         for (const move of item.moves) {
           if (move.kind === 'linear') {
             emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y })
@@ -1387,6 +1144,60 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       return
     }
 
+    // Canned cycles write the borrowed motor's letter as a linear coordinate,
+    // and a cycle's positioning is not a turning feed move (issue #393, rule
+    // 3b). They are written only on a machine that borrows no motor and for a
+    // toolpath that carries no angle anywhere; otherwise the expanded moves are
+    // used, exactly as on a machine with canned cycles off.
+    const toolpathCarriesAngle = toolpath.moves.some(
+      (move) => move.from.a !== undefined || move.to.a !== undefined,
+    )
+    const cannedCycles = operation.kind === 'drilling'
+      && toolpath.drillCycles
+      && toolpath.drillCycles.length > 0
+      && definition.cannedCycles
+      && rotaryBorrowedAxis(definition) === null
+      && !toolpathCarriesAngle
+      ? planDrillCycles(project, definition, toolpath.drillCycles, operation)
+      : null
+    const cannedBlock = definition.cannedCycles
+    const cannedCmd = cannedCycles !== null && cannedBlock !== null
+      ? cannedCommandFor(cannedBlock, cannedCycles[0].cycle.drillType)
+      : null
+    // The motion plan is made before the tool change: the restart block below
+    // states where the operation's first move starts from and the height its
+    // own rapids use. Its warnings are appended where they have always been.
+    const plan = cannedCmd !== null ? null : planOperationMotion({
+      project,
+      definition,
+      operation,
+      toolpath,
+      arcEmitOptions,
+      startPosition: emittedPosition,
+      captureTrace,
+    })
+    // The height the restart retracts to: the operation's own clearance (the
+    // height its rapids travel at), never a cutting point. A canned cycle
+    // positions at its first hole's clear plane, which is its safe height.
+    const operationSafeZ = plan !== null
+      ? plannedSafeZ(plan.steps) ?? generatorSafeZ(operation)
+      : cannedCycles![0].clear.z
+    const restartStart = plan !== null
+      ? plan.steps.length > 0
+        ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0)
+        : null
+      : cannedCycles![0].clear
+    // A feed or an arc that starts the operation states its own plane after
+    // the XY reposition; a rapid's own split writes Z first, so it needs none.
+    const firstStep = plan?.steps[0]
+    const restartStartPlane = firstStep === undefined
+      ? null
+      : firstStep.kind === 'arc'
+        ? firstStep.startPoint.z
+        : firstStep.moveKind === 'rapid'
+          ? null
+          : restartStart!.z
+
     // Tool change
     if (step.changeTool) {
       // Inverse-time mode is left before the program pauses (rule 4): a tool
@@ -1410,6 +1221,21 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
 
+    // One full restart after every emitted tool change (#1057 slice F),
+    // including the first operation's tool load: a tool-change template may
+    // have moved any axis, selected incremental coordinates or changed the
+    // feed mode, and every coordinate the operation writes depends on it. The
+    // block states Z, X, Y and the rotary word again before the operation's
+    // own approach.
+    if (step.changeTool) {
+      restartAfterToolChange(
+        restartStart,
+        operationSafeZ,
+        restartStartPlane,
+        pendingManualIndexAngle === null,
+      )
+    }
+
     // The manual-index retract and turn (#1054 slice 2b): written here, after
     // the first operation's tool change, so the first motion below it is the
     // operation's own. The retract is machine-coordinate whatever the tool
@@ -1431,64 +1257,28 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
-    let emittedCanned = false
-
-    // Canned cycles write the borrowed motor's letter as a linear coordinate,
-    // and a cycle's positioning is not a turning feed move (issue #393, rule
-    // 3b). They are written only on a machine that borrows no motor and for a
-    // toolpath that carries no angle anywhere; otherwise the expanded moves are
-    // used, exactly as on a machine with canned cycles off.
-    const toolpathCarriesAngle = toolpath.moves.some(
-      (move) => move.from.a !== undefined || move.to.a !== undefined,
-    )
-
-    if (
-      operation.kind === 'drilling'
-      && toolpath.drillCycles
-      && toolpath.drillCycles.length > 0
-      && definition.cannedCycles
-      && rotaryBorrowedAxis(definition) === null
-      && !toolpathCarriesAngle
-    ) {
+    if (cannedCycles !== null && cannedBlock !== null) {
       // A canned cycle is not a turning move and must not run in inverse-time
       // mode (rule 4).
       leaveInverseTime()
-      const cycles = planDrillCycles(project, definition, toolpath.drillCycles, operation)
-      const cannedDef = definition.cannedCycles
+      const cycles = cannedCycles
+      const cannedDef = cannedBlock
 
-      // Resolve the command word for the operation's drill type
-      const drillTypeCommandMap: Record<string, string | null> = {
-        simple: cannedDef.drillCommand,
-        dwell: cannedDef.drillWithDwellCommand,
-        peck: cannedDef.peckDrillCommand,
-        chip_breaking: cannedDef.chipBreakDrillCommand,
-      }
       const cycleDrillType = cycles[0].cycle.drillType
-      const cannedCmd = drillTypeCommandMap[cycleDrillType]
 
       if (cannedCmd) {
-        emittedCanned = true
-
         const plungeFeed = step.plungeFeed
         const feedWord = definition.feedSpeed.feedCommand
         let feedEmitted = false
 
         // Rapid to first hole XY at clearZ so the controller has a defined initial plane
         const firstMachineXY = cycles[0].clear
-        // A canned cycle's positioning is the operation's first motion after a
-        // template like any other: re-enter to the clear plane first, stating
-        // every axis (#1057 correction 4). The cycle's own clear plane is the
-        // height its generator rapid to, so it is the safe Z here.
-        reenterBeforeMotion(firstMachineXY, firstMachineXY.z)
         if (state.currentPosition) {
           const cp = state.currentPosition
-          // A template may have moved Z without leaving a tracked block
-          // (#1057); the stale Z is no proof the tool is at the clear plane, so
-          // restate it before the cycle positions in XY.
-          if (!state.zKnown || cp.z !== firstMachineXY.z) {
+          if (cp.z !== firstMachineXY.z) {
             emitMotionLine(definition.motion.rapidCommand, { z: firstMachineXY.z })
           }
-          if (!state.xKnown || !state.yKnown || cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
+          if (cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
             emitMotionLine(definition.motion.rapidCommand, { x: firstMachineXY.x, y: firstMachineXY.y })
           }
         } else {
@@ -1497,7 +1287,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
         // Retract mode (G98 / G99), once before the first canned line
         if (cannedDef.retractMode) {
-          emitTemplateLine(cannedDef.retractMode, false)
+          emitTemplateLine(cannedDef.retractMode)
         }
 
         // Emit modal canned-cycle lines
@@ -1560,7 +1350,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
             feedEmitted = true
           }
 
-          emitTemplateLine(segs.join(' '), false)
+          emitTemplateLine(segs.join(' '))
         }
 
         // Cancel canned cycle
@@ -1569,22 +1359,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         // Reset state: canned cancel breaks motion modality
         state.motionCommand = null
 
-        // The cycle lines went through the template writer, so they cleared
-        // the plane it wrote. The emitter wrote those X/Y words itself, so the
-        // plane is provable again — but only for an axis the *cancellation*
-        // does not itself move (#1057 correction 3). A cancel template such as
-        // `G80\nG0 X0 Y0` parks the spindle, and restoring both flags after it
-        // would hide the next operation's XY rapid and leave its first feed
-        // move plunging diagonally from the park. Compute the knowledge after
-        // the template, never before. Z stays unknown exactly as before.
-        const cancelLines = cannedDef.cancelCommand.split(/\r?\n/)
-        const cancelsAxis = (axis: 'X' | 'Y') => cancelLines.some(
-          (line) => templateMovesAxis(line, axis, definition.program.commentPrefix),
-        )
+        // Track position as last hole's XY at clearZ (machine coords)
         const lastMachinePos = cycles[cycles.length - 1].clear
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
-        state.xKnown = !cancelsAxis('X')
-        state.yKnown = !cancelsAxis('Y')
       } else {
         // Command not available for this drill type — fall back to expanded moves
         warnings.push({
@@ -1594,51 +1371,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
 
-    if (!emittedCanned) {
+    if (plan !== null) {
+      warnings.push(...plan.warnings)
       // Emit a single rapid (G0) with per-axis splitting. `splitRapid` decides
-      // which block carries the angle — never a block with Z (issue #393). It
-      // also decides whether the tracked Z may be trusted at all: a template
-      // may have moved Z behind the emitter's back (#1057), and then the rapid
-      // restates its own Z before any XY or rotary motion.
+      // which block carries the angle — never a block with Z (issue #393).
       const emitRapid = (pt: ToolpathPoint) => {
-        // A square blank's turning height is the proven clearance for an A
-        // word, so its repair runs before the split (#1016 C2 M1). The split
-        // would otherwise write the rapid's own target Z, which the generators
-        // keep above the corner envelope but not necessarily at travel height.
-        // Only a *tracked* position can be stale: at a program start or after a
-        // machine-coordinate retract there is no position at all, and the split
-        // itself writes Z first (which is also what keeps this repair from
-        // adding a block to an unchanged program).
-        if (state.currentPosition !== null
-          && pt.a !== undefined
-          && state.rotaryWord !== null
-          && (!state.rotaryKnown || state.rotaryAngle !== pt.a)) {
-          retractUnknownSquareZ()
-        }
-        for (const axes of splitRapid(state.currentPosition, pt, {
-          xKnown: state.xKnown,
-          yKnown: state.yKnown,
-          zKnown: state.zKnown,
-          rotaryKnown: state.rotaryKnown,
-        })) {
+        for (const axes of splitRapid(state.currentPosition, pt)) {
+          // A rapid that carries a new A word turns the blank. If a template
+          // moved Z since the last motion block, the height the split decided
+          // from is no longer trustworthy, so retract before writing the angle
+          // (the split already keeps the angle off any Z block).
+          if (axes.a !== undefined && state.rotaryWord !== null && state.rotaryAngle !== axes.a) {
+            retractUnknownSquareZ()
+          }
           emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }
-
-      // ── Motion plan (shared by every dialect) ──
-      // Machine-coordinate transform, arc fitting, the emitted-arc fallback and
-      // the feed each move is written with; this emitter only spells the result
-      // as G-code words.
-      const plan = planOperationMotion({
-        project,
-        definition,
-        operation,
-        toolpath,
-        arcEmitOptions,
-        startPosition: emittedPosition,
-        captureTrace,
-      })
-      warnings.push(...plan.warnings)
 
       // The feed word of every emitted block (issue #393, rule 4). Planned from
       // the operation's own project moves, so a turning move's path length is
@@ -1656,15 +1404,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           : effectiveFeed('cut', planned.feedScale, step.cutFeed, step.plungeFeed),
       })
 
-      // The operation's safe Z (#1057 correction 4): the height its own rapids
-      // travel at, which the generators set to their clearance. It is never a
-      // cutting point — an operation whose whole path runs low has no rapid at
-      // all, and the generator formula is used instead. A feed move that begins
-      // the operation is recovered through this height, not through the highest
-      // point the operation happens to reach.
-      const plannedRapidTopZ = plannedSafeZ(plan.steps)
-      const operationSafeZ = plannedRapidTopZ ?? generatorSafeZ(operation)
-
       plan.steps.forEach((d, index) => {
         const directive = feeds[index] ?? { mode: 'none' as const }
         if (d.kind === 'arc') {
@@ -1672,37 +1411,13 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           // turning moves out of arc runs), so it leaves inverse-time mode and
           // carries no angle word of its own.
           leaveInverseTime()
-          if (reenterBeforeMotion(d.startPoint, operationSafeZ)
-            && state.currentPosition !== null
-            && state.currentPosition.z !== d.startPoint.z) {
-            // The re-entry left the cutter at the safe height; an arc carries no
-            // Z of its own, so descend to its plane before it runs.
-            emitMotionLine(definition.motion.rapidCommand, { z: d.startPoint.z })
-          }
           const feed = directive.mode === 'normal'
             ? directive.feed
             : effectiveFeed('cut', d.feedScale, step.cutFeed, step.plungeFeed)
           emitArcLine(d, feed)
         } else if (d.moveKind === 'rapid') {
-          // A rapid's own start is where it begins: after a template it must be
-          // stated before the rapid travels, so the split below starts from a
-          // point the controller has been told.
-          reenterBeforeMotion(
-            plannedStepStart(project, definition, operation, toolpath, plan.steps, index),
-            operationSafeZ,
-          )
           emitRapid(d.point)
         } else {
-          const start = plannedStepStart(project, definition, operation, toolpath, plan.steps, index)
-          if (reenterBeforeMotion(start, operationSafeZ)
-            && state.currentPosition !== null
-            && state.currentPosition.z !== start.z) {
-            // A feed move carries no safe retract of its own: a linear block
-            // writes its end all at once. The re-entry stated the start plane
-            // and left the cutter at the safe height, so descend to the move's
-            // own start Z before feeding from it.
-            emitMotionLine(definition.motion.rapidCommand, { z: start.z })
-          }
           emitPlannedMove(d.point, directive)
         }
       })
@@ -1743,9 +1458,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // Unwind the bar once, at the end (issue #395, rule 5): a program that has
   // turned the stock and stops at a non-zero angle is returned to 0 so the
   // operator's next part starts where this one did. Not between operations,
-  // and never written when the program never turned or already ends at 0. An
-  // angle a template may have moved is unknown even when the tracked angle is
-  // 0, so that case unwinds too (#1057 correction 2). The
+  // and never written when the program never turned or already ends at 0. A
+  // tool change may have moved the bar without the program restating the
+  // angle, so a program that had turned still owes the unwind then
+  // (`rotaryAngleLost`), exactly as it does when the tracked angle is not 0.
+  // The
   // last operation may have descended at a constant angle (that is not a turn),
   // or a template may have moved Z, so the unwind first raises the cutter clear
   // of the bar — for a round bar as well as a square blank, and whatever the
@@ -1755,7 +1472,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // rapid word itself rather than relying on modal motion: a command that does
   // not move the tool must not be read as a continuation of whatever mode was
   // left behind.
-  if (state.rotaryAngle !== null && (state.rotaryAngle !== 0 || !state.rotaryKnown)) {
+  if (state.rotaryAngle !== null && (state.rotaryAngle !== 0 || rotaryAngleLost)) {
     if (!retractForBarUnwind()) {
       return {
         gcode: '',
@@ -1767,7 +1484,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
     state.motionCommand = definition.motion.rapidCommand
     state.rotaryAngle = 0
-    state.rotaryKnown = true
   }
 
   // 5. Footer

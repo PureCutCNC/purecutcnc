@@ -1343,62 +1343,6 @@ export interface PlanOperationMotionArgs {
 }
 
 /**
- * The machine-coordinate point a planned step starts from.
- *
- * A fitted arc carries its own `startPoint`; a linear step carries only its
- * end, so its start is the previous step's end, or — for the operation's first
- * step — the first toolpath move's own `from`. An emitter that must reposition
- * before a feed move reaches for this rather than the tracked position, which a
- * machine template may have invalidated (#1057 correction 3).
- */
-export function plannedStepStart(
-  project: Project,
-  definition: MachineDefinition,
-  operation: Operation,
-  toolpath: Pick<ToolpathResult, 'moves'>,
-  steps: readonly FittedMoveDescriptor[],
-  index: number,
-): ToolpathPoint {
-  const step = steps[index]
-  if (step.kind === 'arc') return step.startPoint
-  if (index > 0) {
-    const previous = steps[index - 1]
-    return previous.kind === 'arc' ? previous.endPoint : previous.point
-  }
-  const first = toolpath.moves[0]
-  const start = first
-    ? projectToMachinePoint(first.from, project.origin, definition, setupFrameForOperation(project, operation))
-    : step.point
-  // A borrowed motor's letter is the angle, never a linear coordinate (issue
-  // #393). The planned steps suppress it; the first move's raw `from` still
-  // carries it, so it must be dropped here too.
-  const borrowed = rotaryBorrowedAxis(definition)
-  return borrowed === 'x' || borrowed === 'y' ? suppressBorrowedAxis(start, borrowed) : start
-}
-
-/**
- * The highest machine-coordinate Z the operation's own *rapid* steps reach, or
- * null when it has none (#1057 correction 4).
- *
- * An emitter that must re-enter after a machine template retracts to this
- * height before any XY or rotary motion. The generators put every rapid that
- * travels in the plane at their own safe/clearance height, so the value is
- * "the operation's safeZ as the generators define it". A *cutting* point never
- * contributes: an arc is a cut and its endpoints are not read, and an
- * operation whose whole path runs at Z-5 has no rapid at all — the caller must
- * fall back to the generator's formula rather than rapid through the stock at
- * the cut height.
- */
-export function plannedSafeZ(steps: readonly FittedMoveDescriptor[]): number | null {
-  let top: number | null = null
-  for (const step of steps) {
-    if (step.kind !== 'linear' || step.moveKind !== 'rapid') continue
-    if (top === null || step.point.z > top) top = step.point.z
-  }
-  return top
-}
-
-/**
  * Turn one operation's toolpath into the machine-coordinate moves an emitter
  * writes out. Arc fitting runs when the operation asks for it and the machine
  * can interpolate arcs; otherwise every move stays linear.
@@ -1512,17 +1456,58 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 }
 
 /**
- * Which tracked axes of `current` the caller can still prove are where the
- * controller really is. Every field defaults to known; `current` being null
- * overrides them all.
+ * The machine-coordinate point a planned step starts from.
+ *
+ * A fitted arc carries its own `startPoint`; a linear step carries only its
+ * end, so its start is the previous step's end, or — for the operation's first
+ * step — the first toolpath move's own `from`. The restart block written after
+ * a tool change reads step 0 through this to state where the operation's first
+ * move begins (#1057 slice F).
  */
-export interface RapidAxisKnowledge {
-  xKnown?: boolean
-  yKnown?: boolean
-  zKnown?: boolean
-  /** False when a machine template may have turned the stock. Only read when
-   *  the target carries an angle. */
-  rotaryKnown?: boolean
+export function plannedStepStart(
+  project: Project,
+  definition: MachineDefinition,
+  operation: Operation,
+  toolpath: Pick<ToolpathResult, 'moves'>,
+  steps: readonly FittedMoveDescriptor[],
+  index: number,
+): ToolpathPoint {
+  const step = steps[index]
+  if (step.kind === 'arc') return step.startPoint
+  if (index > 0) {
+    const previous = steps[index - 1]
+    return previous.kind === 'arc' ? previous.endPoint : previous.point
+  }
+  const first = toolpath.moves[0]
+  const start = first
+    ? projectToMachinePoint(first.from, project.origin, definition, setupFrameForOperation(project, operation))
+    : step.point
+  // A borrowed motor's letter is the angle, never a linear coordinate (issue
+  // #393). The planned steps suppress it; the first move's raw `from` still
+  // carries it, so it must be dropped here too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  return borrowed === 'x' || borrowed === 'y' ? suppressBorrowedAxis(start, borrowed) : start
+}
+
+/**
+ * The highest machine-coordinate Z the operation's own *rapid* steps reach, or
+ * null when it has none (#1057 slice F).
+ *
+ * The restart block after a tool change retracts to this height before it
+ * states XY. The generators put every rapid that travels in the plane at their
+ * own safe/clearance height, so the value is "the operation's safeZ as the
+ * generators define it". A *cutting* point never contributes: an arc is a cut
+ * and its endpoints are not read, and an operation whose whole path runs at
+ * Z-5 has no rapid at all — the caller falls back to the generator's formula
+ * rather than rapid through the stock at the cut height.
+ */
+export function plannedSafeZ(steps: readonly FittedMoveDescriptor[]): number | null {
+  let top: number | null = null
+  for (const step of steps) {
+    if (step.kind !== 'linear' || step.moveKind !== 'rapid') continue
+    if (top === null || step.point.z > top) top = step.point.z
+  }
+  return top
 }
 
 /**
@@ -1538,54 +1523,28 @@ export interface RapidAxisKnowledge {
  * and the Z block after it. A rotation-only rapid — every linear coordinate
  * unchanged — emits a single block carrying only the angle, so a move that
  * turns the stock is never silently dropped (rule 1).
- *
- * `knowledge` is the caller's promise that each tracked axis is where the
- * controller really is. A machine template may have moved any axis behind the
- * emitter's back (#1057): an axis it may have moved is unknown, so the rapid
- * restates it from the target even when it equals the stale value and the
- * ordinary split would have dropped the block. The order is unchanged — Z
- * first, then XY, then the angle word — so the safe retract is never dropped
- * and the parked plane is never skipped. `current` being null is always
- * unknown.
  */
 export function splitRapid(
   current: ToolpathPoint | null,
   target: ToolpathPoint,
-  knowledge: RapidAxisKnowledge = {},
 ): Array<Partial<ToolpathPoint>> {
   const angle = target.a
-  const xTrusted = current !== null && (knowledge.xKnown ?? true)
-  const yTrusted = current !== null && (knowledge.yKnown ?? true)
-  const zTrusted = current !== null && (knowledge.zKnown ?? true)
-  const rotaryTrusted = current !== null && (knowledge.rotaryKnown ?? true)
-
   // Only a real angle change is written; a rapid that keeps the angle produces
-  // the pre-rotary blocks unchanged. An angle a template moved is unknown even
-  // when it equals the stale one, so the word is restated.
-  const turning = angle !== undefined && (!rotaryTrusted || angle !== current?.a)
+  // the pre-rotary blocks unchanged.
+  const turning = angle !== undefined && angle !== current?.a
 
-  // An unknown axis is no position at all: a template can leave the machine
-  // anywhere, so every rapid restates that axis from the target before it
-  // travels anywhere else. An axis the target does not name has no linear
-  // travel to restate: on a machine that borrows a motor its letter carries the
-  // angle instead (issue #393), so a stale flag for it must not invent an XY
-  // block that would write the letter as a coordinate.
-  const zChanges = !zTrusted || current.z !== target.z
-  const xChanges = target.x !== undefined
-    && (current === null || !xTrusted || current.x !== target.x)
-  const yChanges = target.y !== undefined
-    && (current === null || !yTrusted || current.y !== target.y)
-  const xyChanges = xChanges || yChanges
+  const zChanges = current === null || current.z !== target.z
+  const xyChanges = current === null
+    || (target.x !== undefined && current.x !== target.x)
+    || (target.y !== undefined && current.y !== target.y)
 
   const blocks: Array<Partial<ToolpathPoint>> = []
   // A rapid that does not turn keeps the split it has always had: Z first, then
   // XY. A rapid that turns may not turn the bar while Z moves, so the turn
   // happens at the higher of its two Z values (issue #393): Z rising is the
   // ordinary order with the angle on the XY block, and Z falling or unchanged
-  // turns across first and drops afterwards. An unknown Z is never "higher":
-  // retract to the target height first, then turn. The `current === null` test
-  // narrows for the comparison below and repeats what `!zTrusted` already says.
-  const zFirst = !turning || current === null || !zTrusted || target.z >= current.z
+  // turns across first and drops afterwards.
+  const zFirst = !turning || current === null || target.z >= current.z
   if (zFirst) {
     if (zChanges) blocks.push({ z: target.z })
     // The angle rides the XY block when there is one and otherwise a block of

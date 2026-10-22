@@ -243,9 +243,8 @@ function testDebugModelForSbpExport(): void {
   assert(model.diagnostic.state === 'verified', `expected verified, got ${JSON.stringify(model.diagnostic.warnings)}`)
   assert(model.metrics.emitted.arcCw + model.metrics.emitted.arcCcw === 4, `the circle is 4 exported arcs, got ${JSON.stringify(model.metrics.emitted)}`)
   assert(model.metrics.emitted.linear === 2, `plunge and exit are linear, got ${model.metrics.emitted.linear}`)
-  // C9 may have moved the machine, so the export re-enters before the first
-  // motion (#1057 correction 4): its safe-Z and start jogs are rapid motion
-  // too, one more than the operation's own entry and exit.
+  // The tool-change restart (#1057 slice F) writes the safe-Z and start-plane
+  // jogs before the operation's own entry and exit, so there are four.
   assert(model.metrics.emitted.rapid === 4, `four jogs, got ${model.metrics.emitted.rapid}`)
   assert(model.zLevels.length === 1, 'one cutting level')
   assert(model.zLevelStats[0].exportedSegs === 5, `the level shows 4 arcs and the exit, got ${model.zLevelStats[0].exportedSegs}`)

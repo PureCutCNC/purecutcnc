@@ -61,7 +61,11 @@ Bundled definitions and user-provided definitions use the same runtime contract.
 A definition may describe:
 
 - controller identity and output extensions;
-- startup and shutdown templates;
+- startup and shutdown templates, restricted by class (#1057 slice F): the
+  program header may only set up modals, the tool change and the footer may do
+  anything (the program restarts after a tool change), and every other template
+  must be inert — no motion, axis, mode or macro word. The schema refuses a
+  definition that breaks the rule, naming the template and the word;
 - units, precision, comments, and line formatting;
 - motion and drilling-cycle capabilities;
 - tool-change, spindle, and coolant behavior;
@@ -296,9 +300,12 @@ tool, which the G-code emitter restated.
   counterpart of G-code restating `M3 S…`. `C7` to stop.
 - Tool change: `&Tool=N` then `C9`, the standard ShopBot tool-change macro
   (manual or automatic). `C9` moves the machine and may set speeds, so neither
-  is assumed afterwards: the next rapid states Z before it travels and the
-  next fed move restates `MS`. The G-code path does not restate position after
-  `M6`; changing that would change existing G-code output.
+  is assumed afterwards: the part file restarts with `SA`, a `JZ` to a proven
+  safe Z and a `J2` to the point the next move starts from, and the next fed
+  move restates `MS`. The G-code path writes the equivalent block
+  (`G90 G94 G17`, the units word, `G0` to safe Z, `G0` with X, Y and the
+  rotary word) after every emitted tool change (#1057 slice F); a program
+  written with tool changes off is unchanged.
 - Drilling is written as its expanded moves: there are no canned cycles.
 - Coolant is not written, because output wiring differs per machine; asking
   for it raises the same warning as on a G-code machine without coolant.
@@ -339,8 +346,10 @@ that. Project format 3.3 exists only so such a build shows its newer-version
 warning when it opens the file; that is a warning, not a refusal. And the
 bundled ShopBot definition's unused G-code words are comment-prefixed with
 non-modal motion, so what the G-code path writes is a file of comments ending
-in `END`, never motion. The second also covers a machine JSON imported into an
-older build, which no project version can.
+in `END`, never motion — plus, since #1057 slice F, the tool-change restart's
+`G90 G94 G17` baseline, which carries no motion or axis word. The second also
+covers a machine JSON imported into an older build, which no project version
+can.
 
 ## Application library vs project snapshot
 

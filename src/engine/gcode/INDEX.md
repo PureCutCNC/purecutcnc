@@ -31,7 +31,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 ## Files
 
 - `index.ts` — public API.
-- `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
+- `types.ts` — `MachineDefinition` and its zod schema (whose `superRefine` also
+  runs `templateRuleViolations`, so a template that breaks its class is refused
+  at the boundary; see `templateRules.ts`), covering `motion.arcInterpolation`,
   `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
   for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
   `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
@@ -43,6 +45,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the program uses for rotation, which project axis a borrowed motor costs, and
   the sign a positive angle is multiplied by),
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
+- `templateRules.ts` — the template classes and their allowlists (#1057 slice
+  F): which field is a *program header*, *tool change*, *footer* or an *inert*
+  in-program template, what each may contain, and the refusal message naming the
+  field and the offending word. `types.ts` runs it in the schema's
+  `superRefine`, so machine import, the editor and project snapshots all refuse
+  a definition that breaks a class. It expands the emitter's `{placeholder}`
+  syntax before judging a line, so `{unitsCommand}` is judged by the command it
+  becomes and a controller-owned feed expression (`F#<_hal[...]>`) is still a
+  feed word.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch, plus dropping a
   plasma cut before a non-plasma machine's emitter with `postPlasmaCutSkipped`,
   #960) and the G-code emitter: templates, modal tracking, canned drill cycles,
@@ -86,40 +97,40 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the same machine-coordinate clearance retract first (#1054 fix 2). On a
   square blank a template Z move before an A word also rapids to the
   generators' travel height whenever the tracked Z is unknown, because the
-  last operation may have descended at a constant angle. A template is inert
-  only when every word on it is on an explicit allowlist (dwell, plane, units,
-  distance/feed modes, cutter compensation, work-coordinate select, spindle,
-  coolant, pause/end, a tool select with no change, and parameter words, plus a
-  numeric `$` selector such as QtPlasmaC's `M5 $0`, and a *bare* program
-  number such as `O0001 (part.nc)`: a call/subroutine keyword after the O-word
-  is still distrusted, but the program number moves nothing): an axis word, an
-  O-word followed by a keyword or macro call, a canned cycle, a home, a tool
-  change, an expression or any unknown word makes the template non-inert. A
-  template that moves the controller off the program's modal baseline — `G91`
-  (incremental), `G18`/`G19` (a non-XY arc plane), or the other unit command —
-  is non-inert too, and the re-entry restates `G90`/`G17`/the program's units
-  before any coordinate word.
-  For every project type the next motion of any kind after such a template
-  performs one full **re-entry**, exactly as the start of an operation does
-  (#1057 correction 4, replacing the per-axis repairs of corrections 1–3):
-  a rapid to the program's safe Z, always stated — the square blank's travel
-  height, the machine-coordinate Safe Z on a bar program whose machine has that
-  move (#1054), otherwise `plannedSafeZ`'s height, the clearance the operation's
-  own rapids use, never the highest point the path happens to reach (an
-  arc-only cut at Z−5 does not become its own clearance); then the modal damage
-  restored and the motion word reset so the retract spells `G0`; then a rapid
-  in XY and the rotary word to the exact point the next move starts from, every
-  axis stated even when it is believed known. The operation's ordinary approach
-  and move follow, so an arc always has a stated start and a rapid never runs at
-  the template's height or in its stale move mode. A template that is provably
-  inert leaves the program byte-identical.
-  Both plasma piercing paths re-enter on the same rule, torch off, to the
-  pierce point before the pierce sequence: G-code piercing states its safe
-  height first, controller-owned piercing (QtPlasmaC) states XY alone. A
-  `torchOnCommand` that itself moves the machine is the one template that
-  cannot re-enter torch-off, so the pierce point is restated before the cut and
-  a following arc's I/J is never measured from the macro's park. ShopBot does
-  the same with `JZ`/`J2` after `C9`.
+  last operation may have descended at a constant angle.
+  **Machine templates are restricted by class** (#1057 slice F, Frank's
+  decision 2026-10-21). `templateRules.ts` classifies every template field and
+  the schema refuses a definition that breaks its class: a *program header* may
+  only set up modals (`G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`,
+  units, work-coordinate select, a bare program number, a parameter assignment,
+  comments, non-moving M codes) with no motion or axis word; the *tool change*,
+  the *footer* and the program-end command may do anything; and every template
+  that runs inside the program (spindle, coolant, pause, operation header,
+  inverse-time, units, canned cycle, plasma torch, material/THC) is inert — no
+  motion word, axis word, mode change, O-word or macro expression. The purpose
+  templates keep exactly their own word (`G93`/`G94`, `G20`/`G21`, the torch's
+  `M3`/`M4`/`M5` with an optional `S` and `$` selector, the material/THC output
+  commands and parameters). Machine import, the editor and project-snapshot
+  loading all go through that schema, so a definition that could move from a
+  template is refused before an emitter sees it. The emitter therefore no
+  longer carries the per-axis invalidation and re-entry that slices B–E added
+  for arbitrary templates; what remains is the restart block below.
+  **After every emitted tool change** — including the first operation's tool
+  load, because a tool-change template may still do anything — the program
+  restarts in one block: `G90 G94 G17` (distance, feed and plane modes), the
+  units word, one stated rapid to a proven safe Z (the square blank's travel
+  height; the machine-coordinate Safe Z on a bar's manual-index program
+  (#1054), whose own opening turn then supplies the motion; otherwise the
+  operation's own rapid clearance, `plannedSafeZ` never a cutting point), then
+  one rapid with X, Y and — when the first move carries one — the rotary word,
+  all stated to the exact point that move starts from. A feed or an arc that
+  starts the operation gets one more rapid to its own start plane. A program
+  written with tool changes off has no tool change and no block, and is
+  byte-identical to the base (`templateByteIdentity.test.ts`). A program that
+  turned the bar and may have lost the angle to a tool-change template still
+  owes the closing unwind (`rotaryAngleLost`).
+  ShopBot's part file writes the equivalent after `C9`: `SA`, a `JZ` to the
+  safe Z, then a `J2` to the start.
   Canned drill cycles are written only on a machine that borrows no motor and
   for a toolpath with no angle anywhere (#393); otherwise the expanded moves
   are used, as on a machine with canned cycles off.
@@ -142,16 +153,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   coordinates, for a dialect with canned cycles), `plannedSafeZ` (the highest
   Z the operation's own *rapid* steps reach — the clearance the generators set
   for them, or null when the path has none, so a cutting point can never become
-  the re-entry height, #1057 correction 4), `splitRapid` (the safe-Z
-  split of a rapid, carrying a rotary angle so a rotation-only rapid is never
-  dropped — the angle rides the XY block when there is one and otherwise a
-  block of its own, never a Z block, in either direction of Z; the caller's
-  per-axis `RapidAxisKnowledge` says which tracked axes are still provable, and
-  each unknown axis is restated from the target even when it equals the stale
-  value, in the existing Z → XY → angle order; after a template the emitters now
-  re-enter rather than lean on this, #1057 correction 4; a borrowed
-  motor's letter is the angle, not a coordinate, so it never invents an XY
-  block), `planStepFeeds` / `inverseTimeFeedValue` and
+  the restart block's height, #1057 slice F), `plannedStepStart` (the point a
+  planned step starts from — an arc's own start, the previous step's end, or the
+  first toolpath move's `from` — which the restart block states), `splitRapid`
+  (the safe-Z split of a rapid, carrying a rotary angle so a rotation-only
+  rapid is never dropped — the angle rides the XY block when there is one and
+  otherwise a block of its own, never a Z block, in either direction of Z; a
+  borrowed motor's letter is the angle, not a coordinate, so it never invents
+  an XY block), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, where `length` is the true length of the path the tip draws in
@@ -299,12 +308,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while QtPlasmaC
   writes the same program whatever the drop feed.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `templateZRetract.test.ts`
-  (the full re-entry after a non-inert template, in both dialects, #1057
-  correction 4: a table over every start kind — rapid, linear feed, arc, canned
-  drill, both plasma pierce modes, rotary — and GRBL, LinuxCNC, Mach
-  N-numbers and ShopBot, asserting the safe Z, the restated `G0`, the stated
-  start plane and the approach, plus the review's four repros and the one-rule
-  mutations), `motionPipeline.test.ts`
+  (the restart block after a tool change, #1057 slice F: the exact block per
+  bundled dialect — GRBL, LinuxCNC, Mach N-numbers, generic and ShopBot — a
+  tool-change template ending at `G0 Z-2` and one switching to `G91`, two-tool
+  programs, a feed-first start plane, a rotary angle and the tool-changes-off
+  control, plus the mutations that must fail), `templateRestrictions.test.ts`
+  (every restricted template field refuses a motion/axis/mode/macro word with a
+  message naming field and word; the header's own class; tool change and footer
+  accept anything; every bundled definition validates; machine import reports
+  the refusal), `templateByteIdentity.test.ts` (a tool-change-free program per
+  bundled definition is byte-identical to `origin/integration/0.6.0`),
+  `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
