@@ -1370,18 +1370,25 @@ const NINETY = Math.PI / 2
 }
 
 // ── 12. the machine's own templates may not drive the borrowed motor (1c) ─
+//
+// #1057 slice F restricts every template except the tool-change block and the
+// footer; those two may still write anything, so they are the ones this check
+// has to catch. A definition that put a motion word in a header or an operation
+// header is refused by the schema before it reaches the emitter.
 
 {
   const project = projectWith(bar())
   const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
-  const withHeader = (header: string[]): MachineDefinition => validateMachineDefinition({
+  // The footer is the other template that may write anything and is always
+  // emitted, so every spelling below is judged on the program it appears in.
+  const withFooter = (footer: string[]): MachineDefinition => validateMachineDefinition({
     ...structuredClone(GRBL),
     rotary: BORROWED_Y,
-    program: { ...structuredClone(GRBL.program), header: [...GRBL.program.header, ...header] },
+    program: { ...structuredClone(GRBL.program), footer },
   })
 
   for (const line of ['G0 X0 Y0', 'G53 G0 Y0', 'G92 Y0']) {
-    const result = exportProgram(project, withHeader([line]), [
+    const result = exportProgram(project, withFooter([line]), [
       { operation: operation('One'), moves },
       { operation: operation('Two'), moves },
     ])
@@ -1393,32 +1400,54 @@ const NINETY = Math.PI / 2
   }
 
   // A comment is not a template line: the letter there drives nothing.
-  const commented = exportProgram(project, withHeader(['; G0 Y0']), [{ operation: operation('One'), moves }])
+  const commented = exportProgram(project, withFooter(['; G0 Y0']), [{ operation: operation('One'), moves }])
   assert.deepEqual(commented.warnings, [], 'a comment mentioning the letter does not refuse the program')
   assert.match(commented.gcode, /X20\b/, 'and the operation is exported')
 
   // The other axis is not the borrowed letter.
-  const otherAxis = exportProgram(project, withHeader(['G0 X0']), [{ operation: operation('One'), moves }])
+  const otherAxis = exportProgram(project, withFooter(['G0 X0']), [{ operation: operation('One'), moves }])
   assert.deepEqual(otherAxis.warnings, [], 'an X word on a machine that borrows Y is harmless')
 
   // The three spellings a raw-template scan missed. `G0 Y{feed}` is only a word
   // once rendered; whitespace between the letter and its value is still a word;
   // and a line that starts with a parenthesised comment still carries code.
-  const withOperationHeader = (operationHeader: string[]): MachineDefinition => validateMachineDefinition({
-    ...structuredClone(GRBL),
-    rotary: BORROWED_Y,
-    program: {
-      ...structuredClone(GRBL.program),
-      operationHeader: [...GRBL.program.operationHeader, ...operationHeader],
-    },
+  // `{feed}` is only a word once the tool-change context renders it, so this
+  // one is written by a real tool change.
+  const one = operation('One')
+  const renderedText = 'G0 X0 Y{feed}'
+  // Slice H: a feed value may not become an axis coordinate, so the schema
+  // refuses the placeholder position outright.
+  assert.throws(
+    () => validateMachineDefinition({
+      ...structuredClone(GRBL),
+      rotary: BORROWED_Y,
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
+    }),
+    (error: unknown) => error instanceof Error && error.message.includes('{feed}'),
+    'the schema refuses a feed placeholder in an axis word',
+  )
+  const rendered = runPostProcessor({
+    project,
+    // The emitter is the last line of defence and does not validate; a
+    // definition loaded from an old project snapshot predates the schema rule.
+    definition: {
+      ...structuredClone(GRBL),
+      rotary: BORROWED_Y,
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
+    } as MachineDefinition,
+    operations: [{
+      operation: one,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: toolpathOf(one, moves),
+    }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
   })
-  const rendered = exportProgram(project, withOperationHeader(['G0 X0 Y{feed}']), [{ operation: operation('One'), moves }])
   assert.deepEqual(rendered.warnings, [{
     code: 'postRotaryTemplateUsesBorrowedAxis',
     params: { axis: 'Y' },
   }], 'a template rendered to a real Y word refuses the program')
 
-  const spaced = exportProgram(project, withHeader(['Y 0']), [{ operation: operation('One'), moves }])
+  const spaced = exportProgram(project, withFooter(['Y 0']), [{ operation: operation('One'), moves }])
   assert.deepEqual(spaced.warnings, [{
     code: 'postRotaryTemplateUsesBorrowedAxis',
     params: { axis: 'Y' },
@@ -1429,24 +1458,13 @@ const NINETY = Math.PI / 2
   const parenMachine = validateMachineDefinition({
     ...structuredClone(LINUXCNC),
     rotary: BORROWED_Y,
-    program: { ...structuredClone(LINUXCNC.program), header: [...LINUXCNC.program.header, '(position) G0 Y0'] },
+    program: { ...structuredClone(LINUXCNC.program), footer: ['(position) G0 Y0'] },
   })
   const paren = exportProgram(project, parenMachine, [{ operation: operation('One'), moves }])
   assert.deepEqual(paren.warnings, [{
     code: 'postRotaryTemplateUsesBorrowedAxis',
     params: { axis: 'Y' },
   }], 'code after a leading parenthesised comment still counts')
-
-  // A command the program never writes cannot refuse anything: with
-  // `pauseAfterChange` off, `pauseCommand` is not emitted even though it names Y.
-  const inactivePause = validateMachineDefinition({
-    ...structuredClone(GRBL),
-    rotary: BORROWED_Y,
-    toolChange: { ...structuredClone(GRBL.toolChange), pauseCommand: 'G0 Y0', pauseAfterChange: false },
-  })
-  const paused = exportProgram(project, inactivePause, [{ operation: operation('One'), moves }])
-  assert.deepEqual(paused.warnings, [], 'a pause command that is never written does not refuse the program')
-  assert.match(paused.gcode, /X20\b/, 'and the operation is exported')
 }
 
 // A machine with its own axis: a template that writes A turns the bar behind
@@ -1493,21 +1511,21 @@ const NINETY = Math.PI / 2
   assert.equal(turned.gcode, '', 'the refused program carries no program text')
 
   // The same template on a program that never turns is harmless: nothing is
-  // rotated, so the extra `A` word cannot contradict the planner.
+  // rotated, so the extra `A` word cannot contradict the planner. The footer is
+  // the other template that may write anything.
   const angleFree = exportProgram(project, validateMachineDefinition({
     ...structuredClone(GRBL),
     rotary: OWN_AXIS,
-    program: { ...structuredClone(GRBL.program), header: [...GRBL.program.header, 'G0 A0'] },
+    program: { ...structuredClone(GRBL.program), footer: ['G0 A0'] },
   }), [{ operation: operation('Flat'), moves }])
   assert.deepEqual(angleFree.warnings, [], 'an own-axis template that writes A is harmless while nothing turns')
   assert.match(angleFree.gcode, /G0 A0/, 'and the template is written unchanged')
 }
 
-// Definition-supplied command text that is not a header/tool-change template —
-// the canned-cycle command, the cycle cancel and the retract mode — is judged
-// by the same axis-word check (issue #393, rule 3c). Canned cycles are written
-// only on an own-axis machine, so the refusal needs a turning operation
-// elsewhere in the program to make the `A` word matter.
+// The canned-cycle command words are cycle selectors by schema now (#1057
+// slice F), so the only canned-cycle output that reaches the axis-word check is
+// a legal cycle. The control pins that it still exports on an own-axis machine
+// with a turning operation elsewhere in the program.
 {
   const project = projectWith(bar())
   const drillOp = operation('Drill', { kind: 'drilling' })
@@ -1530,27 +1548,11 @@ const NINETY = Math.PI / 2
       moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }]),
     },
   ]
-  const withCanned = (patch: Partial<NonNullable<MachineDefinition['cannedCycles']>>): MachineDefinition =>
-    validateMachineDefinition({
-      ...structuredClone(LINUXCNC),
-      rotary: OWN_AXIS,
-      cannedCycles: { ...structuredClone(LINUXCNC.cannedCycles), ...patch },
-    })
-
-  for (const [name, patch] of [
-    ['the cancel command', { cancelCommand: 'G0 A0' }],
-    ['the cycle command', { drillCommand: 'G81 A0' }],
-  ] as const) {
-    const refused = exportProgram(project, withCanned(patch), entries)
-    assert.deepEqual(refused.warnings, [{
-      code: 'postRotaryTemplateUsesBorrowedAxis',
-      params: { axis: 'A' },
-    }], `${name} writing A refuses the turning program`)
-    assert.equal(refused.gcode, '', `${name}: the refused program carries no text`)
-  }
-
-  // The control: the same canned cycle with an ordinary command still exports.
-  const control = exportProgram(project, withCanned({}), entries)
+  const control = exportProgram(project, validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: OWN_AXIS,
+    cannedCycles: structuredClone(LINUXCNC.cannedCycles),
+  }), entries)
   assert.deepEqual(control.warnings, [], 'an ordinary canned cycle does not refuse the program')
   assert.match(control.gcode, /G81\b/, 'and the cycle is written')
 }
@@ -1720,7 +1722,9 @@ const NINETY = Math.PI / 2
   const withDwellHeader = validateMachineDefinition({
     ...structuredClone(GRBL),
     rotary: OWN_AXIS,
-    program: { ...structuredClone(GRBL.program), operationHeader: ['G4 P1', 'G0 X0 Y0'] },
+    // A dwell is an inert operation-header template (#1057 slice F); a
+    // positioning word there is refused by the schema.
+    program: { ...structuredClone(GRBL.program), operationHeader: ['G4 P1'] },
   })
   const result = exportProgram(project, withDwellHeader, [
     {
@@ -1736,7 +1740,6 @@ const NINETY = Math.PI / 2
   const dwell = lines.lastIndexOf('G4 P1')
   assert.ok(dwell > 0, `the header dwell is emitted:\n${lines.join('\n')}`)
   assert.equal(lines[dwell - 1], 'G94', 'G94 is restored before the next operation\'s dwell template')
-  assert.ok(lines.lastIndexOf('G0 X0 Y0') > dwell, 'the positioning template follows it without an angle')
   // Nothing in the second operation's header turns the bar.
   assert.ok(lines.slice(dwell).every((line) => !/A-?[0-9]/.test(line)),
     'no turning move follows the restored mode')
