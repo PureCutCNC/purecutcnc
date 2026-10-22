@@ -73,6 +73,10 @@ export function GenerationSettingsMenu({
   const failed = status.executorFailure !== null
     || [...status.operations.values()].some((value) => value === 'failed')
   const paused = status.automaticPaused
+  // A worker that could not start is not a failure the user has to clear: this
+  // session moved to the main thread and the work still runs. It is reported
+  // separately so it cannot be mistaken for either state (issue #1087).
+  const fallback = status.executorFallback
 
   // Portalled and clamped: the CAM panel scrolls and has its own stacking
   // context, so an in-flow menu would be clipped by the panel it hangs off.
@@ -109,15 +113,20 @@ export function GenerationSettingsMenu({
       : busy
         ? t('appShell.generation.working', { count: status.queuedCount + (status.activeOperationId ? 1 : 0) })
         : t('appShell.generation.ready')
+  // A fallback is appended, not substituted: generation keeps working, so the
+  // gear must still be able to say it is up to date while naming where it ran.
+  const statusNotice = fallback
+    ? `${statusLabel} — ${t('appShell.generation.workerFallback')}`
+    : statusLabel
 
   return (
     <>
       <button
         ref={triggerRef}
-        className={`tree-action-btn cam-generation-gear${paused || failed ? ' cam-generation-gear--flagged' : ''}`}
+        className={`tree-action-btn cam-generation-gear${paused || failed || fallback ? ' cam-generation-gear--flagged' : ''}`}
         type="button"
-        title={`${t('appShell.generation.backend')} — ${statusLabel}`}
-        aria-label={`${t('appShell.generation.menuAria')} — ${statusLabel}`}
+        title={`${t('appShell.generation.backend')} — ${statusNotice}`}
+        aria-label={`${t('appShell.generation.menuAria')} — ${statusNotice}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -145,7 +154,7 @@ export function GenerationSettingsMenu({
             the thing the gear alone cannot spell out.
           */}
           <div className="cam-generation-menu__status" role="status" aria-live="polite">
-            {statusLabel}
+            {statusNotice}
             {/*
               A failure with no stated reason leaves the user with nothing to
               act on — and no way to tell "this operation's geometry is bad"
@@ -154,6 +163,13 @@ export function GenerationSettingsMenu({
             {status.executorFailure && (
               <span className="cam-generation-menu__failure">
                 {status.executorFailure.message}
+              </span>
+            )}
+            {/* The fallback keeps the operation running, so it is a notice with
+                its reason rather than a failure to clear (issue #1087). */}
+            {fallback && (
+              <span className="cam-generation-menu__fallback">
+                {fallback.message}
               </span>
             )}
           </div>

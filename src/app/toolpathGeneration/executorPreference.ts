@@ -25,10 +25,12 @@
  * carrying something that must not matter. It would also travel: a file saved
  * on a machine where the worker is fine would arrive on one where it is not.
  *
- * The default is `inline`, and stays `inline` until a maintainer's explicit
- * go/no-go on the evidence (slice 5). Shipping the worker as an opt-in that a
- * user chooses is a different risk from shipping it as the path everyone lands
- * on unknowingly.
+ * The default is `worker` since 0.6.0 (issue #1087). A fresh profile gets the
+ * background thread — long generations no longer hold the main thread and Stop
+ * really interrupts them — while an explicit stored choice is kept as it was.
+ * A runtime that cannot start a worker falls back to `inline`: first by the
+ * availability check below, and, if the worker fails while starting, by the
+ * service switching this session to the main thread and reporting it.
  */
 
 import type { ExecutorKind } from './types'
@@ -38,10 +40,11 @@ export const EXECUTOR_PREFERENCE_STORAGE_KEY = 'purecut.generation.executor'
 /**
  * The shipped default.
  *
- * `inline` is what the application did before this work, so a user who never
- * touches the setting gets the behaviour that has been in use all along.
+ * `worker` is what a user who never opens the setting gets. `inline` remains a
+ * deliberate per-machine choice, and the runtime fallback for an environment
+ * where a worker cannot start.
  */
-export const DEFAULT_EXECUTOR_KIND: ExecutorKind = 'inline'
+export const DEFAULT_EXECUTOR_KIND: ExecutorKind = 'worker'
 
 /**
  * Read a stored value, falling back to the default for anything unrecognised.

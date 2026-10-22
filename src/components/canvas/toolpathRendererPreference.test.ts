@@ -15,13 +15,20 @@
  */
 
 import assert from 'node:assert/strict'
-import { TOOLPATH_RENDERER_CODEC, toolpathRendererOverride } from './toolpathRendererPreference'
+import { DEFAULT_TOOLPATH_RENDERER, TOOLPATH_RENDERER_CODEC, toolpathRendererOverride }
+  from './toolpathRendererPreference'
+
+// The shipped default moved to GPU in 0.6.0 (issue #1087).
+assert.equal(DEFAULT_TOOLPATH_RENDERER, 'gpu', 'a fresh profile must get the GPU layer')
 
 for (const choice of ['canvas', 'gpu'] as const) {
   assert.equal(TOOLPATH_RENDERER_CODEC.deserialize(TOOLPATH_RENDERER_CODEC.serialize(choice)), choice)
   assert.equal(toolpathRendererOverride('?toolpathRenderer=' + choice, true), choice)
   assert.equal(toolpathRendererOverride('?toolpathRenderer=' + choice, false), null)
 }
+// A stored Canvas choice is kept, not rewritten to the new default.
+assert.equal(TOOLPATH_RENDERER_CODEC.deserialize('canvas'), 'canvas')
+assert.equal(TOOLPATH_RENDERER_CODEC.deserialize('gpu'), 'gpu')
 for (const invalid of ['', 'auto', 'webgl', 'GPU', '"gpu"', 'null']) {
   assert.throws(() => TOOLPATH_RENDERER_CODEC.deserialize(invalid))
   assert.equal(toolpathRendererOverride('?toolpathRenderer=' + invalid, true), null)

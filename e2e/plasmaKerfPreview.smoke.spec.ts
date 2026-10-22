@@ -34,6 +34,13 @@ import {
   seedProject,
 } from './helpers'
 
+import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
+
+// The GPU layer is the shipped default (issue #1087). These tests read toolpath
+// pixels from the base Canvas, so they pin the stored Canvas choice instead of
+// reading an overlay canvas they were never written against.
+test.use({ preferences: { [TOOLPATH_RENDERER_STORAGE_KEY]: 'canvas' } })
+
 const PLASMA_OP = 'Plasma through-cut'
 const TORCH_DIAMETER_MM = 3
 const STOCK_WIDTH_MM = 80

@@ -19,8 +19,8 @@ import { useLocalStorageState } from '../../hooks/useLocalStorageState'
 import { useToolpathGpuSuggestion } from './useToolpathGpuSuggestion'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { GpuToolpathRenderer } from './gpuToolpathRenderer'
-import { TOOLPATH_RENDERER_CODEC, TOOLPATH_RENDERER_STORAGE_KEY, toolpathRendererOverride,
-  type ToolpathRendererChoice, type ToolpathRendererStatus } from './toolpathRendererPreference'
+import { DEFAULT_TOOLPATH_RENDERER, TOOLPATH_RENDERER_CODEC, TOOLPATH_RENDERER_STORAGE_KEY,
+  toolpathRendererOverride, type ToolpathRendererChoice, type ToolpathRendererStatus } from './toolpathRendererPreference'
 
 export interface SketchToolpathSurface {
   gpu: GpuToolpathRenderer
@@ -34,7 +34,7 @@ export function useSketchToolpathRenderer(canvasRef: RefObject<HTMLCanvasElement
   invalidate: () => void, toolpaths: readonly ToolpathResult[]) {
   const override = toolpathRendererOverride(typeof location === 'undefined' ? '' : location.search, import.meta.env.DEV)
   const [choice, setChoice] = useLocalStorageState<ToolpathRendererChoice>(
-    TOOLPATH_RENDERER_STORAGE_KEY, override ?? 'canvas',
+    TOOLPATH_RENDERER_STORAGE_KEY, override ?? DEFAULT_TOOLPATH_RENDERER,
     { codec: TOOLPATH_RENDERER_CODEC, enabled: override === null },
   )
   const [attempt, setAttempt] = useState(0)

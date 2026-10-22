@@ -29,6 +29,7 @@ import { viewLinearMap, type ViewTransform } from './viewTransform'
 import { maskVertexShader, maskFragmentShader, compositeVertexShader, compositeFragmentShader } from './gpuToolpathShaders'
 import { GpuToolpathAnnotations } from './gpuToolpathAnnotations'
 import { movesAtToolpathLevel } from '../toolpathLevels'
+import { acquireToolpathWebgl } from './toolpathWebglSupport'
 
 interface LayerBatch { scene: Scene; geometries: InstancedBufferGeometry[] }
 interface PreparedLayers {
@@ -82,7 +83,9 @@ export class GpuToolpathRenderer {
 
   constructor(canvas: HTMLCanvasElement, invalidate: () => void) {
     this.canvas = canvas
-    const context = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true })
+    // A software-only context is slower than Canvas, so ask for a real GPU and
+    // take the existing fallback path when the browser refuses (issue #1087).
+    const context = acquireToolpathWebgl(canvas, import.meta.env.DEV)
     if (!context) throw new Error('WebGL2 is unavailable; retaining Canvas toolpaths')
     try {
       this.renderer = new WebGLRenderer({ canvas, context })

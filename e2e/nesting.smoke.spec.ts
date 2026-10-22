@@ -183,11 +183,11 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
   // improve, so the search may stall on its own before Stop lands.
   const keepImproving = panel.getByRole('button', { name: 'Keep improving', exact: true })
   await keepImproving.click()
-  await expect(panel.getByRole('status').filter({ hasText: /layouts tried/ })).toBeVisible()
+  await expect(panel.getByRole('status').filter({ hasText: /layouts? tried/ })).toBeVisible()
   await expect(titleButtons).toHaveCount(1)
   await panel.getByRole('button', { name: 'Stop', exact: true }).click({ timeout: 2_000 }).catch(() => undefined)
   await expect(keepImproving).toBeVisible({ timeout: 30_000 })
-  await expect(panel.getByRole('status').filter({ hasText: /layouts tried/ })).toHaveText(/Searched for \d+:\d\d\.$/)
+  await expect(panel.getByRole('status').filter({ hasText: /layouts? tried/ })).toHaveText(/Searched for \d+:\d\d\.$/)
   await expect(panel.locator('.inline-spinner')).toHaveCount(0)
   await expect.poll(() => getFeatureCount(page)).toBe(12)
   await panel.getByRole('button', { name: 'Discard nest', exact: true }).click()

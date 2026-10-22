@@ -15,15 +15,87 @@
  */
 
 import { test, expect } from './fixtures'
+import { allowSoftwareToolpathWebgl } from './helpers'
 import { installSlowCanvasClock, panForGpuSuggestion, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
+import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
+import type { Page } from '@playwright/test'
+
+/** GPU preparations, as published by the dev-only stats attribute. */
+async function gpuPreparations(page: Page): Promise<number> {
+  const value = await page.locator('canvas.sketch-toolpath-gpu').getAttribute('data-poc-stats')
+  return value ? (JSON.parse(value) as { preparations: number }).preparations : 0
+}
+
+/**
+ * Wait until preview generation has finished and its result has reached the
+ * renderer.
+ *
+ * The gear's "up to date" comes from the queue, so it is also true in the
+ * moment before the first demand is stated. `prepared` additionally waits for
+ * the GPU to have prepared a toolpath, which only happens once a result has
+ * arrived; the two animation frames then let the scheduled paint run before a
+ * test reads a counter that generation would otherwise change underneath it.
+ */
+async function waitForGenerationSettled(
+  page: Page,
+  ui: typeof import('./selectors'),
+  prepared = false,
+): Promise<void> {
+  if (prepared) await expect.poll(() => gpuPreparations(page), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0, { timeout: 30_000 })
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
+
+/**
+ * The GPU layer is the shipped default (issue #1087), and this file is the
+ * deliberate Canvas lane: it starts from a stored Canvas choice so the opt-in
+ * toggle, the suggestion, and the Canvas-only instrumentation below keep
+ * testing the fallback rather than accidentally toggling the default off. The
+ * fresh-profile default is covered in its own describe, and the rest of the
+ * suite runs on the default.
+ */
+test.use({ preferences: { [TOOLPATH_RENDERER_STORAGE_KEY]: 'canvas' } })
+
+test.describe('shipped renderer default', () => {
+  test.use({ preferences: {} })
+
+  test('a fresh profile uses the GPU layer and a stored Canvas choice survives', async ({ app }) => {
+    const page = app.page
+    // This test asserts the GPU path itself, so on CI's SwiftShader it asks the
+    // dev-only seam for plain WebGL2 before the app boots (issue #1087).
+    await allowSoftwareToolpathWebgl(page)
+    await page.goto('/')
+    const base = page.locator('canvas.sketch-canvas')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+    expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+
+    // An explicit Canvas choice is a user preference, not an override of the
+    // default, so it is kept as it was — including across a reload.
+    await page.getByRole('button', { name: 'GPU', exact: true }).click()
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('canvas')
+    await page.reload()
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
+  })
+})
 
 for (const action of ['enable', 'dismiss'] as const) {
   test.describe(`GPU suggestion ${action}`, () => {
     test.use({ hasTouch: action === 'enable', viewport: { width: 1024, height: 768 } })
     test('offers an explicit choice after slow navigation and remembers it', async ({ app }, testInfo) => {
       const page = app.page
+      await allowSoftwareToolpathWebgl(page)
       await seedToolpathVisProject(page)
       await installSlowCanvasClock(page)
       const snapshot = () => page.evaluate(async () => {
@@ -67,6 +139,7 @@ for (const action of ['enable', 'dismiss'] as const) {
 
 test('GPU suggestion resets with new toolpaths and respects manual Canvas selection', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await installSlowCanvasClock(page)
   const suggestion = page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
@@ -87,6 +160,7 @@ test('GPU suggestion resets with new toolpaths and respects manual Canvas select
 
 
 test('GPU renderer coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
   const result = await app.page.evaluate(async () => {
     const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
@@ -177,12 +251,17 @@ test('GPU renderer coverage union, shared styles, transform and retained buffers
 
 test('GPU renderer opts in, retains buffers through navigation and falls back on context loss', async ({ app, ui }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   const base = page.locator('canvas.sketch-canvas')
   const gpu = page.locator('canvas.sketch-toolpath-gpu')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await ui.operations.rowByName(page, 'Route A').click()
+  // Generation now runs in the worker, so its result can land while a test is
+  // reading the GPU counters. Settle first: an extra preparation during the pan
+  // is not a re-preparation of retained buffers, it is the first one.
+  await waitForGenerationSettled(page, ui, true)
   const preparations = () => gpu.getAttribute('data-poc-stats').then(value => JSON.parse(value!).preparations as number)
   const before = await preparations()
   const box = (await base.boundingBox())!
@@ -215,6 +294,7 @@ test('GPU renderer opts in, retains buffers through navigation and falls back on
 // GPU renderer draws the Bottom view itself; the Top overlay must still go.
 test('GPU renderer draws a Bottom view and clears its Top overlay', async ({ app, ui }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   const base = page.locator('canvas.sketch-canvas')
@@ -272,9 +352,35 @@ test('GPU renderer initialization failure leaves Canvas toolpaths available', as
 
 
 
-test('renderer preference persists without changing project, history or booklet pixels', async ({ app }) => {
+test('software-only WebGL2 draws toolpaths on Canvas and says why', async ({ app }) => {
   const page = app.page
+  // CI's headless Chromium renders WebGL2 on SwiftShader, where the strict
+  // request is refused. A developer machine has a real GPU, so the premise is
+  // absent there and the test would silently assert the GPU lane instead.
+  const softwareOnly = await page.evaluate(() =>
+    document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true }) === null)
+  test.skip(!softwareOnly, 'hardware WebGL2 is available; the software-only premise cannot be reproduced here')
+
+  // No dev switch: this is the path a user without a GPU actually gets.
+  await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
+  const base = page.locator('canvas.sketch-canvas')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
+  // The legend/status says Canvas, with the same notice as a missing WebGL2.
+  const notice = page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })
+  await expect(notice).toBeVisible()
+  await expect(notice.getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
+})
+
+
+test('renderer preference persists without changing project, history or booklet pixels', async ({ app, ui }) => {
+  const page = app.page
+  await allowSoftwareToolpathWebgl(page)
+  await seedToolpathVisProject(page)
+  // Counted later through `generatedResultCount`; let the worker finish so a
+  // late result cannot add a second entry to that set.
+  await waitForGenerationSettled(page, ui)
   const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
   await expect(selector).toHaveAttribute('aria-pressed', 'false')
@@ -341,6 +447,9 @@ test('renderer preference persists without changing project, history or booklet 
 
 test('GPU startup failure has a persistent preference, visible fallback and working retry', async ({ app }) => {
   const page = app.page
+  // The retry must be able to succeed after the simulated failure, which needs
+  // the dev-only plain request on CI's SwiftShader (issue #1087).
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(() => {
     const original = HTMLCanvasElement.prototype.getContext
@@ -367,6 +476,7 @@ test('GPU startup failure has a persistent preference, visible fallback and work
 
 test('switching away cancels a pending lazy GPU load', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   let release: () => void = () => {}
   const pending = new Promise<void>(resolve => { release = resolve })
@@ -392,6 +502,7 @@ for (const hasTouch of [false, true]) {
     test.use({ hasTouch, viewport: { width: 1024, height: 768 } })
     test('pending startup keeps the panel and toggle positions stable', async ({ app }, testInfo) => {
       const page = app.page
+      await allowSoftwareToolpathWebgl(page)
       await seedToolpathVisProject(page)
       let release: () => void = () => {}
       const pending = new Promise<void>(resolve => { release = resolve })
@@ -425,6 +536,7 @@ for (const hasTouch of [false, true]) {
 
 
 test('GPU annotation painter order matches Canvas across selection, resize and navigation', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
   const results = await app.page.evaluate(async () => {
     const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const previewUrl = '/src/components/canvas/previewPrimitives.ts'
@@ -507,6 +619,7 @@ test('GPU annotation painter order matches Canvas across selection, resize and n
 
 
 test('production renderer suggestion works through normal project Open and persists', async ({ page }, testInfo) => {
+  await allowSoftwareToolpathWebgl(page)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -540,6 +653,7 @@ test('production renderer suggestion works through normal project Open and persi
 
 test('render failure falls back until explicit retry, without leaving stale overlays', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(async () => {
     const url = '/src/components/canvas/gpuToolpathRenderer.ts'
@@ -565,6 +679,7 @@ test('render failure falls back until explicit retry, without leaving stale over
 
 test('hidden sketch submits no GPU work and releases hidden/replaced results', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(async () => {
     const url = '/src/components/canvas/gpuToolpathRenderer.ts'
@@ -596,8 +711,9 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
 
 test.describe('GPU tablet emulation', () => {
   test.use({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } })
-  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
+  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app, ui }, testInfo) => {
     const page = app.page
+    await allowSoftwareToolpathWebgl(page)
     await seedToolpathVisProject(page)
     const selector = page.getByRole('button', { name: 'GPU', exact: true })
     await expect(selector).toBeVisible()
@@ -612,6 +728,9 @@ test.describe('GPU tablet emulation', () => {
     const box = (await base.boundingBox())!
     const x = box.x + box.width / 2, y = box.y + box.height / 2
     const stats = async () => JSON.parse((await gpu.getAttribute('data-poc-stats'))!) as { submissions: number; preparations: number }
+    // A worker result landing during the pinch would be prepared then, after
+    // `before` was read, and look like the pinch re-prepared retained buffers.
+    await waitForGenerationSettled(page, ui, true)
     const before = await stats()
     const touch = await page.context().newCDPSession(page)
     try {
@@ -637,6 +756,7 @@ test.describe('GPU tablet emulation', () => {
 test.describe('Toolpath visibility panel smoke', () => {
   test('GPU is the first inline toggle and supports keyboard switching', async ({ app, ui }, testInfo) => {
     const page = app.page
+    await allowSoftwareToolpathWebgl(page)
     await seedToolpathVisProject(page)
     const panel = ui.toolpathVis.sketchPanel(page)
     const items = ui.toolpathVis.sketchItems(page)
@@ -854,6 +974,9 @@ test.describe('Toolpath visibility panel smoke', () => {
     await seedToolpathVisProject(page)
     await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible({ timeout: 15000 })
     await page.getByText('Route A', { exact: true }).click()
+    // This test counts canvas draws; a worker result arriving mid-gesture would
+    // add one of its own. Settle before installing the counters.
+    await waitForGenerationSettled(page, ui)
     // Observe actual Canvas arrow fills, not a test-only production flag.
     await page.evaluate(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')

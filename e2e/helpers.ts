@@ -25,6 +25,28 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect } from './fixtures'
 import { contextMenu as ctxSel, tree as treeSel } from './selectors'
+import { ALLOW_SOFTWARE_WEBGL_FLAG } from '../src/components/canvas/toolpathWebglSupport'
+
+// ── Dev-only GPU test seam ──────────────────────────────────────────
+
+/**
+ * Allow the toolpath renderer to accept a software WebGL2 context (issue
+ * #1087). CI's headless Chromium renders WebGL2 on SwiftShader, so GPU specs
+ * would otherwise take the Canvas fallback and assert nothing about the GPU.
+ *
+ * The app honours this flag only when `import.meta.env.DEV` is true — it is
+ * inert in production builds, which is why these specs run against the dev
+ * server. Fallback specs deliberately leave it unset. It is applied to the
+ * current page as well as to later navigations, because tests also construct
+ * `GpuToolpathRenderer` directly through `page.evaluate`.
+ */
+export async function allowSoftwareToolpathWebgl(page: Page): Promise<void> {
+  const enable = (flag: string) => {
+    ;(window as unknown as Record<string, unknown>)[flag] = true
+  }
+  await page.addInitScript(enable, ALLOW_SOFTWARE_WEBGL_FLAG)
+  await page.evaluate(enable, ALLOW_SOFTWARE_WEBGL_FLAG)
+}
 
 // ── __pcTest seam ───────────────────────────────────────────────────
 

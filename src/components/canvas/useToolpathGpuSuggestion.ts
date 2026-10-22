@@ -19,6 +19,7 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useLocalStorageState } from '../../hooks/useLocalStorageState'
 import { createSlowCanvasDetector, GPU_SUGGESTION_CODEC, GPU_SUGGESTION_STORAGE_KEY,
   type CanvasDrawSample } from './toolpathGpuSuggestion'
+import { allowSoftwareWebgl, hardwareToolpathWebglAvailable } from './toolpathWebglSupport'
 
 /** Observes only the active Canvas choice; all state is browser-local. */
 export function useToolpathGpuSuggestion(enabled: boolean, toolpaths: readonly ToolpathResult[]) {
@@ -35,7 +36,10 @@ export function useToolpathGpuSuggestion(enabled: boolean, toolpaths: readonly T
 
   const observe = useCallback((sample: CanvasDrawSample) => {
     if (document.hidden) { detector.reset(); return }
-    if (detector.observe(sample)) setSuggestedFor(detector)
+    if (!detector.observe(sample)) return
+    // Claiming a GPU that the renderer would refuse on a software-only context
+    // would send the user to a slower renderer that immediately falls back.
+    if (hardwareToolpathWebglAvailable(allowSoftwareWebgl(import.meta.env.DEV))) setSuggestedFor(detector)
   }, [detector])
   const dismiss = useCallback(() => { setHandled(true); setSuggestedFor(null) }, [setHandled])
 

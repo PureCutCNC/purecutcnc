@@ -17,7 +17,7 @@
 import type { CanvasThemePalette } from '../../theme/palette'
 import type { ToolpathOverlayLayerKey } from '../viewport3d/toolpathOverlay'
 
-/** Shared by the Canvas reference/booklet renderer and the opt-in GPU POC. */
+/** Shared by the Canvas reference/booklet renderer and the GPU layer. */
 export function toolpathLayerStyles(palette: CanvasThemePalette): Record<ToolpathOverlayLayerKey, {
   stroke: string; lineWidth: number; dash: number[]
 }> {

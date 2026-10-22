@@ -31,6 +31,13 @@ import type { Locator, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { seedProject } from './helpers'
 
+import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
+
+// The GPU layer is the shipped default (issue #1087). These tests read toolpath
+// pixels from the base Canvas, so they pin the stored Canvas choice instead of
+// reading an overlay canvas they were never written against.
+test.use({ preferences: { [TOOLPATH_RENDERER_STORAGE_KEY]: 'canvas' } })
+
 /** A pixel colour is "dominant" when it covers at least this many canvas
  *  pixels — antialiased edges and single-pixel noise fall below it, interior
  *  runs of the 2.5px emphasized cut lines sit far above it. */
@@ -379,7 +386,8 @@ test.describe('Feed-coloured toolpath smoke', () => {
     // pixels, proven by hiding the cuts layer and seeing the canvas change.
     const sketchCanvas = ui.canvas.sketch(app.page)
     const offKeys = [...offGroups].sort().join('|')
-    await ui.toolpathVis.sketchItems(app.page).first().click()
+    // By name: the renderer's GPU button shares the item class and comes first.
+    await ui.toolpathVis.sketchItems(app.page).filter({ hasText: /^Cuts$/ }).click()
     await expect.poll(async () => {
       const hiddenGroups = await dominantPixelGroups(sketchCanvas)
       return [...hiddenGroups].sort().join('|') !== offKeys

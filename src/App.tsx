@@ -478,7 +478,10 @@ function App() {
               executor: generationBackend.preference,
               onExecutorChange: generationBackend.setPreference,
               workerAvailable: generationBackend.workerAvailable,
-              canStop: generationBackend.canStop,
+              // Read from the service, not the preference: a worker that could
+              // not start falls back to the main thread mid-session, and Stop
+              // must stop being offered at the same moment (issue #1087).
+              canStop: generationBackend.canStop && generationStatus.executorKind === 'worker',
               onStop: stopGeneration,
               onResume: resumeGeneration,
               onRetry: retryGeneration,
