@@ -23,7 +23,8 @@
  * generated toolpaths through the real post-processor and asserts the program
  * an operator at the lathe gets: the Around header, one establishing rapid at
  * safe height per operation, turning cuts in inverse time, no arc and no
- * canned cycle, and one unwind rapid back to angle 0 at the end.
+ * canned cycle. The bar stays at the angle its last move left it (#1091): no
+ * closing unwind is written.
  *
  * Run with: npx tsx src/engine/gcode/aroundExport.test.ts
  */
@@ -385,11 +386,11 @@ function highestFedZ(path: ToolpathResult, originZ: number): number {
 /**
  * The angles actually written, derived from the wrapped toolpaths: the rotary
  * word is modal, so it is written once per change — including each operation's
- * opening rapid at its own start angle — and once more for the closing unwind
- * when the program does not end at 0. A re-derivation of the modal rule, used
- * only to check the written count against the moves.
+ * opening rapid at its own start angle. The program ends on the last move's
+ * angle (#1091), so no extra write is added. A re-derivation of the modal rule,
+ * used only to check the written count against the moves.
  */
-function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition, unwind: boolean): number[] {
+function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition): number[] {
   const direction = rotaryDirection(definition)
   const written: number[] = []
   let last: number | undefined
@@ -404,9 +405,6 @@ function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition, un
   for (const entry of fixture.operations) {
     for (const move of fixture.wrapped.get(entry.id)!.moves) consider(move.to.a)
   }
-  if (unwind && last !== undefined && last !== 0) written.push(0)
-  // A program ending at 0 writes no unwind, and neither does one that never
-  // turned the bar.
   return written
 }
 
@@ -645,7 +643,7 @@ console.log('Testing the centreline and the borrowed motor...')
   const borrowed = exportFixture(MM, BORROWED_Y)
   assert.equal(rotaryWord(BORROWED_Y), 'Y', 'the borrowed motor is project Y')
   const borrowedLines = motionBlocks(borrowed.gcode).filter((line) => /\bY-?[0-9]/.test(line))
-  const written = expectedAngleWrites(MM, BORROWED_Y, true)
+  const written = expectedAngleWrites(MM, BORROWED_Y)
   assert.deepEqual(angleWords(borrowed.gcode, 'Y'), written.map((value) => Number(value.toFixed(3))),
     'the borrowed letter is written once per angle change, in order')
   assert.equal(borrowedLines.length, written.length, 'and on exactly that many motion blocks')
@@ -673,7 +671,7 @@ console.log('Testing the centreline and the borrowed motor...')
   const borrowedX = exportFixture(INCH, BORROWED_X, false)
   assert.equal(rotaryWord(BORROWED_X), 'X', 'the borrowed motor is project X')
   assert.deepEqual(angleWords(borrowedX.gcode, 'X').map((value) => Number(value.toFixed(4))),
-    expectedAngleWrites(INCH, BORROWED_X, true).map((value) => Number(value.toFixed(4))),
+    expectedAngleWrites(INCH, BORROWED_X).map((value) => Number(value.toFixed(4))),
     'the borrowed X carries the angle once per change')
 }
 
@@ -737,13 +735,13 @@ console.log('Testing G93/G94 discipline and a hand-checked inverse-time word...'
     `the emitted word is feed / sqrt(l² + (r·Δθ)²), expected ${expected.toFixed(3)}`)
 }
 
-// ── 5. the unwind (rule 5) ────────────────────────────────────
+// ── 5. the program ends where it ended (#1091) ───────────────
 
-console.log('Testing the single unwind rapid...')
+console.log('Testing the program keeps its last angle...')
 
 {
   // A slanted Engrave line 2.5 circumferences long: the angle runs past 360
-  // and the program unwinds once, at the end.
+  // and the program must stop there, not unwind.
   const line = straight({ x: 60, y: 30 }, { x: 100, y: 30 + 2.5 * MM_CIRCUMFERENCE })
   const multi = buildFixture(MM_BAR, 'mm', [
     { id: 'line', kind: 'polygon', profile: line, operation: 'line', zTop: 40, zBottom: 39 },
@@ -751,7 +749,8 @@ console.log('Testing the single unwind rapid...')
     pass: 'finish', carveDepth: 1, maxCarveDepth: 1, target: { source: 'features', featureIds: ['line'] },
   })], [tool('t1', 'mm', 3, 'flat_endmill')], aroundSetup('x'))
 
-  const angles = multi.wrapped.get('Engrave')!.moves.flatMap((move) => [move.from.a!, move.to.a!])
+  const wrapped = multi.wrapped.get('Engrave')!
+  const angles = wrapped.moves.flatMap((move) => [move.from.a!, move.to.a!])
   assert.ok(Math.max(...angles) > 360, `a multi-turn line writes angles past 360 (max ${Math.max(...angles)})`)
   assert.ok(Math.min(...angles) < 0 || Math.max(...angles) >= 900, 'and keeps turning rather than wrapping')
 
@@ -759,18 +758,23 @@ console.log('Testing the single unwind rapid...')
   const blocks = motionBlocks(result.gcode)
   const written = angleWords(result.gcode, 'A')
   assert.ok(Math.max(...written) > 360, `the program writes an angle past 360, got ${Math.max(...written)}`)
-  const unwinds = blocks.filter((line) => /^G0\s+A-?0(\.0+)?$/.test(line))
-  assert.deepEqual(unwinds, ['G0 A0.000'], `exactly one unwind rapid, at the end:\n${blocks.join('\n')}`)
-  assert.equal(blocks[blocks.length - 1], 'G0 A0.000', 'the unwind is the last motion block')
-  assert.ok(result.gcode.indexOf('G0 A0.000') < result.gcode.indexOf('M30'), 'and comes before the program end')
-  // It happens at the height the last operation retracted to — a rapid with no
-  // Z word of its own.
-  assert.doesNotMatch(unwinds[0], /Z/, 'the unwind turns at the retract height')
-  // Not between operations: no other block turns the bar without cutting it.
-  assert.equal(unwinds.length, 1, 'the unwind is written once, not between operations')
+  // No closing unwind: no motion block anywhere is a bare rapid to 0.
+  assert.ok(
+    !blocks.some((block) => /^G0\s+A-?0(\.0+)?$/.test(block)),
+    `no closing unwind rapid is written:\n${blocks.join('\n')}`,
+  )
+  // The last angle written is the last move's angle, not 0.
+  const lastAngle = wrapped.moves[wrapped.moves.length - 1].to.a!
+  assert.notEqual(lastAngle % 360, 0, 'fixture: the last move does not sit on the zero line')
+  assert.equal(written[written.length - 1], Number(lastAngle.toFixed(3)), 'the program ends on its last angle')
+  // The final motion is the operation's own retract, and it carries no A word:
+  // the bar stays where the toolpath left it.
+  const last = blocks[blocks.length - 1]
+  assert.match(last, /^G0\s+Z/, `the final motion is the operation's retract, got ${last}`)
+  assert.doesNotMatch(last, /A/, 'the retract does not turn the bar')
 
   // A cut that ends where it began — the bar returns to angle 0 — writes no
-  // unwind, even though the program turned the bar. The end sits on the zero
+  // unwind, because there is none for any program. The end sits on the zero
   // line (issue #1026), which is the bar's centreline, not the sheet's edge.
   const backLine = straight({ x: 60, y: 30 + MM_CIRCUMFERENCE }, { x: 100, y: 50 })
   const back = buildFixture(MM_BAR, 'mm', [
@@ -782,10 +786,10 @@ console.log('Testing the single unwind rapid...')
     'the case is not vacuous: the bar was turned')
   const endsAtZero = exportFixture(back, OWN_X, false)
   assert.ok(!motionBlocks(endsAtZero.gcode).some((block) => /^G0\s+A/.test(block)),
-    'a program that ends at angle 0 writes no unwind rapid')
+    'a program that ends at angle 0 writes no extra A rapid')
   assert.ok(/G93/.test(endsAtZero.gcode), 'even though it cut in inverse time')
 
-  // A program that never turns the bar writes no unwind either.
+  // A program that never turns the bar writes no angle at all.
   const flatOnly = { ...multi, wrapped: new Map([...multi.wrapped].map(([id, path]) => [id, {
     ...path,
     moves: path.moves.map((move) => ({ ...move, from: { ...move.from, a: undefined }, to: { ...move.to, a: undefined } })),
@@ -793,42 +797,6 @@ console.log('Testing the single unwind rapid...')
   const noTurn = exportFixture(flatOnly, OWN_X, false)
   assert.ok(!/A-?[0-9]/.test(noTurn.gcode), 'a program that never turns writes no angle at all')
   assert.ok(!/G93/.test(noTurn.gcode), 'and no inverse time')
-}
-
-{
-  // A program whose last motion is a turning cut leaves inverse-time mode
-  // before the closing unwind (rule 4 before rule 5): the unwind block would
-  // otherwise turn the bar under G93, where its F means 1/min. The wrapped
-  // path is truncated so no retract follows the final cut — the case a
-  // trailing rapid would otherwise mask by leaving the mode on its own.
-  const line = straight({ x: 60, y: 30 }, { x: 100, y: 30 + 1.5 * MM_CIRCUMFERENCE })
-  const fixture = buildFixture(MM_BAR, 'mm', [
-    { id: 'line', kind: 'polygon', profile: line, operation: 'line', zTop: 40, zBottom: 39 },
-  ], [operation('Engrave', 'follow_line', ['line'], 't1', {
-    pass: 'finish', carveDepth: 1, maxCarveDepth: 1, target: { source: 'features', featureIds: ['line'] },
-  })], [tool('t1', 'mm', 3, 'flat_endmill')], aroundSetup('x'))
-
-  const full = fixture.wrapped.get('Engrave')!
-  const lastCut = full.moves.reduce((last, move, index) => (move.kind === 'cut' ? index : last), -1)
-  assert.ok(lastCut >= 0, 'the fixture has a turning cut to end on')
-  assert.ok(full.moves[lastCut].to.a !== 0, 'and it ends at a non-zero angle, so the program unwinds')
-  fixture.wrapped.set('Engrave', { ...full, moves: full.moves.slice(0, lastCut + 1) })
-
-  const result = exportFixture(fixture, OWN_X, false)
-  const lines = result.gcode.split('\n').map((raw) => raw.split(';')[0].trim())
-  const unwindAt = lines.findIndex((programLine) => /^G0\s+A-?0(\.0+)?$/.test(programLine))
-  assert.ok(unwindAt > 0, 'the truncated program still unwinds the bar')
-  assert.ok(lines.slice(0, unwindAt).includes('G93'), 'the last motion really was a turning cut')
-  // After the last turning cut: G94, then the spindle stop (#393), then the
-  // unwind. Nothing between the cut and the unwind runs in inverse-time mode.
-  const restoredAt = lines.lastIndexOf('G94', unwindAt)
-  const lastInverseAt = lines.lastIndexOf('G93', unwindAt)
-  assert.ok(restoredAt > lastInverseAt, 'inverse-time mode is left before the unwind')
-  // GRBL applies no tool-length compensation, so the closing retract is the
-  // machine definition's own Safe Z (#1054 fix 3), after the spindle stop and
-  // before the turn: 0 by default, the top of travel after homing, never the
-  // project's Safe Z mapped through the origin.
-  assert.deepEqual(lines.slice(restoredAt, unwindAt), ['G94', 'M5', 'G53 G0 Z0.000'], 'the spindle stop, then the unwind retract')
 }
 
 // ── 6. the bar and the machine must agree (rule 3) ────────────
@@ -874,29 +842,17 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     OWN_X.program.commentSuffix,
     { word: rotaryWord(OWN_X)!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
-  // The program ends at a non-zero angle, so it carries the closing
-  // machine-coordinate retract (#1054 fix 2). A G53 block is not a work
-  // position, so the parse is not reported as verified (#1054 fix 4); the
-  // rest of the program must still read back.
-  assert.equal(parsed.status, 'unsupported', `the program parses around the machine retract: ${parsed.warnings.join('; ')}`)
-  assert.ok(
-    parsed.warnings.length > 0 && parsed.warnings.every((warning) => warning.includes('G53')),
-    `the only warnings are the machine-coordinate retract: ${parsed.warnings.join('; ')}`,
-  )
+  // The program ends at a non-zero angle and carries no closing unwind after
+  // #1091, so every block is a work-coordinate motion the parser can place.
+  assert.equal(parsed.status, 'verified', `the program parses cleanly: ${parsed.warnings.join('; ')}`)
+  assert.deepEqual(parsed.warnings, [], 'no block is reported as unplaceable')
   assert.ok(parsed.moves.length > 0, 'and has motion')
 
   // The whole program, unwrapped with `unwrapPoint`, lies on the flat
   // toolpaths the operations were generated from.
   const flatSource = MM.operations.flatMap((entry) => unwrapToolpath(wrapped.get(entry.id)!, frame).moves)
-  const closingUnwindAt = parsed.moves.findLastIndex((move) => move.from.a !== undefined && move.to.a === 0
-    && move.from.x === move.to.x && move.from.y === move.to.y && move.from.z === move.to.z)
   let checked = 0
-  for (const [index, move] of parsed.moves.entries()) {
-    // The closing unwind turns the bar with the tool parked, so in stock space
-    // it sweeps across the bar rather than following the flat path. It is the
-    // one motion the flat toolpath has no analogue for (rule 5). The machine-
-    // coordinate retract before it is not in the trace at all (#1054 fix 4).
-    if (index === closingUnwindAt) continue
+  for (const move of parsed.moves) {
     for (const point of [move.from, move.to]) {
       // The program also opens with a Z-only safe rapid, before any angle word
       // — the pre-existing safe-Z split, whose XY is the machine's own zero

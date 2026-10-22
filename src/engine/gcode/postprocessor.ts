@@ -295,11 +295,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     zKnown: false,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
-  /** True once a tool-change template may have moved the bar and nothing
-   *  restated the angle. The closing unwind still returns the bar to 0 then:
-   *  the last tracked angle is no longer proof of where the stock is. */
-  let rotaryAngleLost = false
-
   // Count G-code motion blocks as emitted, not the input toolpath moves. The
   // latter can be reduced by arc fitting or expanded when a rapid is split
   // into safe Z and XY blocks.
@@ -376,7 +371,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const machineSafeZ = convertLength(definition.motion.machineSafeZ, 'mm', outputUnits)
   // The square blank's mid-program repair (a template that moved Z before an A
   // word) is square-only: a round bar's bytes are unchanged (#1054 fix 1,
-  // finding 2, still uses the travel height for the repair, not the unwind).
+  // finding 2). It uses the travel height, never a machine-coordinate retract.
   const squareRetractZ = isSquareStock(project.stock) ? barTravelZ : null
   if (barTravelZ !== null && programTurns && !Number.isFinite(barTravelZ)) {
     // The blank carries no usable turning height (a corrupt or degenerate
@@ -488,8 +483,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     if (state.rotaryAngle === angle) return
     segments.push(`${state.rotaryWord}${formatGCodeNumber(angle, definition, outputUnits)}`)
     state.rotaryAngle = angle
-    // The controller has been told the angle, so the last one is proof again.
-    rotaryAngleLost = false
   }
 
   /** Turn inverse-time feed off, if it is on (issue #393, rule 4). */
@@ -629,25 +622,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     state.zKnown = false
     emittedPosition = null
     return true
-  }
-
-  /**
-   * Before the closing unwind the cutter may legitimately sit below the travel
-   * height (the last operation descended at a constant angle), and a template
-   * may have moved Z where the emitter cannot see it. A turn there is never
-   * safe, so the unwind retracts in machine coordinates first — for a round bar
-   * as well as a square blank (#1054 fix 1, finding 2; #1054 fix 2).
-   *
-   * The retract is machine-coordinate whatever compensation a template left in
-   * effect: the emitter no longer infers that state from the template text, so
-   * the work-coordinate Z cannot be trusted to describe the tip. A machine with
-   * no machine-coordinate move refuses the turn instead of writing it.
-   */
-  const retractForBarUnwind = (): boolean => {
-    if (barTravelZ === null) return true
-    if (emitMachineCoordinateRetract()) return true
-    refuseTurnClearance()
-    return false
   }
 
   /**
@@ -916,7 +890,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     start: ToolpathPoint,
     startPlane: number | null,
     stateAngle: boolean,
-    markAngleLost: boolean,
   ): void => {
     const plane: Partial<ToolpathPoint> = { x: start.x, y: start.y }
     if (stateAngle && setupPlan.manualIndexAngle !== null && state.rotaryWord !== null) {
@@ -926,17 +899,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
     // Force the angle word: a tool-change macro may have moved the bar even
     // when the next move keeps the last angle. The tracked angle is restored
-    // when the move carries none, and the program then owes a closing unwind
-    // if it had already turned.
+    // when the move carries none.
     const trackedAngle = state.rotaryAngle
     state.rotaryAngle = null
     emitMotionLine(definition.motion.rapidCommand, plane)
     if (plane.a === undefined) {
       state.rotaryAngle = trackedAngle
-      // Only a tool change makes the last angle unproven. A placement that
-      // follows the opening turn has just had the angle stated, so it owes no
-      // closing unwind.
-      if (markAngleLost && trackedAngle !== null) rotaryAngleLost = true
     }
     if (startPlane !== null) {
       emitMotionLine(definition.motion.rapidCommand, { z: startPlane })
@@ -1005,7 +973,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     } else {
       emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
     }
-    placeAtStart(start, startPlane, barSetupProgram, true)
+    placeAtStart(start, startPlane, barSetupProgram)
   }
 
   // One plasma operation whose torch path is written. Controller piercing
@@ -1304,7 +1272,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       emitManualIndexTurn(pendingManualIndexAngle)
       pendingManualIndexAngle = null
       if (restartStart !== null) {
-        placeAtStart(restartStart, restartStartPlane, false, false)
+        placeAtStart(restartStart, restartStartPlane, false)
       }
     }
 
@@ -1517,36 +1485,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // The program never ends in inverse-time mode (rule 4).
   leaveInverseTime()
 
-  // Unwind the bar once, at the end (issue #395, rule 5): a program that has
-  // turned the stock and stops at a non-zero angle is returned to 0 so the
-  // operator's next part starts where this one did. Not between operations,
-  // and never written when the program never turned or already ends at 0. A
-  // tool change may have moved the bar without the program restating the
-  // angle, so a program that had turned still owes the unwind then
-  // (`rotaryAngleLost`), exactly as it does when the tracked angle is not 0.
-  // The
-  // last operation may have descended at a constant angle (that is not a turn),
-  // or a template may have moved Z, so the unwind first raises the cutter clear
-  // of the bar — for a round bar as well as a square blank, and whatever the
-  // templates did (#1054 fix 1, finding 2). That retract is always the machine
-  // definition's own Safe Z in machine coordinates, and a machine with no such
-  // move refuses the turn instead (#1054 fix 2, fix 3). The block spells the
-  // rapid word itself rather than relying on modal motion: a command that does
-  // not move the tool must not be read as a continuation of whatever mode was
-  // left behind.
-  if (state.rotaryAngle !== null && (state.rotaryAngle !== 0 || rotaryAngleLost)) {
-    if (!retractForBarUnwind()) {
-      return {
-        gcode: '',
-        warnings: turnClearanceRefusal === null ? [] : [turnClearanceRefusal],
-        stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
-        ...(captureTrace ? { motionTraces: [] } : null),
-      }
-    }
-    emitLine(`${definition.motion.rapidCommand} ${state.rotaryWord}${formatGCodeNumber(0, definition, outputUnits)}`)
-    state.motionCommand = definition.motion.rapidCommand
-    state.rotaryAngle = 0
-  }
+  // The bar stays where the last operation left it (#1091): there is no
+  // closing unwind. The program's final motion is the last operation's own
+  // retract, exactly as it is for a non-rotary program.
 
   // 5. Footer
   definition.program.footer.forEach(line => {

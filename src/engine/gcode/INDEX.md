@@ -98,14 +98,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the project origin, units or Safe Z: `G53` is the machine's zero, which the
   app does not know. A machine with no machine-coordinate move is refused with
   `postRotaryTurnWithoutClearance` rather than turned.
-  A program that turned the bar and ends at a non-zero angle gets one closing
-  unwind rapid to 0 (#395, rule 5) before the footer; never between operations,
-  and none for a program that ends at 0 or that never carried an angle (so a
-  Top manual-index program writes no unwind, and a Bottom one does). It makes
-  the same machine-coordinate clearance retract first (#1054 fix 2). On a
-  square blank a template Z move before an A word also rapids to the
-  generators' travel height whenever the tracked Z is unknown, because the
-  last operation may have descended at a constant angle.
+  A program ends where its last move left it (#1091, Frank's 2026-10-22
+  decision): there is no closing unwind, so a rotary program's bar stays at its
+  last angle — an along rough at A3600 stays there, a Bottom program stays at
+  A180. The final motion is the last operation's own retract, exactly as a
+  non-rotary program's is; the emitter invents no retract and no turn. The
+  operator zeros A for the work and clears it when done, and the controller's
+  soft limits handle range. The opening turn of a Top/Bottom bar program is
+  unaffected: it still retracts in machine coordinates and states A0/A180
+  before the face. On a square blank a template Z move before an A word also
+  rapids to the generators' travel height whenever the tracked Z is unknown,
+  because the last operation may have descended at a constant angle.
   **Machine templates are restricted by class** (#1057 slice F, Frank's
   decision 2026-10-21). `templateRules.ts` classifies *every string field* of
   the definition schema — `MACHINE_STRING_FIELDS` is the table validation walks,
@@ -151,8 +154,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   A program written with tool changes off has no tool change and no block, and
   is byte-identical to the base (`templateByteIdentity.test.ts`); it still
   places the start after the opening manual-index turn, before any feed. A
-  program that turned the bar and may have lost the angle to a tool-change
-  template still owes the closing unwind (`rotaryAngleLost`).
+  tool change may have moved the bar without the program restating the angle,
+  but the program no longer owes a closing unwind for it (#1091); the last
+  stated angle is simply the last angle the toolpath wrote.
   ShopBot's part file writes the equivalent after `C9`: `SA`, a `JZ` to the
   safe Z, then a `J2` to the start.
   Canned drill cycles are written only on a machine that borrows no motor and
@@ -377,8 +381,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   refusal, the across coordinate left on the centreline or the borrowed letter
   devoted to the angle, the establishing rapid, `G93`/`G94` with a
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
-  angle and the single closing unwind, `postRotaryAxisMismatch`, and the
-  program read back through `parseGcodeMotion` onto the flat toolpath).
+  angle with no closing unwind, `postRotaryAxisMismatch`, and the program read
+  back through `parseGcodeMotion` onto the flat toolpath).
 - `squareRotaryOutput.test.ts` — the square blank through generation and the
   real posted program (#1016 C2-S4): both axes, both units, rough/finish and
   own / borrowed / reversed machines post nonempty angle-bearing inverse-time
@@ -430,9 +434,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   program is posted, then replayed by an independent modal interpreter written
   in the test (G0/G1/G2/G3, the machine's rotary word, Z, G20/G21, G90/G91):
   every accepted program's rotary changes must execute at or above the emitted
-  travel height, and every refused program must carry a refusal code. Focused
-  cases pin the closing-unwind retract, the template Z-unknown rule, and the
-  restored whole-operation turning-feed precedence on a round bar.
+  travel height, and every refused program must carry a refusal code. The
+  program's last angle in the text must be the last toolpath angle (no closing
+  unwind). Focused cases pin the template Z-unknown rule, the restored
+  whole-operation turning-feed precedence on a round bar, and the program
+  ending on its own retract (#1091).
 
 ## Adding a dialect
 
