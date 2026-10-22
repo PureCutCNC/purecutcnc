@@ -41,7 +41,7 @@ const ALL_CODES = [
   'xyLeadUnsupported', 'xyLeadRegionMask', 'xyLeadNoViablePath', 'xyLeadNeedsRampedEntry',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
   'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
-  'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded',
+  'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded', 'rotaryFinishWithoutRough',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',
   'vcarveWrongKind', 'vcarveNeedsVBit', 'contourSpacingPositive', 'vBitInvalidSlope', 'vcarveNoMoves',
@@ -143,6 +143,13 @@ assert(
   interpolate(warningsEn['warnings.rotaryWorkBudgetExceeded'], { operation: 'Rotary rough' })
     .startsWith('Rotary rough: this would generate too many moves'),
   'the work-budget message names the operation and the remedy',
+)
+// The 2026-10-22 finish advisory names the operation and states the consequence
+// without claiming a refusal.
+assert(
+  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish' })
+    === 'Rotary finish: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
+  'the finish-without-rough advisory names the operation and the consequence',
 )
 
 // The debug passthrough renders its text verbatim in both locales.

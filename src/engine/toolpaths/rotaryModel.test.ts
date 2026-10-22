@@ -314,16 +314,11 @@ const FINISH_PASS_MM: NormalizedTool = { ...BALL, id: 'ball-2', name: '2 mm ball
 const FLAT_2: NormalizedTool = { ...BALL, id: 'flat-2', name: '4 mm flat end mill', type: 'flat_endmill', diameter: 4, radius: 2 }
 const VBIT: NormalizedTool = { ...BALL, id: 'v-60', name: '60 degree V-bit', type: 'v_bit', vBitAngle: 60 }
 /**
- * A depth larger than any blank in these tests, so an along finish's
- * self-clearing layer rule (`ceil((blank - tip) / stepdown) - 1`) emits no
- * layer. These blocks pin the **finish pass** geometry (links, runs, merging,
- * stock offsets); the clearing layers are owned by the slice-R/R2 block below
- * and by the square property test. #1045 slice R2 refuses a finish with no
- * usable depth at all, so a test tool with `defaultStepdown: 0` must ask for
- * one explicitly.
+ * The finish-pass parameters these blocks pin: links, runs, merging and stock
+ * offsets. The finish emits only its model-following passes, so no layer depth
+ * is part of them.
  */
-const NO_CLEARING_DEPTH = 1e3
-const FINISH_BASE = { stepdown: NO_CLEARING_DEPTH, sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30, safeRadius: FINISH_SAFE, requestedCellSize: CELL }
+const FINISH_BASE = { sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30, safeRadius: FINISH_SAFE, requestedCellSize: CELL }
 /**
  * Review fix 1: a turning link rises to the bar's surface plus a 1 mm
  * clearance (`min(safeRadius, R + 1)`), never above the retract height. These
@@ -1335,8 +1330,6 @@ for (const axis of ['x', 'y'] as const) {
   const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 20 + 1.6, requestedCellSize: fixtureCell,
-    // See `NO_CLEARING_DEPTH`: this fixture measures the finish pass alone.
-    stepdown: NO_CLEARING_DEPTH,
   }, {})
   const elapsed = performance.now() - start
   const passes = finishPasses(0.5)
@@ -1630,71 +1623,10 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   const result = generateRotaryFinish('op-fixture', fixture, STOCK, BALL, {
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
-    // A depth above the blank keeps this finish-pass-only fixture's motion; the
-    // clearing layers have their own fixture below (#1045 slice R2).
-    stepdown: NO_CLEARING_DEPTH,
   }, {})
   assert.equal(result.moves.length, 8844, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
     'e9067d81a3ad5bc657224f7f908db815dd16aaa8fefdd48de885211025d706e6', 'finish fixture keeps its exact points')
-}
-
-// ---------------------------------------------------------------------------
-// Slice R: an along finish clears the material above its own finish surface in
-// its own stepdown layers. Slice R2 makes that clearing depend on the **raw
-// stock only** and refuses a finish with no usable stepdown.
-// ---------------------------------------------------------------------------
-{
-  const stock = roundStock(20, 20)
-  const pivot = stock.thickness / 2
-  const cylinder = lathe(stock, () => 5, 0, 20, 80, 64)
-  const params = {
-    stepover: 20, sampleSpacing: 1, stockToLeave: 0,
-    alongStart: 0, alongEnd: 20, safeRadius: 30, requestedCellSize: CELL,
-  }
-  const clearing = generateRotaryFinish('along-clear', cylinder, stock, FINISH_PASS_MM,
-    { ...params, stepdown: 1 }, {})
-  assert.deepEqual(clearing.warnings, [], 'along clear warns about nothing')
-  // 10 mm bar radius, 5 mm finish surface, 1 mm layers: 9, 8, 7 and 6 are the
-  // clearing layers, then the finish pass at 5.
-  const alongCuts = (moves: readonly ToolpathMove[]): ToolpathMove[] => moves.filter((move) =>
-    move.kind === 'cut' && move.from.a === move.to.a && move.from.x !== move.to.x)
-  const tips = new Set(alongCuts(clearing.moves)
-    .map((move) => Math.round((move.to.z - pivot) * 1e6) / 1e6))
-  const hasTip = (value: number): boolean => [...tips].some((tip) => Math.abs(tip - value) <= 0.02)
-  for (const layer of [9, 8, 7, 6]) assert.ok(hasTip(layer), `along clear cuts layer ${layer}`)
-  assert.ok(hasTip(5), 'the finish pass follows the model at the finish surface')
-  const lowest = Math.min(...clearing.moves
-    .filter((move) => move.kind !== 'rapid')
-    .flatMap((move) => [move.from.z, move.to.z]))
-  assert.ok(lowest >= pivot + 5 - TOLERANCE, 'along clear never cuts below the finish surface')
-  // The entry plunges straight to the first clearing layer, one stepdown below
-  // the bar, not to the finish surface.
-  const entry = clearing.moves.find((move) => move.kind === 'plunge')
-  assert.ok(entry, 'along clear has an entry plunge')
-  approx(entry!.to.z - pivot, 9, 'the entry plunges to the first clearing layer')
-
-  // #1045 slice R2: no usable depth on the operation **or** the tool refuses.
-  // `FINISH_PASS_MM` has `defaultStepdown: 0`, exactly a hand-built tool with
-  // none, and an along finish used to keep its pre-slice-R motion there -- a
-  // full-depth finish pass with nothing clearing above it.
-  const noDepth = generateRotaryFinish('along-no-depth', cylinder, stock, FINISH_PASS_MM,
-    { ...params }, {})
-  assert.deepEqual(noDepth.moves, [], 'an along finish with no usable stepdown emits no motion')
-  assert.deepEqual(noDepth.warnings.map((warning) => warning.code), ['stepdownPositive'],
-    'an along finish with no usable stepdown refuses with the around finish code')
-  const belowMinimum = generateRotaryFinish('along-below-min', cylinder, stock, FINISH_PASS_MM,
-    { ...params, stepdown: 0.001 }, {})
-  assert.deepEqual(belowMinimum.moves, [], 'a sub-minimum along stepdown emits no motion')
-  assert.deepEqual(belowMinimum.warnings.map((warning) => warning.code), ['rotaryStepdownBelowMinimum'],
-    'a sub-minimum along stepdown refuses with the around finish code')
-  // The tool's own default is a usable fallback, so a finish without a saved
-  // field still generates and still clears.
-  const withToolDefault = generateRotaryFinish('along-tool-default', cylinder, stock,
-    { ...FINISH_PASS_MM, defaultStepdown: 1 }, { ...params }, {})
-  assert.deepEqual(withToolDefault.warnings, [], 'the tool default supplies the layer depth')
-  assert.deepEqual(withToolDefault.moves, clearing.moves,
-    'the tool default and an explicit field of the same depth generate the same motion')
 }
 
 // ---------------------------------------------------------------------------

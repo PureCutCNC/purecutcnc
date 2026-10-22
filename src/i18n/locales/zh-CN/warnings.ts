@@ -68,6 +68,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.operationStepoverRatioRange': '加工操作步距比例必须在 0 和 1 之间',
   'warnings.rotaryStepdownBelowMinimum': '{operation}：每层切深低于 0.01 mm；请增大切深',
   'warnings.rotaryWorkBudgetExceeded': '{operation}：这将生成过多移动；请增大切深或步距',
+  'warnings.rotaryFinishWithoutRough': '{operation}：在装夹中，此模型在此精加工之前没有粗加工；它将在一次走刀中切至全深。',
   'warnings.vcarveMedialWrongKind': '中轴线生成器仅支持V雕（中轴）加工操作',
   'warnings.vcarveMedialNeedsVBit': 'V雕（中轴）需要V刀',
   'warnings.vcarveBandNoDepth': '深度带 {topZ} -> {bottomZ} 没有可用的V雕深度',

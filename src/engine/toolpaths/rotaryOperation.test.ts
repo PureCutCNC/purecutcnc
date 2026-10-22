@@ -115,46 +115,62 @@ const singlePath = computeOperationToolpath(unionProject, op)!.result
 const combinedPath = computeOperationToolpath(unionProject, { ...op, target: { source: 'features', featureIds: ['model', 'second'] } })!.result
 assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transformed model reaches rotary sampling')
 
-// #1045 slice R2: an along finish reads the raw stock only. An earlier rough,
-// its settings, its enabled flag and its position in the list are all
-// irrelevant to the finish's motion, so a rough that is disabled, excluded from
-// the export, in another program or simply not run cannot leave the finish
-// unprotected.
+// 2026-10-22 decision: a finish emits only its model-following motion, and the
+// operation list changes only its advisory warning. An enabled rotary rough on
+// the same model earlier in the same setup suppresses `rotaryFinishWithoutRough`
+// (the rough left at most one of its stepdowns); a disabled rough, a rough on
+// another model, a rough in another setup, a rough later in the list and no
+// rough at all keep it.
 {
   const fixture = rotaryOperationFixture('x', 'rotary_finish')
   const finish = fixture.operations[0]
   const rough = { ...finish, id: 'rough', name: 'rough', kind: 'rotary_rough' as const, pass: 'rough' as const }
+  const warning = (result: { warnings: Array<{ code: string; params?: Record<string, string | number> }> }) =>
+    result.warnings.filter((entry) => entry.code === 'rotaryFinishWithoutRough')
   const alone = computeOperationToolpath(fixture, finish)!.result
-  assert.deepEqual(alone.warnings, [], 'a bare along finish warns about nothing')
-  assert.ok(alone.moves.length > 0, 'a bare along finish clears its own blank and cuts')
+  assert.deepEqual(alone.warnings, [{
+    code: 'rotaryFinishWithoutRough', params: { operation: 'Rotary finish' },
+  }], 'a bare along finish is warned that it cuts to full depth in one pass')
+  assert.ok(alone.moves.length > 0, 'and it still follows the model and cuts')
   const withRough = computeOperationToolpath({ ...fixture, operations: [rough, finish] }, finish)!.result
+  assert.deepEqual(warning(withRough), [], 'an enabled rough before the finish suppresses the warning')
   assert.deepEqual(withRough.moves, alone.moves,
-    'an earlier rough does not change the along finish, even though it clears material the finish re-cuts')
-  // A rough on another tool, with another stepdown, is still not read.
+    'an earlier rough does not change the finish motion')
+  // A rough on another tool is still a rough on this model, so it suppresses
+  // the advisory; only the model, the setup and the order matter.
   const otherTool = { ...fixture.tools[0], id: 't2', diameter: 6, defaultStepdown: 0.3 }
   const otherRough = { ...rough, id: 'rough2', toolRef: 't2', stepdown: 0.3 }
   const foreign = computeOperationToolpath({
     ...fixture, tools: [...fixture.tools, otherTool], operations: [otherRough, finish],
   }, finish)!.result
-  assert.deepEqual(foreign.moves, alone.moves, 'a rough on another tool does not change the finish')
+  assert.deepEqual(warning(foreign), [], 'a rough on another tool but the same model suppresses the warning')
+  assert.deepEqual(foreign.moves, alone.moves, 'and does not change the finish motion')
   const later = computeOperationToolpath({ ...fixture, operations: [finish, rough] }, finish)!.result
-  assert.deepEqual(later.moves, alone.moves, 'a rough after the finish does not change it')
+  assert.deepEqual(warning(later).length, 1, 'a rough after the finish does not count')
+  assert.deepEqual(later.moves, alone.moves, 'and does not change the finish motion')
   const disabled = computeOperationToolpath({
     ...fixture,
     operations: [rough, finish].map((operation) => operation.id === rough.id ? { ...operation, enabled: false } : operation),
   }, finish)!.result
-  assert.deepEqual(disabled.moves, alone.moves, 'a disabled rough does not change the finish')
-
-  // #1045 slice R2: no usable depth on the operation or the tool refuses with
-  // the around finish's code instead of generating an unprotected finish.
-  const noDepthTool = { ...fixture.tools[0], defaultStepdown: 0 }
-  const refused = computeOperationToolpath({
+  assert.deepEqual(warning(disabled).length, 1, 'a disabled rough does not count')
+  assert.deepEqual(disabled.moves, alone.moves, 'and does not change the finish motion')
+  const anotherModel = computeOperationToolpath({
+    ...fixture, operations: [{ ...rough, target: { source: 'features', featureIds: ['other-model'] } }, finish],
+  }, finish)!.result
+  assert.deepEqual(warning(anotherModel).length, 1, 'a rough on another model does not count')
+  const anotherSetup = computeOperationToolpath({
     ...fixture,
-    tools: [noDepthTool],
-    operations: [{ ...finish, stepdown: 0 }],
+    setups: [...fixture.setups, { ...fixture.setups[0], id: 'other-setup', name: 'Other' }],
+    operations: [{ ...rough, setupId: 'other-setup' }, finish],
+  }, finish)!.result
+  assert.deepEqual(warning(anotherSetup).length, 1, 'a rough in another setup does not count')
+  // A zero saved stepdown is a finish field the generator no longer reads: the
+  // finish still follows the model, and the advisory is about the operation
+  // order, not about a rough's depth.
+  const zeroDepth = computeOperationToolpath({
+    ...fixture, operations: [{ ...rough, stepdown: 0 }, { ...finish, stepdown: 0 }],
   }, { ...finish, stepdown: 0 })!.result
-  assert.deepEqual(refused.moves, [], 'a no-stepdown along finish emits no motion')
-  assert.deepEqual(refused.warnings.map((warning) => warning.code), ['stepdownPositive'],
-    'a no-stepdown along finish refuses')
+  assert.deepEqual(zeroDepth.warnings, [], 'a zero saved stepdown does not refuse or warn the finish')
+  assert.deepEqual(zeroDepth.moves, alone.moves, 'the finish ignores the saved stepdown entirely')
 }
 console.log('rotaryOperation integration tests passed')

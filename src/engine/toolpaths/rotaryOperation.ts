@@ -31,8 +31,9 @@ import type { ToolpathWarningCode } from './warningCodes'
  * space.
  *
  * A square blank is accepted for `rotary_rough` / `rotary_finish` exactly as a
- * round bar is (#1016 C2-S3): both generators sample the actual blank and
- * clear its corners. Only these two kinds reach here, so 2D engraving wrapped
+ * round bar is (#1016 C2-S3): both generators sample the actual blank, and the
+ * rough clears its corners while the finish only follows the model. Only these
+ * two kinds reach here, so 2D engraving wrapped
  * onto a square blank is *not* enabled by this — the wrapped-flat pipeline has
  * its own guards, and the operation-validity and active-face guards still
  * refuse square stock until the authoring slice lands.
@@ -51,10 +52,10 @@ function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
 
 /**
  * The generator parameters for one saved operation, or the warning code that
- * says why it cannot run. A finish needs no licence from an earlier operation
- * (#1045 slices M/R2): it clears its own raw blank in stepdown layers before it
- * follows the model, in around and along mode alike. No other operation's row,
- * result or enabled flag is read here.
+ * says why it cannot run. No other operation's row, result or enabled flag is
+ * read here: a finish emits only its model-following passes (2026-10-22
+ * decision), and whether a rough precedes it is an advisory warning decided
+ * from the project below, not a licence this generator needs.
  */
 function rotaryContext(project: Project, operation: Operation): RotaryContext | { code: ToolpathWarningCode } {
   const stock = project.stock
@@ -99,7 +100,7 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   const safeRadius = rapidRadius > maxRadius ? rapidRadius : maxRadius + tool.diameter
   const stepover = Math.max((operation.stepover ?? 0.5) * tool.diameter, 1e-3)
   const params: RotaryFinishParams = {
-    stepover, stepdown: operation.stepdown,
+    stepover,
     stockToLeave: operation.stockToLeaveRadial,
     sampleSpacing: operation.kind === 'rotary_finish' ? tool.radius / 4 : tool.radius / 2,
     requestedCellSize: Math.min(tool.radius / 3, stepover * 0.5),
@@ -111,6 +112,41 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   return { stock, surface, tool, params }
 }
 
+/** The operation fields the preceding-rough advisory reads. */
+export type RotaryOrderOperation = Pick<Operation, 'id' | 'setupId' | 'kind' | 'enabled' | 'target'>
+
+/**
+ * True when this finish has no enabled rotary rough on the same model feature
+ * earlier in the same setup's operation order (2026-10-22 decision).
+ *
+ * The rule is advisory only: it decides a warning, never motion. Order is the
+ * project's own `operations` array, which is the order the program is posted
+ * in. A rough in another setup, a disabled rough, a rough on another model and
+ * a rough after the finish all leave the finish unprotected, so each of them
+ * counts as no rough. The shared feature id is the model instance the finish
+ * targets; a rough whose target includes it is machining the same model.
+ */
+export function rotaryFinishWithoutRough(
+  operations: readonly RotaryOrderOperation[],
+  operation: RotaryOrderOperation,
+): boolean {
+  if (operation.kind !== 'rotary_finish') return false
+  if (operation.target.source !== 'features') return false
+  const models = new Set(operation.target.featureIds)
+  if (models.size === 0) return false
+  const index = operations.findIndex((candidate) => candidate.id === operation.id)
+  if (index < 0) return false
+  const setup = operation.setupId ?? null
+  for (let i = 0; i < index; i++) {
+    const candidate = operations[i]
+    if (!candidate.enabled || candidate.kind !== 'rotary_rough') continue
+    if ((candidate.setupId ?? null) !== setup) continue
+    if (candidate.target.source !== 'features') continue
+    if (candidate.target.featureIds.some((featureId) => models.has(featureId))) return false
+  }
+  return true
+}
+
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
   const empty = (code: ToolpathWarningCode): ToolpathResult => ({
     operationId: operation.id, moves: [], bounds: null,
@@ -120,12 +156,15 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   if ('code' in built) return empty(built.code)
   const { stock, surface, tool, params } = built
   const result = operation.kind === 'rotary_rough'
-    ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: params.stepdown ?? 0 }, {})
+    ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
     : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
-  return {
-    ...result,
-    warnings: result.warnings.map((warning) => ({
-      ...warning, params: { ...warning.params, operation: operation.name },
-    })),
+  const warnings = result.warnings.map((warning) => ({
+    ...warning, params: { ...warning.params, operation: operation.name },
+  }))
+  // Advisory only: the finish still emits exactly the model-following motion
+  // above, and this warning changes nothing about it.
+  if (operation.kind === 'rotary_finish' && rotaryFinishWithoutRough(project.operations, operation)) {
+    warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name } })
   }
+  return { ...result, warnings }
 }

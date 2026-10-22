@@ -71,6 +71,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.operationStepoverRatioRange': 'Operations-Bahnabstand-Verhältnis muss zwischen 0 und 1 liegen',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: Die Zustellung liegt unter 0,01 mm; erhöhen Sie sie',
   'warnings.rotaryWorkBudgetExceeded': '{operation}: Dies würde zu viele Bewegungen erzeugen; erhöhen Sie die Zustellung oder den Bahnabstand',
+  'warnings.rotaryFinishWithoutRough': '{operation}: In dieser Aufspannung geht diesem Schlichten keine Schruppbearbeitung an diesem Modell voraus; es schneidet in einem Durchgang bis zur vollen Tiefe.',
   // v-carve medial
   'warnings.vcarveMedialWrongKind': 'Nur V-Gravur-Mittelachse-Operationen können vom Mittelachsen-Generator aufgelöst werden',
   'warnings.vcarveMedialNeedsVBit': 'V-Gravur Mittelachse erfordert einen V-Nutfräser',

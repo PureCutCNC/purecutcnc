@@ -529,7 +529,8 @@ console.log('Testing the Codex A0 plunge and the stub-face under-read...')
   approx(along.start, CODEX_ALONG.start, 'the fixture reproduces the 18 mm chuck-limited start')
   approx(along.end, CODEX_ALONG.end, 'the fixture reproduces the 40 mm model-limited end')
   const result = generateRotaryOperation(project, operation)
-  assert.deepEqual(result.warnings, [], 'the exact repro generates without a warning')
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+    'the exact repro generates without a refusal (the advisory is expected)')
   assert.ok(result.moves.length > 0, 'the exact repro cuts')
 
   // #1016 C2-F7 pulled the cutter centre one radius inside each stubbed end, so
@@ -675,8 +676,8 @@ for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
   const fixture = codexFixture(toolType, 'rotary_finish', CODEX_OFFSET_MODEL)
   const stock = fixture.project.stock as BarStock
   const result = generateRotaryOperation(fixture.project, fixture.operation)
-  assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryBelowCentreline'],
-    `${toolType}: the off-axis finish reports only the below-centreline warning`)
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), ['rotaryBelowCentreline'],
+    `${toolType}: the off-axis finish reports only the below-centreline refusal (plus the advisory)`)
   assert.ok(result.moves.length > 0, `${toolType}: the off-axis finish still cuts where the model lies under the tool`)
   const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
   assert.ok(measured.max <= 1e-6,
@@ -838,14 +839,16 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     if (!(fixture.along.end - fixture.along.start > 2 * fixture.tool.radius)) {
       collapsed++
       assert.deepEqual(result.moves, [], `${label}: a band narrower than the cutter emits no motion`)
-      assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryNoRoom'],
+      assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), ['rotaryNoRoom'],
         `${label}: a band narrower than the cutter says there is no room`)
       return
     }
     // An off-axis target's lower half really is below the centreline; that is
     // the model's warning, not the retained stub's.
     const unexpected = result.warnings.filter(
-      (warning) => warning.code !== 'rotaryBelowCentreline' || !spec.offset,
+      (warning) => warning.code === 'rotaryFinishWithoutRough'
+        ? false
+        : warning.code !== 'rotaryBelowCentreline' || !spec.offset,
     )
     assert.deepEqual(unexpected, [], `${label}: no unexpected warning`)
     assert.ok(result.moves.length > 0, `${label}: cuts`)
@@ -1018,9 +1021,10 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 // retained end -- so each fixture that ends inside the bar starts and ends one
 // cutter radius in. The floor and the step predicate are still square-only.
 //
-// Re-captured for #1045 slice R: an along finish is self-protecting too, so the
-// two round **finish** fingerprints move (the finish now clears the standing bar
-// in its own stepdown layers). The round roughs are unchanged.
+// Re-captured again for the 2026-10-22 decision: the two round **finish**
+// fingerprints move because the finish no longer clears the standing bar and a
+// finish-only program now carries `rotaryFinishWithoutRough`. The round roughs
+// are unchanged.
 
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
@@ -1030,9 +1034,9 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 }
 
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/flat_endmill/finish/chuck-model': '08a62650895b137d|',
+  'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|rotaryFinishWithoutRough',
   'x/mm/ball_endmill/rough/model-model': '9361d06fdb459cd8|',
-  'y/mm/flat_endmill/finish/chuck-model': '5937d7d5750428fe|',
+  'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|rotaryFinishWithoutRough',
   'y/inch/ball_endmill/rough/model-model': '795c6fdd5fa34d27|',
 }
 

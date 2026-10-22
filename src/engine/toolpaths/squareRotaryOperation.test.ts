@@ -220,7 +220,8 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   }
   const valid = generateRotaryOperation(project, { ...operation, stockToLeaveRadial: 0.5 })
   assert.ok(valid.moves.length > 0, `${kind}: a valid allowance still generates`)
-  assert.deepEqual(valid.warnings, [], `${kind}: a valid allowance raises no warning`)
+  assert.deepEqual(valid.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+    `${kind}: a valid allowance raises no refusal (a finish also carries the advisory)`)
 }
 
 console.log('engine/toolpaths/squareRotaryOperation.test.ts: all assertions passed')

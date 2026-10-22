@@ -161,16 +161,20 @@ export type ToolpathWarningCode =
   | 'targetsNotFound'
   | 'stepoverRatioRange'
   | 'operationStepoverRatioRange'
-  /** A rotary operation's own layer depth is a finite positive number (the
-   *  tool's default when the saved field is missing, zero, negative, NaN or
-   *  infinite) but smaller than the physically meaningful minimum (#1045 slice
-   *  O). Distinct
-   *  from `stepdownPositive`: the value is valid in form, just unusably small. */
+  /** A rotary **rough**'s layer depth is a finite positive number but smaller
+   *  than the physically meaningful minimum (#1045 slice O); a finish has no
+   *  layer depth. Distinct from `stepdownPositive`: the value is valid in form,
+   *  just unusably small. */
   | 'rotaryStepdownBelowMinimum'
-  /** A rotary rough or a square around finish would emit more moves than its
-   *  work budget allows at the requested layer depth and sampling (#1045 slice
-   *  O). The job is refused rather than hanging the worker mid-generation. */
+  /** A rotary **rough** would emit more moves than its work budget allows at
+   *  the requested layer depth and sampling (#1045 slice O; a finish has no
+   *  layers). The job is refused rather than hanging the worker mid-generation. */
   | 'rotaryWorkBudgetExceeded'
+  /** The finish has no enabled rotary rough on the same model feature earlier
+   *  in the same setup's operation order, so it will cut to full depth in one
+   *  pass. Advisory only (2026-10-22 decision): the finish follows the model
+   *  either way, and the warning changes no motion. */
+  | 'rotaryFinishWithoutRough'
   | 'surface3dNeedsModel'
   | 'surface3dNotMesh'
   | 'surface3dLoadFailed'

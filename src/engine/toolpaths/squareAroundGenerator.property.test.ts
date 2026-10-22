@@ -32,9 +32,11 @@
  * to 60 mm square and 20 to 1 000 mm long (every size band, the large ones on
  * one seed in eight) -- plus, since #1045 slice R, eight along-finish programs
  * (a bare along finish and an along rough + along finish, on a round bar and a
- * square blank) -- and replays each one, in order, through its own reference. Since #1045 slice M removed the finish's licensing, a bare around
- * finish clears its own blank and cuts, so every one of those programs is
- * replayed. At least 38 of them (every eighth seed) are **default-parameter**
+ * square blank) -- and replays each one, in order, through its own reference.
+ * A finish emits only its model-following passes (2026-10-22 decision), so a
+ * finish-only program cuts to full depth in one pass: it is replayed, but its
+ * layer bounds are not asserted; it must carry the no-rough advisory instead.
+ * At least 38 of them (every eighth seed) are **default-parameter**
  * programs on a shortened bar: their generator sampling is never coarsened, so
  * the defaults the adapter actually emits are covered rather than only the
  * coarsened draws. (The non-compact draws ask for a coarser sampling than the
@@ -77,30 +79,33 @@
  *
  * For each program the reference asserts:
  *
- * 1. no turning cut **or plunge** engages more than its operation's bound --
- *    a rough's `stepdown`, a finish's `stockToLeave` plus its own layer
- *    allowance, each plus the stated reference tolerance. An along-mode stage's
- *    non-turning cuts are judged on a different metric (#1045 slice O): the
- *    **radial surface bite**, the material one move removes from the outermost
- *    solid at a ray, is asserted against the cutter's **exact geometry**
- *    (#1045 slice Q): the largest radial bite one stepdown can take, derived
- *    from the ball's sphere cap (or the flat's bottom face) at the ray's
- *    offset from the axis -- see `alongRadialBiteBound`. An along **finish**
- *    stage (#1045 slice R) uses the same bound with the finish's own stepdown,
- *    which is what its clearing layers and finish pass descend by. The reference's
- *    interior number -- material below an intact shell -- is reported as a
- *    diagnostic and deliberately **not** asserted (#1045 slice P): it is not a
- *    radial depth and has no geometric bound, so the old stepover + diameter
- *    "flank bound" was removed.
+ * 1. a **rough** turning cut or plunge engages no more than its `stepdown`
+ *    plus the stated reference tolerance. An along-mode stage's non-turning
+ *    cuts are judged on a different metric (#1045 slice O): the **radial
+ *    surface bite**, the material one move removes from the outermost solid at
+ *    a ray, is asserted against the cutter's **exact geometry** (#1045 slice
+ *    Q): the largest radial bite one stepdown can take, derived from the ball's
+ *    sphere cap (or the flat's bottom face) at the ray's offset from the axis
+ *    -- see `alongRadialBiteBound`. A finish **after a rough** keeps that
+ *    bound with the **rough's** stepdown: the rough left at most one of those
+ *    above the surface, so the finish's model-following pass removes at most
+ *    that. A finish-only program has no layer bound at all (2026-10-22
+ *    decision); it is covered by the advisory. The reference's interior number
+ *    -- material below an intact shell -- is reported as a diagnostic and
+ *    deliberately **not** asserted (#1045 slice P): it is not a radial depth
+ *    and has no geometric bound, so the old stepover + diameter "flank bound"
+ *    was removed.
  * 2. no cutter body enters a retained end: every reference cell outside the
  *    band keeps the blank's material;
  * 3. no rapid turns A below the blank's corner radius plus 1 mm clearance;
- * 4. the finished surface is within tolerance of the model -- it is not cut
- *    below it, and no more than the finish's own scallop plus the sampler's
- *    stated cell lift is left above it.
+ * 4. a finished surface (a finish after a rough) is within tolerance of the
+ *    model -- it is not cut below it, and no more than the finish's own scallop
+ *    plus the sampler's stated cell lift is left above it. A finish-only
+ *    program is not a finished surface: the raw blank stands between its
+ *    passes, so only the not-below-the-model half applies to it.
  *
  * #1045 slice S adds an **independent structural assertion on the emitted
- * moves**, for every rough and finish stage in both directions: at every along
+ * moves**, for every **rough** stage in both directions: at every along
  * position / angle sample the stage cuts, its commanded tip radii must descend
  * from the raw stock's surface -- the round bar's radius or the square blank's
  * **touch radius** at that angle, computed here from the blank's box and the
@@ -116,11 +121,12 @@
  * measured cutter's footprint; otherwise the plain previous-layer bound
  * applies.
  *
- * #1045 slice M removed the finish's licensing entirely: a square around finish
- * clears the standing blank above its own finish surface in the around rough's
- * layered rings before it follows the model, so it depends on no other
- * operation. Nothing is refused here; the self-clearing layers are what the
- * engagement bound and the surface tolerance judge.
+ * 2026-10-22 decision: a finish (around or along, round or square) only follows
+ * the model -- no clearing layers and no link to a rough. This file therefore
+ * asserts no layer bound for a finish-only program; the adapter's advisory,
+ * `rotaryFinishWithoutRough`, says it cuts to full depth in one pass, and the
+ * seeded program asserts that advisory through the real helper. A finish after a
+ * rough keeps the along-stage radial bound with the rough's stepdown.
  *
  * The per-sample **touch-radius gate** is asserted by the seeded square-material
  * property in `rotarySquareAroundPasses.test.ts`, not duplicated here: a cut
@@ -138,6 +144,8 @@ import type { BarStock } from '../../types/project'
 import { defaultTool, getStockBounds, roundStock } from '../../types/project'
 import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
+import { rotaryFinishWithoutRough } from './rotaryOperation'
+import type { RotaryOrderOperation } from './rotaryOperation'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
 // ── deterministic random source ──────────────────────────────────────────
@@ -845,14 +853,6 @@ interface Case {
   defaultParams: boolean
   /** A default-parameter case whose bar is drawn short; never coarsened. */
   compact: boolean
-  /**
-   * The finish's own clearing depth. A finish usually carries the tool's
-   * `defaultStepdown`, not the rough's drawn value; keeping it at 1.5 mm or more
-   * also keeps the replay affordable, because the finish now clears its own
-   * blank (#1045 slice M) and half-millimetre layers on a 60 mm blank would
-   * dominate the run.
-   */
-  finishStepdown: number
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
@@ -999,8 +999,8 @@ function drawCase(seed: number, lengthScale: number): Case {
     const roughSpacing = Math.max(radius / 2, 1e-3)
     const finishSpacing = Math.max(radius / 4, 1e-3)
     const requestedCellSize = Math.min(radius / 3, defaultStepover * 0.5)
-    // The layer depth matters here: it drives the finish's own clearing, and a
-    // millimetre-scale default keeps a deep corner to a handful of layers.
+    // The layer depth drives the rough's layer count; a millimetre-scale
+    // default keeps a deep corner to a handful of layers.
     const stepdown = Math.round(pick(2.5, 3) * 10) / 10
     return {
       label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
@@ -1024,7 +1024,6 @@ function drawCase(seed: number, lengthScale: number): Case {
       alongEnd,
       defaultParams: true,
       compact: true,
-      finishStepdown: 3,
     }
   }
   // Every size band is covered, but the large ones only on one seed in eight:
@@ -1053,7 +1052,7 @@ function drawCase(seed: number, lengthScale: number): Case {
   const radius = diameter / 2
   const inscribed = side / 2
   // Most programs leave a realistic corner to clear; a quarter keep a deep
-  // one (the finish's self-clearing is most demanding there).
+  // one (a rough that must clear it is the most demanding case).
   const modelRadius = Math.round(pick(seed % 4 === 0 ? 0.4 : 0.6, 0.9) * inscribed * 10) / 10
   // A bare around rough is the most expensive program to replay (every ring
   // follows the raw square's corner), so it is one seed in eight; the finish and
@@ -1130,17 +1129,15 @@ function drawCase(seed: number, lengthScale: number): Case {
     alongEnd,
     defaultParams: false,
     compact: false,
-    finishStepdown: Math.max(stepdown, 2),
   }
 }
 
 /**
- * One seeded **along-finish** case (#1045 slice R): a short bar, a cutter large
- * against it and a deep model corner, on a round bar and a square blank, both a
- * bare along finish and an along rough + along finish. Since #1045 slice R2 the
- * finish clears the raw blank in both shapes: after a rough those clearing
- * layers mostly cut air, and that is the accepted cost of never depending on
- * another operation.
+ * One seeded **along-finish** case: a short bar, a cutter large against it and
+ * a deep model corner, on a round bar and a square blank, both a bare along
+ * finish and an along rough + along finish. A bare along finish cuts to full
+ * depth in one pass and carries the advisory; the rough + finish pair keeps the
+ * along-stage radial bound with the rough's stepdown (2026-10-22 decision).
  */
 function drawAlongCase(seed: number): Case {
   const rand = mulberry32(seed * 0x9e3779b1 + 0x52)
@@ -1191,7 +1188,6 @@ function drawAlongCase(seed: number): Case {
     alongEnd,
     defaultParams: false,
     compact: true,
-    finishStepdown: 2,
   }
 }
 
@@ -1250,16 +1246,28 @@ function generate(entry: Case): Program {
       sampleSpacing: entry.finishSpacing,
       stockToLeave: entry.stockToLeave,
       passDirection: entry.finishKind,
-      // #1045 slices M/R2: a finish clears its own raw blank, in around and
-      // along mode alike. No earlier result is handed to it, so the rough
-      // generated above cannot license a shallower finish.
-      stepdown: entry.finishStepdown,
     }, {})
+  const finishCodes = finish.warnings.map((warning) => warning.code)
+  if (entry.programKind !== 'rough') {
+    // The adapter decides the advisory from the project; reproduce its
+    // operation list here so a finish-only program asserts the real helper's
+    // answer. The motion above is unchanged either way.
+    const finishOperation: RotaryOrderOperation = {
+      id: 'finish', setupId: 'setup', kind: 'rotary_finish', enabled: true,
+      target: { source: 'features', featureIds: ['model'] },
+    }
+    const roughOperation: RotaryOrderOperation = {
+      id: 'rough', setupId: 'setup', kind: 'rotary_rough', enabled: true,
+      target: { source: 'features', featureIds: ['model'] },
+    }
+    const operations = entry.programKind === 'finish' ? [finishOperation] : [roughOperation, finishOperation]
+    if (rotaryFinishWithoutRough(operations, finishOperation)) finishCodes.push('rotaryFinishWithoutRough')
+  }
   return {
     roughMoves: rough.moves,
     finishMoves: finish.moves,
     roughCodes: rough.warnings.map((warning) => warning.code),
-    finishCodes: finish.warnings.map((warning) => warning.code),
+    finishCodes,
   }
 }
 
@@ -1472,11 +1480,7 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
     const ratio = Math.max(cells / MAX_REPLAY_CELLS, 1)
     entry = {
       ...entry,
-      // Both radial depths, not only the rough's: the finish now clears its own
-      // blank (#1045 slice M), so a half-millimetre finish stepdown on a tall
-      // corner is the most expensive input in the set.
       stepdown: Math.min(3, entry.stepdown * Math.max(1.2, Math.min(1.8, ratio))),
-      finishStepdown: Math.min(3, entry.finishStepdown * Math.max(1.2, Math.min(1.8, ratio))),
       defaultParams: false,
     }
     program = generate(entry)
@@ -1946,13 +1950,14 @@ let alongInteriorDiagnostic = { depth: 0, label: '', stepover: 0, diameter: 0, s
 // it a no-op) cannot pass silently: the seeded set must assert the radial
 // surface bite of every along program.
 let alongBiteChecks = 0
+// The subset of those checks on a **finish after a rough** (the task's bound).
+let finishAlongBiteChecks = 0
 // #1045 slice S: how many emitted cuts the independent raw-descent assertion
 // judged, split so a run that drops one mode (or one stage) cannot pass silently.
 let descentChecks = 0
 let alongDescentChecks = 0
 let aroundDescentChecks = 0
 let roughDescentChecks = 0
-let finishDescentChecks = 0
 let worstDescentMargin = Number.POSITIVE_INFINITY
 let worstDescentMarginLabel = ''
 let nonTurningWorst = 0
@@ -2013,7 +2018,7 @@ for (const { entry, program } of CASES) {
   if (process.env.SQUARE_PROFILE) {
     console.log(`  [case] ${casesDone} ${((Date.now() - startedAt) / 1000).toFixed(1)} s${entry.compact ? ' compact' : ''} `
       + `est ${estimateReplayCells(program, entry)} steps ${referenceStats.steps - profileSteps} `
-      + `moves ${referenceStats.moves - profileMoves} sd ${entry.stepdown}/${entry.finishStepdown} ${entry.programKind} — ${entry.label}`)
+      + `moves ${referenceStats.moves - profileMoves} sd ${entry.stepdown} ${entry.programKind} — ${entry.label}`)
     profileSteps = referenceStats.steps
     profileMoves = referenceStats.moves
   }
@@ -2043,11 +2048,17 @@ for (const { entry, program } of CASES) {
     assert.deepEqual(program.roughCodes, [], `${entry.label}: the rough warns about nothing`)
   }
   if (finishRan) {
-    // #1045 slice M: with the licensing gone a bare finish clears its own blank
-    // and cuts; so does one after any rough, retained ends or not. Slice R
-    // extends that to an along finish.
-    assert.ok(program.finishMoves.length > 0, `${entry.label}: the finish clears itself and cuts`)
-    assert.deepEqual(program.finishCodes, [], `${entry.label}: the finish warns about nothing`)
+    // A finish only follows the model, so it cuts with or without a rough. A
+    // finish-only program therefore cuts to full depth in one pass and is
+    // outside every layer bound; it carries the advisory instead. A finish
+    // after a rough is bounded by what the rough left.
+    assert.ok(program.finishMoves.length > 0, `${entry.label}: the finish follows the model and cuts`)
+    if (entry.programKind === 'finish') {
+      assert.deepEqual(program.finishCodes, ['rotaryFinishWithoutRough'],
+        `${entry.label}: a finish-only program carries the no-rough advisory`)
+    } else {
+      assert.deepEqual(program.finishCodes, [], `${entry.label}: a preceding rough suppresses the advisory`)
+    }
     if (entry.finishKind === 'along') {
       alongFinishStages++
       if (entry.programKind === 'finish') {
@@ -2080,8 +2091,12 @@ for (const { entry, program } of CASES) {
   const windowHigh = Math.min(bounds.maxX, maxCutAlong + cutterRadius + 1)
   const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
 
-  const finishBound = entry.stockToLeave + entry.finishStepdown
-    + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+  // A finish after a rough removes at most what the rough left at an along
+  // stage's ray: one rough `stepdown`, plus the reference's own cell allowance
+  // (`alongRadialBiteBound` below). A finish-only program has no layer bound
+  // (2026-10-22 decision). Turning engagement is a rough-only assertion: a
+  // finish has no clearing layers, and its single model-following ring can meet
+  // the rough's between-pass ridge frontally, which is not a radial depth.
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
   if (roughRan) stageSpecs.push({
@@ -2096,41 +2111,48 @@ for (const { entry, program } of CASES) {
   })
   assert.ok(stageSpecs.length > 0, `${entry.label}: the program has motion`)
 
-  // #1045 slice S: judge the emitted motion before replaying it. The stage's
-  // samples are the generator's own pass/ring positions; the raw surfaces are
-  // this file's own (never `rotaryModel`'s).
+  // #1045 slice S (2026-10-22 decision): judge the emitted motion of every
+  // **rough** before replaying it. A finish emits only the model-following
+  // passes, so it has no layer descent to verify; after a rough the radial
+  // bound below uses the rough's stepdown instead of a finish one.
   const stages = stageSpecs.map((spec) => ({
     ...spec,
-    descent: assertStageDescent(
-      entry,
-      `${spec.finish ? 'finish' : 'rough'} ${spec.direction} stage`,
-      spec.moves,
-      spec.direction,
-      pivot,
-      ball,
-      cutterRadius,
-      spec.finish ? entry.finishStepdown : entry.stepdown,
-      alongOf,
-      spec.finish ? entry.finishSpacing : entry.roughSpacing,
-    ),
+    descent: spec.finish
+      ? null
+      : assertStageDescent(
+        entry,
+        `rough ${spec.direction} stage`,
+        spec.moves,
+        spec.direction,
+        pivot,
+        ball,
+        cutterRadius,
+        entry.stepdown,
+        alongOf,
+        entry.roughSpacing,
+      ),
   }))
   for (const stage of stages) {
+    if (!stage.descent) continue
     descentChecks += stage.descent.cuts
     if (stage.direction === 'along') alongDescentChecks += stage.descent.cuts
     else aroundDescentChecks += stage.descent.cuts
-    if (stage.finish) finishDescentChecks += stage.descent.cuts
-    else roughDescentChecks += stage.descent.cuts
+    roughDescentChecks += stage.descent.cuts
     if (stage.descent.margin < worstDescentMargin) {
       worstDescentMargin = stage.descent.margin
       worstDescentMarginLabel = `${entry.label} ${stage.descent.marginLabel}`
     }
     assert.ok(stage.descent.cuts > 0,
-      `${entry.label}: the ${stage.finish ? 'finish' : 'rough'} ${stage.direction} stage emits a verified descent`)
+      `${entry.label}: the rough ${stage.direction} stage emits a verified descent`)
   }
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
   for (const stage of stages) {
-    const bound = stage.finish ? finishBound : roughBound
+    const bound = roughBound
+    // A finish-only program cuts to full depth in one pass, so the along-stage
+    // radial bite does not apply to it; it is covered by the advisory instead.
+    // (Turning engagement and plunges are rough-only assertions regardless.)
+    const unlicensedFinish = stage.finish && entry.programKind === 'finish'
     for (const move of stage.moves) {
       const hasAngle = move.from.a !== undefined || move.to.a !== undefined
       const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
@@ -2152,12 +2174,14 @@ for (const { entry, program } of CASES) {
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
         if (stage.direction === 'around') {
-          if (moveInteriorWorst > worstAssertedInterior) {
-            worstAssertedInterior = moveInteriorWorst
-            worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
-              + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)}`
+          if (!stage.finish) {
+            if (moveInteriorWorst > worstAssertedInterior) {
+              worstAssertedInterior = moveInteriorWorst
+              worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
+                + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)}`
+            }
+            checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
           }
-          checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
         } else {
           // #1045 slice O/P: an along pass is a **flank** cut, not a radial
           // plunge. The radial metric that matters is the material this move
@@ -2185,9 +2209,17 @@ for (const { entry, program } of CASES) {
           // reference resolves. `alongRadialBiteBound` derives that maximum in
           // closed form; `tip` is the move's lowest tip, at which the bound is
           // largest.
-          // An along finish's clearing and finish passes descend by the
-          // finish's own stepdown (slice R); the rough's by its own. Both use
-          // slice Q's exact geometry. The bound is extended past the previous
+          // A finish after a rough is bounded by the rough's stepdown: the
+          // rough left at most one of those above the surface, so the finish's
+          // model-following pass removes at most that. A rough uses its own.
+          // Both use slice Q's exact geometry. The bound is extended past the
+          // previous layer's reach (#1045 slice Q extension): on a ray that
+          // layer did **not** reach, the standing material is not its contact,
+          // so the allowance is measured from the material actually standing at
+          // that ray down to this body's own contact. Where the previous layer
+          // did reach, the standing material is at most its contact, so the
+          // second term cannot exceed the first and the exact bound is
+          // unchanged.
           // layer's reach (#1045 slice Q extension): on a ray that layer did
           // **not** reach, the standing material is not its contact, so the
           // allowance is measured from the material actually standing at that
@@ -2195,7 +2227,7 @@ for (const { entry, program } of CASES) {
           // reach, the standing material is at most its contact, so the second
           // term cannot exceed the first and the exact bound is unchanged.
           const tip = Math.min(move.from.z - pivot, move.to.z - pivot)
-          const stepdown = stage.finish ? entry.finishStepdown : entry.stepdown
+          const stepdown = entry.stepdown
           const cellDelta = (() => {
             const d = ((moveSurfaceCell.angle - fromAngle) % 360 + 360) % 360
             return d > 180 ? 360 - d : d
@@ -2210,11 +2242,13 @@ for (const { entry, program } of CASES) {
             - alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
           // #1045 slice S: the standing-material term is only sound where the
           // stage's own emitted samples inside this cutter's footprint really
-          // descended from the raw blank one stepdown at a time. Without that
-          // proof it would measure from material the operation never cleared and
-          // excuse any bite (a 1 000 mm stepdown passed all eight along-finish
-          // cases, including 9.3975 mm). Fall back to the previous-layer bound.
-          const standingAllowed = descentCoversRay(
+          // descended from the raw blank one stepdown at a time. A finish has
+          // no descent of its own (it follows the model), so it uses the plain
+          // previous-layer bound. Without that proof it would measure from
+          // material the operation never cleared and excuse any bite (a
+          // 1 000 mm stepdown passed all eight along-finish cases, including
+          // 9.3975 mm).
+          const standingAllowed = stage.descent !== null && descentCoversRay(
             stage.descent,
             moveSurfaceCell.along,
             moveSurfaceCell.angle,
@@ -2224,23 +2258,26 @@ for (const { entry, program } of CASES) {
             moveSurfaceCell.material,
           )
           const alongBound = standingAllowed ? Math.max(reachedBound, standingBound) : reachedBound
-          const alongMargin = alongBound - moveSurfaceWorst
-          if (alongMargin < worstAlongMargin) {
-            worstAlongMargin = alongMargin
-            worstAlongMarginLabel = `${entry.label} ${move.kind} `
-              + `A${fromAngle.toFixed(2)} tip ${tip.toFixed(3)} `
-              + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)} `
-              + `(previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
-              + `${standingAllowed ? 'covered' : 'not covered'} at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
+          if (!unlicensedFinish) {
+            const alongMargin = alongBound - moveSurfaceWorst
+            if (alongMargin < worstAlongMargin) {
+              worstAlongMargin = alongMargin
+              worstAlongMarginLabel = `${entry.label} ${move.kind} `
+                + `A${fromAngle.toFixed(2)} tip ${tip.toFixed(3)} `
+                + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)} `
+                + `(previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+                + `${standingAllowed ? 'covered' : 'not covered'} at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
+            }
+            checkEngagement(moveSurfaceWorst, alongBound,
+              `${entry.label}: along ${move.kind} radial surface bite `
+              + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+              + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
+              + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
+              + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+              + `(${standingAllowed ? 'covered by the emitted descent' : 'not applied: no verified descent inside the footprint'})`)
+            alongBiteChecks++
+            if (stage.finish) finishAlongBiteChecks++
           }
-          checkEngagement(moveSurfaceWorst, alongBound,
-            `${entry.label}: along ${move.kind} radial surface bite `
-            + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
-            + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
-            + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
-            + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
-            + `(${standingAllowed ? 'covered by the emitted descent' : 'not applied: no verified descent inside the footprint'})`)
-          alongBiteChecks++
           // Diagnostic only: the interior removal an along move finds below an
           // intact shell. It has no asserted bound (see above); recording the
           // worst is what lets the report show how much it is, without claiming
@@ -2249,8 +2286,7 @@ for (const { entry, program } of CASES) {
             alongInteriorDiagnostic = {
               depth: moveInteriorWorst,
               label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
-              stepover: entry.stepover, diameter: entry.diameter,
-              stepdown: stage.finish ? entry.finishStepdown : entry.stepdown,
+              stepover: entry.stepover, diameter: entry.diameter, stepdown: entry.stepdown,
             }
           }
         }
@@ -2264,20 +2300,22 @@ for (const { entry, program } of CASES) {
             checkedCuts++
             const key = stage.finish ? 'finish' : 'rough'
             const keyLabel = `${entry.label} @A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)}`
-            if (engagement > worst[key].peak) {
-              worst[key].peak = engagement
-              worst[key].peakLabel = keyLabel
+            if (!stage.finish) {
+              if (engagement > worst[key].peak) {
+                worst[key].peak = engagement
+                worst[key].peakLabel = keyLabel
+              }
+              const excess = engagement - bound
+              if (excess > worst[key].excess) {
+                worst[key].bound = bound
+                worst[key].excess = excess
+                worst[key].label = keyLabel
+              }
+              checkEngagement(engagement, bound,
+                `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
+                + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
+                + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
             }
-            const excess = engagement - bound
-            if (excess > worst[key].excess) {
-              worst[key].bound = bound
-              worst[key].excess = excess
-              worst[key].label = keyLabel
-            }
-            checkEngagement(engagement, bound,
-              `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
-              + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
-              + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
           } else if (engagement > nonTurningWorst) {
             nonTurningWorst = engagement
             nonTurningLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
@@ -2300,14 +2338,16 @@ for (const { entry, program } of CASES) {
           } else {
             checkedPlunges++
             const keyLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
-            if (engagement > worstPlunge) {
-              worstPlunge = engagement
-              worstPlungeLabel = keyLabel
+            if (!stage.finish) {
+              if (engagement > worstPlunge) {
+                worstPlunge = engagement
+                worstPlungeLabel = keyLabel
+              }
+              checkEngagement(engagement, bound,
+                `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
+                + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
+                + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
             }
-            checkEngagement(engagement, bound,
-              `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
-              + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
-              + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
           }
         }
       }
@@ -2334,9 +2374,13 @@ for (const { entry, program } of CASES) {
     }
   }
 
-  // (3) The finished surface: not below the model, and no more than the
-  // finish's own scallop above model + stock.
+  // (3) The finished surface: not below the model, and -- for a finish that
+  // has a rough in front of it -- no more than the finish's own scallop above
+  // model + stock. A finish-only program cuts to full depth in one pass and
+  // leaves the raw blank between its passes, so its above-model material is not
+  // a finished-surface measure; it is covered by the advisory instead.
   if (!finishRan) continue
+  const finishOnly = entry.programKind === 'finish'
   const slope = modelMaxSlope(entry.profile)
   // A ball leaves its between-pass scallop; a flat leaves a staircase one full
   // step tall on a sloped surface, because each pass's bottom is a horizontal
@@ -2379,7 +2423,7 @@ for (const { entry, program } of CASES) {
       const wanted = model + entry.stockToLeave
       checkedSurfaceCells++
       const over = material - wanted
-      if (over > worstSurfaceOver) {
+      if (!finishOnly && over > worstSurfaceOver) {
         worstSurfaceOver = over
         worstSurfaceOverLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} material ${material.toFixed(4)} model ${model.toFixed(4)}`
       }
@@ -2388,9 +2432,11 @@ for (const { entry, program } of CASES) {
         worstSurfaceUnder = under
         worstSurfaceUnderLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} material ${material.toFixed(4)} model ${model.toFixed(4)}`
       }
-      assert.ok(over <= surfaceTolerance,
-        `${entry.label}: the finish leaves ${over.toFixed(4)} mm above the model (allowed ${surfaceTolerance.toFixed(4)}) `
-        + `at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
+      if (!finishOnly) {
+        assert.ok(over <= surfaceTolerance,
+          `${entry.label}: the finish leaves ${over.toFixed(4)} mm above the model (allowed ${surfaceTolerance.toFixed(4)}) `
+          + `at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
+      }
       const underLimit = corner * referenceAngleRad + budget.alongBin + 1e-6
       assert.ok(under <= underLimit,
         `${entry.label}: the finish cuts ${under.toFixed(4)} mm below the model `
@@ -2434,7 +2480,7 @@ console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4
 console.log(`  along stage: closest to its exact-geometry bound at ${worstAlongMargin.toFixed(4)} mm margin `
   + `(${worstAlongMarginLabel || 'none'})`)
 console.log(`  emitted layer descent: ${descentChecks} cuts checked (${alongDescentChecks} along, `
-  + `${aroundDescentChecks} around; ${roughDescentChecks} rough, ${finishDescentChecks} finish); `
+  + `${aroundDescentChecks} around; all ${roughDescentChecks} rough; finishes have no layer descent); `
   + `closest to its allowance at ${worstDescentMargin.toFixed(4)} mm margin `
   + `(${worstDescentMarginLabel || 'none'})`)
 // Diagnostic only, explicitly not a bound (#1045 slice P). The old
@@ -2452,19 +2498,21 @@ if (process.env.SQUARE_CASES) {
 }
 
 console.log(`  along finishes: ${alongFinishStages} stages (${alongFinishOnlyRound} finish-only round, `
-  + `${alongFinishOnlySquare} finish-only square) — the radial bound is asserted with the finish's own stepdown`)
+  + `${alongFinishOnlySquare} finish-only square) — finish-only programs carry the advisory; `
+  + `a finish after a rough keeps the radial bound with the rough's stepdown`)
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
 assert.ok(alongFinishStages >= 8, `the along-finish stages are in the seeded set (${alongFinishStages})`)
 assert.ok(alongFinishOnlyRound >= 1, `a finish-only along program on a round bar (${alongFinishOnlyRound})`)
 assert.ok(alongFinishOnlySquare >= 1, `a finish-only along program on a square blank (${alongFinishOnlySquare})`)
 assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
+assert.ok(finishAlongBiteChecks > 100,
+  `the finish-after-rough along stage's radial surface bite is asserted (${finishAlongBiteChecks})`)
 // #1045 slice S: the raw-descent assertion must actually cover every stage
 // shape, in both modes, for rough and finish. A change that stops calling it
 // fails here rather than passing with no checks.
 assert.ok(alongDescentChecks > 1000, `the emitted along descent is asserted (${alongDescentChecks})`)
 assert.ok(aroundDescentChecks > 1000, `the emitted around descent is asserted (${aroundDescentChecks})`)
 assert.ok(roughDescentChecks > 1000, `the emitted rough descent is asserted (${roughDescentChecks})`)
-assert.ok(finishDescentChecks > 1000, `the emitted finish descent is asserted (${finishDescentChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**
