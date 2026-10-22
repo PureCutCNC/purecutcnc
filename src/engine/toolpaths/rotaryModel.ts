@@ -21,6 +21,8 @@ import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
+import { CENTRE_SLACK, buildRotaryHeightMap, buildRotaryRasterGeometry } from './rotaryRaster'
+import type { RotaryRasterGeometry } from './rotaryRaster'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
@@ -193,6 +195,31 @@ interface RotaryStripPlan {
   /** Triangle starts (offsets into `index`) that reach the strip at every turn. */
   readonly always: Uint32Array
   readonly bucketWidth: number
+  /**
+   * The cell size the axial-centre cull was built for, when every angle of the
+   * call shares one. A triangle whose axial span holds no cell centre at that
+   * size cannot reach any cell of the map at any angle and is excluded from
+   * `always` and the buckets. `undefined` means no cull (mixed cell sizes).
+   */
+  readonly axialCell?: number
+}
+
+/** The mesh-only half of a plan: it does not depend on the tool or the angles. */
+type RotaryPlanGeometry = Pick<RotaryStripPlan, 'across' | 'up' | 'hull' | 'minAlong' | 'maxAlong'>
+
+/**
+ * Scratch storage owned by one operation, including every refinement round
+ * (issue #1045 slice T). The geometry is mesh-only; the plan is valid for any
+ * angle whose strip reach is not wider than the `reach` it was built with, so a
+ * later round reuses it unless a midpoint widens the reach.
+ */
+interface RotarySamplingWorkspace {
+  geometry?: RotaryPlanGeometry
+  subset?: Uint32Array
+  plan?: RotaryStripPlan
+  reach?: number
+  /** Contiguous per-triangle records for the fused around-mode raster. */
+  raster?: RotaryRasterGeometry
 }
 
 /** The arc of turn directions over which a triangle can reach the strip. */
@@ -403,10 +430,17 @@ function buildStripPlan(
   tool: NormalizedTool,
   requestedCellSize: number,
   anglesDeg: readonly number[],
+  workspace: RotarySamplingWorkspace,
 ): RotaryStripPlan {
-  const { across, up } = crossSection(mesh.positions, stock)
-  const hull = crossSectionHull(across, up)
-  const { min: minAlong, max: maxAlong } = alongExtremes(mesh.positions, stock)
+  // The cross-section, its hull and the along extremes are the same at every
+  // angle and in every refinement round; a 1.47 M-vertex hull and its sort are
+  // paid once per operation rather than once per `sampleRotaryModel` call.
+  const { across, up, hull, minAlong, maxAlong } = workspace.geometry ??= (() => {
+    const section = crossSection(mesh.positions, stock)
+    const hull = crossSectionHull(section.across, section.up)
+    const { min: minAlong, max: maxAlong } = alongExtremes(mesh.positions, stock)
+    return { ...section, hull, minAlong, maxAlong }
+  })()
   const bucketWidth = TAU / STRIP_BUCKETS
   const triangleCount = Math.floor(mesh.index.length / 3)
   // The widest strip any angle of this operation reads: `safeToolTipZAt` reads
@@ -415,19 +449,59 @@ function buildStripPlan(
   // slack absorbs the grid arithmetic. A triangle that cannot reach this band
   // cannot touch any angle's window.
   let reach = 0
+  const cellSizes = new Set<number>()
   for (const angle of anglesDeg) {
     const bounds = turnedBounds(hull, minAlong, maxAlong, stock, angle)
     const cellSize = chooseHeightMapCellSize(bounds, requestedCellSize, [])
+    cellSizes.add(cellSize)
     const candidate = (Math.ceil(tool.radius / cellSize) + 2) * cellSize
     if (candidate > reach) reach = candidate
   }
+  // Rotation never moves the bar axis and the grid origin on it is
+  // `fround(minAlong)`, so when every angle of this call shares a cell size the
+  // set of triangles that can cover an axial cell centre is fixed. On a mesh
+  // finer than the cell most triangles cover none (three quarters of the bust);
+  // dropping them is exact and they are paid for at no angle.
+  const axialCell = cellSizes.size === 1 ? [...cellSizes][0] : undefined
   if (!(reach > 0) || !Number.isFinite(reach)) {
+    // An infinite reach keeps every triangle; it is valid for every angle.
+    if (workspace.plan && workspace.reach === Number.POSITIVE_INFINITY) return workspace.plan
     const all = new Uint32Array(triangleCount * 3)
     for (let t = 0; t < all.length; t++) all[t] = t
-    return {
+    const plan: RotaryStripPlan = {
       across, up, hull, minAlong, maxAlong,
       bucketStarts: new Uint32Array(STRIP_BUCKETS + 1), bucketTriangles: new Uint32Array(0),
       always: all, bucketWidth,
+    }
+    workspace.plan = plan
+    workspace.reach = Number.POSITIVE_INFINITY
+    return plan
+  }
+  // A plan built for a wider reach contains every triangle this call can need:
+  // the strip index only ever over-includes, and the buckets are direction-only.
+  // The axial cull must match the cell size it was built for.
+  if (workspace.plan && workspace.reach !== undefined && workspace.reach >= reach
+    && workspace.plan.axialCell === axialCell) {
+    return workspace.plan
+  }
+  let axialMask: Uint8Array | undefined
+  if (axialCell !== undefined) {
+    axialMask = new Uint8Array(triangleCount)
+    const origin = Math.fround(minAlong)
+    for (let t = 0; t < triangleCount; t++) {
+      const offset = t * 3
+      const v0 = mesh.index[offset]
+      const v1 = mesh.index[offset + 1]
+      const v2 = mesh.index[offset + 2]
+      const axisOffset = stock.axis === 'x' ? 0 : 1
+      const p0 = mesh.positions[v0 * 3 + axisOffset]
+      const p1 = mesh.positions[v1 * 3 + axisOffset]
+      const p2 = mesh.positions[v2 * 3 + axisOffset]
+      const lo = Math.min(p0, p1, p2)
+      const hi = Math.max(p0, p1, p2)
+      const first = Math.ceil((lo - origin) / axialCell - 0.5 - CENTRE_SLACK)
+      const last = Math.floor((hi - origin) / axialCell - 0.5 + CENTRE_SLACK)
+      if (first <= last) axialMask[t] = 1
     }
   }
   const arcFirst = new Int32Array(triangleCount)
@@ -436,6 +510,10 @@ function buildStripPlan(
   let alwaysCount = 0
   for (let t = 0; t < triangleCount; t++) {
     const offset = t * 3
+    if (axialMask && axialMask[t] === 0) {
+      arcFirst[t] = -2
+      continue
+    }
     if (stripArc(across, up, mesh.index[offset], mesh.index[offset + 1], mesh.index[offset + 2], reach, arc)) {
       arcFirst[t] = -1
       alwaysCount++
@@ -457,7 +535,7 @@ function buildStripPlan(
   }
   const always = new Uint32Array(alwaysCount)
   let alwaysIndex = 0
-  for (let t = 0; t < triangleCount; t++) if (arcFirst[t] < 0) always[alwaysIndex++] = t * 3
+  for (let t = 0; t < triangleCount; t++) if (arcFirst[t] === -1) always[alwaysIndex++] = t * 3
   const bucketStarts = new Uint32Array(STRIP_BUCKETS + 1)
   for (let t = 0; t < triangleCount; t++) {
     const first = arcFirst[t]
@@ -485,7 +563,13 @@ function buildStripPlan(
       for (let k = 0; k <= last; k++) bucketTriangles[cursor[k]++] = offset
     }
   }
-  return { across, up, hull, minAlong, maxAlong, bucketStarts, bucketTriangles, always, bucketWidth }
+  const plan: RotaryStripPlan = {
+    across, up, hull, minAlong, maxAlong, bucketStarts, bucketTriangles, always, bucketWidth,
+    ...(axialCell !== undefined ? { axialCell } : {}),
+  }
+  workspace.plan = plan
+  workspace.reach = reach
+  return plan
 }
 
 /**
@@ -544,6 +628,24 @@ export function sampleRotaryModel(
   options: RotarySampleOptions,
   warnings: ToolpathWarning[],
 ): RotarySampling {
+  return sampleRotaryModelWithWorkspace(mesh, stock, tool, options, warnings, {})
+}
+
+/**
+ * `sampleRotaryModel` with scratch storage that outlives one call. The around
+ * grid is sampled once and then refined in rounds; every round runs over the
+ * same mesh, tool and along positions, so the cross-section, hull, strip index
+ * and candidate buffer are built once per operation instead of once per round
+ * (issue #1045 slice T). A caller that has no rounds passes a fresh object.
+ */
+function sampleRotaryModelWithWorkspace(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  tool: NormalizedTool,
+  options: RotarySampleOptions,
+  warnings: ToolpathWarning[],
+  workspace: RotarySamplingWorkspace,
+): RotarySampling {
   const anglesDeg: number[] = []
   const along = [...options.along]
   const tipRadius: Float32Array[] = []
@@ -557,14 +659,14 @@ export function sampleRotaryModel(
   }
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
-  // One turned buffer for the whole operation: the mesh is the same size at
-  // every angle, and neither the height map nor the sampling retains it, so a
-  // fresh 3 V Float32 per angle is allocation the run does not need. Only the
-  // vertices of the triangles this angle rasterises are written into it.
-  const turned = new Float32Array(mesh.positions.length)
+  // Along mode keeps its established project-then-raster path, byte for byte:
+  // one turned buffer for the whole operation, written only at the candidate
+  // triangles' vertices. Around mode fuses the projection into the raster
+  // kernel and needs no turned mesh at all (issue #1045 slice T).
+  const turned = options.conservativeCellBounds ? null : new Float32Array(mesh.positions.length)
   // A triangle can appear in both queried buckets, so the gathered list can be
   // twice the triangle count; anything beyond that would be a bug.
-  const subset = new Uint32Array(2 * Math.floor(mesh.index.length / 3))
+  const subset = workspace.subset ??= new Uint32Array(2 * Math.floor(mesh.index.length / 3))
   let plan: RotaryStripPlan | null = null
   let stopped = false
   // #1045 slice F: around mode reads every cell as the top of its square, not
@@ -581,7 +683,7 @@ export function sampleRotaryModel(
     }
     // Built lazily so an immediate stop -- a cancelled worker -- never pays for
     // a 1.47 M-vertex hull and bucket index.
-    plan ??= buildStripPlan(mesh, stock, tool, options.requestedCellSize, options.anglesDeg)
+    plan ??= buildStripPlan(mesh, stock, tool, options.requestedCellSize, options.anglesDeg, workspace)
     const t = (angle * Math.PI) / 180
     const cos = Math.cos(t)
     const sin = Math.sin(t)
@@ -614,12 +716,19 @@ export function sampleRotaryModel(
       const end = plan.bucketStarts[bucket + 1]
       for (let i = start; i < end; i++) subset[count++] = plan.bucketTriangles[i]
     }
-    turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
-    const heightMap = buildHeightMap(turned, mesh.index, bbox, cellSize, {
+    const buildOptions = {
       window,
       triangles: subset.subarray(0, count),
       ...(options.conservativeCellBounds ? { trackCellRise: true } : {}),
-    })
+    }
+    if (turned) turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
+    const heightMap = turned
+      ? buildHeightMap(turned, mesh.index, bbox, cellSize, buildOptions)
+      : buildRotaryHeightMap({
+        axis: stock.axis, centre, pivot, cos, sin,
+        geometry: workspace.raster ??= buildRotaryRasterGeometry(
+          mesh.positions, mesh.index, stock.axis, centre, pivot),
+      }, bbox, cellSize, buildOptions)
     if (options.conservativeCellBounds) angleLifts.push(Math.min(heightMap.cellRise ?? 0, cellSize))
     const row = new Float32Array(along.length)
     for (let i = 0; i < along.length; i++) {
@@ -1668,6 +1777,7 @@ function aroundSegmentationTolerance(
  */
 function refineAroundSampling(args: {
   mesh: RotaryModelMesh
+  workspace: RotarySamplingWorkspace
   stock: BarStock
   tool: NormalizedTool
   samplingTool: NormalizedTool
@@ -1682,24 +1792,38 @@ function refineAroundSampling(args: {
   const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, conservativeCellBounds, shouldStop } = args
   let angles = [...args.angles]
   let tips: Float32Array[] = [...args.tips]
+  // A midpoint row is a pure function of (mesh, tool, along positions, cell
+  // size, angle), and all of those are fixed for this refinement. Every round
+  // tests all current segments -- a segment that passed can still fail once a
+  // subdivided neighbour changes the cusp test -- but only a midpoint that has
+  // never been sampled needs a height map. Without this cache each round paid a
+  // fresh map for every segment, passing ones included: six rounds of a smooth
+  // ring cost six times the base grid even when almost nothing failed (issue
+  // #1045 slice T).
+  const midpointRows = new Map<number, Float32Array>()
   for (let round = 0; round < MAX_AROUND_REFINEMENT_ROUNDS; round++) {
     const mids = angles.slice(0, -1).map((angle, k) => (angle + angles[k + 1]) / 2)
     if (mids.length === 0) break
-    const sampled = sampleRotaryModel(mesh, stock, samplingTool, {
-      anglesDeg: mids,
-      along,
-      requestedCellSize,
-      ...(conservativeCellBounds ? { conservativeCellBounds: true } : {}),
-      ...(shouldStop ? { shouldStop } : {}),
-    }, warnings)
-    if (!sampled.valid) return null
-    if (sampled.stopped) return { angles, tips, stopped: true }
+    const missing = mids.filter((angle) => !midpointRows.has(angle))
+    if (missing.length > 0) {
+      const sampled = sampleRotaryModelWithWorkspace(mesh, stock, samplingTool, {
+        anglesDeg: missing,
+        along,
+        requestedCellSize,
+        ...(conservativeCellBounds ? { conservativeCellBounds: true } : {}),
+        ...(shouldStop ? { shouldStop } : {}),
+      }, warnings, args.workspace)
+      if (!sampled.valid) return null
+      if (sampled.stopped) return { angles, tips, stopped: true }
+      for (let k = 0; k < missing.length; k++) midpointRows.set(missing[k], sampled.tipRadius[k])
+    }
+    const midRow = (k: number): Float32Array => midpointRows.get(mids[k])!
     const fails = new Set<number>()
     for (let k = 0; k + 1 < angles.length && fails.size < mids.length; k++) {
       const delta = angles[k + 1] - angles[k]
       const rowA = tips[k]
       const rowB = tips[k + 1]
-      const rowMid = sampled.tipRadius[k]
+      const rowMid = midRow(k)
       const rowPrev = k > 0 ? tips[k - 1] : null
       const rowNext = k + 2 < angles.length ? tips[k + 2] : null
       for (let i = 0; i < along.length; i++) {
@@ -1752,7 +1876,7 @@ function refineAroundSampling(args: {
       nextTips.push(tips[k])
       if (k + 1 < angles.length && fails.has(k)) {
         nextAngles.push(mids[k])
-        nextTips.push(sampled.tipRadius[k])
+        nextTips.push(midRow(k))
       }
     }
     angles = nextAngles
@@ -1880,7 +2004,11 @@ function rotaryTargets(
     // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
     !(isSquareStock(stock) && params.passDirection === 'around'),
   )
-  const sampling = sampleRotaryModel(
+  // One workspace for the base grid and every refinement round: the mesh, tool
+  // and along positions are the same in all of them, so the hull, the strip
+  // index and the candidate buffer are built once (issue #1045 slice T).
+  const workspace: RotarySamplingWorkspace = {}
+  const sampling = sampleRotaryModelWithWorkspace(
     samplingMesh,
     stock,
     samplingTool,
@@ -1892,6 +2020,7 @@ function rotaryTargets(
       ...hooks,
     },
     warnings,
+    workspace,
   )
   if (!sampling.valid) {
     return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
@@ -1904,6 +2033,7 @@ function rotaryTargets(
   if (params.passDirection === 'around' && angles.length > 1) {
     const refined = refineAroundSampling({
       mesh: samplingMesh,
+      workspace,
       stock,
       tool,
       samplingTool,
