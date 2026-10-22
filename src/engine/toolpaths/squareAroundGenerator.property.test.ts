@@ -99,6 +99,23 @@
  *    below it, and no more than the finish's own scallop plus the sampler's
  *    stated cell lift is left above it.
  *
+ * #1045 slice S adds an **independent structural assertion on the emitted
+ * moves**, for every rough and finish stage in both directions: at every along
+ * position / angle sample the stage cuts, its commanded tip radii must descend
+ * from the raw stock's surface -- the round bar's radius or the square blank's
+ * **touch radius** at that angle, computed here from the blank's box and the
+ * cutter's body, never from `rotaryModel` -- one operation stepdown at a time.
+ * The first cut at a sample must be within one stepdown of the raw surface;
+ * later cuts may use the slice-Q cutter-cap allowance as well. A cut above the
+ * standing material removes nothing and is ignored, so the emitter's vertical
+ * step leg is judged by the drop it actually makes. This is what a missing
+ * clearing pass violates: the along-stage standing-material allowance in
+ * assertion 1 is measured from whatever the reference still holds, so on its
+ * own it could excuse a whole uncleared column. That allowance is therefore
+ * conditional on this descent holding for the stage's own samples inside the
+ * measured cutter's footprint; otherwise the plain previous-layer bound
+ * applies.
+ *
  * #1045 slice M removed the finish's licensing entirely: a square around finish
  * clears the standing blank above its own finish surface in the around rough's
  * layered rings before it follows the model, so it depends on no other
@@ -239,6 +256,66 @@ function blankRadius(stock: BarStock, angleDeg: number): number {
   if (stock.shape === 'round') return stock.thickness / 2
   const radians = angleDeg * Math.PI / 180
   return stock.thickness / 2 / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+}
+
+/**
+ * The raw stock's surface at one program angle, derived here rather than by the
+ * generator (#1045 slice S).
+ *
+ * A round bar is its radius at every angle. A square blank's surface at a pass
+ * is not the ray's own radius: the cutter's body spans a slab across the pass
+ * ray, and the highest blank material inside that slab is what the first layer
+ * meets. That **touch radius** is computed from the blank's box and the
+ * cutter's own cross-section -- a flat's bottom face (`Y`) or a ball's lower
+ * surface (`Y - r + sqrt(r^2 - X^2)`) -- by taking the maximum over the square's
+ * intersection with `|X| <= r`. That intersection is convex, so its maximum is
+ * on the boundary: a square corner inside the slab, an edge crossing
+ * `X = +/-r`, or, for a ball, the interior tangency of a square edge.
+ */
+function rawStockSurface(stock: BarStock, angleDeg: number, cutterRadius: number, ball: boolean): number {
+  if (stock.shape === 'round') return stock.thickness / 2
+  const half = stock.thickness / 2
+  const radians = angleDeg * Math.PI / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+    const across = u * half
+    const up = v * half
+    return { x: across * cos - up * sin, y: across * sin + up * cos }
+  })
+  const reach = Math.abs(cutterRadius)
+  const heightAt = ball
+    ? (x: number, y: number): number => y - reach + Math.sqrt(Math.max(0, reach * reach - x * x))
+    : (_x: number, y: number): number => y
+  const tolerance = 1e-9 * Math.max(1, reach, half)
+  let best = Number.NEGATIVE_INFINITY
+  const consider = (x: number, y: number): void => {
+    if (Math.abs(x) <= reach + tolerance) best = Math.max(best, heightAt(x, y))
+  }
+  for (const corner of corners) consider(corner.x, corner.y)
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i]
+    const b = corners[(i + 1) % corners.length]
+    const dx = b.x - a.x
+    if (dx === 0) continue
+    for (const boundary of [-reach, reach]) {
+      const t = (boundary - a.x) / dx
+      if (t < -tolerance || t > 1 + tolerance) continue
+      const clamped = Math.min(1, Math.max(0, t))
+      consider(boundary, a.y + clamped * (b.y - a.y))
+    }
+    if (!ball) continue
+    const length = Math.hypot(dx, b.y - a.y)
+    if (!(length > 0)) continue
+    // d/dX [Y - r + sqrt(r^2 - X^2)] = 0 at X = +/- r |dY| / |edge|.
+    const xStar = reach * Math.abs(b.y - a.y) / length
+    for (const x of [xStar, -xStar]) {
+      const t = (x - a.x) / dx
+      if (t < 0 || t > 1) continue
+      consider(x, a.y + t * (b.y - a.y))
+    }
+  }
+  return best
 }
 
 function createReference(stock: BarStock, alongStart: number, alongEnd: number, alongBin: number, angleBins: number): Reference {
@@ -1526,6 +1603,241 @@ function alongRayContact(
   return Number.isFinite(contact) ? contact : tip
 }
 
+// ── the emitted motion's own layer descent (#1045 slice S) ────────────────
+//
+// The along-stage radial bound above assumes the previous layer's pass reached
+// the ray under test. Slice Q extended it to a ray the previous layer missed by
+// measuring from the material still standing there, but that standing material
+// is read from the reference: if the operation never emitted a clearing pass at
+// all, the reference still holds the raw blank and the allowance becomes the
+// whole bite. A 1 000 mm generator stepdown left every along-finish replay case
+// green that way, including a 9.3975 mm bite.
+//
+// So the emitted motion is judged independently, at its own samples: every
+// stage's tip radii must descend from the raw stock's surface one operation
+// stepdown at a time. Only where that holds may the standing-material allowance
+// widen the along-stage bound.
+
+/** The generator's own collinear-merge tolerance; a sampled pose may drift this far. */
+const DESCENT_TOLERANCE = 1e-3
+/** Angle key resolution, 0.0001 degrees. */
+const DESCENT_ANGLE_QUANTUM = 1e4
+/** Along key resolution, 0.001 mm. */
+const DESCENT_ALONG_QUANTUM = 1e3
+const DESCENT_ALONG_OFFSET = 10_000_000
+const DESCENT_KEY_BASE = 40_000_000
+
+/** One sample that actually cut, for the standing allowance's footprint query. */
+interface DescentSample {
+  readonly along: number
+  readonly angle: number
+}
+
+interface StageDescent {
+  /** Every sample this stage cut, with its raw-surface descent verified. */
+  readonly samples: Map<number, DescentSample>
+  /** Cuts that lowered a sample's standing material. */
+  readonly cuts: number
+  /** The closest a step came to its allowance, for the report. */
+  readonly margin: number
+  readonly marginLabel: string
+}
+
+function descentKey(along: number, angleDeg: number): number {
+  const angle = Math.round((((angleDeg % 360) + 360) % 360) * DESCENT_ANGLE_QUANTUM)
+    % (360 * DESCENT_ANGLE_QUANTUM)
+  const alongKey = Math.round(along * DESCENT_ALONG_QUANTUM) + DESCENT_ALONG_OFFSET
+  return angle * DESCENT_KEY_BASE + alongKey
+}
+
+/**
+ * Assert that one stage's emitted cuts descend from the raw stock at every
+ * along/angle sample it visits (#1045 slice S).
+ *
+ * The samples are the generator's own pass/ring positions: its along vertex
+ * positions (an along pass) or its base angular grid plus every emitted vertex
+ * angle (an around ring). All layers share those positions, so each key is the
+ * same physical sample for every layer. For each key:
+ *
+ * 1. the **first** cut may be at most one stepdown below the raw surface there
+ *    -- on a square blank the touch radius, on a round bar its radius. This is
+ *    what a missing clearing layer violates immediately;
+ * 2. every **later** cut may descend at most one stepdown plus the slice-Q
+ *    cutter-cap allowance from the material the previous cut left. The cap
+ *    allowance is the extra radial depth the cutter's own geometry reaches at a
+ *    ray off its axis (`alongRadialBiteBound - stepdown`); at a sample's own ray
+ *    it is zero and the plain stepdown is the whole allowance.
+ *
+ * A cut above the standing material removes nothing and is ignored, so a
+ * generator's vertical step leg (which arrives high and then drops) is judged
+ * by the drop it actually makes, not by the height it transits.
+ */
+function assertStageDescent(
+  entry: Case,
+  label: string,
+  moves: readonly ToolpathMove[],
+  direction: 'around' | 'along',
+  pivot: number,
+  ball: boolean,
+  cutterRadius: number,
+  stepdown: number,
+  alongOf: (point: ToolpathMove['from']) => number,
+  sampleSpacing: number,
+): StageDescent {
+  const stock = entry.stock
+  const corner = barMaxRadius(stock)
+  const rawCache = new Map<number, number>()
+  const rawAt = (angleDeg: number): number => {
+    const key = Math.round((((angleDeg % 360) + 360) % 360) * DESCENT_ANGLE_QUANTUM)
+    let raw = rawCache.get(key)
+    if (raw === undefined) {
+      raw = rawStockSurface(stock, key / DESCENT_ANGLE_QUANTUM, cutterRadius, ball)
+      rawCache.set(key, raw)
+    }
+    return raw
+  }
+  const alongGrid = new Map<number, number>()
+  const collectAlong = (value: number): void => {
+    const key = Math.round(value * DESCENT_ALONG_QUANTUM)
+    if (!alongGrid.has(key)) alongGrid.set(key, key / DESCENT_ALONG_QUANTUM)
+  }
+  const angleGrid = new Map<number, number>()
+  const collectAngle = (value: number): void => {
+    const angle = ((value % 360) + 360) % 360
+    const key = Math.round(angle * DESCENT_ANGLE_QUANTUM)
+    if (!angleGrid.has(key)) angleGrid.set(key, key / DESCENT_ANGLE_QUANTUM)
+  }
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    collectAlong(alongOf(move.from))
+    collectAlong(alongOf(move.to))
+    // The emitted vertices carry any refined angle too, so a plunge or a
+    // bisected segment is sampled at its own ray as well as on the base grid.
+    collectAngle(move.from.a ?? 0)
+    collectAngle(move.to.a ?? 0)
+  }
+  if (direction === 'around') {
+    // The generator's base angular grid: `ceil(2 pi R / cap)` intervals, each
+    // `360 / n` degrees, so the corner is resolved by the same 0.005 mm sagitta
+    // rule the generator uses. Sampling only emitted vertices would miss the
+    // corner on a ring that merged into one full-turn move.
+    const intervals = Math.max(1, Math.ceil(2 * Math.PI * corner / aroundArcStep(corner, sampleSpacing)))
+    for (let k = 0; k <= intervals; k++) collectAngle(360 * k / intervals)
+  }
+  const alongSamples = [...alongGrid.values()].sort((a, b) => a - b)
+  const angleSamples = [...angleGrid.values()].sort((a, b) => a - b)
+  const standing = new Map<number, number>()
+  const samples = new Map<number, DescentSample>()
+  let cuts = 0
+  let margin = Number.POSITIVE_INFINITY
+  let marginLabel = ''
+  const visit = (along: number, angleRaw: number, tip: number): void => {
+    if (!Number.isFinite(tip)) return
+    const angle = ((angleRaw % 360) + 360) % 360
+    const raw = rawAt(angle)
+    if (!(raw > 0)) return
+    const key = descentKey(along, angle)
+    let current = standing.get(key)
+    if (current === undefined) {
+      current = raw
+      standing.set(key, raw)
+    }
+    if (!(tip < current - 1e-12)) return
+    const drop = current - tip
+    const first = !samples.has(key)
+    const cap = first ? 0 : Math.max(0, alongRadialBiteBound(ball, cutterRadius, stepdown, tip) - stepdown)
+    const allowed = stepdown + cap + DESCENT_TOLERANCE
+    cuts++
+    const slack = allowed - drop
+    if (slack < margin) {
+      margin = slack
+      marginLabel = `${label} along ${along.toFixed(3)} A${angle.toFixed(3)} `
+        + `drop ${drop.toFixed(4)} against ${allowed.toFixed(4)}`
+    }
+    if (drop > allowed + 1e-9) {
+      assert.ok(false,
+        `${entry.label}: the emitted ${label} does not descend from the raw blank at along `
+        + `${along.toFixed(3)} A${angle.toFixed(3)}: ${first ? 'the first cut is' : 'one cut drops'} `
+        + `${drop.toFixed(4)} mm (${current.toFixed(4)} -> ${tip.toFixed(4)}), over the `
+        + `${allowed.toFixed(4)} mm allowed ${first ? '(one stepdown)' : `(one stepdown ${stepdown.toFixed(4)} `
+        + `+ cutter cap ${cap.toFixed(4)})`}`,
+      )
+    }
+    samples.set(key, { along, angle })
+    standing.set(key, tip)
+  }
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    const fromAlong = alongOf(move.from)
+    const toAlong = alongOf(move.to)
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    const fromAngle = move.from.a ?? 0
+    const toAngle = move.to.a ?? fromAngle
+    const dAlong = toAlong - fromAlong
+    const dAngle = toAngle - fromAngle
+    if (direction === 'along') {
+      if (Math.abs(dAngle) > 1e-9) {
+        // A turning link at travel height: judge its endpoints at their own
+        // angles. It is above the blank and removes nothing.
+        visit(fromAlong, fromAngle, fromTip)
+        visit(toAlong, toAngle, toTip)
+        continue
+      }
+      const low = Math.min(fromAlong, toAlong)
+      const high = Math.max(fromAlong, toAlong)
+      for (const along of alongSamples) {
+        if (along < low - DESCENT_TOLERANCE) continue
+        if (along > high + DESCENT_TOLERANCE) break
+        const fraction = dAlong === 0 ? 0 : (along - fromAlong) / dAlong
+        visit(along, fromAngle, fromTip + (toTip - fromTip) * fraction)
+      }
+    } else {
+      if (Math.abs(dAlong) > 1e-9) {
+        visit(fromAlong, fromAngle, fromTip)
+        visit(toAlong, toAngle, toTip)
+        continue
+      }
+      const low = Math.min(fromAngle, toAngle)
+      const high = Math.max(fromAngle, toAngle)
+      for (const angle of angleSamples) {
+        if (angle < low - DESCENT_TOLERANCE) continue
+        if (angle > high + DESCENT_TOLERANCE) break
+        const fraction = dAngle === 0 ? 0 : (angle - fromAngle) / dAngle
+        visit(fromAlong, angle, fromTip + (toTip - fromTip) * fraction)
+      }
+    }
+  }
+  return { samples, cuts, margin, marginLabel }
+}
+
+/**
+ * Whether a stage's verified descent covers the measured ray: some cut sample
+ * lies inside this cutter body's footprint of it (along within one radius,
+ * angle within the body's own angular reach). The along-stage standing
+ * allowance may only use its measurement where this is true (#1045 slice S);
+ * otherwise the plain previous-layer bound applies.
+ */
+function descentCoversRay(
+  stage: StageDescent,
+  along: number,
+  angleDeg: number,
+  ball: boolean,
+  cutterRadius: number,
+  tip: number,
+  material: number,
+): boolean {
+  if (stage.samples.size === 0) return false
+  const reach = bodyAngularReachDeg(ball, cutterRadius, tip, Math.max(material, cutterRadius))
+  for (const sample of stage.samples.values()) {
+    if (Math.abs(sample.along - along) >= cutterRadius) continue
+    let delta = ((sample.angle - angleDeg) % 360 + 360) % 360
+    if (delta > 180) delta = 360 - delta
+    if (delta <= reach + 1e-9) return true
+  }
+  return false
+}
+
 // The repro the slice-Q bound missed (#1045 slice Q extension), checked before
 // the seeded run and independently of it: a Ø4 ball at tip 2 removes 2.3435 mm
 // from a ray 24.25° off its axis where 4.85 mm of material still stands, while
@@ -1634,6 +1946,15 @@ let alongInteriorDiagnostic = { depth: 0, label: '', stepover: 0, diameter: 0, s
 // it a no-op) cannot pass silently: the seeded set must assert the radial
 // surface bite of every along program.
 let alongBiteChecks = 0
+// #1045 slice S: how many emitted cuts the independent raw-descent assertion
+// judged, split so a run that drops one mode (or one stage) cannot pass silently.
+let descentChecks = 0
+let alongDescentChecks = 0
+let aroundDescentChecks = 0
+let roughDescentChecks = 0
+let finishDescentChecks = 0
+let worstDescentMargin = Number.POSITIVE_INFINITY
+let worstDescentMarginLabel = ''
 let nonTurningWorst = 0
 let nonTurningLabel = ''
 
@@ -1762,18 +2083,50 @@ for (const { entry, program } of CASES) {
   const finishBound = entry.stockToLeave + entry.finishStepdown
     + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
-  const stages: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
-  if (roughRan) stages.push({
+  const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
+  if (roughRan) stageSpecs.push({
     moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE),
     finish: false,
     direction: entry.roughKind,
   })
-  if (finishRan) stages.push({
+  if (finishRan) stageSpecs.push({
     moves: coalesceCommandedMoves(program.finishMoves, COALESCE_TOLERANCE),
     finish: true,
     direction: entry.finishKind,
   })
-  assert.ok(stages.length > 0, `${entry.label}: the program has motion`)
+  assert.ok(stageSpecs.length > 0, `${entry.label}: the program has motion`)
+
+  // #1045 slice S: judge the emitted motion before replaying it. The stage's
+  // samples are the generator's own pass/ring positions; the raw surfaces are
+  // this file's own (never `rotaryModel`'s).
+  const stages = stageSpecs.map((spec) => ({
+    ...spec,
+    descent: assertStageDescent(
+      entry,
+      `${spec.finish ? 'finish' : 'rough'} ${spec.direction} stage`,
+      spec.moves,
+      spec.direction,
+      pivot,
+      ball,
+      cutterRadius,
+      spec.finish ? entry.finishStepdown : entry.stepdown,
+      alongOf,
+      spec.finish ? entry.finishSpacing : entry.roughSpacing,
+    ),
+  }))
+  for (const stage of stages) {
+    descentChecks += stage.descent.cuts
+    if (stage.direction === 'along') alongDescentChecks += stage.descent.cuts
+    else aroundDescentChecks += stage.descent.cuts
+    if (stage.finish) finishDescentChecks += stage.descent.cuts
+    else roughDescentChecks += stage.descent.cuts
+    if (stage.descent.margin < worstDescentMargin) {
+      worstDescentMargin = stage.descent.margin
+      worstDescentMarginLabel = `${entry.label} ${stage.descent.marginLabel}`
+    }
+    assert.ok(stage.descent.cuts > 0,
+      `${entry.label}: the ${stage.finish ? 'finish' : 'rough'} ${stage.direction} stage emits a verified descent`)
+  }
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
   for (const stage of stages) {
@@ -1855,7 +2208,22 @@ for (const { entry, program } of CASES) {
           const reachedBound = alongRadialBiteBound(ball, cutterRadius, stepdown, tip)
           const standingBound = moveSurfaceCell.material
             - alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
-          const alongBound = Math.max(reachedBound, standingBound)
+          // #1045 slice S: the standing-material term is only sound where the
+          // stage's own emitted samples inside this cutter's footprint really
+          // descended from the raw blank one stepdown at a time. Without that
+          // proof it would measure from material the operation never cleared and
+          // excuse any bite (a 1 000 mm stepdown passed all eight along-finish
+          // cases, including 9.3975 mm). Fall back to the previous-layer bound.
+          const standingAllowed = descentCoversRay(
+            stage.descent,
+            moveSurfaceCell.along,
+            moveSurfaceCell.angle,
+            ball,
+            cutterRadius,
+            tip,
+            moveSurfaceCell.material,
+          )
+          const alongBound = standingAllowed ? Math.max(reachedBound, standingBound) : reachedBound
           const alongMargin = alongBound - moveSurfaceWorst
           if (alongMargin < worstAlongMargin) {
             worstAlongMargin = alongMargin
@@ -1863,14 +2231,15 @@ for (const { entry, program } of CASES) {
               + `A${fromAngle.toFixed(2)} tip ${tip.toFixed(3)} `
               + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)} `
               + `(previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
-              + `at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
+              + `${standingAllowed ? 'covered' : 'not covered'} at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
           }
           checkEngagement(moveSurfaceWorst, alongBound,
             `${entry.label}: along ${move.kind} radial surface bite `
             + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
             + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
             + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
-            + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)})`)
+            + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+            + `(${standingAllowed ? 'covered by the emitted descent' : 'not applied: no verified descent inside the footprint'})`)
           alongBiteChecks++
           // Diagnostic only: the interior removal an along move finds below an
           // intact shell. It has no asserted bound (see above); recording the
@@ -2064,6 +2433,10 @@ console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below 
 console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
 console.log(`  along stage: closest to its exact-geometry bound at ${worstAlongMargin.toFixed(4)} mm margin `
   + `(${worstAlongMarginLabel || 'none'})`)
+console.log(`  emitted layer descent: ${descentChecks} cuts checked (${alongDescentChecks} along, `
+  + `${aroundDescentChecks} around; ${roughDescentChecks} rough, ${finishDescentChecks} finish); `
+  + `closest to its allowance at ${worstDescentMargin.toFixed(4)} mm margin `
+  + `(${worstDescentMarginLabel || 'none'})`)
 // Diagnostic only, explicitly not a bound (#1045 slice P). The old
 // stepover + diameter "flank bound" is gone: a hand-built Ø4 flat sweep at tip 2
 // with a 10° ray offset removes 9.4867 mm internally, far past it.
@@ -2085,6 +2458,13 @@ assert.ok(alongFinishStages >= 8, `the along-finish stages are in the seeded set
 assert.ok(alongFinishOnlyRound >= 1, `a finish-only along program on a round bar (${alongFinishOnlyRound})`)
 assert.ok(alongFinishOnlySquare >= 1, `a finish-only along program on a square blank (${alongFinishOnlySquare})`)
 assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
+// #1045 slice S: the raw-descent assertion must actually cover every stage
+// shape, in both modes, for rough and finish. A change that stops calling it
+// fails here rather than passing with no checks.
+assert.ok(alongDescentChecks > 1000, `the emitted along descent is asserted (${alongDescentChecks})`)
+assert.ok(aroundDescentChecks > 1000, `the emitted around descent is asserted (${aroundDescentChecks})`)
+assert.ok(roughDescentChecks > 1000, `the emitted rough descent is asserted (${roughDescentChecks})`)
+assert.ok(finishDescentChecks > 1000, `the emitted finish descent is asserted (${finishDescentChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**
