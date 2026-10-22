@@ -246,7 +246,10 @@ console.log('Testing the restart block is written per dialect after a tool chang
 const restartByDialect: Array<{ id: string; toolChangeEnd: string; block: string[] }> = [
   {
     id: 'generic',
-    toolChangeEnd: 'M0',
+    // #1057 slice K: generic's own `M0` command carries the tool comment and is
+    // its only pause, so the marker must include the comment (it used to land
+    // on the separate `pauseAfterChange` line).
+    toolChangeEnd: 'M0 ( Tool change: Tool 1 )',
     block: ['G90 G94 G17', 'G21', 'G0 Z5', 'X0 Y80'],
   },
   {
@@ -279,7 +282,8 @@ const restartByDialect: Array<{ id: string; toolChangeEnd: string; block: string
 for (const dialect of restartByDialect) {
   const program = postOperations(makeProject(['t1']), bundled(dialect.id), [RAPID_MOVES])
   // A definition may write its tool-change pause as a separate line after the
-  // line that names the change; the block begins after the whole block.
+  // line that names the change (grblhal), or as the command line itself
+  // (generic, after #1057 slice K): the block begins after the whole block.
   const after = restartLines(program, dialect.toolChangeEnd)
   assert.deepEqual(after.slice(0, dialect.block.length), dialect.block,
     `${dialect.id}: the restart block follows the tool change:\n${after.slice(0, 8).join('\n')}`)

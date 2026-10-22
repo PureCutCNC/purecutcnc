@@ -22,6 +22,10 @@
 // word, a safe-Z rapid and the operation's start plane) before the operation's
 // approach. The other 28 cases are untouched — no tool change, no restart — and
 // `templateByteIdentity.test.ts` pins the same byte identity independently.
+//
+// The generic and grbl tool-change cases were re-frozen again for #1057 slice K:
+// each definition's own `M0` tool-change command is now its only pause
+// (`pauseAfterChange` off), so the extra standalone `M0` after it is gone.
 import assert from 'node:assert/strict'
 import { mergeFormData, toFormData } from '../../components/machine/machineDefinitionForm'
 import golden from './legacyMachineParity.json'
