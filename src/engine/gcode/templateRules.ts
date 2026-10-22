@@ -68,6 +68,18 @@
  * axis or change a mode, it no longer carries per-axis invalidation and recovery
  * for them. See `postprocessor.ts` / `opensbpEmitter.ts` (the restart block) and
  * `motionPipeline.ts`.
+ *
+ * Slice I (2026-10-21) accepts the forms QtPlasmaC documents, and no more:
+ *
+ * - the torch template's `$` selector is a LinuxCNC spindle number, so it is a
+ *   non-negative integer (`$0`, `$1`, `$2`) or `-1` to stop every tool;
+ * - the material feed template is exactly the controller-owned
+ *   `F#<_hal[plasmac.cut-feed-rate]>`, optionally followed by a comment;
+ * - a material/THC command carries only the parameter words its own LinuxCNC
+ *   or QtPlasmaC command defines, as integers.
+ *
+ * The documentation for each form is cited beside the constant that enforces
+ * it.
  */
 
 /**
@@ -89,6 +101,7 @@ export type TemplateRule =
   | { kind: 'inverse-time-off' }
   | { kind: 'torch' }
   | { kind: 'material' }
+  | { kind: 'material-feed' }
   | { kind: 'canned-cycle' }
   | { kind: 'canned-retract' }
   | { kind: 'canned-cancel' }
@@ -316,7 +329,23 @@ const CANNED_CYCLE_COMMANDS: ReadonlySet<string> = new Set([
   'G73', 'G81', 'G82', 'G83', 'G84', 'G85', 'G86', 'G87', 'G88', 'G89',
 ])
 
-/** A material/THC output command (LinuxCNC M62–M67, QtPlasmaC M190/M191). */
+/**
+ * A material/THC output command (LinuxCNC M62–M67, QtPlasmaC M190/M191).
+ *
+ * LinuxCNC defines the handshake words:
+ *
+ * - `M62`-`M65` (digital outputs) take a digital output number as a `P` word:
+ *   https://linuxcnc.org/docs/2.9/html/gcode/m-code.html#mcode:m62-m65
+ * - `M66` (wait on input) takes a digital `P` number or an analog `E` number,
+ *   the wait mode `L`, and the timeout `Q`:
+ *   https://linuxcnc.org/docs/2.9/html/gcode/m-code.html#mcode:m66
+ * - `M67` (synchronized analog output) takes an analog `E` number and `Q`:
+ *   https://linuxcnc.org/docs/2.9/html/gcode/m-code.html#mcode:m67
+ *
+ * QtPlasmaC's automatic material handling uses `M190 Pn`, then the
+ * `M66 P3 L3 Qn` wait, then the cut-feed expression:
+ * https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:material-handling
+ */
 const MATERIAL_COMMANDS: ReadonlySet<string> = new Set([
   'M62', 'M63', 'M64', 'M65', 'M66', 'M67', 'M190', 'M191',
 ])
@@ -334,10 +363,46 @@ const PARAMETER_LETTERS: ReadonlySet<string> = new Set([
   'F', 'S', 'T', 'N', 'H', 'D', 'P', 'Q', 'L',
 ])
 
-/** The letters a material/THC handshake word may carry. */
-const MATERIAL_LETTERS: ReadonlySet<string> = new Set(['P', 'L', 'Q', 'T', 'E', 'F', 'S'])
+/**
+ * The parameter letters each material/THC command defines, so a word cannot
+ * be borrowed from a different command. `M190 Pn` selects a QtPlasmaC
+ * material; `P-1` returns to the default material
+ * (https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:material-handling).
+ * A parameter word must carry its integer value, never a bare letter.
+ */
+const MATERIAL_COMMAND_LETTERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  M62: new Set(['P']),
+  M63: new Set(['P']),
+  M64: new Set(['P']),
+  M65: new Set(['P']),
+  M66: new Set(['P', 'L', 'Q', 'E']),
+  M67: new Set(['E', 'Q']),
+  M190: new Set(['P']),
+  M191: new Set(['P']),
+}
 
-/** The torch command words. A torch on/off template is nothing else. */
+/**
+ * The one controller-owned feed expression a material template may contain.
+ *
+ * QtPlasmaC's Automatic Material Handling section documents it as the way to
+ * cut at the selected material's feed rate:
+ * `F#<_hal[plasmac.cut-feed-rate]>`
+ * https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:material-handling
+ *
+ * No other HAL pin, macro variable or arithmetic expression is accepted: this
+ * is the only parameter use the material-feed template has.
+ */
+const MATERIAL_FEED_EXPRESSION = 'F#<_hal[plasmac.cut-feed-rate]>'
+
+/**
+ * The torch command words. A torch on/off template is nothing else.
+ *
+ * QtPlasmaC's Mandatory Codes and Multi-Tool sections define the `$` selector:
+ * `M3 $0 S1` starts the torch, `M5 $0` stops it, and `M5 $-1` stops every
+ * tool. The selector is a LinuxCNC spindle number, so it is a non-negative
+ * integer (`$0`, `$1`, `$2`), with `-1` for "all tools":
+ * https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#plasma:multi-tool
+ */
 const TORCH_COMMANDS: ReadonlySet<string> = new Set(['M3', 'M4', 'M5'])
 
 /**
@@ -483,7 +548,7 @@ export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
   { path: ['plasma', 'torchOffCommand'], class: template({ kind: 'torch' }) },
   { path: ['plasma', 'materialSelectCommand'], class: template({ kind: 'material' }) },
   { path: ['plasma', 'materialWaitCommand'], class: template({ kind: 'material' }) },
-  { path: ['plasma', 'materialFeedCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'materialFeedCommand'], class: template({ kind: 'material-feed' }) },
   { path: ['plasma', 'thcOnCommand'], class: template({ kind: 'material' }) },
   { path: ['plasma', 'thcOffCommand'], class: template({ kind: 'material' }) },
   { path: ['plasma', 'pierceMode'], class: { kind: 'enum' } },
@@ -542,8 +607,6 @@ export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
 ]
 
 interface ScanOptions {
-  /** A controller-owned feed expression (`F#<_hal[plasmac.cut-feed-rate]>`). */
-  parameterExpressions: boolean
   /** A parameter assignment (`#<holes> = 1`), which moves nothing. */
   assignment: boolean
   /** A numeric `$` selector, such as QtPlasmaC's `M5 $0`. */
@@ -617,14 +680,11 @@ function scanTemplateLine(
     return { words: [{ letter: 'O' }] }
   }
   // A numeric selector is an argument of the command, not an expression, and
-  // it names no axis. Every other `$` (a system command, a macro variable) is
-  // arbitrary text and is refused.
-  if (!options.allowSelectors && code.includes('$')) return { word: '$' }
-  // A controller-owned feed value is a parameter expression, not a word value.
-  if (options.parameterExpressions) {
-    code = code.replace(/([FS])\s*#<[^>\n]*>/g, '$1 1')
-  }
-  code = code.replace(/\$\d+(?:\.\d+)?/g, ' ')
+  // it names no axis. QtPlasmaC's selector is a LinuxCNC spindle number:
+  // `$0`, `$1`, `$2` … or `$-1` for all tools. Every other `$` (a system
+  // command, a macro variable, `$-2`, a decimal) is not a selector and is
+  // refused by the character check below.
+  if (options.allowSelectors) code = code.replace(/\$(?:-1|\d+)/g, ' ')
   for (const character of ['#', '[', ']', '$', '=']) {
     if (code.includes(character)) return { word: character }
   }
@@ -758,6 +818,18 @@ function checkCommandText(text: string, rule: TemplateRule): LineRefusal | null 
 }
 
 /**
+ * A material feed line is the exact controller-owned expression, optionally
+ * followed by a comment. Comments are removed first, so `(loaded)` or
+ * `; loaded` after the expression is harmless; anything else — a different
+ * HAL pin, an arithmetic expression, an extra word, a bare `F` — is not.
+ */
+function checkMaterialFeedLine(line: string, syntax: CommentSyntax): LineRefusal | null {
+  const code = lineCode(line, syntax).trim()
+  if (code.length === 0 || code === MATERIAL_FEED_EXPRESSION) return null
+  return { word: code, kind: 'word' }
+}
+
+/**
  * The first word on one line that breaks `rule`, or null when the line is
  * acceptable. `anything` and `tool-change` still check placeholders (operator
  * text may not be written as code anywhere, and a placeholder may not spell a
@@ -777,14 +849,15 @@ function checkTemplateLine(
   // probe. Nothing about it is free text, so a second word, a newline or a
   // mode change makes the field wrong as a whole.
   if (rule.kind === 'command') return checkCommandText(line, rule)
+  if (rule.kind === 'material-feed') return checkMaterialFeedLine(line, syntax)
   const expanded = expandPlaceholders(line, unitsCommand, wcsCommand)
   const scan = scanTemplateLine(expanded, syntax, {
-    parameterExpressions: rule.kind === 'material',
     assignment: rule.kind === 'header',
-    allowSelectors: rule.kind === 'torch' || rule.kind === 'material',
+    allowSelectors: rule.kind === 'torch',
   })
   if ('word' in scan) return { word: scan.word, kind: 'word' }
 
+  let materialCommand: string | null = null
   for (const word of scan.words) {
     const command = commandOf(word)
     switch (rule.kind) {
@@ -828,13 +901,25 @@ function checkTemplateLine(
         }
         if (word.letter !== 'S') return { word: showWord(word), kind: 'word' }
         continue
-      case 'material':
+      case 'material': {
         if (command !== null) {
           if (!MATERIAL_COMMANDS.has(command)) return { word: showWord(word), kind: 'word' }
+          materialCommand = command
           continue
         }
-        if (!MATERIAL_LETTERS.has(word.letter)) return { word: showWord(word), kind: 'word' }
+        // The command defines which parameter letters it takes, and every
+        // parameter is an integer word (`P3`, `L3`, `Q2`, `E0`), never a bare
+        // letter, a decimal or a word before any command.
+        if (
+          materialCommand === null
+          || word.value === undefined
+          || !/^[-+]?\d+$/.test(word.value)
+          || !MATERIAL_COMMAND_LETTERS[materialCommand].has(word.letter)
+        ) {
+          return { word: showWord(word), kind: 'word' }
+        }
         continue
+      }
       case 'canned-cycle':
         if (command === null || !CANNED_CYCLE_COMMANDS.has(command)) {
           return { word: showWord(word), kind: 'word' }
@@ -873,12 +958,17 @@ function describeRule(rule: TemplateRule): { label: string, hint: string } {
     case 'torch':
       return {
         label: 'plasma torch template',
-        hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and $ selector',
+        hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and a $ selector ($0, $1, $2 … or $-1 for all tools)',
       }
     case 'material':
       return {
         label: 'material/THC template',
-        hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands, P/L/Q/T/E parameters and an F/S feed word',
+        hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands and the integer P/L/Q/E words those commands define',
+      }
+    case 'material-feed':
+      return {
+        label: 'material feed template',
+        hint: `a material feed template may contain only ${MATERIAL_FEED_EXPRESSION}, optionally followed by a comment`,
       }
     case 'canned-cycle':
       return {

@@ -327,6 +327,72 @@ console.log('Testing the placeholder positions that are safe...')
   )
 }
 
+// ── 2b. QtPlasmaC's documented forms and their close variants ─
+
+console.log('Testing the documented QtPlasmaC torch, material and selector forms...')
+
+interface PlasmaFormCase {
+  label: string
+  path: string[]
+  value: string
+}
+
+/**
+ * QtPlasmaC's documented forms, each cited in `templateRules.ts`:
+ * - the `$` selector is a spindle number, non-negative or -1 for all tools
+ *   (Multi-Tool and Mandatory Codes sections of the QtPlasmaC manual);
+ * - `M190 Pn`, the `M66 P3 L3 Qn` wait, and the controller-owned feed
+ *   expression (Automatic Material Handling section);
+ * - LinuxCNC's `M62`-`M67` integer parameter words (M-code reference).
+ */
+const ACCEPTED_PLASMA_FORMS: PlasmaFormCase[] = [
+  { label: 'torch on: M3 $0 S1', path: ['plasma', 'torchOnCommand'], value: 'M3 $0 S1' },
+  { label: 'torch on: M3 S1 (backwards-compatible)', path: ['plasma', 'torchOnCommand'], value: 'M3 S1' },
+  { label: 'torch on: M4 $1 S1', path: ['plasma', 'torchOnCommand'], value: 'M4 $1 S1' },
+  { label: 'torch off: M5 $0', path: ['plasma', 'torchOffCommand'], value: 'M5 $0' },
+  { label: 'torch off: M5 $1 (scribe)', path: ['plasma', 'torchOffCommand'], value: 'M5 $1' },
+  { label: 'torch off: M5 $2 (spotting)', path: ['plasma', 'torchOffCommand'], value: 'M5 $2' },
+  { label: 'torch off: M5 $-1 (all tools)', path: ['plasma', 'torchOffCommand'], value: 'M5 $-1' },
+  { label: 'torch off: M5 (backwards-compatible)', path: ['plasma', 'torchOffCommand'], value: 'M5' },
+  { label: 'material select: M190 P{materialNumber}', path: ['plasma', 'materialSelectCommand'], value: 'M190 P{materialNumber}' },
+  { label: 'material select: M190 P3', path: ['plasma', 'materialSelectCommand'], value: 'M190 P3' },
+  { label: 'material select: M190 P-1 (default material)', path: ['plasma', 'materialSelectCommand'], value: 'M190 P-1' },
+  { label: 'material wait: M66 P3 L3 Q2', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2' },
+  { label: 'material feed: the controller feed expression', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]>' },
+  { label: 'material feed: expression with a trailing comment', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)' },
+  { label: 'material feed: expression with a trailing semicolon comment', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> ; loaded' },
+  { label: 'THC on: M63 P2', path: ['plasma', 'thcOnCommand'], value: 'M63 P2' },
+  { label: 'THC off: M62 P2', path: ['plasma', 'thcOffCommand'], value: 'M62 P2' },
+]
+
+const REFUSED_PLASMA_FORMS: PlasmaFormCase[] = [
+  { label: 'torch off: $-2 is not a spindle number', path: ['plasma', 'torchOffCommand'], value: 'M5 $-2' },
+  { label: 'torch off: a bare $ is not a selector', path: ['plasma', 'torchOffCommand'], value: 'M5 $' },
+  { label: 'torch off: a decimal selector', path: ['plasma', 'torchOffCommand'], value: 'M5 $0.5' },
+  { label: 'torch off: a signed selector other than -1', path: ['plasma', 'torchOffCommand'], value: 'M5 $+1' },
+  { label: 'torch off: an axis word after the selector', path: ['plasma', 'torchOffCommand'], value: 'M5 $0 X0' },
+  { label: 'material feed: a different HAL pin', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[other]>' },
+  { label: 'material feed: a bare parameter number', path: ['plasma', 'materialFeedCommand'], value: 'F#1' },
+  { label: 'material feed: an S expression instead of F', path: ['plasma', 'materialFeedCommand'], value: 'S#<_hal[plasmac.cut-feed-rate]>' },
+  { label: 'material feed: an extra motion word', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> X0' },
+  { label: 'material feed: an extra feed word', path: ['plasma', 'materialFeedCommand'], value: 'F#<_hal[plasmac.cut-feed-rate]> F1000' },
+  { label: 'material feed: a material select is not a feed', path: ['plasma', 'materialFeedCommand'], value: 'M190 P3' },
+  { label: 'material wait: a motion word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 G0' },
+  { label: 'material wait: an axis word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 X0' },
+  { label: 'material wait: a T word M66 does not define', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3 Q2 T1' },
+  { label: 'material wait: a decimal L word', path: ['plasma', 'materialWaitCommand'], value: 'M66 P3 L3.5 Q2' },
+  { label: 'material select: an L word M190 does not define', path: ['plasma', 'materialSelectCommand'], value: 'M190 L3' },
+  { label: 'material select: an axis word', path: ['plasma', 'materialSelectCommand'], value: 'M190 P3 X0' },
+]
+
+for (const form of ACCEPTED_PLASMA_FORMS) {
+  assertAccepted(form.label, withPath(PLASMA_MATERIAL, form.path, form.value))
+}
+for (const form of REFUSED_PLASMA_FORMS) {
+  assertRefusedAt(form.label, withPath(PLASMA_MATERIAL, form.path, form.value), form.path)
+}
+console.log(`  ${ACCEPTED_PLASMA_FORMS.length} accepted and ${REFUSED_PLASMA_FORMS.length} refused QtPlasmaC forms`)
+
 // ── 3. Comment syntax: the exact per-dialect allowlist ───────
 
 console.log('Testing the comment marker is one of the dialect\'s exact forms...')

@@ -69,6 +69,38 @@ assert.equal(padded.plasma?.materialWaitCommand, '  M66 P3 L3 Q2  ')
 assert.ok(!('thcOnCommand' in padded.plasma!))
 assert.ok(!('thcOffCommand' in padded.plasma!))
 
+// The QtPlasmaC forms the machine editor and e2e write survive validation
+// (#1057 slice I): the `$` spindle selector, the documented material sequence
+// and its trailing comments.
+const documented = validateMachineDefinition({
+  ...plasma,
+  plasma: {
+    ...block,
+    torchOffCommand: 'M5 $-1',
+    materialWaitCommand: 'M66 P3 L3 Q2',
+    materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)',
+    materialSelectCommand: 'M190 P{materialNumber} (selected)',
+  },
+})
+assert.equal(documented.plasma?.torchOffCommand, 'M5 $-1')
+assert.equal(documented.plasma?.materialWaitCommand, 'M66 P3 L3 Q2')
+assert.equal(documented.plasma?.materialFeedCommand, 'F#<_hal[plasmac.cut-feed-rate]> (loaded)')
+assert.equal(documented.plasma?.materialSelectCommand, 'M190 P{materialNumber} (selected)')
+for (const [key, value] of [
+  ['torchOffCommand', 'M5 $-2'],
+  ['torchOffCommand', 'M5 $0.5'],
+  ['materialFeedCommand', 'F#<_hal[other]>'],
+  ['materialFeedCommand', 'F#1'],
+  ['materialWaitCommand', 'M66 P3 G0'],
+  ['materialSelectCommand', 'M190 L3'],
+] as const) {
+  assert.equal(
+    MachineDefinitionSchema.safeParse({ ...plasma, plasma: { ...block, [key]: value } }).success,
+    false,
+    `${key} keeps refusing ${value}`,
+  )
+}
+
 const duplicate = duplicateMachineAsCustom(plasma, [])
 assert.equal(duplicate.machineKind, 'plasma')
 assert.deepEqual(duplicate.plasma, block)
