@@ -249,18 +249,16 @@ function testRotaryProgramReadback(): void {
       { kind: 'plunge', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 20, 0) },
       { kind: 'cut', from: rpt(0, 10, 20, 0), to: rpt(10, 10, 20, 90) },
       { kind: 'cut', from: rpt(10, 10, 20, 90), to: rpt(20, 10, 20, 90) },
+      // The operation's own retract, as every generator emits it. The program
+      // ends here at A90 (#1091), with no closing unwind and no machine move.
+      { kind: 'rapid', from: rpt(20, 10, 20, 90), to: rpt(20, 10, 30, 90) },
     ]
     const { gcode, trace } = exportRotary(definition, moves)
     const parsed = parseExportedMotion(gcode, definition)
-    // The program ends at 90°, so it carries the closing machine-coordinate
-    // retract (#1054 fix 2). That block is not a work position, so the parse
-    // cannot be reported as verified (#1054 fix 4); everything else must read
-    // back unchanged.
-    assert(parsed.status === 'unsupported', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
-    assert(
-      parsed.warnings.length === 2 && parsed.warnings.every((warning) => warning.includes('G53')),
-      `${drive}: the only warnings are the machine-coordinate retract, got ${JSON.stringify(parsed.warnings)}`,
-    )
+    // The program ends at A90 and carries no closing unwind after #1091, so
+    // every block is a work-coordinate motion the parser can place.
+    assert(parsed.status === 'verified', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
+    assert(parsed.warnings.length === 0, `${drive}: no block is unplaceable, got ${JSON.stringify(parsed.warnings)}`)
 
     const feedMoves = parsed.moves.filter((m) => m.kind !== 'rapid')
     assert(feedMoves.length === 3, `${drive}: plunge + turning cut + straight cut, got ${feedMoves.length}`)
@@ -284,14 +282,10 @@ function testRotaryProgramReadback(): void {
     const angles = feedMoves.map((m) => m.to.a)
     assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)
 
-    // The view's own comparison still matches every endpoint and angle; the
-    // only diagnostic is that the machine-coordinate retract cannot be placed
-    // in the work frame (#1054 fix 4).
+    // The view's own comparison matches every endpoint and angle: nothing
+    // assumes the bar returns to A0 at the end.
     const diagnostic = compareMotionTraces(parsed, trace, tolerance)
-    assert(
-      diagnostic.warnings.length === 1 && diagnostic.warnings[0].kind === 'unsupported',
-      `${drive}: ${JSON.stringify(diagnostic.warnings)}`,
-    )
+    assert(diagnostic.warnings.length === 0, `${drive}: ${JSON.stringify(diagnostic.warnings)}`)
 
     if (drive === 'borrowed') {
       for (const m of parsed.moves) {
@@ -307,16 +301,32 @@ function testRotaryProgramReadback(): void {
  * `G53G0 Z...`; read back, that block must still be recognised as a machine
  * move. Whitespace-only tokenisation silently dropped it, so the machine
  * retract became a work-coordinate move and the read-back stayed verified.
+ *
+ * Since #1091 the only machine-coordinate retract a program writes is the
+ * manual-index opening turn of a Top/Bottom bar program, so the probe is that
+ * program rather than a closing unwind.
  */
 function testCompactMachineCoordinateReadback(): void {
   console.log('Testing a compact G53G0 retract read back through the exporter...')
   const definition = rotaryGrbl('own')
   definition.motion = { ...definition.motion, machineCoordinateCommand: 'G53G0' }
+  const project: Project = { ...rotaryProject(), meta: { ...rotaryProject().meta, projectType: 'rotary' } }
+  const operation = rotaryOperation()
   const moves: ToolpathMove[] = [
-    { kind: 'rapid', from: rpt(0, 10, 30, 0), to: rpt(0, 10, 30, 0) },
-    { kind: 'cut', from: rpt(0, 10, 30, 0), to: rpt(10, 10, 30, 90) },
+    { kind: 'rapid', from: pt(0, 10, 30), to: pt(10, 10, 30) },
+    { kind: 'cut', from: pt(10, 10, 30), to: pt(20, 10, 20) },
+    { kind: 'rapid', from: pt(20, 10, 20), to: pt(20, 10, 30) },
   ]
-  const { gcode } = exportRotary(definition, moves)
+  const { gcode } = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+    }],
+    options: { emitToolChanges: false, emitCoolant: false },
+  })
   assert(gcode.includes('G53G0'), `the exporter writes the compact machine-coordinate command:\n${gcode}`)
   const parsed = parseExportedMotion(gcode, definition)
   assert(

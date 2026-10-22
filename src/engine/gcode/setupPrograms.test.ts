@@ -31,8 +31,7 @@
  * retract-then-turn lines fail; ignoring `reversed` → the bottom-program
  * blocks fail. For #1054 fix 1: writing the opening turn before the first
  * tool change → the LinuxCNC G43-order assertion fails; posting the turn on a
- * mismatched rotary axis → the refusal assertion fails; comparing the closing
- * unwind in machine Z → the `-Z` assertion fails.
+ * mismatched rotary axis → the refusal assertion fails.
  *
  * Run with: npx tsx src/engine/gcode/setupPrograms.test.ts
  */
@@ -661,18 +660,19 @@ function testManualIndexTurnsTheBarItself(): void {
             const motion = programWithoutComments(program, 'gcode').split('\n')
             const turnBlocks = motion.filter((line) => line.startsWith(`G0 ${letter}`))
             const endsAt = lines.lastIndexOf('M30')
-            if (face === 'top') {
-              assertEqual(turnBlocks, [`G0 ${angleWord}`], `${label}: Top turns once and never unwinds`)
-              assertEqual(lines[endsAt - 1], 'M5', `${label}: nothing is posted after the last operation but the spindle stop`)
-            } else {
-              assertEqual(turnBlocks, [`G0 ${angleWord}`, `G0 ${letter}0.000`], `${label}: Bottom turns to 180, then unwinds to 0`)
-              assertEqual(lines[endsAt - 1], `G0 ${letter}0.000`, `${label}: the unwind is the last motion block`)
-              // No compensation is active, so the closing retract is the
-              // definition's machine Safe Z too, whatever the bar's shape
-              // (#1054 fix 3).
-              assertEqual(lines[endsAt - 2], `G53 G0 Z${safeWord}`, `${label}: after retracting to the machine Safe Z`)
-              assertEqual(lines[endsAt - 3], 'M5', `${label}: after the spindle stop`)
-            }
+            // The program ends where it ended (#1091): Top stays at A0 and
+            // Bottom stays at A180. The opening turn is the only bar turn; the
+            // last operation's own retract is the final motion.
+            assertEqual(turnBlocks, [`G0 ${angleWord}`], `${label}, ${face}: one opening turn, never an unwind`)
+            assertEqual(lines[endsAt - 1], 'M5', `${label}, ${face}: nothing is posted after the last operation but the spindle stop`)
+            // A Top program's single `G0 A0` is its opening turn; a Bottom
+            // program has none at all. Either way there is no closing unwind.
+            const zeroTurns = lines.slice(0, endsAt).filter((line) => line === `G0 ${letter}0.000`)
+            assertEqual(
+              zeroTurns.length,
+              face === 'top' ? 1 : 0,
+              `${label}, ${face}: no closing unwind to 0`,
+            )
           }
         }
       }
@@ -794,42 +794,13 @@ function testManualIndexAxisMismatchIsRefused(): void {
 }
 
 /**
- * Finding 3 (#1054 fix 1): the closing unwind judges clearance in project
- * space, not machine-signed coordinates. With `zAxis: '-Z'` a cut height is a
- * large positive machine Z, so comparing it raw against the negative travel
- * coordinate called it clear and unwound without retracting.
- */
-function testInvertedZAxisUnwindRetracts(): void {
-  console.log('Testing the closing unwind retracts on an inverted Z machine...')
-  const project = rotaryBarProjectOf('square', 'x')
-  const two = withBottomSetup(project, { axis: 'x', operationIds: ['under'] })
-  const base = rotaryMachine('x', 'own')
-  const inverted = validateMachineDefinition({
-    ...base,
-    coordinateSystem: { ...base.coordinateSystem, zAxis: '-Z' },
-  })
-  // The path ends at the cut height: no operation retract, so only the closing
-  // unwind can establish clearance. GRBL applies no tool-length compensation,
-  // so the retract is the definition's machine Safe Z (#1054 fix 3): a machine
-  // coordinate, untouched by the inverted `-Z` transform and by the project's
-  // origin (the default is 0, the top of travel).
-  const moves = barMoves('x', 'bottom').slice(0, -1)
-  const lines = post(two, ['under'], inverted, moves).gcode.split('\n')
-  const safeZ = inverted.motion.machineSafeZ
-  const unwindAt = lines.lastIndexOf('G0 A0.000')
-  assert(unwindAt > 0, 'the program still unwinds the bar')
-  assertEqual(lines[unwindAt - 1], `G53 G0 Z${safeZ.toFixed(3)}`, 'the unwind retracts to the machine Safe Z first')
-  assertEqual(lines[unwindAt - 2], 'M5', 'after the spindle stop, before the turn')
-}
-
-/**
- * #1054 fix 2/fix 3: every opening and closing turn of a bar Top/Bottom
- * program is preceded by the machine-coordinate retract, whatever compensation
- * a template claims. The emitter no longer scans the template text for
- * `G43`/`G49`; only the machine frame is independent of the work offset and
- * compensation. Every bundled rotary-capable dialect must retract to the
- * definition's own Safe Z, and a machine with no machine-coordinate move must
- * refuse the turn even when a `G43` claims compensation.
+ * #1054 fix 2/fix 3: the opening turn of a bar Top/Bottom program is preceded
+ * by the machine-coordinate retract, whatever compensation a template claims.
+ * The emitter no longer scans the template text for `G43`/`G49`; only the
+ * machine frame is independent of the work offset and compensation. Every
+ * bundled rotary-capable dialect must retract to the definition's own Safe Z,
+ * and a machine with no machine-coordinate move must refuse the turn even when
+ * a `G43` claims compensation. There is no closing turn since #1091.
  */
 function testEveryBarTurnRetractsInMachineCoordinates(): void {
   console.log('Testing every bar turn retracts in machine coordinates...')
@@ -869,15 +840,13 @@ function testEveryBarTurnRetractsInMachineCoordinates(): void {
         const safeLine = `G53 G0 Z${formatGCodeNumber(definition.motion.machineSafeZ, definition, two.meta.units)}`
         assert(turnAt > 0, `${setting}: the turn is posted\n${result.gcode}`)
         assertEqual(lines[turnAt - 1], safeLine, `${setting}: machine-coordinate Safe Z before the turn`)
-        if (face === 'bottom') {
-          const unwindAt = lines.findLastIndex((line) => line === `G0 A${formatGCodeNumber(0, definition, two.meta.units)}`)
-          assert(unwindAt > turnAt, `${setting}: the closing unwind is posted`)
-          assertEqual(
-            lines[unwindAt - 1],
-            safeLine,
-            `${setting}: machine-coordinate Safe Z before the closing unwind`,
-          )
-        }
+        // The bar stays at the opening angle: no closing unwind is written
+        // (#1091), so the A word appears exactly once.
+        assertEqual(
+          lines.filter((line) => line === `G0 A${angle}`),
+          [`G0 A${angle}`],
+          `${setting}: one opening turn and no closing unwind`,
+        )
       }
     }
   }
@@ -1120,7 +1089,6 @@ testManualIndexTurnRetractsInMachineCoordinates()
 testEveryBarTurnRetractsInMachineCoordinates()
 testMachineSafeZIsAMachineCoordinate()
 testManualIndexAxisMismatchIsRefused()
-testInvertedZAxisUnwindRetracts()
 testFlatAndAroundProgramsAreUnchanged()
 
 console.log('setup program tests passed')

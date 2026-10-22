@@ -18,13 +18,14 @@
  * Square-blank program safety (#1016 C2 correction M1, third Codex pass).
  *
  * The planner's turn guard (`trackOperationAngle` + `rotaryTravelZ`) sees only
- * the operation's moves. Two other A words reach a program: the closing unwind,
- * and any A a supplied path carries after a machine template has moved Z behind
- * the emitter's back. That second one is written by *two* emitters — a rapid
- * and a turning feed — so the generator places a turning feed on a G1 as the
- * first rotary motion of an operation a template has just moved Z in front of,
- * not only a rapid. This file proves, on the **emitted text**, that neither can
- * turn a square blank below the generators' travel height.
+ * the operation's moves. A supplied path can still carry an A word after a
+ * machine template has moved Z behind the emitter's back. That A is written by
+ * *two* emitters — a rapid and a turning feed — so the generator places a
+ * turning feed on a G1 as the first rotary motion of an operation a template
+ * has just moved Z in front of, not only a rapid. This file proves, on the
+ * **emitted text**, that it cannot turn a square blank below the generators'
+ * travel height. A closing unwind no longer exists (#1091), so there is no
+ * second A word to police.
  *
  * A seeded property test generates a few hundred square programs and posts each
  * whole program through the real postprocessor. An independent modal
@@ -36,11 +37,9 @@
  * the postprocessor refuses may carry no such motion and must name its refusal.
  *
  * Focused tests pin the three cases the property test is built to catch:
- * the unwind retract, the template Z-unknown rule, and the restored
- * whole-operation turning-feed precedence on a round bar. The unwind retract
- * is proven on a square blank and on a round bar, the latter also with a
- * spindle-stop template that lowers Z (mutation: skip non-square unwind
- * retracts → the round assertion fails).
+ * the template Z-unknown rule, the restored whole-operation turning-feed
+ * precedence on a round bar, and the program ending where it ended with the
+ * operation's own retract as the final motion (#1091).
  *
  * Run with: npx tsx src/engine/gcode/squareRotaryProgramSafety.test.ts
  */
@@ -58,9 +57,10 @@ import { warningSeverity } from '../toolpaths/warningCodes'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { runPostProcessor } from './postprocessor'
-import { rotaryWord, validateMachineDefinition } from './types'
+import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, MM_PER_INCH } from '../../utils/units'
+import { formatGCodeNumber } from './utils'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -356,6 +356,21 @@ function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: numbe
   return { blocks, turns, violations, units }
 }
 
+/**
+ * The last value the machine's rotary word is given in the program text,
+ * ignoring comment-only lines. A borrowed letter carries the angle and never a
+ * linear coordinate on these machines, so every occurrence is an angle.
+ */
+function lastRotaryValue(gcode: string, letter: 'A' | 'X' | 'Y'): number | null {
+  const pattern = new RegExp(`(?:^|[\\s])${letter}(-?[0-9]+(?:\\.[0-9]+)?)`, 'g')
+  let last: number | null = null
+  for (const raw of gcode.split(/\r?\n/)) {
+    if (/^[;(%]/.test(raw.trim())) continue
+    for (const match of raw.matchAll(pattern)) last = Number(match[1])
+  }
+  return last
+}
+
 // ── seeded generator ─────────────────────────────────────────
 
 const SEED = 1016
@@ -509,16 +524,15 @@ function generate(rand: () => number, index: number): Generated {
       }
     }
 
-    // The last operation may legitimately finish below the travel height: a
-    // constant-angle descent is not a turn, and the closing unwind must then
-    // retract before it turns. Earlier operations end clear so the next
-    // template exposure starts from a known height.
+    // The last operation may legitimately descend below the travel height: a
+    // constant-angle descent is not a turn. Like every real generator, the
+    // path then ends with the operation's own retract (#1091), so the program
+    // ends clear wherever the last cut was. Earlier operations end clear so
+    // the next template exposure starts from a known height.
     const last = opIndex === operationsCount - 1
     if (last && !unsafe && rand() < 0.55) {
       ensureLow()
       endsLow = true
-    } else {
-      ensureTravel()
     }
 
     if (unsafe && last) {
@@ -531,9 +545,9 @@ function generate(rand: () => number, index: number): Generated {
       } else {
         staleAOnly(lowZ, current.a + 33)
       }
-      ensureTravel()
     }
 
+    ensureTravel()
     carryA = current.a
     carryAlong = current.x === centre ? nextAlong() : current.x
     entries.push({ operation: op, tool: normalizedTool(project, op), moves })
@@ -600,6 +614,17 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
     assert.equal(audit.units, units, `${program.label}: the program declares its own unit system`)
     assert.deepEqual(audit.violations, [], `${program.label}: every rotary change executes above the travel height`)
     assert.ok(audit.turns > 0, `${program.label}: an accepted turning program actually turns`)
+    // #1091: the program ends where its last move left it. The last angle in
+    // the text is the last toolpath move's angle — no closing A0 is written,
+    // and no extra turn is invented after the retract.
+    const lastMove = program.entries[program.entries.length - 1].moves.at(-1)
+    assert.ok(lastMove?.to.a !== undefined, `${program.label}: the last move carries an angle`)
+    if (lastMove?.to.a === undefined) throw new Error('unreachable')
+    assert.equal(
+      lastRotaryValue(result.gcode, letter),
+      Number(formatGCodeNumber(lastMove.to.a * rotaryDirection(definition), definition, units)),
+      `${program.label}: the program ends on the last toolpath angle, with no closing unwind`,
+    )
     turns += audit.turns
   }
 
@@ -624,52 +649,88 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
   console.log(`   ${feedFirstAccepted} accepted feed-first turns (${[...feedFirstCoverage].sort().join(', ')})`)
 }
 
-// ── 2. the closing unwind retracts a square blank ─────────────
+// ── 2. the program ends where it ended (#1091) ───────────────
 
-console.log('Testing the closing unwind retract on a square blank...')
+console.log('Testing the program keeps its last angle and its own retract...')
 {
   const { project, operation, stock } = fixture({ axis: 'x', units: 'mm' })
   const definition = machine('own', 'x')
   const centre = barCentre(stock)
   const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', 'mm')
   const lowZ = barPivotZ(stock) + 1
-  const point = (z: number, a: number): ToolpathPoint => ({ x: 15, y: centre, z, a })
+  const point = (x: number, z: number, a: number): ToolpathPoint => ({ x, y: centre, z, a })
+  // A safe turn to A45, a constant-angle descent (not a turn), then the
+  // operation's own final retract — exactly what every generator emits.
   const moves: ToolpathMove[] = [
-    { kind: 'rapid', from: point(travelZ, 0), to: point(travelZ, 0) },
-    { kind: 'cut', from: point(travelZ, 0), to: point(travelZ, 45) },
-    { kind: 'rapid', from: point(travelZ, 45), to: point(lowZ, 45) },
+    { kind: 'rapid', from: point(15, travelZ, 0), to: point(15, travelZ, 0) },
+    { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 45) },
+    { kind: 'rapid', from: point(15, travelZ, 45), to: point(15, lowZ, 45) },
+    { kind: 'rapid', from: point(15, lowZ, 45), to: point(15, travelZ, 45) },
   ]
   const result = post(project, definition, [{ operation, tool: normalizedTool(project, operation), moves }])
-  assert.deepEqual(result.warnings, [], 'the safe turn plus a constant-angle descent is accepted')
+  assert.deepEqual(result.warnings, [], 'the safe turn, the descent and the retract are accepted')
   const letter = rotaryWord(definition)!
-  const audit = auditProgram(result.gcode, letter, emittedTravelZ(stock, 'mm', definition, project), emittedHalfStep(definition, 'mm'))
-  assert.deepEqual(audit.violations, [], 'the closing unwind does not turn at the descent height')
-  assert.ok(audit.turns >= 2, 'the probe actually turns twice: to A45 and back to A0')
-  assert.match(result.gcode, /A0/, 'the program still unwinds the bar')
-  // The round bar gets the same closing retract (#1054 fix 1, finding 2): its
-  // travel height is the crown plus 1 mm, emitted above the blank's top.
+  const safeZ = emittedTravelZ(stock, 'mm', definition, project)
+  const audit = auditProgram(result.gcode, letter, safeZ, emittedHalfStep(definition, 'mm'))
+  assert.deepEqual(audit.violations, [], 'no rotary change runs below the travel height')
+  assert.equal(audit.turns, 2, 'the placement states A0 and the cut turns to A45: no closing unwind')
+  // The program keeps its last angle. There is no bare rapid back to 0, and no
+  // machine-coordinate retract at all on a program with no manual-index turn.
+  const angles = [...result.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.deepEqual(angles, [0, 45], `the program writes the toolpath's angles only: ${JSON.stringify(angles)}`)
+  assert.doesNotMatch(result.gcode, /G53/, 'no closing machine-coordinate retract is written')
+  // The final motion is the operation's own retract, and it carries no A word.
+  const lines = result.gcode.split('\n')
+  const end = lines.lastIndexOf('M30')
+  const retract = `Z${formatGCodeNumber(safeZ, definition, 'mm')}`
+  assert.equal(lines[end - 1], 'M5', 'the spindle stop follows the retract')
+  assert.equal(lines[end - 2], retract, 'the final motion is the operation retract at the travel height')
+  assert.doesNotMatch(lines[end - 2], /A/, 'the retract does not turn the bar')
+
+  // The same program on a round bar: still no machine-coordinate retract and no
+  // unwind. Nothing here assumes the bar returns to A0.
   const round = fixture({ axis: 'x', units: 'mm', round: true })
   const roundResult = post(round.project, machine('own', 'x'), [{
     operation: round.operation,
     tool: normalizedTool(round.project, round.operation),
     moves,
   }])
-  const roundBar = round.project.stock
-  assert.ok(isBarStock(roundBar), 'fixture: the round project has bar stock')
-  // GRBL applies no tool-length compensation, so the retract is the machine
-  // definition's own Safe Z (#1054 fix 3), not the work-coordinate travel
-  // height and not the project's Safe Z mapped through the origin.
-  const roundSafe = machine('own', 'x').motion.machineSafeZ.toFixed(3)
-  assert.match(
-    roundResult.gcode,
-    new RegExp(`G53 G0 Z${roundSafe}\\nG0 A0`),
-    'a round bar also retracts to the machine Safe Z before the closing unwind',
-  )
+  assert.ok(isBarStock(round.project.stock), 'fixture: the round project has bar stock')
+  assert.doesNotMatch(roundResult.gcode, /G53/, 'a round bar writes no closing retract either')
+  const roundAngles = [...roundResult.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.deepEqual(roundAngles, [0, 45], 'the round program also ends on A45')
 
-  // The reviewer's repro (#1054 fix 1, finding 2): a spindle-stop template that
-  // lowers Z into cleared space behind the emitter's back. The template's Z is
-  // unknown, so the unwind must retract to the bar's travel height even though
-  // the last tracked motion ended high.
+  // A tool change whose macro may have moved the bar no longer owes an unwind:
+  // the second operation carries no angle, so the last stated angle is the only
+  // proof of where the bar is — and the program simply ends there.
+  const secondTool: Tool = { ...round.tool, id: 't2', name: 'Second' }
+  round.project.tools = [...round.project.tools, secondTool]
+  const secondOp: Operation = { ...round.operation, id: 'op2', name: 'Second', toolRef: 't2' }
+  const secondMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 16, y: centre, z: travelZ }, to: { x: 18, y: centre, z: travelZ } },
+    { kind: 'cut', from: { x: 18, y: centre, z: travelZ }, to: { x: 20, y: centre, z: lowZ } },
+    { kind: 'rapid', from: { x: 20, y: centre, z: lowZ }, to: { x: 20, y: centre, z: travelZ } },
+  ]
+  const multi = post(round.project, machine('own', 'x'), [
+    {
+      operation: round.operation,
+      tool: normalizedTool(round.project, round.operation),
+      moves: [
+        { kind: 'rapid', from: point(15, travelZ, 0), to: point(15, travelZ, 0) },
+        { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 90) },
+      ],
+    },
+    { operation: secondOp, tool: normalizeToolForProject(secondTool, round.project), moves: secondMoves },
+  ], true)
+  assert.deepEqual(multi.warnings, [], 'the two-operation program posts')
+  const multiAngles = [...multi.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.equal(multiAngles[multiAngles.length - 1], 90, 'the bar stays at the last angle a template may have left it near')
+  assert.ok(!multi.gcode.split('\n').some((line) => line === 'G0 A0.000'), 'no closing unwind is owed after the tool change')
+  assert.doesNotMatch(multi.gcode, /G53/, 'and no machine-coordinate closing retract is written')
+
+  // A spindle-stop template that lowers Z behind the emitter's back is written
+  // after the operation's retract. The emitter adds nothing after it: the
+  // program ends exactly where the non-rotary one would (#1091).
   const base = machine('own', 'x')
   const dropping = {
     ...base,
@@ -680,12 +741,11 @@ console.log('Testing the closing unwind retract on a square blank...')
     tool: normalizedTool(round.project, round.operation),
     moves,
   }])
-  assert.match(
-    droppingResult.gcode,
-    new RegExp(`G0 Z-2\\nG53 G0 Z${roundSafe}\\nG0 A0`),
-    'the template Z move is repaired before the unwind turns the bar',
-  )
-  assert.match(droppingResult.gcode, /G0 Z-2/, 'the template line is still written')
+  assert.match(droppingResult.gcode, /G0 Z-2\nM30/, 'the template line is the last motion, before the end')
+  const tail = droppingResult.gcode.split('\n')
+  const templateAt = tail.indexOf('G0 Z-2')
+  assert.ok(templateAt > 0, 'the template line is written')
+  assert.ok(!tail.slice(templateAt).some((line) => /\bA-?[0-9]/.test(line)), 'no A word is invented after it')
 }
 
 // ── 3. a Z-moving template cannot hide the cutter height ──────

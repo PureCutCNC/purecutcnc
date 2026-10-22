@@ -57,7 +57,8 @@
  * cases check what only a real interpreter can settle for a wrapped program:
  * the Around header as comments, an angle word per change (under `A` on an own
  * axis, under the borrowed motor's letter otherwise), `G93`/`G94` around each
- * turning cut with its own inverse-time `F`, and one closing unwind rapid.
+ * turning cut with its own inverse-time `F`, and the last toolpath angle kept
+ * at the end (#1091: no closing unwind).
  */
 
 import { newProject, defaultTool, getStockBounds, rectProfile, roundStock } from '../../src/types/project'
@@ -661,7 +662,7 @@ function aroundOperation(kind: Operation['kind'], featureId: string, overrides: 
  * A wrapped Engrave on a borrowed-Y rotary (issue #395). The operator's line
  * is a slanted straight cut, so the program must turn the bar while it travels
  * along it: `G93`, one inverse-time `F` on the turning block, the angle under
- * `Y` and never a linear `Y` word, and an unwind rapid at the end.
+ * `Y` and never a linear `Y` word, ending on its last angle.
  */
 function generatedAroundEngraveBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const feature = aroundFeature('line', 'polygon', {
@@ -866,7 +867,7 @@ export const CORPUS: CorpusCase[] = [
     name: 'around-engrave-borrowed-y',
     covers: 'issue #395 - a wrapped Engrave on a borrowed-Y rotary: the Around header, the '
       + 'angle written under Y once per change and never as a linear word, G93 with an '
-      + 'inverse-time F on the turning cut, and one closing unwind rapid.',
+      + 'inverse-time F on the turning cut, and the last angle kept at the end.',
     units: 'mm',
     machineId: 'grbl',
     definitionOverrides: (base) => ({

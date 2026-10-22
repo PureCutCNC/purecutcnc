@@ -45,7 +45,7 @@ every validator that claims its machine, exactly as before.
 |---|---|---|---|
 | `rotary-borrowed-y-inverse-time` | grbl | all claiming grbl | the angle under the borrowed `Y`, `G93` and an inverse-time `F`, and no linear `Y` |
 | `rotary-own-axis-inverse-time` | linuxcnc | `linuxcnc-rs274` | the angle under `A` and `G93` — a program Grbl cannot read |
-| `around-engrave-borrowed-y` | grbl | all claiming grbl | a wrapped Engrave (#395): the Around header, the angle under the borrowed `Y`, inverse time, one closing unwind |
+| `around-engrave-borrowed-y` | grbl | all claiming grbl | a wrapped Engrave (#395): the Around header, the angle under the borrowed `Y`, inverse time, the last angle kept at the end |
 | `around-pocket-own-axis` | linuxcnc | `linuxcnc-rs274` | a wrapped pocket (#395): every ring turns the bar, the angle under `A`, inverse time throughout |
 | `rotary-model-finish-borrowed-y` | grbl | all claiming grbl | a model-in-a-bar finish (#1015): the angle carried by the borrowed `Y`, inverse time around each turning link |
 | `rotary-model-rough-own-axis` | linuxcnc | `linuxcnc-rs274` | a model-in-a-bar rough (#1015) in layers: the angle under `A`, inverse time throughout |
@@ -53,8 +53,8 @@ every validator that claims its machine, exactly as before.
 The `around-*` cases (issue #395) are generated end to end, not hand-built: an
 Around toolpath is produced on the unrolled sheet and carried onto the bar by
 `wrapToolpath`, so no hand-picked move set can imitate it. They carry the
-Around header as comments, and the closing unwind rapid (rule 5) is the last
-motion block of both.
+Around header as comments, and neither ends with a closing unwind (#1091):
+the last operation's own retract is the final motion, at the last angle.
 
 The `rotary-model-*` cases (issue #1015) are generated end to end for the same
 reason: a finish and a rough on an imported model inside a round bar, produced

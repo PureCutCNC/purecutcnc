@@ -605,15 +605,10 @@ function assertExportedHelix(
     definition.program.commentSuffix,
     { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
   )
-  // The helix ends at a non-zero angle, so the program carries the closing
-  // machine-coordinate retract (#1054 fix 2). A G53 block is not a work
-  // position, so the parse is not reported as verified (#1054 fix 4); every
-  // other block must still reconstruct.
-  assert.equal(parsed.status, 'unsupported', `${label}: the program parses around the machine retract (${parsed.warnings.join('; ')})`)
-  assert.ok(
-    parsed.warnings.length > 0 && parsed.warnings.every((warning) => warning.includes('G53')),
-    `${label}: the only warnings are the machine-coordinate retract (${parsed.warnings.join('; ')})`,
-  )
+  // The helix ends at a non-zero angle and the program stops there (#1091):
+  // no closing unwind, so every block is a work-coordinate motion.
+  assert.equal(parsed.status, 'verified', `${label}: the program parses cleanly (${parsed.warnings.join('; ')})`)
+  assert.equal(parsed.warnings.length, 0, `${label}: no block is unplaceable (${parsed.warnings.join('; ')})`)
 
   // 360 degrees per physical lead: over one lead (`starts * pitch`) of physical
   // travel the bar turns exactly one revolution. The posted angle carries the
@@ -657,6 +652,21 @@ function assertExportedHelix(
     .filter((angle): angle is number => angle !== undefined)
   assert.ok(posted.length > 0, `${label}: the program posts the angle`)
   assert.ok(Math.max(...posted.map(Math.abs)) > 360, `${label}: the program keeps turning past one revolution`)
+
+  // #1091: the program ends where the thread ended. The last angle in the
+  // text is the last toolpath move's angle — no closing A0 unwind — and the
+  // final motion is the operation's own retract, not a turn.
+  const lastMove = path.moves[path.moves.length - 1]
+  assert.ok(lastMove.to.a !== undefined, `${label}: the last move carries an angle`)
+  if (lastMove.to.a === undefined) throw new Error('unreachable')
+  assert.ok(
+    Math.abs(posted[posted.length - 1] - lastMove.to.a * expectedDriveSign(definition)) <= 1e-6,
+    `${label}: the last angle written is the last toolpath angle, with no closing unwind`,
+  )
+  assert.ok(
+    !exported.gcode.split(/\r?\n/).some((line) => line === `G0 ${word}0.000`),
+    `${label}: no bare closing turn to 0 is written`,
+  )
 
   return exported.gcode
 }

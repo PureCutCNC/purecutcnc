@@ -199,24 +199,6 @@ function motionLines(program: string): string[] {
     .filter((line) => line.startsWith('G') || /[XYZA]/.test(line))
 }
 
-/**
- * The program without its closing unwind rapid (issue #395, rule 5): a program
- * that has turned the bar and stops at a non-zero angle returns it to 0 once,
- * before the footer. These cases assert the #393 rotary contract — which word
- * carries the angle, modal writes, inverse time — so the one closing `G0 A0`
- * (`G0 Y0`/`G0 X0` on a borrowed motor) is removed here; the unwind itself is
- * asserted in `aroundExport.test.ts` and in the last section of this file.
- */
-function withoutUnwind(program: string): string {
-  // The closing unwind is a retract clear of the bar followed by the turn to
-  // 0 (#1054 fix 1, finding 2; fix 2 makes the retract a machine-coordinate
-  // `G53 G0` when no tool-length compensation is active). Remove both,
-  // leaving the program as it reads before its closing block.
-  return program
-    .replace(/\n(?:G53 G0|G0) Z-?\d+\.\d+\nG0 (?:A|X|Y)0\.000(?=\n)/, '')
-    .replace(/\nG0 (?:A|X|Y)0\.000(?=\n)/, '')
-}
-
 /** The one line whose motion word is `word`, or undefined. */
 function lineWithWord(program: string, word: RegExp): string | undefined {
   return motionLines(program).find((line) => word.test(line))
@@ -313,7 +295,7 @@ function bruteForceStockPathLength(
     { kind: 'cut', from: at(10, 10, 20, 350), to: at(10, 10, 20, 370) },
   ]
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves }])
-  const lines = motionLines(withoutUnwind(result.gcode))
+  const lines = motionLines(result.gcode)
   const turning = lines.filter((line) => /A-?[0-9]/.test(line))
 
   // The first point with an angle emits the word (on the rapid); later moves at
@@ -329,7 +311,7 @@ function bruteForceStockPathLength(
 
   // `reversed` flips the sign on the way out.
   const reversed = exportProgram(project, rotaryMachine({ ...OWN_AXIS, reversed: true }), [{ operation: op, moves }])
-  const reversedTurning = motionLines(withoutUnwind(reversed.gcode)).filter((line) => /A-?[0-9]/.test(line))
+  const reversedTurning = motionLines(reversed.gcode).filter((line) => /A-?[0-9]/.test(line))
   assert.equal(reversedTurning.length, 4, 'the same blocks carry an angle reversed')
   // Zero negated is still zero, and prints as `0.000`, not `-0.000`.
   assert.match(reversedTurning[0], /A-?0\b/, 'reversed writes the negated angle')
@@ -349,7 +331,7 @@ function bruteForceStockPathLength(
     { kind: 'cut', from: at(0, 10, 30, 0), to: at(20, 10, 30, 45) },
   ])
   const result = exportProgram(project, rotaryMachine(BORROWED_Y), [{ operation: op, moves }])
-  const lines = motionLines(withoutUnwind(result.gcode))
+  const lines = motionLines(result.gcode)
   const turning = lines.filter((line) => /Y-?[0-9]/.test(line))
   assert.deepEqual(turning, ['X0.000 Y0.000', 'G1 X20.000 Z10.000 Y45.000 F23.593'],
     `the borrowed letter carries the angle and never a linear value:\n${lines.join('\n')}`)
@@ -360,7 +342,7 @@ function bruteForceStockPathLength(
   // does on its own axis.
   const mirrored = rotaryMachine(BORROWED_Y, { ...GRBL.coordinateSystem, yAxis: '-Y' })
   const mirroredResult = exportProgram(project, mirrored, [{ operation: op, moves }])
-  const mirroredTurning = motionLines(withoutUnwind(mirroredResult.gcode)).filter((line) => /Y-?[0-9]/.test(line))
+  const mirroredTurning = motionLines(mirroredResult.gcode).filter((line) => /Y-?[0-9]/.test(line))
   assert.deepEqual(mirroredTurning, ['X0.000 Y0.000', 'G1 X20.000 Z10.000 Y-45.000 F23.593'],
     'a mirrored borrowed output flips the sign')
 }
@@ -599,8 +581,8 @@ const NINETY = Math.PI / 2
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('SameFeed'), moves,
   }])
-  const turning = motionLines(withoutUnwind(result.gcode)).filter((line) => /A(90|180)\b/.test(line))
-  assert.equal(turning.length, 2, `two turning moves:\n${motionLines(withoutUnwind(result.gcode)).join('\n')}`)
+  const turning = motionLines(result.gcode).filter((line) => /A(90|180)\b/.test(line))
+  assert.equal(turning.length, 2, `two turning moves:\n${motionLines(result.gcode).join('\n')}`)
   const expected = (FEED / (10 * NINETY)).toFixed(3)
   for (const line of turning) {
     assert.match(line, new RegExp(`F${expected}\\b`), 'every inverse-time move restates its F, even when it is unchanged')
@@ -623,7 +605,7 @@ const NINETY = Math.PI / 2
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('Discipline'), moves,
   }])
-  const lines = motionLines(withoutUnwind(result.gcode))
+  const lines = motionLines(result.gcode)
 
   // The establishing rapid carries the angle but no feed word.
   const establishing = lines.find((line) => /A45\b/.test(line))
@@ -667,14 +649,14 @@ const NINETY = Math.PI / 2
     operation: operation('EndsTurning'),
     moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
   }])
-  // The closing unwind (#395) sits between the spindle stop and the footer.
-  const raw = withoutUnwind(result.gcode).split('\n')
+  // Since #1091 nothing sits between the spindle stop and the footer.
+  const raw = result.gcode.split('\n')
   const restored = raw.indexOf('G94')
   const spindleOff = raw.indexOf('M5')
   const end = raw.indexOf('M30')
   assert.ok(restored > 0 && spindleOff > restored && end > spindleOff,
     `G94 comes before the spindle stop and the program end:\n${result.gcode}`)
-  assert.match(withoutUnwind(result.gcode), /G94\nM5\nM30/,
+  assert.match(result.gcode, /G94\nM5\nM30/,
     'the spindle stop and the end are written in ordinary mode')
 }
 
@@ -1036,7 +1018,7 @@ const NINETY = Math.PI / 2
       { kind: 'cut', from: at(0, 10, 30, 20), to: at(10, 10, 30, 20) },
     ],
   }])
-  assert.deepEqual(motionLines(withoutUnwind(rising.gcode)).filter((line) => line.startsWith('G0') || /A20\b/.test(line)),
+  assert.deepEqual(motionLines(rising.gcode).filter((line) => line.startsWith('G0') || /A20\b/.test(line)),
     ['G0 Z10.000', 'X0.000 Y0.000 A20.000'],
     `a rising rapid writes Z first, then the XY block with the angle:\n${motionLines(rising.gcode).join('\n')}`)
 
@@ -1050,7 +1032,7 @@ const NINETY = Math.PI / 2
       { kind: 'cut', from: at(10, 10, 20, 30), to: at(20, 10, 20, 30) },
     ],
   }])
-  assert.deepEqual(motionLines(withoutUnwind(falling.gcode)).filter((line) => line.startsWith('G0')
+  assert.deepEqual(motionLines(falling.gcode).filter((line) => line.startsWith('G0')
     || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A30\b/.test(line)),
     ['G0 Z10.000', 'X0.000 Y0.000 A0.000', 'X10.000 Y0.000 A30.000', 'Z0.000'],
     `a falling rapid turns across first, then drops:\n${motionLines(falling.gcode).join('\n')}`)
@@ -1065,7 +1047,7 @@ const NINETY = Math.PI / 2
       { kind: 'cut', from: at(10, 10, 30, 0), to: at(20, 10, 30, 0) },
     ],
   }])
-  assert.deepEqual(motionLines(withoutUnwind(both.gcode)).filter((line) => line.startsWith('G0')
+  assert.deepEqual(motionLines(both.gcode).filter((line) => line.startsWith('G0')
     || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A(15|0)\./.test(line)),
     ['G0 Z20.000', 'X30.000 Y0.000 A15.000', 'X10.000 Y0.000 A0.000', 'Z10.000'],
     `a rising rapid puts the angle on the XY block, a falling one turns first:\n${motionLines(both.gcode).join('\n')}`)
@@ -1666,7 +1648,7 @@ const NINETY = Math.PI / 2
     },
   ])
   assert.deepEqual(result.warnings, [], 'an angle-less operation after a turn is fine')
-  const lines = motionLines(withoutUnwind(result.gcode))
+  const lines = motionLines(result.gcode)
   const turned = lines.findIndex((line) => /A45\b/.test(line))
   assert.ok(turned >= 0, `the turn is written:\n${lines.join('\n')}`)
   assert.ok(lines.slice(turned + 1).every((line) => !/A-?[0-9]/.test(line)),
@@ -1736,7 +1718,7 @@ const NINETY = Math.PI / 2
       moves: [{ kind: 'cut', from: at(0, 10, 20), to: at(5, 10, 20) }],
     },
   ])
-  const lines = motionLines(withoutUnwind(result.gcode))
+  const lines = motionLines(result.gcode)
   const dwell = lines.lastIndexOf('G4 P1')
   assert.ok(dwell > 0, `the header dwell is emitted:\n${lines.join('\n')}`)
   assert.equal(lines[dwell - 1], 'G94', 'G94 is restored before the next operation\'s dwell template')
@@ -1811,43 +1793,82 @@ const NINETY = Math.PI / 2
   assert.equal(plan.warnings.length, 1, 'and reported once')
 }
 
-// ── 16. the closing unwind applies to every rotary program (5) ─
+// ── 16. no closing unwind, on any rotary program (#1091) ─────
 //
-// Rule 5 is not Around-specific: a program that has turned the bar and stops
-// at a non-zero angle returns it to 0 once, before the footer, so the next
-// part starts where this one did. `withoutUnwind` above removes exactly this
-// block from the #393 contract assertions.
+// A rotary program ends where its last move left it. The bar is not returned
+// to 0 before the footer, so the operator's next part is not silently turned
+// by the program. The final motion is the last operation's own retract, exactly
+// as a non-rotary program's is.
 {
   const project = projectWith(bar())
   const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
-    operation: operation('Unwind'),
+    operation: operation('EndsAt90'),
     moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
   }])
   const raw = result.gcode.split('\n')
-  assert.equal(raw[raw.length - 2], 'G0 A0.000', 'a rapid returns the rotary to 0 before the program end')
-  assert.equal(raw[raw.length - 1], 'M30', 'and the program end follows it')
-  // Finding 2 (#1054 fix 1): the unwind retracts clear of the bar first,
-  // because the turning cut ended below it. GRBL applies no tool-length
-  // compensation, so the retract is the machine definition's own Safe Z
-  // (#1054 fix 3): 0 by default, the top of travel after homing.
-  assert.equal(raw[raw.length - 3], 'G53 G0 Z0.000', 'the closing unwind retracts before it turns')
-  // The borrowed letter carries the unwind on a borrowed-motor machine.
+  assert.equal(raw[raw.length - 1], 'M30', 'the program end is the last line')
+  assert.equal(raw[raw.length - 2], 'M5', 'nothing is written after the spindle stop')
+  assert.ok(!/^G0 [AXY]0\.000$/.test(raw[raw.length - 2]), 'no closing unwind runs before the footer')
+  assert.ok(!result.gcode.includes('G53'), 'and no machine-coordinate unwind retract either')
+  // The last angle written is the last move's, not 0.
+  const written = motionLines(result.gcode)
+    .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  assert.equal(written[written.length - 1], 90, 'the program ends on the last move angle')
+  // The final motion is the turning cut itself, at its own height: the emitter
+  // invents no retract and no turn.
+  const axisLines = motionLines(result.gcode).filter((block) => /[AXYZ]/.test(block))
+  assert.match(axisLines[axisLines.length - 1], /A90\.000/, 'the last motion is the toolpath move')
+
+  // The borrowed letter is left at its last angle too.
   const borrowed = exportProgram(project, rotaryMachine(BORROWED_Y), [{
-    operation: operation('Unwind'),
+    operation: operation('EndsAt90'),
     moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
   }])
-  assert.match(borrowed.gcode, /\nG0 Y0\.000\nM30/, 'the borrowed letter carries the unwind')
-  // A program that ends at 0 writes none.
+  assert.ok(!/\nG0 Y0\.000\nM30/.test(borrowed.gcode), 'no borrowed-letter unwind is written')
+  const borrowedWritten = motionLines(borrowed.gcode)
+    .flatMap((block) => [...block.matchAll(/Y(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  assert.equal(borrowedWritten[borrowedWritten.length - 1], 90, 'the borrowed letter ends on the last angle')
+
+  // A program that ends at 0 writes no extra A rapid either, for the same
+  // reason: there is no closing block at all.
   const zero = exportProgram(project, rotaryMachine(OWN_AXIS), [{
     operation: operation('Zero'),
     moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(5, 10, 20, 0) }]),
   }])
-  assert.ok(!/\nG0 [AXY]0\.000\n/.test(zero.gcode), 'a program that ends at 0 writes no unwind')
-  assert.equal(
-    withoutUnwind(result.gcode),
-    result.gcode.replace('\nG53 G0 Z0.000\nG0 A0.000', ''),
-    'the helper strips exactly the closing block',
-  )
+  assert.ok(!/\nG0 [AXY]0\.000\n/.test(zero.gcode), 'a program that ends at 0 writes no extra A rapid')
+}
+
+// ── 17. the final motion is the retract a non-rotary program uses ─
+//
+// #1091: removing the closing unwind must not remove or move the last
+// operation's retract. The same toolpath, angle-free and at a constant angle,
+// ends with the identical final motion — the operation's own retract.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30), to: at(10, 10, 30) },
+    { kind: 'cut', from: at(10, 10, 30), to: at(10, 10, 20) },
+    { kind: 'rapid', from: at(10, 10, 20), to: at(10, 10, 30) },
+  ]
+  const flat = exportProgram(project, GRBL, [{ operation: operation('Retract'), moves }])
+  const turned = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('Retract'),
+    moves: established(moves.map((move) => ({
+      ...move,
+      from: { ...move.from, a: 45 },
+      to: { ...move.to, a: 45 },
+    }))),
+  }])
+  const lastMotion = (program: string): string => {
+    const axis = motionLines(program).filter((line) => /[XYZ]/.test(line))
+    assert.ok(axis.length > 0, 'the program has axis motion')
+    return axis[axis.length - 1]
+  }
+  assert.equal(lastMotion(turned.gcode), lastMotion(flat.gcode),
+    'the rotary program ends with the identical retract a non-rotary program uses')
+  const retractZ = Number(lastMotion(turned.gcode).match(/Z(-?[0-9.]+)/)![1])
+  assert.ok(retractZ > 0, `the retract is above the cut depth, got Z${retractZ}`)
+  assert.doesNotMatch(lastMotion(turned.gcode), /A/, 'and the retract carries no angle word')
 }
 
 console.log('engine/gcode/rotaryOutput.test.ts: all assertions passed')
