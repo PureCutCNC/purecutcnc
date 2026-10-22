@@ -758,7 +758,15 @@ function testManualIndexTurnRetractsInMachineCoordinates(): void {
       !lines.slice(0, retractAt).some((line) => /(^|\s)A[-+]?\d/.test(line)),
       `${face}: no A word is written before the retract`,
     )
-    assert(/^Z|^X|^G[0-3]/.test(lines[turnAt + 2]), `${face}: the operation's own motion follows the turn`)
+    // The turn states only the angle and leaves X/Y unknown, so the start XY
+    // is stated right after it, before any feed (Codex review of slice F,
+    // finding 5). The operation's own motion follows.
+    assert(/^X/.test(lines[turnAt + 1] ?? ''), `${face}: the start XY follows the turn (${lines[turnAt + 1]})`)
+    assert(
+      !lines.slice(turnAt + 1, turnAt + 3).some((line) => /^G1\b/.test(line)),
+      `${face}: no feed runs before the start is placed`,
+    )
+    assert(/^Z|^X|^G[0-3]/.test(lines[turnAt + 3] ?? ''), `${face}: the operation's own motion follows the turn`)
   }
 }
 

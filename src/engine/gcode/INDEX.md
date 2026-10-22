@@ -99,36 +99,52 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   generators' travel height whenever the tracked Z is unknown, because the
   last operation may have descended at a constant angle.
   **Machine templates are restricted by class** (#1057 slice F, Frank's
-  decision 2026-10-21). `templateRules.ts` classifies every template field and
-  the schema refuses a definition that breaks its class: a *program header* may
-  only set up modals (`G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`,
-  units, work-coordinate select, a bare program number, a parameter assignment,
-  comments, non-moving M codes) with no motion or axis word; the *tool change*,
-  the *footer* and the program-end command may do anything; and every template
-  that runs inside the program (spindle, coolant, pause, operation header,
+  decision 2026-10-21). `templateRules.ts` classifies *every string field* of
+  the definition schema — `MACHINE_STRING_FIELDS` is the table validation walks,
+  and a test enumerates the schema's string paths so a new field without a class
+  fails before it can reach an emitter. The schema refuses a definition that
+  breaks its class: a *program header* may only set up modals (`G90`, `G17`,
+  `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, units, work-coordinate select, a
+  bare program number, a fully scanned parameter assignment, comments,
+  non-moving M codes) with no motion or axis word; the *tool change*, the
+  *footer* and the program-end command may do anything; and every template that
+  runs inside the program (spindle, coolant, pause, operation header,
   inverse-time, units, canned cycle, plasma torch, material/THC) is inert — no
-  motion word, axis word, mode change, O-word or macro expression. The purpose
-  templates keep exactly their own word (`G93`/`G94`, `G20`/`G21`, the torch's
-  `M3`/`M4`/`M5` with an optional `S` and `$` selector, the material/THC output
-  commands and parameters). Machine import, the editor and project-snapshot
-  loading all go through that schema, so a definition that could move from a
-  template is refused before an emitter sees it. The emitter therefore no
-  longer carries the per-axis invalidation and re-entry that slices B–E added
-  for arbitrary templates; what remains is the restart block below.
+  motion word, axis word, mode change, O-word or macro expression. The inert
+  allowlist is `G4` and the spindle/coolant/pause/end M codes only: `G40`,
+  `G49`, `G61`, `G64`, `G80` and `G97` change controller state and are legal
+  only in the header, the tool change and the footer. A *single-word command*
+  field (rapid/linear/arc words, feed/RPM prefixes, units, the peck word, the
+  machine-coordinate retract, the plasma probe/set-zero) is matched whole
+  against its own pattern, so `rpmCommand: "G91\nS"` is refused; every other
+  placeholder that carries operator text (`{programName}`, `{operationName}`,
+  `{operationDescription}`, `{toolName}`) may appear only inside a comment, and
+  the emitter strips the dialect's closing marker, `;` and newlines from that
+  text. The purpose templates keep exactly their own word (`G93`/`G94`,
+  `G20`/`G21`, the torch's `M3`/`M4`/`M5` with an optional `S` and `$` selector,
+  the material/THC output commands and parameters). Machine import, the editor
+  and project-snapshot loading all go through that schema, so a definition that
+  could move from a template is refused before an emitter sees it. The emitter
+  therefore no longer carries the per-axis invalidation and re-entry that
+  slices B–E added for arbitrary templates; what remains is the restart block
+  below.
   **After every emitted tool change** — including the first operation's tool
   load, because a tool-change template may still do anything — the program
   restarts in one block: `G90 G94 G17` (distance, feed and plane modes), the
-  units word, one stated rapid to a proven safe Z (the square blank's travel
-  height; the machine-coordinate Safe Z on a bar's manual-index program
-  (#1054), whose own opening turn then supplies the motion; otherwise the
-  operation's own rapid clearance, `plannedSafeZ` never a cutting point), then
-  one rapid with X, Y and — when the first move carries one — the rotary word,
-  all stated to the exact point that move starts from. A feed or an arc that
-  starts the operation gets one more rapid to its own start plane. A program
-  written with tool changes off has no tool change and no block, and is
-  byte-identical to the base (`templateByteIdentity.test.ts`). A program that
-  turned the bar and may have lost the angle to a tool-change template still
-  owes the closing unwind (`rotaryAngleLost`).
+  units word, one stated rapid to a proven safe Z (a bar Top/Bottom program
+  always uses the machine-coordinate Safe Z — on a square blank too, because a
+  work height is not proof after a tool change; a square blank that turns in
+  any other program uses its travel height; otherwise the operation's own rapid
+  clearance, `plannedSafeZ` never a cutting point), then one rapid with X, Y
+  and the rotary word, all stated to the exact point that move starts from. A
+  bar Top/Bottom program states the setup's own A angle on that block after
+  every tool change, not just when the toolpath happens to carry one. A feed or
+  an arc that starts the operation gets one more rapid to its own start plane.
+  A program written with tool changes off has no tool change and no block, and
+  is byte-identical to the base (`templateByteIdentity.test.ts`); it still
+  places the start after the opening manual-index turn, before any feed. A
+  program that turned the bar and may have lost the angle to a tool-change
+  template still owes the closing unwind (`rotaryAngleLost`).
   ShopBot's part file writes the equivalent after `C9`: `SA`, a `JZ` to the
   safe Z, then a `J2` to the start.
   Canned drill cycles are written only on a machine that borrows no motor and
@@ -318,6 +334,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   accept anything; every bundled definition validates; machine import reports
   the refusal), `templateByteIdentity.test.ts` (a tool-change-free program per
   bundled definition is byte-identical to `origin/integration/0.6.0`),
+  `templateReviewFixes.test.ts` (the seven Codex review findings: every schema
+  string field is classified, command fields refuse injected words, an
+  assignment does not hide a trailing word, operator text is comment-only and
+  sanitized, only the header/tool-change/footer may change state, the opening
+  turn is followed by the start placement, a bar restart restates the setup
+  angle, and a square bar restart uses G53),
   `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

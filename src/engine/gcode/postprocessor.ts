@@ -108,17 +108,35 @@ function cannedCommandFor(
   }
 }
 
-function safeCommentText(text: string): string {
-  return text
-    .replace(/[()]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+/**
+ * Operator-visible text (`operation.name`, a tool name, the project name) made
+ * safe for the definition's comment syntax (Codex review of slice F, finding
+ * 3). A closing parenthesis ends a `( … )` comment, a semicolon starts a new
+ * one in a `;` dialect, and a newline ends the comment line entirely; any of
+ * them would turn the rest of the text into program code. Parentheses are
+ * removed for every dialect because a `)` is a closing marker wherever it
+ * appears, and the rest follows the prefix the definition uses.
+ */
+function safeCommentText(
+  text: string,
+  definition?: Pick<MachineDefinition, 'program'>,
+): string {
+  let safe = text.replace(/[\r\n]+/g, ' ')
+  // `)` closes a parenthesised comment and `;` starts a block comment in every
+  // bundled dialect; neither may survive inside operator text.
+  safe = safe.replace(/[();]/g, ' ')
+  const prefix = definition?.program.commentPrefix ?? ''
+  if (prefix === "'") safe = safe.replace(/'/g, ' ')
+  return safe.replace(/\s+/g, ' ').trim()
 }
 
-function safeCommentLines(text: string): string[] {
+function safeCommentLines(
+  text: string,
+  definition?: Pick<MachineDefinition, 'program'>,
+): string[] {
   return text
     .split(/\r?\n/)
-    .map((line) => safeCommentText(line))
+    .map((line) => safeCommentText(line, definition))
     .filter((line) => line.length > 0)
 }
 
@@ -425,8 +443,18 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
   }
 
+  // Operator text is sanitized for this dialect's comments even when a
+  // template puts the placeholder in a comment (the schema refuses one in
+  // code): a project or tool name may itself contain the closing marker.
+  const USER_TEXT_PLACEHOLDERS: ReadonlySet<string> = new Set([
+    'programName', 'operationName', 'operationDescription', 'toolName',
+  ])
   const substituteTemplates = (text: string, context: Record<string, string | number>): string => {
-    return text.replace(/{(\w+)}/g, (_, key) => context[key] !== undefined ? context[key].toString() : `{${key}}`)
+    return text.replace(/{(\w+)}/g, (_, key) => {
+      if (context[key] === undefined) return `{${key}}`
+      const value = context[key].toString()
+      return USER_TEXT_PLACEHOLDERS.has(key) ? safeCommentText(value, definition) : value
+    })
   }
 
   const emitTemplateLines = (
@@ -744,7 +772,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // Nothing is written for a project with a single setup.
   warnings.push(...setupPlan.warnings)
   for (const comment of setupPlan.headerComments) {
-    emitLine(`${definition.program.commentPrefix} ${safeCommentText(comment)}${definition.program.commentSuffix}`)
+    emitLine(`${definition.program.commentPrefix} ${safeCommentText(comment, definition)}${definition.program.commentSuffix}`)
   }
 
   // The bar is turned by the program itself in a manual-index setup whose
@@ -849,7 +877,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
 
   const comment = (text: string) => {
     const suffix = definition.program.commentSuffix
-    emitLine(`${definition.program.commentPrefix} ${safeCommentText(text)}${suffix ? ` ${suffix}` : ''}`)
+    emitLine(`${definition.program.commentPrefix} ${safeCommentText(text, definition)}${suffix ? ` ${suffix}` : ''}`)
   }
 
   /**
@@ -873,6 +901,49 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   /**
+   * Place the tool at the point the operation's first move starts from:
+   * one rapid with X, Y and — when there is an angle to state — the rotary
+   * word, then one rapid to its start plane when that first move is a feed or
+   * an arc. Nothing here writes Z before the XY plane it belongs to.
+   *
+   * `stateAngle` forces the setup's own A angle, which a bar Top/Bottom
+   * program restates after every tool change (Codex review of slice F, finding
+   * 6): the tool-change macro may have turned the bar, and the operation's
+   * toolpath does not carry the setup's index angle, so only the program's own
+   * setup angle is proof of where the face is.
+   */
+  const placeAtStart = (
+    start: ToolpathPoint,
+    startPlane: number | null,
+    stateAngle: boolean,
+    markAngleLost: boolean,
+  ): void => {
+    const plane: Partial<ToolpathPoint> = { x: start.x, y: start.y }
+    if (stateAngle && setupPlan.manualIndexAngle !== null && state.rotaryWord !== null) {
+      plane.a = setupPlan.manualIndexAngle * rotaryDirection(definition)
+    } else if (start.a !== undefined && state.rotaryWord !== null) {
+      plane.a = start.a
+    }
+    // Force the angle word: a tool-change macro may have moved the bar even
+    // when the next move keeps the last angle. The tracked angle is restored
+    // when the move carries none, and the program then owes a closing unwind
+    // if it had already turned.
+    const trackedAngle = state.rotaryAngle
+    state.rotaryAngle = null
+    emitMotionLine(definition.motion.rapidCommand, plane)
+    if (plane.a === undefined) {
+      state.rotaryAngle = trackedAngle
+      // Only a tool change makes the last angle unproven. A placement that
+      // follows the opening turn has just had the angle stated, so it owes no
+      // closing unwind.
+      if (markAngleLost && trackedAngle !== null) rotaryAngleLost = true
+    }
+    if (startPlane !== null) {
+      emitMotionLine(definition.motion.rapidCommand, { z: startPlane })
+    }
+  }
+
+  /**
    * One full restart block after a tool change (#1057 slice F).
    *
    * A tool-change template is the one machine text allowed to do anything:
@@ -884,31 +955,28 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * a. `G90 G94 G17` restores the distance, feed and plane modes every
    *    coordinate below depends on, then the units word restates the frame the
    *    numbers are in.
-   * b. One rapid to a proven safe Z, always stated: a square blank that turns
-   *    uses its travel height (#1016); a bar's manual-index program uses the
-   *    machine-coordinate Safe Z (#1054), which no work offset or tool-length
-   *    compensation can change. Any other program — including a round bar's
-   *    Around program — uses the operation's own rapid clearance
-   *    (`plannedSafeZ`, never a cutting point).
-   * c. One rapid with X, Y and — when the first move carries an angle — the
-   *    rotary word, all stated, to the exact point the operation's first move
-   *    starts from. The angle is written even when it equals the last one:
-   *    a tool-change macro may have moved it.
-   * d. When that first move is a feed or an arc (not a rapid, whose own split
-   *    states Z first), one rapid to its start plane (`startPlane`), so it
-   *    never feeds diagonally down from the restart height.
+   * b. One rapid to a proven safe Z, always stated. A bar Top/Bottom program
+   *    uses the machine-coordinate retract whatever the blank's shape
+   *    (finding 7): a square blank's travel height is a work-coordinate height
+   *    and a tool change may have changed the work frame, so it is never the
+   *    restart retract. A square blank that turns in any *other* program still
+   *    uses its travel height (#1016). Any other program — including a round
+   *    bar's Around program — uses the operation's own rapid clearance.
+   * c. `placeAtStart` states X, Y and the setup angle where there is one.
+   * d. `placeAtStart` states the start plane of a feed or an arc.
    *
    * `start` is null when the operation has no motion at all: the block then
    * still restores the modal baseline, and there is nothing to place.
-   * `placeStart: false` writes only that baseline: a manual-index program's own
-   * opening turn follows immediately and is itself the machine-coordinate
+   * `retractFirst: false` writes only that baseline: a manual-index program's
+   * own opening turn follows immediately and is itself the machine-coordinate
    * retract plus a stated angle (#1054), so a second retract would be noise.
+   * The caller places the start after that turn instead (finding 5).
    */
   const restartAfterToolChange = (
     start: ToolpathPoint | null,
     safeZ: number,
     startPlane: number | null,
-    placeStart: boolean,
+    retractFirst: boolean,
   ): void => {
     emitLine(`${MODAL_DISTANCE_COMMAND} ${MODAL_FEED_COMMAND} ${MODAL_PLANE_COMMAND}`)
     state.inverseTime = false
@@ -922,36 +990,22 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     // itself a machine-coordinate retract plus a stated angle (#1054), so it
     // places the tool: writing the retract and the plane here as well would
     // retract twice. Only the modal baseline above is written then.
-    if (!placeStart) return
-    if (programTurns && squareRetractZ !== null) {
+    if (!retractFirst) return
+    if (barSetupProgram && barTravelZ !== null && machineRapidCommand !== null && emitMachineCoordinateRetract()) {
+      // A manual-index program of a bar retracts in machine coordinates, as its
+      // opening turn does (#1054), and it does so whatever the blank's shape
+      // (finding 7). That leaves the work frame unknown, so the tracking below
+      // is deliberately not trusted as a work height: the next motion restates
+      // Z before it cuts, and an A word repairs a square blank's height through
+      // `retractUnknownSquareZ`.
+      state.zKnown = false
+    } else if (programTurns && squareRetractZ !== null) {
       // A square blank turns only at its proven travel height (#1016).
       emitMotionLine(definition.motion.rapidCommand, { z: squareRetractZ })
-    } else if (barSetupProgram && barTravelZ !== null && machineRapidCommand !== null && emitMachineCoordinateRetract()) {
-      // A manual-index program of a bar retracts in machine coordinates, as its
-      // opening turn does (#1054). That leaves the work frame unknown, so the
-      // tracking below is deliberately not trusted as a work height: the next
-      // motion restates Z before it cuts, and an A word repairs a square
-      // blank's height through `retractUnknownSquareZ`.
-      state.zKnown = false
     } else {
       emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
     }
-    // Force the angle word: a tool-change macro may have moved the bar even
-    // when the next move keeps the last angle. The tracked angle is restored
-    // when the move carries none, and the program then owes a closing unwind
-    // if it had already turned.
-    const plane: Partial<ToolpathPoint> = { x: start.x, y: start.y }
-    if (start.a !== undefined && state.rotaryWord !== null) plane.a = start.a
-    const trackedAngle = state.rotaryAngle
-    state.rotaryAngle = null
-    emitMotionLine(definition.motion.rapidCommand, plane)
-    if (plane.a === undefined) {
-      state.rotaryAngle = trackedAngle
-      if (trackedAngle !== null) rotaryAngleLost = true
-    }
-    if (startPlane !== null) {
-      emitMotionLine(definition.motion.rapidCommand, { z: startPlane })
-    }
+    placeAtStart(start, startPlane, barSetupProgram, true)
   }
 
   // One plasma operation whose torch path is written. Controller piercing
@@ -1117,18 +1171,18 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     const operationContext = {
       ...commonContext,
       operationIndex: opIndex + 1,
-      operationName: safeCommentText(operation.name),
-      operationDescription: safeCommentText(operation.description ?? ''),
+      operationName: safeCommentText(operation.name, definition),
+      operationDescription: safeCommentText(operation.description ?? '', definition),
       operationKind: operation.kind,
       operationPass: operation.pass,
       operationTarget: operationTargetSummary(operation.target),
       toolNumber: step.toolNumber,
-      toolName: safeCommentText(tool.name),
+      toolName: safeCommentText(tool.name, definition),
       feed: formatGCodeNumber(step.cutFeed, definition, outputUnits),
       plungeFeed: formatGCodeNumber(step.plungeFeed, definition, outputUnits),
       rpm: formatGCodeNumber(rpm, definition, outputUnits),
     }
-    const descriptionLines = safeCommentLines(operation.description ?? '')
+    const descriptionLines = safeCommentLines(operation.description ?? '', definition)
 
     // An operation header is a template: it may carry a dwell or a positioning
     // move, neither of which may run in inverse-time mode (issue #393, rule 4).
@@ -1241,9 +1295,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     // operation's own. The retract is machine-coordinate whatever the tool
     // change claims (#1054 fix 2). A machine that emits no tool change still
     // gets it here, immediately before its first motion.
+    //
+    // The turn is not a placement: it states the angle and leaves X/Y (and the
+    // work frame) unknown, so the start is stated *after* it, before any feed
+    // (Codex review of slice F, finding 5). The tool-change restart above
+    // deliberately wrote only its modal baseline.
     if (pendingManualIndexAngle !== null) {
       emitManualIndexTurn(pendingManualIndexAngle)
       pendingManualIndexAngle = null
+      if (restartStart !== null) {
+        placeAtStart(restartStart, restartStartPlane, false, false)
+      }
     }
 
     // Spindle On

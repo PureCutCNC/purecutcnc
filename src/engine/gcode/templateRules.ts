@@ -72,6 +72,51 @@ export type TemplateRule =
   | { kind: 'canned-cycle' }
   | { kind: 'canned-retract' }
   | { kind: 'canned-cancel' }
+  /**
+   * A field that is one command (or one command prefix) and nothing else: a
+   * rapid/linear/arc word, the feed or RPM letter, the peck word, the
+   * machine-coordinate retract or the plasma probe/set-zero command. Reviewed
+   * as a single line against an exact per-field pattern, never as free text
+   * (Codex review of #1057 slice F, finding 1: `rpmCommand: "G91\nS"` wrote a
+   * motion word after the restart).
+   */
+  | { kind: 'command', label: string, pattern: RegExp, hint: string }
+
+/** The single-word command fields, by the shape they must have. */
+type CommandField =
+  | 'rapid'
+  | 'linear'
+  | 'arc-cw'
+  | 'arc-ccw'
+  | 'feed'
+  | 'rpm'
+  | 'peck'
+  | 'machine-rapid'
+  | 'probe'
+  | 'set-zero'
+
+/**
+ * What every string field of the machine definition schema is, so a new field
+ * cannot reach the emitter unclassified (Codex review of slice F, finding 1).
+ *
+ * `metadata`/`enum`/`comment` are not program text and are only here so the
+ * enumeration is complete. `template` and `command` are validated.
+ */
+export type StringFieldClass =
+  | { kind: 'metadata' }
+  | { kind: 'enum' }
+  | { kind: 'comment' }
+  | { kind: 'template', rule: TemplateRule }
+  | { kind: 'command', command: CommandField }
+
+/** One string field of `MachineDefinitionSchema`, with its class. */
+export interface MachineStringFieldSpec {
+  /** Schema path; an array's elements share the container's path. */
+  path: readonly string[]
+  /** True when the schema declares an array of strings. */
+  array?: boolean
+  class: StringFieldClass
+}
 
 /**
  * The definition shape these rules read. Structural rather than
@@ -92,7 +137,16 @@ export interface TemplateRuleDefinition {
   workCoordinates: {
     selectCommand: string | null
   }
+  motion: {
+    rapidCommand: string
+    linearCommand: string
+    cwArcCommand: string
+    ccwArcCommand: string
+    machineCoordinateCommand?: string | null
+  }
   feedSpeed: {
+    feedCommand: string
+    rpmCommand: string
     spindleOnCW: string
     spindleOnCCW: string
     spindleOff: string
@@ -111,6 +165,7 @@ export interface TemplateRuleDefinition {
     drillWithDwellCommand: string | null
     peckDrillCommand: string | null
     chipBreakDrillCommand: string | null
+    peckStepWord: string
     retractMode: 'G98' | 'G99' | null
     cancelCommand: string
   } | null
@@ -125,6 +180,10 @@ export interface TemplateRuleDefinition {
     materialFeedCommand?: string
     thcOnCommand?: string
     thcOffCommand?: string
+    touchOff?: {
+      probeCommand: string
+      setZeroCommand: string
+    }
   }
   stop: {
     programEndCommand: string
@@ -165,15 +224,18 @@ const HEADER_M_COMMANDS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * `G`/`M` commands an inert template may spell: dwell, compensation and
- * tool-length *cancel*, path control, cycle cancel, and the spindle/coolant/
- * pause/end M codes. Nothing that selects a frame (`G54`–`G59`), applies an
- * offset (`G43`/`G44`/`G41`/`G42`), changes plane/units/distance/feed mode, or
- * selects a cycle.
+ * `G`/`M` commands an inert template may spell. Only a dwell is truly inert:
+ * every other G word an earlier version allowed (`G40`, `G49`, `G61`, `G64`,
+ * `G80`, `G97`) changes controller state, and a state change written inside the
+ * program is exactly what the class rule exists to prevent (Codex review of
+ * slice F, finding 4). `G80` and `G49` remain legal in a program header, which
+ * runs before any motion and before the first tool change, and in the
+ * tool-change and footer templates, which the emitter distrusts.
+ *
+ * The M codes are the spindle, coolant, pause and stop commands: they start or
+ * stop a device but move no axis and change no motion mode.
  */
-const INERT_G_COMMANDS: ReadonlySet<string> = new Set([
-  'G4', 'G40', 'G49', 'G61', 'G64', 'G80', 'G97',
-])
+const INERT_G_COMMANDS: ReadonlySet<string> = new Set(['G4'])
 const INERT_M_COMMANDS: ReadonlySet<string> = new Set([
   'M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M7', 'M8', 'M9', 'M30',
 ])
@@ -206,6 +268,172 @@ const MATERIAL_LETTERS: ReadonlySet<string> = new Set(['P', 'L', 'Q', 'T', 'E', 
 
 /** The torch command words. A torch on/off template is nothing else. */
 const TORCH_COMMANDS: ReadonlySet<string> = new Set(['M3', 'M4', 'M5'])
+
+/**
+ * Placeholders that carry text the operator typed: the project name, an
+ * operation's name or description, and a tool's name. They may only be
+ * substituted inside a comment (Codex review of slice F, finding 3): a
+ * template that puts one in code writes arbitrary user text into the program,
+ * and a closing `)` or a newline in it escapes the comment entirely.
+ */
+const USER_TEXT_PLACEHOLDERS: ReadonlySet<string> = new Set([
+  'programName', 'operationName', 'operationDescription', 'toolName',
+])
+
+/**
+ * Every placeholder the emitter fills in with a value the definition author
+ * controls or a number it formats. They cannot escape a comment or write an
+ * arbitrary word, so they are judged by what they expand to.
+ */
+const NUMERIC_PLACEHOLDERS: ReadonlySet<string> = new Set([
+  'date', 'units', 'operationIndex', 'operationKind', 'operationPass',
+  'operationTarget', 'toolNumber', 'feed', 'plungeFeed', 'rpm', 'materialNumber',
+])
+
+/** The exact per-field shape a single-word command field must have. */
+const COMMAND_CORES: Record<CommandField, { core: string, label: string, hint: string }> = {
+  rapid: {
+    core: 'G0{1,2}',
+    label: 'rapid command',
+    hint: 'the rapid command is one G0 or G00 word and nothing else',
+  },
+  linear: {
+    core: 'G0?1',
+    label: 'linear command',
+    hint: 'the linear command is one G1 or G01 word and nothing else',
+  },
+  'arc-cw': {
+    core: 'G0?2',
+    label: 'clockwise arc command',
+    hint: 'the clockwise arc command is one G2 or G02 word and nothing else',
+  },
+  'arc-ccw': {
+    core: 'G0?3',
+    label: 'counter-clockwise arc command',
+    hint: 'the counter-clockwise arc command is one G3 or G03 word and nothing else',
+  },
+  feed: {
+    core: 'F',
+    label: 'feed command',
+    hint: 'the feed command is the letter F; the emitter appends the number',
+  },
+  rpm: {
+    core: 'S?',
+    label: 'RPM command',
+    hint: 'the RPM command is the letter S; the emitter appends the number, and a blank field writes none',
+  },
+  peck: {
+    core: 'Q',
+    label: 'peck-step word',
+    hint: 'the peck-step word is the letter Q; the emitter appends the depth',
+  },
+  'machine-rapid': {
+    core: 'G53(?:\\s+G0{1,2})?',
+    label: 'machine-coordinate rapid command',
+    hint: 'the machine-coordinate command is G53, optionally followed by G0 or G00; the emitter appends only Z',
+  },
+  probe: {
+    core: 'G38\\.[2-5]',
+    label: 'probe command',
+    hint: 'the probe command is one G38.2-G38.5 word; the emitter appends only Z and F',
+  },
+  'set-zero': {
+    core: '(?:G10\\s+L(?:2|20)\\s+P0|G92(?:\\.1)?)',
+    label: 'set-zero command',
+    hint: 'the set-zero command is G10 L2/L20 P0 or G92/G92.1; the emitter appends only Z, and it must set the current work coordinate',
+  },
+}
+
+/** A regex that matches `core` alone, with the definition's comment marker optional. */
+function commandPattern(command: CommandField, commentPrefix: string): RegExp {
+  const marker = commentPrefix.length > 0
+    ? `(?:${commentPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*)?`
+    : ''
+  return new RegExp(`^\\s*${marker}${COMMAND_CORES[command].core}\\s*$`, 'i')
+}
+
+/** A template whose whole text is one line of code. */
+function template(rule: TemplateRule): StringFieldClass {
+  return { kind: 'template', rule }
+}
+
+/**
+ * EVERY string field of `MachineDefinitionSchema`, with its class. A test
+ * enumerates the schema's string fields and fails when one of them is missing
+ * here, so a new field cannot be added without deciding what it is. This table
+ * is also what `templateFields` walks: the classification and the validation
+ * cannot drift apart.
+ */
+export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
+  { path: ['id'], class: { kind: 'metadata' } },
+  { path: ['name'], class: { kind: 'metadata' } },
+  { path: ['description'], class: { kind: 'metadata' } },
+  { path: ['vendor'], class: { kind: 'metadata' } },
+  { path: ['fileExtension'], class: { kind: 'metadata' } },
+  { path: ['outputDialect'], class: { kind: 'enum' } },
+  { path: ['machineKind'], class: { kind: 'enum' } },
+
+  { path: ['plasma', 'torchOnCommand'], class: template({ kind: 'torch' }) },
+  { path: ['plasma', 'torchOffCommand'], class: template({ kind: 'torch' }) },
+  { path: ['plasma', 'materialSelectCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'materialWaitCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'materialFeedCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'thcOnCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'thcOffCommand'], class: template({ kind: 'material' }) },
+  { path: ['plasma', 'pierceMode'], class: { kind: 'enum' } },
+  { path: ['plasma', 'touchOff', 'probeCommand'], class: { kind: 'command', command: 'probe' } },
+  { path: ['plasma', 'touchOff', 'setZeroCommand'], class: { kind: 'command', command: 'set-zero' } },
+
+  { path: ['rotary', 'about'], class: { kind: 'enum' } },
+  { path: ['rotary', 'drive'], class: { kind: 'enum' } },
+  { path: ['rotary', 'inverseTimeFeed', 'on'], class: template({ kind: 'inverse-time-on' }) },
+  { path: ['rotary', 'inverseTimeFeed', 'off'], class: template({ kind: 'inverse-time-off' }) },
+
+  { path: ['coordinateSystem', 'xAxis'], class: { kind: 'enum' } },
+  { path: ['coordinateSystem', 'yAxis'], class: { kind: 'enum' } },
+  { path: ['coordinateSystem', 'zAxis'], class: { kind: 'enum' } },
+
+  { path: ['units', 'mmCommand'], class: template({ kind: 'units' }) },
+  { path: ['units', 'inchCommand'], class: template({ kind: 'units' }) },
+
+  { path: ['program', 'header'], array: true, class: template({ kind: 'header' }) },
+  { path: ['program', 'operationHeader'], array: true, class: template({ kind: 'inert', label: 'operation header' }) },
+  { path: ['program', 'footer'], array: true, class: template({ kind: 'anything' }) },
+  { path: ['program', 'commentPrefix'], class: { kind: 'comment' } },
+  { path: ['program', 'commentSuffix'], class: { kind: 'comment' } },
+
+  { path: ['workCoordinates', 'selectCommand'], class: template({ kind: 'header' }) },
+
+  { path: ['motion', 'rapidCommand'], class: { kind: 'command', command: 'rapid' } },
+  { path: ['motion', 'linearCommand'], class: { kind: 'command', command: 'linear' } },
+  { path: ['motion', 'cwArcCommand'], class: { kind: 'command', command: 'arc-cw' } },
+  { path: ['motion', 'ccwArcCommand'], class: { kind: 'command', command: 'arc-ccw' } },
+  { path: ['motion', 'arcFormat'], class: { kind: 'enum' } },
+  { path: ['motion', 'machineCoordinateCommand'], class: { kind: 'command', command: 'machine-rapid' } },
+
+  { path: ['feedSpeed', 'feedCommand'], class: { kind: 'command', command: 'feed' } },
+  { path: ['feedSpeed', 'rpmCommand'], class: { kind: 'command', command: 'rpm' } },
+  { path: ['feedSpeed', 'spindleOnCW'], class: template({ kind: 'inert', label: 'spindle-on' }) },
+  { path: ['feedSpeed', 'spindleOnCCW'], class: template({ kind: 'inert', label: 'spindle-on' }) },
+  { path: ['feedSpeed', 'spindleOff'], class: template({ kind: 'inert', label: 'spindle-off' }) },
+
+  { path: ['toolChange', 'commands'], array: true, class: template({ kind: 'anything' }) },
+  { path: ['toolChange', 'pauseCommand'], class: template({ kind: 'inert', label: 'pause' }) },
+
+  { path: ['cannedCycles', 'drillCommand'], class: template({ kind: 'canned-cycle' }) },
+  { path: ['cannedCycles', 'drillWithDwellCommand'], class: template({ kind: 'canned-cycle' }) },
+  { path: ['cannedCycles', 'peckDrillCommand'], class: template({ kind: 'canned-cycle' }) },
+  { path: ['cannedCycles', 'chipBreakDrillCommand'], class: template({ kind: 'canned-cycle' }) },
+  { path: ['cannedCycles', 'peckStepWord'], class: { kind: 'command', command: 'peck' } },
+  { path: ['cannedCycles', 'retractMode'], class: template({ kind: 'canned-retract' }) },
+  { path: ['cannedCycles', 'cancelCommand'], class: template({ kind: 'canned-cancel' }) },
+
+  { path: ['coolant', 'floodOnCommand'], class: template({ kind: 'inert', label: 'coolant' }) },
+  { path: ['coolant', 'mistOnCommand'], class: template({ kind: 'inert', label: 'coolant' }) },
+  { path: ['coolant', 'coolantOffCommand'], class: template({ kind: 'inert', label: 'coolant' }) },
+
+  { path: ['stop', 'programEndCommand'], class: template({ kind: 'anything' }) },
+]
 
 interface ScanOptions {
   /** A controller-owned feed expression (`F#<_hal[plasmac.cut-feed-rate]>`). */
@@ -267,8 +495,14 @@ function scanTemplateLine(
   // The program delimiter cannot move an axis.
   if (code === '%') return { words: [{ letter: '%' }] }
   // A parameter assignment names a variable and computes a value; it moves
-  // nothing. Only the header allows one (the bundled QtPlasmaC program number).
-  if (options.assignment && /^#\S*\s*=/.test(code)) return { words: [] }
+  // nothing on its own. Only the header allows one (the bundled QtPlasmaC
+  // program number). It does not end the line: `#1=1 G0Z-2` is an assignment
+  // followed by a motion word, and the scan must still see the motion (Codex
+  // review of slice F, finding 2). Consuming every assignment token and
+  // continuing is what makes the rest of the line visible.
+  if (options.assignment) {
+    code = code.replace(/#(?:<[^>\n]*>|\d+)\s*=\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)/g, ' ')
+  }
   // An O-word is the interpreter's program/subroutine/macro syntax. A bare
   // O-word names the program (`O0001 (part.nc)`) and moves nothing; anything
   // after it is a keyword or a macro body and is refused.
@@ -321,23 +555,62 @@ function commandOf(word: ScannedWord): string | null {
   return `${word.letter}${Number(word.value)}`
 }
 
+/** Why a line was refused: a word, or one of the two placeholder mistakes. */
+type LineRefusalKind = 'word' | 'user-placeholder' | 'unknown-placeholder'
+
+interface LineRefusal {
+  word: string
+  kind: LineRefusalKind
+}
+
+/**
+ * A placeholder in *code* that the emitter cannot safely fill: operator text
+ * (which may close a comment or start a new line) or a placeholder the emitter
+ * does not know at all. Inside a comment both are harmless, which is why the
+ * line's comments are removed before this check.
+ */
+function placeholderRefusal(line: string, commentPrefix: string): LineRefusal | null {
+  const code = lineCode(line, commentPrefix)
+  for (const match of code.matchAll(/\{(\w+)\}/g)) {
+    const key = match[1]
+    if (USER_TEXT_PLACEHOLDERS.has(key)) {
+      return { word: match[0], kind: 'user-placeholder' }
+    }
+    if (!NUMERIC_PLACEHOLDERS.has(key) && key !== 'unitsCommand' && key !== 'wcsCommand') {
+      return { word: match[0], kind: 'unknown-placeholder' }
+    }
+  }
+  return null
+}
+
 /**
  * The first word on one line that breaks `rule`, or null when the line is
- * acceptable. `anything` is never checked: the tool change and the footer may
- * do what they like.
+ * acceptable. `anything` still checks placeholders (operator text may not be
+ * written as code anywhere), but is otherwise unchecked.
  */
 function checkTemplateLine(
   line: string,
   rule: TemplateRule,
   commentPrefix: string,
-): string | null {
+): LineRefusal | null {
+  const placeholder = placeholderRefusal(line, commentPrefix)
+  if (placeholder !== null) return placeholder
   if (rule.kind === 'anything') return null
+  // A command field is one line matched whole: a rapid word, a feed letter, a
+  // probe. Nothing about it is free text, so a second word, a newline or a
+  // mode change makes the field wrong as a whole.
+  if (rule.kind === 'command') {
+    const text = line.trim()
+    return rule.pattern.test(text)
+      ? null
+      : { word: text.length > 0 ? text : '(blank)', kind: 'word' }
+  }
   const scan = scanTemplateLine(line, commentPrefix, {
     parameterExpressions: rule.kind === 'material',
     assignment: rule.kind === 'header',
     allowSelectors: rule.kind === 'torch' || rule.kind === 'material',
   })
-  if ('word' in scan) return scan.word
+  if ('word' in scan) return { word: scan.word, kind: 'word' }
 
   for (const word of scan.words) {
     const command = commandOf(word)
@@ -348,51 +621,57 @@ function checkTemplateLine(
         if (word.letter === 'O' || word.letter === '%') continue
         if (command !== null) {
           const allowed = word.letter === 'G' ? HEADER_G_COMMANDS : HEADER_M_COMMANDS
-          if (!allowed.has(command)) return showWord(word)
+          if (!allowed.has(command)) return { word: showWord(word), kind: 'word' }
           continue
         }
-        if (AXIS_LETTERS.has(word.letter) || !PARAMETER_LETTERS.has(word.letter)) return showWord(word)
+        if (AXIS_LETTERS.has(word.letter) || !PARAMETER_LETTERS.has(word.letter)) {
+          return { word: showWord(word), kind: 'word' }
+        }
         continue
       case 'inert':
         if (command !== null) {
           const allowed = word.letter === 'G' ? INERT_G_COMMANDS : INERT_M_COMMANDS
-          if (!allowed.has(command)) return showWord(word)
+          if (!allowed.has(command)) return { word: showWord(word), kind: 'word' }
           continue
         }
-        if (!PARAMETER_LETTERS.has(word.letter)) return showWord(word)
+        if (!PARAMETER_LETTERS.has(word.letter)) return { word: showWord(word), kind: 'word' }
         continue
       case 'units':
         // The units template is its own G20/G21 and nothing else.
-        if (word.letter !== 'G' || (command !== 'G20' && command !== 'G21')) return showWord(word)
+        if (word.letter !== 'G' || (command !== 'G20' && command !== 'G21')) {
+          return { word: showWord(word), kind: 'word' }
+        }
         continue
       case 'inverse-time-on':
-        if (command !== 'G93') return showWord(word)
+        if (command !== 'G93') return { word: showWord(word), kind: 'word' }
         continue
       case 'inverse-time-off':
-        if (command !== 'G94') return showWord(word)
+        if (command !== 'G94') return { word: showWord(word), kind: 'word' }
         continue
       case 'torch':
         if (command !== null) {
-          if (!TORCH_COMMANDS.has(command)) return showWord(word)
+          if (!TORCH_COMMANDS.has(command)) return { word: showWord(word), kind: 'word' }
           continue
         }
-        if (word.letter !== 'S') return showWord(word)
+        if (word.letter !== 'S') return { word: showWord(word), kind: 'word' }
         continue
       case 'material':
         if (command !== null) {
-          if (!MATERIAL_COMMANDS.has(command)) return showWord(word)
+          if (!MATERIAL_COMMANDS.has(command)) return { word: showWord(word), kind: 'word' }
           continue
         }
-        if (!MATERIAL_LETTERS.has(word.letter)) return showWord(word)
+        if (!MATERIAL_LETTERS.has(word.letter)) return { word: showWord(word), kind: 'word' }
         continue
       case 'canned-cycle':
-        if (command === null || !CANNED_CYCLE_COMMANDS.has(command)) return showWord(word)
+        if (command === null || !CANNED_CYCLE_COMMANDS.has(command)) {
+          return { word: showWord(word), kind: 'word' }
+        }
         continue
       case 'canned-retract':
-        if (command !== 'G98' && command !== 'G99') return showWord(word)
+        if (command !== 'G98' && command !== 'G99') return { word: showWord(word), kind: 'word' }
         continue
       case 'canned-cancel':
-        if (command !== 'G80') return showWord(word)
+        if (command !== 'G80') return { word: showWord(word), kind: 'word' }
         continue
     }
   }
@@ -439,6 +718,8 @@ function describeRule(rule: TemplateRule): { label: string, hint: string } {
       return { label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
     case 'anything':
       return { label: 'template', hint: 'this template may contain anything' }
+    case 'command':
+      return { label: rule.label, hint: rule.hint }
   }
 }
 
@@ -457,80 +738,73 @@ function fieldName(path: Array<string | number>): string {
 
 /**
  * A template expanded the way the emitter expands it, so a placeholder is
- * judged by what it becomes. `{unitsCommand}` and `{wcsCommand}` render the
- * definition's own commands; every other placeholder renders a value or a
- * comment's text and cannot move an axis on its own.
+ * judged by what it becomes rather than by the placeholder text.
+ * `{unitsCommand}` and `{wcsCommand}` render the definition's own commands and
+ * every value placeholder renders a number. Operator text is deliberately left
+ * in place: it may only appear inside a comment (checked before this runs), and
+ * a comment is removed before the words are scanned.
  */
 function expandPlaceholders(text: string, unitsCommand: string, wcsCommand: string): string {
-  return text.replace(/\{(\w+)\}/g, (_placeholder, key: string) => {
+  return text.replace(/\{(\w+)\}/g, (whole, key: string) => {
     if (key === 'unitsCommand') return unitsCommand
     if (key === 'wcsCommand') return wcsCommand
-    return '1'
+    return NUMERIC_PLACEHOLDERS.has(key) ? '1' : whole
   })
 }
 
-/** Every template field in the definition, with the rule it must satisfy. */
+/** The rule a classified field must satisfy, or null when it is not program text. */
+function fieldRule(fieldClass: StringFieldClass, definition: TemplateRuleDefinition): TemplateRule | null {
+  switch (fieldClass.kind) {
+    case 'metadata':
+    case 'enum':
+    case 'comment':
+      return null
+    case 'template':
+      return fieldClass.rule
+    case 'command': {
+      const command = COMMAND_CORES[fieldClass.command]
+      return {
+        kind: 'command',
+        label: command.label,
+        pattern: commandPattern(fieldClass.command, definition.program.commentPrefix),
+        hint: command.hint,
+      }
+    }
+  }
+}
+
+/** Read a dotted schema path from a definition, or undefined. */
+function readPath(root: unknown, path: readonly string[]): unknown {
+  let value = root
+  for (const key of path) {
+    if (value === null || typeof value !== 'object') return undefined
+    value = (value as Record<string, unknown>)[key]
+  }
+  return value
+}
+
+/**
+ * Every classified string field that is present in the definition, with the
+ * rule it must satisfy. Driven by `MACHINE_STRING_FIELDS`, so a field the table
+ * classifies is validated and a field it does not is caught by the enumeration
+ * test before it can reach the emitter.
+ */
 function templateFields(definition: TemplateRuleDefinition): TemplateField[] {
   const fields: TemplateField[] = []
-  const add = (path: Array<string | number>, text: string | null, rule: TemplateRule): void => {
-    if (text !== null) fields.push({ path, text, rule })
+  for (const spec of MACHINE_STRING_FIELDS) {
+    const rule = fieldRule(spec.class, definition)
+    if (rule === null) continue
+    const value = readPath(definition, spec.path)
+    if (value === null || value === undefined) continue
+    if (spec.array) {
+      if (!Array.isArray(value)) continue
+      value.forEach((text, index) => {
+        if (typeof text === 'string') fields.push({ path: [...spec.path, index], text, rule })
+      })
+    } else if (typeof value === 'string') {
+      fields.push({ path: [...spec.path], text: value, rule })
+    }
   }
-  const addAll = (path: string[], texts: readonly string[], rule: TemplateRule): void => {
-    texts.forEach((text, index) => add([...path, index], text, rule))
-  }
-
-  addAll(['program', 'header'], definition.program.header, { kind: 'header' })
-  addAll(['program', 'operationHeader'], definition.program.operationHeader, { kind: 'inert', label: 'operation header' })
-  // The end of the program: nothing follows it, so it may do anything.
-  addAll(['program', 'footer'], definition.program.footer, { kind: 'anything' })
-  addAll(['toolChange', 'commands'], definition.toolChange.commands, { kind: 'anything' })
-  add(['stop', 'programEndCommand'], definition.stop.programEndCommand, { kind: 'anything' })
-
-  add(['units', 'mmCommand'], definition.units.mmCommand, { kind: 'units' })
-  add(['units', 'inchCommand'], definition.units.inchCommand, { kind: 'units' })
-  add(['workCoordinates', 'selectCommand'], definition.workCoordinates.selectCommand, { kind: 'header' })
-
-  add(['feedSpeed', 'spindleOnCW'], definition.feedSpeed.spindleOnCW, { kind: 'inert', label: 'spindle-on' })
-  add(['feedSpeed', 'spindleOnCCW'], definition.feedSpeed.spindleOnCCW, { kind: 'inert', label: 'spindle-on' })
-  add(['feedSpeed', 'spindleOff'], definition.feedSpeed.spindleOff, { kind: 'inert', label: 'spindle-off' })
-  add(['toolChange', 'pauseCommand'], definition.toolChange.pauseCommand, { kind: 'inert', label: 'pause' })
-
-  const coolant = definition.coolant
-  if (coolant !== null) {
-    add(['coolant', 'floodOnCommand'], coolant.floodOnCommand, { kind: 'inert', label: 'coolant' })
-    add(['coolant', 'mistOnCommand'], coolant.mistOnCommand, { kind: 'inert', label: 'coolant' })
-    add(['coolant', 'coolantOffCommand'], coolant.coolantOffCommand, { kind: 'inert', label: 'coolant' })
-  }
-
-  const canned = definition.cannedCycles
-  if (canned !== null) {
-    add(['cannedCycles', 'drillCommand'], canned.drillCommand, { kind: 'canned-cycle' })
-    add(['cannedCycles', 'drillWithDwellCommand'], canned.drillWithDwellCommand, { kind: 'canned-cycle' })
-    add(['cannedCycles', 'peckDrillCommand'], canned.peckDrillCommand, { kind: 'canned-cycle' })
-    add(['cannedCycles', 'chipBreakDrillCommand'], canned.chipBreakDrillCommand, { kind: 'canned-cycle' })
-    add(['cannedCycles', 'retractMode'], canned.retractMode, { kind: 'canned-retract' })
-    add(['cannedCycles', 'cancelCommand'], canned.cancelCommand, { kind: 'canned-cancel' })
-  }
-
-  // `null` means the controller has no inverse-time commands: nothing is
-  // written, so there is nothing to hold to a rule.
-  const inverseTime = definition.rotary?.inverseTimeFeed ?? null
-  if (inverseTime !== null) {
-    add(['rotary', 'inverseTimeFeed', 'on'], inverseTime.on, { kind: 'inverse-time-on' })
-    add(['rotary', 'inverseTimeFeed', 'off'], inverseTime.off, { kind: 'inverse-time-off' })
-  }
-
-  const plasma = definition.plasma
-  if (plasma !== undefined) {
-    add(['plasma', 'torchOnCommand'], plasma.torchOnCommand, { kind: 'torch' })
-    add(['plasma', 'torchOffCommand'], plasma.torchOffCommand, { kind: 'torch' })
-    add(['plasma', 'thcOnCommand'], plasma.thcOnCommand ?? null, { kind: 'material' })
-    add(['plasma', 'thcOffCommand'], plasma.thcOffCommand ?? null, { kind: 'material' })
-    add(['plasma', 'materialSelectCommand'], plasma.materialSelectCommand ?? null, { kind: 'material' })
-    add(['plasma', 'materialWaitCommand'], plasma.materialWaitCommand ?? null, { kind: 'material' })
-    add(['plasma', 'materialFeedCommand'], plasma.materialFeedCommand ?? null, { kind: 'material' })
-  }
-
   return fields
 }
 
@@ -554,10 +828,27 @@ export function refusedTemplateWords(
   const words: string[] = []
   for (const rawLine of text.split(/\r?\n/)) {
     const line = expandPlaceholders(rawLine, unitsCommand, wcsCommand)
-    const word = checkTemplateLine(line, rule, commentPrefix)
-    if (word !== null) words.push(word)
+    const refusal = checkTemplateLine(line, rule, commentPrefix)
+    if (refusal !== null) words.push(refusal.word)
   }
   return words
+}
+
+/** The refusal as a person reads it, naming the field and saying why. */
+function refusalMessage(
+  path: Array<string | number>,
+  rule: TemplateRule,
+  refusal: LineRefusal,
+): string {
+  const field = fieldName(path)
+  if (refusal.kind === 'user-placeholder') {
+    return `${field}: the placeholder "${refusal.word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
+  }
+  if (refusal.kind === 'unknown-placeholder') {
+    return `${field}: the placeholder "${refusal.word}" is not one the emitter fills in; remove it or use a supported placeholder.`
+  }
+  const { label, hint } = describeRule(rule)
+  return `${field}: the word "${refusal.word}" is not allowed in the ${label}; ${hint}.`
 }
 
 /**
@@ -571,15 +862,13 @@ export function templateRuleViolations(definition: TemplateRuleDefinition): Temp
   const wcsCommand = definition.workCoordinates.selectCommand ?? ''
   const violations: TemplateRuleViolation[] = []
   for (const field of templateFields(definition)) {
-    if (field.rule.kind === 'anything') continue
-    const { label, hint } = describeRule(field.rule)
     for (const rawLine of field.text.split(/\r?\n/)) {
       const line = expandPlaceholders(rawLine, unitsCommand, wcsCommand)
-      const word = checkTemplateLine(line, field.rule, definition.program.commentPrefix)
-      if (word !== null) {
+      const refusal = checkTemplateLine(line, field.rule, definition.program.commentPrefix)
+      if (refusal !== null) {
         violations.push({
           path: field.path,
-          message: `${fieldName(field.path)}: the word "${word}" is not allowed in the ${label}; ${hint}.`,
+          message: refusalMessage(field.path, field.rule, refusal),
         })
         break
       }

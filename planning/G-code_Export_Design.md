@@ -61,11 +61,15 @@ Bundled definitions and user-provided definitions use the same runtime contract.
 A definition may describe:
 
 - controller identity and output extensions;
-- startup and shutdown templates, restricted by class (#1057 slice F): the
+- startup and shutdown templates, restricted by class (#1057 slice F, completed
+  by the review fixes): every string field of the schema is classified — the
   program header may only set up modals, the tool change and the footer may do
   anything (the program restarts after a tool change), and every other template
-  must be inert — no motion, axis, mode or macro word. The schema refuses a
-  definition that breaks the rule, naming the template and the word;
+  must be inert — no motion, axis, mode or macro word. Single-word command
+  fields (rapid/linear/arc words, feed/RPM prefixes, units, peck word, machine
+  retract, plasma probe/set-zero) match an exact per-field pattern, and operator
+  text may only be substituted inside a comment. The schema refuses a definition
+  that breaks the rule, naming the field and the word;
 - units, precision, comments, and line formatting;
 - motion and drilling-cycle capabilities;
 - tool-change, spindle, and coolant behavior;
@@ -303,9 +307,11 @@ tool, which the G-code emitter restated.
   is assumed afterwards: the part file restarts with `SA`, a `JZ` to a proven
   safe Z and a `J2` to the point the next move starts from, and the next fed
   move restates `MS`. The G-code path writes the equivalent block
-  (`G90 G94 G17`, the units word, `G0` to safe Z, `G0` with X, Y and the
-  rotary word) after every emitted tool change (#1057 slice F); a program
-  written with tool changes off is unchanged.
+  (`G90 G94 G17`, the units word, a proven safe-Z rapid, then `G0` with X, Y
+  and the rotary word) after every emitted tool change (#1057 slice F). A bar
+  Top/Bottom program always retracts to the machine-coordinate Safe Z there and
+  restates the setup's A angle, on a square blank too; a program written with
+  tool changes off is unchanged.
 - Drilling is written as its expanded moves: there are no canned cycles.
 - Coolant is not written, because output wiring differs per machine; asking
   for it raises the same warning as on a G-code machine without coolant.
