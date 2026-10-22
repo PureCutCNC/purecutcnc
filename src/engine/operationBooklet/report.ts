@@ -502,6 +502,12 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   if (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish') {
     rows.push(
       { label: translate('cam.operation.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
+      // Which way the passes travel round the bar (#1045 slice B). Missing reads
+      // as 'along', the motion every saved rotary operation was cut with.
+      {
+        label: translate('cam.rotary.passes'),
+        value: translate(operation.rotaryPassDirection === 'around' ? 'cam.rotary.passAround' : 'cam.rotary.passAlong'),
+      },
       { label: translate('cam.rotary.chuckSupport'), value: lengthWithUnits(operation.rotaryChuckSupport ?? 0, units) },
       { label: translate('cam.rotary.tailSupport'), value: lengthWithUnits(operation.rotaryTailSupport ?? 0, units) },
     )

@@ -258,18 +258,24 @@ function postOperations(
  * `normalizeGeneratedDate`), so a change that alters any other byte of the
  * generated program of a consistent fixture fails here. The projects are made
  * coherent first: the machine and the stock are what the type implies, exactly
- * as the load migration reads them. `around` was recaptured on the #1054
- * branch for fix 2's machine-coordinate closing retract, and again for #1091,
- * which removes that retract and the closing `G0 A0` unwind (the generated
- * moves, `aroundMoves`, are unchanged).
+ * as the load migration reads them.
+ *
+ * `around` and `aroundMoves` were recomputed on the merged #1045 + #1054 code,
+ * so they now include both changes. #1045 slice D's C2-F7 cutter-centre
+ * pull-in, now applied to a round bar's retained ends too, starts and ends the
+ * along grid one cutter radius in because the fixture's band ends inside the
+ * bar; that moved `aroundMoves` (and therefore `around`). #1054 fix 3's
+ * machine-coordinate closing retract then changed only the program text, so
+ * `aroundMoves` is still the #1045 value while `around` carries both. The
+ * program's structure is unchanged.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: 'b8c8d676caef4350',
-  aroundMoves: '1ae454fc6597c367',
+  around: '37a8b133e86b9d09',
+  aroundMoves: 'e7248422dcef1683',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

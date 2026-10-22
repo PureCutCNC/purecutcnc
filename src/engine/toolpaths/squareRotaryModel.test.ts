@@ -275,9 +275,11 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   // higher at the travel height (and would mask the corner).
   const at45 = retained.moves.filter((m) => m.kind === 'cut' && m.to.a === 45 && m.to.z < PIVOT + MAX_R + 0.5)
   assert.ok(at45.length > 0, 'the 45° pass cuts')
-  const max45 = Math.max(...at45.map((m) => m.to.z)) - PIVOT
-  assert.ok(max45 < H, `the 45° pass no longer rides the retained corner (${max45} < ${H})`)
-  approx(max45, TARGET_RADIUS, 'the 45° pass cuts the model radius', 0.05)
+  // The finish only follows the model (2026-10-22 decision), so the pass that
+  // must not ride the retained corner is its model-following cut at A45.
+  const min45 = Math.min(...at45.map((m) => m.to.z)) - PIVOT
+  assert.ok(min45 < H, `the 45° finish pass no longer rides the retained corner (${min45} < ${H})`)
+  approx(min45, TARGET_RADIUS, 'the 45° finish pass cuts the model radius', 0.05)
   const inset = BALL.radius
   for (const move of retained.moves) {
     if (move.kind === 'rapid') continue

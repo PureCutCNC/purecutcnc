@@ -434,12 +434,14 @@ log('Testing generated rough and finish moves on the actual bar...')
       `${operation.kind}: no generation warning at any severity`,
     )
     // What this measures: every generated point is finite; the path's along
-    // extent is exactly the requested band on the real bar; and its closest
-    // approach to the bar axis reaches the hex's flat (apothem) radius, so the
-    // tool really does make contact with the generated solid. The *maximum*
-    // radial distance is deliberately not bounded — it is the safe-height
-    // retract plane above the bar top, not a cut — so this block makes no
-    // "everything stays inside the bar radius" claim.
+    // extent is the requested band pulled one cutter radius inside each stubbed
+    // end (#1045 slice D, the C2-F7 rule the square blank already used: a
+    // pass on the band edge would otherwise cut into the retained bar); and
+    // its closest approach to the bar axis reaches the hex's flat (apothem)
+    // radius, so the tool really does make contact with the generated solid.
+    // The *maximum* radial distance is deliberately not bounded — it is the
+    // safe-height retract plane above the bar top, not a cut — so this block
+    // makes no "everything stays inside the bar radius" claim.
     assert.ok(isRoundStock(project.stock), `${operation.kind}: the fixture is a round bar`)
     const axis = project.stock.axis
     const acrossMin = axis === 'x' ? bounds.minY : bounds.minX
@@ -460,8 +462,10 @@ log('Testing generated rough and finish moves on the actual bar...')
         minRadius = Math.min(minRadius, Math.hypot(across - axisCentre, point.z - pivotZ))
       }
     }
-    near(minAlong, alongStart, `${operation.kind}: the path starts at the requested along position`, 1e-4)
-    near(maxAlong, alongEnd, `${operation.kind}: the path ends at the requested along position`, 1e-4)
+    const tool = project.tools.find((entry) => entry.id === operation.toolRef)!
+    const cutterRadius = tool.diameter / 2
+    near(minAlong, alongStart + cutterRadius, `${operation.kind}: the path starts one cutter radius inside the requested along position`, 1e-4)
+    near(maxAlong, alongEnd - cutterRadius, `${operation.kind}: the path ends one cutter radius inside the requested along position`, 1e-4)
     assert.ok(minRadius <= apothem + 1e-3, `${operation.kind}: the path reaches the hex flat surface (${minRadius} vs ${apothem})`)
     assert.ok(minRadius > 0, `${operation.kind}: the path approaches the axis from the material side`)
   }

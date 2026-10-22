@@ -714,7 +714,12 @@ function generatedRotaryModel(
       operations: [operation],
     }
     const envelope = computeOperationToolpath(project, operation)
-    if (!envelope || envelope.result.moves.length === 0 || envelope.result.warnings.length > 0) {
+    // The finish case is a finish on its own by design, so the advisory
+    // "no rough before this finish" note (#1045) is expected; any other
+    // warning still fails the case.
+    const warnings = (envelope?.result.warnings ?? []).filter((warning) =>
+      !(kind === 'rotary_finish' && warning.code === 'rotaryFinishWithoutRough'))
+    if (!envelope || envelope.result.moves.length === 0 || warnings.length > 0) {
       throw new Error(`${caseName} corpus fixture did not generate cleanly: ${JSON.stringify(envelope?.result.warnings)}`)
     }
     if (!envelope.result.moves.every((move) => move.from.a !== undefined && move.to.a !== undefined)) {

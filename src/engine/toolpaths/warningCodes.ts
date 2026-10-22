@@ -161,6 +161,20 @@ export type ToolpathWarningCode =
   | 'targetsNotFound'
   | 'stepoverRatioRange'
   | 'operationStepoverRatioRange'
+  /** A rotary **rough**'s layer depth is a finite positive number but smaller
+   *  than the physically meaningful minimum (#1045 slice O); a finish has no
+   *  layer depth. Distinct from `stepdownPositive`: the value is valid in form,
+   *  just unusably small. */
+  | 'rotaryStepdownBelowMinimum'
+  /** A rotary **rough** would emit more moves than its work budget allows at
+   *  the requested layer depth and sampling (#1045 slice O; a finish has no
+   *  layers). The job is refused rather than hanging the worker mid-generation. */
+  | 'rotaryWorkBudgetExceeded'
+  /** The finish has no enabled rotary rough on the same model feature earlier
+   *  in the same setup's operation order, so it will cut to full depth in one
+   *  pass. Advisory only (2026-10-22 decision): the finish follows the model
+   *  either way, and the warning changes no motion. */
+  | 'rotaryFinishWithoutRough'
   | 'surface3dNeedsModel'
   | 'surface3dNotMesh'
   | 'surface3dLoadFailed'
@@ -467,8 +481,23 @@ export type ToolpathWarningCode =
    *  blank turns. A supplied or stale path that changes A while the cutter's
    *  lowest point is below that corner envelope would drive the standing
    *  corners through the cutter, so the operation is refused rather than
-   *  posted (issue #1016 C2 correction M1). */
+   *  posted (issue #1016 C2 correction M1).
+   *
+   *  #1045 slice K admits the one kind of below-envelope turn that is a real
+   *  cut: an around-the-bar pass on a square blank, whose motion must equal the
+   *  toolpath the generator emits for the current project (see
+   *  `postSquareAroundToolpathStale`). A **turning rapid**, and a turn on an
+   *  along-mode operation, keeps this refusal. Params: operation. */
   | 'postRotarySquareTurnBelowEnvelope'
+  /** A square blank's around-the-bar operation is being posted with motion that
+   *  is not what the generator emits for the current project: a stale path, a
+   *  hand-edited one, or another operation's path. Around mode turns below the
+   *  blank's corner envelope because the turn is the cut, so the export check
+   *  proves the motion is the generator's own by regenerating the operation and
+   *  comparing it move for move (same kinds, points exactly equal bit for bit,
+   *  same order). The operation is refused rather than posted (issue #1045
+   *  slices K and L). Params: operation. */
+  | 'postSquareAroundToolpathStale'
   /** A bar turn (the manual-index opening turn or the closing unwind) has no
    *  honest clearance retract: no tool-length compensation is active, so a
    *  work-coordinate retract would not describe the tip, and the machine has
@@ -534,11 +563,15 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
  *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
- *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope` and
- *   `postRotaryTurnWithoutClearance` — a rotary operation or turn the machine
- *   cannot run safely is left out of the program (issues #393, #1016 C2 M1,
- *   #1054 fix 2). The file would otherwise be saved without that pass, or
- *   turned at a height nobody can prove.
+ *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope`,
+ *   `postSquareAroundToolpathStale` and `postRotaryTurnWithoutClearance` — a
+ *   rotary operation the machine cannot run, a square around path that is not
+ *   the current project's own, or a bar turn with no provable clearance is left
+ *   out of the program (issues #393, #1016 C2 M1, #1045, #1054 fix 2). The file
+ *   would otherwise be saved without that pass, and approximating any of them
+ *   would cut the stock at the wrong angle, the wrong feed, or through the
+ *   square blank's standing corners, or turn the bar at a height nobody can
+ *   prove.
  *
  * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
  * round bar or a block in an Around setup is a note about a job the setup does
@@ -568,6 +601,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
   'postRotarySquareTurnBelowEnvelope',
+  'postSquareAroundToolpathStale',
   'postRotaryTurnWithoutClearance',
 ])
 

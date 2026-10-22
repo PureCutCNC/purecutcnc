@@ -41,6 +41,7 @@ const ALL_CODES = [
   'xyLeadUnsupported', 'xyLeadRegionMask', 'xyLeadNoViablePath', 'xyLeadNeedsRampedEntry',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
   'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
+  'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded', 'rotaryFinishWithoutRough',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',
   'vcarveWrongKind', 'vcarveNeedsVBit', 'contourSpacingPositive', 'vBitInvalidSlope', 'vcarveNoMoves',
@@ -98,8 +99,7 @@ const ALL_CODES = [
   'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',
   'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis', 'postRotaryDrillNotExpanded',
   'postRotaryAxisMismatch',
-  'postRotarySquareTurnBelowEnvelope',
-  'postRotaryTurnWithoutClearance',
+  'postRotarySquareTurnBelowEnvelope', 'postSquareAroundToolpathStale', 'postRotaryTurnWithoutClearance',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
@@ -131,6 +131,26 @@ for (const key of Object.keys(warningsEn)) {
   const code = key.slice('warnings.'.length)
   assert(codeSet.has(code), `catalog key ${key} corresponds to a ToolpathWarningCode`)
 }
+
+// The two rotary refusals added by #1045 slice O name the operation and say
+// what to change, so the message is actionable rather than a generic range.
+assert(
+  interpolate(warningsEn['warnings.rotaryStepdownBelowMinimum'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: the stepdown is below 0.01 mm'),
+  'the below-minimum stepdown message names the operation and the minimum',
+)
+assert(
+  interpolate(warningsEn['warnings.rotaryWorkBudgetExceeded'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: this would generate too many moves'),
+  'the work-budget message names the operation and the remedy',
+)
+// The 2026-10-22 finish advisory names the operation and states the consequence
+// without claiming a refusal.
+assert(
+  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish' })
+    === 'Rotary finish: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
+  'the finish-without-rough advisory names the operation and the consequence',
+)
 
 // The debug passthrough renders its text verbatim in both locales.
 const debugWarning: ToolpathWarning = { code: 'debug', params: { text: 'Debug: xyz 42' } }

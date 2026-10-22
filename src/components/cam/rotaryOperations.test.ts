@@ -65,8 +65,13 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   assert.ok(!operationComputationEquals(operation, { ...operation, rotaryChuckSupport: 5 }))
   assert.ok(!operationComputationEquals(operation, { ...operation, rotaryTailSupport: 6 }))
   assert.ok(operationComputationEquals(operation, { ...operation, rotaryChuckSupport: undefined, rotaryTailSupport: undefined }))
+  // #1045 slice B: the Passes value moves the cutter, so it is a cache input.
+  // Missing IS 'along' — the motion every saved operation was cut with — so an
+  // explicit 'along' must not invalidate a missing one (the guard suite owns the
+  // 'around' half of this).
+  assert.ok(operationComputationEquals(operation, { ...operation, rotaryPassDirection: 'along' }), 'missing Passes equals along for the cache')
   const fields = OPERATION_FIELD_GROUP_IDS.flatMap((group) => operationFieldsForGroup(group, operation, project.tools[0]).map((field) => field.id))
-  assert.deepEqual(fields.sort(), ['name','description','kind','enabled','target','targetSource','tool','stepover', ...(kind === 'rotary_rough' ? ['stepdown'] : []), 'stockToLeaveRadial','feed','plungeFeed','rpm','rotaryChuckSupport','rotaryTailSupport'].sort(), 'only the specified rotary controls are visible')
+  assert.deepEqual(fields.sort(), ['name','description','kind','enabled','target','targetSource','tool','stepover', ...(kind === 'rotary_rough' ? ['stepdown'] : []), 'stockToLeaveRadial','feed','plungeFeed','rpm','rotaryChuckSupport','rotaryTailSupport','rotaryPassDirection'].sort(), 'only the specified rotary controls are visible')
   assert.deepEqual(preferredToolTypes(kind), ['ball_endmill', 'flat_endmill'])
   assert.deepEqual(toolpathLevels({ moves: [] }, operation), [])
   const converted = convertProjectUnits({ ...project, operations: [{ ...operation, rotaryChuckSupport: 25.4, rotaryTailSupport: 50.8 }] }, 'inch')
@@ -90,7 +95,7 @@ const store = useProjectStore.getState
 store().openProjectFromText(oldText, null)
 const saved = store().saveProject()
 const first = JSON.parse(saved)
-assert.ok(first.operations.every((operation: Record<string, unknown>) => !('rotaryChuckSupport' in operation) && !('rotaryTailSupport' in operation)))
+assert.ok(first.operations.every((operation: Record<string, unknown>) => !('rotaryChuckSupport' in operation) && !('rotaryTailSupport' in operation) && !('rotaryPassDirection' in operation)))
 store().openProjectFromText(saved, null)
 const second = JSON.parse(store().saveProject())
 second.meta.modified = first.meta.modified

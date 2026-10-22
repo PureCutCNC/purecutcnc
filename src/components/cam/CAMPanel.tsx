@@ -51,6 +51,7 @@ import type {
   PocketPattern,
   OperationTarget,
   Project,
+  RotaryPassDirection,
   Tool,
   ToolType,
   XyLeadStrategy,
@@ -1465,7 +1466,17 @@ export function CAMPanel({
       ),
       stepover: () => (
         <>
-          <label className="properties-field">
+          <label
+            className="properties-field"
+            // A rotary stepover measures a different distance depending on the
+            // Passes choice: round the bar in along mode, along it in around
+            // mode (#1045 slice B). The field keeps its name in both.
+            title={isRotaryOperationKind(operation.kind)
+              ? camT(operation.rotaryPassDirection === 'around'
+                ? 'cam.rotary.stepoverAroundTooltip'
+                : 'cam.rotary.stepoverAlongTooltip')
+              : undefined}
+          >
             <span>
               {operation.kind === 'v_carve'
                 ? camT('cam.operation.contourSpacing')
@@ -1966,6 +1977,19 @@ export function CAMPanel({
           <span>{camT('cam.rotary.tailSupport')}</span>
           <DraftLengthInput value={operation.rotaryTailSupport ?? 0} units={project.meta.units} min={0}
             onCommit={(value) => updateOperation(operation.id, { rotaryTailSupport: value })} />
+        </label>
+      ),
+      rotaryPassDirection: () => (
+        <label className="properties-field" title={camT('cam.rotary.passesTooltip')}>
+          <span>{camT('cam.rotary.passes')}</span>
+          <Select<RotaryPassDirection>
+            value={operation.rotaryPassDirection ?? 'along'}
+            options={[
+              { value: 'along', label: camT('cam.rotary.passAlong') },
+              { value: 'around', label: camT('cam.rotary.passAround') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { rotaryPassDirection: value })}
+          />
         </label>
       ),
       stockToLeaveAxial: () => (

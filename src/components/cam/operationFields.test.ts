@@ -519,6 +519,35 @@ function testDrillingHidesTheTwoDimensionalStrategyFields() {
   }
 }
 
+/**
+ * Passes — along or around the bar — is a rotary strategy choice (#1045 slice
+ * B). It belongs to Strategy because it decides how the cutter covers the
+ * material, and it is offered by exactly the two rotary kinds the generator
+ * reads it for; a non-rotary operation that showed the row would offer a
+ * setting nothing consumes.
+ */
+function testRotaryPassesIsARotaryStrategyField() {
+  const field = OPERATION_FIELDS.find((candidate) => candidate.id === 'rotaryPassDirection')
+  assert(field, 'rotaryPassDirection must be declared')
+  assert(field.group === 'strategy', 'the Passes row belongs to the Strategy group')
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    assert(field.appliesTo(makeOperation({ kind })), `${kind} offers the Passes choice`)
+    assert(
+      operationFieldsForGroup('strategy', makeOperation({ kind })).some((entry) => entry.id === 'rotaryPassDirection'),
+      `${kind} renders Passes inside Strategy`,
+    )
+  }
+  for (const kind of ALL_KINDS) {
+    if (kind === 'rotary_rough' || kind === 'rotary_finish') continue
+    assert(!field.appliesTo(makeOperation({ kind })), `${kind} must not offer the rotary Passes choice`)
+    assert(
+      !operationFieldsForGroup('strategy', makeOperation({ kind })).some((entry) => entry.id === 'rotaryPassDirection'),
+      `${kind} must not render Passes inside Strategy`,
+    )
+  }
+}
+
 testEveryDeclaredIdHasExactlyOneRow()
 testEveryFieldNamesADeclaredGroup()
 testEveryFieldIsReachable()
@@ -533,6 +562,7 @@ testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()
 testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
+testRotaryPassesIsARotaryStrategyField()
 testClearingControlsMatchTheDeclaration()
 testScallopHeightHidesTheOverridesItReplaces()
 

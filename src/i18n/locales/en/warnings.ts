@@ -69,6 +69,9 @@ export const warningsEn = {
   'warnings.targetsMissing': 'Some selected target features are missing',
   'warnings.stepoverRatioRange': 'Stepover ratio must be between 0 and 1',
   'warnings.operationStepoverRatioRange': 'Operation stepover ratio must be between 0 and 1',
+  'warnings.rotaryStepdownBelowMinimum': '{operation}: the stepdown is below 0.01 mm; increase it',
+  'warnings.rotaryWorkBudgetExceeded': '{operation}: this would generate too many moves; increase the stepdown or stepover',
+  'warnings.rotaryFinishWithoutRough': '{operation}: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
   // v-carve medial
   'warnings.vcarveMedialWrongKind': 'Only V-carve medial operations can be resolved by the medial-axis generator',
   'warnings.vcarveMedialNeedsVBit': 'V-carve medial requires a V-bit tool',
@@ -274,7 +277,8 @@ export const warningsEn = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis}, the word that turns the rotary on this machine. Remove it from the machine's templates before exporting.",
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
-  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope, so the standing corners would sweep into the cutter.',
+  'warnings.postSquareAroundToolpathStale': 'Operation "{operation}" was not exported: its toolpath is out of date for this project. Regenerate it before exporting.',
+  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope and the cut would take more than the operation\'s allowed depth, so the standing corners would sweep into the cutter.',
   'warnings.postRotaryTurnWithoutClearance': 'Operation "{operation}" was not exported: the bar cannot be turned safely because no tool-length compensation is active and this machine has no machine-coordinate move to its safe Z. Apply tool-length compensation or give the machine a machine-coordinate rapid, then export again.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',

@@ -686,7 +686,13 @@ function stubFixture(toolType: ToolType, detailCells: number): StubFixture {
   assert(along, 'fixture: the stub case has room between its supports')
   const toolpath: ToolpathResult = generateRotaryOperation(project, operation)
   assert(toolpath.moves.length > 0, 'fixture: the stub program cuts')
-  assert.deepEqual(toolpath.warnings, [], 'fixture: the stub program generates without a warning')
+  // A lone finish gets the advisory "no rough before this finish" note
+  // (#1045); any other warning still fails the fixture.
+  assert.deepEqual(
+    toolpath.warnings.filter((warning) => warning.code !== 'rotaryFinishWithoutRough'),
+    [],
+    'fixture: the stub program generates without a warning',
+  )
   const setup = project.setups.find((entry) => entry.id === 'around')
   assert(setup, 'fixture: the Around setup exists')
   const paths = new Map([[operation.id, toolpath]])

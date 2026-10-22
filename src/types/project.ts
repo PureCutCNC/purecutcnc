@@ -663,6 +663,17 @@ export function isRotaryOperationKind(kind: OperationKind): boolean {
   return kind === 'rotary_rough' || kind === 'rotary_finish'
 }
 
+/**
+ * How a rotary operation's passes travel over the bar (#1045 slice A).
+ *
+ * `'along'` is the original and the load-bearing default: every pass runs along
+ * the bar at one angle and the passes step round in A. `'around'` runs a ring at
+ * one along position instead, turning A round the bar while Z follows the model,
+ * then steps along. A saved operation without the field must keep the along
+ * motion it was saved with.
+ */
+export type RotaryPassDirection = 'along' | 'around'
+
 export type OperationPass = 'rough' | 'finish'
 
 export type EdgeStrategy = 'contour' | 'trochoidal'
@@ -818,6 +829,10 @@ export interface Operation {
   /** Bar length left uncut at each end, in project units. Missing reads as zero. */
   rotaryChuckSupport?: number
   rotaryTailSupport?: number
+  /** Whether a rotary rough/finish cuts along the bar (step round in A) or
+   *  around it (a ring at each along position, A turning). Missing reads as
+   *  `'along'`, which is what a saved operation was cut with (#1045 slice A). */
+  rotaryPassDirection?: RotaryPassDirection
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

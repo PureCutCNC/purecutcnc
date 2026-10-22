@@ -57,6 +57,7 @@ import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFace, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
+import { computeOperationToolpath } from '../toolpaths/generateOperation'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
 import { manualIndexingApplies } from '../../store/helpers/projectType'
@@ -997,6 +998,15 @@ interface TrackedOperationAngle {
    * emitted block will command, not by the stale `from.a` a toolpath may carry.
    */
   lowestTurnZ: number | null
+  /**
+   * The same minimum restricted to **rapid** turns. An around-mode square cut
+   * below the blank's corner envelope is a real cut (it is admitted by the
+   * regenerate-and-match check in `inspectRotaryOperation`), but a rapid that
+   * turns there removes nothing and still swings the standing corner into the
+   * cutter. Kept separately so the square guard can refuse it in every mode
+   * while the around cut is admitted.
+   */
+  lowestTurnRapidZ: number | null
 }
 
 /**
@@ -1013,7 +1023,7 @@ interface TrackedOperationAngle {
  * A rapid labelled `from.a = to.a = 45` while the controller sits at A0 still
  * writes `A45` and turns the blank, so it is a turn here (#1016 C2). At program
  * start the controller is at zero, and a rapid, feed, arc or lead move is
- * treated the same way; the lowest Z of a turning move is reported so the
+ * treated the same way. The lowest Z of a turning move is reported so the
  * square-blank guard can refuse a turn below the generator's travel height.
  */
 function trackOperationAngle(
@@ -1023,16 +1033,20 @@ function trackOperationAngle(
 ): TrackedOperationAngle {
   let current = tracked
   let lowestTurnZ: number | null = null
+  let lowestTurnRapidZ: number | null = null
   const noteTurn = (move: ToolpathMove) => {
     const low = Math.min(move.from.z, move.to.z)
     if (lowestTurnZ === null || low < lowestTurnZ) lowestTurnZ = low
+    if (move.kind === 'rapid' && (lowestTurnRapidZ === null || low < lowestTurnRapidZ)) {
+      lowestTurnRapidZ = low
+    }
   }
   for (const move of moves) {
     const carriesAngle = move.from.a !== undefined || move.to.a !== undefined
     if (!carriesAngle) continue
     // A feed move with an angle on one end only is broken, not trackable: say
     // the angle is not established so the operation is refused.
-    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ }
+    if (feedAngleIsSplit(move)) return { established: false, trackedAngle: current, lowestTurnZ, lowestTurnRapidZ }
     const start = move.from.a === undefined ? undefined : move.from.a * direction
     const end = move.to.a === undefined ? undefined : move.to.a * direction
     // The emitter's modal angle is unknown before the first angle word, and a
@@ -1049,12 +1063,12 @@ function trackOperationAngle(
       // end angle from the controller's actual angle; report the turn so the
       // square guard sees the physical motion the emitter would write.
       if (end !== undefined && end !== controller) noteTurn(move)
-      return { established: false, trackedAngle: current, lowestTurnZ }
+      return { established: false, trackedAngle: current, lowestTurnZ, lowestTurnRapidZ }
     }
     if (end !== undefined && end !== controller) noteTurn(move)
     if (end !== undefined) current = end
   }
-  return { established: true, trackedAngle: current, lowestTurnZ }
+  return { established: true, trackedAngle: current, lowestTurnZ, lowestTurnRapidZ }
 }
 
 /**
@@ -1075,6 +1089,44 @@ function operationHasTurningFeed(moves: readonly ToolpathMove[]): boolean {
  */
 function emittedCoordinateHalfStep(definition: MachineDefinition, units: Units): number {
   return 0.5 * 10 ** -definition.numberFormat.decimalPlaces[units]
+}
+
+/**
+ * Exact comparison of the posted motion with the same operation regenerated
+ * from the current project (#1045 slice L). Regeneration is deterministic, so
+ * a genuinely current path matches bit for bit; a relative tolerance let a
+ * 1e-9 mm coordinate edit through, and at a number-format rounding boundary
+ * that edit changed the emitted Z. `Object.is` keeps `NaN`/`-0` exact too.
+ */
+function sameSquareAroundCoordinate(a: number | undefined, b: number | undefined): boolean {
+  return Object.is(a, b)
+}
+
+function sameSquareAroundPoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
+  return sameSquareAroundCoordinate(a.x, b.x)
+    && sameSquareAroundCoordinate(a.y, b.y)
+    && sameSquareAroundCoordinate(a.z, b.z)
+    && sameSquareAroundCoordinate(a.a, b.a)
+}
+
+/**
+ * True when `posted` is the motion `regenerated` describes: the same move
+ * kinds, the same points, in the same order (#1045 slice K). Only commanded
+ * motion is compared; `source` and `feedScale` are diagnostics and feed hints,
+ * not a path.
+ */
+function sameSquareAroundToolpath(
+  posted: readonly ToolpathMove[],
+  regenerated: readonly ToolpathMove[],
+): boolean {
+  if (posted.length !== regenerated.length) return false
+  for (let index = 0; index < posted.length; index++) {
+    const a = posted[index]
+    const b = regenerated[index]
+    if (a.kind !== b.kind) return false
+    if (!sameSquareAroundPoint(a.from, b.from) || !sameSquareAroundPoint(a.to, b.to)) return false
+  }
+  return true
 }
 
 function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): ToolpathWarning {
@@ -1100,12 +1152,18 @@ function inspectRotaryOperation(args: {
   emittedCutter: EmittedSquareCutter
   trackedAngle: number | null
   borrowedCoordinate: number | null
+  /**
+   * Regenerated around-mode square toolpaths, keyed by operation id, so one
+   * export generates an operation once even if it is inspected more than once.
+   * `null` means generation produced no result for it.
+   */
+  staleCache: Map<string, ToolpathResult | null>
 }): { refused: ToolpathWarning } | {
   refused: null
   trackedAngle: number | null
   borrowedCoordinate: number | null
 } {
-  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate } = args
+  const { definition, project, operation, toolpath, operationName, emittedCutter, trackedAngle, borrowedCoordinate, staleCache } = args
   const tolerance = exportGeometryTolerance(project.meta.units)
   const hasAngle = toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
   // Track the controller angle once, from the angle the program handed in
@@ -1195,9 +1253,42 @@ function inspectRotaryOperation(args: {
     // decimal places, so a path within half of the last decimal of that height
     // is emitted *at* the height and is not refused for the sub-step. This runs
     // only for square stock: a round bar's output stays frozen.
+    //
+    // #1045 slice K: an around-the-bar pass turns *below* that height by
+    // design, because the turn is the cut. The threat the export check exists
+    // for is a stale or hand-edited toolpath, not a safe program the generator
+    // emitted: an around-mode square operation therefore regenerates its own
+    // toolpath for this project and must match the motion being posted move for
+    // move. Generation that differs in any kind or point is a stale path and is
+    // refused. A rapid that turns under the height removes nothing and keeps
+    // the refusal in every mode; so does a turn on an along-mode operation. The
+    // generator's own safety is a property of the generator, proven by
+    // `squareAroundGenerator.property.test.ts`.
+    const around = isRotaryOperationKind(operation.kind)
+      && operation.rotaryPassDirection === 'around'
+      && squareRotaryWorkAdmitted(project, operation)
     const travelZ = rotaryTravelZ(project.stock, project.meta.units)
     const roundingAllowance = emittedCoordinateHalfStep(definition, project.meta.units)
-    if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
+    // A **turning rapid** under the height removes nothing and swings the
+    // standing corner into the cutter in every mode: refused before the
+    // around-mode comparison, so a stale around path that turns a rapid too low
+    // is reported as the physical hazard it is.
+    if (tracked.lowestTurnRapidZ !== null && tracked.lowestTurnRapidZ < travelZ - roundingAllowance) {
+      return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
+    }
+    if (around && hasAngle && toolpath.moves.length > 0) {
+      let regenerated = staleCache.get(operation.id)
+      if (regenerated === undefined) {
+        regenerated = computeOperationToolpath(project, operation)?.result ?? null
+        staleCache.set(operation.id, regenerated)
+      }
+      if (regenerated === null || !sameSquareAroundToolpath(toolpath.moves, regenerated.moves)) {
+        return { refused: { code: 'postSquareAroundToolpathStale', params: { operation: operationName } } }
+      }
+    } else if (tracked.lowestTurnZ !== null && tracked.lowestTurnZ < travelZ - roundingAllowance) {
+      // Only an around-mode square operation may turn a *cut* below the height,
+      // and only with the generator's own current motion (checked above). An
+      // along-mode turn is refused exactly as it was before #1045 slice K.
       return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
     }
   }
@@ -1249,6 +1340,10 @@ export function planRotaryRefusals(
   // and the borrowed coordinate carry from one operation to the next.
   let trackedAngle: number | null = null
   let borrowedCoordinate: number | null = null
+  // A program is one setup's operations, so each operation is inspected once;
+  // the map still keeps the regenerate-and-match check (#1045 slice K) from
+  // regenerating an operation twice if a caller ever repeats one.
+  const staleCache = new Map<string, ToolpathResult | null>()
   for (const entry of operations) {
     const verdict = inspectRotaryOperation({
       definition,
@@ -1265,6 +1360,7 @@ export function planRotaryRefusals(
       },
       trackedAngle,
       borrowedCoordinate,
+      staleCache,
     })
     if (verdict.refused !== null) {
       warnings.push(verdict.refused)
