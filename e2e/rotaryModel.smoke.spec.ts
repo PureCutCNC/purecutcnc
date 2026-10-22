@@ -142,7 +142,7 @@ async function seedRotaryModelProject(page: Page): Promise<Project> {
 
 interface RotaryPathReadout {
   moveCount: number
-  warningCount: number
+  warningCodes: string[]
   allHaveAngle: boolean
   allOnCentreline: boolean
 }
@@ -167,7 +167,7 @@ async function rotaryPath(page: Page, operationId: string): Promise<RotaryPathRe
     const points = envelope.result.moves.flatMap((move) => [move.from, move.to])
     return {
       moveCount: envelope.result.moves.length,
-      warningCount: envelope.result.warnings.length,
+      warningCodes: envelope.result.warnings.map((warning) => warning.code),
       allHaveAngle: points.every((point) => typeof point.a === 'number'),
       allOnCentreline: points.every((point) => Math.abs(point[across] - centre) < 1e-6),
     }
@@ -325,10 +325,12 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   expect(rough.target).toEqual({ source: 'features', featureIds: [model.id] })
   expect(finish.setupId).toBe(aroundSetup.id)
   expect(rough.setupId).toBe(aroundSetup.id)
-  for (const operation of [finish, rough]) {
+  // The finish was added before the rough, so no rough precedes it in the
+  // setup: it carries the advisory "no rough before this finish" (#1045).
+  for (const [operation, codes] of [[finish, ['rotaryFinishWithoutRough']], [rough, []]] as const) {
     const generated = await rotaryPath(page, operation.id)
     expect(generated.moveCount).toBeGreaterThan(0)
-    expect(generated.warningCount).toBe(0)
+    expect(generated.warningCodes).toEqual(codes)
     expect(generated.allHaveAngle).toBe(true)
     expect(generated.allOnCentreline).toBe(true)
   }
@@ -394,7 +396,8 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   expect(finish.rotaryPassDirection).toBeUndefined()
   const along = await rotaryPassReadout(page, finish.id)
   expect(along.moveCount).toBeGreaterThan(0)
-  expect(along.warningCodes).toEqual([])
+  // A finish on its own carries the advisory "no rough before this finish" (#1045).
+  expect(along.warningCodes).toEqual(['rotaryFinishWithoutRough'])
 
   // The Passes control lives in the collapsed Strategy group. Add selected the
   // operation, so its properties are already on screen; clicking its row again
@@ -414,7 +417,7 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   expect(changed.operations.find((operation) => operation.kind === 'rotary_finish')!.rotaryPassDirection).toBe('around')
 
   const around = await rotaryPassReadout(page, finish.id)
-  expect(around.warningCodes).toEqual([])
+  expect(around.warningCodes).toEqual(['rotaryFinishWithoutRough'])
   expect(around.moveCount).toBeGreaterThan(0)
   // Every point of the around path turns, and one operation never leaves the
   // first turn: the ring alternation keeps A inside [0, 360].
