@@ -341,6 +341,12 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
       // rather than recover. A fallback that somehow fails again is an inline
       // failure, so this cannot become a retry loop.
       executorFallback = outcome.failure
+      // The raw reason belongs in the log; the UI states the move in the user's
+      // language and keeps the reason as secondary detail (issue #1087).
+      console.warn(
+        `Toolpath generation: ${outcome.failure.message}; using the main thread.`,
+        outcome.failure.detail ?? '',
+      )
       executorKind = 'inline'
       replaceExecutor()
       job.identity = {

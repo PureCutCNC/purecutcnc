@@ -154,7 +154,7 @@ export function GenerationSettingsMenu({
             the thing the gear alone cannot spell out.
           */}
           <div className="cam-generation-menu__status" role="status" aria-live="polite">
-            {statusLabel}
+            {statusNotice}
             {/*
               A failure with no stated reason leaves the user with nothing to
               act on — and no way to tell "this operation's geometry is bad"

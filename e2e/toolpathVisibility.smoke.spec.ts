@@ -19,6 +19,37 @@ import { installSlowCanvasClock, panForGpuSuggestion, seedToolpathVisProject, TO
 import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
+import type { Page } from '@playwright/test'
+
+/** GPU preparations, as published by the dev-only stats attribute. */
+async function gpuPreparations(page: Page): Promise<number> {
+  const value = await page.locator('canvas.sketch-toolpath-gpu').getAttribute('data-poc-stats')
+  return value ? (JSON.parse(value) as { preparations: number }).preparations : 0
+}
+
+/**
+ * Wait until preview generation has finished and its result has reached the
+ * renderer.
+ *
+ * The gear's "up to date" comes from the queue, so it is also true in the
+ * moment before the first demand is stated. `prepared` additionally waits for
+ * the GPU to have prepared a toolpath, which only happens once a result has
+ * arrived; the two animation frames then let the scheduled paint run before a
+ * test reads a counter that generation would otherwise change underneath it.
+ */
+async function waitForGenerationSettled(
+  page: Page,
+  ui: typeof import('./selectors'),
+  prepared = false,
+): Promise<void> {
+  if (prepared) await expect.poll(() => gpuPreparations(page), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0, { timeout: 30_000 })
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
 
 /**
  * The GPU layer is the shipped default (issue #1087), and this file is the
@@ -218,6 +249,10 @@ test('GPU renderer opts in, retains buffers through navigation and falls back on
   const gpu = page.locator('canvas.sketch-toolpath-gpu')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await ui.operations.rowByName(page, 'Route A').click()
+  // Generation now runs in the worker, so its result can land while a test is
+  // reading the GPU counters. Settle first: an extra preparation during the pan
+  // is not a re-preparation of retained buffers, it is the first one.
+  await waitForGenerationSettled(page, ui, true)
   const preparations = () => gpu.getAttribute('data-poc-stats').then(value => JSON.parse(value!).preparations as number)
   const before = await preparations()
   const box = (await base.boundingBox())!
@@ -307,9 +342,12 @@ test('GPU renderer initialization failure leaves Canvas toolpaths available', as
 
 
 
-test('renderer preference persists without changing project, history or booklet pixels', async ({ app }) => {
+test('renderer preference persists without changing project, history or booklet pixels', async ({ app, ui }) => {
   const page = app.page
   await seedToolpathVisProject(page)
+  // Counted later through `generatedResultCount`; let the worker finish so a
+  // late result cannot add a second entry to that set.
+  await waitForGenerationSettled(page, ui)
   const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
   await expect(selector).toHaveAttribute('aria-pressed', 'false')
@@ -631,7 +669,7 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
 
 test.describe('GPU tablet emulation', () => {
   test.use({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } })
-  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
+  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app, ui }, testInfo) => {
     const page = app.page
     await seedToolpathVisProject(page)
     const selector = page.getByRole('button', { name: 'GPU', exact: true })
@@ -647,6 +685,9 @@ test.describe('GPU tablet emulation', () => {
     const box = (await base.boundingBox())!
     const x = box.x + box.width / 2, y = box.y + box.height / 2
     const stats = async () => JSON.parse((await gpu.getAttribute('data-poc-stats'))!) as { submissions: number; preparations: number }
+    // A worker result landing during the pinch would be prepared then, after
+    // `before` was read, and look like the pinch re-prepared retained buffers.
+    await waitForGenerationSettled(page, ui, true)
     const before = await stats()
     const touch = await page.context().newCDPSession(page)
     try {
@@ -889,6 +930,9 @@ test.describe('Toolpath visibility panel smoke', () => {
     await seedToolpathVisProject(page)
     await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible({ timeout: 15000 })
     await page.getByText('Route A', { exact: true }).click()
+    // This test counts canvas draws; a worker result arriving mid-gesture would
+    // add one of its own. Settle before installing the counters.
+    await waitForGenerationSettled(page, ui)
     // Observe actual Canvas arrow fills, not a test-only production flag.
     await page.evaluate(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')
