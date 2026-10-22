@@ -236,6 +236,12 @@ export interface HeightMap {
   originX: number
   originY: number
   cellSize: number
+  /**
+   * With `trackCellRise`, the largest `(|dz/dx| + |dz/dy|) * cellSize / 2` over
+   * the triangles that rasterised a cell (issue #1045 slice F). Omitted (or 0)
+   * otherwise.
+   */
+  cellRise?: number
 }
 
 type CoverageContours = Array<Array<[number, number]>>
@@ -292,6 +298,14 @@ export interface HeightMapBuildOptions {
    * there.
    */
   readonly triangles?: Uint32Array
+  /**
+   * Track the largest rise a rasterised triangle's plane makes across half of
+   * one cell (issue #1045 slice F). Reported as {@link HeightMap.cellRise}, it
+   * bounds how far a cell-centre height can sit below the true surface inside
+   * that cell, so a caller that reads the map as a support can pad its tip by
+   * exactly that much.
+   */
+  readonly trackCellRise?: boolean
 }
 
 export function buildHeightMap(
@@ -305,6 +319,7 @@ export function buildHeightMap(
   const height = Math.max(1, Math.ceil((bbox.maxY - bbox.minY) / cellSize))
   const data = new Float32Array(width * height)
   data.fill(-Infinity)
+  let cellRise = 0
 
   const minRow = Math.max(0, options?.window?.minRow ?? 0)
   const maxRow = Math.min(height - 1, options?.window?.maxRow ?? height - 1)
@@ -341,7 +356,16 @@ export function buildHeightMap(
     const e1x = v2x - v0x, e1y = v2y - v0y
     const denom = e0x * e1y - e0y * e1x
     if (Math.abs(denom) < 1e-15) continue
-
+    let triangleRise = 0
+    if (options?.trackCellRise) {
+      const dz0 = v1z - v0z
+      const dz1 = v2z - v0z
+      const dzdx = (dz0 * e1y - dz1 * e0y) / denom
+      const dzdy = (dz1 * e0x - dz0 * e1x) / denom
+      const rise = (Math.abs(dzdx) + Math.abs(dzdy)) * cellSize / 2
+      if (Number.isFinite(rise)) triangleRise = rise
+    }
+    let touched = false
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
         const cx = bbox.minX + (col + 0.5) * cellSize
@@ -356,11 +380,16 @@ export function buildHeightMap(
         const z = w * v0z + u * v1z + v * v2z
         const idx = row * width + col
         if (z > data[idx]) data[idx] = z
+        touched = true
       }
     }
+    if (touched && triangleRise > cellRise) cellRise = triangleRise
   }
 
-  return { data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize }
+  return {
+    data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize,
+    ...(options?.trackCellRise ? { cellRise } : null),
+  }
 }
 
 function heightMapCacheKey(
@@ -405,9 +434,19 @@ export function safeToolTipZAt(
   y: number,
   heightMap: HeightMap,
   tool: NormalizedTool,
+  /**
+   * Half the distance across one cell, when a caller reads the map as an upper
+   * bound over each cell's square rather than a point sample (issue #1045 slice
+   * F). Any cell whose nearest point can reach the tool is included, and the
+   * tool's lift is measured from that nearest point, so the support is an
+   * over-estimate of the true one.
+   */
+  cellPad = 0,
 ): number {
   const toolRadius = tool.radius
-  const neighborCells = Math.ceil(toolRadius / heightMap.cellSize)
+  const pad = cellPad > 0 ? cellPad : 0
+  const neighbourRadius = toolRadius + pad
+  const neighborCells = Math.ceil(neighbourRadius / heightMap.cellSize)
   const radiusSq = toolRadius * toolRadius
   const isBall = tool.type === 'ball_endmill'
   const vBitHalfAngleDeg = tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0
@@ -435,12 +474,13 @@ export function safeToolTipZAt(
       const dx = cx - x
       const dy = cy - y
       const dSq = dx * dx + dy * dy
-      if (dSq > radiusSq) continue
+      const reachSq = pad > 0 ? Math.max(0, Math.sqrt(dSq) - pad) ** 2 : dSq
+      if (reachSq > radiusSq) continue
       let constrained: number
       if (isBall) {
-        constrained = cellZ - toolRadius + Math.sqrt(radiusSq - dSq)
+        constrained = cellZ - toolRadius + Math.sqrt(radiusSq - reachSq)
       } else if (cotHalfAngle > 0) {
-        constrained = cellZ - Math.sqrt(dSq) * cotHalfAngle
+        constrained = cellZ - Math.sqrt(reachSq) * cotHalfAngle
       } else {
         constrained = cellZ
       }

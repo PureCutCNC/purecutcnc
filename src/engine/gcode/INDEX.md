@@ -208,12 +208,19 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   normalized `units` label must be the project's, so an entry naming another
   valid row or carrying a foreign unit label is refused even when its shape and
   numbers were spoofed to match; a removed, unusable, differently shaped or
-  differently sized cutter fails closed too, rather than letting the guard prove
-  one tool clear and the emitter write another), an A-changing square move whose
+  differently sized cutter fails closed too, rather than letting the check prove
+  one tool clear and the emitter write another), a **turning** square **rapid** whose
   cutter's lowest point is below the corner envelope `barPivotZ + barMaxRadius`
-  is refused (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1; the generators
-  keep every A-changing move above that envelope, and a turn placed exactly on
-  it is within the generator's own tolerance — the emitted Z's half-step), and
+  is refused in every mode (`postRotarySquareTurnBelowEnvelope`, #1016 C2 M1), and
+  a below-envelope **cut** turn is admitted only for an around-mode square
+  operation whose posted motion equals the operation regenerated for the current
+  project move for move (same kinds, points exactly equal bit for bit, same
+  order); anything else is `postSquareAroundToolpathStale` (#1045 slices K and
+  M -- slice M removed the rough-before licensing: a finish only follows the
+  model, with no clearing layers and no link to a rough, so a finish exported
+  without its rough is legitimate; a missing preceding rough is an advisory
+  warning, never a refusal). An along-mode
+  cut turn below the envelope keeps `postRotarySquareTurnBelowEnvelope`, and
   the inverse-time refusal keeps its own whole-operation turning-feed test,
   independent of the angle tracker, so an unestablished constant-angle feed
   cannot hide a later turning feed and change which refusal a round bar reports
@@ -411,7 +418,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   analytic true-pivot inverse-time word. All sixteen square rough/finish fingerprints were
   re-captured for #1016 C2-F7, which shortens every one (the cutter centre now
   starts and ends one radius inside each stubbed end); the round fingerprints
-  did not move.
+  did not move then. #1045 slice D re-captures all 24 round fingerprints: the same pull-in now applies to a
+  round bar's stubbed ends (a ring or pass on the band edge cut into the retained end), so every fixture's grid
+  starts and ends one cutter radius in; the arithmetic, layers and posted words are otherwise unchanged.
 - `squareRotaryProgramSafety.test.ts` — square-blank program safety on the
   **emitted text** (#1016 C2 M1 correction): a seeded property test (300
   programs, seed 1016) generates supplied paths with safe turns, constant-angle

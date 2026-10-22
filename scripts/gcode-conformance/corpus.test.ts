@@ -96,19 +96,19 @@ assert.equal(caseRunsOnValidator(ownAxis, 'fabmo-opensbp', ['shopbot']), false,
 // G-code: no angle word, no `G93`, and it would then be validated as if it
 // proved something about rotary output.
 //
-// The rough case no longer turns while feeding (issue #1015 slice G). Its along
-// range starts and ends inside the bar, so the retained-bar stubs hold the first
-// and last sample of every pass at the bar's surface: no layer cuts them, each
-// pass's runs stop short of the pass ends, and the tool retracts and turns there
-// instead of linking. The retract is to the bar's surface plus a clearance, not
-// to `safeRadius` (slice H) -- still a rapid, so still no `G93`. The wrapped form
-// still reaches the export as the A word on every move. The finish cuts the
-// model's own ends (a `NaN` sample is simply not cut), so it keeps its turning
-// links.
+// Both model cases turn while feeding. The rough's along range starts and ends
+// inside the bar, and since #1045 slice D the C2-F7 cutter-centre pull starts
+// and ends every pass one cutter radius inside the stubbed ends, so the first
+// and last sample of a pass are no longer held at the bar's surface: the runs
+// reach the pass ends, consecutive passes link at the travel height, and that
+// link is a feed move that turns A -- so it needs the inverse-time pair. The
+// wrapped form still reaches the export as the A word on every move. (Slice G
+// recorded the opposite, no `G93`, when the un-pulled span stopped each run
+// short of the pass end and the between-pass move was a rapid.)
 
 const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp, turnsInFeed: boolean]> = [
   ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/, true],
-  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/, false],
+  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/, true],
 ]
 
 for (const [name, machineId, angleWord, turnsInFeed] of ROTARY_MODEL_CASES) {

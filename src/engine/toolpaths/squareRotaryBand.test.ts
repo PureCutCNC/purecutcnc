@@ -438,7 +438,8 @@ console.log('Testing the cutter centre starts and ends one radius inside Frank\'
   const spanStart = finish.band.start + rt
   const spanEnd = finish.band.end - rt
   const result = generateRotaryOperation(finish.project, finish.operation)
-  assert.deepEqual(result.warnings, [], 'Frank\'s finish generates without a warning')
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+    'Frank\'s finish generates without a refusal (the advisory is expected)')
   assert.ok(result.moves.length > 0, 'Frank\'s finish cuts')
   // The finish cuts every sample of its span, so the emitted extremes are the
   // span's own ends: exactly one radius in, not two and not zero.
@@ -459,20 +460,24 @@ console.log('Testing the cutter centre starts and ends one radius inside Frank\'
         `every emitted point is inside the pulled-in span (${along})`)
     }
   }
-  // The measured shape of the pass: rapid at travel height, one straight plunge,
-  // one feed across the span at the target radius, and a straight retract.
+  // The measured shape of the pass: rapid at travel height, one straight plunge
+  // to the target radius, one feed across the span, and a straight retract. The
+  // finish has no clearing layers (2026-10-22 decision), so its first cut is the
+  // model-following pass itself.
   const first = result.moves[0]
   assert.equal(first.kind, 'rapid', 'the pass opens with a rapid')
-  const plunge = result.moves[1]
-  assert.equal(plunge.kind, 'plunge', 'a straight plunge follows it')
-  approx(alongOf(finish.stock, plunge.from), spanStart, 'the plunge is at the span start')
-  approx(alongOf(finish.stock, plunge.to), spanStart, 'the plunge is vertical')
+  assert.equal(result.moves[1].kind, 'plunge', 'a straight plunge follows it')
   const feed = result.moves.find((move) => move.kind === 'cut'
+    && move.from.a === 0
     && Math.abs(alongOf(finish.stock, move.to) - alongOf(finish.stock, move.from)) > 1e-9)
-  assert.ok(feed, 'the pass feeds along the bar')
+  assert.ok(feed, 'the finish pass feeds along the bar')
   approx(alongOf(finish.stock, feed.from), spanStart, 'the feed starts at the span start')
   approx(alongOf(finish.stock, feed.to), spanEnd, 'the feed ends at the span end')
   approx(feed.from.z - barPivotZ(finish.stock), finish.targetRadius, 'the feed cuts at the target radius', 0.01)
+  const finishPlunge = result.moves[result.moves.indexOf(feed) - 1]
+  assert.equal(finishPlunge.kind, 'plunge', 'the finish pass plunges immediately before its feed')
+  approx(alongOf(finish.stock, finishPlunge.from), spanStart, 'the finish plunge is at the span start')
+  approx(alongOf(finish.stock, finishPlunge.to), spanStart, 'the finish plunge is vertical')
   const retract = result.moves[result.moves.length - 1]
   assert.equal(retract.kind, 'rapid', 'the pass ends with the final retract')
   assert.equal(alongOf(finish.stock, retract.from), alongOf(finish.stock, retract.to),
@@ -513,7 +518,8 @@ console.log('Testing the 25 mm case on both cutter shapes and both pass kinds...
       approx(fixture.band.start, 18, `${toolType}/${kind}: the chuck-limited band starts at 18`)
       approx(fixture.band.end, 40, `${toolType}/${kind}: the model-limited band ends at 40`)
       const result = generateRotaryOperation(fixture.project, fixture.operation)
-      assert.deepEqual(result.warnings, [], `${toolType}/${kind}: generates without a warning`)
+      assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+        `${toolType}/${kind}: generates without a refusal (the advisory is expected on a finish)`)
       assert.ok(result.moves.length > 0, `${toolType}/${kind}: cuts`)
       let min = Infinity
       let max = -Infinity
@@ -574,7 +580,8 @@ console.log('Testing the F6 floor is a net that never binds and an unstubbed end
   })
   approx(open.band.end, 6, 'the band reaches the bar end')
   const result = generateRotaryOperation(open.project, open.operation)
-  assert.deepEqual(result.warnings, [], 'the open-end fixture generates without a warning')
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+    'the open-end fixture generates without a refusal (the advisory is expected)')
   const alongs = result.moves.flatMap((move) => [alongOf(open.stock, move.from), alongOf(open.stock, move.to)])
   approx(Math.min(...alongs), open.band.start + open.tool.radius, 'the stubbed start is still pulled in')
   approx(Math.max(...alongs), open.band.end, 'the bar end is not pulled in')
@@ -602,7 +609,8 @@ console.log('Testing the cutter-centre pull is rounded outward past the stub tan
   assert.ok(fixture.band.end - (fixture.band.end - rt) < rt,
     'the naive end difference rounds inside the stub')
   const result = generateRotaryOperation(fixture.project, fixture.operation)
-  assert.deepEqual(result.warnings, [], 'the hostile fixture generates without a warning')
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
+    'the hostile fixture generates without a refusal (the advisory is expected)')
   assert.ok(result.moves.length > 0, 'the hostile fixture cuts')
   let min = Infinity
   let max = -Infinity
@@ -637,7 +645,7 @@ console.log('Testing a collapsed cutter-centre span refuses with rotaryNoRoom...
   approx(collapsed.band.end - collapsed.band.start, 0.2, 'the fixture band is narrower than the cutter', 1e-6)
   const result = generateRotaryOperation(collapsed.project, collapsed.operation)
   assert.deepEqual(result.moves, [], 'the collapsed span emits no motion')
-  assert.deepEqual(result.warnings.map((warning) => warning.code), ['rotaryNoRoom'],
+  assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), ['rotaryNoRoom'],
     'the collapsed span says there is no room')
   console.log('  collapsed span: rotaryNoRoom, no motion')
 }

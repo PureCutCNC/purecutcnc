@@ -313,6 +313,11 @@ const FINISH_SAFE = 30
 const FINISH_PASS_MM: NormalizedTool = { ...BALL, id: 'ball-2', name: '2 mm ball nose', diameter: 4, radius: 2 }
 const FLAT_2: NormalizedTool = { ...BALL, id: 'flat-2', name: '4 mm flat end mill', type: 'flat_endmill', diameter: 4, radius: 2 }
 const VBIT: NormalizedTool = { ...BALL, id: 'v-60', name: '60 degree V-bit', type: 'v_bit', vBitAngle: 60 }
+/**
+ * The finish-pass parameters these blocks pin: links, runs, merging and stock
+ * offsets. The finish emits only its model-following passes, so no layer depth
+ * is part of them.
+ */
 const FINISH_BASE = { sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30, safeRadius: FINISH_SAFE, requestedCellSize: CELL }
 /**
  * Review fix 1: a turning link rises to the bar's surface plus a 1 mm
@@ -1572,9 +1577,16 @@ for (const axis of ['x', 'y'] as const) {
   // the regression gate for the square work; a square-only change that leaks a
   // different cap, pass count, layer start or travel height into the round path
   // fails here.
-  assert.equal(result.moves.length, 2217, 'rough fixture keeps its move count')
+  //
+  // Re-captured for #1045 slice D: the band's upper end (X = 60.48) is inside
+  // the bar, so the C2-F7 cutter-centre pull-in now keeps the tool one radius
+  // inside the retained end. The span's last along position moves from 60.48
+  // to 57.48 (every position shifts with the pulled span), the count drops
+  // 2217 -> 2092, and the whole point list moves. The finish below uses the
+  // full 0..150 band (both ends meet the bar) and is unchanged.
+  assert.equal(result.moves.length, 2092, 'rough fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'fac0d7364f3337eabbe95eedc7504e63ef046c642279601d89f4eac55fd2fc24', 'rough fixture keeps its exact points')
+    'd559ac4d79d6c9716d0c7183f1d40ab8b4f4f5ace3493c23edbcf31c6b111386', 'rough fixture keeps its exact points')
   assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar

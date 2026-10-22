@@ -69,6 +69,9 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.targetsMissing': 'Einige ausgewählte Ziel-Features fehlen',
   'warnings.stepoverRatioRange': 'Bahnabstand-Verhältnis muss zwischen 0 und 1 liegen',
   'warnings.operationStepoverRatioRange': 'Operations-Bahnabstand-Verhältnis muss zwischen 0 und 1 liegen',
+  'warnings.rotaryStepdownBelowMinimum': '{operation}: Die Zustellung liegt unter 0,01 mm; erhöhen Sie sie',
+  'warnings.rotaryWorkBudgetExceeded': '{operation}: Dies würde zu viele Bewegungen erzeugen; erhöhen Sie die Zustellung oder den Bahnabstand',
+  'warnings.rotaryFinishWithoutRough': '{operation}: In dieser Aufspannung geht diesem Schlichten keine Schruppbearbeitung an diesem Modell voraus; es schneidet in einem Durchgang bis zur vollen Tiefe.',
   // v-carve medial
   'warnings.vcarveMedialWrongKind': 'Nur V-Gravur-Mittelachse-Operationen können vom Mittelachsen-Generator aufgelöst werden',
   'warnings.vcarveMedialNeedsVBit': 'V-Gravur Mittelachse erfordert einen V-Nutfräser',
@@ -274,7 +277,8 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': 'Die Vorlagen der Maschine schreiben {axis}, das Wort, das an dieser Maschine die Drehachse dreht. Entfernen Sie es vor dem Export aus den Vorlagen der Maschine.',
   'warnings.postRotaryDrillNotExpanded': 'Operation „{operation}" wurde nicht exportiert: Ihr Bohren hat keine aufgelösten Bewegungen, und auf einer Maschine, deren Drehachse einen Motor ausleiht, sind feste Zyklen nicht möglich.',
   'warnings.postRotaryAxisMismatch': 'Operation „{operation}" wurde nicht exportiert: Die Drehachse der Maschine verläuft entlang {machineAxis}, der Stab jedoch entlang {stockAxis}.',
-  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
+  'warnings.postSquareAroundToolpathStale': 'Operation „{operation}" wurde nicht exportiert: Ihr Werkzeugweg ist für dieses Projekt veraltet. Erzeugen Sie ihn vor dem Export neu.',
+  'warnings.postRotarySquareTurnBelowEnvelope': 'Operation „{operation}" wurde nicht exportiert: Sie dreht das Vierkantmaterial, während das Werkzeug unterhalb der Eckhüllkurve des Rohlings steht, und der Schnitt würde mehr als die zulässige Tiefe der Operation abtragen, sodass die stehenden Ecken in das Werkzeug schwenken würden.',
   'warnings.postRotaryTurnWithoutClearance': 'Operation „{operation}" wurde nicht exportiert: Der Stab kann nicht sicher gedreht werden, weil keine Werkzeuglängenkorrektur aktiv ist und diese Maschine keine Maschinenkoordinaten-Bewegung auf ihre sichere Z-Höhe hat. Aktivieren Sie die Werkzeuglängenkorrektur oder geben Sie der Maschine einen Maschinenkoordinaten-Eilgang, und exportieren Sie erneut.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',

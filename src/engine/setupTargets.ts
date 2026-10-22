@@ -369,6 +369,17 @@ export function squareRotaryWorkAdmitted(project: Project, operation: Operation)
 }
 
 /**
+ * A target's identity for "the same model": its source and its feature ids in
+ * a fixed order. Used by the square around rule below (#1045 slice C).
+ */
+export function operationTargetKey(target: OperationTarget): string {
+  return target.source === 'features'
+    ? `features:${[...target.featureIds].sort().join(',')}`
+    : 'stock'
+}
+
+
+/**
  * Whether an operation may be generated in its setup, checked at generation
  * time as well as when a target is edited: a feature's span or face can
  * change after the operation was built, and an operation left targeting the

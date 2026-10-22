@@ -985,8 +985,57 @@ function testReportSetupSection(): void {
   )
 }
 
+/**
+ * #1045 slice B: the sheet says which way the passes travel, because an
+ * operator cannot tell along from around by looking at the job. Missing reads
+ * as along — the motion every saved rotary operation was cut with — and the row
+ * sits directly after Stock to leave.
+ */
+function testReportRotaryPassesRow(): void {
+  console.log('Testing rotary operations print the Passes row...')
+  const { project, operation, toolpath } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+  const label = translate('cam.rotary.passes')
+  const reportFor = (rotaryPassDirection?: 'along' | 'around') => buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'rotary_finish', rotaryPassDirection },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  const missing = reportFor()
+  const passesRow = missing.settingRows.find((row) => row.label === label)
+  assert(passesRow?.value === translate('cam.rotary.passAlong'), 'a missing Passes value prints as along')
+  const labels = missing.settingRows.map((row) => row.label)
+  assert(
+    labels.indexOf(label) === labels.indexOf(translate('cam.operation.stockToLeaveRadial')) + 1,
+    'the Passes row follows Stock to leave',
+  )
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const report = buildOperationBookletReport({
+      project,
+      operation: { ...operation, kind, rotaryPassDirection: 'around' },
+      tool,
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+    assert(
+      report.settingRows.some((row) => row.label === label && row.value === translate('cam.rotary.passAround')),
+      `${kind} set to around prints Around the bar`,
+    )
+  }
+  const along = reportFor('along')
+  assert(
+    along.settingRows.some((row) => row.label === label && row.value === translate('cam.rotary.passAlong')),
+    'an explicit along value prints Along the bar',
+  )
+}
+
 testReportContent()
 testReportSetupSection()
+testReportRotaryPassesRow()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()
