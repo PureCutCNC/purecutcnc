@@ -166,6 +166,13 @@ function shopbot(): MachineDefinition {
   return validateMachineDefinition(structuredClone(found))
 }
 
+/** A definition whose dialect is G-code, for the misread half of the test. */
+function gcode(): MachineDefinition {
+  const found = BUNDLED_DEFINITIONS.find((definition) => definition.id === 'grbl')
+  if (!found) throw new Error('Fixture error: no bundled G-code definition')
+  return validateMachineDefinition(structuredClone(found))
+}
+
 function testDebugModelForSbpExport(): void {
   console.log('Testing the exported-motion debug model verifies an SBP export...')
   const project = newProject('Debug', 'mm')
@@ -243,7 +250,9 @@ function testDebugModelForSbpExport(): void {
   assert(model.diagnostic.state === 'verified', `expected verified, got ${JSON.stringify(model.diagnostic.warnings)}`)
   assert(model.metrics.emitted.arcCw + model.metrics.emitted.arcCcw === 4, `the circle is 4 exported arcs, got ${JSON.stringify(model.metrics.emitted)}`)
   assert(model.metrics.emitted.linear === 2, `plunge and exit are linear, got ${model.metrics.emitted.linear}`)
-  assert(model.metrics.emitted.rapid === 3, `three jogs, got ${model.metrics.emitted.rapid}`)
+  // The tool-change restart (#1057 slice F) writes the safe-Z and start-plane
+  // jogs before the operation's own entry and exit, so there are four.
+  assert(model.metrics.emitted.rapid === 4, `four jogs, got ${model.metrics.emitted.rapid}`)
   assert(model.zLevels.length === 1, 'one cutting level')
   assert(model.zLevelStats[0].exportedSegs === 5, `the level shows 4 arcs and the exit, got ${model.zLevelStats[0].exportedSegs}`)
   // The exported layer is drawn back in project space.
@@ -255,8 +264,7 @@ function testDebugModelForSbpExport(): void {
   }
 
   // A G-code parser reading the same text sees none of it: the dispatch matters.
-  const gcodeDefinition = validateMachineDefinition({ ...definition, outputDialect: 'gcode' })
-  const misread = parseExportedMotion(result.gcode, gcodeDefinition)
+  const misread = parseExportedMotion(result.gcode, gcode())
   assert(misread.moves.length !== parseSbpMotion(result.gcode).moves.length, 'reading SBP as G-code does not find the same motion')
 }
 

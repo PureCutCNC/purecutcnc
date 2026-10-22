@@ -1552,6 +1552,61 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
 }
 
 /**
+ * The machine-coordinate point a planned step starts from.
+ *
+ * A fitted arc carries its own `startPoint`; a linear step carries only its
+ * end, so its start is the previous step's end, or — for the operation's first
+ * step — the first toolpath move's own `from`. The restart block written after
+ * a tool change reads step 0 through this to state where the operation's first
+ * move begins (#1057 slice F).
+ */
+export function plannedStepStart(
+  project: Project,
+  definition: MachineDefinition,
+  operation: Operation,
+  toolpath: Pick<ToolpathResult, 'moves'>,
+  steps: readonly FittedMoveDescriptor[],
+  index: number,
+): ToolpathPoint {
+  const step = steps[index]
+  if (step.kind === 'arc') return step.startPoint
+  if (index > 0) {
+    const previous = steps[index - 1]
+    return previous.kind === 'arc' ? previous.endPoint : previous.point
+  }
+  const first = toolpath.moves[0]
+  const start = first
+    ? projectToMachinePoint(first.from, project.origin, definition, setupFrameForOperation(project, operation))
+    : step.point
+  // A borrowed motor's letter is the angle, never a linear coordinate (issue
+  // #393). The planned steps suppress it; the first move's raw `from` still
+  // carries it, so it must be dropped here too.
+  const borrowed = rotaryBorrowedAxis(definition)
+  return borrowed === 'x' || borrowed === 'y' ? suppressBorrowedAxis(start, borrowed) : start
+}
+
+/**
+ * The highest machine-coordinate Z the operation's own *rapid* steps reach, or
+ * null when it has none (#1057 slice F).
+ *
+ * The restart block after a tool change retracts to this height before it
+ * states XY. The generators put every rapid that travels in the plane at their
+ * own safe/clearance height, so the value is "the operation's safeZ as the
+ * generators define it". A *cutting* point never contributes: an arc is a cut
+ * and its endpoints are not read, and an operation whose whole path runs at
+ * Z-5 has no rapid at all — the caller falls back to the generator's formula
+ * rather than rapid through the stock at the cut height.
+ */
+export function plannedSafeZ(steps: readonly FittedMoveDescriptor[]): number | null {
+  let top: number | null = null
+  for (const step of steps) {
+    if (step.kind !== 'linear' || step.moveKind !== 'rapid') continue
+    if (top === null || step.point.z > top) top = step.point.z
+  }
+  return top
+}
+
+/**
  * Split one rapid into the blocks that are emitted for it.
  *
  * A rapid that does not turn keeps the split it has always had: Z first, then

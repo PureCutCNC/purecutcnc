@@ -414,7 +414,15 @@ function testGcodeRapidsUseTheSplit(): void {
   ]
   const program = runPostProcessor({ ...input, definition: bundled('grbl', { motion: { ...bundled('grbl').motion, modalMotion: false } }) }).gcode
   const rapids = program.split('\n').filter((line) => line.startsWith('G0 '))
-  assertEqual(rapids, ['G0 Z5.000', 'G0 X10.000 Y-5.000', 'G0 Z5.000', 'G0 X40.000 Y-25.000'], 'G0 blocks')
+  // The tool-change restart (#1057 slice F) writes the safe-Z retract and its
+  // start plane first; the operation's own rapids follow, Z first each time.
+  assertEqual(rapids, [
+    'G0 Z5.000',
+    'G0 X0.000 Y0.000',
+    'G0 X10.000 Y-5.000',
+    'G0 Z5.000',
+    'G0 X40.000 Y-25.000',
+  ], 'G0 blocks')
 }
 
 testSpindleSpeedChangeIsRestated()

@@ -19,6 +19,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { Project, Operation } from '../../types/project'
 import type { ToolpathResult, NormalizedTool, ToolpathMove } from '../toolpaths/types'
 import type { FittedMoveDescriptor } from './arcFitting'
+import { templateRuleViolations } from './templateRules'
 
 /**
  * Per-operation machine-coordinate motion trace captured by the postprocessor
@@ -287,6 +288,15 @@ export const MachineDefinitionSchema = z.object({
         context.addIssue({ code: 'custom', path: ['rotary', 'drive'], message: 'The rotary cannot borrow the Z motor.' })
       }
     }
+  }
+  // Machine templates are restricted by class (#1057 slice F): a program
+  // header may only set up modals, the tool change and the footer may do
+  // anything, and every template that runs inside the program is inert. The
+  // emitter no longer recovers from a template that moves, so a definition
+  // that could break that promise is refused here, naming the field and the
+  // offending word.
+  for (const violation of templateRuleViolations(definition)) {
+    context.addIssue({ code: 'custom', path: violation.path, message: violation.message })
   }
 })
 

@@ -315,8 +315,16 @@ function testDelegationByDialect(): void {
   assert(explicit === asGcode, 'outputDialect "gcode" must not change the program')
 
   // The dialect — not the definition's id, name or extension — selects SBP.
+  // An `opensbp` definition must also declare the dialect's own comment syntax
+  // and templates (slice H), so the G-code fields that name the definition are
+  // swapped for the ShopBot ones; the emitter reads neither.
   const grblAsSbp = run({
-    definition: validateMachineDefinition({ ...grbl, outputDialect: 'opensbp' }),
+    definition: validateMachineDefinition({
+      ...grbl,
+      outputDialect: 'opensbp',
+      program: structuredClone(bundled('shopbot').program),
+      toolChange: structuredClone(bundled('shopbot').toolChange),
+    }),
     operations: [{ moves }],
   }).lines
   const shopbotLines = run({ operations: [{ moves }] }).lines
@@ -346,10 +354,14 @@ function testProgramStructure(): void {
     "' Tool 1: Tool A",
     '&Tool=1',
     'C9',
+    // The restart block after the tool change (#1057 slice F): absolute mode,
+    // a jog to the safe Z, then a jog to the point the first move starts from.
+    'SA',
+    'JZ,5.000',
+    'J2,0.000,0.000',
     'TR,12000',
     'C6',
-    // The first rapid starts from an unknown position: Z, then XY.
-    'JZ,5.000',
+    // From that stated position the first rapid only has to travel in XY.
     'J2,10.000,-5.000',
     // 600 mm/min and 180 mm/min, in mm per second.
     'MS,10.000,3.000',
@@ -366,7 +378,7 @@ function testProgramStructure(): void {
   ], 'program')
   assert(warnings.length === 0, `expected no warnings, got ${JSON.stringify(warnings)}`)
   assert(stats.lineCount === lines.length, 'lineCount counts every physical line')
-  assert(stats.moveCount === 6, `moveCount counts jogs, moves and arcs only, got ${stats.moveCount}`)
+  assert(stats.moveCount === 7, `moveCount counts jogs, moves and arcs only, got ${stats.moveCount}`)
   assert(stats.operationCount === 1, 'operationCount')
 
   // Nothing but SBP: no G-code words, no line numbers.
@@ -819,13 +831,16 @@ function testPositionIsUnknownAfterToolChange(): void {
   })
   const change = lines.indexOf('&Tool=2')
   assert(change > 0, 'fixture should change tool')
-  assertLines(lines.slice(change, change + 9), [
+  assertLines(lines.slice(change, change + 10), [
     '&Tool=2',
     'C9',
-    'TR,12000',
-    'C6',
+    // The restart block (#1057 slice F) states the safe Z and the start plane
+    // before the operation moves; the no-op rapid that follows writes nothing.
+    'SA',
     'JZ,5.000',
     'J2,20.000,-15.000',
+    'TR,12000',
+    'C6',
     'MS,10.000,3.000',
     'M3,20.000,-15.000,-1.000',
     'M3,30.000,-15.000,-1.000',
@@ -1020,7 +1035,10 @@ function testSafeZSplitOfRapids(): void {
     }],
   })
   const jogs = lines.filter((line) => line.startsWith('J'))
-  assertLines(jogs, ['JZ,5.000', 'J2,10.000,-5.000', 'JZ,5.000', 'J2,40.000,-25.000'], 'jogs')
+  // The restart after the tool load (#1057 slice F) states the safe Z and the
+  // start plane; the first rapid then only travels in XY. The later rapid that
+  // changes Z and XY together still splits Z first.
+  assertLines(jogs, ['JZ,5.000', 'J2,0.000,0.000', 'J2,10.000,-5.000', 'JZ,5.000', 'J2,40.000,-25.000'], 'jogs')
 }
 
 // ── Builds that predate the dialect ───────────────────────────
@@ -1030,7 +1048,17 @@ function testOlderBuildWritesNoMotion(): void {
   // What such a build keeps of the definition: everything but the field it
   // does not know. It then takes the G-code path with these command words.
   const { outputDialect: _dropped, ...legacyView } = bundled('shopbot')
-  const legacy = validateMachineDefinition(legacyView)
+  // Slice H refuses that shape at the schema boundary (an apostrophe comment
+  // prefix is not a G-code form); the emitter must still behave for a project
+  // snapshot that predates the rule, so it gets the unvalidated view.
+  let refused = false
+  try {
+    validateMachineDefinition(legacyView)
+  } catch {
+    refused = true
+  }
+  assert(refused, 'the schema refuses the apostrophe comment prefix on a G-code definition')
+  const legacy = legacyView as MachineDefinition
   assert(resolveOutputDialect(legacy) === 'gcode', 'fixture: the legacy view takes the G-code path')
 
   const program = run({
@@ -1043,9 +1071,15 @@ function testOlderBuildWritesNoMotion(): void {
   }).gcode
   const lines = program.split('\n')
   assert(lines.length > 20, 'fixture should produce a real program')
+  // The restart block's modal baseline (#1057 slice F) is emitter-owned G-code
+  // and is written whatever the definition's templates are; it carries no
+  // motion and no axis word. Everything else, motion included, stays a
+  // comment, because every template and command word in this definition is
+  // one.
+  const MODAL_BASELINE = 'G90 G94 G17'
   for (const line of lines) {
-    assert(line.startsWith("'") || line === 'END',
-      `an older build would write "${line}" into a .sbp: every line must be a comment or END`)
+    assert(line.startsWith("'") || line === 'END' || line === MODAL_BASELINE,
+      `an older build would write "${line}" into a .sbp: every line must be a comment, the modal baseline or END`)
   }
 }
 

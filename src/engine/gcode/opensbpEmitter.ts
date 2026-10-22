@@ -63,17 +63,21 @@ import type { PostProcessorInput, PostProcessorResult, OperationMotionTrace } fr
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import { getOperationSafeZ } from '../toolpaths/geometry'
+import { setupFrameForOperation, setupToCanonicalPoint } from '../setupOrientation'
 import { resolveEmittedArc } from './arcFitting'
 import type { ArcMoveDescriptor } from './arcFitting'
 import {
   createArcEmitOptions,
   createEmittedValueFormatter,
   planOperationMotion,
+  plannedSafeZ,
+  plannedStepStart,
   planProgramSequence,
   planProgramSetup,
   splitRapid,
 } from './motionPipeline'
-import { formatGCodeNumber } from './utils'
+import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
 /**
  * ShopBot's control software runs on Windows and reads a part file line by
@@ -128,6 +132,21 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
   // The `MS` values last written, as written. Null until the first `MS`, and
   // again after a tool change, whose macro is free to change speeds.
   let emittedSpeeds: { xy: string; z: string } | null = null
+  /**
+   * The program's fallback safe Z for one operation: the stock top plus the
+   * project's operation clearance, the formula every generator uses
+   * (`getOperationSafeZ`), mapped into the emitted frame exactly as a move's
+   * own Z is. Read only for an operation whose path carries no rapid of its
+   * own. The point is carried back into the canonical stock frame first: the
+   * generators work in the setup-local frame, and a Bottom setup would flip a
+   * clearance left in the wrong one below the table.
+   */
+  const generatorSafeZ = (operation: PostProcessorInput['operations'][number]['operation']): number => {
+    const setup = setupFrameForOperation(project, operation)
+    const local = { x: 0, y: 0, z: getOperationSafeZ(project) }
+    const canonical = setup ? setupToCanonicalPoint(local, setup) : local
+    return projectToMachinePoint(canonical, project.origin, definition, setup).z
+  }
 
   const emit = (line: string) => {
     lines.push(line)
@@ -196,6 +215,27 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
     }
     emitComment(`Tool ${toolNumber}: ${commentText(tool.name)}`)
 
+    // ── Motion plan (shared by every dialect) ──
+    // Drilling takes this path too: there are no canned cycles to emit, so a
+    // drill cycle is written as the expanded moves the toolpath already holds.
+    // It is made before the tool change so the restart block below can state
+    // the point the operation's first move starts from. A change leaves the
+    // control's position unknown, which is what the plan is validated from,
+    // exactly as it was when the plan was made after `C9`.
+    const plan = planOperationMotion({
+      project,
+      definition,
+      operation,
+      toolpath,
+      arcEmitOptions,
+      startPosition: step.changeTool ? null : emittedPosition,
+      captureTrace,
+    })
+    const operationSafeZ = plannedSafeZ(plan.steps) ?? generatorSafeZ(operation)
+    const restartStart = plan.steps.length > 0
+      ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0)
+      : null
+
     // Tool change. C9 is a macro: it moves the machine and may set speeds of
     // its own, so neither is assumed afterwards. The next rapid restates Z
     // before it travels and the next fed move restates `MS`.
@@ -208,6 +248,25 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       emittedSpeeds = null
       currentPosition = null
       emittedPosition = null
+    }
+
+    // One full restart block after every emitted tool change (#1057 slice F),
+    // including the first operation's tool load, the part-file equivalent of
+    // the G-code emitter's: absolute mode (`SA`), a jog to a proven safe Z,
+    // then a jog to the point the operation's first move starts from. A feed
+    // or an arc that starts the operation jogs to its own plane first; a
+    // rapid's split writes Z itself.
+    if (step.changeTool) {
+      emit('SA')
+      if (restartStart !== null) {
+        emitJog({ z: operationSafeZ })
+        emitJog({ x: restartStart.x, y: restartStart.y })
+        const first = plan.steps[0]
+        if (first !== undefined && restartStart.z !== operationSafeZ
+          && (first.kind === 'arc' || first.moveKind !== 'rapid')) {
+          emitJog({ z: restartStart.z })
+        }
+      }
     }
 
     // Spindle on at this operation's speed: when it is stopped, and again
@@ -277,18 +336,6 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       trackPosition({ x: arc.endPoint.x, y: arc.endPoint.y })
     }
 
-    // ── Motion plan (shared by every dialect) ──
-    // Drilling takes this path too: there are no canned cycles to emit, so a
-    // drill cycle is written as the expanded moves the toolpath already holds.
-    const plan = planOperationMotion({
-      project,
-      definition,
-      operation,
-      toolpath,
-      arcEmitOptions,
-      startPosition: emittedPosition,
-      captureTrace,
-    })
     warnings.push(...plan.warnings)
 
     for (const step of plan.steps) {

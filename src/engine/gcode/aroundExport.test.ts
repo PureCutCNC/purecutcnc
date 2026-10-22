@@ -690,8 +690,12 @@ console.log('Testing G93/G94 discipline and a hand-checked inverse-time word...'
   assert.ok(lines.includes('G93'), 'G93 is written before the first turning cut')
   const lastInverse = lines.lastIndexOf('G93')
   assert.ok(lines.slice(lastInverse).some((line) => line === 'G94'), 'and restored to G94')
-  assert.equal((result.gcode.match(/G93/g) ?? []).length, (result.gcode.match(/G94/g) ?? []).length,
-    'every G93 is matched by a G94')
+  // A tool change writes one restart block whose `G90 G94 G17` restates the
+  // feed mode unconditionally (#1057 slice F), so G94 may outnumber G93. What
+  // must hold is that no G93 is left without one after it.
+  const g94 = (result.gcode.match(/G94/g) ?? []).length
+  const g93 = (result.gcode.match(/G93/g) ?? []).length
+  assert.ok(g94 >= g93, `no G93 is left unclosed (${g93} G93, ${g94} G94)`)
 
   // One cut checked by hand. A move at a constant height `r` above the
   // centreline sweeps a surface arc `r × Δθ` while it travels `l` along the
