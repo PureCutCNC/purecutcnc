@@ -115,29 +115,46 @@ const singlePath = computeOperationToolpath(unionProject, op)!.result
 const combinedPath = computeOperationToolpath(unionProject, { ...op, target: { source: 'features', featureIds: ['model', 'second'] } })!.result
 assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transformed model reaches rotary sampling')
 
-// #1045 slice R: an along finish is handed the material an earlier rough on the
-// same setup and target actually left, so a rough that brought the bar within
-// one stepdown contributes no clearing layers; with no rough the finish clears
-// the raw bar.
+// #1045 slice R2: an along finish reads the raw stock only. An earlier rough,
+// its settings, its enabled flag and its position in the list are all
+// irrelevant to the finish's motion, so a rough that is disabled, excluded from
+// the export, in another program or simply not run cannot leave the finish
+// unprotected.
 {
   const fixture = rotaryOperationFixture('x', 'rotary_finish')
   const finish = fixture.operations[0]
   const rough = { ...finish, id: 'rough', name: 'rough', kind: 'rotary_rough' as const, pass: 'rough' as const }
-  const withRough = computeOperationToolpath({ ...fixture, operations: [rough, finish] }, finish)!.result
   const alone = computeOperationToolpath(fixture, finish)!.result
-  assert.deepEqual(withRough.warnings, [], 'the finish after a rough warns about nothing')
-  assert.ok(withRough.moves.length > 0, 'the finish after a rough still cuts')
-  assert.notDeepEqual(withRough.moves, alone.moves,
-    'the rough before the finish supplies the standing material the finish clears')
-  // Only an earlier enabled rough is standing material: the same rough after
-  // the finish changes nothing.
+  assert.deepEqual(alone.warnings, [], 'a bare along finish warns about nothing')
+  assert.ok(alone.moves.length > 0, 'a bare along finish clears its own blank and cuts')
+  const withRough = computeOperationToolpath({ ...fixture, operations: [rough, finish] }, finish)!.result
+  assert.deepEqual(withRough.moves, alone.moves,
+    'an earlier rough does not change the along finish, even though it clears material the finish re-cuts')
+  // A rough on another tool, with another stepdown, is still not read.
+  const otherTool = { ...fixture.tools[0], id: 't2', diameter: 6, defaultStepdown: 0.3 }
+  const otherRough = { ...rough, id: 'rough2', toolRef: 't2', stepdown: 0.3 }
+  const foreign = computeOperationToolpath({
+    ...fixture, tools: [...fixture.tools, otherTool], operations: [otherRough, finish],
+  }, finish)!.result
+  assert.deepEqual(foreign.moves, alone.moves, 'a rough on another tool does not change the finish')
   const later = computeOperationToolpath({ ...fixture, operations: [finish, rough] }, finish)!.result
-  assert.deepEqual(later.moves, alone.moves, 'a rough after the finish is not standing material')
-  // A disabled rough is not standing material either.
+  assert.deepEqual(later.moves, alone.moves, 'a rough after the finish does not change it')
   const disabled = computeOperationToolpath({
     ...fixture,
     operations: [rough, finish].map((operation) => operation.id === rough.id ? { ...operation, enabled: false } : operation),
   }, finish)!.result
-  assert.deepEqual(disabled.moves, alone.moves, 'a disabled rough is not standing material')
+  assert.deepEqual(disabled.moves, alone.moves, 'a disabled rough does not change the finish')
+
+  // #1045 slice R2: no usable depth on the operation or the tool refuses with
+  // the around finish's code instead of generating an unprotected finish.
+  const noDepthTool = { ...fixture.tools[0], defaultStepdown: 0 }
+  const refused = computeOperationToolpath({
+    ...fixture,
+    tools: [noDepthTool],
+    operations: [{ ...finish, stepdown: 0 }],
+  }, { ...finish, stepdown: 0 })!.result
+  assert.deepEqual(refused.moves, [], 'a no-stepdown along finish emits no motion')
+  assert.deepEqual(refused.warnings.map((warning) => warning.code), ['stepdownPositive'],
+    'a no-stepdown along finish refuses')
 }
 console.log('rotaryOperation integration tests passed')

@@ -16,14 +16,14 @@
 
 import type { BarStock, Operation, Project } from '../../types/project'
 import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
-import { operationFace, operationTargetKey } from '../setupTargets'
+import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
 import { splitFeatureTargets } from './regions'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
 import type { RotaryFinishParams } from './rotaryModel'
-import type { NormalizedTool, RotaryRoughLeft, ToolpathResult } from './types'
+import type { NormalizedTool, ToolpathResult } from './types'
 import type { ToolpathWarningCode } from './warningCodes'
 
 /**
@@ -51,12 +51,10 @@ function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
 
 /**
  * The generator parameters for one saved operation, or the warning code that
- * says why it cannot run. A square around finish needs no licence from an
- * earlier operation since #1045 slice M: it clears its own standing material in
- * stepdown layers before it follows the model. An along finish is handed the
- * material earlier enabled roughs actually left since #1045 slice R, only so it
- * can skip clearing that is already done; with no rough it clears the raw
- * blank, so no finish depends on another operation having run.
+ * says why it cannot run. A finish needs no licence from an earlier operation
+ * (#1045 slices M/R2): it clears its own raw blank in stepdown layers before it
+ * follows the model, in around and along mode alike. No other operation's row,
+ * result or enabled flag is read here.
  */
 function rotaryContext(project: Project, operation: Operation): RotaryContext | { code: ToolpathWarningCode } {
   const stock = project.stock
@@ -110,47 +108,7 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
   }
-  // #1045 slice R: an along finish clears only the material earlier enabled
-  // roughs on the same setup and target actually left, so a rough that already
-  // brought the bar within one stepdown of the finish surface changes nothing.
-  // The material is read from each rough's own generated result, never from its
-  // settings or from the operation list: a rough that emits no motion
-  // contributes nothing. With no preceding rough the finish clears the raw
-  // blank, so it depends on no other operation having run.
-  const roughLeft = operation.kind === 'rotary_finish'
-    && (operation.rotaryPassDirection ?? 'along') !== 'around'
-    ? precedingRoughLeft(project, operation, stock)
-    : []
-  return {
-    stock,
-    surface,
-    tool,
-    params: roughLeft.length > 0 ? { ...params, roughLeft } : params,
-  }
-}
-
-/**
- * Generate every earlier enabled rotary rough on the same setup and target and
- * hand back the material each one leaves (#1045 slice R). A result with no
- * moves carries no material.
- */
-function precedingRoughLeft(project: Project, finish: Operation, stock: BarStock): RotaryRoughLeft[] {
-  const index = project.operations.findIndex((entry) => entry.id === finish.id)
-  if (index <= 0) return []
-  const key = operationTargetKey(finish.target)
-  const left: RotaryRoughLeft[] = []
-  for (const entry of project.operations.slice(0, index)) {
-    if (!entry.enabled || entry.kind !== 'rotary_rough') continue
-    if (entry.setupId !== finish.setupId || operationTargetKey(entry.target) !== key) continue
-    const built = rotaryContext(project, entry)
-    if ('code' in built) continue
-    const result = generateRotaryRough(entry.id, built.surface.mesh, stock, built.tool, {
-      ...built.params,
-      stepdown: entry.stepdown,
-    }, {})
-    if (result.moves.length > 0 && result.roughLeft) left.push(result.roughLeft)
-  }
-  return left
+  return { stock, surface, tool, params }
 }
 
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {

@@ -17,12 +17,15 @@
 /**
  * #1045 slice A: rotary passes **around** the bar.
  *
- * The along pass is the original motion and must stay byte-identical: the first
+ * The along pass keeps its original **rough** motion byte-identical: the first
  * block asserts that a missing `passDirection` and an explicit `'along'` produce
  * the same result, and that both match a digest recorded from the base commit
  * (`e3175dd6`) with a scratch script before the change. The digests are of
  * `JSON.stringify(result)` for the three fixtures exactly as built here -- the
- * cone and the stepped cylinder on a round bar, and the square blank.
+ * cone and the stepped cylinder on a round bar, and the square blank. The along
+ * **finish** digests moved with #1045 slice R (self-clearing) and again with
+ * slice R2 (clearing from the raw blank only, and a required depth); the rough
+ * digests still pin the base commit.
  *
  * The around pass is a ring per along position: one angle every `sampleSpacing`
  * of surface distance, both 0 and 360 present, rings alternating direction so A
@@ -179,15 +182,9 @@ function prism(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
-/**
- * A SHA-256 of a generated result's **output**, recorded so a motion change
- * fails loudly. `roughLeft` is the runtime material map an along finish reads
- * (#1045 slice R), not output: it is stripped so the recorded digests keep
- * pinning the moves, warnings and bounds alone.
- */
+/** A SHA-256 of a generated result, recorded so a motion change fails loudly. */
 function digest(value: unknown): string {
-  const { roughLeft: _runtimeOnly, ...output } = value as Record<string, unknown>
-  return createHash('sha256').update(JSON.stringify(output)).digest('hex')
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
 const alongOf = (point: { x: number; y: number }): number => point.x
@@ -197,11 +194,14 @@ const angleOf = (point: ToolpathPoint): number => {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Byte-identical along mode.
+// 1. Byte-identical along mode (rough; re-captured finish).
 //
-// The digests were recorded from the base commit's generators with a scratch
-// script before the change, on the fixtures below and the parameters named in
-// each row. A missing `passDirection` and `'along'` must both reproduce them.
+// The rough digests were recorded from the base commit's generators with a
+// scratch script before the change, on the fixtures below and the parameters
+// named in each row, and still match. The finish digests are re-captured from
+// #1045 slice R2 because an along finish now clears its own raw blank in
+// `stepdown` layers before its finish pass. A missing `passDirection` and
+// `'along'` must both reproduce each row.
 // ---------------------------------------------------------------------------
 
 const DIGEST_STOCK = roundStock(40, 20, 'x', { x: 10, y: 7 })
@@ -226,6 +226,11 @@ function digestStepped(): RotaryModelMesh {
 const DIGEST_FINISH = {
   sampleSpacing: 2, stockToLeave: 0, alongStart: 10, alongEnd: 30,
   safeRadius: 30, requestedCellSize: CELL, stepover: 20,
+  // #1045 slice R2: an along finish with no usable depth now refuses, and these
+  // fixtures must generate. The **finish** digests below are re-captured with
+  // this depth (the finish now clears its own raw blank); the rough digests are
+  // unchanged, because `DIGEST_ROUGH` already had its own 4 mm depth.
+  stepdown: 2,
 }
 const DIGEST_ROUGH = { ...DIGEST_FINISH, sampleSpacing: 1, stepover: 22, stepdown: 4 }
 const DIGEST_SQUARE_FINISH = { ...DIGEST_FINISH, alongStart: 5, alongEnd: 25 }
@@ -245,7 +250,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
   {
     label: 'cone finish', operationId: 'cone', kind: 'finish', mesh: digestCone,
     stock: DIGEST_STOCK, params: DIGEST_FINISH,
-    recorded: 'f7b83ed181b9fb70d2b335dc1015e7a609a84995b8a95dfaecf16c57f5a5cd1b',
+    recorded: 'a7de647ebb039da7735eade8f0dad2560b76effafc34f5600b3b4a8679bf94e7',
   },
   {
     label: 'cone rough', operationId: 'cone', kind: 'rough', mesh: digestCone,
@@ -255,7 +260,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
   {
     label: 'stepped finish', operationId: 'step', kind: 'finish', mesh: digestStepped,
     stock: DIGEST_STOCK, params: DIGEST_FINISH,
-    recorded: 'dbb5052518b3066acf31a02cafa8f9a3d816a85400362c52bc38a01fa48a8d2f',
+    recorded: 'ed1e33e7a542f071e39264e42d81c57cd75db61b50651f8b4dfadb2185631932',
   },
   {
     label: 'stepped rough', operationId: 'step', kind: 'rough', mesh: digestStepped,
@@ -266,7 +271,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
     label: 'square finish', operationId: 'square', kind: 'finish',
     mesh: () => prism(DIGEST_SQUARE, SQUARE_SECTION, [10, 30]),
     stock: DIGEST_SQUARE, params: DIGEST_SQUARE_FINISH,
-    recorded: '8e03601562ba666c743f1c2f4ffbe5ebe433f6464ac5834c5148865b92bc4965',
+    recorded: '00511792e797ed14e1c6a87d40eeac1e0c3f5c08c17194b55f3fb9302517ab5f',
   },
   {
     label: 'square rough', operationId: 'square', kind: 'rough',

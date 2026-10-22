@@ -1060,9 +1060,10 @@ function drawCase(seed: number, lengthScale: number): Case {
 /**
  * One seeded **along-finish** case (#1045 slice R): a short bar, a cutter large
  * against it and a deep model corner, on a round bar and a square blank, both a
- * bare along finish and an along rough + along finish. The finish-only cases
- * clear the raw blank; the rough + finish cases carry the rough's own left
- * material, so their finish is the skip-air (unchanged) path.
+ * bare along finish and an along rough + along finish. Since #1045 slice R2 the
+ * finish clears the raw blank in both shapes: after a rough those clearing
+ * layers mostly cut air, and that is the accepted cost of never depending on
+ * another operation.
  */
 function drawAlongCase(seed: number): Case {
   const rand = mulberry32(seed * 0x9e3779b1 + 0x52)
@@ -1172,13 +1173,10 @@ function generate(entry: Case): Program {
       sampleSpacing: entry.finishSpacing,
       stockToLeave: entry.stockToLeave,
       passDirection: entry.finishKind,
-      // #1045 slice M: an around finish clears its own standing material, so it
-      // needs no earlier result. #1045 slice R: an along finish clears the
-      // material earlier roughs really left -- here the rough generated above,
-      // exactly what the adapter derives from it -- and the raw blank when there
-      // is none.
+      // #1045 slices M/R2: a finish clears its own raw blank, in around and
+      // along mode alike. No earlier result is handed to it, so the rough
+      // generated above cannot license a shallower finish.
       stepdown: entry.finishStepdown,
-      ...(entry.finishKind === 'along' && roughResult?.roughLeft ? { roughLeft: [roughResult.roughLeft] } : {}),
     }, {})
   return {
     roughMoves: rough.moves,
@@ -1483,6 +1481,123 @@ function alongRadialBiteBound(ball: boolean, radius: number, stepdown: number, t
     + radius * Math.sqrt(stepdown * (2 * lower + stepdown))) / upper
 }
 
+/**
+ * The cutter body's nearest radial contact at a ray `deltaDeg` off its axis and
+ * `dx` along it (#1045 slice Q extension).
+ *
+ * `alongRadialBiteBound` assumes the previous layer's pass reached the ray, so
+ * the standing material there is at most that pass's own contact. That is not
+ * always true: a lower layer reaches rays the layer above cannot, because the
+ * ball's angular reach `asin(R / (tip + R))` grows as the tip gets smaller, and
+ * the shank above its equator reaches high-radius rays the sphere misses. On
+ * such a **newly reached** ray the material is whatever stood there before --
+ * the blank, or whatever an even earlier pass left -- not the previous layer's
+ * contact. The exact allowance is then measured from that standing material
+ * down to this body's own contact, which is what this helper returns.
+ *
+ * The formula is the reference's own body contact for the near side of the
+ * sphere (`centre * cos - sqrt(...)`), the shank's entry, and a flat's bottom
+ * face; `tip` is the fallback when the ray is outside the body, since the
+ * body's contact is never below its tip. Using the reference's standing
+ * material and this contact cannot hide a bite: the measured bite is the
+ * removal from the outermost solid down to the body's contact or above it.
+ */
+function alongRayContact(
+  ball: boolean,
+  radius: number,
+  tip: number,
+  deltaDeg: number,
+  dx: number,
+): number {
+  const delta = deltaDeg * Math.PI / 180
+  const cos = Math.cos(delta)
+  const sin = Math.sin(delta)
+  if (cos <= 0) return tip
+  const reachSq = radius * radius - dx * dx
+  if (reachSq < 0) return tip
+  if (!ball) return Math.max(tip, tip / cos)
+  const centre = tip + radius
+  const discriminant = reachSq - centre * centre * sin * sin
+  let contact = Number.POSITIVE_INFINITY
+  if (discriminant >= 0) contact = Math.max(0, centre * cos - Math.sqrt(discriminant))
+  const shankStart = centre / cos
+  const shankExit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
+  if (shankExit >= shankStart) contact = Math.min(contact, shankStart)
+  return Number.isFinite(contact) ? contact : tip
+}
+
+// The repro the slice-Q bound missed (#1045 slice Q extension), checked before
+// the seeded run and independently of it: a Ø4 ball at tip 2 removes 2.3435 mm
+// from a ray 24.25° off its axis where 4.85 mm of material still stands, while
+// the layer above (tip 3) cannot reach that ray at all -- `asin(2 / 5) =
+// 23.58°`. Slice Q's bound of 2.1165 mm assumed the previous layer swept the
+// ray, so the measured bite exceeded it. The extended allowance measures that
+// bite from the standing material at the ray, and passes.
+{
+  const radius = 2
+  const lowerTip = 2
+  const upperTip = 3
+  const stepdown = 1
+  const angleDeg = 0.5
+  const angleBins = 720
+  const standing = 4.85
+  const reference: Reference = {
+    // The cell sits at along 0.5, and the move from 0.5 to 1.5 is swept at
+    // half-bin steps, so its first step is directly over the cell (dx = 0) --
+    // the same continuous sweep the seeded reference performs.
+    alongStart: 0.25,
+    alongBins: 1,
+    alongBin: 0.5,
+    angleBins,
+    angleDeg,
+    maxMaterial: standing,
+    occupied: new Map(),
+    material: new Float64Array(angleBins).fill(standing),
+  }
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  // The move starts directly over the cell (dx = 0 at its first swept step), so
+  // the lower layer's contact is the outermost-surface removal the slice-Q
+  // metric records. The previous layer's window cannot reach that ray.
+  const cutAt = (tip: number): ToolpathMove => ({
+    kind: 'cut', from: { x: 0.5, y: 0, z: tip }, to: { x: 1.5, y: 0, z: tip },
+  })
+  // The upper layer misses the 24.25° ray, so the material there stays blank.
+  referenceMove(reference, cutAt(upperTip), 0, radius, true, alongOf, 0, 0)
+  assert.ok(asinDeg(radius / (upperTip + radius)) < 24.25,
+    'the previous layer is out of reach of the repro ray')
+  assert.equal(reference.material[48], standing,
+    'the upper layer leaves the repro ray standing')
+  // The lower layer reaches it through the ball's shank and takes the column.
+  referenceMove(reference, cutAt(lowerTip), 0, radius, true, alongOf, 0, 0)
+  const reproBite = standing - reference.material[48]
+  const oldBound = alongRadialBiteBound(true, radius, stepdown, lowerTip)
+  assert.ok(Math.abs(reproBite - 2.3435) < 1e-3,
+    `the repro ray removes ${reproBite.toFixed(4)} mm, not 2.3435`)
+  assert.ok(reproBite > oldBound + 1e-6,
+    `the repro exceeds the previous-layer bound (${reproBite.toFixed(4)} > ${oldBound.toFixed(4)})`)
+  // The seeded allowance is evaluated at the **recorded worst cell** exactly as
+  // the seeded loop does it: the standing material there minus this body's
+  // contact at that ray, never below the previous-layer bound.
+  const cell = moveSurfaceCell
+  const cellDelta = (() => {
+    const d = ((cell.angle - 0) % 360 + 360) % 360
+    return d > 180 ? 360 - d : d
+  })()
+  const cellDx = cell.along < 0.5 ? 0.5 - cell.along : cell.along > 1.5 ? cell.along - 1.5 : 0
+  const extendedBound = Math.max(oldBound,
+    cell.material - alongRayContact(true, radius, lowerTip, cellDelta, cellDx))
+  assert.ok(extendedBound >= moveSurfaceWorst - 1e-12,
+    `the standing-material bound ${extendedBound.toFixed(4)} covers the measured ${moveSurfaceWorst.toFixed(4)}`)
+  console.log(`  slice-Q repro: ${reproBite.toFixed(4)} mm at the 24.25 deg ray; previous-layer bound `
+    + `${oldBound.toFixed(4)} mm (missed); worst cell ${moveSurfaceWorst.toFixed(4)} mm covered by `
+    + `the standing-material bound ${extendedBound.toFixed(4)} mm`)
+}
+
+/** `Math.asin` in degrees, for the repro's reach check. */
+function asinDeg(value: number): number {
+  return Math.asin(Math.min(1, value)) * 180 / Math.PI
+}
+
 interface Worst {
   /** The largest engagement any cut of this operation took. */
   peak: number
@@ -1719,22 +1834,43 @@ for (const { entry, program } of CASES) {
           // largest.
           // An along finish's clearing and finish passes descend by the
           // finish's own stepdown (slice R); the rough's by its own. Both use
-          // slice Q's exact geometry.
-          const alongBound = alongRadialBiteBound(ball, cutterRadius,
-            stage.finish ? entry.finishStepdown : entry.stepdown,
-            Math.min(move.from.z - pivot, move.to.z - pivot))
+          // slice Q's exact geometry. The bound is extended past the previous
+          // layer's reach (#1045 slice Q extension): on a ray that layer did
+          // **not** reach, the standing material is not its contact, so the
+          // allowance is measured from the material actually standing at that
+          // ray down to this body's own contact. Where the previous layer did
+          // reach, the standing material is at most its contact, so the second
+          // term cannot exceed the first and the exact bound is unchanged.
+          const tip = Math.min(move.from.z - pivot, move.to.z - pivot)
+          const stepdown = stage.finish ? entry.finishStepdown : entry.stepdown
+          const cellDelta = (() => {
+            const d = ((moveSurfaceCell.angle - fromAngle) % 360 + 360) % 360
+            return d > 180 ? 360 - d : d
+          })()
+          const alongLo = Math.min(alongOf(move.from), alongOf(move.to))
+          const alongHi = Math.max(alongOf(move.from), alongOf(move.to))
+          const cellDx = moveSurfaceCell.along < alongLo
+            ? alongLo - moveSurfaceCell.along
+            : moveSurfaceCell.along > alongHi ? moveSurfaceCell.along - alongHi : 0
+          const reachedBound = alongRadialBiteBound(ball, cutterRadius, stepdown, tip)
+          const standingBound = moveSurfaceCell.material
+            - alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          const alongBound = Math.max(reachedBound, standingBound)
           const alongMargin = alongBound - moveSurfaceWorst
           if (alongMargin < worstAlongMargin) {
             worstAlongMargin = alongMargin
             worstAlongMarginLabel = `${entry.label} ${move.kind} `
-              + `A${fromAngle.toFixed(2)} tip ${Math.min(move.from.z - pivot, move.to.z - pivot).toFixed(3)} `
-              + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)}`
+              + `A${fromAngle.toFixed(2)} tip ${tip.toFixed(3)} `
+              + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)} `
+              + `(previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+              + `at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
           }
           checkEngagement(moveSurfaceWorst, alongBound,
             `${entry.label}: along ${move.kind} radial surface bite `
             + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
             + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
-            + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)})`)
+            + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
+            + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)})`)
           alongBiteChecks++
           // Diagnostic only: the interior removal an along move finds below an
           // intact shell. It has no asserted bound (see above); recording the
