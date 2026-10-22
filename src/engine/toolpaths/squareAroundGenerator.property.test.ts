@@ -60,7 +60,8 @@
  * chord is replayed as that chord too: a ring emitted as hundreds of short
  * fragments would otherwise re-scan its whole cutter footprint for every
  * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
- * this suite exists to catch (and far inside `alongBin + ballRise`). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
+ * this suite exists to catch (and far inside both the around allowance and the
+ * along stage's exact-geometry radial bound). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
  * is pinned by hand-computed unit cases before the seeded run. Every ray keeps
  * all occupied intervals, including cavities below an unchanged outer surface.
  * Engagement sums newly removed material over the whole swept move; interior
@@ -80,7 +81,10 @@
  *    allowance, each plus the stated reference tolerance. An along-mode stage's
  *    non-turning cuts are judged on a different metric (#1045 slice O): the
  *    **radial surface bite**, the material one move removes from the outermost
- *    solid at a ray, is asserted against the same bound. The reference's
+ *    solid at a ray, is asserted against the cutter's **exact geometry**
+ *    (#1045 slice Q): the largest radial bite one stepdown can take, derived
+ *    from the ball's sphere cap (or the flat's bottom face) at the ray's
+ *    offset from the axis -- see `alongRadialBiteBound`. The reference's
  *    interior number -- material below an intact shell -- is reported as a
  *    diagnostic and deliberately **not** asserted (#1045 slice P): it is not a
  *    radial depth and has no geometric bound, so the old stepover + diameter
@@ -728,8 +732,9 @@ const MAX_REPLAY_CELLS = 400_000
  * its run, in millimetres (#1045 slice M). Every move is still swept at the
  * reference's own resolution, but a ring emitted as hundreds of three-degree
  * fragments would otherwise re-scan its whole footprint for each fragment. A
- * 0.05 mm chord tolerance is far inside this file's stated bound
- * (`alongBin + ballRise` on the order of a third of a millimetre) and an order
+ * 0.05 mm chord tolerance is far inside this file's stated allowances (the
+ * around `alongBin + ballRise` on the order of a third of a millimetre, and the
+ * along stage's exact-geometry radial bound of about a millimetre) and an order
  * of magnitude tighter than the 0.49 mm gouge this suite was built to catch.
  */
 const COALESCE_TOLERANCE = 0.05
@@ -1322,6 +1327,68 @@ function ballRiseAt(radius: number, dx: number): number {
   return radius - Math.sqrt(Math.max(0, radius * radius - dx * dx))
 }
 
+/**
+ * The exact largest **radial surface bite** a cutter can take at one ray while
+ * it descends one stepdown, given the layer's own tip radius (#1045 slice Q).
+ *
+ * The along-stage metric is not engagement but a radial depth: the material one
+ * move removes from the outermost solid at a ray. For a cutter whose axis is
+ * `d` off the ray and `dx` along it, the reference's body contact is exact:
+ *
+ *   ball: c(t) = (t+R) cos(d) - sqrt(R^2 - dx^2 - (t+R)^2 sin(d)^2)
+ *   flat: c(t) = t / cos(d)                    (dx only limits the reach)
+ *
+ * A move at layer tip `t` is preceded, at the same pass angle and the same
+ * along span (every layer shares the sample grid), by a pass at tip `t+s` or
+ * lower. That pass swept this ray, so the standing material before the move is
+ * at most `c(t+s)` -- any other earlier move only lowers it -- and the move
+ * leaves `c(t)`. The bite is therefore at most `c(t+s) - c(t)`, and the bound
+ * is that difference maximised over the ray offsets the reference resolves.
+ * The first layer has no such pass, but its standing material is the blank,
+ * at most `t + s` because its layer tip is `maxRadius - s` (raised to the
+ * model where the model stands above it), while its contact is at least `t`;
+ * that bite is at most `s`, which every bound below exceeds.
+ *
+ * **Ball.** At a fixed `d` the difference grows with `|dx|` (the two sphere
+ * surfaces diverge as the ray moves toward the upper one's tangent), so the
+ * maximum is at that tangency, `dx^2 = R^2 - (t+s+R)^2 sin(d)^2`, where the
+ * upper contact is `(t+s+R) cos(d)`. The difference is then
+ *
+ *   D(d) = s cos(d) + sqrt(s (2 (t+R) + s)) sin(d),
+ *
+ * which increases over the whole reachable range `d <= asin(R/(t+s+R))`: its
+ * unconstrained peak sits at `atan(sqrt((2 (t+R) + s) / s))`, beyond that
+ * tangency. The exact maximum is therefore at the tangency:
+ *
+ *   bound = [ s sqrt((t+s+R)^2 - R^2) + R sqrt(s (2 (t+R) + s)) ] / (t+s+R).
+ *
+ * The ball's shank does not raise it: its bite is the flat expression at tip
+ * `t+R`, and its reach `atan(R/(t+s+R))` lies inside the sphere's
+ * `asin(R/(t+s+R))`, so the sphere alone sets the bound.
+ *
+ * **Flat.** The bite is `s / cos(d)`, and the upper layer's rim limits the
+ * reach to `d <= atan(R/(t+s))`, where `cos(d) = (t+s)/sqrt((t+s)^2 + R^2)`:
+ *
+ *   bound = s sqrt((t+s)^2 + R^2) / (t+s).
+ *
+ * `tip` is the **lowest** tip the move reaches. The bound falls as `t` grows,
+ * so evaluating it at the move's minimum tip can only over-estimate: the
+ * previous layer's tip at that along position is at most `minTip + stepdown`.
+ * Unlike the old `alongBin + ballRise` term, this is the cutter's own geometry;
+ * the reference's bin sizes do not appear as a tolerance, only as the cell
+ * offsets whose maximum the bound describes.
+ */
+function alongRadialBiteBound(ball: boolean, radius: number, stepdown: number, tip: number): number {
+  if (!ball) {
+    const upper = tip + stepdown
+    return stepdown * Math.sqrt(upper * upper + radius * radius) / upper
+  }
+  const lower = tip + radius
+  const upper = tip + stepdown + radius
+  return (stepdown * Math.sqrt(upper * upper - radius * radius)
+    + radius * Math.sqrt(stepdown * (2 * lower + stepdown))) / upper
+}
+
 interface Worst {
   /** The largest engagement any cut of this operation took. */
   peak: number
@@ -1347,6 +1414,10 @@ let worstAssertedInterior = 0
 let worstAssertedInteriorLabel = ''
 let worstAlongBite = 0
 let worstAlongBiteLabel = ''
+// The closest an along-stage radial bite came to its exact-geometry bound, and
+// the bound it was checked against (#1045 slice Q).
+let worstAlongMargin = Number.POSITIVE_INFINITY
+let worstAlongMarginLabel = ''
 // Diagnostic only, never asserted (#1045 slice P): interior removal an along
 // move finds below an intact shell. It is not a radial depth and has no bound.
 let alongInteriorDiagnostic = { depth: 0, label: '', stepover: 0, diameter: 0, stepdown: 0 }
@@ -1519,10 +1590,28 @@ for (const { entry, program } of CASES) {
               + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)} `
               + `at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)}`
           }
-          checkEngagement(moveSurfaceWorst, bound,
+          // #1045 slice Q: the allowance is the cutter's **exact geometry**, not
+          // the old `alongBin + ballRise` scallop term. A step down from layer
+          // `t + stepdown` to `t` can move the outermost solid at a ray by at
+          // most the difference between the ball's sphere (or the flat's bottom
+          // face) at those two tips, maximised over the ray offsets the
+          // reference resolves. `alongRadialBiteBound` derives that maximum in
+          // closed form; `tip` is the move's lowest tip, at which the bound is
+          // largest.
+          const alongBound = alongRadialBiteBound(ball, cutterRadius, entry.stepdown,
+            Math.min(move.from.z - pivot, move.to.z - pivot))
+          const alongMargin = alongBound - moveSurfaceWorst
+          if (alongMargin < worstAlongMargin) {
+            worstAlongMargin = alongMargin
+            worstAlongMarginLabel = `${entry.label} ${move.kind} `
+              + `A${fromAngle.toFixed(2)} tip ${Math.min(move.from.z - pivot, move.to.z - pivot).toFixed(3)} `
+              + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)}`
+          }
+          checkEngagement(moveSurfaceWorst, alongBound,
             `${entry.label}: along ${move.kind} radial surface bite `
             + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
-            + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)})`)
+            + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
+            + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)})`)
           alongBiteChecks++
           // Diagnostic only: the interior removal an along move finds below an
           // intact shell. It has no asserted bound (see above); recording the
@@ -1708,6 +1797,8 @@ console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above t
 console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
   + `(${worstSurfaceUnderLabel})`)
 console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
+console.log(`  along stage: closest to its exact-geometry bound at ${worstAlongMargin.toFixed(4)} mm margin `
+  + `(${worstAlongMarginLabel || 'none'})`)
 // Diagnostic only, explicitly not a bound (#1045 slice P). The old
 // stepover + diameter "flank bound" is gone: a hand-built Ø4 flat sweep at tip 2
 // with a 10° ray offset removes 9.4867 mm internally, far past it.
