@@ -115,5 +115,13 @@ export const shellFr: Record<keyof typeof shellEn, string> = {
   'platform.confirmDiscard': 'Vous avez des modifications non enregistrées. Les abandonner et continuer ?',
   'platform.readProjectFailed': 'Impossible de lire le fichier du projet.',
   'platform.openProjectFailed': 'Impossible d’ouvrir le fichier du projet.',
+  'shell.commandPalette.title': 'Palette de commandes',
+  'shell.commandPalette.placeholder': 'Rechercher des commandes…',
+  'shell.commandPalette.noResults': 'Aucune commande correspondante',
+  'shell.commandPalette.hint': 'Tapez pour rechercher · ↑↓ pour naviguer · Entrée pour exécuter · Échap pour fermer',
+  'shell.commandPalette.group.file': 'Fichier',
+  'shell.commandPalette.group.sketch': 'Esquisse',
+  'shell.commandPalette.group.create': 'Créer',
+  'shell.commandPalette.group.view': 'Vue',
   'platform.readFileError': 'Impossible de lire « {name} ». Le fichier est peut-être trop volumineux ou inaccessible.',
 }

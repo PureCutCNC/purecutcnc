@@ -121,5 +121,13 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'platform.confirmDiscard': '您有未保存的更改。要放弃更改并继续吗？',
   'platform.readProjectFailed': '读取项目文件失败。',
   'platform.openProjectFailed': '打开项目文件失败。',
+  'shell.commandPalette.title': '命令面板',
+  'shell.commandPalette.placeholder': '搜索命令…',
+  'shell.commandPalette.noResults': '没有匹配的命令',
+  'shell.commandPalette.hint': '输入以搜索 · ↑↓ 导航 · Enter 执行 · Esc 关闭',
+  'shell.commandPalette.group.file': '文件',
+  'shell.commandPalette.group.sketch': '草图',
+  'shell.commandPalette.group.create': '创建',
+  'shell.commandPalette.group.view': '视图',
   'platform.readFileError': '读取“{name}”失败。文件可能过大或无法访问。',
 }

@@ -469,6 +469,10 @@
     <path d="M 17 21 L 17 13 L 7 13 L 7 21" />
     <path d="M 7 3 L 7 8 L 15 8 L 15 3" />
   </symbol>
+  <symbol id="search" viewBox="0 0 24 24">
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="M 15.5 15.5 L 21 21" />
+  </symbol>
   <symbol id="segment-delete" viewBox="0 0 24 24">
     <path d="M 3 12 L 21 12" />
     <path d="M 9 8 L 15 16" />
