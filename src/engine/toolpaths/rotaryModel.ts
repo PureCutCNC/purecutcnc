@@ -1001,6 +1001,45 @@ interface RotaryRun {
 }
 
 /**
+ * Dense model samples along the bar at the physical angle every around ring
+ * ends on (#1093). Rings alternate direction, so ring `i` always finishes at
+ * one of the two representations of the same physical rotation -- A0 or A360 --
+ * and ring `i + 1` starts there. The link between them is a feed along the bar
+ * at that shared angle, and this row is the safe tip height the link follows.
+ *
+ * `tips` is the same transformed value the rings cut at (stock to leave added,
+ * floored at the pivot, capped at the blank's largest radius, and -- on a
+ * square blank -- floored at the retained stub's exact contact); `NaN` still
+ * means "no model under the tool".
+ */
+interface RotaryLinkRow {
+  readonly along: readonly number[]
+  readonly tips: readonly number[]
+}
+
+/**
+ * One commanded leg of a ring-to-ring link (#1093). The finish's surface-
+ * following legs are feeds; the rough's in-air traverse is a rapid, because it
+ * is above every material its own earlier layers can leave on the span by the
+ * clearance -- the same reason the old travel-height traverse was a rapid.
+ */
+interface RotaryLinkStep {
+  readonly to: ToolpathPoint
+  readonly kind: 'cut' | 'rapid'
+}
+
+/** Both controller spellings of the same physical bar rotation (A0 and A360). */
+function sameRotaryAngle(a: number, b: number): boolean {
+  const delta = ((b - a) % 360 + 360) % 360
+  return delta <= 1e-9 || delta >= 360 - 1e-9
+}
+
+/** The along-bar coordinate of a point on either bar axis. */
+function alongCoordinate(stock: BarStock, point: { x: number; y: number }): number {
+  return stock.axis === 'x' ? point.x : point.y
+}
+
+/**
  * Emit one pass's runs, and say where the pass left the tool. A run that starts
  * where the previous pass finished links to it -- a rise to `travelZ`, a turn,
  * and a drop, each its own `cut` move so a merged move can never lose one of the
@@ -1011,6 +1050,16 @@ interface RotaryRun {
  * *inside* the model between the two pass angles: on a square prism of half-width
  * 10 in a 40 mm bar the 34.29 -> 51.43 degree link ran at tip radius 13.598 while
  * the corner at 45 degrees needed 14.141.
+ *
+ * #1093 added a **forced link** for around mode: when a run ends at its ring's
+ * end and the next starts at the next ring's start, the two share one physical
+ * angle (rings alternate direction, so A0 and A360 are the same rotation), and
+ * `link` supplies the feed path between them -- the finish follows the model at
+ * that angle, the rough rises only to what its own earlier layers left. It is
+ * emitted before the travel-height rules below, so a link that can stay down
+ * never becomes a retract, rapid and plunge; `link` returns null for a split
+ * ring, a gap in the reachable surface, an angle change or an over-budget row,
+ * and that run falls through to the old motion unchanged.
  *
  * Every other run stays at `travelZ` too: the retract off the run just cut, the
  * traverse to the next run's first point and the plunge's start are all at the
@@ -1044,6 +1093,60 @@ interface RotaryRun {
  * passes `pivot`: its `dA` inside a run is zero, and leaving the two-argument
  * `Math.hypot` in place keeps its spacing, and so its output, byte-identical.
  */
+/**
+ * Emit one ring-to-ring link (#1093).
+ *
+ * `steps` excludes `from` and ends at the next ring's first point. A feed leg
+ * is split by the same steep-step rule the rings use: a rise larger than the
+ * pair's surface distance is a vertical leg plus a leg at the higher tip, so a
+ * sharp shoulder cannot be undercut between two safe samples. A pair that
+ * shares its along position and angle is the link's own vertical leg (the
+ * rough's constant-height plan) and is emitted directly -- the ring loop's
+ * split would make it a move plus a zero-length move. A rapid leg is emitted
+ * as given: it is the rough's in-air traverse at one height, and the
+ * steep-step rule does not apply to a move that already clears the material.
+ */
+function emitLinkPoints(
+  moves: ToolpathMove[],
+  from: ToolpathPoint,
+  steps: readonly RotaryLinkStep[],
+  forceStep?: (from: ToolpathPoint, to: ToolpathPoint) => boolean,
+): void {
+  let previous = from
+  for (const step of steps) {
+    const to = step.to
+    if (to.x === previous.x && to.y === previous.y && to.z === previous.z && to.a === previous.a) {
+      previous = to
+      continue
+    }
+    if (step.kind === 'rapid') {
+      moves.push({ kind: 'rapid', from: previous, to })
+      previous = to
+      continue
+    }
+    const spacing = Math.hypot(to.x - previous.x, to.y - previous.y)
+    const rise = to.z - previous.z
+    if (spacing <= 1e-12) {
+      moves.push({ kind: 'cut', from: previous, to })
+    } else {
+      const stepped = Math.abs(rise) > spacing
+        || (Math.abs(rise) > 1e-9 && forceStep?.(previous, to) === true)
+      if (stepped) {
+        if (rise > 0) {
+          moves.push({ kind: 'cut', from: previous, to: { ...previous, z: to.z } })
+          moves.push({ kind: 'cut', from: { ...previous, z: to.z }, to })
+        } else {
+          moves.push({ kind: 'cut', from: previous, to: { ...to, z: previous.z } })
+          moves.push({ kind: 'cut', from: { ...to, z: previous.z }, to })
+        }
+      } else {
+        moves.push({ kind: 'cut', from: previous, to })
+      }
+    }
+    previous = to
+  }
+}
+
 function emitRotaryRuns(
   moves: ToolpathMove[],
   here: ToolpathPoint | undefined,
@@ -1053,14 +1156,45 @@ function emitRotaryRuns(
   previousEndedAtEnd: boolean,
   forceStep?: (from: ToolpathPoint, to: ToolpathPoint) => boolean,
   pivot?: number,
+  link?: (from: ToolpathPoint, to: ToolpathPoint) => readonly RotaryLinkStep[] | null,
+  /**
+   * Attempt the link from whatever point the previous ring left, not only from
+   * a run that reached its ring's end (#1093). A square rough's rings cut only
+   * short arcs around the corners, so their runs start and end at the touch
+   * gate's boundaries rather than at A0/A360; two neighbouring rings still
+   * share those boundary angles. The caller enables this only for a ring after
+   * the first in its layer, so a layer boundary keeps the travel-height
+   * retract. The finish leaves it off: a split ring retracts, as the issue
+   * requires.
+   */
+  linkPartial?: boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
   let current = here
   let endedAtEnd = false
   for (const run of runs) {
     const first = run.points[0]
-    const canLink = current !== undefined && previousEndedAtEnd && run.atStart
-      && current.x === first.x && current.y === first.y
-    if (canLink && current) {
+    // #1093: a ring-to-ring link that can stay down is a feed, not a
+    // retract/rapid/plunge. `link` is supplied only for around mode; it returns
+    // the points to feed through (excluding `current`, ending at `first`), or
+    // null when the link cannot stay down -- a gap in the reachable surface, an
+    // angle change or the work budget -- in which case the old behaviour below
+    // applies unchanged. A split ring never reaches this call: the finish
+    // reports it as not ended at the ring's end.
+    const linkPoints = current !== undefined && (linkPartial === true || (previousEndedAtEnd && run.atStart))
+      ? link?.(current, first) ?? null
+      : null
+    // The travel-height link is the same-along turn: a square rough's corner
+    // arcs are separated by an A move at one along position. `linkPartial`
+    // (the rough) may use it from any run, not only from a ring end; on a
+    // square blank it turns at the corner envelope, which is the existing
+    // rule. The finish keeps the old gate, so a split ring still retracts.
+    const canLink = current !== undefined && current.x === first.x && current.y === first.y
+      && (previousEndedAtEnd && run.atStart
+        || (linkPartial === true && current.a !== first.a))
+    if (linkPoints && current) {
+      emitLinkPoints(moves, current, linkPoints, forceStep)
+      current = linkPoints[linkPoints.length - 1].to
+    } else if (canLink && current) {
       const high = travelZ
       if (high > current.z) moves.push({ kind: 'cut', from: current, to: { ...current, z: high } })
       moves.push({ kind: 'cut', from: { ...current, z: high }, to: { ...first, z: high } })
@@ -1222,6 +1356,46 @@ function aroundGrid(
  * under a few hundred megabytes and is far above any job the panel describes.
  */
 const MAX_ROTARY_SAMPLES = 16_000_000
+
+/**
+ * The most dense link samples one around operation may ask for (#1093). The
+ * link row is one extra angle row over the ring along span, sampled no coarser
+ * than the ring spacing or a quarter of the tool radius; a span and spacing
+ * that ask for more than this fall back to the old travel-height link rather
+ * than sampling a coarser row, because a coarser row would miss a feature the
+ * row exists to find.
+ */
+const MAX_LINK_SAMPLES = 250_000
+
+/**
+ * The total link-row samples one around operation may build across every
+ * shared angle it links at. A square blank links at the angles its touch gate
+ * opens and closes, so several rows are built; this caps the total work rather
+ * than any single row. Over the cap the remaining angles fall back to the old
+ * travel-height link.
+ */
+const MAX_LINK_TOTAL_SAMPLES = 2_000_000
+
+/**
+ * The largest `row.length x along.length` product one link may cost (#1093).
+ * The link row is walked once per ring boundary and the rough's leftover walk
+ * is over the whole row for every earlier layer, so an unbounded product runs
+ * for minutes on a long bar with a small cutter. Over the budget the angle
+ * falls back to today's retract rather than a coarser row.
+ */
+const MAX_LINK_WORK = 4_000_000
+
+/**
+ * The most cutter-body window work one around operation may spend (#1093).
+ * The windowed leftover walk costs `linkRow x along x windowRows` per computed
+ * angle window, and the link plan asks for it at every ring boundary. Caching by
+ * the window's row span (not the per-link `required`) shares the walk between
+ * links whose body reaches the same rows; this budget bounds the sum that the
+ * per-call `MAX_LINK_WORK` cannot. Past it the remaining links retract through
+ * the old travel path, so a long, fine job stays finite instead of running a
+ * quadratic pass for every ring.
+ */
+const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
 // grid, even when the touch gate ultimately skips it (#1045 slice N). Both this
@@ -1908,6 +2082,8 @@ function rotaryTargets(
    * floor where a stub overlaps (#1016 C2-F6b).
    */
   stubFloor: number[][] | null
+  /** The dense link row at a ring link's shared angle, around mode only. */
+  linkRowAt: (angleDeg: number) => RotaryLinkRow | null
   stopped: boolean
   refusal: ToolpathWarningCode | null
 } {
@@ -1919,12 +2095,12 @@ function rotaryTargets(
   // correction M1).
   const stockToLeave = params.stockToLeave
   if (!(tool.radius > 0) || !Number.isFinite(tool.radius)) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
+    return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'toolDiameterPositive' }
   }
   const samplingRadius = tool.radius + stockToLeave
   if (!Number.isFinite(stockToLeave) || stockToLeave < 0
     || !(samplingRadius > 0) || !Number.isFinite(samplingRadius)) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
+    return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'rotaryStockToLeaveInvalid' }
   }
   // The radius the samples are capped at and the angular step is derived from
   // is the blank's *largest* radius, not the inscribed one (#1016 C2-S3): a
@@ -1940,7 +2116,7 @@ function rotaryTargets(
   // cutter at all and refuses like an empty range.
   const span = rotaryCutterSpan(stock, tool, params)
   if (!span) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'rotaryNoRoom' }
+    return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'rotaryNoRoom' }
   }
   const maxRadius = barMaxRadius(stock)
   // Around mode is the same sampling grid with the two roles swapped: one ring
@@ -1952,7 +2128,7 @@ function rotaryTargets(
   if (params.passDirection === 'around') {
     const grid = aroundGrid(stock, span, params, tool.units)
     if (grid === null) {
-      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+      return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'operationStepoverRatioRange' }
     }
     angles = grid.angles
     along = grid.along
@@ -1960,7 +2136,7 @@ function rotaryTargets(
     const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
     const positions = rotaryAlongPositions(mesh, stock, tool, params, span)
     if (positions === null) {
-      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+      return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'operationStepoverRatioRange' }
     }
     along = positions
     // The budget is checked against the *refined* along count (#1016 C2-S3
@@ -1972,7 +2148,7 @@ function rotaryTargets(
     // bound at 300,000 samples and then asked for ~8e8; refusing here is what
     // keeps that allocation from happening.
     if (!Number.isFinite(passes) || passes > MAX_ROTARY_SAMPLES || passes * along.length > MAX_ROTARY_SAMPLES) {
-      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+      return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'operationStepoverRatioRange' }
     }
     const angleStep = 360 / passes
     angles = Array.from({ length: passes }, (_, k) => k * angleStep)
@@ -2024,9 +2200,9 @@ function rotaryTargets(
     workspace,
   )
   if (!sampling.valid) {
-    return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'toolDiameterPositive' }
+    return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'toolDiameterPositive' }
   }
-  if (sampling.stopped) return { angles, along, tips: [], stubFloor: null, stopped: true, refusal: null }
+  if (sampling.stopped) return { angles, along, tips: [], stubFloor: null, linkRowAt: () => null, stopped: true, refusal: null }
   // #1045 slice E: the around path's between-sample safety is a property of the
   // emitted motion, not of the endpoint grid. Bisect every segment whose chord
   // falls more than the segment tolerance below the model at its mid angle.
@@ -2047,9 +2223,9 @@ function rotaryTargets(
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     })
     if (refined === null) {
-      return { angles: [], along: [], tips: [], stubFloor: null, stopped: false, refusal: 'operationStepoverRatioRange' }
+      return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'operationStepoverRatioRange' }
     }
-    if (refined.stopped) return { angles: [], along: [], tips: [], stubFloor: null, stopped: true, refusal: null }
+    if (refined.stopped) return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: true, refusal: null }
     angles = refined.angles
     tipRows = refined.tips
   }
@@ -2132,7 +2308,95 @@ function rotaryTargets(
       }
     }
   }
-  return { angles, along, tips, stubFloor, stopped: false, refusal: null }
+  // #1093: a link row per shared angle, sampled on demand and cached. A full
+  // ring's end and the next ring's start share one physical angle; on a square
+  // blank the rough's corner arcs share the angle where the layer's touch gate
+  // opens or closes, so the shared angle is not always A0. The row is sampled
+  // **no coarser than the ring spacing or a quarter of the tool radius** --
+  // the caller's `sampleSpacing` is not a safety guarantee here (it caps the
+  // *angular* step; the link travels along the bar), and a ridge between two
+  // rings narrower than the ring spacing would otherwise be missed and cut
+  // straight through. `requestedCellSize` alone cannot promise that either.
+  // The same mesh, tool, stock offset, conservative cell bounds and
+  // retained-stub floor the rings use are applied, so a link follows exactly
+  // the surface the ring cuts. `null` means "no surface link" for that angle:
+  // a mode without rings, or a work budget that cannot afford a row this fine
+  // -- the caller then keeps the old retract/rapid/plunge rather than sampling
+  // a coarser, unsafe row.
+  const linkCache = new Map<number, RotaryLinkRow | null>()
+  let linkSampleTotal = 0
+  const linkRowAt = (angleDeg: number): RotaryLinkRow | null => {
+    const key = ((angleDeg % 360) + 360) % 360
+    const cached = linkCache.get(key)
+    if (cached !== undefined) return cached
+    if (params.passDirection !== 'around' || along.length <= 1) {
+      linkCache.set(key, null)
+      return null
+    }
+    const spacing = Math.min(
+      aroundArcStep(stock, params, tool.units),
+      params.stepover,
+      tool.radius / 4,
+    )
+    const span = along[along.length - 1] - along[0]
+    const intervals = span > 0 ? Math.ceil(span / Math.max(spacing, 1e-9)) : 0
+    if (!Number.isFinite(intervals) || intervals <= 0 || intervals + 1 > MAX_LINK_SAMPLES
+      || linkSampleTotal + intervals + 1 > MAX_LINK_TOTAL_SAMPLES
+      // The row is walked once per ring boundary, and the rough's leftover walk
+      // is row x along; cap that product and retract instead of running a
+      // quadratic pass on a long bar with a small cutter.
+      || (intervals + 1) * along.length > MAX_LINK_WORK) {
+      linkCache.set(key, null)
+      return null
+    }
+    const linkAlong = Array.from({ length: intervals + 1 }, (_, i) => along[0] + span * i / intervals)
+    const sampled = sampleRotaryModelWithWorkspace(
+      samplingMesh,
+      stock,
+      samplingTool,
+      {
+        anglesDeg: [key],
+        along: linkAlong,
+        requestedCellSize: params.requestedCellSize,
+        conservativeCellBounds: true,
+      },
+      warnings,
+      workspace,
+    )
+    if (!sampled.valid || sampled.stopped) {
+      linkCache.set(key, null)
+      return null
+    }
+    linkSampleTotal += linkAlong.length
+    const raw = sampled.tipRadius[0]
+    const linkTips = Array.from(raw, (tip) =>
+      Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
+    if (isSquareStock(stock)) {
+      const bounds = getStockBounds(stock)
+      const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+      const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+      const lowerStub = params.alongStart > lower
+      const upperStub = upper > params.alongEnd
+      if (lowerStub || upperStub) {
+        for (let i = 0; i < linkAlong.length; i++) {
+          let floor = Number.NEGATIVE_INFINITY
+          if (lowerStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, key, tool.radius, tool.type, linkAlong[i] - params.alongStart))
+          }
+          if (upperStub) {
+            floor = Math.max(floor, squareRotaryStubContactFloor(
+              stock, key, tool.radius, tool.type, params.alongEnd - linkAlong[i]))
+          }
+          if (Number.isFinite(linkTips[i]) && floor > linkTips[i]) linkTips[i] = floor
+        }
+      }
+    }
+    const row: RotaryLinkRow = { along: linkAlong, tips: linkTips }
+    linkCache.set(key, row)
+    return row
+  }
+  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
 }
 
 /**
@@ -2166,9 +2430,13 @@ function rotaryTargets(
  * With `passDirection: 'around'` (#1045 slice A) the pass runs round the bar
  * instead: one **ring** per along position, the angle sweeping the whole turn,
  * then a step along. Rings alternate direction so A stays within [0, 360] and
- * each ring starts where the previous one ended. A `NaN` sample is still not
- * cut, the layer links are the same emitter's, and the steep-step rule measures
- * their surface distance along the arc rather than across X/Y. A saved operation
+ * each ring starts where the previous one ended. A full ring's end and the next
+ * ring's start are the same physical angle, so #1093 links them with a feed
+ * along the bar that follows the model at that angle through a sample row no
+ * coarser than the ring spacing or a quarter of the tool radius; only a split
+ * ring or a gap in the reachable surface retracts. A `NaN` sample
+ * is still not cut, the layer links are the same emitter's, and the steep-step
+ * rule measures their surface distance along the arc rather than across X/Y. A saved operation
  * without the field keeps the along motion above byte for byte -- the shape of
  * the motion, not its band: the slice-D retained-end pull applies to both modes
  * and is a safety fix.
@@ -2251,6 +2519,39 @@ export function generateRotaryFinish(
     : { x: centre, y: alongPosition, z: pivot + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
   const forceStep = retainedStubStepForced(stock, params, tool)
+  // #1093: link consecutive full rings with a feed along the bar at their
+  // shared end angle, following the model at that angle through the dense link
+  // row. The finish assumes no rough: the height is the model's own safe tip,
+  // never the standing blank. A `NaN` anywhere on the span means the link
+  // cannot stay down (there is no surface under the tool there), so the old
+  // retract/rapid/plunge handles it; the same happens for a split ring (the
+  // caller marks a ring that emitted more than one run as not ended at its end),
+  // a link that changes A, and an operation whose dense row would exceed the
+  // work budget (no row). Only the operation's first positioning move and its
+  // final retract go to the rapid height.
+  const linkRowAt = sampling.linkRowAt
+  const followLink = (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+    if (from.a === undefined || to.a === undefined) return null
+    // A surface link keeps one angle *exactly*. A0 and A360 are the same
+    // physical rotation, but a move between them is a full commanded turn; an
+    // A-changing link stays on the old travel-height cut rule (or its retract).
+    if (from.a !== to.a) return null
+    const linkRow = linkRowAt(from.a)
+    if (!linkRow) return null
+    const fromAlong = alongCoordinate(stock, from)
+    const toAlong = alongCoordinate(stock, to)
+    if (!(toAlong > fromAlong)) return null
+    const points: RotaryLinkStep[] = []
+    for (let i = 0; i < linkRow.along.length; i++) {
+      const x = linkRow.along[i]
+      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      const tip = linkRow.tips[i]
+      if (!Number.isFinite(tip)) return null
+      points.push({ to: point(x, tip, from.a), kind: 'cut' })
+    }
+    points.push({ to, kind: 'cut' })
+    return points
+  }
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
@@ -2271,9 +2572,13 @@ export function generateRotaryFinish(
         const tip = sampling.tips[k][ring]
         samples.push(Number.isFinite(tip) ? point(along[ring], tip, angles[k]) : null)
       }
-      const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
+      const runs = ringRuns(samples)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
       here = emitted.here
-      previousEndedAtEnd = emitted.endedAtEnd
+      // A split ring is partial arcs: its last run can still reach the ring end,
+      // but the issue's contract is that a split ring retracts rather than
+      // feeding to the next ring. Only a ring that emitted one run may link.
+      previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
@@ -2365,9 +2670,19 @@ export interface RotaryRoughParams extends RotaryFinishParams {
  * along position (#1045 slice A): the per-sample `needsCut`/layer rule is the
  * along pass's, the direction alternation continues across layers (no
  * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and every sample
- * reads its own angle row. Missing keeps the along motion byte for byte -- the
- * shape of the motion, not its band: the slice-D retained-end pull applies to
- * both modes and is a safety fix.
+ * reads its own angle row. Consecutive rings are linked (#1093) at the
+ * angle their runs share -- a full ring's end and the next ring's start, or a
+ * square corner arc's touch-gate boundary -- along the bar at the highest
+ * material this operation's own earlier layers left on the path, plus the 1 mm
+ * clearance. The constant-height traverse is a **rapid**: it is in air by
+ * construction, and a feed through air makes the machine creep. Its rise and
+ * drop stay feeds; the first layer has nothing removed in front of it and keeps
+ * the travel height, and an A-changing link is left to the old travel-height
+ * rule (or its retract), because the surface link requires one exact angle.
+ * Missing
+ * keeps the along motion byte
+ * for byte -- the shape of the motion, not its band: the slice-D retained-end
+ * pull applies to both modes and is a safety fix.
  *
  * A **square** blank supports around mode too (#1045 slice C): a sample is cut
  * only when the layer radius is below `squareRotaryTouchRadius` at that
@@ -2472,6 +2787,187 @@ export function generateRotaryRough(
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
     ? { x: position, y: centre, z: pivot + tip, a: angle }
     : { x: centre, y: position, z: pivot + tip, a: angle }
+  // #1093: a link between cuts of this operation rises only to the highest
+  // material this operation's own earlier layers can still leave on the link's
+  // along span, plus the clearance every travel move uses today, and never
+  // below the two cuts it joins. The link angle is the one both cuts share -- a
+  // full ring's end and the next ring's start, or a square corner arc's touch
+  // gate boundary -- so the row is sampled on demand at that angle and cached.
+  // The leftover at a layer is derived from the rings' own sampled tips: each
+  // earlier layer's cut lowers the material over its cutter footprint (with the
+  // ball's rise at the ring offset). The first layer has nothing removed in
+  // front of it and keeps today's travel height.
+  const linkRowAt = sampling.linkRowAt
+  const clearance = convertLength(1, 'mm', tool.units)
+  const pointIndexAt = (angleDeg: number): number => {
+    const exact = angles.indexOf(angleDeg)
+    if (exact >= 0) return exact
+    for (let k = 0; k < angles.length; k++) {
+      if (sameRotaryAngle(angles[k], angleDeg)) return k
+    }
+    return -1
+  }
+  const leftoverCache = new Map<string, number[]>()
+  let linkWindowWork = 0
+  /**
+   * The widest angle off its axis at which the cutter body can meet any
+   * material at all (#1093). A ball's sphere and shank stay inside the cylinder
+   * of radius `r` about its axis, so the reach is `asin(r / (tip + r))`; a flat's
+   * body is that same cylinder, so `atan(r / tip)` bounds the bottom face's
+   * reach. The link height is sized from this window, not from the link's own
+   * ray: on a square or box model the material at a neighbouring angle is
+   * higher, and running the link through it is a gouge.
+   */
+  const bodyReachDeg = (tip: number): number => {
+    if (tool.type === 'ball_endmill') {
+      const centre = tip + tool.radius
+      return centre > tool.radius ? Math.min(90, Math.asin(tool.radius / centre) * 180 / Math.PI) : 90
+    }
+    if (!(tip > 0)) return 90
+    return Math.min(90, Math.atan(tool.radius / tip) * 180 / Math.PI)
+  }
+  /** The ring angle rows whose material the cutter body can reach at `reachDeg`. */
+  const angleWindow = (k: number, reachDeg: number): number[] => {
+    if (!(reachDeg > 0)) return [k]
+    const target = angles[k]
+    const windowRows: number[] = []
+    for (let kk = 0; kk < angles.length; kk++) {
+      let delta = ((angles[kk] - target) % 360 + 360) % 360
+      if (delta > 180) delta = 360 - delta
+      if (delta <= reachDeg + 1e-9) windowRows.push(kk)
+    }
+    if (!windowRows.includes(k)) windowRows.push(k)
+    return windowRows
+  }
+  const linkLeftoverAt = (row: RotaryLinkRow, angleDeg: number, layer: number, reachDeg = 0): number[] => {
+    const k = pointIndexAt(angleDeg)
+    if (k < 0) return []
+    // The base walk reads the link angle's own row and is already bounded by
+    // `linkRowAt`'s `row.along x along` budget. Only the body window multiplies
+    // that by the angle span, so only the window needs its own caps (#1093).
+    const windowed = reachDeg > 0
+    const windowRows = windowed ? angleWindow(k, reachDeg) : [k]
+    const work = row.along.length * along.length * windowRows.length
+    if (windowed && work > MAX_LINK_WORK) return []
+    // Two reaches that select the same angle rows leave the same material, so
+    // the key is the row span rather than the per-link height. Without this a
+    // long job recomputes the whole walk for every ring boundary.
+    const key = windowed
+      ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
+      : `${k}:${layer}`
+    const cached = leftoverCache.get(key)
+    if (cached) return cached
+    if (windowed) {
+      // The per-call cap above cannot bound the operation: the link plan asks
+      // at every ring boundary. Past the operation budget the rest of the links
+      // retract, and the empty answer is cached so they do not retry the walk.
+      if (linkWindowWork + work > MAX_LINK_WINDOW_WORK) {
+        leftoverCache.set(key, [])
+        return []
+      }
+      linkWindowWork += work
+    }
+    // The blank's own height over the body's window: a square blank's corner is
+    // higher than its face, and an earlier layer that did not cut at a face
+    // angle leaves that support standing.
+    let support = maxRadius
+    if (square) {
+      support = Number.NEGATIVE_INFINITY
+      for (const kk of windowRows) {
+        support = Math.max(support, squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type))
+      }
+    }
+    const leftover = new Array<number>(row.along.length).fill(support)
+    const radius = tool.radius
+    const ball = tool.type === 'ball_endmill'
+    for (let j = 1; j < layer; j++) {
+      const layerRadius = Math.max(lowest, maxRadius - j * params.stepdown)
+      const previousRadius = maxRadius - (j - 1) * params.stepdown
+      const cuts: number[] = []
+      for (const kk of windowRows) {
+        if (square && !(layerRadius < squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type))) continue
+        cuts.push(kk)
+      }
+      if (cuts.length === 0) continue
+      for (let i = 0; i < row.along.length; i++) {
+        const x = row.along[i]
+        // The material this layer leaves at x is the *shallowest* contact any of
+        // its rings makes over x -- an upper bound on what remains standing, so
+        // the next link clears it. The ball's rise at the ring offset keeps a
+        // between-rings ridge from being missed. The window is the rows whose
+        // material the cutter body can reach at the link height, so the link
+        // clears the body too, not only its own ray.
+        let contact = Number.NEGATIVE_INFINITY
+        for (const kk of cuts) {
+          const rowTips = tips[kk]
+          for (let p = 0; p < along.length; p++) {
+            const dx = x - along[p]
+            if (Math.abs(dx) > radius) continue
+            if (!(rowTips[p] < previousRadius)) continue
+            const cutTip = Math.max(rowTips[p], layerRadius)
+            const rise = ball ? radius - Math.sqrt(Math.max(0, radius * radius - dx * dx)) : 0
+            if (cutTip + rise > contact) contact = cutTip + rise
+          }
+        }
+        if (contact > Number.NEGATIVE_INFINITY && contact < leftover[i]) leftover[i] = contact
+      }
+    }
+    leftoverCache.set(key, leftover)
+    return leftover
+  }
+  const linkPlan = (layer: number) => (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+    if (from.a === undefined || to.a === undefined || from.a !== to.a) return null
+    const fromAlong = alongCoordinate(stock, from)
+    const toAlong = alongCoordinate(stock, to)
+    if (!(toAlong > fromAlong)) return null
+    const row = linkRowAt(from.a)
+    if (!row) return null
+    let required = maxRadius
+    if (layer > 1) {
+      const leftover = linkLeftoverAt(row, from.a, layer)
+      if (leftover.length === 0) return null
+      required = Number.NEGATIVE_INFINITY
+      for (let i = 0; i < row.along.length; i++) {
+        const x = row.along[i]
+        if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
+        if (leftover[i] > required) required = leftover[i]
+      }
+      // The ring's own ray is not enough on a **square blank**: its raised
+      // envelope at a neighbouring angle is not in the model's sampler tips, so
+      // an earlier layer that did not cut at the face leaves that support
+      // standing where the cutter body can still meet it. Size the link from
+      // the widest window the body can meet at this height. The reach shrinks
+      // as the height rises, so the window found at the ray's height is the
+      // widest one the final height can need. A round bar does not need it: its
+      // cross-section is the same at every angle, so the sampler's own
+      // two-dimensional tip already clears the lateral reach (#1093 review).
+      if (square && Number.isFinite(required) && required > 0) {
+        const reach = bodyReachDeg(required)
+        if (reach > 0) {
+          const bodyLeftover = linkLeftoverAt(row, from.a, layer, reach)
+          if (bodyLeftover.length === 0) return null
+          for (let i = 0; i < row.along.length; i++) {
+            const x = row.along[i]
+            if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
+            if (bodyLeftover[i] > required) required = bodyLeftover[i]
+          }
+        }
+      }
+      required = Math.max(required, from.z - pivot, to.z - pivot)
+    }
+    const highZ = pivot + required + clearance
+    // The middle leg runs at one height and one angle, above everything this
+    // operation's earlier layers can leave on the span by `clearance`, and at
+    // or above both cuts: `required` is the maximum of the leftover material and
+    // the two end tips (the first layer takes the blank's largest radius). It is
+    // therefore always in air, so it is a rapid. The rise to it and the drop to
+    // the next ring stay feeds.
+    const steps: RotaryLinkStep[] = []
+    if (highZ > from.z) steps.push({ to: { ...from, z: highZ }, kind: 'cut' })
+    steps.push({ to: { ...to, z: Math.max(highZ, to.z) }, kind: 'rapid' })
+    if (Math.max(highZ, to.z) > to.z) steps.push({ to, kind: 'cut' })
+    return steps
+  }
   if (params.passDirection === 'around') {
     // A ring is one along position (#1045 slice A), so the layer loop keeps its
     // layers and the rings run along inside each one. The direction alternation
@@ -2502,6 +2998,7 @@ export function generateRotaryRough(
         : null
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
+      const layerLink = linkPlan(layer)
       for (let i = 0; i < along.length; i++, ring++) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const forward = ring % 2 === 0
@@ -2512,7 +3009,7 @@ export function generateRotaryRough(
           const cuts = tip < previousRadius && (touchesMaterial === null || touchesMaterial[k])
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
-        const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot)
+        const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, layerLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
       }

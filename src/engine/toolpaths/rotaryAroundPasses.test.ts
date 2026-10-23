@@ -194,6 +194,28 @@ const angleOf = (point: ToolpathPoint): number => {
   assert.ok(point.a !== undefined, 'every rotary point carries A')
   return point.a
 }
+/**
+ * A ring-to-ring link (#1093): a feed at one angle that changes the along
+ * coordinate. A ring's own cut always shares its along position and turns A, so
+ * this is the one shape that distinguishes the new link from a ring chord.
+ */
+const isAlongLink = (move: ToolpathMove): boolean => move.kind === 'cut'
+  && move.from.a !== undefined && move.to.a !== undefined
+  && move.from.a === move.to.a
+  && (move.from.x !== move.to.x || move.from.y !== move.to.y)
+/**
+ * The rough's in-air link leg (#1093): a rapid at one angle and one height that
+ * changes the along coordinate. It is above the material the operation's own
+ * earlier layers can leave, by the clearance, so it is a rapid rather than a
+ * feed -- the machine must not creep through that air.
+ */
+const isAirLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
+  && move.from.a !== undefined && move.to.a !== undefined
+  && move.from.a === move.to.a
+  && move.from.z === move.to.z
+  // Forward along the bar, in ring order. A layer boundary's travel-height
+  // traverse runs back to the first along position and is not a link.
+  && (move.to.x > move.from.x || move.to.y > move.from.y)
 
 // ---------------------------------------------------------------------------
 // 1. Byte-identical along mode (rough; re-captured finish).
@@ -311,7 +333,11 @@ interface Ring {
 function cutRings(moves: readonly ToolpathMove[]): Ring[] {
   const rings: Ring[] = []
   for (const move of moves) {
-    if (move.kind !== 'cut') continue
+    // A ring's turning cuts are the ones that change A. A constant-angle cut is
+    // either a ring's own vertical step leg or a #1093 link leg; neither is a
+    // ring sample, and an intermediate link leg would otherwise look like a
+    // ring at an along position no ring visits.
+    if (move.kind !== 'cut' || move.from.a === move.to.a) continue
     const along = alongOf(move.from)
     assert.equal(alongOf(move.to), along, 'a cut move never leaves its ring')
     const last = rings[rings.length - 1]
@@ -360,8 +386,8 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     for (const point of [move.from, move.to]) {
       const a = angleOf(point)
       assert.ok(a >= 0 && a <= 360, `A ${a} is inside [0, 360]`)
-      if (move.kind === 'cut') {
-        assert.equal(alongOf(point), alongOf(move.from), 'every cut point keeps its ring’s along coordinate')
+      if (move.kind === 'cut' && !isAlongLink(move)) {
+        assert.equal(alongOf(point), alongOf(move.from), 'every ring cut point keeps its ring’s along coordinate')
       }
       assert.ok(point.z >= barPivotZ(RING_STOCK) - 1e-9, 'no point cuts below the pivot')
     }
@@ -459,6 +485,158 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     `the finish starts at the model, not the raw bar (highest ${highest.toFixed(3)})`)
   assert.ok(highest > 1, 'and it does cut a real depth of the standing bar')
   assert.equal(cutRings(result.moves).length, 11, 'one model-following ring per along position')
+}
+
+// ---------------------------------------------------------------------------
+// 2c. #1093: full rings are linked by a feed along the bar, not by a
+//     retract + rapid + plunge, and the finish link follows the model.
+//
+//     The rejection this block guards is the old motion: one retract and one
+//     plunge per ring (92 and 184 on the bust bench). A finish assumes no
+//     rough, so the link must stay on the model surface at the shared ring-end
+//     angle -- far below the bar's 21 mm travel height on this fixture.
+// ---------------------------------------------------------------------------
+
+{
+  const result = generateRotaryFinish('links', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around' }, {})
+  assert.deepEqual(result.warnings, [], 'the linked finish has no warning')
+  const rapid = result.moves.filter((move) => move.kind === 'rapid')
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+  assert.equal(plunges.length, 1, 'a full-ring around finish plunges once, at its first cut')
+  assert.equal(rapid.length, 2, 'and retracts only for the first positioning move and the final retract')
+  const links = result.moves.filter(isAlongLink)
+  // One feed link between each of the eleven rings; a steep shoulder splits a
+  // link into its horizontal legs, so a boundary can contribute more than one.
+  assert.ok(links.length >= 10 && links.length <= 20,
+    `ten ring boundaries are linked by feed moves (got ${links.length})`)
+  const pivot = barPivotZ(RING_STOCK)
+  for (const link of links) {
+    assert.ok(angleOf(link.from) === angleOf(link.to), 'the link keeps the rings\' shared angle')
+    assert.ok(link.to.x > link.from.x, 'the link runs along the bar in ring order')
+    for (const point of [link.from, link.to]) {
+      const tip = point.z - pivot
+      // The model on this fixture is radius 4 then 7; the sampler's
+      // conservative cell bound can lift a sample by at most the 0.05 cell.
+      assert.ok(tip <= 7 + RING_PARAMS.requestedCellSize + 1e-9,
+        `a finish link stays on the model (tip ${tip.toFixed(4)}), not at the 21 mm bar envelope`)
+      assert.ok(tip >= 4 - RING_PARAMS.requestedCellSize - 1e-9,
+        `a finish link does not sink below the model (tip ${tip.toFixed(4)})`)
+    }
+  }
+  // No run is split, so every ring boundary carries a link cut.
+  const rings = cutRings(result.moves)
+  assert.equal(rings.length, 11, 'the linked finish still emits eleven rings')
+}
+
+// ---------------------------------------------------------------------------
+// 2c-bis. #1093 review finding: the finish link row used to be sampled at the
+//     ring spacing (or the caller's angular `sampleSpacing`, capped). A ridge
+//     narrower than the ring spacing, at the midpoint between two rings, was
+//     therefore invisible: the link ran straight through it at the surrounding
+//     surface height. This is the reviewer's counter-example -- a Ø200 bar, a
+//     Ø1 ball, a 0.2 mm ridge 19.82 mm above a 60.18 mm cylinder -- and the
+//     link must now sample at `tool.radius / 4` and climb over the ridge.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a finish link resolves a ridge between two rings...')
+{
+  const stock = roundStock(200, 30, 'x', { x: 0, y: 0 })
+  const ball: NormalizedTool = {
+    ...BALL, id: 'ball-1', name: '1 mm ball nose', type: 'ball_endmill',
+    diameter: 1, radius: 0.5,
+  }
+  const base = 60.18
+  const peak = 80
+  // The retained ends pull the ring grid one cutter radius inside the band, so
+  // it is 5.5 + 19i/13: the ridge sits at the midpoint of rings 6 and 7
+  // (14.2692 and 15.7308), 0.73 mm from either -- more than the 0.5 mm cutter
+  // radius, so neither ring's footprint reaches it.
+  const ridgeFrom = 14.9
+  const ridgeTo = 15.1
+  const model = revolved(stock, [
+    { along: 5, radius: base },
+    { along: ridgeFrom, radius: base },
+    { along: ridgeFrom, radius: peak },
+    { along: ridgeTo, radius: peak },
+    { along: ridgeTo, radius: base },
+    { along: 25, radius: base },
+  ], 128)
+  const finish = generateRotaryFinish('ridge-link', model, stock, ball, {
+    // The coarser the caller's angular spacing, the coarser the old link row --
+    // 1.49 mm at this `stepover`, which misses the 0.2 mm ridge entirely.
+    stepover: 1.49, sampleSpacing: 2, stockToLeave: 0, alongStart: 5, alongEnd: 25,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around',
+  }, {})
+  // A Ø200 bar's height map is reduced to its budget; that is a resolution
+  // advisory, not a refusal, and the ridge below still resolves at the link
+  // row's own 0.125 mm spacing.
+  assert.ok(finish.warnings.every((warning) => warning.code === 'surfaceHeightMapReduced'),
+    'the ridge-link finish carries only the height-map resolution advisory')
+  const pivot = barPivotZ(stock)
+  const links = finish.moves.filter(isAlongLink)
+  assert.ok(links.length >= 10, `the ridge still links its full rings (${links.length})`)
+  // Every link segment that crosses the ridge's flat top must sit on it. The
+  // segment, not its endpoints: a merge collapses the run to its two ends, so
+  // an endpoint filter would miss the very point the link crosses. The sampler's
+  // conservative cell bound can lift a sample by at most its 0.05 mm cell; the
+  // tip must never be at the surrounding 60.18 mm cylinder.
+  let crossed = 0
+  let lowest = Number.POSITIVE_INFINITY
+  for (const link of links) {
+    const a = link.from.x
+    const b = link.to.x
+    if (!(b > a)) continue
+    const lo = Math.max(a, ridgeFrom)
+    const hi = Math.min(b, ridgeTo)
+    if (hi <= lo) continue
+    crossed++
+    for (const x of [lo, hi]) {
+      const tip = link.from.z + (link.to.z - link.from.z) * (x - a) / (b - a) - pivot
+      if (tip < lowest) lowest = tip
+    }
+  }
+  assert.ok(crossed > 0, 'the link row samples the ridge at all')
+  assert.ok(lowest >= peak - 0.06,
+    `the finish link climbs over the ridge instead of cutting through it (lowest tip ${lowest.toFixed(4)}, model ${peak})`)
+}
+
+// ---------------------------------------------------------------------------
+// 2d. #1093: a rough link rises only to what this operation's own earlier
+//     layers left. The first layer keeps the bar-top travel height (11); the
+//     second layer's links sit a clearance above the 7 mm floor the first
+//     layer cut, not above the 5 mm model and not at the 11 mm bar envelope.
+// ---------------------------------------------------------------------------
+
+{
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const model = revolved(stock, [{ along: 0, radius: 5 }, { along: 20, radius: 5 }], 64)
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-links', model, stock, FLAT, { ...params, stepdown: 3 }, {})
+  assert.deepEqual(result.warnings, [], 'the linked rough has no warning')
+  const pivot = barPivotZ(stock)
+  // The link's in-air traverse is a rapid at one angle and one height; its rise
+  // and drop are feeds and are not the link itself.
+  const links = result.moves.filter(isAirLink)
+  assert.ok(links.length >= 11, `the rough links its rings with an air rapid (${links.length})`)
+  assert.equal(result.moves.filter(isAlongLink).length, 0,
+    'no rough link is emitted as a feed through air')
+  // Rings are 2 mm apart, so layer 1 has ten links; the eleventh is layer 2's
+  // first link, between its first and second rings. `maxRadius - stepdown = 7`
+  // is the floor layer 1 left, and the bar is 10 mm, so a link at the model (6)
+  // would be a gouge.
+  const firstLayer = links.slice(0, 10).map((link) => link.to.z - pivot)
+  const secondLayer = links[10].to.z - pivot
+  assert.ok(firstLayer.every((tip) => Math.abs(tip - 11) <= 1e-9),
+    'the first layer keeps today\'s height: the bar surface plus the 1 mm clearance')
+  assert.ok(secondLayer >= 8 - 1e-9,
+    `the second layer's link clears the 7 mm floor plus the 1 mm clearance (got ${secondLayer.toFixed(3)})`)
+  assert.ok(secondLayer < 11 - 1e-9,
+    `the second layer's link drops below the bar's travel height (got ${secondLayer.toFixed(3)})`)
+  assert.ok(links.every((link) => link.to.z - pivot >= 5 + 1 - 1e-6),
+    'no rough link sinks into the model or misses the clearance')
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +1075,9 @@ interface LayeredPoint {
  * and this block would check the wrong thing.
  */
 function aroundLayers(moves: readonly ToolpathMove[], pivot: number): LayeredPoint[] {
-  const points = orderedCutPoints(moves)
+  // A ring-to-ring link changes the along coordinate at one angle; it is not a
+  // ring sample and must not shift the layer count.
+  const points = orderedCutPoints(moves.filter((move) => !isAlongLink(move)))
   const alongCount = new Set(points.map(alongOf)).size
   assert.ok(alongCount > 0, 'the around rough cuts an along position')
   const rings: ToolpathPoint[][] = []
