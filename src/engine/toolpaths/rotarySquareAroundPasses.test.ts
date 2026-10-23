@@ -198,9 +198,6 @@ const angleOf = (point: ToolpathPoint): number => {
  */
 const isConstantAngleCut = (move: ToolpathMove): boolean => move.kind === 'cut'
   && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
-/** A ring-to-ring link's along feed: a cut at one angle that changes along. */
-const isAlongLink = (move: ToolpathMove): boolean => isConstantAngleCut(move)
-  && (move.from.x !== move.to.x || move.from.y !== move.to.y)
 
 // ---------------------------------------------------------------------------
 // 1. The slice-A refusal is gone: a square blank generates around passes.
@@ -327,16 +324,34 @@ console.log('Testing that a split square ring retracts instead of linking low...
   assert.ok(plunges > 1,
     `a split ring retracts and plunges again rather than feeding at the surface (${plunges} plunges)`)
   const pivot = barPivotZ(SQUARE)
-  for (const move of finish.moves) {
-    if (!isAlongLink(move)) continue
-    // The new link keeps the shared physical angle of the two ring ends (A0 or
-    // A360); any other A change is the old travel link, which must stay at the
-    // blank's corner envelope.
-    if (move.from.a !== 0 && move.from.a !== 360) {
-      assert.ok(move.from.z - pivot >= TRAVEL_TIP - 1e-9,
-        `an A-changing square link turns at the corner envelope (${(move.from.z - pivot).toFixed(4)})`)
+  // The A-turning rule is live on the rough and the retract path: a ring split
+  // by the touch gate has several runs at one along position, and the emitter
+  // joins them with a cut at the blank's corner envelope; a split finish
+  // retracts and its travel rapid turns there too. Ring cuts also change A, but
+  // they are the cut itself -- the rule is about the *turn*, so only non-cut
+  // turning moves are asserted and the travel-height cut links are counted
+  // (the dead version filtered constant-angle along links and then asked
+  // whether their angle was not A0/A360, which was never true).
+  const rough = generateRotaryRough('split-link-rough', model, SQUARE, FLAT, {
+    ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+  }, {})
+  let turningLinks = 0
+  let turningTravelLinks = 0
+  for (const move of [...finish.moves, ...rough.moves]) {
+    if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) continue
+    const low = Math.min(move.from.z, move.to.z) - pivot
+    if (move.kind === 'cut') {
+      turningLinks++
+      if (low >= TRAVEL_TIP - 1e-9) turningTravelLinks++
+      continue
     }
+    assert.ok(low >= TRAVEL_TIP - 1e-9,
+      `a ${move.kind} turns A at the blank's corner envelope (${low.toFixed(4)})`)
   }
+  assert.ok(turningLinks > 0,
+    `the split-ring fixtures emit A-changing cut links (${turningLinks})`)
+  assert.ok(turningTravelLinks > 0,
+    `the A-changing cut link turns at the travel height (${turningTravelLinks})`)
 }
 
 // ---------------------------------------------------------------------------

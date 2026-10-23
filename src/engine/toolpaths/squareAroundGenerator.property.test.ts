@@ -45,13 +45,22 @@
  *
  * #1093 adds the around ring-to-ring link to the proof. A full ring's end and
  * the next ring's start share one physical angle, so the emitter feeds along
- * the bar instead of retracting. The finish follows the model at that angle;
- * the rough rises only to the material its own earlier layers left, plus the
- * 1 mm clearance. Ten **round-bar** around cases (a bare rough, a rough +
- * finish and a bare finish, with and without retained ends) join the seeded
- * set, so the same link is replayed on both cross-sections. Every rough link
- * is checked against the reference's standing material: it must remove
- * nothing. A split ring still retracts through the old travel path.
+ * the bar instead of retracting. The finish follows the model at that angle
+ * through a row sampled no coarser than the ring spacing or a quarter of the
+ * tool radius; the rough rises only to the material its own earlier layers
+ * left, plus the 1 mm clearance, and that constant-height traverse is a rapid.
+ * Ten **round-bar** around cases (a bare rough, a rough + finish and a bare
+ * finish, with and without retained ends) join the seeded set, plus two
+ * **non-revolved** models -- a square prism inside the round bar, ball and flat
+ * -- so a link crossing a feature between two rings is replayed against the
+ * full cutter body rather than one ray of a surface of revolution. Every
+ * rough link is checked: a cut link removes nothing, and the in-air rapid's
+ * body must clear the reference's standing material. Every finish link is
+ * replayed too; after a rough its removal is bounded by that rough's stepdown
+ * (a surface link removes the between-ring terrace, so the rough's air
+ * allowance does not apply), while a finish-only link is covered by the
+ * advisory and the final-surface check. A split ring still retracts through
+ * the old travel path.
  *
  * The reference is written without the generator's helpers (no
  * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
@@ -186,6 +195,49 @@ function revolved(
       index.push(a + j, a + j2, b + j2, a + j, b + j2, b + j)
     }
   }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * An extruded rectangle (a closed box) inside the blank (#1093). A box is not a
+ * surface of revolution: its material height varies with the angle under one
+ * cutter pose, so replaying a link across it exercises the **full cutter
+ * body**, not just the link's own ray. The side walls are quads rather than the
+ * vertex-pair triangles first tried here; the pair winding left the
+ * across-facing sides invisible to the sampler at some angles. The reference
+ * stays blind to the generator's model code.
+ */
+function box(
+  stock: BarStock,
+  alongFrom: number,
+  alongTo: number,
+  acrossMin: number,
+  acrossMax: number,
+  upMin: number,
+  upMax: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  // Extruded rectangle (four corners, caps and side walls). The earlier
+  // vertex-pair box winding left the across-facing sides invisible to the
+  // sampler at some angles; the prism's side quads sample at every angle.
+  const crossSection: Array<readonly [number, number]> = [
+    [acrossMin, upMin], [acrossMax, upMin], [acrossMax, upMax], [acrossMin, upMax],
+  ]
+  const positions: number[] = []
+  for (const along of [alongFrom, alongTo]) {
+    for (const [across, up] of crossSection) {
+      if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+      else positions.push(centre + across, along, pivot + up)
+    }
+  }
+  const n = crossSection.length
+  const index: number[] = []
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    index.push(i, j, n + j, i, n + j, n + i)
+  }
+  for (let i = 1; i < n - 1; i++) index.push(0, i + 1, i, n, n + i, n + i + 1)
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
@@ -631,6 +683,70 @@ function referenceMove(
   return engagement
 }
 
+/**
+ * How far the cutter body of a constant-height along rapid clears the
+ * reference's standing material, in mm (#1093).
+ *
+ * The rough's ring-to-ring link is now a rapid: it runs at one angle and one
+ * height, derived from what the operation's own earlier layers left plus the
+ * clearance. It must be in air, so at every cell the cutter passes over the
+ * body's own contact must be at or above the material -- not the tip, because a
+ * ball or a flat reaches a neighbouring angle higher than its lowest point.
+ * The move is along the bar, so the tool passes directly over every cell it
+ * spans; `dx = 0` is the deepest pose for that cell. Returns the smallest
+ * `contact - material`, negative when the body is inside the material.
+ */
+export const rapidWorst = { along: 0, angle: 0, material: 0, contact: 0, tip: 0, delta: 0 }
+
+function rapidClearance(
+  reference: Reference,
+  move: ToolpathMove,
+  pivot: number,
+  cutterRadius: number,
+  ball: boolean,
+  alongOf: (point: ToolpathMove['from']) => number,
+): number {
+  const { material, alongBins, alongStart, alongBin, angleBins, angleDeg } = reference
+  const fromAlong = alongOf(move.from)
+  const toAlong = alongOf(move.to)
+  const tip = move.from.z - pivot
+  const angle = move.from.a ?? 0
+  const halfSpan = bodyAngularReachDeg(ball, cutterRadius, tip, reference.maxMaterial)
+  const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - cutterRadius - alongStart) / alongBin))
+  const i1 = Math.min(alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + cutterRadius - alongStart) / alongBin))
+  const loBin = Math.floor((angle - halfSpan - angleDeg) / angleDeg)
+  const hiBin = Math.ceil((angle + halfSpan + angleDeg) / angleDeg)
+  let margin = Number.POSITIVE_INFINITY
+  for (let i = i0; i <= i1; i++) {
+    const cellAlong = alongStart + (i + 0.5) * alongBin
+    // The tool passes over this cell only inside the link's own span; outside
+    // it, the nearest pose is the nearer endpoint, `dx` away. Using dx = 0 for
+    // a cell beyond the span overstates the body's reach by the whole offset.
+    const dx = cellAlong < fromAlong ? fromAlong - cellAlong
+      : cellAlong > toAlong ? cellAlong - toAlong : 0
+    if (dx > cutterRadius) continue
+    for (let cell = loBin; cell <= hiBin; cell++) {
+      const k = ((cell % angleBins) + angleBins) % angleBins
+      const cellAngle = (k + 0.5) * angleDeg
+      const delta = Math.abs(((cellAngle - angle + 180) % 360 + 360) % 360 - 180)
+      if (delta > halfSpan + angleDeg) continue
+      const standing = material[i * angleBins + k]
+      if (standing <= 0) continue
+      const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
+      if (!span) continue
+      const cellMargin = span.contact - standing
+      if (cellMargin < margin) {
+        margin = cellMargin
+        Object.assign(rapidWorst, {
+          along: cellAlong, angle: cellAngle,
+          material: standing, contact: span.contact, tip, delta,
+        })
+      }
+    }
+  }
+  return margin
+}
+
 /** Count cavities as well as surface loss when judging retained stock. */
 function retainedRemoval(reference: Reference, index: number, blank: number): number {
   const occupied = reference.occupied.get(index)
@@ -845,6 +961,12 @@ interface Case {
   label: string
   stock: BarStock
   profile: { along: number; radius: number }[]
+  /**
+   * A non-revolved model (#1093). When present it replaces the revolved mesh;
+   * `profile` is then only the label's shape and the finished-surface check is
+   * skipped (it needs an analytic radius, and a box's is not one).
+   */
+  mesh?: RotaryModelMesh
   type: 'flat_endmill' | 'ball_endmill'
   diameter: number
   stepdown: number
@@ -1262,6 +1384,54 @@ function drawRoundCase(seed: number, lengthScale = 1): Case {
   }
 }
 
+/**
+ * A non-revolved around case (#1093 review): the model is a **square prism**
+ * inside a round bar, so the material height under one cutter pose varies with
+ * the angle and the link's whole body is judged, not one ray. Two cases cover
+ * a ball and a flat cutter, both rough + finish, so every finish link is
+ * replayed after a rough and the removal bound applies.
+ *
+ * The model is a box rather than `revolved`, so the finished-surface check is
+ * skipped for these cases; the link replay, the rough layer descent and the
+ * retained-end check are the proof.
+ */
+function drawFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 14
+  const stock = roundStock(side, length)
+  const alongStart = 3
+  const alongEnd = 11
+  const half = 2.6
+  const diameter = 1.5
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `square prism ${2 * half} both around ends 0 stepdown 1.5`,
+    stock,
+    // The prism's inscribed radius; only the label and the (skipped) surface
+    // check would read it.
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: 1,
+    roughSpacing: 0.35,
+    finishSpacing: 0.3,
+    requestedCellSize: 0.25,
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
 /** The reference grid limit for one case. Default-parameter cases keep the full
  *  resolution; a coarsened non-compact case may run on a smaller grid, which
  *  coarsens the generator's requested cells too (the 4x relationship holds). */
@@ -1288,7 +1458,7 @@ interface Program {
 function generate(entry: Case): Program {
   const tool = normalizedTool(entry.type, entry.diameter)
   const stock = entry.stock
-  const model = revolved(stock, entry.profile)
+  const model = entry.mesh ?? revolved(stock, entry.profile)
   const common = {
     stepover: entry.stepover,
     // The rough's own sampling. The finish reads its own in the call below.
@@ -2033,6 +2203,18 @@ let worstDescentMargin = Number.POSITIVE_INFINITY
 let worstDescentMarginLabel = ''
 let nonTurningWorst = 0
 let nonTurningLabel = ''
+// #1093: finish links replayed against the independent model.
+let finishLinkChecks = 0
+let worstFinishLinkBite = 0
+let worstFinishLinkBiteLabel = ''
+let worstFinishAfterRoughLinkBite = 0
+let worstFinishAfterRoughLinkBiteLabel = ''
+let finishAfterRoughLinkChecks = 0
+// #1093: the rough's in-air link is a rapid now, checked for clearance.
+let rapidLinkChecks = 0
+let roundRapidLinkChecks = 0
+let worstRapidLinkMargin = Number.POSITIVE_INFINITY
+let worstRapidLinkLabel = ''
 
 // `SQUARE_CASES` is a profiling aid only: the committed run uses all 300 seeded
 // cases, and the assertions below still require the full set.
@@ -2048,6 +2230,11 @@ const CASES = [
   // #1093: the round-bar around equivalent of the square set, always present.
   ...Array.from({ length: ROUND_CASES }, (_, seed) =>
     fitEntry(drawRoundCase(seed), (scale) => drawRoundCase(seed, scale))),
+  // #1093 review: non-revolved around models, so a link crossing a feature
+  // between two rings is replayed against the full cutter body at every angle
+  // under the pose, not one ray of a surface of revolution.
+  fitEntry(drawFeatureCase(0)),
+  fitEntry(drawFeatureCase(1)),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -2084,15 +2271,13 @@ let profileMoves = 0
 let checkedPlunges = 0
 let worstPlunge = 0
 let worstPlungeLabel = ''
-// #1093: rough link moves (a cut at one angle that changes along) replayed
-// against the reference's remaining material. A link must rise above what the
-// operation's own earlier layers left, so it removes nothing; a mutation that
-// sizes it from the model instead of the leftover terrace takes a bite.
+// #1093: rough link moves replayed against the reference's remaining material.
+// An in-air link is a rapid and is checked for body clearance below; a link
+// that stays a cut (the A-changing travel rule) must remove nothing.
 let roughLinkChecks = 0
-let roundRoughLinkChecks = 0
 let roundAroundCases = 0
-let worstRoughLinkBite = 0
-let worstRoughLinkLabel = ''
+/** Non-revolved models replayed (#1093 review). */
+let featureCases = 0
 
 for (const { entry, program } of CASES) {
   currentCaseLabel = entry.label
@@ -2107,6 +2292,7 @@ for (const { entry, program } of CASES) {
     profileMoves = referenceStats.moves
   }
   casesDone++
+  if (entry.mesh) featureCases++
   if (entry.stock.shape === 'round' && entry.roughKind === 'around') roundAroundCases++
   if (entry.defaultParams) {
     defaultCases++
@@ -2130,7 +2316,14 @@ for (const { entry, program } of CASES) {
   const finishRan = entry.programKind !== 'rough'
   if (roughRan) {
     assert.ok(program.roughMoves.length > 0, `${entry.label}: the rough emits motion`)
-    assert.deepEqual(program.roughCodes, [], `${entry.label}: the rough warns about nothing`)
+    // A non-revolved box that straddles the axis may legitimately need a cut
+    // below the centreline (#1093); every revolved case here is above it.
+    assert.ok(
+      entry.mesh
+        ? program.roughCodes.every((code) => code === 'rotaryBelowCentreline')
+        : program.roughCodes.length === 0,
+      `${entry.label}: the rough warns about nothing else`,
+    )
   }
   if (finishRan) {
     // A finish only follows the model, so it cuts with or without a rough. A
@@ -2142,7 +2335,10 @@ for (const { entry, program } of CASES) {
       assert.deepEqual(program.finishCodes, ['rotaryFinishWithoutRough'],
         `${entry.label}: a finish-only program carries the no-rough advisory`)
     } else {
-      assert.deepEqual(program.finishCodes, [], `${entry.label}: a preceding rough suppresses the advisory`)
+      assert.ok(entry.mesh
+        ? program.finishCodes.every((code) => code === 'rotaryBelowCentreline')
+        : program.finishCodes.length === 0,
+      `${entry.label}: a preceding rough suppresses the advisory`)
     }
     if (entry.finishKind === 'along') {
       alongFinishStages++
@@ -2206,7 +2402,7 @@ for (const { entry, program } of CASES) {
   // bound below uses the rough's stepdown instead of a finish one.
   const stages = stageSpecs.map((spec) => ({
     ...spec,
-    descent: spec.finish
+    descent: spec.finish || entry.mesh
       ? null
       : assertStageDescent(
         entry,
@@ -2259,6 +2455,29 @@ for (const { entry, program } of CASES) {
           assert.ok(margin >= -1e-6,
             `${entry.label}: a rapid turns A at Z${lowZ.toFixed(4)}, below the corner envelope plus clearance `
             + `(${travelZ.toFixed(4)})`)
+        } else if (stage.direction === 'around'
+          && fromAngle === toAngle && alongOf(move.from) !== alongOf(move.to)
+          && move.from.z === move.to.z) {
+          // #1093: the rough's in-air link is a constant-height rapid along the
+          // bar. It must clear everything the reference still holds under the
+          // whole cutter body; it removes nothing, so a rapid that dips below
+          // the leftover bound is a gouge the reference would never replay.
+          rapidLinkChecks++
+          if (entry.stock.shape === 'round') roundRapidLinkChecks++
+          const margin = rapidClearance(reference, move, pivot, cutterRadius, ball, alongOf)
+          if (margin < worstRapidLinkMargin) {
+            worstRapidLinkMargin = margin
+            worstRapidLinkLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+              + `tip ${(move.from.z - pivot).toFixed(3)}`
+          }
+          assert.ok(margin >= -linkBiteAllowance,
+            `${entry.label}: an in-air rough link at A${fromAngle.toFixed(2)} along `
+            + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} stands `
+            + `${(-margin).toFixed(4)} mm below the material its earlier layers left `
+            + `(allowed ${linkBiteAllowance.toFixed(4)}; tip ${rapidWorst.tip.toFixed(3)} `
+            + `contact ${rapidWorst.contact.toFixed(3)} material ${rapidWorst.material.toFixed(3)} `
+            + `at along ${rapidWorst.along.toFixed(2)} A${rapidWorst.angle.toFixed(2)} delta ${rapidWorst.delta.toFixed(2)})`)
         }
       } else if (lowZ < travelZ - 1e-6) {
         const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
@@ -2270,20 +2489,49 @@ for (const { entry, program } of CASES) {
         // along-mode pass is a constant-angle cut by construction.
         const linkMove = stage.direction === 'around'
           && fromAngle === toAngle && alongOf(move.from) !== alongOf(move.to)
-        if (linkMove && !stage.finish) {
-          roughLinkChecks++
-          if (entry.stock.shape === 'round') roundRoughLinkChecks++
-          if (moveSurfaceWorst > worstRoughLinkBite) {
-            worstRoughLinkBite = moveSurfaceWorst
-            worstRoughLinkLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
-              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
-              + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+        if (linkMove) {
+          if (stage.finish) {
+            finishLinkChecks++
+            if (moveSurfaceWorst > worstFinishLinkBite) {
+              worstFinishLinkBite = moveSurfaceWorst
+              worstFinishLinkBiteLabel = `${entry.label} ${entry.programKind} A${fromAngle.toFixed(2)} along `
+                + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+                + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+            }
+            // A surface-following link is not an air move: between two rings it
+            // removes the terrace the rough left, so the air allowance the rough
+            // link uses does not apply. A finish after a rough is bounded by that
+            // rough's stepdown, exactly as the along-stage finish above is; a
+            // finish-only program has no layer bound (2026-10-22 decision) and is
+            // covered by its advisory and the final-surface check.
+            if (entry.programKind !== 'finish') {
+              finishAfterRoughLinkChecks++
+              if (moveSurfaceWorst > worstFinishAfterRoughLinkBite) {
+                worstFinishAfterRoughLinkBite = moveSurfaceWorst
+                worstFinishAfterRoughLinkBiteLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+                  + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+                  + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+              }
+              assert.ok(moveSurfaceWorst <= roughBound,
+                `${entry.label}: a finish link at A${fromAngle.toFixed(2)} along `
+                + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
+                + `${moveSurfaceWorst.toFixed(4)} mm of the material the rough left `
+                + `(allowed ${roughBound.toFixed(4)}, one rough stepdown; cell along `
+                + `${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+                + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)}; `
+                + `stepover ${entry.stepover} cell ${entry.requestedCellSize})`)
+            }
+          } else {
+            // A rough link that stays a cut (it changes A, or its next cut is
+            // above the clearance plane) is the old travel-height motion; the
+            // rapid is checked above.
+            roughLinkChecks++
+            assert.ok(moveSurfaceWorst <= linkBiteAllowance,
+              `${entry.label}: a rough link at A${fromAngle.toFixed(2)} along `
+              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
+              + `${moveSurfaceWorst.toFixed(4)} mm of the material the earlier layers left `
+              + `(allowed ${linkBiteAllowance.toFixed(4)})`)
           }
-          assert.ok(moveSurfaceWorst <= linkBiteAllowance,
-            `${entry.label}: a rough link at A${fromAngle.toFixed(2)} along `
-            + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
-            + `${moveSurfaceWorst.toFixed(4)} mm of the material the earlier layers left `
-            + `(allowed ${linkBiteAllowance.toFixed(4)})`)
         }
         if (stage.direction === 'around') {
           if (!stage.finish) {
@@ -2292,7 +2540,11 @@ for (const { entry, program } of CASES) {
               worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
                 + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)}`
             }
-            checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+            // A sharp non-revolved corner makes the cumulative removed material
+            // an upper bound with no stepdown meaning (the same reason the along
+            // stage's interior number is not a bound); the link and rapid checks
+            // carry the non-revolved cases.
+            if (!entry.mesh) checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
           }
         } else {
           // #1045 slice O/P: an along pass is a **flank** cut, not a radial
@@ -2417,10 +2669,12 @@ for (const { entry, program } of CASES) {
                 worst[key].excess = excess
                 worst[key].label = keyLabel
               }
-              checkEngagement(engagement, bound,
-                `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
-                + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
-                + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              if (!entry.mesh) {
+                checkEngagement(engagement, bound,
+                  `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
+                  + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
+                  + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              }
             }
           } else if (engagement > nonTurningWorst) {
             nonTurningWorst = engagement
@@ -2449,10 +2703,12 @@ for (const { entry, program } of CASES) {
                 worstPlunge = engagement
                 worstPlungeLabel = keyLabel
               }
-              checkEngagement(engagement, bound,
-                `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
-                + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
-                + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              if (!entry.mesh) {
+                checkEngagement(engagement, bound,
+                  `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
+                  + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
+                  + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              }
             }
           }
         }
@@ -2486,6 +2742,10 @@ for (const { entry, program } of CASES) {
   // leaves the raw blank between its passes, so its above-model material is not
   // a finished-surface measure; it is covered by the advisory instead.
   if (!finishRan) continue
+  // A non-revolved model has no "radius at this along"; the surface bounds
+  // below need one. Its link replay, layer descent and retained-end checks are
+  // the proof for those cases (#1093).
+  if (entry.mesh) continue
   const finishOnly = entry.programKind === 'finish'
   const slope = modelMaxSlope(entry.profile)
   // A ball leaves its between-pass scallop; a flat leaves a staircase one full
@@ -2621,12 +2881,22 @@ assert.ok(aroundDescentChecks > 1000, `the emitted around descent is asserted ($
 assert.ok(roughDescentChecks > 1000, `the emitted rough descent is asserted (${roughDescentChecks})`)
 assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
 console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
-console.log(`  #1093 rough links: ${roughLinkChecks} replayed (${roundRoughLinkChecks} on round bars), `
-  + `worst removal ${worstRoughLinkBite.toFixed(4)} mm (${worstRoughLinkLabel || 'none'})`)
+console.log(`  #1093 rough links: ${rapidLinkChecks} replayed as in-air rapids `
+  + `(${roundRapidLinkChecks} on round bars; ${roughLinkChecks} cut links), `
+  + `worst body clearance ${worstRapidLinkMargin.toFixed(4)} mm (${worstRapidLinkLabel || 'none'})`)
+console.log(`  #1093 finish links: ${finishLinkChecks} replayed `
+  + `(${finishAfterRoughLinkChecks} after a rough), worst removal ${worstFinishLinkBite.toFixed(4)} mm `
+  + `(${worstFinishLinkBiteLabel || 'none'}); after a rough ${worstFinishAfterRoughLinkBite.toFixed(4)} mm `
+  + `(${worstFinishAfterRoughLinkBiteLabel || 'none'})`)
 assert.ok(roundAroundCases >= ROUND_CASES,
   `the round-bar around set is in the seeded run (${roundAroundCases} >= ${ROUND_CASES})`)
-assert.ok(roughLinkChecks > 0, `the rough links are replayed against the reference (${roughLinkChecks})`)
-assert.ok(roundRoughLinkChecks > 0, `a round-bar rough link is replayed (${roundRoughLinkChecks})`)
+assert.ok(featureCases >= 2,
+  `non-revolved around models are replayed (${featureCases})`)
+assert.ok(rapidLinkChecks > 0, `the rough in-air links are replayed against the reference (${rapidLinkChecks})`)
+assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (${roundRapidLinkChecks})`)
+assert.ok(finishLinkChecks > 0, `the finish links are replayed against the reference (${finishLinkChecks})`)
+assert.ok(finishAfterRoughLinkChecks > 0,
+  `a finish link after a rough is replayed against the reference (${finishAfterRoughLinkChecks})`)
 // #1045 slice N: at least 38 programs must run at the adapter's **default**
 // parameters -- never coarsened, only shortened -- so the default cutting
 // programs are covered, not only the custom-sampling ones. The subset covers

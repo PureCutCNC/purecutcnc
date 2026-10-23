@@ -203,6 +203,19 @@ const isAlongLink = (move: ToolpathMove): boolean => move.kind === 'cut'
   && move.from.a !== undefined && move.to.a !== undefined
   && move.from.a === move.to.a
   && (move.from.x !== move.to.x || move.from.y !== move.to.y)
+/**
+ * The rough's in-air link leg (#1093): a rapid at one angle and one height that
+ * changes the along coordinate. It is above the material the operation's own
+ * earlier layers can leave, by the clearance, so it is a rapid rather than a
+ * feed -- the machine must not creep through that air.
+ */
+const isAirLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
+  && move.from.a !== undefined && move.to.a !== undefined
+  && move.from.a === move.to.a
+  && move.from.z === move.to.z
+  // Forward along the bar, in ring order. A layer boundary's travel-height
+  // traverse runs back to the first along position and is not a link.
+  && (move.to.x > move.from.x || move.to.y > move.from.y)
 
 // ---------------------------------------------------------------------------
 // 1. Byte-identical along mode (rough; re-captured finish).
@@ -516,6 +529,78 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 }
 
 // ---------------------------------------------------------------------------
+// 2c-bis. #1093 review finding: the finish link row used to be sampled at the
+//     ring spacing (or the caller's angular `sampleSpacing`, capped). A ridge
+//     narrower than the ring spacing, at the midpoint between two rings, was
+//     therefore invisible: the link ran straight through it at the surrounding
+//     surface height. This is the reviewer's counter-example -- a Ø200 bar, a
+//     Ø1 ball, a 0.2 mm ridge 19.82 mm above a 60.18 mm cylinder -- and the
+//     link must now sample at `tool.radius / 4` and climb over the ridge.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a finish link resolves a ridge between two rings...')
+{
+  const stock = roundStock(200, 30, 'x', { x: 0, y: 0 })
+  const ball: NormalizedTool = {
+    ...BALL, id: 'ball-1', name: '1 mm ball nose', type: 'ball_endmill',
+    diameter: 1, radius: 0.5,
+  }
+  const base = 60.18
+  const peak = 80
+  // The retained ends pull the ring grid one cutter radius inside the band, so
+  // it is 5.5 + 19i/13: the ridge sits at the midpoint of rings 6 and 7
+  // (14.2692 and 15.7308), 0.73 mm from either -- more than the 0.5 mm cutter
+  // radius, so neither ring's footprint reaches it.
+  const ridgeFrom = 14.9
+  const ridgeTo = 15.1
+  const model = revolved(stock, [
+    { along: 5, radius: base },
+    { along: ridgeFrom, radius: base },
+    { along: ridgeFrom, radius: peak },
+    { along: ridgeTo, radius: peak },
+    { along: ridgeTo, radius: base },
+    { along: 25, radius: base },
+  ], 128)
+  const finish = generateRotaryFinish('ridge-link', model, stock, ball, {
+    // The coarser the caller's angular spacing, the coarser the old link row --
+    // 1.49 mm at this `stepover`, which misses the 0.2 mm ridge entirely.
+    stepover: 1.49, sampleSpacing: 2, stockToLeave: 0, alongStart: 5, alongEnd: 25,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around',
+  }, {})
+  // A Ø200 bar's height map is reduced to its budget; that is a resolution
+  // advisory, not a refusal, and the ridge below still resolves at the link
+  // row's own 0.125 mm spacing.
+  assert.ok(finish.warnings.every((warning) => warning.code === 'surfaceHeightMapReduced'),
+    'the ridge-link finish carries only the height-map resolution advisory')
+  const pivot = barPivotZ(stock)
+  const links = finish.moves.filter(isAlongLink)
+  assert.ok(links.length >= 10, `the ridge still links its full rings (${links.length})`)
+  // Every link segment that crosses the ridge's flat top must sit on it. The
+  // segment, not its endpoints: a merge collapses the run to its two ends, so
+  // an endpoint filter would miss the very point the link crosses. The sampler's
+  // conservative cell bound can lift a sample by at most its 0.05 mm cell; the
+  // tip must never be at the surrounding 60.18 mm cylinder.
+  let crossed = 0
+  let lowest = Number.POSITIVE_INFINITY
+  for (const link of links) {
+    const a = link.from.x
+    const b = link.to.x
+    if (!(b > a)) continue
+    const lo = Math.max(a, ridgeFrom)
+    const hi = Math.min(b, ridgeTo)
+    if (hi <= lo) continue
+    crossed++
+    for (const x of [lo, hi]) {
+      const tip = link.from.z + (link.to.z - link.from.z) * (x - a) / (b - a) - pivot
+      if (tip < lowest) lowest = tip
+    }
+  }
+  assert.ok(crossed > 0, 'the link row samples the ridge at all')
+  assert.ok(lowest >= peak - 0.06,
+    `the finish link climbs over the ridge instead of cutting through it (lowest tip ${lowest.toFixed(4)}, model ${peak})`)
+}
+
+// ---------------------------------------------------------------------------
 // 2d. #1093: a rough link rises only to what this operation's own earlier
 //     layers left. The first layer keeps the bar-top travel height (11); the
 //     second layer's links sit a clearance above the 7 mm floor the first
@@ -532,21 +617,26 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   const result = generateRotaryRough('rough-links', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the linked rough has no warning')
   const pivot = barPivotZ(stock)
-  const links = result.moves.filter(isAlongLink)
-  assert.ok(links.length >= 11, `the rough links its rings (${links.length})`)
+  // The link's in-air traverse is a rapid at one angle and one height; its rise
+  // and drop are feeds and are not the link itself.
+  const links = result.moves.filter(isAirLink)
+  assert.ok(links.length >= 11, `the rough links its rings with an air rapid (${links.length})`)
+  assert.equal(result.moves.filter(isAlongLink).length, 0,
+    'no rough link is emitted as a feed through air')
   // Rings are 2 mm apart, so layer 1 has ten links; the eleventh is layer 2's
-  // first. `maxRadius - stepdown = 7` is the floor layer 1 left, and the bar is
-  // 10 mm, so a link at the model (6) would be a gouge.
+  // first link, between its first and second rings. `maxRadius - stepdown = 7`
+  // is the floor layer 1 left, and the bar is 10 mm, so a link at the model (6)
+  // would be a gouge.
   const firstLayer = links.slice(0, 10).map((link) => link.to.z - pivot)
   const secondLayer = links[10].to.z - pivot
   assert.ok(firstLayer.every((tip) => Math.abs(tip - 11) <= 1e-9),
     'the first layer keeps today\'s height: the bar surface plus the 1 mm clearance')
-  assert.ok(secondLayer >= 7 - 1e-9,
-    `the second layer's link clears the 7 mm floor the first layer left (got ${secondLayer.toFixed(3)})`)
+  assert.ok(secondLayer >= 8 - 1e-9,
+    `the second layer's link clears the 7 mm floor plus the 1 mm clearance (got ${secondLayer.toFixed(3)})`)
   assert.ok(secondLayer < 11 - 1e-9,
     `the second layer's link drops below the bar's travel height (got ${secondLayer.toFixed(3)})`)
-  assert.ok(links.every((link) => link.to.z - pivot >= 5 - 1e-6),
-    'no rough link sinks into the model')
+  assert.ok(links.every((link) => link.to.z - pivot >= 5 + 1 - 1e-6),
+    'no rough link sinks into the model or misses the clearance')
 }
 
 // ---------------------------------------------------------------------------
