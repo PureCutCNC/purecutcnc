@@ -2289,16 +2289,101 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
       }
     }
   }
-  // The finish keeps the old sampling: its walls are still thickened by its
-  // own leave, and its output is byte-identical to HEAD (fingerprints captured
-  // there). #1095 changes the rough only.
-  for (const [direction, fingerprint] of [['along', '6efaca92f332b379'], ['around', '67a9e8002172941d']] as const) {
-    const finish = generateRotaryFinish('finish', mesh, stock, ball, {
+  // #1095 applies the same rule to the finish: it no longer applies its radial
+  // leave to the retained walls, so the outermost pass stays at model + leave
+  // instead of being lifted over the thickened wall's corner. With leave 0
+  // nothing is eroded and no grid extra is built, so the output is byte-
+  // identical to HEAD (the zero-leave fingerprints were captured there).
+  for (const direction of ['along', 'around'] as const) {
+    const params = {
       stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9, safeRadius: 9,
-      requestedCellSize: 0.01, stockToLeave: leave, passDirection: direction,
-    }, {})
+      requestedCellSize: 0.01, passDirection: direction,
+    } as const
+    const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
+    const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
+    assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? '8b430361116b9874' : '22fa3732edae372d',
+      `finish ${direction}: zero stock to leave is byte-identical`)
+    // Recaptured for #1095: the positive-leave fingerprints now carry the
+    // un-thickened walls (the old values lifted the outermost pass to ~4.42).
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      fingerprint, `finish ${direction}: byte-identical with a positive leave`)
+      direction === 'along' ? '45837f8a39449e24' : 'c853fb88559dad28',
+      `finish ${direction}: the leave reaches the model, not the retained wall`)
+    const first = outermost(finish, base.alongStart + ball.radius)
+    assert.ok(first <= modelRadius + leave + 0.03,
+      `finish ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.03).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `finish ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < stock.thickness / 2 - 0.5,
+      `finish ${direction}: the outermost pass is not lifted to the bar top (${first.toFixed(4)})`)
+    for (const move of finish.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - ball.radius >= base.alongStart - 1e-9,
+          `finish ${direction}: the cutter body stays out of the lower retained wall at x ${point.x}`)
+        assert.ok(point.x + ball.radius <= base.alongEnd + 1e-9,
+          `finish ${direction}: the cutter body stays out of the upper retained wall at x ${point.x}`)
+      }
+    }
+  }
+
+  // The requested amount in all cases: in the middle of the band, away from
+  // both retained walls, a rough and a finish leave exactly model + stock to
+  // leave. The tolerance is the height-map cell -- 0.005 mm here -- because the
+  // sampler's conservative cell bounds are its documented lift (a sample can
+  // read up to one cell above the true surface); the between-pass scallop does
+  // not apply at the sample points this reads. A leave that is 0.01 mm too big
+  // therefore fails, which the 0.01 mm fingerprints above could not see.
+  {
+    const cell = 0.005
+    const tolerance = cell
+    // A longer bar gives the along mode interior passes too: on the 12 mm
+    // fixture its cutter-centre span is only 5..7, so both passes sit one radius
+    // from a wall.
+    const leftoverStock = roundStock(12, 20, 'x')
+    const leftoverMesh = lathe(leftoverStock, () => modelRadius, 3, 17, 1, 192)
+    // An along-mode pass is one long cut along the bar, so its midpoint is read
+    // from the commanded segment rather than from an emitted vertex. The model
+    // is a cylinder, so the tip on that segment is constant; an around ring has
+    // a zero-length x span and is read at its own x.
+    const probe = 10
+    for (const direction of ['along', 'around'] as const) {
+      for (const kind of ['rough', 'finish'] as const) {
+        const params = {
+          stepover: 1, stepdown: 0.5, sampleSpacing: 1, alongStart: 3, alongEnd: 17, safeRadius: 9,
+          requestedCellSize: cell, stockToLeave: leave, passDirection: direction,
+        } as const
+        const result = kind === 'rough'
+          ? generateRotaryRough(`${kind}-mid`, leftoverMesh, leftoverStock, ball, params, {})
+          : generateRotaryFinish(`${kind}-mid`, leftoverMesh, leftoverStock, ball, params, {})
+        let lowest = Number.POSITIVE_INFINITY
+        let highest = Number.NEGATIVE_INFINITY
+        for (const move of result.moves) {
+          if (move.kind !== 'cut') continue
+          const lo = Math.min(move.from.x, move.to.x)
+          const hi = Math.max(move.from.x, move.to.x)
+          if (probe < lo - 1e-9 || probe > hi + 1e-9) continue
+          const fraction = hi - lo > 1e-9 ? (probe - move.from.x) / (move.to.x - move.from.x) : 0
+          const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
+          // The rough's earlier layers sit above the outermost one; they are
+          // not the leftover the band is asked about.
+          if (tip > leftoverStock.thickness / 2) continue
+          lowest = Math.min(lowest, tip)
+          highest = Math.max(highest, tip)
+        }
+        assert.ok(Number.isFinite(lowest), `${kind} ${direction}: the mid band is cut`)
+        assert.ok(lowest >= modelRadius + leave - tolerance,
+          `${kind} ${direction}: the mid band is not cut below model + stock to leave (${lowest.toFixed(4)})`)
+        // A rough's higher layers are above the leave; only its lowest cut is
+        // the leftover. A finish has one model-following surface, so every
+        // point of it must stay within the cell.
+        const top = kind === 'finish' ? highest : lowest
+        assert.ok(top <= modelRadius + leave + tolerance,
+          `${kind} ${direction}: the mid band leaves at most model + stock to leave + one cell `
+          + `(${top.toFixed(4)} <= ${(modelRadius + leave + tolerance).toFixed(4)})`)
+      }
+    }
   }
 
   // Slice B: eroding the wall changes the wall, never the height-map grid. The
