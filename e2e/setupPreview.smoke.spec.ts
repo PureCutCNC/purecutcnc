@@ -150,8 +150,12 @@ test('a single-setup project simulates as before, with no picker and no note', a
   const { page } = app
   await seedTwoSetups(page, false)
   await ui.operations.rowByName(page, 'Top pass').click()
+  // Generation runs on the background thread by default (#1087); on the dev
+  // server its first start loads the worker's modules one by one, so give the
+  // first toolpaths the same 30 s the other generation waits use.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
   await ui.viewMenu.tabSimulation(page).click()
-  await expect.poll(async () => (await simStats(page)).removed).toBeGreaterThan(0)
+  await expect.poll(async () => (await simStats(page)).removed, { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(ui.simSetup.picker(page)).toHaveCount(0)
   await expect(ui.simSetup.note(page)).toHaveCount(0)
 })
