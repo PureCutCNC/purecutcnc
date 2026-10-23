@@ -273,14 +273,19 @@ function postOperations(
  * unwind: the trailing machine-coordinate retract and the closing `G0 A0` are
  * gone, so the program text loses its last two motion lines. `aroundMoves` is
  * unchanged — #1091 adds and removes no generated move.
+ *
+ * #1095 recaptured both: the rough no longer applies the radial stock to leave
+ * to the retained end walls, and the height-map grid stays on the un-eroded
+ * stubs, so the wall-adjacent samples and the runs ending on them change while
+ * the mid-bar samples are bit-identical.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '5619215fdfe922df',
-  aroundMoves: 'e7248422dcef1683',
+  around: '594f68b5ff757189',
+  aroundMoves: 'ad5b30f01eb5cfd5',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

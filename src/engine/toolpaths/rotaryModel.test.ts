@@ -119,6 +119,23 @@ function lathe(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
+/** Concatenate meshes into one, the way `withRetainedBar` adds a stub. */
+function concatMeshes(meshes: readonly RotaryModelMesh[]): RotaryModelMesh {
+  const positions = new Float32Array(meshes.reduce((total, mesh) => total + mesh.positions.length, 0))
+  const index = new Uint32Array(meshes.reduce((total, mesh) => total + mesh.index.length, 0))
+  let positionOffset = 0
+  let indexOffset = 0
+  let vertexOffset = 0
+  for (const mesh of meshes) {
+    positions.set(mesh.positions, positionOffset)
+    for (let i = 0; i < mesh.index.length; i++) index[indexOffset + i] = mesh.index[i] + vertexOffset
+    positionOffset += mesh.positions.length
+    indexOffset += mesh.index.length
+    vertexOffset += mesh.positions.length / 3
+  }
+  return { positions, index }
+}
+
 for (const axis of ['x', 'y'] as const) {
   // Deliberately translated across-axis stock: catches using R as the centre.
   const stock = roundStock(40, 80, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
@@ -2282,6 +2299,40 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     }, {})
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
       fingerprint, `finish ${direction}: byte-identical with a positive leave`)
+  }
+
+  // Slice B: eroding the wall changes the wall, never the height-map grid. The
+  // grid is taken from the un-eroded stub (`gridExtra`), so every sample more
+  // than one cutter radius from the wall stays bit-identical to the un-eroded
+  // reference; without it the eroded stub's narrower bounds shift the grid
+  // origin and re-rasterise the whole bar. The cell is deliberately not a whole
+  // fraction of the leave, so the pre-fix origin shift cannot land on the same
+  // cell centres.
+  {
+    const wall = stock.thickness / 2
+    const stub = (radius: number, from: number, to: number): RotaryModelMesh =>
+      lathe(stock, () => radius, from, to, 1, 192)
+    const unEroded = concatMeshes([mesh, stub(wall, 0, 3), stub(wall, 9, 12)])
+    const eroded = concatMeshes([mesh, stub(wall - leave, leave, 3 - leave), stub(wall - leave, 9 + leave, 12 - leave)])
+    const gridExtra = concatMeshes([stub(wall, 0, 3), stub(wall, 9, 12)])
+    const sampling = { ...ball, radius: ball.radius + leave, diameter: ball.diameter + 2 * leave }
+    const along = Array.from({ length: 21 }, (_, i) => 5 + 2 * i / 20)
+    const options = { anglesDeg: [0, 90], along, requestedCellSize: 0.07 }
+    const reference = sampleRotaryModel(unEroded, stock, sampling, options, [])
+    const fixed = sampleRotaryModel(eroded, stock, sampling, { ...options, gridExtra }, [])
+    const buggy = sampleRotaryModel(eroded, stock, sampling, options, [])
+    let interiorDiffs = 0
+    let buggyInteriorDiffs = 0
+    for (let k = 0; k < options.anglesDeg.length; k++) {
+      for (let i = 0; i < along.length; i++) {
+        if (along[i] < 5.5) continue
+        if (fixed.tipRadius[k][i] !== reference.tipRadius[k][i]) interiorDiffs++
+        if (buggy.tipRadius[k][i] !== reference.tipRadius[k][i]) buggyInteriorDiffs++
+      }
+    }
+    assert.equal(interiorDiffs, 0, 'every sample more than one cutter radius from the wall is bit-identical')
+    assert.ok(buggyInteriorDiffs > 0, 'without the un-eroded grid the eroded bounds shift the mid-bar samples')
+    assert.notEqual(fixed.tipRadius[0][0], reference.tipRadius[0][0], 'the wall-adjacent sample is no longer held up')
   }
 }
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')
