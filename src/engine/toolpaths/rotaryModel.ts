@@ -2811,21 +2811,21 @@ export function generateRotaryRough(
   const angleWindow = (k: number, reachDeg: number): number[] => {
     if (!(reachDeg > 0)) return [k]
     const target = angles[k]
-    const window: number[] = []
+    const windowRows: number[] = []
     for (let kk = 0; kk < angles.length; kk++) {
       let delta = ((angles[kk] - target) % 360 + 360) % 360
       if (delta > 180) delta = 360 - delta
-      if (delta <= reachDeg + 1e-9) window.push(kk)
+      if (delta <= reachDeg + 1e-9) windowRows.push(kk)
     }
-    if (!window.includes(k)) window.push(k)
-    return window
+    if (!windowRows.includes(k)) windowRows.push(k)
+    return windowRows
   }
   const linkLeftoverAt = (row: RotaryLinkRow, angleDeg: number, layer: number, reachDeg = 0): number[] => {
     const k = pointIndexAt(angleDeg)
     if (k < 0) return []
-    const window = angleWindow(k, reachDeg)
-    if (row.along.length * along.length * window.length > MAX_LINK_WORK) return []
-    const key = `${k}:${layer}:${reachDeg.toFixed(6)}:${window.length}`
+    const windowRows = angleWindow(k, reachDeg)
+    if (row.along.length * along.length * windowRows.length > MAX_LINK_WORK) return []
+    const key = `${k}:${layer}:${reachDeg.toFixed(6)}:${windowRows.length}`
     const cached = leftoverCache.get(key)
     if (cached) return cached
     // The blank's own height over the body's window: a square blank's corner is
@@ -2834,7 +2834,7 @@ export function generateRotaryRough(
     let support = maxRadius
     if (square) {
       support = Number.NEGATIVE_INFINITY
-      for (const kk of window) {
+      for (const kk of windowRows) {
         support = Math.max(support, squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type))
       }
     }
@@ -2845,7 +2845,7 @@ export function generateRotaryRough(
       const layerRadius = Math.max(lowest, maxRadius - j * params.stepdown)
       const previousRadius = maxRadius - (j - 1) * params.stepdown
       const cuts: number[] = []
-      for (const kk of window) {
+      for (const kk of windowRows) {
         if (square && !(layerRadius < squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type))) continue
         cuts.push(kk)
       }
