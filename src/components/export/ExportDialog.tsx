@@ -32,7 +32,6 @@ import { useExportPreparation } from '../../app/toolpathGeneration/useExportPrep
 import {
   groupExportOperationOptions,
   listExportOperationOptions,
-  reusableExportPath,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { exportDialectLabels } from './exportDialectLabels'
@@ -58,7 +57,7 @@ interface ExportDialogProps {
 
 export function ExportDialog({ onClose, service, contextRef, requestGenerationTrace, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
-  const { project, selectProject, lastExportPath, markExported } = useProjectStore()
+  const { project, selectProject, markExported } = useProjectStore()
   const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
@@ -247,9 +246,9 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           program.fileStem,
           program.gcode,
           ext,
-          // Only a single-setup project overwrites its last export in place:
-          // with one file per setup there is no one path to reuse.
-          perSetup ? null : reusableExportPath(lastExportPath, ext),
+          // A previous export path is never permission to overwrite it (issue
+          // #1081): every G-code export asks for a destination, per file.
+          null,
         )
       } catch {
         // The files written so far stay recorded, so pressing Export again

@@ -481,7 +481,10 @@ function testTheOutsideEntryStaysOffThePartAndItsObstacles() {
     // profile are two Clipper results that agree only to the integer scale, so
     // an absolute zero would be a claim about rounding, not about gouging.
     const entryClearance = clearanceOf(samples, bossOutline)
-    const cutClearance = clearanceOf(cutSamples(result.moves), bossOutline)
+    // Denser than the entry sampling, because the baseline has to find at least
+    // as close a point on every cut segment; otherwise the comparison measures
+    // sample spacing rather than clearance.
+    const cutClearance = clearanceOf(cutSamples(result.moves, 16), bossOutline)
     assert(entryClearance >= cutClearance - 1e-9,
       `${strategy}: the entry stays as clear of the boss as the cut does`
       + ` (entry ${entryClearance.toFixed(6)} mm, cut ${cutClearance.toFixed(6)} mm)`)
@@ -666,20 +669,23 @@ function testAnUnplaceableEntryFallsBackOutLoud() {
     circleFeature('right', around(-19, 23, 5), 'add', 0, -3),
     circleFeature('lid', around(0, 26, 4), 'add', 0, -3),
   ])
-  for (const strategy of RAMPED) {
-    const result = generateEdgeRouteToolpath(
-      project,
-      outsideOperation({ pass: 'rough', entryStrategy: strategy }),
-    )
-    const descents = descentsIntoCut(result.moves)
-    assert(descents.length > 0, `${strategy}: this fixture is the pinched one`)
-    assert(warned(result, 'entryStrategyFallback'),
-      `${strategy}: a descent that could not be ramped is reported`)
-    // The rest of the route still gets its entry — one pinched span does not
-    // drop the whole operation back to plunging.
-    assert(countKind(result.moves, 'lead_in') > 0,
-      `${strategy}: the spans that fit still ramp in`)
-  }
+  // Helix still needs the clearance domain, and on this span it has none.
+  // A requested ramp no longer falls back here: issue #1084 keeps it on the
+  // fragment's own cut segment, which exists even where the broad domain is
+  // pinched. The ramp's own too-short / over-budget fallback is pinned in
+  // `entry.test.ts`, directly on the constrained placement.
+  const result = generateEdgeRouteToolpath(
+    project,
+    outsideOperation({ pass: 'rough', entryStrategy: 'helix' }),
+  )
+  const descents = descentsIntoCut(result.moves)
+  assert(descents.length > 0, 'helix: this fixture is the pinched one')
+  assert(warned(result, 'entryStrategyFallback'),
+    'helix: a descent that could not be ramped is reported')
+  // The rest of the route still gets its entry — one pinched span does not
+  // drop the whole operation back to plunging.
+  assert(countKind(result.moves, 'lead_in') > 0,
+    'helix: the spans that fit still ramp in')
   console.log('unplaceable entry falls back out loud: PASSED')
 }
 
@@ -786,6 +792,39 @@ function testTheLeadArrivesWithTheRampedEntry() {
 }
 
 /**
+ * A requested OUTSIDE ramp is kerf-bound (issue #1084), and the XY lead is
+ * incompatible with it: the lead stages the descent off the wall, which is
+ * exactly the uncut stock beside the profile. It is omitted with an accurate
+ * warning rather than silently ignored, and a requested ramp is never turned
+ * into a helix to keep the lead.
+ */
+function testAnOutsideRampOmitsTheIncompatibleLead(): void {
+  console.log('Testing an outside ramp omits the off-wall lead and says so...')
+  const ramped = generateEdgeRouteToolpath(
+    bossProject(),
+    outsideOperation({ pass: 'rough', entryStrategy: 'ramp', xyLeadStrategy: 'arc' }),
+  )
+  assert(countKind(ramped.moves, 'lead_in') > 0, 'the ramp itself is still emitted')
+  assert(countKind(ramped.moves, 'lead_out') === 0, 'the off-wall exit arc is omitted')
+  assert(warned(ramped, 'xyLeadNoViablePath'), 'the omitted lead is reported')
+  assert(!warned(ramped, 'xyLeadNeedsRampedEntry'),
+    'the stale "needs ramped entry" warning is not used — a ramp was requested')
+  assert(!warned(ramped, 'entryStrategyFallback'),
+    'the kerf-bound ramp fits the boss cut segment')
+
+  // A requested helix keeps its lead: #1084 changes only the outside ramp.
+  const helical = generateEdgeRouteToolpath(
+    bossProject(),
+    outsideOperation({ pass: 'rough', entryStrategy: 'helix', xyLeadStrategy: 'arc' }),
+  )
+  assert(arrivalArcMoves(helical.moves) > arrivalArcMoves(
+    generateEdgeRouteToolpath(bossProject(), outsideOperation({ pass: 'rough', entryStrategy: 'helix' })).moves),
+  'the requested helix still earns its arrival arc')
+  assert(!warned(helical, 'xyLeadNoViablePath'), 'the helix lead is not reported unavailable')
+  console.log('outside ramp omits the lead: PASSED')
+}
+
+/**
  * A finish edge route arrives along an arc and leaves without one.
  *
  * The two are not symmetric. The arrival has a helix under it — `synthesizeEntry`
@@ -839,6 +878,7 @@ try {
   testTrochoidalRoughingNeverBuildsTheEntryPolicy()
   testPlungeAndAbsentAreUnchangedAndIdentical()
   testTheLeadArrivesWithTheRampedEntry()
+  testAnOutsideRampOmitsTheIncompatibleLead()
   testAFinishRouteArrivesOnAnArcAndLeavesWithoutOne()
   console.log('\nAll edge-route entry-policy tests PASSED.')
 } catch (e) {

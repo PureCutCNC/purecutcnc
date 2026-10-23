@@ -81,6 +81,9 @@ export function createProjectLifecycleSlice(
           project: nextProject,
           dirty: false,
           filePath: null,
+          // A remembered export path belongs to the project it was exported
+          // from; a new document must choose its own destination (issue #1081).
+          lastExportPath: null,
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
@@ -247,6 +250,9 @@ export function createProjectLifecycleSlice(
         clearProjectMemoryCaches()
         return {
           project: nextProject,
+          // Loading a document starts its export identity over, even though
+          // the path it was loaded from is unrelated to any G-code file.
+          lastExportPath: null,
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
@@ -312,6 +318,9 @@ export function createProjectLifecycleSlice(
           origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
         },
         filePath: path,
+        // The opened document has no G-code destination yet; a previous
+        // project's export path must never authorize an overwrite (#1081).
+        lastExportPath: null,
         dirty: decoded.convertedLegacy || migratedMachineLibrary,
         loadWarning: joinWarnings(
           versionWarning ?? (decoded.convertedLegacy

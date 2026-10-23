@@ -35,6 +35,15 @@ const ENTRY_BOUNDARY_SAFETY_FRACTION = 0.1
 // A ramp is a local zig-zag near the entry point, not a traverse of the whole
 // pocket. Cap the run at this multiple of tool diameter.
 const MAX_RAMP_RUN_DIAMETERS = 3
+// A contour-constrained ramp needs at least this much connected cut travel to
+// be a ramp rather than reciprocal rubbing (issue #1084). The ordinary broad
+// domain cap is an upper bound and its floor (`MIN_RAMP_RUN`) is deliberately
+// microscopic because a chord across the pocket can always be lengthened; on a
+// real contour there may be nothing but a few tessellation chords next to the
+// entry, and reversing on one of those is the 106/308-stroke defect. One tool
+// diameter of contiguous travel is the smallest stroke worth using; below it
+// the existing warned plunge fallback is the honest answer.
+const MIN_CONTOUR_RAMP_RUN_DIAMETERS = 1
 // Connecting a candidate helix centre to the cut start is by far the most
 // expensive test here (segment-inside-region against every contour edge).
 // Bound the centres and angles tried so a hopeless search fails fast instead of
@@ -74,6 +83,32 @@ export interface EntryClearanceRegion {
   islands: Point[][]
 }
 
+/**
+ * The real cut polyline a requested ramp is allowed to follow (issue #1084).
+ *
+ * An edge route's outside entry used to be placed anywhere in the broad
+ * collision-free domain, which on a part standing in uncut stock includes the
+ * stock beside the profile. The ramp now has to run along the connected travel
+ * of the path the operation is about to cut, so its swept envelope is the kerf
+ * the level cut already removes. It follows that polyline through its
+ * tessellation vertices rather than treating each chord as a separate stroke.
+ *
+ * The entry vertex is the path point matched to the synthesis target:
+ * - an OPEN fragment may use only the connected travel forward of it, because
+ *   the reverse side is not part of the cut;
+ * - a CLOSED fragment may run either way around the loop, since both sides are
+ *   cut. A run long enough to reach the entry again is a full loop and needs no
+ *   final retrace.
+ *
+ * The polyline is only a candidate: `findRampPlacement` still enforces the
+ * existing minimum length, maximum run, move budget and region/tab safety, and
+ * a run that fails any of them leaves the constrained ramp unavailable.
+ */
+export interface EntryRampPath {
+  points: Point[]
+  closed: boolean
+}
+
 export interface EntryPolicy {
   strategy: Exclude<EntryStrategy, 'plunge'>
   rampAngle: number
@@ -84,6 +119,13 @@ export interface EntryPolicy {
   cutDirection: CutDirection
   cutSide: EntryCutSide
   clearanceRegions: EntryClearanceRegion[]
+  /**
+   * Constrain a requested ramp to this actual cut polyline. Absent preserves
+   * the legacy clearance-domain placement; `null` is an explicit "unavailable"
+   * and forces the existing warned fallback rather than returning to the broad
+   * domain chord.
+   */
+  rampPath?: EntryRampPath | null
   startZ?: number
   handoffFeedScale?: number
   onWarning?: (warning: ToolpathWarning) => void
@@ -122,6 +164,12 @@ interface RampPlacement {
   start: Point
   end: Point
   region: EntryClearanceRegion
+  /**
+   * The real cut polyline from the entry vertex to `end`, in order. Present
+   * only for a contour-constrained placement (issue #1084); absent keeps the
+   * legacy straight reciprocation between `start` and `end`.
+   */
+  contour?: Point[]
 }
 
 /** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
@@ -204,6 +252,20 @@ export function withEntryStartZ(
   return policy ? { ...policy, startZ } : undefined
 }
 
+/**
+ * Constrain a requested ramp to the operation's real cut polyline (issue #1084).
+ *
+ * `null` is meaningful: the caller knows there is no usable cut contour to
+ * use, and the entry must fall back with the existing warning instead of
+ * silently returning to the clearance domain's broad chord.
+ */
+export function withEntryRampPath(
+  policy: EntryPolicy | undefined,
+  rampPath: EntryRampPath | null,
+): EntryPolicy | undefined {
+  return policy ? { ...policy, rampPath } : undefined
+}
+
 export function pitchFromRampAngle(pathDiameter: number, rampAngleDegrees: number): number {
   if (!(pathDiameter > 0) || !(rampAngleDegrees > 0)) return 0
   return Math.PI * pathDiameter * Math.tan(toRadians(rampAngleDegrees))
@@ -283,7 +345,12 @@ export function synthesizeEntry(
       }
     }
 
-    const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
+    const rampPlacement = findRampPlacement(
+      target,
+      policy.clearanceRegions,
+      policy.toolDiameter,
+      policy.rampPath,
+    )
     if (rampPlacement && rampDescentMoveCount(startZ - target.z, rampPlacement, policy.rampAngle)
       <= MAX_ENTRY_DESCENT_MOVES) {
       warn({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'ramp' } })
@@ -302,7 +369,12 @@ export function synthesizeEntry(
     }
   }
 
-  const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
+  const rampPlacement = findRampPlacement(
+    target,
+    policy.clearanceRegions,
+    policy.toolDiameter,
+    policy.rampPath,
+  )
   if (rampPlacement && rampDescentMoveCount(startZ - target.z, rampPlacement, policy.rampAngle)
     <= MAX_ENTRY_DESCENT_MOVES) {
     return {
@@ -327,9 +399,112 @@ function helixDescentMoveCount(depth: number, radius: number, rampAngle: number)
 }
 
 function rampDescentMoveCount(depth: number, placement: RampPlacement, rampAngle: number): number {
-  const runLength = Math.hypot(placement.end.x - placement.start.x, placement.end.y - placement.start.y)
-  const dropPerRun = runLength * Math.tan(toRadians(rampAngle))
-  return dropPerRun > ENTRY_EPSILON ? Math.max(1, Math.ceil(Math.max(0, depth) / dropPerRun)) : Infinity
+  const rise = Math.tan(toRadians(rampAngle))
+  const contour = placement.contour
+  if (!contour || contour.length < 2) {
+    const runLength = Math.hypot(
+      placement.end.x - placement.start.x,
+      placement.end.y - placement.start.y,
+    )
+    const dropPerRun = runLength * rise
+    if (!(dropPerRun > ENTRY_EPSILON)) return Infinity
+    return Math.max(1, Math.ceil(Math.max(0, depth) / dropPerRun))
+  }
+
+  // A contour run is measured by its ACTUAL arclength, not the chord between
+  // its endpoints. On a full closed loop the endpoints coincide, so the chord
+  // is zero and every stroke looks infinitely deep; on a near-full circle the
+  // chord is much shorter than the travel. The emitter descends by accumulated
+  // arclength, so the budget has to use the same measure.
+  const runLength = contourLength(contour)
+  const dropPerRun = runLength * rise
+  if (!(dropPerRun > ENTRY_EPSILON)) return Infinity
+  const strokes = Math.max(1, Math.ceil(Math.max(0, depth) / dropPerRun))
+  const fullStrokes = strokes - 1
+  const segments = contour.length - 1
+  // Every full stroke crosses every vertex, so it emits one move per segment.
+  let count = fullStrokes * segments
+  if (count > MAX_ENTRY_DESCENT_MOVES) return count
+
+  // Account for the final partial stroke's actual vertex crossings rather than
+  // charging a whole stroke for it. A full final stroke is handled by the same
+  // arithmetic: its travel equals the run length and it crosses every vertex.
+  const remaining = Math.max(0, depth - fullStrokes * dropPerRun)
+  const finalDistance = clamp(remaining / rise, 0, runLength)
+  const forward = fullStrokes % 2 === 0
+  count += contourTravelMoves(contour, finalDistance, !forward)
+  if (count > MAX_ENTRY_DESCENT_MOVES) return count
+
+  // At final depth the emitter follows the contour back to the entry vertex.
+  // That handoff is usually a single move on the legacy straight ramp, but on a
+  // tessellated contour it can be as many moves as the whole run. Count it, or
+  // a run whose descent just fits the ceiling can still emit a program twice
+  // the size. A full closed loop already ends at the entry, so it needs none.
+  const finalTravel = forward ? finalDistance : runLength - finalDistance
+  const closedLoop = sameXY(contour[0], contour[contour.length - 1])
+  if (!(closedLoop && finalTravel >= runLength - ENTRY_EPSILON)) {
+    count += contourHandoffMoves(contour, finalTravel)
+  }
+  return count
+}
+
+/** Planar arclength of a polyline. */
+function contourLength(contour: Point[]): number {
+  let length = 0
+  for (let index = 1; index < contour.length; index += 1) {
+    length += Math.hypot(
+      contour[index].x - contour[index - 1].x,
+      contour[index].y - contour[index - 1].y,
+    )
+  }
+  return length
+}
+
+/**
+ * Moves `emitContourRamp` emits to travel `distance` from one end of the
+ * contour: one per crossed vertex, plus one when the travel stops inside a
+ * segment. Mirrors the emitter's boundary stepping without emitting anything,
+ * so a dense tessellation is costed before it is allocated.
+ */
+function contourTravelMoves(contour: Point[], distance: number, fromEnd: boolean): number {
+  if (!(distance > ENTRY_EPSILON)) return 0
+  let travelled = 0
+  let moves = 0
+  for (let step = 1; step < contour.length; step += 1) {
+    const previous = contour[fromEnd ? contour.length - step : step - 1]
+    const next = contour[fromEnd ? contour.length - 1 - step : step]
+    const segment = Math.hypot(next.x - previous.x, next.y - previous.y)
+    if (!(segment > ENTRY_EPSILON)) continue
+    if (travelled + segment < distance - ENTRY_EPSILON) {
+      travelled += segment
+      moves += 1
+      continue
+    }
+    return moves + 1
+  }
+  return moves
+}
+
+/**
+ * Moves `emitContourRamp` needs to retrace from `travel` back to the entry
+ * vertex at final depth. Boundaries are cumulative from the start, so this is
+ * direction-independent; the terminal boundary at zero is the last move.
+ */
+function contourHandoffMoves(contour: Point[], travel: number): number {
+  if (!(travel > ENTRY_EPSILON)) return 0
+  let cumulative = 0
+  let moves = 1
+  for (let index = 1; index < contour.length; index += 1) {
+    const segment = Math.hypot(
+      contour[index].x - contour[index - 1].x,
+      contour[index].y - contour[index - 1].y,
+    )
+    cumulative += segment
+    if (!(segment > ENTRY_EPSILON)) continue
+    if (!(cumulative < travel - ENTRY_EPSILON)) break
+    moves += 1
+  }
+  return moves
 }
 
 function emitHelix(
@@ -408,6 +583,9 @@ function emitRamp(
   policy: EntryPolicy,
   placement: RampPlacement,
 ): ToolpathPoint {
+  if (placement.contour && placement.contour.length >= 2) {
+    return emitContourRamp(moves, from, target, safeZ, startZ, policy, placement.contour)
+  }
   let current = rapidToEntryStart(moves, from, { ...placement.start, z: startZ }, safeZ)
   let descendingTo = placement.end
   const fullRun = Math.hypot(placement.end.x - placement.start.x, placement.end.y - placement.start.y)
@@ -441,6 +619,126 @@ function emitRamp(
     }
     entryHandoffMoves.add(handoff)
     moves.push(handoff)
+  }
+  return target
+}
+
+/**
+ * Ramp along a real cut contour (issue #1084).
+ *
+ * The stroke is the connected path the operation is about to cut, so crossing a
+ * tessellation vertex is a normal move rather than a reason to reverse: reversing
+ * per chord is what produced the 106/308 descending strokes on
+ * `ramp-on-path-test.camj`. The cutter descends by accumulated XY arclength at
+ * the requested angle, reverses only at the useful stroke endpoints, and at
+ * final depth follows the same contour back to the entry vertex instead of
+ * taking an off-path chord. Every emitted move therefore has its centreline on
+ * the level cut's own centreline, which keeps the ramp inside the level kerf.
+ */
+function emitContourRamp(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+  startZ: number,
+  policy: EntryPolicy,
+  contour: Point[],
+): ToolpathPoint {
+  const cumulative = [0]
+  for (let index = 1; index < contour.length; index += 1) {
+    cumulative.push(cumulative[index - 1]
+      + Math.hypot(contour[index].x - contour[index - 1].x, contour[index].y - contour[index - 1].y))
+  }
+  const runLength = cumulative[cumulative.length - 1] ?? 0
+  if (!(runLength > ENTRY_EPSILON)) return target
+  // A run that comes back to the entry vertex is a full loop. It ends where it
+  // began, so the final-depth handoff below must not retrace it: that would cut
+  // the same loop twice at full depth.
+  const closedLoop = contour.length >= 3 && sameXY(contour[0], contour[contour.length - 1])
+  const rise = Math.tan(toRadians(policy.rampAngle))
+  const pointAt = (travel: number): Point => {
+    const distance = clamp(travel, 0, runLength)
+    if (closedLoop && distance >= runLength - ENTRY_EPSILON) {
+      return { x: contour[0].x, y: contour[0].y }
+    }
+    let index = 1
+    while (index < cumulative.length - 1 && cumulative[index] < distance - ENTRY_EPSILON) index += 1
+    const start = Math.max(0, cumulative[index - 1])
+    const end = cumulative[index] ?? start
+    const ratio = end > start + ENTRY_EPSILON ? (distance - start) / (end - start) : 0
+    return {
+      x: contour[index - 1].x + (contour[index].x - contour[index - 1].x) * ratio,
+      y: contour[index - 1].y + (contour[index].y - contour[index - 1].y) * ratio,
+    }
+  }
+  const nextBoundary = (travel: number, direction: 1 | -1): number => {
+    if (direction > 0) {
+      for (const value of cumulative) {
+        if (value > travel + ENTRY_EPSILON) return value
+      }
+      return runLength
+    }
+    for (let index = cumulative.length - 1; index >= 0; index -= 1) {
+      if (cumulative[index] < travel - ENTRY_EPSILON) return cumulative[index]
+    }
+    return 0
+  }
+
+  let current = rapidToEntryStart(moves, from, { ...contour[0], z: startZ }, safeZ)
+  let travel = 0
+  let direction: 1 | -1 = 1
+  while (current.z > target.z + ENTRY_EPSILON) {
+    const strokeEnd = direction > 0 ? runLength : 0
+    const strokeDistance = Math.abs(strokeEnd - travel)
+    if (!(strokeDistance > ENTRY_EPSILON)) {
+      direction = direction > 0 ? -1 : 1
+      continue
+    }
+    const remainingDrop = current.z - target.z
+    const budget = Math.min(strokeDistance, remainingDrop / rise)
+    let advanced = 0
+    while (advanced < budget - ENTRY_EPSILON) {
+      const boundary = nextBoundary(travel, direction)
+      const toBoundary = Math.abs(boundary - travel)
+      const step = Math.min(toBoundary, budget - advanced)
+      if (!(step > ENTRY_EPSILON)) break
+      const nextTravel = travel + direction * step
+      const nextPoint = pointAt(nextTravel)
+      const nextZ = Math.max(target.z, current.z - step * rise)
+      const next: ToolpathPoint = { x: nextPoint.x, y: nextPoint.y, z: nextZ }
+      moves.push({
+        kind: 'lead_in',
+        from: current,
+        to: next,
+        feedScale: plungeLimitedMoveFeedScale(policy.cutFeed, policy.plungeFeed, current, next),
+      })
+      current = next
+      travel = nextTravel
+      advanced += step
+      if (current.z <= target.z + ENTRY_EPSILON) break
+    }
+    if (current.z <= target.z + ENTRY_EPSILON) break
+    direction = direction > 0 ? -1 : 1
+  }
+
+  // Final-depth handoff on the contour itself: retrace to the entry vertex, so
+  // no straight chord leaves the kerf the cut removes. A full loop is already
+  // at that vertex; normalising its travel to zero suppresses the duplicate.
+  if (closedLoop && travel >= runLength - ENTRY_EPSILON) travel = 0
+  while (travel > ENTRY_EPSILON) {
+    const boundary = nextBoundary(travel, -1)
+    const nextPoint = pointAt(boundary)
+    const next: ToolpathPoint = { x: nextPoint.x, y: nextPoint.y, z: target.z }
+    const move: ToolpathMove = {
+      kind: 'lead_in',
+      from: current,
+      to: next,
+      ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
+    }
+    if (boundary <= ENTRY_EPSILON) entryHandoffMoves.add(move)
+    moves.push(move)
+    current = next
+    travel = boundary
   }
   return target
 }
@@ -634,7 +932,16 @@ function findRampPlacement(
   target: ToolpathPoint,
   regions: EntryClearanceRegion[],
   toolDiameter: number,
+  rampPath?: EntryRampPath | null,
 ): RampPlacement | null {
+  // An explicit path constraint (including the explicit "unavailable" null)
+  // replaces the broad-domain search. It never falls through to it: the whole
+  // point of the constraint is that the collision-free domain is not proof the
+  // stock there was removed (issue #1084).
+  if (rampPath !== undefined) {
+    return findConstrainedRampPlacement(target, regions, toolDiameter, rampPath)
+  }
+
   const point = { x: target.x, y: target.y }
   const candidates = regions.filter((region) => pointInRegion(point, region))
   const searchRegions = candidates.length > 0 ? candidates : regions
@@ -677,6 +984,133 @@ function findRampPlacement(
     }
   }
   return best
+}
+
+/**
+ * Ramp placement constrained to a real adjacent cut contour (issue #1084).
+ *
+ * The run is anchored at the entry vertex, because that vertex is on the cut
+ * path and the ramp's handoff has to be as well. It follows the connected
+ * polyline up to the existing `MAX_RAMP_RUN_DIAMETERS` cap, crossing
+ * tessellation vertices rather than treating each chord as a stroke. A CLOSED
+ * fragment may run either actual direction; an OPEN one only forward, because
+ * the reverse side is not part of that cut.
+ *
+ * Each candidate is truncated to the longest prefix that stays inside ONE
+ * clearance region, which is what keeps a tab, clamp or region edge from being
+ * bridged: no gap is ever crossed, the run simply stops before it. A run below
+ * the meaningful-stroke floor is rejected so a contour too short to ramp falls
+ * back with the existing warning instead of reciprocating on a few chords.
+ */
+function findConstrainedRampPlacement(
+  target: ToolpathPoint,
+  regions: EntryClearanceRegion[],
+  toolDiameter: number,
+  rampPath: EntryRampPath | null,
+): RampPlacement | null {
+  if (rampPath === null || regions.length === 0) return null
+  const points = rampPath.closed ? trimClosedPath(rampPath.points) : rampPath.points
+  if (points.length < 2) return null
+  const entryIndex = points.findIndex((point) => sameXY(point, target))
+  if (entryIndex < 0) return null
+
+  const maxRun = toolDiameter * MAX_RAMP_RUN_DIAMETERS
+  const minRun = Math.max(ENTRY_EPSILON, toolDiameter * MIN_CONTOUR_RAMP_RUN_DIAMETERS)
+  const directions: Array<1 | -1> = rampPath.closed ? [1, -1] : [1]
+  let best: RampPlacement | null = null
+  let bestLength = 0
+  for (const direction of directions) {
+    const run = contourRun(points, entryIndex, direction, rampPath.closed, maxRun)
+    if (!run || run.length < 2) continue
+    for (const region of regions) {
+      const valid = trimContourRunToRegion(run, region, minRun)
+      if (!valid || !(valid.length > bestLength + ENTRY_EPSILON)) continue
+      bestLength = valid.length
+      const contour = [...valid.points]
+      // Anchor on the requested vertex exactly. `sameXY` admits a nanometre of
+      // slack, and the handoff has to land on the point the cut starts from.
+      contour[0] = { x: target.x, y: target.y }
+      best = {
+        start: contour[0],
+        end: contour[contour.length - 1],
+        region,
+        contour,
+      }
+    }
+  }
+  return best
+}
+
+/**
+ * Connected travel from the entry vertex in one direction, capped at `maxRun`
+ * and preserving every actual vertex it crosses. A closed path stops after one
+ * full loop; the final point may be a linear interpolation on the last segment
+ * so a partial stroke ends exactly at the cap rather than overshooting it.
+ */
+function contourRun(
+  points: Point[],
+  entryIndex: number,
+  direction: 1 | -1,
+  closed: boolean,
+  maxRun: number,
+): Point[] | null {
+  const count = points.length
+  const run: Point[] = [points[entryIndex]]
+  let length = 0
+  const steps = closed ? count : count - entryIndex - 1
+  for (let step = 1; step <= steps; step += 1) {
+    const raw = entryIndex + direction * step
+    const index = closed ? ((raw % count) + count) % count : raw
+    if (index < 0 || index >= count) break
+    const previous = run[run.length - 1]
+    const next = points[index]
+    const segment = Math.hypot(next.x - previous.x, next.y - previous.y)
+    if (!(segment > ENTRY_EPSILON)) continue
+    if (length + segment >= maxRun - ENTRY_EPSILON) {
+      const remaining = Math.max(0, maxRun - length)
+      if (remaining > ENTRY_EPSILON) {
+        const ratio = remaining / segment
+        run.push({
+          x: previous.x + (next.x - previous.x) * ratio,
+          y: previous.y + (next.y - previous.y) * ratio,
+        })
+      }
+      break
+    }
+    run.push(next)
+    length += segment
+  }
+  return run.length >= 2 ? run : null
+}
+
+/**
+ * The longest prefix of `run` whose every segment stays in `region`. This is
+ * where a tab or obstacle cuts the stroke short; the caller then either uses the
+ * prefix (if it is long enough to be useful) or falls back.
+ */
+function trimContourRunToRegion(
+  run: Point[],
+  region: EntryClearanceRegion,
+  minRun: number,
+): { points: Point[]; length: number } | null {
+  const points: Point[] = [run[0]]
+  let length = 0
+  for (let index = 1; index < run.length; index += 1) {
+    const previous = points[points.length - 1]
+    if (!segmentInsideRegion(previous, run[index], region)) break
+    points.push(run[index])
+    length += Math.hypot(run[index].x - previous.x, run[index].y - previous.y)
+  }
+  if (points.length < 2 || !(length >= minRun - ENTRY_EPSILON)) return null
+  return { points, length }
+}
+
+/** Drop the repeated closing vertex some callers leave on a closed polyline. */
+function trimClosedPath(points: Point[]): Point[] {
+  if (points.length >= 2 && sameXY(points[0], points[points.length - 1])) {
+    return points.slice(0, -1)
+  }
+  return points
 }
 
 export function entryBoundarySafety(toolDiameter: number): number {

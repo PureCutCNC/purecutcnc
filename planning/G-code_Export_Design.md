@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: machine origin, machine definitions, postprocessing, and G-code export
-last-verified: 2026-10-03
+last-verified: 2026-10-22
 ---
 
 # G-code Export Design
@@ -437,6 +437,12 @@ The export surface must make these inputs visible before saving:
 - output options that materially change setup or commands;
 - warnings and validation failures;
 - final G-code preview.
+
+Every export action requests a save destination, including a repeat export of
+the same project. A remembered export path is never treated as authorization to
+overwrite that file, and New (including template), load, and open transitions
+clear the remembered path because it belongs to the document that produced it
+(issue #1081).
 
 No-operation selection and invalid machine/setup state disable export rather
 than producing an apparently valid empty or partial file.
