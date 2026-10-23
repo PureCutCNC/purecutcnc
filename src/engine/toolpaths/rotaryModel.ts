@@ -1511,10 +1511,24 @@ function modelOutsideBar(mesh: RotaryModelMesh, stock: BarStock, tolerance: numb
  * for a square blank would leave its corners unsupported and let a finite
  * cutter enter them. `null` for an empty span.
  */
-function retainedBarStub(stock: BarStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
+function retainedBarStub(
+  stock: BarStock,
+  units: Units,
+  alongFrom: number,
+  alongTo: number,
+  inset = 0,
+): RotaryModelMesh | null {
+  // #1095: erode the stub by `inset` in every direction — its own radius / half
+  // side, and both along ends. The sampler's tool is enlarged by the same
+  // amount, and a ball against an `s`-eroded solid is the real ball against the
+  // real solid, so the retained wall keeps exactly the clearance the real cutter
+  // needs instead of the stock to leave. A zero inset adds/subtracts exactly
+  // zero, so the stock-to-leave-zero output is untouched.
+  const from = alongFrom + inset
+  const to = alongTo - inset
   return isSquareStock(stock)
-    ? squareBlankRetainedStub(stock, alongFrom, alongTo)
-    : retainedRoundStub(stock, units, alongFrom, alongTo)
+    ? squareBlankRetainedStub(stock, from, to, inset)
+    : retainedRoundStub(stock, units, from, to, inset)
 }
 
 /**
@@ -1523,10 +1537,19 @@ function retainedBarStub(stock: BarStock, units: Units, alongFrom: number, along
  * sagitta `R (1 - cos(pi / segments))` stays within `minRenderHeight` of the
  * true surface, so the height map never reads the stub below the bar by more
  * than the 3D view's own minimum height (100 segments for a 40 mm bar at
- * 0.01 mm). Returns `null` for an empty span.
+ * 0.01 mm). `inset` erodes the cylinder by that distance (#1095): its radius and
+ * both along ends move in, so a sampling tool enlarged by the same amount meets
+ * the real wall exactly where the real cutter does. Returns `null` for an empty
+ * span.
  */
-function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
-  const radius = barInscribedRadius(stock)
+function retainedRoundStub(
+  stock: RoundStock,
+  units: Units,
+  alongFrom: number,
+  alongTo: number,
+  inset = 0,
+): RotaryModelMesh | null {
+  const radius = barInscribedRadius(stock) - inset
   if (!(alongTo - alongFrom > 0) || !(radius > 0)) return null
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
@@ -1584,6 +1607,13 @@ function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, a
  * the raised samples) and left a corner the next layer then took more than
  * `stepdown` out of -- the overcut the export guard found. The along pass keeps
  * the stub in its mesh byte for byte.
+ *
+ * `wallInset` erodes both stubs by that distance (#1095). The rough passes the
+ * stock to leave here, because the sampler is about to enlarge its tool by the
+ * same amount: `(wall ⊖ s) ⊕ (R + s) = wall ⊕ R`, so the retained wall is met
+ * by the real cutter instead of one thickened by the leave. The finish passes
+ * zero, so its saved motion is byte-identical. Zero adds and subtracts exactly
+ * zero, so stock-to-leave-zero output is untouched either way.
  */
 function withRetainedBar(
   mesh: RotaryModelMesh,
@@ -1592,14 +1622,15 @@ function withRetainedBar(
   alongStart: number,
   alongEnd: number,
   includeSquareStubs = true,
+  wallInset = 0,
 ): RotaryModelMesh {
   if (isSquareStock(stock) && !includeSquareStubs) return mesh
   const bounds = getStockBounds(stock)
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
   const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
   const stubs = [
-    retainedBarStub(stock, units, lower, alongStart),
-    retainedBarStub(stock, units, alongEnd, upper),
+    retainedBarStub(stock, units, lower, alongStart, wallInset),
+    retainedBarStub(stock, units, alongEnd, upper, wallInset),
   ].filter((stub): stub is RotaryModelMesh => stub !== null)
   if (stubs.length === 0) return mesh
   const positions = new Float32Array(mesh.positions.length + stubs.reduce((total, stub) => total + stub.positions.length, 0))
@@ -2061,6 +2092,22 @@ function refineAroundSampling(args: {
   return { angles, tips, stopped: false }
 }
 
+/** #1095's switch for whether the leave also applies to the retained walls. */
+interface RotaryTargetOptions {
+  /**
+   * Whether the radial stock to leave also applies to the retained end walls
+   * (#1095). `true` — the finish's saved behaviour — enlarges the sampling tool
+   * and leaves the stubs at their real size, so the walls are thickened by the
+   * leave. `false` is the rough's: the leave belongs to the **model surface
+   * only**, so each retained stub is sampled eroded by the leave
+   * (`withRetainedBar`'s `wallInset`). Erosion by `s` plus the sampler's tool
+   * enlargement by `s` is the real cutter against the real wall, so the
+   * outermost pass — pulled in exactly one cutter radius — is limited by the
+   * wall itself and not lifted to clear a thickened top corner.
+   */
+  readonly stockToLeaveOnRetainedWalls?: boolean
+}
+
 /** Sampling and normal stock offset shared by finishing and every rough layer. */
 function rotaryTargets(
   operationId: string,
@@ -2070,6 +2117,7 @@ function rotaryTargets(
   params: RotaryFinishParams,
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
   warnings: ToolpathWarning[],
+  options: RotaryTargetOptions = {},
 ): {
   angles: number[]
   along: number[]
@@ -2169,6 +2217,11 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
+  // #1095: the enlarged sampling tool is what applies the leave, and it applies
+  // it to the retained stubs too unless they are handed to the sampler eroded by
+  // the same amount. A zero leave adds exactly zero, so the old mesh (and its
+  // bit-identical output) is unchanged.
+  const wallInset = options.stockToLeaveOnRetainedWalls === false ? stockToLeave : 0
   const samplingMesh = withRetainedBar(
     mesh,
     stock,
@@ -2180,6 +2233,7 @@ function rotaryTargets(
     // including the stub here lifted every ring's tip near an end to the blank's
     // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
     !(isSquareStock(stock) && params.passDirection === 'around'),
+    wallInset,
   )
   // One workspace for the base grid and every refinement round: the mesh, tool
   // and along positions are the same in all of them, so the hull, the strip
@@ -2727,7 +2781,13 @@ export function generateRotaryRough(
     return { operationId, moves: [], warnings: [{ code: 'rotaryStepdownBelowMinimum', params: { operation: operationId } }], bounds: null }
   }
   const warnings: ToolpathWarning[] = []
-  const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
+  // #1095: the radial leave belongs to the model surface alone on a rough. The
+  // retained end walls keep their real size, so the outermost pass -- one cutter
+  // radius from the wall -- reaches model + leave instead of being lifted over a
+  // thickened wall's corner. The finish keeps the old sampling, byte for byte.
+  const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings, {
+    stockToLeaveOnRetainedWalls: false,
+  })
   if (sampling.refusal) {
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }
   }

@@ -116,13 +116,23 @@ export function squareBlankSectionExit(
  * matches the round stub's in `rotaryModel.ts`; the sampler reads the maximum
  * height over the triangles, and this stays a real closed solid for any other
  * reader.
+ *
+ * `inset` is the #1095 morphological erosion by `s`, used only when the stock to
+ * leave must apply to the model alone: the prism's four flats and its along end
+ * faces each move inward by `s`, and the span is shortened by `s` at both ends
+ * by the caller. Eroding a square prism by a ball is exactly a smaller square
+ * prism — the distance to the boundary is the nearest flat's, and a corner is
+ * farther than `s` from the eroded corner — so an eroded stub sampled with a
+ * ball enlarged by `s` is the real ball against the real wall. `inset` of zero
+ * leaves every coordinate bit-identical.
  */
 export function squareBlankRetainedStub(
   stock: SquareStock,
   alongFrom: number,
   alongTo: number,
+  inset = 0,
 ): SquareRotaryMesh | null {
-  const halfSide = barInscribedRadius(stock)
+  const halfSide = barInscribedRadius(stock) - inset
   if (!(alongTo - alongFrom > 0) || !(halfSide > 0)) return null
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)

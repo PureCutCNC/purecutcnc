@@ -2194,4 +2194,94 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
   assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid round geometry produced no angle rows')
   assert.deepEqual(invalidSampling.tipRadius, [], 'invalid round geometry cannot look like empty space')
 }
+
+// ── #1095: the radial stock to leave applies to the model only ───────
+//
+// The rough used to hand the retained end stubs to a sampler whose tool was
+// enlarged by the leave, so the walls were thickened by the same amount. The
+// outermost pass is pulled exactly one cutter radius inside the wall, so it
+// landed inside the thickened wall and was lifted to clear its top corner.
+//
+// The fixture makes the wall the binding material with no leave: bar radius 6,
+// ball radius 2, model radius 4, so the real wall's contact and the model are
+// the same height at the outermost pass. With a leave the only difference at
+// that pass must be the leave itself, never the wall's lifted corner. The two
+// ends are retained (the band is 3..9 inside a 12 mm bar), and the height-map
+// cell is requested at 0.01 mm, so the pass's own discretisation is a fraction
+// of the old lift.
+{
+  const stock = roundStock(12, 12, 'x')
+  const pivot = stock.thickness / 2
+  const modelRadius = 4
+  const leave = 0.05
+  const ball: NormalizedTool = { ...BALL, diameter: 4, radius: 2 }
+  const mesh = lathe(stock, () => modelRadius, 3, 9, 1, 192)
+  const base = {
+    stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9,
+    safeRadius: 9, requestedCellSize: 0.01, stepdown: 0.5,
+  }
+  /** The lowest tip the outermost pass reaches at its first along position. */
+  const outermost = (result: ReturnType<typeof generateRotaryRough>, along: number): number => {
+    const values: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut') continue
+      for (const point of [move.from, move.to]) {
+        if (Math.abs(point.x - along) > 1e-6) continue
+        const tip = point.z - pivot
+        // A plunge's start and a link's rise sit at the travel height, which is
+        // above the bar; they are not a cut into the band.
+        if (tip > stock.thickness / 2) continue
+        values.push(tip)
+      }
+    }
+    assert.ok(values.length > 0, `the outermost pass at ${along} has a cut`)
+    return Math.min(...values)
+  }
+  for (const direction of ['along', 'around'] as const) {
+    const without = generateRotaryRough('no-leave', mesh, stock, ball,
+      { ...base, stockToLeave: 0, passDirection: direction }, {})
+    const withLeave = generateRotaryRough('leave', mesh, stock, ball,
+      { ...base, stockToLeave: leave, passDirection: direction }, {})
+    // s = 0 is the frozen baseline. Each fingerprint was captured from HEAD
+    // before #1095 (the same fixture, same parameters), so the zero-leave path
+    // is byte-identical and this fixture's retained-end handling has not moved.
+    assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? 'cdda0e6f02fecdc9' : 'c6de4183e81dff32',
+      `rough ${direction}: zero stock to leave is byte-identical`)
+    const spanStart = base.alongStart + ball.radius
+    const first = outermost(withLeave, spanStart)
+    // The old generator lifted the first pass to ~4.41 on this fixture.
+    assert.ok(first <= modelRadius + leave + 0.12,
+      `rough ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.12).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `rough ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < stock.thickness / 2 - 0.5,
+      `rough ${direction}: the outermost pass is not lifted to the bar top (${first.toFixed(4)})`)
+    // The real cutter's body is one radius wide along the bar at every point
+    // it makes, so a point at least a radius inside each end keeps the body
+    // clear of the retained walls. This is the pull-in's one-radius rule: a
+    // pull shorter than the cutter radius enters the wall and fails here.
+    for (const move of withLeave.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - ball.radius >= base.alongStart - 1e-9,
+          `rough ${direction}: the cutter body stays out of the lower retained wall at x ${point.x}`)
+        assert.ok(point.x + ball.radius <= base.alongEnd + 1e-9,
+          `rough ${direction}: the cutter body stays out of the upper retained wall at x ${point.x}`)
+      }
+    }
+  }
+  // The finish keeps the old sampling: its walls are still thickened by its
+  // own leave, and its output is byte-identical to HEAD (fingerprints captured
+  // there). #1095 changes the rough only.
+  for (const [direction, fingerprint] of [['along', '6efaca92f332b379'], ['around', '67a9e8002172941d']] as const) {
+    const finish = generateRotaryFinish('finish', mesh, stock, ball, {
+      stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9, safeRadius: 9,
+      requestedCellSize: 0.01, stockToLeave: leave, passDirection: direction,
+    }, {})
+    assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
+      fingerprint, `finish ${direction}: byte-identical with a positive leave`)
+  }
+}
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')
