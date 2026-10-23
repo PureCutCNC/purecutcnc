@@ -1176,9 +1176,10 @@ function emitRotaryRuns(
     // #1093: a ring-to-ring link that can stay down is a feed, not a
     // retract/rapid/plunge. `link` is supplied only for around mode; it returns
     // the points to feed through (excluding `current`, ending at `first`), or
-    // null when the link cannot stay down -- a gap in the reachable surface, a
-    // split ring, an angle change or the work budget -- in which case the old
-    // behaviour below applies unchanged.
+    // null when the link cannot stay down -- a gap in the reachable surface, an
+    // angle change or the work budget -- in which case the old behaviour below
+    // applies unchanged. A split ring never reaches this call: the finish
+    // reports it as not ended at the ring's end.
     const linkPoints = current !== undefined && (linkPartial === true || (previousEndedAtEnd && run.atStart))
       ? link?.(current, first) ?? null
       : null
@@ -1383,6 +1384,18 @@ const MAX_LINK_TOTAL_SAMPLES = 2_000_000
  * falls back to today's retract rather than a coarser row.
  */
 const MAX_LINK_WORK = 4_000_000
+
+/**
+ * The most cutter-body window work one around operation may spend (#1093).
+ * The windowed leftover walk costs `linkRow x along x windowRows` per computed
+ * angle window, and the link plan asks for it at every ring boundary. Caching by
+ * the window's row span (not the per-link `required`) shares the walk between
+ * links whose body reaches the same rows; this budget bounds the sum that the
+ * per-call `MAX_LINK_WORK` cannot. Past it the remaining links retract through
+ * the old travel path, so a long, fine job stays finite instead of running a
+ * quadratic pass for every ring.
+ */
+const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
 // grid, even when the touch gate ultimately skips it (#1045 slice N). Both this
@@ -2511,10 +2524,11 @@ export function generateRotaryFinish(
   // row. The finish assumes no rough: the height is the model's own safe tip,
   // never the standing blank. A `NaN` anywhere on the span means the link
   // cannot stay down (there is no surface under the tool there), so the old
-  // retract/rapid/plunge handles it; the same happens for a split ring (its
-  // run does not reach the ring end), a link that changes A, and an operation
-  // whose dense row would exceed the work budget (no row). Only the operation's
-  // first positioning move and its final retract go to the rapid height.
+  // retract/rapid/plunge handles it; the same happens for a split ring (the
+  // caller marks a ring that emitted more than one run as not ended at its end),
+  // a link that changes A, and an operation whose dense row would exceed the
+  // work budget (no row). Only the operation's first positioning move and its
+  // final retract go to the rapid height.
   const linkRowAt = sampling.linkRowAt
   const followLink = (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
     if (from.a === undefined || to.a === undefined) return null
@@ -2558,9 +2572,13 @@ export function generateRotaryFinish(
         const tip = sampling.tips[k][ring]
         samples.push(Number.isFinite(tip) ? point(along[ring], tip, angles[k]) : null)
       }
-      const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
+      const runs = ringRuns(samples)
+      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
       here = emitted.here
-      previousEndedAtEnd = emitted.endedAtEnd
+      // A split ring is partial arcs: its last run can still reach the ring end,
+      // but the issue's contract is that a split ring retracts rather than
+      // feeding to the next ring. Only a ring that emitted one run may link.
+      previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
@@ -2790,6 +2808,7 @@ export function generateRotaryRough(
     return -1
   }
   const leftoverCache = new Map<string, number[]>()
+  let linkWindowWork = 0
   /**
    * The widest angle off its axis at which the cutter body can meet any
    * material at all (#1093). A ball's sphere and shank stay inside the cylinder
@@ -2823,11 +2842,31 @@ export function generateRotaryRough(
   const linkLeftoverAt = (row: RotaryLinkRow, angleDeg: number, layer: number, reachDeg = 0): number[] => {
     const k = pointIndexAt(angleDeg)
     if (k < 0) return []
-    const windowRows = angleWindow(k, reachDeg)
-    if (row.along.length * along.length * windowRows.length > MAX_LINK_WORK) return []
-    const key = `${k}:${layer}:${reachDeg.toFixed(6)}:${windowRows.length}`
+    // The base walk reads the link angle's own row and is already bounded by
+    // `linkRowAt`'s `row.along x along` budget. Only the body window multiplies
+    // that by the angle span, so only the window needs its own caps (#1093).
+    const windowed = reachDeg > 0
+    const windowRows = windowed ? angleWindow(k, reachDeg) : [k]
+    const work = row.along.length * along.length * windowRows.length
+    if (windowed && work > MAX_LINK_WORK) return []
+    // Two reaches that select the same angle rows leave the same material, so
+    // the key is the row span rather than the per-link height. Without this a
+    // long job recomputes the whole walk for every ring boundary.
+    const key = windowed
+      ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
+      : `${k}:${layer}`
     const cached = leftoverCache.get(key)
     if (cached) return cached
+    if (windowed) {
+      // The per-call cap above cannot bound the operation: the link plan asks
+      // at every ring boundary. Past the operation budget the rest of the links
+      // retract, and the empty answer is cached so they do not retry the walk.
+      if (linkWindowWork + work > MAX_LINK_WINDOW_WORK) {
+        leftoverCache.set(key, [])
+        return []
+      }
+      linkWindowWork += work
+    }
     // The blank's own height over the body's window: a square blank's corner is
     // higher than its face, and an earlier layer that did not cut at a face
     // angle leaves that support standing.
@@ -2893,12 +2932,16 @@ export function generateRotaryRough(
         if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
         if (leftover[i] > required) required = leftover[i]
       }
-      // The ring's own ray is not enough: the cutter body reaches material at
-      // neighbouring angles (a square blank's corner, a box in the model), so
-      // size the link from the widest window the body can meet at this height.
-      // The reach shrinks as the height rises, so the window found at the ray's
-      // height is the widest one the final height can need.
-      if (Number.isFinite(required) && required > 0) {
+      // The ring's own ray is not enough on a **square blank**: its raised
+      // envelope at a neighbouring angle is not in the model's sampler tips, so
+      // an earlier layer that did not cut at the face leaves that support
+      // standing where the cutter body can still meet it. Size the link from
+      // the widest window the body can meet at this height. The reach shrinks
+      // as the height rises, so the window found at the ray's height is the
+      // widest one the final height can need. A round bar does not need it: its
+      // cross-section is the same at every angle, so the sampler's own
+      // two-dimensional tip already clears the lateral reach (#1093 review).
+      if (square && Number.isFinite(required) && required > 0) {
         const reach = bodyReachDeg(required)
         if (reach > 0) {
           const bodyLeftover = linkLeftoverAt(row, from.a, layer, reach)
@@ -2914,14 +2957,14 @@ export function generateRotaryRough(
     }
     const highZ = pivot + required + clearance
     // The middle leg runs at one height and one angle, above everything this
-    // operation's earlier layers can leave on the span by `clearance`: it is
-    // in air, so it is a rapid. The rise to it and the drop to the next ring
-    // stay feeds. A link whose next cut is above the clearance plane keeps the
-    // cut/step treatment instead.
-    const air = highZ >= from.z && highZ >= to.z
+    // operation's earlier layers can leave on the span by `clearance`, and at
+    // or above both cuts: `required` is the maximum of the leftover material and
+    // the two end tips (the first layer takes the blank's largest radius). It is
+    // therefore always in air, so it is a rapid. The rise to it and the drop to
+    // the next ring stay feeds.
     const steps: RotaryLinkStep[] = []
     if (highZ > from.z) steps.push({ to: { ...from, z: highZ }, kind: 'cut' })
-    steps.push({ to: { ...to, z: Math.max(highZ, to.z) }, kind: air ? 'rapid' : 'cut' })
+    steps.push({ to: { ...to, z: Math.max(highZ, to.z) }, kind: 'rapid' })
     if (Math.max(highZ, to.z) > to.z) steps.push({ to, kind: 'cut' })
     return steps
   }

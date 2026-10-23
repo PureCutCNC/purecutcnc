@@ -50,17 +50,22 @@
  * tool radius; the rough rises only to the material its own earlier layers
  * left, plus the 1 mm clearance, and that constant-height traverse is a rapid.
  * Ten **round-bar** around cases (a bare rough, a rough + finish and a bare
- * finish, with and without retained ends) join the seeded set, plus two
- * **non-revolved** models -- a square prism inside the round bar, ball and flat
- * -- so a link crossing a feature between two rings is replayed against the
- * full cutter body rather than one ray of a surface of revolution. Every
+ * finish, with and without retained ends) join the seeded set, plus four
+ * **non-revolved** models -- a square prism inside a round bar and inside a
+ * square blank, ball and flat -- so a link crossing a feature between two rings
+ * is replayed against the full cutter body rather than one ray of a surface of
+ * revolution. The square-blank pair is the case the rough's cutter-body window
+ * exists for: the blank's own raised envelope at a neighbouring angle is not in
+ * the model sampler, and at a face-angle link it stands more than the 1 mm
+ * clearance above the link's ray. Every
  * rough link is checked: a cut link removes nothing, and the in-air rapid's
  * body must clear the reference's standing material. Every finish link is
  * replayed too; after a rough its removal is bounded by that rough's stepdown
  * (a surface link removes the between-ring terrace, so the rough's air
  * allowance does not apply), while a finish-only link is covered by the
- * advisory and the final-surface check. A split ring still retracts through
- * the old travel path.
+ * advisory. The final-surface check reads the prism's own boundary radius, so a
+ * finish link that cuts 0.2 mm below it fails on these cases too. A split ring
+ * still retracts through the old travel path.
  *
  * The reference is written without the generator's helpers (no
  * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
@@ -963,10 +968,14 @@ interface Case {
   profile: { along: number; radius: number }[]
   /**
    * A non-revolved model (#1093). When present it replaces the revolved mesh;
-   * `profile` is then only the label's shape and the finished-surface check is
-   * skipped (it needs an analytic radius, and a box's is not one).
+   * `profile` is then only the label's shape and `meshRadiusAt` supplies the
+   * boundary the finished-surface check measures against.
    */
   mesh?: RotaryModelMesh
+  /** The non-revolved model's boundary radius at one angle (#1093 review). */
+  meshRadiusAt?: (angleDeg: number) => number
+  /** The along span the non-revolved model occupies. */
+  meshAlong?: { readonly from: number; readonly to: number }
   type: 'flat_endmill' | 'ball_endmill'
   diameter: number
   stepdown: number
@@ -985,6 +994,12 @@ interface Case {
   defaultParams: boolean
   /** A default-parameter case whose bar is drawn short; never coarsened. */
   compact: boolean
+  /**
+   * A per-case replay budget (#1093 review). A small mesh case's conservative
+   * estimate overstates its actual replay, and coarsening it would loosen the
+   * finished-surface bound past the 0.2 mm gouge this set exists to catch.
+   */
+  maxReplayCells?: number
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
@@ -1384,6 +1399,14 @@ function drawRoundCase(seed: number, lengthScale = 1): Case {
   }
 }
 
+/** The boundary radius of a centred square prism of half-width `half`. */
+function prismRadius(half: number): (angleDeg: number) => number {
+  return (angleDeg) => {
+    const radians = angleDeg * Math.PI / 180
+    return half / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+  }
+}
+
 /**
  * A non-revolved around case (#1093 review): the model is a **square prism**
  * inside a round bar, so the material height under one cutter pose varies with
@@ -1391,9 +1414,9 @@ function drawRoundCase(seed: number, lengthScale = 1): Case {
  * a ball and a flat cutter, both rough + finish, so every finish link is
  * replayed after a rough and the removal bound applies.
  *
- * The model is a box rather than `revolved`, so the finished-surface check is
- * skipped for these cases; the link replay, the rough layer descent and the
- * retained-end check are the proof.
+ * The model is a box rather than `revolved`; the finished-surface check reads
+ * `meshRadiusAt` instead of the analytic profile, so a finish that cuts below
+ * the prism still fails.
  */
 function drawFeatureCase(seed: number): Case {
   const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
@@ -1409,10 +1432,11 @@ function drawFeatureCase(seed: number): Case {
     label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
       + `square prism ${2 * half} both around ends 0 stepdown 1.5`,
     stock,
-    // The prism's inscribed radius; only the label and the (skipped) surface
-    // check would read it.
+    // The prism's inscribed radius; only the label reads it now.
     profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
     mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
     type,
     diameter,
     stepdown: 1.5,
@@ -1429,6 +1453,99 @@ function drawFeatureCase(seed: number): Case {
     alongEnd,
     defaultParams: false,
     compact: true,
+  }
+}
+
+/**
+ * A square blank with a square prism inside it (#1093 review). The blank's own
+ * raised envelope at a neighbouring angle is not in the model sampler, so this
+ * is the case the rough's cutter-body window exists for: at a face-angle link
+ * the blank stands above the link's ray by more than the 1 mm clearance, and the
+ * window is what raises the link over it. The finished-surface check also runs
+ * against the prism, so a finish link that cuts below it fails.
+ */
+function drawSquareFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 25
+  const length = 30
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const alongStart = 3
+  const alongEnd = 27
+  const half = 2.6
+  const diameter = 6
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  const radius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} square ${side}x${length} `
+      + `prism ${2 * half} both around ends 0 stepdown 3`,
+    stock,
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
+    type,
+    diameter,
+    stepdown: 3,
+    stepover: Math.max(0.75 * diameter, 1e-3),
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: Math.max(radius / 4, 1e-3),
+    requestedCellSize: Math.min(radius / 3, 0.75 * diameter * 0.5),
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * A finish-only prism case whose reference stays fine enough to assert the
+ * finished surface against the 0.2 mm gouge (#1093 review). The cut band meets
+ * the bar's ends, so no retained stub lifts the finish link off the prism's top;
+ * a small cutter keeps the reference grid affordable.
+ */
+function drawFinishFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 6
+  const stock = roundStock(side, length)
+  // The cut band meets the bar's own ends, so there is no retained stub: the
+  // finish link runs on the prism's top, not on the stub's 5 mm shoulder.
+  const alongStart = 0
+  const alongEnd = 6
+  const half = 1
+  const diameter = 0.4
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  const radius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `prism ${2 * half} finish-only around ends 0`,
+    stock,
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: 2,
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: 0.4,
+    requestedCellSize: 0.35,
+    stockToLeave: 0,
+    programKind: 'finish',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    maxReplayCells: 2_000_000,
   }
 }
 
@@ -1664,11 +1781,12 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
   let entry = coarsenGrid(initial)
   let program = generate(entry)
   let cells = estimateReplayCells(program, entry)
+  const replayCap = initial.maxReplayCells ?? MAX_REPLAY_CELLS
   for (let attempt = 0; attempt < 8 && redraw !== undefined
-    && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
+    && (cells > replayCap || !fitsGrid(entry)); attempt++) {
     const length = entry.alongEnd - entry.alongStart
     if (length <= 20.5) break
-    const ratio = cells > 0 ? MAX_REPLAY_CELLS / cells : 0.8
+    const ratio = cells > 0 ? replayCap / cells : 0.8
     const nextScale = scale * Math.max(0.1, Math.min(0.9, ratio * 0.95))
     if (nextScale >= scale * 0.999) break
     scale = nextScale
@@ -1682,9 +1800,9 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
   // scales with the inverse square of the cell: compute the step, and regenerate
   // the motion once afterwards because a coarser height map can change the tips.
   let coarseChanged = false
-  for (let attempt = 0; attempt < 4 && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
     const before = referenceBudget(entry)
-    const ratio = Math.max(cells / MAX_REPLAY_CELLS, before.cells / MAX_REFERENCE_CELLS, 1)
+    const ratio = Math.max(cells / replayCap, before.cells / MAX_REFERENCE_CELLS, 1)
     const factor = Math.max(1.3, Math.min(5, Math.sqrt(ratio) * 1.05))
     const next = Math.min(entry.requestedCellSize * factor, cellCeiling(entry))
     if (next <= entry.requestedCellSize * 1.001) break
@@ -1697,8 +1815,8 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
     program = generate(entry)
     cells = estimateReplayCells(program, entry)
   }
-  for (let attempt = 0; attempt < 4 && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
-    const ratio = Math.max(cells / MAX_REPLAY_CELLS, referenceBudget(entry).cells / MAX_REFERENCE_CELLS, 1)
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const ratio = Math.max(cells / replayCap, referenceBudget(entry).cells / MAX_REFERENCE_CELLS, 1)
     const factor = Math.max(1.25, Math.min(3, Math.sqrt(ratio) * 1.05))
     const nextCell = Math.min(entry.requestedCellSize * factor, cellCeiling(entry))
     entry = {
@@ -1717,8 +1835,8 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
   // every sampling parameter has been coarsened. Coarsen the **layer** height
   // instead (still inside the stated 0.5-3 mm range) rather than the reference:
   // this is the one input that changes how many rings a layer emits.
-  for (let attempt = 0; attempt < 4 && (cells > MAX_REPLAY_CELLS || !fitsGrid(entry)); attempt++) {
-    const ratio = Math.max(cells / MAX_REPLAY_CELLS, 1)
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const ratio = Math.max(cells / replayCap, 1)
     entry = {
       ...entry,
       stepdown: Math.min(3, entry.stepdown * Math.max(1.2, Math.min(1.8, ratio))),
@@ -2174,6 +2292,9 @@ let worstStubDrop = 0
 let worstStubLabel = ''
 let worstSurfaceOver = Number.NEGATIVE_INFINITY
 let worstSurfaceOverLabel = ''
+// #1093 review: surface cells the non-revolved prism cases assert, so a run
+// that silently skips them fails below instead of passing with no check.
+let meshSurfaceCells = 0
 let worstSurfaceUnder = Number.NEGATIVE_INFINITY
 let worstSurfaceUnderLabel = ''
 let worstAssertedInterior = 0
@@ -2235,6 +2356,9 @@ const CASES = [
   // under the pose, not one ray of a surface of revolution.
   fitEntry(drawFeatureCase(0)),
   fitEntry(drawFeatureCase(1)),
+  fitEntry(drawSquareFeatureCase(0)),
+  fitEntry(drawSquareFeatureCase(1)),
+  fitEntry(drawFinishFeatureCase(0)),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -2742,11 +2866,45 @@ for (const { entry, program } of CASES) {
   // leaves the raw blank between its passes, so its above-model material is not
   // a finished-surface measure; it is covered by the advisory instead.
   if (!finishRan) continue
-  // A non-revolved model has no "radius at this along"; the surface bounds
-  // below need one. Its link replay, layer descent and retained-end checks are
-  // the proof for those cases (#1093).
-  if (entry.mesh) continue
   const finishOnly = entry.programKind === 'finish'
+  const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
+  // The same floor the revolved cases use: a conservative cell read plus the
+  // reference's own angle and along resolution. A finish that cuts below the
+  // model by more than this is a gouge, and it is now asserted for a
+  // non-revolved model too (#1093 review): the box/prism cases used to skip the
+  // finished-surface check, so a finish link 0.2 mm below the prism passed.
+  const underLimit = corner * referenceAngleRad + budget.alongBin + 1e-6
+  if (entry.mesh) {
+    const radiusAt = entry.meshRadiusAt
+    const meshAlong = entry.meshAlong
+    assert.ok(radiusAt !== undefined && meshAlong !== undefined,
+      `${entry.label}: a mesh case supplies its boundary radius and along span`)
+    if (!radiusAt || !meshAlong) continue
+    for (let i = 0; i < reference.alongBins; i++) {
+      const along = reference.alongStart + (i + 0.5) * reference.alongBin
+      if (along < meshAlong.from || along > meshAlong.to) continue
+      for (let k = 0; k < reference.angleBins; k++) {
+        const angle = (k + 0.5) * reference.angleDeg
+        const wanted = radiusAt(angle)
+        const material = reference.material[i * reference.angleBins + k]
+        checkedSurfaceCells++
+        meshSurfaceCells++
+        const under = wanted - material
+        if (under > worstSurfaceUnder) {
+          worstSurfaceUnder = under
+          worstSurfaceUnderLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} `
+            + `material ${material.toFixed(4)} model ${wanted.toFixed(4)}`
+        }
+        assert.ok(under <= underLimit,
+          `${entry.label}: the finish cuts ${under.toFixed(4)} mm below the prism `
+          + `(allowed ${underLimit.toFixed(4)}) at along ${along.toFixed(2)} A${angle.toFixed(2)}; `
+          + `lowest contact ${lowestContact.contact.toFixed(3)} at along ${lowestContact.along.toFixed(2)} `
+          + `A${lowestContact.angle.toFixed(2)} tip ${lowestContact.tip.toFixed(3)} (${lowestContact.kind}); `
+          + `params ${JSON.stringify({ stepover: entry.stepover, rough: entry.roughSpacing, finish: entry.finishSpacing, cell: entry.requestedCellSize, leave: entry.stockToLeave })}`)
+      }
+    }
+    continue
+  }
   const slope = modelMaxSlope(entry.profile)
   // A ball leaves its between-pass scallop; a flat leaves a staircase one full
   // step tall on a sloped surface, because each pass's bottom is a horizontal
@@ -2761,7 +2919,6 @@ for (const { entry, program } of CASES) {
     ? entry.stepover
     : aroundArcStep(corner, entry.finishSpacing)
   const angularScallop = ball ? (angleArc * angleArc) / (8 * cutterRadius) : 0
-  const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
   // The generator's conservative cell lift (`angleLifts`, capped at
   // `requestedCellSize` in `sampleRotaryModel`) is part of the surface it
   // promises: it guarantees the emitted tip is at or above the model. The
@@ -2803,7 +2960,6 @@ for (const { entry, program } of CASES) {
           `${entry.label}: the finish leaves ${over.toFixed(4)} mm above the model (allowed ${surfaceTolerance.toFixed(4)}) `
           + `at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
       }
-      const underLimit = corner * referenceAngleRad + budget.alongBin + 1e-6
       assert.ok(under <= underLimit,
         `${entry.label}: the finish cuts ${under.toFixed(4)} mm below the model `
         + `(allowed ${underLimit.toFixed(4)}) at along ${along.toFixed(2)} A${angle.toFixed(2)}; `
@@ -2841,7 +2997,7 @@ console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)}
 console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
   + `(${worstSurfaceOverLabel})`)
 console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
-  + `(${worstSurfaceUnderLabel})`)
+  + `(${worstSurfaceUnderLabel}); ${meshSurfaceCells} cells on the non-revolved prisms`)
 console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
 console.log(`  along stage: closest to its exact-geometry bound at ${worstAlongMargin.toFixed(4)} mm margin `
   + `(${worstAlongMarginLabel || 'none'})`)
@@ -2890,8 +3046,10 @@ console.log(`  #1093 finish links: ${finishLinkChecks} replayed `
   + `(${worstFinishAfterRoughLinkBiteLabel || 'none'})`)
 assert.ok(roundAroundCases >= ROUND_CASES,
   `the round-bar around set is in the seeded run (${roundAroundCases} >= ${ROUND_CASES})`)
-assert.ok(featureCases >= 2,
+assert.ok(featureCases >= 4,
   `non-revolved around models are replayed (${featureCases})`)
+assert.ok(meshSurfaceCells > 0,
+  `the non-revolved cases assert the finished surface (${meshSurfaceCells} cells)`)
 assert.ok(rapidLinkChecks > 0, `the rough in-air links are replayed against the reference (${rapidLinkChecks})`)
 assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (${roundRapidLinkChecks})`)
 assert.ok(finishLinkChecks > 0, `the finish links are replayed against the reference (${finishLinkChecks})`)
