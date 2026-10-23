@@ -28,6 +28,56 @@
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject } from './helpers'
+import type { Page } from '@playwright/test'
+
+/**
+ * Replace the platform's save entry point with a probe. Every export must call
+ * it with an explicit `null` destination (issue #1081); a previous path is never
+ * permission to overwrite. `success` and `cancel` answer immediately; `pending`
+ * hands the test the resolver so it can open another document mid-save.
+ */
+async function installExportSaveProbe(
+  page: Page,
+  mode: 'success' | 'cancel' | 'pending',
+): Promise<void> {
+  await page.evaluate(async (probeMode) => {
+    const module = await import('/src/platform/index.ts') as {
+      platform: { saveTextFile: (...args: unknown[]) => Promise<string | null> }
+    }
+    const probe = window as unknown as {
+      __exportSaveCalls: unknown[][]
+      __resolveExportSave: ((path: string | null) => void) | null
+    }
+    probe.__exportSaveCalls = []
+    probe.__resolveExportSave = null
+    module.platform.saveTextFile = async (...args: unknown[]) => {
+      probe.__exportSaveCalls.push(args)
+      if (probeMode === 'cancel') return null
+      if (probeMode === 'pending') {
+        return await new Promise<string | null>((resolve) => {
+          probe.__resolveExportSave = resolve
+        })
+      }
+      return '/tmp/e2e-export.nc'
+    }
+  }, mode)
+}
+
+async function exportSaveCalls(page: Page): Promise<unknown[][]> {
+  return page.evaluate(() => {
+    const probe = window as unknown as { __exportSaveCalls?: unknown[][] }
+    return probe.__exportSaveCalls ?? []
+  })
+}
+
+async function lastExportPath(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const module = await import('/src/store/projectStore.ts') as {
+      useProjectStore: { getState: () => { lastExportPath: string | null } }
+    }
+    return module.useProjectStore.getState().lastExportPath
+  })
+}
 
 test.describe('Export G-code operation checklist smoke', () => {
   test('per-operation export pre-checks only that operation', async ({ app, ui }) => {
@@ -296,3 +346,103 @@ for (const layout of [
     })
   })
 }
+test.describe('Export G-code destination smoke (#1081)', () => {
+  test('every export asks for a destination, even after a successful export', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page)
+    await installExportSaveProbe(app.page, 'success')
+
+    const dialog = ui.exportDialog.root(app.page)
+
+    await ui.operations.headerExportButton(app.page).click()
+    await expect(dialog).toBeVisible()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+    await ui.exportDialog.exportButton(app.page).click()
+    await expect(dialog).toBeHidden()
+
+    let calls = await exportSaveCalls(app.page)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toHaveLength(4)
+    expect(calls[0]?.[3]).toBeNull()
+    const firstSuggestedName = calls[0]?.[0]
+
+    // Same document and same remembered export path, but a rename and a
+    // changed operation selection alter the suggested name. It must still ask.
+    await app.page.evaluate(async () => {
+      const module = await import('/src/store/projectStore.ts') as {
+        useProjectStore: { getState: () => { setProjectName: (name: string) => void } }
+      }
+      module.useProjectStore.getState().setProjectName('Renamed Part')
+    })
+
+    await ui.operations.headerExportButton(app.page).click()
+    await expect(dialog).toBeVisible()
+    await ui.exportDialog.operationCheckbox(app.page, 'Route B').uncheck()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+    await ui.exportDialog.exportButton(app.page).click()
+    await expect(dialog).toBeHidden()
+
+    calls = await exportSaveCalls(app.page)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toHaveLength(4)
+    expect(calls[1]?.[3]).toBeNull()
+    expect(calls[1]?.[0]).not.toBe(firstSuggestedName)
+    expect(calls[1]?.[0]).toContain('Renamed_Part')
+  })
+
+  test('cancelling the destination neither closes the dialog nor marks an export', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page)
+    await installExportSaveProbe(app.page, 'cancel')
+
+    const dialog = ui.exportDialog.root(app.page)
+    await ui.operations.headerExportButton(app.page).click()
+    await expect(dialog).toBeVisible()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+
+    await ui.exportDialog.exportButton(app.page).click()
+    await expect.poll(async () => (await exportSaveCalls(app.page)).length).toBe(1)
+
+    const calls = await exportSaveCalls(app.page)
+    expect(calls[0]).toHaveLength(4)
+    expect(calls[0]?.[3]).toBeNull()
+    await expect(dialog).toBeVisible()
+    expect(await lastExportPath(app.page)).toBeNull()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  })
+
+  test('a destination chosen during an in-flight save is not attributed to a switched document', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page)
+    await installExportSaveProbe(app.page, 'pending')
+
+    const dialog = ui.exportDialog.root(app.page)
+    await ui.operations.headerExportButton(app.page).click()
+    await expect(dialog).toBeVisible()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+
+    await ui.exportDialog.exportButton(app.page).click()
+    await expect.poll(async () => (await exportSaveCalls(app.page)).length).toBe(1)
+    await expect(dialog).toBeVisible()
+
+    // Swap documents while the platform save promise is still open.
+    await app.page.evaluate(async () => {
+      const w = window as unknown as {
+        __pcTest: { getProject: () => Promise<Record<string, unknown>>; loadProject: (json: string) => Promise<void> }
+      }
+      const project = await w.__pcTest.getProject()
+      const meta = project.meta as Record<string, unknown>
+      project.meta = { ...meta, name: 'Switched project' }
+      await w.__pcTest.loadProject(JSON.stringify(project))
+    })
+    await expect(dialog).toBeVisible()
+
+    await app.page.evaluate(() => {
+      const probe = window as unknown as { __resolveExportSave?: ((path: string | null) => void) | null }
+      probe.__resolveExportSave?.('/tmp/previous-project.nc')
+    })
+
+    // The async document-identity check closes the dialog without marking the
+    // switched project exported (issue #675) and without clearing the marker
+    // the switch already reset.
+    await expect(dialog).toBeHidden()
+    expect(await lastExportPath(app.page)).toBeNull()
+  })
+})

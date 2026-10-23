@@ -65,6 +65,7 @@ import { significantSilhouettePaths } from './silhouette'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   createEntryPolicy,
+  withEntryRampPath,
   type EntryClearanceRegion,
   type EntryPolicy,
   helixAngularDirection,
@@ -843,6 +844,7 @@ function appendFragmentedContoursAtLevels(
   leadForLevel?: (z: number) => XyLeadContext | undefined,
   entryForLevel?: (z: number) => EntryPolicy | undefined,
   onObstacleBlocked?: (z: number, fragment: ClosedGuideFragment) => void,
+  constrainRampToCutPath = false,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
@@ -866,6 +868,16 @@ function appendFragmentedContoursAtLevels(
 
       for (const ff of finalFragments) {
         if (ff.points.length < 2) continue
+        // A requested outside ramp may only follow this fragment's own cut
+        // polyline (issue #1084). The constraint is per FRAGMENT, because the
+        // actual adjacent segment differs for every region/clamp/tab cut; the
+        // level's tab keep-outs already live in `levelEntry`. A fragment whose
+        // adjacent segment is too short or blocked leaves the constrained
+        // placement unavailable, so the entry falls back with a warning rather
+        // than returning to the broad domain.
+        const fragmentEntry = constrainRampToCutPath
+          ? withEntryRampPath(levelEntry, { points: ff.points, closed: ff.closed })
+          : levelEntry
         if (ff.closed) {
           // The route follows the wall itself, so every contour here is a
           // surface that survives into the part. The plan re-seams the loop at
@@ -881,7 +893,7 @@ function appendFragmentedContoursAtLevels(
             ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }
             : contourStartPoint(points, z)
           nextPosition = transitionToCutEntry(
-            moves, nextPosition, entry, safeZ, maxLinkDistance, undefined, levelEntry,
+            moves, nextPosition, entry, safeZ, maxLinkDistance, undefined, fragmentEntry,
           )
           if (leadPlan && levelLead) {
             nextPosition = emitXyLead(moves, nextPosition, leadPlan, z, levelLead.options, 'lead_in')
@@ -899,7 +911,7 @@ function appendFragmentedContoursAtLevels(
           const head = openLead ? openLead.staging : ff.points[0]
           const entry = { x: head.x, y: head.y, z }
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
-          nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ, levelEntry)
+          nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ, fragmentEntry)
           if (openLead && levelLead) {
             nextPosition = emitXyLead(moves, nextPosition, openLead, z, levelLead.options, 'lead_in')
           }
@@ -1440,6 +1452,17 @@ function generateEdgeRouteToolpathSingle(
   const wallQualifiesForLead = !isTrochoidal
     && (operation.pass === 'finish' || roughingRingIsTheFinishedWall(operation))
   const carriesWallLead = wallQualifiesForLead && descentCanAffordALead(operation)
+  /**
+   * A requested OUTSIDE ramp is kerf-bound (issue #1084): it may only follow
+   * the operation's own cut polyline, so an XY lead would stage the descent
+   * off that wall and outside the kerf the level cut removes. The lead is
+   * omitted and reported; the finish-wall witness mark that trades away is
+   * accepted as part of this bounded safety fix. Requested helix entries and
+   * their ramp fallback keep their existing lead behaviour.
+   */
+  const outsideRampOnCutPath = operation.kind === 'edge_route_outside'
+    && !isTrochoidal
+    && operation.entryStrategy === 'ramp'
   // The ARRIVAL is safe because a helix bores its staging point before the arc
   // reaches it. The DEPARTURE has no such thing: it drives out of the finished
   // slot into whatever stands beside it and then retracts vertically out of the
@@ -2140,6 +2163,17 @@ function generateEdgeRouteToolpathSingle(
   /** Lead options for an outside route, or undefined when this pass carries no lead. */
   function outsideLeadOptions(domain: () => EntryClearanceRegion[]): XyLeadOptions | undefined {
     if (!carriesWallLead) return undefined
+    if (outsideRampOnCutPath) {
+      // The ramp and the lead want opposite things here: #695 staged the lead
+      // in open, domain-validated air off the wall, while #1084's kerf-bound
+      // ramp must stay on the wall path. Keeping the lead would put the
+      // descent back in the uncut stock beside the profile, which is the
+      // defect. Omit it and say so rather than silently ignoring the request.
+      if (operation.xyLeadStrategy === 'arc') {
+        appendUniqueWarning(warnings, { code: 'xyLeadNoViablePath' })
+      }
+      return undefined
+    }
     return resolveXyLeadOptions(
       operation,
       tool.diameter,
@@ -2266,6 +2300,7 @@ function generateEdgeRouteToolpathSingle(
             outsideLeadForLevel(outsideLeadOptions(combinedDomain)),
             outsideEntryForLevel(outsideEntryPolicy(combinedDomain)),
             warnPartsBlockingRoute(run.targets.map((target) => target.feature.name).join(', ')),
+            outsideRampOnCutPath,
           )
         }
       }
@@ -2358,6 +2393,7 @@ function generateEdgeRouteToolpathSingle(
           outsideLeadForLevel(outsideLeadOptions(targetDomain)),
           outsideEntryForLevel(outsideEntryPolicy(targetDomain)),
           warnPartsBlockingRoute(target.feature.name),
+          outsideRampOnCutPath,
         )
       }
     }

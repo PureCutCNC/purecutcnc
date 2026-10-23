@@ -123,7 +123,8 @@ const serialize = (project: Project, operation: Operation): string => {
   return JSON.stringify({ moves: result.moves, warnings: result.warnings })
 }
 
-// ── Far parts change nothing; near parts still shape the route ────────
+// ── Far parts change nothing; near parts shape the strategies that leave the
+//    wall (helix). A kerf-bound ramp no longer leaves it (issue #1084). ──
 
 for (const { name, overrides } of CASES) {
   const operation = outsideOperation(overrides)
@@ -142,12 +143,24 @@ for (const { name, overrides } of CASES) {
     + 'the outside domain must be boxed by the wall it follows, not by every obstacle',
   )
   // And the frame must not be so tight that it drops what matters.
-  assert(
-    nearOnly !== bossAlone,
-    `${name}: the parts beside the boss no longer shape its route — `
-    + 'the obstacle frame is dropping obstacles that reach the wall path or its entries',
-  )
-  console.log(`  ✓ ${name}: far parts change nothing, near parts still shape it (${entries} entry moves)`)
+  //
+  // A requested ramp is the exception since issue #1084: it is kerf-bound to
+  // the route's own cut polyline, so a neighbour that only reached the old
+  // off-wall staging box no longer moves the entry. That is the fix, not a
+  // dropped obstacle — the neighbours here stop 5 mm outside the wall path.
+  if (overrides.entryStrategy === 'ramp') {
+    assert(
+      nearOnly === bossAlone,
+      `${name}: a kerf-bound ramp followed a neighbour instead of the cut polyline`,
+    )
+  } else {
+    assert(
+      nearOnly !== bossAlone,
+      `${name}: the parts beside the boss no longer shape its route — `
+      + 'the obstacle frame is dropping obstacles that reach the wall path or its entries',
+    )
+  }
+  console.log(`  ✓ ${name}: far parts change nothing (${entries} entry moves)`)
 }
 
 // ── Every obstacle is grown, whichever stands highest ────────────────

@@ -115,6 +115,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `polygonSplit.test.ts` — polygon splitting
 - `profileEdit.test.ts` — profile and segment-editing helper behavior
 - `projectStoreTransform.test.ts` — project transform actions
+- `projectLifecycleExportPath.test.ts` — issue #1081: a remembered G-code export path is cleared by New (blank and template), load, and open transitions, retained by same-document edits/saves, and left untouched by a failed open
 - `second_cut_test.ts` — multi-pass cutting behavior
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `textReference.test.ts` — issue #228: text-feature creation mints a definition, reference copies resolve (selectable), text edits propagate to definition + siblings, 16-char name truncation
