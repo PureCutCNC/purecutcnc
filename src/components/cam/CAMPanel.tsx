@@ -41,7 +41,9 @@ import { createCamPlan, type CamPlanDraft } from '../../engine/operations/camPla
 import { setupFace } from '../../engine/setupOrientation'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
+import { OperationNoteField } from './OperationNoteField'
 import { OperationParameterReference } from './OperationParameterReference'
+import { allToolpathsToggle, allToolpathsToggleEnabled } from './toolpathToggle'
 import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
@@ -156,35 +158,6 @@ function DraftTextInput({ value, onCommit }: DraftTextInputProps) {
           return
         }
 
-        if (event.key === 'Escape') {
-          reset(event.currentTarget)
-          event.currentTarget.blur()
-        }
-      }}
-    />
-  )
-}
-
-function DraftTextArea({ value, onCommit }: DraftTextInputProps) {
-  function reset(element: HTMLTextAreaElement) {
-    element.value = value
-  }
-
-  function commit(element: HTMLTextAreaElement) {
-    if (element.value !== value) {
-      onCommit(element.value)
-    } else {
-      reset(element)
-    }
-  }
-
-  return (
-    <textarea
-      key={value}
-      defaultValue={value}
-      spellCheck
-      onBlur={(event) => commit(event.currentTarget)}
-      onKeyDown={(event) => {
         if (event.key === 'Escape') {
           reset(event.currentTarget)
           event.currentTarget.blur()
@@ -561,6 +534,9 @@ export function CAMPanel({
   // G-code, or a ShopBot part file (issue #953).
   const exportLabels = exportDialectLabels(getActiveMachineDefinition(project))
   const setupSections = camSetupSections(project)
+  // One eye for the whole list (issue #1102, proposal 17): it hides while any
+  // toolpath is drawn and shows once every one is hidden.
+  const toolpathToggle = allToolpathsToggle(project.operations)
   const currentSetup = activeSetup(project)
   // The active setup's face decides what the CAM panel offers: Around hides
   // the cross-face target picker and the automatic plan (issue #395).
@@ -1114,19 +1090,17 @@ export function CAMPanel({
         </label>
       ),
       description: () => (
-        <label className="properties-field properties-field--textarea">
-          <span>{camT('cam.operation.description')}</span>
-          <DraftTextArea
-            value={operation.description ?? ''}
-            onCommit={(value) => updateOperation(operation.id, { description: value })}
-          />
-        </label>
+        <OperationNoteField
+          key={operation.id}
+          value={operation.description ?? ''}
+          onCommit={(value) => updateOperation(operation.id, { description: value })}
+        />
       ),
       kind: () => (
-        <label className="properties-field">
+        <div className="properties-field">
           <span>{camT('cam.operation.kind')}</span>
-          <input type="text" value={operationKindLabel(operation.kind)} readOnly />
-        </label>
+          <span className="properties-value">{operationKindLabel(operation.kind)}</span>
+        </div>
       ),
       pass: () => (
         <label className="properties-field">
@@ -2269,62 +2243,65 @@ export function CAMPanel({
               </div>
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-toolbar cam-section-toolbar--end">
-                  <div className="cam-section-header-actions" ref={addOperationMenuRef}>
-                  {generationSettings && <GenerationSettingsMenu {...generationSettings} />}
-                  <button
-                    className="tree-action-btn tree-action-btn--visibility"
-                    type="button"
-                    title={camT('cam.panel.showAllToolpaths')}
-                    aria-label={camT('cam.panel.showAllToolpaths')}
-                    disabled={project.operations.length === 0}
-                    onClick={() => setAllOperationToolpathVisibility(true)}
-                  >
-                    <Icon id="eye" />
-                  </button>
-                  <button
-                    className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
-                    type="button"
-                    title={camT('cam.panel.hideAllToolpaths')}
-                    aria-label={camT('cam.panel.hideAllToolpaths')}
-                    disabled={project.operations.length === 0}
-                    onClick={() => setAllOperationToolpathVisibility(false)}
-                  >
-                    <Icon id="eye-off" />
-                  </button>
-                  {showsMillingAuthoring(machine) ? (
+                  <div className="cam-section-header-actions cam-operations-toolbar" ref={addOperationMenuRef}>
+                    {/* The primary action leads the row (issue #1102, proposal
+                        14); it kept its handler, popup wiring and warn state. */}
                     <button
-                      ref={camPlanButtonRef}
-                      className="cam-header-action cam-header-action--plan"
+                      className={`cam-header-action cam-header-action--primary${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
                       type="button"
-                      disabled={project.features.length === 0 || currentSetupFace === 'around'}
-                      title={currentSetupFace === 'around' ? camT('cam.plan.unavailableAround') : undefined}
-                      onClick={() => void handleOpenCamPlan()}
+                      title={selection.selectedFeatureIds.length === 0 ? camT('cam.panel.addHint') : undefined}
+                      aria-expanded={showAddOperationMenu}
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        setSelectedNewOperationKind(null)
+                        setPickedTargetIds(null)
+                        setShowAddOperationMenu((value) => !value)
+                      }}
                     >
-                      {camT('cam.plan.launch')}
+                      {setupSections.grouped ? camT('cam.setup.addTo', { name: currentSetup?.name ?? '' }) : camT('cam.panel.add')}
                     </button>
-                  ) : null}
-                  <button
-                    className="cam-header-action"
-                    type="button"
-                    onClick={() => onExport()}
-                  >
-                    {camT('cam.panel.export')}
-                  </button>
-                  <button type="button" className="cam-header-action" onClick={() => setEditingSetupId(currentSetup?.id ?? null)}>{camT('cam.setup.properties')}</button>
-                  <button
-                    className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
-                    type="button"
-                    title={selection.selectedFeatureIds.length === 0 ? camT('cam.panel.addHint') : undefined}
-                    aria-expanded={showAddOperationMenu}
-                    aria-haspopup="dialog"
-                    onClick={() => {
-                      setSelectedNewOperationKind(null)
-                      setPickedTargetIds(null)
-                      setShowAddOperationMenu((value) => !value)
-                    }}
-                  >
-                    {setupSections.grouped ? camT('cam.setup.addTo', { name: currentSetup?.name ?? '' }) : camT('cam.panel.add')}
-                  </button>
+                    {showsMillingAuthoring(machine) ? (
+                      <button
+                        ref={camPlanButtonRef}
+                        className="cam-header-action cam-header-action--plan"
+                        type="button"
+                        disabled={project.features.length === 0 || currentSetupFace === 'around'}
+                        title={currentSetupFace === 'around' ? camT('cam.plan.unavailableAround') : undefined}
+                        onClick={() => void handleOpenCamPlan()}
+                      >
+                        {camT('cam.plan.launch')}
+                      </button>
+                    ) : null}
+                    <button
+                      className="cam-header-action"
+                      type="button"
+                      onClick={() => onExport()}
+                    >
+                      {camT('cam.panel.export')}
+                    </button>
+                    {/* Only grouped setups have a per-card gear, so this stays
+                        the one way into a flat setup's properties. */}
+                    {setupSections.grouped ? null : (
+                      <button type="button" className="cam-header-action" onClick={() => setEditingSetupId(currentSetup?.id ?? null)}>{camT('cam.setup.properties')}</button>
+                    )}
+                    <span className="cam-operations-toolbar__spacer" aria-hidden="true" />
+                    {/* The two icon buttons are one unit so the icons wrap
+                        together when the row is too narrow, never the text
+                        actions (issue #1102, proposal 14). */}
+                    <div className="cam-operations-toolbar__icons">
+                      <button
+                        className={`tree-action-btn tree-action-btn--visibility${toolpathToggle.anyVisible ? '' : ' tree-action-btn--muted'}`}
+                        type="button"
+                        title={camT(toolpathToggle.anyVisible ? 'cam.panel.hideAllToolpaths' : 'cam.panel.showAllToolpaths')}
+                        aria-label={camT(toolpathToggle.anyVisible ? 'cam.panel.hideAllToolpaths' : 'cam.panel.showAllToolpaths')}
+                        aria-pressed={toolpathToggle.anyVisible}
+                        disabled={!allToolpathsToggleEnabled(project.operations)}
+                        onClick={() => setAllOperationToolpathVisibility(toolpathToggle.next)}
+                      >
+                        <Icon id={toolpathToggle.anyVisible ? 'eye' : 'eye-off'} />
+                      </button>
+                      {generationSettings && <GenerationSettingsMenu {...generationSettings} />}
+                    </div>
                     {showAddOperationMenu ? (
                       <OperationAddMenu
                         setupName={setupSections.grouped ? currentSetup?.name : undefined}
@@ -2361,7 +2338,6 @@ export function CAMPanel({
                   </div>
                 ) : (
                   <div className="feature-tree-panel cam-operation-tree">
-                    <div className="tree-root-label">{camT('cam.panel.cam')}</div>
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
                         <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>

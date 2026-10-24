@@ -132,7 +132,6 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.panel.operations': '加工操作',
   'cam.panel.tools': '刀具',
   'cam.panel.operationsEmpty': '选择兼容的图形，然后添加加工操作。挖槽和内缘走刀需要减法特征。外缘走刀需要加法特征。表面清理接受加法特征。',
-  'cam.panel.cam': 'CAM',
   'cam.panel.properties': '属性',
   'cam.panel.export': '导出',
   'cam.panel.add': '添加',
@@ -202,6 +201,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   // ── Operation property labels ──
   'cam.operation.name': '名称',
   'cam.operation.description': '描述',
+  'cam.operation.addNote': '+ 添加备注',
   'cam.operation.kind': '类型',
   'cam.operation.pass': '工序',
   'cam.operation.maxCarveDepth': '最大雕刻深度',

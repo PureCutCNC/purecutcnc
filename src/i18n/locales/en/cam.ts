@@ -131,7 +131,6 @@ export const camEn = {
   'cam.panel.operations': 'Operations',
   'cam.panel.tools': 'Tools',
   'cam.panel.operationsEmpty': 'Select compatible geometry, then add an operation. Pocket and inside route require subtract features. Outside route requires add features. Surface clean accepts add features.',
-  'cam.panel.cam': 'CAM',
   'cam.panel.properties': 'Properties',
   'cam.panel.export': 'Export',
   'cam.panel.add': 'Add',
@@ -201,6 +200,7 @@ export const camEn = {
   // ── Operation property labels ──
   'cam.operation.name': 'Name',
   'cam.operation.description': 'Description',
+  'cam.operation.addNote': '+ Add note',
   'cam.operation.kind': 'Kind',
   'cam.operation.pass': 'Pass',
   'cam.operation.maxCarveDepth': 'Max carve depth',
