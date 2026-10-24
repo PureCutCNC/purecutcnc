@@ -209,11 +209,9 @@ export const newProjectDialog = {
     newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
   stockDimension: (page: Page, dimension: 'width' | 'height' | 'thickness' | 'size' | 'length') =>
     newProjectDialog.root(page).locator(`#new-project-stock-${dimension}`),
-  /** The project type picker, chosen once here (issue #1046). */
-  typeTrigger: (page: Page) =>
-    newProjectDialog.root(page).locator('.properties-field--new-project-type .ui-select__trigger'),
-  typeOption: (page: Page, label: string) =>
-    newProjectDialog.root(page).locator('.properties-field--new-project-type').getByRole('option', { name: label, exact: true }),
+  /** The project type tiles, chosen once here (issue #1046), first in the dialog since #1102. */
+  typeTile: (page: Page, label: string) =>
+    newProjectDialog.root(page).getByRole('radiogroup', { name: 'Project type' }).getByRole('radio', { name: label, exact: true }),
   /** A rotary blank's Shape picker — Round bar or Square blank (issue #1046). */
   stockShapeTrigger: (page: Page) =>
     newProjectDialog.root(page).locator('.properties-field--stock-shape .ui-select__trigger'),
@@ -859,6 +857,8 @@ export const face = {
     face.switchGroup(page).getByRole('button', { name, exact: true }),
   otherSideToggle: (page: Page) => page.locator('.face-switch__ghost'),
   banner: (page: Page) => page.locator('.face-banner'),
+  /** The short "Flipped about X/Y" chip beside the switch on Bottom (issue #1102); its title is the full sentence. */
+  flipChip: (page: Page) => page.locator('.face-switch__chip'),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   ghostRows: (page: Page) => page.locator('.tree-row--feature[data-ghost="true"]'),
   /** The face tag on a tree row or properties row. */

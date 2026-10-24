@@ -118,8 +118,10 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
 
   await ui.face.segment(page, 'Bottom').click()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
-  await expect(ui.face.banner(page)).toContainText('Drawing on bottom face')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
+  // No banner row on desktop: the switch carries a short chip (issue #1102).
+  await expect(ui.face.flipChip(page)).toHaveText('Flipped about X')
+  await expect(ui.face.banner(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -174,7 +176,7 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
 
   // Back on Top the same feature is the ghost and the base is editable again.
   await ui.face.segment(page, 'Top').click()
-  await expect(ui.face.banner(page)).not.toContainText('Stock flipped')
+  await expect(ui.face.flipChip(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -193,7 +195,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
 
   await ui.face.segment(page, 'Bottom').click()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
@@ -223,7 +225,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   expect(undone.setups as unknown[]).toHaveLength(1)
   await expect(undo).toBeDisabled()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 })
 
 // The review's finding 1: the header switch was disabled during a move, but a
@@ -417,7 +419,7 @@ test('the face switch is reachable and operable from the keyboard', async ({ app
   await page.keyboard.press('Space')
   await expect(bottom).toHaveAttribute('aria-pressed', 'true')
   await expect(bottom).toBeFocused()
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 
   // The ghost toggle appears next in the tab order once both faces exist.
   await page.keyboard.press('Tab')
@@ -569,7 +571,7 @@ test.describe('landscape tablet', () => {
     }
 
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
-    await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+    await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 
     await ui.face.otherSideToggle(page).tap()
     await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')

@@ -113,8 +113,7 @@ export async function createNewProject(
 
   if (options.template) await ui.newProjectDialog.template(page, options.template).click()
   if (options.type) {
-    await ui.newProjectDialog.typeTrigger(page).click()
-    await ui.newProjectDialog.typeOption(page, options.type).click()
+    await ui.newProjectDialog.typeTile(page, options.type).click()
   }
   if (options.shape) {
     await ui.newProjectDialog.stockShapeTrigger(page).click()
