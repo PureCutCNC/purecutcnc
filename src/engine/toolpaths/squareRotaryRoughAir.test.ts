@@ -650,13 +650,26 @@ function ballCutterHitsBlank(
         const lowest = Math.min(...usable.flatMap((move) => [radius(move.from, pivot), radius(move.to, pivot)]))
         const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
         const present = new Map<number, Set<number>>()
+        // #1098: along layers alternate direction instead of adding 360 per
+        // layer, so A no longer carries the layer index. A cut tip lies inside
+        // its layer's own radius band `[layerRadius, previousRadius)`, and
+        // those bands are disjoint, so the tip radius still identifies the
+        // layer exactly.
+        const layerOf = (tipRadius: number): number => {
+          for (let i = 1; i <= layers; i++) {
+            const previous = maxRadius - (i - 1) * params.stepdown
+            const layerRadius = Math.max(lowest, maxRadius - i * params.stepdown)
+            if (tipRadius >= layerRadius - tolerance && tipRadius < previous - 1e-12) return i - 1
+          }
+          return -1
+        }
         for (const move of result.moves) {
           if (move.kind === 'rapid' || move.to.a === undefined) continue
-          const index = Math.floor(move.to.a / 360)
+          const index = layerOf(radius(move.to, pivot))
           if (index < 0 || index >= layers) continue
-          const set = present.get(baseAngle(move.to.a - index * 360)) ?? new Set<number>()
+          const set = present.get(baseAngle(move.to.a)) ?? new Set<number>()
           set.add(index)
-          present.set(baseAngle(move.to.a - index * 360), set)
+          present.set(baseAngle(move.to.a), set)
         }
         assert.equal(present.size, Math.ceil(2 * Math.PI * maxRadius / params.stepover), 'every pass is represented')
         // The global `lowest` tip is reached at the last layer, at the pass

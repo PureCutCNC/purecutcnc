@@ -316,8 +316,17 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   assert.ok(result.moves.length > 0, 'the square rough produces motion')
   const layers = Math.ceil((MAX_R - TARGET_RADIUS) / PARAMS.stepdown)
   assert.equal(layers, 3, 'layers are still counted from the corner radius')
-  const usedLayers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
-  assert.deepEqual([...usedLayers].sort((a, b) => a - b), [0, 1, 2], 'the corner passes still cut from the first layer')
+  // #1098: along layers alternate direction instead of adding 360 per layer,
+  // so A no longer carries the layer number. Each of the three layers still
+  // reaches its own radius; read them from the cut heights instead.
+  assert.ok(Math.max(...result.moves.map((m) => m.to.a ?? 0)) <= 360, 'A stays within [0, 360]')
+  const cutTips = result.moves.filter((m) => m.kind !== 'rapid').map((m) => m.to.z - PIVOT)
+  const lowestCut = Math.min(...cutTips)
+  for (let layer = 1; layer <= layers; layer++) {
+    const level = Math.max(lowestCut, MAX_R - layer * PARAMS.stepdown)
+    assert.ok(cutTips.some((tip) => Math.abs(tip - level) < 1e-6),
+      `the corner passes still cut layer ${layer} at its own radius`)
+  }
   // A flat's blank surface is half the side, not the corner. The old rough
   // emitted two flat-direction layers wholly above it (corner − stepdown and
   // corner − 2·stepdown); the first layer that reaches the material is now the
@@ -495,10 +504,11 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
 {
   const mesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
   const rough = generateRotaryRough('final', mesh, SQUARE, FLAT, PARAMS, {})
-  const lastLayer = Math.max(...rough.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
-  const finalCuts = rough.moves.filter((m) => m.kind === 'cut' && m.to.a !== undefined && Math.floor(m.to.a / 360) === lastLayer)
-  assert.ok(finalCuts.length > 0, 'the final layer cuts')
-  const lowestTip = Math.min(...finalCuts.map((m) => m.to.z)) - PIVOT
+  // #1098: A no longer carries the layer number. The final layer is the
+  // program's lowest cut, which is what "reaches the target" means here.
+  const cutTips = rough.moves.filter((m) => m.kind === 'cut').map((m) => m.to.z - PIVOT)
+  assert.ok(cutTips.length > 0, 'the final layer cuts')
+  const lowestTip = Math.min(...cutTips)
   // The grid samples cell centres of the polygonal cylinder, so the reached
   // radius sits within one cell plus the tessellation sagitta of the analytic
   // target — and never below it.
@@ -922,7 +932,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     const withLeave = generateRotaryRough('leave', mesh, stock, BALL,
       { ...base, stockToLeave: leave, passDirection: direction }, {})
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '6f08479950fb1a44' : '0899bb0777c6606f',
+      // #1098: square along rough layers alternate direction; around is untouched.
+      direction === 'along' ? 'fac8eaac0fb0b159' : '0899bb0777c6606f',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
     const first = outermost(withLeave, spanStart)

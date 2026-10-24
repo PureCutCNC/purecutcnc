@@ -278,14 +278,19 @@ function postOperations(
  * to the retained end walls, and the height-map grid stays on the un-eroded
  * stubs, so the wall-adjacent samples and the runs ending on them change while
  * the mid-bar samples are bit-identical.
+ *
+ * #1098 recaptured both again: the fixture is an along-the-bar rough, whose
+ * layers now alternate the direction of their angle sequence instead of adding
+ * a full turn per layer. The same cuts and depths are made, in a different
+ * order and direction, so A stays within [0, 360].
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '594f68b5ff757189',
-  aroundMoves: 'ad5b30f01eb5cfd5',
+  around: 'b2c32e5725b5322e',
+  aroundMoves: '57c161faf512400a',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

@@ -2884,6 +2884,18 @@ export interface RotaryRoughParams extends RotaryFinishParams {
  * for byte -- the shape of the motion, not its band: the slice-D retained-end
  * pull applies to both modes and is a safety fix.
  *
+ * Along-the-bar layers alternate the direction of their angle sequence (#1098):
+ * layer 1 runs the angles in ascending order, layer 2 in descending order from
+ * where layer 1 ended, and so on. No `(layer - 1) * 360` is added, so A stays
+ * within [0, 360] for the whole operation instead of growing by a full turn per
+ * layer. The along direction alternates across the layer boundary as well, so a
+ * layer starts at the bar end the previous one finished at; the step between
+ * layers keeps the ordinary travel-height retract/plunge. **Rotary rough and
+ * finish have no cut direction setting**: passes and layers alternate direction
+ * on purpose, mixing climb and conventional, to keep A within one turn and
+ * avoid air moves (decided 2026-10-23, #1098). #1103 (continuous A, not in
+ * 0.6.0) may later replace the alternation.
+ *
  * A **square** blank supports around mode too (#1045 slice C): a sample is cut
  * only when the layer radius is below `squareRotaryTouchRadius` at that
  * sample's own angle (the along pass's air skip, applied per angle instead of
@@ -3220,23 +3232,38 @@ export function generateRotaryRough(
       }
     }
   } else {
+    // #1098: along layers alternate the direction of their angle sequence, so
+    // layer 2 runs the angles last-to-first and starts where layer 1 ended. A
+    // stays within [0, 360] for the whole operation -- no `(layer - 1) * 360` is
+    // added -- and no full turn separates two layers. The along direction
+    // alternates across the layer boundary too (one global pass counter), so a
+    // layer starts at the bar end the previous one finished at; the step between
+    // layers keeps the ordinary travel-height retract/plunge.
+    //
+    // Rotary rough and finish have **no cut direction setting**: passes and
+    // layers alternate direction on purpose, mixing climb and conventional, to
+    // keep A within one turn and avoid air moves (decided 2026-10-23, #1098).
+    // #1103 (continuous A, not in 0.6.0) may later replace the alternation.
     for (let layer = 1; layer <= layers; layer++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
       const layerRadius = Math.max(lowest, maxRadius - layer * params.stepdown)
       // A new layer never links to the previous one, however its last pass ended.
       let previousEndedAtEnd = false
+      const reversed = layer % 2 === 0
+      const layerPass = (layer - 1) * angles.length
       for (let pass = 0; pass < angles.length; pass++) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
-        const angle = angles[pass] + (layer - 1) * 360
+        const angleIndex = reversed ? angles.length - 1 - pass : pass
+        const angle = angles[angleIndex]
         const touchesMaterial = !square
           || layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
-        const indexAt = (i: number): number => pass % 2 === 0 ? i : along.length - 1 - i
+        const indexAt = (i: number): number => (layerPass + pass) % 2 === 0 ? i : along.length - 1 - i
         const needsCut = (i: number): boolean =>
-          touchesMaterial && tips[pass][indexAt(i)] < previousRadius
+          touchesMaterial && tips[angleIndex][indexAt(i)] < previousRadius
         const at = (i: number): ToolpathPoint => {
           const index = indexAt(i)
-          return point(along[index], Math.max(tips[pass][index], layerRadius), angle)
+          return point(along[index], Math.max(tips[angleIndex][index], layerRadius), angle)
         }
         const runs: RotaryRun[] = []
         let i = 0

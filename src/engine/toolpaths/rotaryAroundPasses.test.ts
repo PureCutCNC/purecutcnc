@@ -226,7 +226,10 @@ const isAirLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
 // model-following passes again (2026-10-22 decision), so its along output is
 // the base output. The fixtures' bands meet the bar's own ends, so #1045 slice
 // D's retained-end pull-in changes none of them. A missing `passDirection` and
-// `'along'` must both reproduce each row.
+// `'along'` must both reproduce each row. Re-captured for #1098: the three
+// **rough** rows move because along layers alternate the direction of their
+// angle sequence (A no longer gains a turn per layer); the finish rows did not
+// move.
 // ---------------------------------------------------------------------------
 
 const DIGEST_STOCK = roundStock(40, 20, 'x', { x: 10, y: 7 })
@@ -275,7 +278,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
   {
     label: 'cone rough', operationId: 'cone', kind: 'rough', mesh: digestCone,
     stock: DIGEST_STOCK, params: DIGEST_ROUGH,
-    recorded: 'e7264da966e737845e6a230d100031840fbc0cd6a321ca33146af3552af889b0',
+    recorded: 'b301f903eb96f9ac81d7448f1b982a358e7302977a86e0c3ac4c530655eccc94',
   },
   {
     label: 'stepped finish', operationId: 'step', kind: 'finish', mesh: digestStepped,
@@ -285,7 +288,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
   {
     label: 'stepped rough', operationId: 'step', kind: 'rough', mesh: digestStepped,
     stock: DIGEST_STOCK, params: DIGEST_ROUGH,
-    recorded: 'edeb101f1f5eda21e77217db752713ba218eaa05303a63ce0f56a092c4b94814',
+    recorded: 'c8527f5f34b7b5a4ada4e296f745fea49f8ec2a68ab4da7370f81edaa16b3370',
   },
   {
     label: 'square finish', operationId: 'square', kind: 'finish',
@@ -297,7 +300,7 @@ const DIGEST_CASES: readonly DigestCase[] = [
     label: 'square rough', operationId: 'square', kind: 'rough',
     mesh: () => prism(DIGEST_SQUARE, SQUARE_SECTION, [10, 30]),
     stock: DIGEST_SQUARE, params: DIGEST_SQUARE_ROUGH,
-    recorded: 'cb24f0e3cd807accfcb1d70890103854d66268ec06ef54d519c74643b770210e',
+    recorded: '815adf6645f21eddd8521095772df8c56563a39a4b45394129110f03560feba5',
   },
 ]
 
@@ -1170,11 +1173,24 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
     ...LAYER_PARAMS, stepdown: LAYER_STEPDOWN,
   }, {})
   assert.deepEqual(result.warnings, [], 'the along layering rough has no warning')
-  // Along mode marks the layers in A: each layer is one more full turn.
-  checkLayering('along', orderedCutPoints(result.moves).map((point) => ({
-    layer: Math.floor(angleOf(point) / 360) + 1,
-    tip: point.z - pivot,
-  })))
+  // #1098: along layers alternate direction instead of adding a full turn, so A
+  // no longer marks the layer. A cut tip lies inside its own disjoint band
+  // `[layerRadius, previousRadius)`, which identifies the layer; travel-height
+  // link rises (above the bar radius) are not cuts into a layer.
+  const tips = orderedCutPoints(result.moves)
+    .map((point) => point.z - pivot)
+    .filter((tip) => tip < LAYER_BAR_RADIUS - 1e-9)
+  const lowest = Math.min(...tips)
+  const layers = Math.ceil((LAYER_BAR_RADIUS - lowest) / LAYER_STEPDOWN)
+  checkLayering('along', tips.map((tip) => {
+    let layer = 1
+    for (let i = 1; i <= layers; i++) {
+      const previous = LAYER_BAR_RADIUS - (i - 1) * LAYER_STEPDOWN
+      const layerRadius = Math.max(lowest, LAYER_BAR_RADIUS - i * LAYER_STEPDOWN)
+      if (tip >= layerRadius - 1e-6 && tip < previous - 1e-9) { layer = i; break }
+    }
+    return { layer, tip }
+  }))
 }
 
 // ---------------------------------------------------------------------------

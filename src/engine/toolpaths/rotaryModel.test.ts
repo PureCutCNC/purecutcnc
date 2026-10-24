@@ -1433,7 +1433,15 @@ for (const axis of ['x', 'y'] as const) {
     assert.deepEqual(progress, angles.map((_, k) => [k + 1, passes]), `${axis} rough samples once per angle for all layers`)
     assert.equal(result.warnings.length, 0, `${axis} rough cone has no warnings`)
     assert.ok(result.moves.length > 0)
-    assert.equal(Math.max(...result.moves.map((m) => Math.floor(m.to.a! / 360))) + 1, layers, `${axis} exact layer count`)
+    // #1098: A no longer carries the layer number (no `(layer - 1) * 360`), so
+    // the layer count is read from the depth levels each layer reaches instead.
+    assert.ok(Math.max(...result.moves.map((m) => m.to.a!)) <= 360, `${axis} A stays within [0, 360]`)
+    const layerTips = result.moves.filter((m) => m.kind !== 'rapid').map((m) => m.to.z - 20)
+    for (let layer = 1; layer <= layers; layer++) {
+      const level = Math.max(lowest, 20 - layer * params.stepdown)
+      assert.ok(layerTips.some((tip) => Math.abs(tip - level) < 1e-6),
+        `${axis} exact layer count: layer ${layer} cuts at its own radius`)
+    }
     const depths = targets.map((row) => row.map(() => Infinity))
     const travelZ = 20 + Math.min(params.safeRadius, 20 + LINK_CLEARANCE)
     let checked = 0
@@ -1442,7 +1450,7 @@ for (const axis of ['x', 'y'] as const) {
     for (let m = 0; m < result.moves.length; m++) {
       const move = result.moves[m]
       if (m) assert.deepEqual(move.from, result.moves[m - 1].to, `${axis} rough moves connected`)
-      assert.ok(move.to.a! >= move.from.a!, `${axis} rough angles never reset across layers`)
+      assert.ok(move.to.a! >= 0 && move.to.a! <= 360, `${axis} rough A stays within [0, 360]`)
       if (move.kind === 'rapid') {
         // Slice H: only the opening positioning move and the closing retract go
         // to safeRadius; every retract and traverse between runs travels at the
@@ -1473,35 +1481,33 @@ for (const axis of ['x', 'y'] as const) {
         links++
         continue
       }
-      const layer = Math.floor(move.to.a! / 360) + 1
-      const pass = Math.round((move.to.a! - (layer - 1) * 360) / (360 / passes))
-      const level = Math.max(lowest, 20 - layer * params.stepdown)
-      const previous = 20 - (layer - 1) * params.stepdown
+      const pass = Math.round((((move.to.a! % 360) + 360) % 360) / (360 / passes)) % passes
       const from = position(move.from), to = position(move.to)
-      if (move.kind === 'cut' && from !== to) {
-        assert.ok(pass % 2 === 0 ? to > from : to < from, `${axis} rough passes alternate direction`)
+      if (from === to) {
+        // A plunge or a vertical step lands on a sample; it is safe by the same
+        // one-dimensional check (it changes no along position).
+        const j = along.findIndex((x) => Math.abs(x - to) < 1e-9)
+        if (j >= 0) depths[pass][j] = Math.min(depths[pass][j], move.to.z - 20)
+        continue
       }
       for (let j = 0; j < along.length; j++) {
         const x = along[j]
         if (x < Math.min(from, to) - 1e-9 || x > Math.max(from, to) + 1e-9) continue
-        const tip = from === to ? move.to.z - 20 : move.from.z - 20 + (move.to.z - move.from.z) * (x - from) / (to - from)
+        const tip = move.from.z - 20 + (move.to.z - move.from.z) * (x - from) / (to - from)
         assert.ok(tip >= targets[pass][j] - 0.0011, `${axis} rough never cuts below target`)
-        // Pure vertical rise/drop links can be above the layer's target.
-        if (from !== to || move.kind === 'plunge') {
-          assert.ok(targets[pass][j] < previous, `${axis} air skipped at later layer`)
-          approx(tip, Math.max(targets[pass][j], level), `${axis} layer target is clamped, last layer exact`, 0.0011)
-          depths[pass][j] = Math.min(depths[pass][j], tip)
-          checked++
-        }
+        depths[pass][j] = Math.min(depths[pass][j], tip)
+        checked++
       }
     }
-    // A final layer can have a single sample, reached by a plunge or a
-    // finish-style turn/drop without an along segment.
+    // The lowest tip the program reaches at each pass/position is the final
+    // layer's target, whatever order and direction the layers ran in. A final
+    // layer can have a single sample, reached by a plunge or a finish-style
+    // turn/drop without an along segment.
     for (const move of result.moves) {
       if (move.kind === 'rapid') continue
       for (const p of [move.from, move.to]) {
-        const layer = Math.floor(p.a! / 360)
-        const pass = Math.round((p.a! - layer * 360) / (360 / passes))
+        if (p.a === undefined) continue
+        const pass = Math.round((((p.a % 360) + 360) % 360) / (360 / passes)) % passes
         const j = along.findIndex((x) => Math.abs(x - position(p)) < 1e-9)
         if (j >= 0) depths[pass][j] = Math.min(depths[pass][j], p.z - 20)
       }
@@ -1563,11 +1569,10 @@ for (const axis of ['x', 'y'] as const) {
       assert.equal(move.from.z, i === 1 ? 20 + params.safeRadius : splitTravelZ, `${axis} split run entry plunges from the travel height`)
     }
     if (move.kind !== 'cut' || move.from.a !== move.to.a || position(move.from) === position(move.to)) continue
-    const layer = Math.floor(move.to.a! / 360)
-    const pass = Math.round((move.to.a! - layer * 360) / (360 / passes))
+    const pass = Math.round((((move.to.a! % 360) + 360) % 360) / (360 / passes)) % passes
     for (let j = 0; j < along.length; j++) {
       if (along[j] < Math.min(position(move.from), position(move.to)) || along[j] > Math.max(position(move.from), position(move.to))) continue
-      assert.ok(splitTargets[pass][j] < 20 - layer * splitParams.stepdown, `${axis} no cut links across an air gap between runs`)
+      assert.ok(splitTargets[pass][j] < 20, `${axis} no cut links across an air gap between runs`)
     }
   }
   assert.ok(traverses > passes, `${axis} split runs exercise real safe traverses`)
@@ -1586,8 +1591,7 @@ for (const axis of ['x', 'y'] as const) {
   const result = generateRotaryRough('rough-fixture', fixture, STOCK, tool, params, {})
   const elapsed = performance.now() - start
   assert.ok(result.moves.length > 0, 'rough fixture generates moves')
-  const layers = new Set(result.moves.filter((m) => m.kind !== 'rapid').map((m) => Math.floor(m.to.a! / 360)))
-  console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${layers.size} layers, ${result.moves.length} moves`)
+  console.log(`rotaryRough fixture: ${elapsed.toFixed(1)} ms, ${result.moves.length} moves`)
   // The rough side of the same frozen matrix as the finish hash below: the
   // value was captured from the baseline 116f050d module and must not move when
   // the generators are widened to `BarStock` (#1016 C2-S3). The round bar is
@@ -1601,9 +1605,15 @@ for (const axis of ['x', 'y'] as const) {
   // to 57.48 (every position shifts with the pulled span), the count drops
   // 2217 -> 2092, and the whole point list moves. The finish below uses the
   // full 0..150 band (both ends meet the bar) and is unchanged.
-  assert.equal(result.moves.length, 2092, 'rough fixture keeps its move count')
+  //
+  // Re-captured for #1098: along-the-bar rough layers alternate the direction
+  // of their angle sequence instead of adding 360 per layer, so A stays within
+  // [0, 360] for the whole program. The same cuts and depths are made; their
+  // order and direction differ, and the seam between two layers costs one more
+  // merge point (2092 -> 2093).
+  assert.equal(result.moves.length, 2093, 'rough fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'd559ac4d79d6c9716d0c7183f1d40ab8b4f4f5ace3493c23edbcf31c6b111386', 'rough fixture keeps its exact points')
+    '9acf48a01a0a0e7256b922643680ed7e6ce23fdb8a0fff904f35fb5c9471efb4', 'rough fixture keeps its exact points')
   assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
@@ -2264,9 +2274,11 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // pass's outermost position, one cutter radius from the wall, no longer
     // reads the tangent wall cell as contact, so those rings drop by the cell's
     // 0.09 mm lift. Every interior position is unchanged and the along pass
-    // never had the lift (its sampler has no cell pad).
+    // never had the lift (its sampler has no cell pad). Recaptured for #1098:
+    // along layers alternate direction, so the along program's order changes;
+    // around is untouched.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'cdda0e6f02fecdc9' : 'cc4b7b7ebb3238bd',
+      direction === 'along' ? '3066ffca34b19d29' : 'cc4b7b7ebb3238bd',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)
