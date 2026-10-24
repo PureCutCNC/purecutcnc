@@ -93,6 +93,32 @@
   padding: 9px 12px;
 }
 
+/* The project type is the dialog's first choice and reads as three tiles in
+   one row (issue #1102, proposal 16). The left column is 300 px wide, so the
+   tiles take the template card look with tighter side padding; the meta line
+   wraps inside its tile and the row keeps a shared height. */
+.dialog--new-project .project-template-list--project-type {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-list--project-type .project-template-card {
+  min-width: 0;
+  padding: 8px 9px;
+}
+
+/* Below the tablet target the three tiles stack, one per row, rather than
+   squeezing the labels and their meta lines into a narrow column. */
+@media (max-width: 1023px) {
+  .dialog--new-project .project-template-list--project-type {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog--new-project .project-template-list--project-type .project-template-card {
+    padding: 9px 12px;
+  }
+}
+
 .dialog--import {
   max-width: 480px;
 }
