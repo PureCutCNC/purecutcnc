@@ -629,9 +629,9 @@ export const camEn = {
   'cam.tools.fluteCount.other': '{count} flutes',
   'cam.tools.maxCutDepthPrefix': 'max',
   // Machining setup UI (#946)
-  'cam.setup.crossFacePicker': 'Targets from the other face',
-  'cam.setup.crossFaceHelp': 'Pick through subtracts or imported models here. Sketch ghosts stay unselectable.',
   'cam.setup.crossFace': '⇄ CROSS-FACE',
+  'cam.setup.crossFaceTitle': 'Reached from the other face',
+  'cam.setup.crossFaceSummary': 'Also from the {side} side ({count})',
   'cam.setup.topOperations': 'Top operations',
   'cam.setup.bottomOperations': 'Bottom operations',
   'cam.setup.aroundOperations': 'Around operations',
