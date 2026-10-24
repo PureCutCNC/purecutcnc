@@ -2438,6 +2438,18 @@ function assertStageDescent(
     const toAngle = move.to.a ?? fromAngle
     const dAlong = toAlong - fromAlong
     const dAngle = toAngle - fromAngle
+    // A pure vertical move (a plunge, a steep step or a travel-height drop) has
+    // no along or angle span, so the interpolation below would judge only its
+    // start height. #1098 makes a layer's last cut commonly end at the bar end
+    // the next layer starts from, followed by a rapid retract the checker skips;
+    // its end height is then never revisited as a later move's `from`. Judge
+    // both ends here: the start is at the travel height on a drop and removes
+    // nothing, the end is the actual cut.
+    if (Math.abs(dAlong) <= 1e-9 && Math.abs(dAngle) <= 1e-9) {
+      visit(fromAlong, fromAngle, fromTip)
+      visit(toAlong, toAngle, toTip)
+      continue
+    }
     if (direction === 'along') {
       if (Math.abs(dAngle) > 1e-9) {
         // A turning link at travel height: judge its endpoints at their own

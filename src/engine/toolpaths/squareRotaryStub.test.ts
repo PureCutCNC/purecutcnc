@@ -1023,8 +1023,12 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 //
 // Re-captured again for the 2026-10-22 decision: the two round **finish**
 // fingerprints move because the finish no longer clears the standing bar and a
-// finish-only program now carries `rotaryFinishWithoutRough`. The round roughs
-// are unchanged.
+// finish-only program now carries `rotaryFinishWithoutRough`.
+//
+// Re-captured once more for #1098: the two round **rough** fingerprints move
+// because along-the-bar layers alternate the direction of their angle sequence
+// instead of adding a full turn per layer (A stays within [0, 360]); the finish
+// fingerprints and both warnings are unchanged.
 
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
@@ -1035,9 +1039,9 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 
 const ROUND_BASELINE: Record<string, string> = {
   'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|rotaryFinishWithoutRough',
-  'x/mm/ball_endmill/rough/model-model': '9361d06fdb459cd8|',
+  'x/mm/ball_endmill/rough/model-model': '3f4cd140ae9761e1|',
   'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|rotaryFinishWithoutRough',
-  'y/inch/ball_endmill/rough/model-model': '795c6fdd5fa34d27|',
+  'y/inch/ball_endmill/rough/model-model': '73b8d4775f59cdb1|',
 }
 
 console.log('Testing the round fixtures are byte-identical to the base commit...')
