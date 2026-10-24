@@ -504,15 +504,6 @@
   width: 300px;
 }
 
-/*
- * These options have no colour swatch — the shared three-column grid
- * (swatch / copy / check) would give the label a 38px column to wrap in. Two
- * columns instead, so the copy gets the width.
- */
-.cam-generation-menu .appearance-menu__option {
-  grid-template-columns: 1fr 20px;
-}
-
 .cam-generation-menu__status {
   padding: 2px 8px 8px;
   color: var(--text-dim);
@@ -549,6 +540,81 @@
 .cam-generation-menu__actions svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * The renderer mode switch (issue #1102 slice D1). It moved here from the
+ * toolpath legend: the legend is about what is drawn, the gear is about how.
+ * Two plain buttons rather than the shared option grid — this is a mode, not a
+ * list of choices with a detail line each.
+ */
+.cam-generation-menu__renderer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 8px;
+}
+
+.cam-generation-menu__renderer-label {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.cam-generation-menu__renderer-options {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cam-generation-menu__renderer-options button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-translucent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cam-generation-menu__renderer-options button:hover {
+  border-color: var(--line-bright);
+}
+
+.cam-generation-menu__renderer-options button[aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+}
+
+.cam-generation-menu__renderer-note {
+  flex-basis: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Not a failure: Canvas is drawing the toolpaths, and Retry asks for GPU again. */
+.cam-generation-menu__renderer-note--fallback {
+  color: var(--warning-text, var(--text-dim));
+}
+
+.cam-generation-menu__renderer-note button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cam-generation-menu__renderer-note button:hover {
+  background: var(--surface-hover);
 }
 
 /* A menu hides its contents, so a stopped or failed pipeline marks the gear. */
@@ -2905,14 +2971,6 @@
   white-space: nowrap;
 }
 
-.viewport-toolpath-renderer__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
 .toolpath-gpu-suggestion {
   position: absolute;
   top: calc(100% + 8px);
@@ -2965,46 +3023,9 @@
 }
 
 @media (pointer: coarse) {
-  .toolpath-gpu-suggestion__actions button {
-    min-height: 44px;
-  }
-}
-
-.viewport-toolpath-vis__swatch--gpu {
-  background: var(--accent);
-}
-
-.viewport-toolpath-renderer__loading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
-  box-sizing: border-box;
-  border: 1.5px solid var(--accent);
-  border-top-color: transparent;
-  border-radius: 50%;
-  background: transparent;
-  animation: toolpath-gpu-loading 0.8s linear infinite;
-}
-
-@keyframes toolpath-gpu-loading {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
-    animation: none;
-  }
-}
-
-@media (pointer: coarse) {
-  .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
-  .viewport-toolpath-renderer__status button {
+  .toolpath-gpu-suggestion__actions button,
+  .cam-generation-menu__renderer-options button,
+  .cam-generation-menu__renderer-note button {
     min-height: 44px;
   }
 

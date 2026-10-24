@@ -15,14 +15,13 @@
  */
 
 /**
- * The stored execution-backend preference, resolved against what this runtime
- * can actually do (issue #675, slice 4).
+ * The execution backend generation will use (issue #1102 slice D1).
  *
- * Keeps two values distinct on purpose. `preference` is what the user chose and
- * what the menu shows; `resolved` is what generation will really use. They
- * differ when a stored `worker` preference is loaded somewhere without Workers
- * — the choice is remembered for when it can be honoured, while generation
- * quietly falls back rather than breaking.
+ * There is no user-facing choice any more: the gear always runs generation on
+ * the worker when the runtime has one, and the service's own automatic fallback
+ * to the main thread is what covers a worker that fails to start. The stored
+ * value is still read and written, because a development build honours it — the
+ * e2e parity spec needs a way to force the main thread.
  */
 
 import { useMemo } from 'react'
@@ -30,26 +29,25 @@ import { useLocalStorageState } from '../../hooks/useLocalStorageState'
 import {
   DEFAULT_EXECUTOR_KIND,
   EXECUTOR_PREFERENCE_STORAGE_KEY,
+  effectiveExecutorKind,
   parseExecutorPreference,
-  resolveExecutorKind,
   serializeExecutorPreference,
   workerBackendAvailable,
 } from './executorPreference'
 import type { ExecutorKind } from './types'
 
 export interface ExecutorPreferenceBinding {
-  /** What the user chose. Shown in the menu. */
-  preference: ExecutorKind
-  setPreference: (kind: ExecutorKind) => void
   /** What generation will actually use. */
   resolved: ExecutorKind
-  workerAvailable: boolean
   /** True when the resolved backend can interrupt work already running. */
   canStop: boolean
 }
 
 export function useExecutorPreference(): ExecutorPreferenceBinding {
-  const [preference, setPreference] = useLocalStorageState<ExecutorKind>(
+  // Kept for its dev-only meaning (see executorPreference.ts): production
+  // ignores the stored value, but reading and writing it keeps the parity
+  // seam working, including writing the shipped default on a fresh profile.
+  const [stored] = useLocalStorageState<ExecutorKind>(
     EXECUTOR_PREFERENCE_STORAGE_KEY,
     DEFAULT_EXECUTOR_KIND,
     {
@@ -62,17 +60,14 @@ export function useExecutorPreference(): ExecutorPreferenceBinding {
 
   const workerAvailable = workerBackendAvailable()
   const resolved = useMemo(
-    () => resolveExecutorKind(preference, workerAvailable),
-    [preference, workerAvailable],
+    () => effectiveExecutorKind(stored, workerAvailable, import.meta.env.DEV),
+    [stored, workerAvailable],
   )
 
   return {
-    preference,
-    setPreference,
     resolved,
-    workerAvailable,
     // Only the worker backend can be stopped mid-operation. Reported from the
-    // resolved kind, not the preference, so a fallback cannot leave the UI
+    // resolved kind, not the stored one, so a fallback cannot leave the UI
     // offering a Stop that does nothing.
     canStop: resolved === 'worker',
   }

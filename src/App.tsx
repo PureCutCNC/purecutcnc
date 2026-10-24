@@ -101,7 +101,10 @@ function App() {
   const { zoomWindowActive, onZoomWindow, onZoomWindowComplete } = useZoomWindow()
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
     DEPTH_LEGEND_COLLAPSED_STORAGE_KEY,
-    false,
+    // The feature-colour legend starts collapsed: it is a reference, not a
+    // control, and it was taking the corner of the sketch (issue #1102 slice
+    // D1). A stored choice from either direction is still honoured.
+    true,
     { codec: DEPTH_LEGEND_CODEC },
   )
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
@@ -475,9 +478,6 @@ function App() {
             generationPaused={generationStatus.automaticPaused}
             generationSettings={{
               status: generationStatus,
-              executor: generationBackend.preference,
-              onExecutorChange: generationBackend.setPreference,
-              workerAvailable: generationBackend.workerAvailable,
               // Read from the service, not the preference: a worker that could
               // not start falls back to the main thread mid-session, and Stop
               // must stop being offered at the same moment (issue #1087).

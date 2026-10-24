@@ -15,22 +15,25 @@
  */
 
 /**
- * Which execution backend generation uses, as a machine-local preference
- * (issue #675, slice 4).
+ * Which execution backend generation uses (issue #675, slice 4).
+ *
+ * **There is no backend choice since issue #1102 slice D1.** Generation always
+ * runs on the worker when the runtime has one, and falls back to the main
+ * thread automatically — first by the availability check below, and, if the
+ * worker fails while starting, by the service switching this session to the
+ * main thread and reporting it. That automatic fallback is unchanged.
+ *
+ * **The storage key and its codec survive for one reason: development.** A
+ * development build still honours a stored `inline`, which is how the e2e
+ * parity spec forces the main thread so it has something to compare the worker
+ * against. In production the stored value is ignored, so a user who stored
+ * `inline` in an older build gets the worker.
  *
  * **Local, and deliberately not part of the document.** It is not in `.camj`,
  * not in undo history, and not in the project store. Where a toolpath was
  * computed cannot change what it is — that is the whole claim the parity corpus
  * exists to defend — so a project carrying a backend choice would be a project
- * carrying something that must not matter. It would also travel: a file saved
- * on a machine where the worker is fine would arrive on one where it is not.
- *
- * The default is `worker` since 0.6.0 (issue #1087). A fresh profile gets the
- * background thread — long generations no longer hold the main thread and Stop
- * really interrupts them — while an explicit stored choice is kept as it was.
- * A runtime that cannot start a worker falls back to `inline`: first by the
- * availability check below, and, if the worker fails while starting, by the
- * service switching this session to the main thread and reporting it.
+ * carrying something that must not matter.
  */
 
 import type { ExecutorKind } from './types'
@@ -38,11 +41,8 @@ import type { ExecutorKind } from './types'
 export const EXECUTOR_PREFERENCE_STORAGE_KEY = 'purecut.generation.executor'
 
 /**
- * The shipped default.
- *
- * `worker` is what a user who never opens the setting gets. `inline` remains a
- * deliberate per-machine choice, and the runtime fallback for an environment
- * where a worker cannot start.
+ * The stored default for a profile that has never chosen, and the value a
+ * development build honours besides a stored `inline`.
  */
 export const DEFAULT_EXECUTOR_KIND: ExecutorKind = 'worker'
 
@@ -68,19 +68,27 @@ export function serializeExecutorPreference(kind: ExecutorKind): string {
  *
  * A build can be loaded where `Worker` or module workers are unavailable — an
  * old embedded webview, a locked-down environment. Offering a choice that
- * cannot work is worse than not offering it, so the control asks this before
- * rendering the option, and a stored `worker` preference resolves back to
- * `inline` when it is false.
+ * cannot work is worse than not offering it, so this decides between the worker
+ * and the main thread before generation starts.
  */
 export function workerBackendAvailable(scope: { Worker?: unknown } = globalThis): boolean {
   return typeof scope.Worker === 'function'
 }
 
-/** The backend to actually use, given a preference and what the runtime supports. */
-export function resolveExecutorKind(
-  preference: ExecutorKind,
-  available = workerBackendAvailable(),
+/**
+ * The backend generation actually uses.
+ *
+ * Production ignores the stored value entirely: `worker` when the runtime has
+ * one, `inline` when it does not. Development still honours a stored `inline`
+ * so the parity spec can force the main thread; everything else there resolves
+ * the same way production does.
+ */
+export function effectiveExecutorKind(
+  stored: ExecutorKind,
+  workerAvailable: boolean = workerBackendAvailable(),
+  development: boolean = false,
 ): ExecutorKind {
-  if (preference === 'worker' && !available) return 'inline'
-  return preference
+  if (!workerAvailable) return 'inline'
+  if (development && stored === 'inline') return 'inline'
+  return 'worker'
 }
