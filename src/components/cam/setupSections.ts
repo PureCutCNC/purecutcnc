@@ -35,6 +35,8 @@ import type { StockZRange, ThroughFeatureCoverage } from '../../engine/setupReac
 import { operationTargetVerdicts } from '../../engine/setupTargets'
 import type { TargetFaceVerdict } from '../../engine/setupTargets'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { MessageParams } from '../../i18n/catalog'
+import type { camEn } from '../../i18n/locales/en/cam'
 
 /** One setup's part of the operations list. */
 export interface CamSetupSection {
@@ -79,6 +81,55 @@ export function camSetupSections(project: Project): { grouped: boolean; sections
   // project's only setup, so its "Around operations" heading and "Add to
   // Around" target are never the flat, unlabelled list.
   return { grouped: projectExportsPerSetup(project) || setups.length > saved.length || setups.some((setup) => setup.kind === 'around'), sections }
+}
+
+/** What one setup card's header shows (issue #1102). */
+export interface SetupCardHeader {
+  /** The face name as shown: Top, Bottom, or the Around setup's own name. */
+  label: string
+  /** What the header toggle announces: the longer wording the header used to show. */
+  ariaLabel: string
+  /** The short program chip, `P01`. */
+  programChip: string
+  /** A second setup with no registration: its card carries the warning. */
+  warn: boolean
+  /** No operations: the card is one header row, with no body at all. */
+  empty: boolean
+}
+
+/**
+ * What one setup card's header reads (issue #1102): the face name, its
+ * operation count and program, and whether it warns about registration.
+ *
+ * The visible name is short so the row fits one line at the panel's width;
+ * `ariaLabel` keeps the longer wording the header used before, because that
+ * is the accessible name the e2e specs and screen readers match on. An Around
+ * setup never warns: the chuck locates the bar, so it has nothing to register.
+ */
+export function setupCardHeader(
+  section: CamSetupSection,
+  t: (key: keyof typeof camEn, params?: MessageParams) => string,
+): SetupCardHeader {
+  const label = section.face === 'top'
+    ? t('cam.setup.top')
+    : section.face === 'bottom'
+      ? t('cam.setup.bottom')
+      : section.setup.name
+  const operations = t(section.face === 'top'
+    ? 'cam.setup.topOperations'
+    : section.face === 'bottom'
+      ? 'cam.setup.bottomOperations'
+      : 'cam.setup.aroundOperations')
+  const number = String(section.programNumber).padStart(2, '0')
+  const programChip = t('cam.setup.program', { number })
+  const programNumber = t('cam.setup.programFull', { number })
+  return {
+    label,
+    ariaLabel: `${operations} ${section.operations.length} ${programNumber}`,
+    programChip,
+    warn: section.face !== 'around' && section.registrationMissing,
+    empty: section.operations.length === 0,
+  }
 }
 
 /** The targets of an operation that are through-features cut from the other face. */
