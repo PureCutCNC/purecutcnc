@@ -20,11 +20,11 @@
  * Both are checked by mutation in the slice that introduced them: make the gear
  * ignore a renderer fallback and the first block fails, and the same happens to
  * the per-status notice rule. Run with:
- *   npx tsx src/components/cam/generationSettingsMenu.test.ts
+ *   npx tsx src/components/cam/generationGearState.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { gearFlagged, rendererNotice } from './generationSettingsMenu'
+import { gearFlagged, rendererNotice } from './generationGearState'
 
 const quiet = { paused: false, failed: false, workerFallback: false, rendererFallback: false }
 assert.equal(gearFlagged(quiet), false, 'an idle, healthy pipeline leaves the gear unmarked')
@@ -47,4 +47,4 @@ assert.equal(rendererNotice('loading'), 'loading')
 assert.equal(rendererNotice('fallback'), 'fallback')
 assert.equal(rendererNotice(null), null, 'no sketch means no notice')
 
-console.log('generationSettingsMenu tests passed')
+console.log('generationGearState tests passed')

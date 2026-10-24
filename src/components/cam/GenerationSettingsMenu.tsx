@@ -42,7 +42,7 @@ import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import { useToolpathRendererStore } from '../../store/toolpathRendererStore'
-import { gearFlagged, rendererNotice } from './generationSettingsMenu'
+import { gearFlagged, rendererNotice } from './generationGearState'
 import type { GenerationStatusSnapshot } from '../../app/toolpathGeneration/types'
 
 export interface GenerationSettingsMenuProps {
