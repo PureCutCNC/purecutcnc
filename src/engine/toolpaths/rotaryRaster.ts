@@ -169,13 +169,23 @@ export function buildRotaryHeightMap(
   const data = new Float32Array(width * height)
   data.fill(-Infinity)
   let cellRise = 0
+  // #1095 slice D: the same per-cell wall coverage `buildHeightMap` records, so
+  // a pass the cutter only touches at a retained wall's face is not lifted to
+  // the wall's top. Only allocated when the caller marks the wall triangles.
+  const wallStart = options?.wallTriangleStart
+  const wallCoverage = wallStart !== undefined ? new Uint8Array(width * height) : undefined
+  const modelOnly = wallStart !== undefined ? new Float32Array(width * height).fill(-Infinity) : undefined
 
   const minRow = Math.max(0, options?.window?.minRow ?? 0)
   const maxRow = Math.min(height - 1, options?.window?.maxRow ?? height - 1)
   const minCol = Math.max(0, options?.window?.minCol ?? 0)
   const maxCol = Math.min(width - 1, options?.window?.maxCol ?? width - 1)
   if (minRow > maxRow || minCol > maxCol) {
-    return { data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize }
+    return {
+      data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize,
+      ...(wallCoverage !== undefined ? { wallCoverage } : null),
+      ...(modelOnly !== undefined ? { modelOnly } : null),
+    }
   }
 
   const { axis, centre, pivot, cos, sin, geometry } = frame
@@ -207,6 +217,7 @@ export function buildRotaryHeightMap(
     // `triangles` holds index offsets (multiples of 3); one triangle per 6
     // section values and 3 along values.
     const t = triangles ? triangles[n] / 3 : n
+    const coverageBit = wallStart !== undefined && t >= wallStart ? 2 : 1
     // The bar-axis bounds never change with the turn: reject a triangle that
     // cannot touch the window before paying for its projection.
     const fixedFirst = axisFirst[t * 2]
@@ -297,6 +308,16 @@ export function buildRotaryHeightMap(
         const w = 1 - u - v
         const z = w * v0z + u * v1z + v * v2z
         const idx = row * width + col
+        if (wallCoverage !== undefined && modelOnly !== undefined) {
+          const coverage = wallCoverage[idx]
+          if (coverageBit === 2) {
+            if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+            wallCoverage[idx] = coverage | 2
+          } else {
+            if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+            wallCoverage[idx] = coverage | 1
+          }
+        }
         if (z > data[idx]) data[idx] = z
         touched = true
       }
@@ -307,5 +328,7 @@ export function buildRotaryHeightMap(
   return {
     data, width, height, originX: minX, originY: minY, cellSize,
     ...(trackCellRise ? { cellRise } : null),
+    ...(wallCoverage !== undefined ? { wallCoverage } : null),
+    ...(modelOnly !== undefined ? { modelOnly } : null),
   }
 }

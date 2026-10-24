@@ -1041,4 +1041,53 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   }
 }
 
+// ── #1095 slice D: the square blank's outermost ring is the model ─────
+//
+// The square around path never puts the retained stub in its sampling mesh:
+// the cutter-centre pull keeps the ring one radius off the stub face and the
+// exact stub floor is the safety net, so the outermost ring already followed
+// the model. This locks that in -- the square blank is the behaviour the round
+// bar had to match -- and asserts the cutter body only touches the stub face.
+{
+  const stock = squareStock(8, 40, 'x')
+  const pivot = barPivotZ(stock)
+  const wallTop = barInscribedRadius(stock)
+  const modelRadius = 1
+  const cell = 0.5
+  // The stub is a square prism far above the model, so a ring lifted to the
+  // blank's face cannot be mistaken for the model.
+  const mesh = cylinderMesh(stock, modelRadius, 10, 30)
+  const result = generateRotaryFinish('square-wall-tangent', mesh, stock, BALL, {
+    stepover: 2, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
+    safeRadius: 12, requestedCellSize: cell, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the square wall-tangent finish warns about nothing')
+  const ringAt = (along: number): number[] => {
+    const radii: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut' || move.from.x !== move.to.x) continue
+      if (Math.abs(move.from.x - along) > 1e-6) continue
+      radii.push(move.from.z - pivot, move.to.z - pivot)
+    }
+    return radii
+  }
+  for (const [end, along] of [['lower', 10 + BALL.radius], ['upper', 30 - BALL.radius]] as const) {
+    const radii = ringAt(along)
+    assert.ok(radii.length > 0, `${end}: the outermost ring is emitted`)
+    assert.ok(Math.max(...radii) <= modelRadius + cell + 1e-6,
+      `${end}: the outermost ring follows the model (${Math.max(...radii).toFixed(4)} <= ${(modelRadius + cell).toFixed(4)})`)
+    assert.ok(Math.max(...radii) < wallTop - BALL.radius,
+      `${end}: no part of the outermost ring is lifted to the retained stub's face`)
+  }
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      assert.ok(point.x - BALL.radius >= 10 - 1e-9,
+        `the cutter body stays out of the lower retained stub at x ${point.x}`)
+      assert.ok(point.x + BALL.radius <= 30 + 1e-9,
+        `the cutter body stays out of the upper retained stub at x ${point.x}`)
+    }
+  }
+}
+
 console.log('engine/toolpaths/squareRotaryModel.test.ts: all assertions passed')

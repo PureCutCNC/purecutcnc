@@ -31,6 +31,14 @@ export interface RotaryModelMesh {
   /** Project coordinates of the model as placed in the unturned bar. */
   readonly positions: Float32Array
   readonly index: Uint32Array
+  /**
+   * The first triangle that is **retained-wall** geometry rather than the model
+   * (#1095 slice D), when a caller appended the wall's mesh to the model's
+   * (`withRetainedBar`). The cells such triangles cover are recorded in the
+   * height map, so a pass the cutter only *touches* at the wall face is not
+   * lifted to the wall's top. Omitted when the mesh is the model alone.
+   */
+  readonly retainedTriangleStart?: number
 }
 
 export interface RotarySampleOptions {
@@ -66,6 +74,13 @@ export interface RotarySampleOptions {
    * behaviour byte for byte.
    */
   readonly gridExtra?: RotaryModelMesh
+  /**
+   * The first triangle in `mesh` that is retained-wall geometry (#1095 slice D),
+   * passed to the height-map raster so a padded sample cannot mistake a tangent
+   * wall face for contact. Omitted when the mesh carries no walls, which is the
+   * old path byte for byte.
+   */
+  readonly wallTriangleStart?: number
 }
 
 export interface RotarySampling {
@@ -793,6 +808,9 @@ function sampleRotaryModelWithWorkspace(
       window,
       triangles: subset.subarray(0, count),
       ...(options.conservativeCellBounds ? { trackCellRise: true } : {}),
+      ...(options.conservativeCellBounds && options.wallTriangleStart !== undefined
+        ? { wallTriangleStart: options.wallTriangleStart }
+        : {}),
     }
     if (turned) turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
     const heightMap = turned
@@ -1714,7 +1732,11 @@ function withRetainedBar(
     indexOffset += stub.index.length
     vertexOffset += stub.positions.length / 3
   }
-  return { positions, index }
+  // #1095 slice D: the stubs are appended after the model, so every triangle
+  // from this one on is retained-wall geometry. The sampler uses the boundary to
+  // tell a wall cell from a model cell; without it a pass tangent to the wall's
+  // face reads the wall's top and lifts off the model.
+  return { positions, index, retainedTriangleStart: mesh.index.length / 3 }
 }
 
 /**
@@ -2128,6 +2150,9 @@ function refineAroundSampling(args: {
         ...(conservativeCellBounds ? { conservativeCellBounds: true } : {}),
         ...(shouldStop ? { shouldStop } : {}),
         ...((gridExtra !== undefined) ? { gridExtra } : {}),
+        ...(mesh.retainedTriangleStart !== undefined
+          ? { wallTriangleStart: mesh.retainedTriangleStart }
+          : {}),
       }, warnings, args.workspace)
       if (!sampled.valid) return null
       if (sampled.stopped) return { angles, tips, stopped: true }
@@ -2359,6 +2384,9 @@ function rotaryTargets(
       ...(params.passDirection === 'around' ? { conservativeCellBounds: true } : {}),
       ...hooks,
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
+      ...(samplingMesh.retainedTriangleStart !== undefined
+        ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+        : {}),
     },
     warnings,
     workspace,
@@ -2525,6 +2553,9 @@ function rotaryTargets(
         requestedCellSize: params.requestedCellSize,
         conservativeCellBounds: true,
         ...((gridExtra !== undefined) ? { gridExtra } : {}),
+        ...(samplingMesh.retainedTriangleStart !== undefined
+          ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+          : {}),
       },
       warnings,
       workspace,
