@@ -128,7 +128,6 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.panel.operations': 'Operationen',
   'cam.panel.tools': 'Werkzeuge',
   'cam.panel.operationsEmpty': 'Wählen Sie kompatible Geometrie, dann fügen Sie eine Operation hinzu. Tasche und Innenkontur erfordern Abzieh-Features. Außenkontur erfordert Hinzufügen-Features. Oberfläche säubern akzeptiert Hinzufügen-Features.',
-  'cam.panel.cam': 'CAM',
   'cam.panel.properties': 'Eigenschaften',
   'cam.panel.export': 'Exportieren',
   'cam.panel.add': 'Hinzufügen',
@@ -198,6 +197,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // ── Operation property labels ──
   'cam.operation.name': 'Name',
   'cam.operation.description': 'Beschreibung',
+  'cam.operation.addNote': '+ Notiz hinzufügen',
   'cam.operation.kind': 'Art',
   'cam.operation.pass': 'Durchgang',
   'cam.operation.maxCarveDepth': 'Max. Gravurtiefe',
