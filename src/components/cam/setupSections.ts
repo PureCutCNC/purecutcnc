@@ -26,7 +26,8 @@
  */
 
 import { activeSetup } from '../../store/helpers/activeFace'
-import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
+import { isRotaryOperationKind } from '../../types/project'
+import type { MachiningSetup, Operation, OperationKind, Project, SetupFace } from '../../types/project'
 import { projectExportsPerSetup, setupLacksRegistration, setupProgramNumber } from '../../engine/gcode/setupPrograms'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { operationCutRange, throughFeatureCoverage } from '../../engine/setupReach'
@@ -125,6 +126,44 @@ export function operationTargetReach(
     range: own ? operationCutRange(project, operation, own, verdict.featureId) : null,
     coverage: verdict.through ? throughFeatureCoverage(project, verdict.featureId, toolpaths) : null,
   }))
+}
+
+/**
+ * The reach cards worth showing for a setup's face (issue #1102): only where
+ * the two faces meet, or where the setup cannot reach a target at all. A
+ * single-sided target — a blind pocket, an Around feature, a rotary pass — has
+ * nothing on the other side to measure, so its card could only ever read
+ * "unverified". Rejected targets stay: "cannot reach" is an error to see.
+ */
+export function visibleTargetReach(face: SetupFace, reaches: readonly TargetReach[]): TargetReach[] {
+  if (face === 'around') return []
+  return reaches.filter((entry) => (
+    entry.verdict.through || entry.verdict.status === 'cross-face' || entry.verdict.status === 'rejected'
+  ))
+}
+
+/**
+ * The folded cross-face list's `<summary>` line (issue #1102): what the list
+ * holds, then every ticked target's name followed by ⇄, so the picks stay
+ * visible while the list is closed.
+ */
+export function crossFaceSummaryLine(
+  summary: string,
+  candidates: readonly { id: string; name: string }[],
+  selectedIds: readonly string[],
+): string {
+  const picked = candidates
+    .filter((feature) => selectedIds.includes(feature.id))
+    .map((feature) => `${feature.name} ⇄`)
+  return picked.length > 0 ? `${summary}: ${picked.join(' ')}` : summary
+}
+
+/**
+ * Whether an operation may be moved to another setup (issue #1102). A rotary
+ * pass only ever lives on the Around setup, so there is nowhere to move it.
+ */
+export function canMoveOperation(kind: OperationKind): boolean {
+  return !isRotaryOperationKind(kind)
 }
 
 /** The operations a setup would lose if it were deleted — what the confirmation has to list. */

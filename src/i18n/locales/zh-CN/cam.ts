@@ -609,9 +609,9 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.tools.fluteCount.other': '{count} 刃',
   'cam.tools.maxCutDepthPrefix': '最大',
   // Machining setup UI (#946)
-  'cam.setup.crossFacePicker': '来自另一面的目标',
-  'cam.setup.crossFaceHelp': '在此选择贯穿减料特征或导入模型。草图中的幽灵特征仍不可选。',
   'cam.setup.crossFace': '⇄ 跨面',
+  'cam.setup.crossFaceTitle': '从另一面到达',
+  'cam.setup.crossFaceSummary': '也包括{side}的目标（{count}）',
   'cam.setup.topOperations': '顶面操作',
   'cam.setup.bottomOperations': '底面操作',
   'cam.setup.aroundOperations': '环绕操作',

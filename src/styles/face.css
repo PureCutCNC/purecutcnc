@@ -489,12 +489,18 @@
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
 .cam-setup-group__status { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; font-size: 11px; padding: 4px; }
 .cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
+/* This class is shared: the cross-face picker is a `details`/`summary` now,
+ * while RotaryTargetPicker is still a `fieldset`/`legend`, so both keep the
+ * same dim caption. */
+.cam-cross-face-picker > summary,
 .cam-cross-face-picker legend { font-size: 12px; color: var(--text-dim); }
+.cam-cross-face-picker > summary { cursor: pointer; }
 .cam-cross-face-picker .properties-check { flex-wrap: wrap; padding: 4px 0; }
 .setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
 .cam-setup-reach { font-size: 12px; }
 .cam-setup-reach__target { margin: 6px 0; padding: 6px; border: 1px dashed var(--line-strong); border-radius: 6px; }
 .cam-setup-reach__target p { margin: 4px 0; }
+.cam-setup-reach__cross-face { margin-left: 4px; color: var(--role-region-text); }
 .cam-setup-coverage--meets { color: var(--success-text); }
 .cam-setup-coverage--gap { color: var(--warning-text); }
 .cam-setup-coverage--unverified { color: var(--text-dim); }

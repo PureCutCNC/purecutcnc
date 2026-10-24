@@ -19,6 +19,7 @@ import { judgeTargetFromFace } from '../../engine/setupTargets'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { isOperationTargetValid } from '../../store/helpers/operationDefaults'
 import { useI18n } from '../../i18n/i18nContext'
+import { crossFaceSummaryLine } from './setupSections'
 
 /** Targets are picked for CAM; ghost sketch selection remains untouched. */
 export function CrossFaceTargetPicker({ project, face, selectedIds, kind, onChange }: {
@@ -28,18 +29,20 @@ export function CrossFaceTargetPicker({ project, face, selectedIds, kind, onChan
   const { t } = useI18n()
   const candidates = resolveFeatureInstances(project).filter((feature) => judgeTargetFromFace(project, feature, face).status === 'cross-face')
   if (candidates.length === 0) return null
-  return <fieldset className="cam-cross-face-picker">
-    <legend>{t('cam.setup.crossFacePicker')}</legend>
-    <p className="properties-hint">{t('cam.setup.crossFaceHelp')}</p>
+  // The list offers targets from the face the setup is not on.
+  const side = t(face === 'top' ? 'cam.setup.bottom' : 'cam.setup.top').toLowerCase()
+  const summary = t('cam.setup.crossFaceSummary', { side, count: candidates.length })
+  return <details className="cam-cross-face-picker">
+    <summary>{crossFaceSummaryLine(summary, candidates, selectedIds)}</summary>
     {candidates.map((feature) => {
       const checked = selectedIds.includes(feature.id)
       const ids = checked ? selectedIds.filter((id) => id !== feature.id) : [...selectedIds, feature.id]
       const valid = !kind || isOperationTargetValid(project, kind, { source: 'features', featureIds: ids })
       return <label className="properties-check" key={feature.id}>
         <input type="checkbox" checked={checked} disabled={!valid} onChange={() => onChange(ids)} />
-        <span>{feature.name}</span><span className="face-chip face-chip--thru">{t('cam.setup.crossFace')}</span>
+        <span>{feature.name}</span>
         {!valid ? <span className="properties-hint">{t('cam.hint.notCompatible')}</span> : null}
       </label>
     })}
-  </fieldset>
+  </details>
 }
