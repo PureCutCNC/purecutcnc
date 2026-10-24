@@ -479,15 +479,19 @@
 .cam-setup-group--active { border-color: var(--accent); }
 .cam-setup-group--bottom.cam-setup-group--active { border-color: var(--face-bottom); }
 .cam-setup-group--around.cam-setup-group--active { border-color: var(--role-region); }
-.cam-setup-group__header { display: flex; align-items: center; gap: 4px; padding: 4px; }
-.cam-setup-group__toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--accent-strong); text-align: left; font-size: 12px; }
+/* One line at the panel's width: the name ellipsizes, the count, chip and the
+ * action buttons keep their size and stay on the right (issue #1102). */
+.cam-setup-group__header { display: flex; align-items: center; gap: 4px; padding: 4px; min-width: 0; }
+.cam-setup-group__toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--accent-strong); text-align: left; font-size: 12px; white-space: nowrap; }
+.cam-setup-group__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cam-setup-group__empty { color: var(--text-dim); font-size: 11px; }
+.cam-setup-group__warn { flex: 0 0 auto; color: var(--warning-text); }
 .cam-setup-group--bottom .cam-setup-group__toggle { color: var(--face-bottom-text); }
 .cam-setup-group--around .cam-setup-group__toggle { color: var(--role-region-text); }
 .cam-setup-group--active .cam-setup-group__header { background: var(--accent-soft); }
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
 .cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
-.cam-setup-group__status { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; font-size: 11px; padding: 4px; }
 .cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
 /* This class is shared: the cross-face picker is a `details`/`summary` now,
  * while RotaryTargetPicker is still a `fieldset`/`legend`, so both keep the
@@ -528,7 +532,6 @@
 [data-shell-mode='tablet-compact'] .cam-cross-face-picker .properties-check { min-height: 44px; }
 
 .cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
-.cam-setup-group__toggle { flex-wrap: wrap; }
 .dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }
 .dialog--setup select, .dialog--setup input, .dialog--setup textarea { min-width: 0; border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px; background: var(--surface); color: var(--text); font: inherit; }
 
