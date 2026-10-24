@@ -25,19 +25,16 @@
   align-items: center;
   align-self: center;
   gap: 8px;
-  flex-shrink: 0;
+  /* Shrinks only by the flip chip, so a narrow header never pushes the
+   * workspace wider than its column (issue #1102). */
+  flex-shrink: 1;
+  min-width: 0;
   padding: 0 8px;
-}
-
-.face-switch__label {
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .face-switch__segments {
   display: flex;
+  flex-shrink: 0;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
   overflow: hidden;
@@ -122,7 +119,10 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  /* Never smaller than its icon. */
+  min-width: 34px;
+  overflow: hidden;
   padding: 3px 9px;
   border: 1px solid color-mix(in srgb, var(--face-bottom) 60%, transparent);
   border-radius: 14px;
@@ -136,6 +136,14 @@
   flex-shrink: 0;
 }
 
+/* When the header is tight the words give way first, down to the icon; the
+ * full sentence stays in the title. */
+.face-switch__chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The toggle wears the colour of the face it shows or hides. */
 .face-switch__ghost--top.face-switch__ghost--on {
   border-color: color-mix(in srgb, var(--accent) 65%, transparent);
@@ -147,11 +155,6 @@
   color: var(--face-bottom-text);
 }
 
-@media (max-width: 1180px) {
-  .face-switch__label {
-    display: none;
-  }
-}
 
 /* Tablet shells carry the switch in the sketch's face row: full tap targets,
  * no label, and the row grows to hold them. */
@@ -171,11 +174,6 @@
 [data-shell-mode='tablet-compact'] .face-switch__ghost {
   min-width: var(--touch-target, 44px);
   min-height: var(--touch-target, 44px);
-}
-
-[data-shell-mode='tablet'] .face-switch__label,
-[data-shell-mode='tablet-compact'] .face-switch__label {
-  display: none;
 }
 
 /* ── Sketch face row: the face switch on a tablet shell ──

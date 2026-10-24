@@ -88,7 +88,6 @@ export function FaceSwitch() {
 
   return (
     <div className="face-switch">
-      <span className="face-switch__label" aria-hidden="true">{t('appShell.face.label')}</span>
       <div className="face-switch__segments" role="group" aria-label={t('appShell.face.label')}>
         {entries.map((entry) => {
           const pressed = face === entry.face

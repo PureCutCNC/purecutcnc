@@ -2284,7 +2284,6 @@ export function CAMPanel({
                     {setupSections.grouped ? null : (
                       <button type="button" className="cam-header-action" onClick={() => setEditingSetupId(currentSetup?.id ?? null)}>{camT('cam.setup.properties')}</button>
                     )}
-                    <span className="cam-operations-toolbar__spacer" aria-hidden="true" />
                     {/* The two icon buttons are one unit so the icons wrap
                         together when the row is too narrow, never the text
                         actions (issue #1102, proposal 14). */}

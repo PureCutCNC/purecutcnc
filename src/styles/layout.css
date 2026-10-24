@@ -931,6 +931,10 @@
 
 .panel-centre {
   min-height: 0;
+  /* A grid item's automatic minimum is its content: a wide header (the
+   * Bottom flip chip, issue #1102) would push the column under the CAM panel.
+   * The header shrinks instead, the chip's words first. */
+  min-width: 0;
   position: relative;
 }
 
@@ -1463,6 +1467,8 @@
 .panel-tabs-header {
   display: flex;
   align-items: flex-end;
+  /* See .panel-centre: the header gives way rather than widening the column. */
+  min-width: 0;
   gap: 2px;
   padding: 8px 6px 0;
   border-bottom: 1px solid var(--line);
@@ -1482,6 +1488,7 @@
   color: var(--text-dim);
   min-height: var(--control-hit-target);
   padding: 0 14px;
+  white-space: nowrap;
   cursor: pointer;
   margin-bottom: -1px;
   transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
@@ -1511,6 +1518,8 @@
   align-items: flex-end;
   gap: 2px;
   min-width: 0;
+  /* The tab names stay whole; the face switch's flip chip gives way first. */
+  flex-shrink: 0;
 }
 
 /* ── Panel pull-out handles (desktop) ──
@@ -3617,15 +3626,16 @@
   gap: 6px;
 }
 
-.cam-operations-toolbar__spacer {
-  flex: 1 1 0;
-  min-width: 0;
+/* One row at the default panel width (about 290px of content, issue #1102):
+ * the three text actions plus the eye and the gear. */
+.cam-operations-toolbar .cam-header-action {
+  padding: 0 8px;
 }
 
 .cam-operations-toolbar__icons {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin-left: auto;
 }
 
