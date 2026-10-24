@@ -139,10 +139,7 @@ export const appShellEn = {
   'appShell.generation.retry': 'Retry',
   'appShell.generation.backend': 'Compute',
   'appShell.generation.menuAria': 'Toolpath generation settings',
-  'appShell.generation.backendInline': 'Main thread',
-  'appShell.generation.backendInlineDetail': 'The window cannot respond while an operation is generating, and stopping has to wait for it to finish.',
-  'appShell.generation.backendWorker': 'Background thread',
-  'appShell.generation.backendWorkerDetail': 'Keeps the window responsive while generating, and stopping takes effect immediately.',
+  'appShell.generation.display': 'Display',
   'appShell.status.about': 'About PureCutCNC',
   'appShell.status.shellMode': 'Shell mode (dev only)',
 

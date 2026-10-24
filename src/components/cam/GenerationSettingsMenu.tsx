@@ -19,17 +19,20 @@
  *
  * These started in the status bar and moved here on the maintainer's call: this
  * is where generation is *visible* — the operations that are generating are
- * listed directly below — so it is where the controls to stop it and to choose
- * how it runs belong.
+ * listed directly below — so it is where the controls to stop it and to see how
+ * it is running belong.
  *
- * Everything lives behind one gear rather than split across two places. A
- * backend picker in the CAM panel and a Stop button in the status bar would be
- * two homes for one concern, which is worse than either alone.
+ * Everything lives behind one gear rather than split across two places, and
+ * since issue #1102 slice D1 that includes the sketch's GPU/Canvas switch and
+ * its fallback notice. There is no backend choice any more: generation always
+ * uses the worker when the runtime has one, and the gear reports the automatic
+ * fallback to the main thread exactly as before.
  *
  * The gear carries its own state, because a menu hides what is inside it: it
- * marks itself when generation is paused or has failed, so a stopped pipeline
- * cannot be a mystery the user has to go looking for. The per-operation pause
- * badges in the tree below say the same thing at the row level.
+ * marks itself when generation is paused or has failed, or when either backend
+ * fell back, so a stopped pipeline or a Canvas-only sketch cannot be a mystery
+ * the user has to go looking for. The per-operation pause badges in the tree
+ * below say the same thing at the row level.
  */
 
 import { useId, useRef, useState } from 'react'
@@ -38,14 +41,12 @@ import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
-import type { ExecutorKind, GenerationStatusSnapshot } from '../../app/toolpathGeneration/types'
+import { useToolpathRendererStore } from '../../store/toolpathRendererStore'
+import { gearFlagged, rendererNotice } from './generationGearState'
+import type { GenerationStatusSnapshot } from '../../app/toolpathGeneration/types'
 
 export interface GenerationSettingsMenuProps {
   status: GenerationStatusSnapshot
-  executor: ExecutorKind
-  onExecutorChange: (kind: ExecutorKind) => void
-  /** False when the runtime has no Worker at all; the choice is then not offered. */
-  workerAvailable: boolean
   /** True when the active backend can actually interrupt work in progress. */
   canStop: boolean
   onStop: () => void
@@ -55,9 +56,6 @@ export interface GenerationSettingsMenuProps {
 
 export function GenerationSettingsMenu({
   status,
-  executor,
-  onExecutorChange,
-  workerAvailable,
   canStop,
   onStop,
   onResume,
@@ -68,6 +66,9 @@ export function GenerationSettingsMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const menuId = useId()
+  // Published by whichever sketch canvas is mounted; null elsewhere, which is
+  // why the Display section appears only in the sketch.
+  const renderer = useToolpathRendererStore(state => state.renderer)
 
   const busy = status.activeOperationId !== null || status.queuedCount > 0
   const failed = status.executorFailure !== null
@@ -77,6 +78,14 @@ export function GenerationSettingsMenu({
   // session moved to the main thread and the work still runs. It is reported
   // separately so it cannot be mistaken for either state (issue #1087).
   const fallback = status.executorFallback
+  const rendererState = rendererNotice(renderer?.status ?? null)
+  const rendererFallback = rendererState === 'fallback'
+  const flagged = gearFlagged({
+    paused,
+    failed,
+    workerFallback: fallback !== null,
+    rendererFallback,
+  })
 
   // Portalled and clamped: the CAM panel scrolls and has its own stacking
   // context, so an in-flow menu would be clipped by the panel it hangs off.
@@ -115,15 +124,21 @@ export function GenerationSettingsMenu({
         : t('appShell.generation.ready')
   // A fallback is appended, not substituted: generation keeps working, so the
   // gear must still be able to say it is up to date while naming where it ran.
-  const statusNotice = fallback
+  const generationNotice = fallback
     ? `${statusLabel} — ${t('appShell.generation.workerFallback')}`
     : statusLabel
+  // The renderer fallback is appended only to the gear's own name and tooltip.
+  // The menu states it once, in the Display section beside its Retry button,
+  // rather than twice in a menu the user is already looking at.
+  const statusNotice = rendererFallback
+    ? `${generationNotice} — ${t('appShell.toolpath.rendererFallback')}`
+    : generationNotice
 
   return (
     <>
       <button
         ref={triggerRef}
-        className={`tree-action-btn cam-generation-gear${paused || failed || fallback ? ' cam-generation-gear--flagged' : ''}`}
+        className={`tree-action-btn cam-generation-gear${flagged ? ' cam-generation-gear--flagged' : ''}`}
         type="button"
         title={`${t('appShell.generation.backend')} — ${statusNotice}`}
         aria-label={`${t('appShell.generation.menuAria')} — ${statusNotice}`}
@@ -154,7 +169,7 @@ export function GenerationSettingsMenu({
             the thing the gear alone cannot spell out.
           */}
           <div className="cam-generation-menu__status" role="status" aria-live="polite">
-            {statusNotice}
+            {generationNotice}
             {/*
               A failure with no stated reason leaves the user with nothing to
               act on — and no way to tell "this operation's geometry is bad"
@@ -208,36 +223,48 @@ export function GenerationSettingsMenu({
             )}
           </div>
 
-          {workerAvailable && (
+          {/*
+            The renderer switch and its fallback moved here from the toolpath
+            legend (issue #1102 slice D1): the legend is about what is drawn and
+            the gear is about how, and the fallback sentence used to wrap the
+            legend onto two rows.
+          */}
+          {renderer && (
             <>
-              <div className="appearance-menu__heading">{t('appShell.generation.backend')}</div>
-              <div className="appearance-menu__options">
-                {(['inline', 'worker'] as const).map((kind) => (
+              <div className="appearance-menu__heading">{t('appShell.generation.display')}</div>
+              <div className="cam-generation-menu__renderer">
+                <span className="cam-generation-menu__renderer-label">
+                  {t('appShell.toolpath.renderer')}
+                </span>
+                <span className="cam-generation-menu__renderer-options">
                   <button
-                    key={kind}
-                    className={`appearance-menu__option ${executor === kind ? 'appearance-menu__option--selected' : ''}`}
                     type="button"
-                    role="menuitemradio"
-                    aria-checked={executor === kind}
-                    onClick={() => { onExecutorChange(kind); close() }}
+                    aria-pressed={renderer.choice === 'gpu'}
+                    onClick={() => renderer.setChoice('gpu')}
                   >
-                    <span className="appearance-menu__copy">
-                      <span className="appearance-menu__label">
-                        {kind === 'inline'
-                          ? t('appShell.generation.backendInline')
-                          : t('appShell.generation.backendWorker')}
-                      </span>
-                      <span className="appearance-menu__detail">
-                        {kind === 'inline'
-                          ? t('appShell.generation.backendInlineDetail')
-                          : t('appShell.generation.backendWorkerDetail')}
-                      </span>
-                    </span>
-                    <span className="appearance-menu__check" aria-hidden="true">
-                      {executor === kind ? '✓' : ''}
-                    </span>
+                    {t('appShell.toolpath.rendererGpu')}
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    aria-pressed={renderer.choice === 'canvas'}
+                    onClick={() => renderer.setChoice('canvas')}
+                  >
+                    {t('appShell.toolpath.rendererCanvas')}
+                  </button>
+                </span>
+                {rendererState === 'loading' && (
+                  <span className="cam-generation-menu__renderer-note" role="status">
+                    {t('appShell.toolpath.rendererLoading')}
+                  </span>
+                )}
+                {rendererFallback && (
+                  <span className="cam-generation-menu__renderer-note cam-generation-menu__renderer-note--fallback" role="status">
+                    {t('appShell.toolpath.rendererFallback')}
+                    <button type="button" onClick={() => renderer.retry()}>
+                      {t('appShell.toolpath.rendererRetry')}
+                    </button>
+                  </span>
+                )}
               </div>
             </>
           )}
