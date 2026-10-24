@@ -16,12 +16,13 @@
 
 import { useProjectStore } from '../../store/projectStore'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { activeFace, aroundUnavailableReason, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, activeSetup, aroundUnavailableReason, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { useI18n } from '../../i18n/i18nContext'
 import type { Project, SetupFace } from '../../types/project'
 import { Icon } from '../Icon'
 import { machineMode, showsFaceSwitch } from '../cam/machineMode'
+import { faceSwitchExtras } from './faceSwitchExtras'
 
 /** One segment: the face it selects, and the icon and label it wears. */
 interface FaceEntry {
@@ -45,7 +46,8 @@ function hasBottomContent(project: Project): boolean {
 
 /**
  * The Top | Bottom | Around segmented control in the workspace header, plus
- * the "Other side" ghost toggle once the project uses both faces.
+ * the "Other side" ghost toggle and, on a flipped Bottom view, the short
+ * "Flipped about X/Y" chip (issue #1102 slice E).
  *
  * The Around segment appears only on a rotary project with a round bar
  * (issue #1028): those two authoring conditions are the whole reason the
@@ -80,6 +82,9 @@ export function FaceSwitch() {
   // The other-side toggle compares the two flat faces only: Around is not a
   // half-turn of either, so it is never shown there.
   const flatOtherSide = face !== 'around' && (face !== 'top' || hasBottomContent(project))
+  // A Bottom view is a flipped stock: the switch says so in a short chip
+  // instead of the old note row, and only once both faces are in use.
+  const extras = faceSwitchExtras({ face, bothFaces, axis: activeSetup(project).orientation.axis })
 
   return (
     <div className="face-switch">
@@ -97,7 +102,7 @@ export function FaceSwitch() {
               title={busy && !pressed
                 ? t('appShell.face.busy')
                 : entry.face === 'around'
-                  ? t('appShell.face.switchToAround')
+                  ? t('canvas.face.aroundTurnsBar')
                   : t(entry.face === 'top' ? 'appShell.face.switchToTop' : 'appShell.face.switchToBottom')}
               onClick={() => { if (!pressed) switchWorkspaceFace(entry.face) }}
             >
@@ -112,12 +117,22 @@ export function FaceSwitch() {
           type="button"
           className={`face-switch__ghost face-switch__ghost--${face === 'top' ? 'bottom' : 'top'}${showOtherSide ? ' face-switch__ghost--on' : ''}`}
           aria-pressed={showOtherSide}
+          aria-label={t('appShell.face.otherSide')}
           title={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
           onClick={() => setShowOtherSide(!showOtherSide)}
         >
           <Icon id={showOtherSide ? 'eye' : 'eye-off'} size={16} />
-          <span>{t('appShell.face.otherSide')}</span>
         </button>
+      )}
+      {extras.flipChip !== null && (
+        <span
+          className="face-switch__chip"
+          role="status"
+          title={`${t(extras.flipChip === 'x' ? 'canvas.face.flippedAboutX' : 'canvas.face.flippedAboutY')} ${t('canvas.face.topIsGhost')}`}
+        >
+          <Icon id="refresh" size={16} />
+          <span>{t('appShell.face.flipped', { axis: extras.flipChip.toUpperCase() })}</span>
+        </span>
       )}
     </div>
   )

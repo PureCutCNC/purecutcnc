@@ -191,9 +191,9 @@ export const appShellEn = {
   'appShell.face.around': 'Around',
   'appShell.face.switchToTop': 'Work on the top face',
   'appShell.face.switchToBottom': 'Work on the bottom face',
-  'appShell.face.switchToAround': 'Work around the bar',
   'appShell.face.busy': 'Finish the current edit before switching face',
   'appShell.face.otherSide': 'Other side',
   'appShell.face.showOtherSide': 'Show the other side as a ghost',
   'appShell.face.hideOtherSide': 'Hide the other side',
+  'appShell.face.flipped': 'Flipped about {axis}',
 } as const satisfies Record<string, string>

@@ -192,9 +192,9 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.face.around': '环绕',
   'appShell.face.switchToTop': '在顶面上工作',
   'appShell.face.switchToBottom': '在底面上工作',
-  'appShell.face.switchToAround': '绕棒料工作',
   'appShell.face.busy': '请先完成当前编辑，再切换加工面',
   'appShell.face.otherSide': '另一面',
   'appShell.face.showOtherSide': '以虚影显示另一面',
   'appShell.face.hideOtherSide': '隐藏另一面',
+  'appShell.face.flipped': '已绕 {axis} 轴翻转',
 }

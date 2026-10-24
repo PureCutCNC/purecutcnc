@@ -125,13 +125,14 @@ export function AppShell({
   const shellMode = useShellMode()
   const { t } = useI18n()
   const tabletShell = isTabletMode(shellMode)
-  // The sketch gets a face row above the canvas once both faces are in use,
-  // and always on a tablet shell, where the row carries the face switch (#945).
+  // A tablet shell carries the face switch in its own row above the canvas
+  // (#945); a desktop shell keeps it in the workspace header and gets no row
+  // at all (issue #1102 slice E 8).
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
   // #960: a plasma machine hides the switch, so the tablet row must not reserve
   // space for a banner that renders nothing.
   const machine = useProjectStore((state) => machineMode(state.project))
-  const faceBannerVisible = bothFaces || (tabletShell && showsFaceSwitch(machine, bothFaces))
+  const faceBannerVisible = tabletShell && showsFaceSwitch(machine, bothFaces)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)

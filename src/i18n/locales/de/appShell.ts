@@ -186,9 +186,9 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.face.around': 'Rundum',
   'appShell.face.switchToTop': 'Auf der Oberseite arbeiten',
   'appShell.face.switchToBottom': 'Auf der Unterseite arbeiten',
-  'appShell.face.switchToAround': 'Rund um die Stange arbeiten',
   'appShell.face.busy': 'Aktuelle Bearbeitung abschließen, bevor die Seite gewechselt wird',
   'appShell.face.otherSide': 'Andere Seite',
   'appShell.face.showOtherSide': 'Andere Seite als Geisterbild anzeigen',
   'appShell.face.hideOtherSide': 'Andere Seite ausblenden',
+  'appShell.face.flipped': 'Um {axis} gewendet',
 }

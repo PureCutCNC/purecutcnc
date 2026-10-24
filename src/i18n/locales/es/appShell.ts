@@ -145,9 +145,9 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.face.around': 'Alrededor',
   'appShell.face.switchToTop': 'Trabajar en la cara superior',
   'appShell.face.switchToBottom': 'Trabajar en la cara inferior',
-  'appShell.face.switchToAround': 'Trabajar alrededor de la barra',
   'appShell.face.busy': 'Termina la edición actual antes de cambiar de cara',
   'appShell.face.otherSide': 'Otra cara',
   'appShell.face.showOtherSide': 'Mostrar la otra cara como fantasma',
   'appShell.face.hideOtherSide': 'Ocultar la otra cara',
+  'appShell.face.flipped': 'Volteado sobre {axis}',
 }
