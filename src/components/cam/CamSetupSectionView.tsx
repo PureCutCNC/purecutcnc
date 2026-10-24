@@ -38,7 +38,7 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
       <button
         type="button"
         className="cam-setup-group__toggle"
-        aria-expanded={open}
+        aria-expanded={header.empty ? undefined : open}
         aria-label={header.ariaLabel}
         title={header.ariaLabel}
         onClick={() => setExpanded(!expanded)}
