@@ -45,6 +45,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { getStockBounds, roundStock } from '../../types/project'
 import type { BarStock, RoundStock, SquareStock } from '../../types/project'
@@ -877,6 +878,216 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   assert.equal(invalidSampling.valid, false, 'the sampler reports invalid tool geometry')
   assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid geometry produced no angle rows')
   assert.deepEqual(invalidSampling.tipRadius, [], 'invalid geometry cannot look like empty space')
+}
+
+// ── #1095: the radial stock to leave applies to the model only ───────
+//
+// The same rule as the round bar, with the square retained stub: a 12 mm
+// blank (face 6, corner 8.485) and a 2 mm ball over a radius-4 model, so the
+// retained face's contact and the model are the same height at the outermost
+// pass with no leave. With a leave the pass must rise by the leave alone, not
+// by the thickened blank; the zero-leave fingerprints were captured from HEAD
+// before #1095 and must not move.
+{
+  const stock = squareStock(12, 12, 'x')
+  const pivot = barPivotZ(stock)
+  const corner = barMaxRadius(stock)
+  const modelRadius = 4
+  const leave = 0.05
+  const mesh = cylinderMesh(stock, modelRadius, 3, 9)
+  const base = {
+    stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9,
+    safeRadius: 9, requestedCellSize: 0.01, stepdown: 0.5,
+  }
+  /** The lowest tip the outermost pass reaches at its first along position. */
+  const outermost = (result: ReturnType<typeof generateRotaryRough>, along: number): number => {
+    const values: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut') continue
+      for (const point of [move.from, move.to]) {
+        if (Math.abs(point.x - along) > 1e-6) continue
+        const tip = point.z - pivot
+        // A plunge's start and a link's rise sit at the travel height, above
+        // the blank's corner; they are not a cut into the band.
+        if (tip > corner) continue
+        values.push(tip)
+      }
+    }
+    assert.ok(values.length > 0, `the outermost pass at ${along} has a cut`)
+    return Math.min(...values)
+  }
+  for (const direction of ['along', 'around'] as const) {
+    const without = generateRotaryRough('no-leave', mesh, stock, BALL,
+      { ...base, stockToLeave: 0, passDirection: direction }, {})
+    const withLeave = generateRotaryRough('leave', mesh, stock, BALL,
+      { ...base, stockToLeave: leave, passDirection: direction }, {})
+    assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? '6f08479950fb1a44' : '0899bb0777c6606f',
+      `rough ${direction}: zero stock to leave is byte-identical`)
+    const spanStart = base.alongStart + BALL.radius
+    const first = outermost(withLeave, spanStart)
+    // The old along generator lifted the first pass to ~4.42 on this fixture.
+    assert.ok(first <= modelRadius + leave + 0.12,
+      `rough ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.12).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `rough ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < barInscribedRadius(stock) - 0.5,
+      `rough ${direction}: the outermost pass is not lifted to the blank's face (${first.toFixed(4)})`)
+    // The real cutter's body is one radius wide along the bar at every point
+    // it makes, so the pull-in keeps it out of the retained square. A pull
+    // shorter than the cutter radius enters the stub and fails here.
+    for (const move of withLeave.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - BALL.radius >= base.alongStart - 1e-9,
+          `rough ${direction}: the cutter body stays out of the lower retained stub at x ${point.x}`)
+        assert.ok(point.x + BALL.radius <= base.alongEnd + 1e-9,
+          `rough ${direction}: the cutter body stays out of the upper retained stub at x ${point.x}`)
+      }
+    }
+  }
+  // #1095 applies the same rule to the finish: it no longer applies its radial
+  // leave to the retained walls, so the outermost pass stays at model + leave
+  // instead of being lifted over the thickened blank. With leave 0 nothing is
+  // eroded and no grid extra is built, so the output is byte-identical to HEAD
+  // (the zero-leave fingerprints were captured there). The around path does not
+  // put the square stub in its sampling mesh (the cutter-centre pull and the
+  // exact stub floor protect it), so only the along fingerprint moved.
+  for (const direction of ['along', 'around'] as const) {
+    const params = {
+      stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9, safeRadius: 9,
+      requestedCellSize: 0.01, passDirection: direction,
+    } as const
+    const finish = generateRotaryFinish('finish', mesh, stock, BALL, { ...params, stockToLeave: leave }, {})
+    const zero = generateRotaryFinish('finish-zero', mesh, stock, BALL, { ...params, stockToLeave: 0 }, {})
+    assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? 'b7fea12dcc3c98c5' : 'ee7c8534a72873d6',
+      `finish ${direction}: zero stock to leave is byte-identical`)
+    // Recaptured for #1095: square around is unchanged (its stub never entered
+    // the sampling mesh); square along carries the un-thickened wall now, so
+    // its old value (which lifted the outermost pass to ~4.42) moved.
+    assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? 'cda89c07cab2130f' : '46ba23d5a6192237',
+      `finish ${direction}: the leave reaches the model, not the retained wall`)
+    const first = outermost(finish, base.alongStart + BALL.radius)
+    assert.ok(first <= modelRadius + leave + 0.03,
+      `finish ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.03).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `finish ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < barInscribedRadius(stock) - 0.5,
+      `finish ${direction}: the outermost pass is not lifted to the blank's face (${first.toFixed(4)})`)
+    for (const move of finish.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - BALL.radius >= base.alongStart - 1e-9,
+          `finish ${direction}: the cutter body stays out of the lower retained stub at x ${point.x}`)
+        assert.ok(point.x + BALL.radius <= base.alongEnd + 1e-9,
+          `finish ${direction}: the cutter body stays out of the upper retained stub at x ${point.x}`)
+      }
+    }
+  }
+
+  // The requested amount in all cases: in the middle of the band, away from
+  // both retained walls, a rough and a finish leave exactly model + stock to
+  // leave, within the height-map cell (0.005 mm here). See the round fixture for
+  // why this check is separate from the fingerprints: a 0.01 mm excess must
+  // fail, and the fingerprints are pinned at a coarser cell.
+  {
+    const cell = 0.005
+    const tolerance = cell
+    // A longer blank gives the along mode interior passes too: on the 12 mm
+    // fixture its cutter-centre span is only 5..7, so both passes sit one radius
+    // from a wall.
+    const leftoverStock = squareStock(12, 20, 'x')
+    const leftoverMesh = cylinderMesh(leftoverStock, modelRadius, 3, 17)
+    // An along-mode pass is one long cut along the bar, so its midpoint is read
+    // from the commanded segment rather than from an emitted vertex. The model
+    // is a cylinder, so the tip on that segment is constant; an around ring has
+    // a zero-length x span and is read at its own x.
+    const probe = 10
+    for (const direction of ['along', 'around'] as const) {
+      for (const kind of ['rough', 'finish'] as const) {
+        const params = {
+          stepover: 1, stepdown: 0.5, sampleSpacing: 1, alongStart: 3, alongEnd: 17, safeRadius: 9,
+          requestedCellSize: cell, stockToLeave: leave, passDirection: direction,
+        } as const
+        const result = kind === 'rough'
+          ? generateRotaryRough(`${kind}-mid`, leftoverMesh, leftoverStock, BALL, params, {})
+          : generateRotaryFinish(`${kind}-mid`, leftoverMesh, leftoverStock, BALL, params, {})
+        let lowest = Number.POSITIVE_INFINITY
+        let highest = Number.NEGATIVE_INFINITY
+        for (const move of result.moves) {
+          if (move.kind !== 'cut') continue
+          const lo = Math.min(move.from.x, move.to.x)
+          const hi = Math.max(move.from.x, move.to.x)
+          if (probe < lo - 1e-9 || probe > hi + 1e-9) continue
+          const fraction = hi - lo > 1e-9 ? (probe - move.from.x) / (move.to.x - move.from.x) : 0
+          const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
+          if (tip > corner) continue
+          lowest = Math.min(lowest, tip)
+          highest = Math.max(highest, tip)
+        }
+        assert.ok(Number.isFinite(lowest), `${kind} ${direction}: the mid band is cut`)
+        assert.ok(lowest >= modelRadius + leave - tolerance,
+          `${kind} ${direction}: the mid band is not cut below model + stock to leave (${lowest.toFixed(4)})`)
+        const top = kind === 'finish' ? highest : lowest
+        assert.ok(top <= modelRadius + leave + tolerance,
+          `${kind} ${direction}: the mid band leaves at most model + stock to leave + one cell `
+          + `(${top.toFixed(4)} <= ${(modelRadius + leave + tolerance).toFixed(4)})`)
+      }
+    }
+  }
+}
+
+// ── #1095 slice D: the square blank's outermost ring is the model ─────
+//
+// The square around path never puts the retained stub in its sampling mesh:
+// the cutter-centre pull keeps the ring one radius off the stub face and the
+// exact stub floor is the safety net, so the outermost ring already followed
+// the model. This locks that in -- the square blank is the behaviour the round
+// bar had to match -- and asserts the cutter body only touches the stub face.
+{
+  const stock = squareStock(8, 40, 'x')
+  const pivot = barPivotZ(stock)
+  const wallTop = barInscribedRadius(stock)
+  const modelRadius = 1
+  const cell = 0.5
+  // The stub is a square prism far above the model, so a ring lifted to the
+  // blank's face cannot be mistaken for the model.
+  const mesh = cylinderMesh(stock, modelRadius, 10, 30)
+  const result = generateRotaryFinish('square-wall-tangent', mesh, stock, BALL, {
+    stepover: 2, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
+    safeRadius: 12, requestedCellSize: cell, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the square wall-tangent finish warns about nothing')
+  const ringAt = (along: number): number[] => {
+    const radii: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut' || move.from.x !== move.to.x) continue
+      if (Math.abs(move.from.x - along) > 1e-6) continue
+      radii.push(move.from.z - pivot, move.to.z - pivot)
+    }
+    return radii
+  }
+  for (const [end, along] of [['lower', 10 + BALL.radius], ['upper', 30 - BALL.radius]] as const) {
+    const radii = ringAt(along)
+    assert.ok(radii.length > 0, `${end}: the outermost ring is emitted`)
+    assert.ok(Math.max(...radii) <= modelRadius + cell + 1e-6,
+      `${end}: the outermost ring follows the model (${Math.max(...radii).toFixed(4)} <= ${(modelRadius + cell).toFixed(4)})`)
+    assert.ok(Math.max(...radii) < wallTop - BALL.radius,
+      `${end}: no part of the outermost ring is lifted to the retained stub's face`)
+  }
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      assert.ok(point.x - BALL.radius >= 10 - 1e-9,
+        `the cutter body stays out of the lower retained stub at x ${point.x}`)
+      assert.ok(point.x + BALL.radius <= 30 + 1e-9,
+        `the cutter body stays out of the upper retained stub at x ${point.x}`)
+    }
+  }
 }
 
 console.log('engine/toolpaths/squareRotaryModel.test.ts: all assertions passed')

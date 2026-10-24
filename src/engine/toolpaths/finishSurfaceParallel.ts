@@ -242,6 +242,23 @@ export interface HeightMap {
    * otherwise.
    */
   cellRise?: number
+  /**
+   * Coverage of each cell by the wall triangles a caller separated out with
+   * `HeightMapBuildOptions.wallTriangleStart` (#1095 slice D), one byte per cell:
+   * `1` when only model triangles covered the cell, `2` when only wall triangles
+   * did, `3` when both, `0` when neither. Omitted when the caller marks no
+   * walls.
+   */
+  wallCoverage?: Uint8Array
+  /**
+   * The highest **model** material in each cell, for the cells a wall triangle
+   * also covered (`wallCoverage` has bit `2`). A padded sample that only reaches
+   * such a cell must read this, not {@link data}: `data` holds the wall's top,
+   * which is stock to keep, and lifting the tip over it is exactly the air pass
+   * #1095 slice D removes. `-Infinity` when no model covers the cell. Omitted
+   * when no walls are marked.
+   */
+  modelOnly?: Float32Array
 }
 
 type CoverageContours = Array<Array<[number, number]>>
@@ -306,6 +323,21 @@ export interface HeightMapBuildOptions {
    * exactly that much.
    */
   readonly trackCellRise?: boolean
+  /**
+   * The first triangle that belongs to a **retained wall** — stock the operation
+   * must not cut, as opposed to the model surface (#1095 slice D). `triangles`
+   * are triangle starts, so a triangle is a wall when its start is at least
+   * `wallTriangleStart * 3`. A cell a wall covers and the model does not is
+   * recorded in {@link HeightMap.wallCoverage} as `2`.
+   *
+   * A wall cell is what makes a tangent pass read as contact: a vertical face
+   * at exactly one cutter radius smears the wall's top into the cell that
+   * straddles the face, and the conservative cell pad
+   * (`safeToolTipZAt`'s `cellPad`) then lifts a pass the cutter only *touches*.
+   * Marking the cells lets that caller keep the pad for model geometry while
+   * treating a wall cell as contact only when the unpadded footprint reaches it.
+   */
+  readonly wallTriangleStart?: number
 }
 
 export function buildHeightMap(
@@ -320,6 +352,14 @@ export function buildHeightMap(
   const data = new Float32Array(width * height)
   data.fill(-Infinity)
   let cellRise = 0
+  // #1095 slice D: one byte per cell recording whether the height came from the
+  // model, from a retained wall, or both. Only allocated when the caller names
+  // the wall triangles, so every existing caller pays nothing.
+  const wallStart = options?.wallTriangleStart
+  const wallCoverage = wallStart !== undefined ? new Uint8Array(width * height) : undefined
+  // The model-only height for the cells a wall also covers. `-Infinity` is the
+  // no-model value; a wall-only cell starts there and stays there.
+  const modelOnly = wallStart !== undefined ? new Float32Array(width * height).fill(-Infinity) : undefined
 
   const minRow = Math.max(0, options?.window?.minRow ?? 0)
   const maxRow = Math.min(height - 1, options?.window?.maxRow ?? height - 1)
@@ -328,11 +368,17 @@ export function buildHeightMap(
   const triangles = options?.triangles
   const triangleCount = triangles ? triangles.length : Math.floor(index.length / 3)
   if (minRow > maxRow || minCol > maxCol) {
-    return { data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize }
+    return {
+      data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize,
+      ...(wallCoverage !== undefined ? { wallCoverage } : null),
+      ...(modelOnly !== undefined ? { modelOnly } : null),
+    }
   }
 
+  const wallStartIndex = wallStart !== undefined ? wallStart * 3 : Infinity
   for (let t = 0; t < triangleCount; t++) {
     const i = triangles ? triangles[t] : t * 3
+    const coverageBit = i >= wallStartIndex ? 2 : 1
     const i0 = index[i] * 3
     const i1 = index[i + 1] * 3
     const i2 = index[i + 2] * 3
@@ -379,6 +425,19 @@ export function buildHeightMap(
         const w = 1 - u - v
         const z = w * v0z + u * v1z + v * v2z
         const idx = row * width + col
+        if (wallCoverage !== undefined && modelOnly !== undefined) {
+          const coverage = wallCoverage[idx]
+          if (coverageBit === 2) {
+            // First wall touch: `data` is still the model-only maximum here, so
+            // it is the value a padded sample must use. Later wall triangles
+            // must not overwrite it.
+            if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+            wallCoverage[idx] = coverage | 2
+          } else {
+            if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+            wallCoverage[idx] = coverage | 1
+          }
+        }
         if (z > data[idx]) data[idx] = z
         touched = true
       }
@@ -389,6 +448,8 @@ export function buildHeightMap(
   return {
     data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize,
     ...(options?.trackCellRise ? { cellRise } : null),
+    ...(wallCoverage !== undefined ? { wallCoverage } : null),
+    ...(modelOnly !== undefined ? { modelOnly } : null),
   }
 }
 
@@ -467,13 +528,27 @@ export function safeToolTipZAt(
 
   for (let nr = minR; nr <= maxR; nr += 1) {
     for (let nc = minC; nc <= maxC; nc += 1) {
-      const cellZ = heightMap.data[nr * heightMap.width + nc]
-      if (!isFinite(cellZ)) continue
+      const idx = nr * heightMap.width + nc
+      let cellZ = heightMap.data[idx]
       const cx = heightMap.originX + (nc + 0.5) * heightMap.cellSize
       const cy = heightMap.originY + (nr + 0.5) * heightMap.cellSize
       const dx = cx - x
       const dy = cy - y
       const dSq = dx * dx + dy * dy
+      // #1095 slice D: a retained wall is stock to keep, not a surface to
+      // finish. A cell a wall covers, which the **unpadded** footprint misses,
+      // is material the cutter's body only touches at the wall face -- a
+      // tangency, not contact -- so it must not lift the tip to the wall's top.
+      // Read the model-only height of that cell instead: the target here is the
+      // model beside the wall, and a ball tangent to a wall a full radius away
+      // cannot gouge it. Any real overlap puts the wall cell inside `radiusSq`
+      // (the pull-in keeps every sample at or beyond one radius) and still
+      // lifts, which keeps the wall safe.
+      const coverage = heightMap.wallCoverage?.[idx]
+      if (pad > 0 && coverage !== undefined && (coverage & 2) !== 0 && dSq > radiusSq) {
+        cellZ = heightMap.modelOnly?.[idx] ?? Number.NEGATIVE_INFINITY
+      }
+      if (!isFinite(cellZ)) continue
       const reachSq = pad > 0 ? Math.max(0, Math.sqrt(dSq) - pad) ** 2 : dSq
       if (reachSq > radiusSq) continue
       let constrained: number

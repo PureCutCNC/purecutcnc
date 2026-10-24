@@ -101,6 +101,18 @@
  * 4x-finer relationship to whatever the case asks the generator for is never
  * reduced.
  *
+ * #1095 adds eight always-present **bare ball roughs** and eight **rough +
+ * finish sequences**, each with a positive stock to leave and a retained end on
+ * both sides, round and square, along and around. They prove independently that
+ * the retained walls keep the blank and that the material left over the first
+ * cutter radius next to each wall is bounded by the ball's own fillet plus the
+ * leave and the sampler's one-cell allowance -- not the wall thickened by the
+ * leave. The sequences run the finish in the same direction and prove the
+ * finish leaves the requested stock across the machined band (assertion 3) with
+ * no lifted wall collar. The tight discrimination against that thickened wall
+ * lives in the unit fixtures, where the height-map cell can be finer than the
+ * reference's grid allows here.
+ *
  * For each program the reference asserts:
  *
  * 1. a **rough** turning cut or plunge engages no more than its `stepdown`
@@ -263,6 +275,88 @@ function modelSurfaceAt(profile: readonly { along: number; radius: number }[], a
     return a.radius + (b.radius - a.radius) * (along - a.along) / (b.along - a.along)
   }
   return null
+}
+
+/**
+ * #1095 slice D: no emitted ring or pass may sit in the air over a retained
+ * wall while the model below it is lower.
+ *
+ * The check reads the **emitted** motion, not the sampler: one group per ring
+ * (around, constant along and an A sweep) or one per pass (along, constant
+ * angle and an along sweep). A group is an air pass when **every** point is
+ * above the model by more than the finish's own stock to leave plus the
+ * sampler's whole conservative lift (a cell plus its pad, counted as
+ * `2.75 * cell`), and at or below the blank's surface at its own angle. That
+ * allowance is well above a model-following ring and well below the gap a ring
+ * lifted to a tall wall's top leaves (`wall - model - radius`). A point that
+ * meets the model, or that stands above the blank (a travel-height step),
+ * clears the group. A model without a radius at that along (a vertical
+ * shoulder) also clears it.
+ *
+ * Only the finish is checked. A rough's first layer sits one stepdown below the
+ * raw blank by design and is a real cut, not air; the finish is the operation
+ * whose entire surface is the model.
+ */
+function assertNoWallTopPass(
+  entry: Case,
+  moves: readonly ToolpathMove[],
+  direction: 'around' | 'along',
+  pivot: number,
+): void {
+  const groups = new Map<string, Array<{ along: number; angle: number; tip: number }>>()
+  const add = (key: string, along: number, angle: number, tip: number): void => {
+    let points = groups.get(key)
+    if (!points) {
+      points = []
+      groups.set(key, points)
+    }
+    points.push({ along, angle, tip })
+  }
+  const record = (move: ToolpathMove): void => {
+    if (move.kind !== 'cut') return
+    if (direction === 'around') {
+      // A ring sweeps A at one along position; a plunge or a step has one A and
+      // is not part of the sweep.
+      if (move.from.x !== move.to.x || move.from.a === move.to.a) return
+      const key = `x${move.from.x.toFixed(9)}`
+      add(key, move.from.x, move.from.a ?? 0, move.from.z - pivot)
+      add(key, move.to.x, move.to.a ?? 0, move.to.z - pivot)
+    } else {
+      // A pass sweeps along at one angle; a plunge or a step has one along
+      // position and is not part of the sweep.
+      if (move.from.a !== move.to.a || move.from.x === move.to.x) return
+      const key = `a${(move.from.a ?? 0).toFixed(9)}`
+      add(key, move.from.x, move.from.a ?? 0, move.from.z - pivot)
+      add(key, move.to.x, move.to.a ?? 0, move.to.z - pivot)
+    }
+  }
+  for (const move of moves) record(move)
+  // The finish's own leave is not air, and the sampler's conservative lift is
+  // the documented allowance for a model-following ring.
+  const airGap = entry.stockToLeave + 2.75 * entry.requestedCellSize
+  for (const points of groups.values()) {
+    if (points.length < 3) continue
+    let air = true
+    for (const point of points) {
+      const model = modelSurfaceAt(entry.profile, point.along)
+      if (model === null) {
+        air = false
+        break
+      }
+      if (point.tip - model <= airGap) {
+        air = false
+        break
+      }
+      if (point.tip > blankRadius(entry.stock, point.angle) + entry.requestedCellSize) {
+        air = false
+        break
+      }
+    }
+    assert.ok(!air,
+      `${entry.label}: the ${direction} pass at ${points[0].along.toFixed(2)} sits in the air `
+      + `(${(Math.min(...points.map((point) => point.tip)) - modelSurfaceAt(entry.profile, points[0].along)!).toFixed(3)} mm `
+      + `above the model)`)
+  }
 }
 
 /** The steepest slope of the model's revolved surface, for the flat's staircase. */
@@ -1000,6 +1094,26 @@ interface Case {
    * finished-surface bound past the 0.2 mm gouge this set exists to catch.
    */
   maxReplayCells?: number
+  /**
+   * #1095: a bare rough whose radial stock to leave must apply to the model
+   * only. The replay then also asserts that the material next to each retained
+   * wall is bounded by the ball fillet plus the leave, instead of the lifted
+   * thickened wall.
+   */
+  wallLeave?: boolean
+  /**
+   * #1095: a rough + finish sequence with the same rule. The finish's own
+   * model-following passes must keep the requested stock across the machined
+   * band (assertion 3), and it must not lift a collar over a thickened wall.
+   */
+  wallLeaveSequence?: boolean
+  /**
+   * #1095 slice D: a tall retained wall (three cutter radii above the model) so
+   * a ring that the sampler lifts to the wall's top can be told apart from the
+   * model by more than the height-map cell. The replay asserts no emitted ring
+   * or pass is in the air over the wall while the model below is lower.
+   */
+  wallAir?: boolean
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
@@ -1396,6 +1510,191 @@ function drawRoundCase(seed: number, lengthScale = 1): Case {
     alongEnd,
     defaultParams: false,
     compact: true,
+  }
+}
+
+/**
+ * #1095: the rough's radial stock to leave applies to the model surface only.
+ *
+ * A retained end makes the wall the binding material at the outermost pass,
+ * which is pulled exactly one cutter radius inside it. The blank here is only
+ * one cutter radius larger than the model — a round bar radius 2 with a model
+ * radius 1, or a 3 mm square (face 1.5) with a model radius 0.5 — so the real
+ * wall's contact and the model are the same height with no leave; the leave is
+ * the only difference the pass may show. The old generator handed the stub to a
+ * sampler enlarged by the leave, so the wall was thickened and the pass was
+ * lifted by `sqrt(2 * radius * leave)` on top of the leave. The height-map cell
+ * is one cutter radius — the coarsest the sampler documents for a small tool,
+ * and the finest the independent reference's grid can afford on a retained bar
+ * with its 4x-finer reference — so the sampler's own cell lift is part of the
+ * bound here. The tight discrimination lives in the unit fixtures, where the
+ * cell is fine; the replay proves independently that the retained walls are
+ * untouched and that the leftover above model + stock next to them is no more
+ * than one cell plus the ball's fillet.
+ *
+ * Every case is a bare **ball** rough so the replay measures the rough's own
+ * leftover next to each wall, with no finish cleaning it up. The sequence
+ * fixture below adds the finish.
+ */
+function drawWallLeaveCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = square ? 3 : 4
+  const length = 6
+  const diameter = 2
+  const radius = diameter / 2
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 0.6
+  const alongStart = ends
+  const alongEnd = length - ends
+  // The face (or bar) is exactly one cutter radius above the model.
+  const modelRadius = side / 2 - radius
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const leave = seed % 2 === 0 ? 0.5 : 0.3
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} rough leave ${leave} retained`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 0.5,
+    stepover: Math.max(0.5 * diameter, 1e-3),
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: Math.max(radius / 4, 1e-3),
+    requestedCellSize: 1,
+    stockToLeave: leave,
+    programKind: 'rough',
+    roughKind: direction,
+    finishKind: 'around',
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    wallLeave: true,
+  }
+}
+
+/**
+ * #1095 slice D: a **tall** retained wall on both ends, and a finish that
+ * follows a much smaller model. The wall stands three cutter radii above the
+ * model, so a ring the sampler lifts to the wall's top is unmistakably in the
+ * air, and the emitted-move check (`assertNoWallTopPass`) can tell it apart
+ * from a model-following ring by more than the height-map cell. The tight
+ * wall-leave fixtures above cannot: with the face only one radius above the
+ * model, a lifted ring and a model ring are within that radius of each other.
+ *
+ * Round and square, along and around, finish-only (the stage the air ring was
+ * seen on): the finish is the operation whose whole surface is the model, so a
+ * ring in the air over the wall has no material to cut.
+ */
+function drawWallAirCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = 8
+  const length = 12
+  const diameter = 3
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 2
+  const alongStart = ends
+  const alongEnd = length - ends
+  const modelRadius = 1
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} finish tall retained wall`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 1,
+    stepover: 2,
+    roughSpacing: 0.5,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'finish',
+    roughKind: 'around',
+    finishKind: direction,
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // The square along program's reference replay is expensive at this cell;
+    // buy it a larger budget instead of coarsening the cell, which would
+    // loosen the finished-surface bound this fixture must keep.
+    maxReplayCells: 4_000_000,
+    wallAir: true,
+  }
+}
+
+/**
+ * #1095: a rough + finish sequence whose finish is the thing under test.
+ *
+ * The bare wall-leave fixture above uses a 2 mm ball on a 3-4 mm blank, which
+ * is deliberately the tightest wall contact but a height-map cell one quarter
+ * the model diameter: the finish on that blank is below the model for the
+ * sampler's own coarse-cell reason, so it cannot also prove the finished
+ * surface. This fixture keeps the same shape -- the face is exactly one cutter
+ * radius above the model and both ends are retained -- with a 1 mm ball, a
+ * model radius of 1.5 mm and the adapter's cell (`radius / 3`), so the finish's
+ * own output is judged cleanly. The replay budget may raise the cell to at most
+ * one cutter radius, which this blank still resolves; the 4x relationship
+ * between the reference and whatever cell the case ends on is never reduced.
+ */
+function drawWallLeaveSequenceCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = 4
+  const length = 8
+  const diameter = 1
+  const radius = diameter / 2
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 1.5
+  const alongStart = ends
+  const alongEnd = length - ends
+  // The face (or bar) is exactly one cutter radius above the model.
+  const modelRadius = side / 2 - radius
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const leave = seed % 2 === 0 ? 0.2 : 0.15
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} rough+finish leave ${leave} retained`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 0.5,
+    stepover: diameter,
+    roughSpacing: radius,
+    finishSpacing: radius,
+    requestedCellSize: Math.max(radius / 3, 1e-3),
+    stockToLeave: leave,
+    programKind: 'both',
+    roughKind: direction,
+    finishKind: direction,
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // The sequence's finish and rough are replayed to the end of the band on
+    // both sides; the cell is kept fine because the finish's own surface is the
+    // property under test, so this case buys a larger replay budget instead of
+    // coarsening it.
+    maxReplayCells: 1_000_000,
+    wallLeaveSequence: true,
   }
 }
 
@@ -2290,6 +2589,13 @@ let worstRapidMargin = Number.POSITIVE_INFINITY
 let worstRapidLabel = ''
 let worstStubDrop = 0
 let worstStubLabel = ''
+// #1095: the material left next to a retained wall, relative to model + leave.
+let wallLeaveChecks = 0
+let wallLeaveCaseCount = 0
+let wallLeaveSequenceCount = 0
+let wallAirCaseCount = 0
+let worstWallLeave = Number.NEGATIVE_INFINITY
+let worstWallLeaveLabel = ''
 let worstSurfaceOver = Number.NEGATIVE_INFINITY
 let worstSurfaceOverLabel = ''
 // #1093 review: surface cells the non-revolved prism cases assert, so a run
@@ -2351,6 +2657,19 @@ const CASES = [
   // #1093: the round-bar around equivalent of the square set, always present.
   ...Array.from({ length: ROUND_CASES }, (_, seed) =>
     fitEntry(drawRoundCase(seed), (scale) => drawRoundCase(seed, scale))),
+  // #1095: bare ball roughs with a positive leave next to retained ends, both
+  // blank shapes and both pass directions. A retained end is the only place the
+  // leave could thicken a wall the rough does not finish, so these are always in
+  // the set whatever the profiling count.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawWallLeaveCase(seed))),
+  // #1095: the same shape with a finish in the same direction, so the finish
+  // itself is replayed with a positive leave next to both retained ends -- on a
+  // round bar and a square blank, along and around.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawWallLeaveSequenceCase(seed))),
+  // #1095 slice D: a tall retained wall and a much smaller model, so an emitted
+  // ring lifted to the wall's top is unmistakable air. Round and square, along
+  // and around; the emitted-move check asserts none exists.
+  ...Array.from({ length: 4 }, (_, seed) => fitEntry(drawWallAirCase(seed))),
   // #1093 review: non-revolved around models, so a link crossing a feature
   // between two rings is replayed against the full cutter body at every angle
   // under the pose, not one ray of a surface of revolution.
@@ -2860,6 +3179,82 @@ for (const { entry, program } of CASES) {
     }
   }
 
+  // (2b) #1095: the radial stock to leave applies to the model only. Next to a
+  // retained wall the outermost pass is pulled exactly one cutter radius inside
+  // it, so the material it leaves over the first cutter radius must be the
+  // ball's own fillet envelope from that pass plus the leave -- never the wall,
+  // thickened by the leave, that the old sampler lifted the pass over. The
+  // allowance is the sampler's documented cell lift (at most one cell), the
+  // reference's own angular/along resolution and the between-pass cusp. A
+  // sequence's finish runs after the rough, so the material measured here is
+  // what the finish left: it must still be the requested stock at the pass, not
+  // a collar the finish lifted off a thickened wall.
+  if (entry.wallLeave || entry.wallLeaveSequence) {
+    const sequence = entry.wallLeaveSequence === true
+    assert.ok(roughRan && ball && entry.stockToLeave > 0,
+      `${entry.label}: the wall-leave check is a ball rough with a positive leave`)
+    if (sequence) {
+      assert.equal(entry.programKind, 'both', `${entry.label}: a wall-leave sequence runs a finish`)
+      assert.ok(finishRan, `${entry.label}: the wall-leave sequence's finish is replayed`)
+    }
+    wallLeaveCaseCount++
+    if (sequence) wallLeaveSequenceCount++
+    const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
+    const halfStep = Math.min(cutterRadius, entry.stepover / 2)
+    const allowance = entry.requestedCellSize + corner * referenceAngleRad
+      + budget.alongBin + ballRiseAt(cutterRadius, halfStep) + 0.005
+    for (const sign of [1, -1] as const) {
+      const face = sign > 0 ? entry.alongStart : entry.alongEnd
+      // The cutter-centre span's outermost pass, one real radius inside the wall.
+      const passRow = face + sign * cutterRadius
+      for (let i = 0; i < reference.alongBins; i++) {
+        const along = reference.alongStart + (i + 0.5) * reference.alongBin
+        // From the wall to one cutter radius inside the outermost pass: the
+        // whole collar the pass's side leaves, plus the pass itself and the
+        // first radius of the machined band.
+        if (Math.abs(along - passRow) > cutterRadius + budget.alongBin) continue
+        const model = modelSurfaceAt(entry.profile, along)
+        if (model === null) continue
+        const fromPass = Math.min(cutterRadius, Math.abs(along - passRow))
+        const fillet = ball ? cutterRadius - Math.sqrt(Math.max(0, cutterRadius * cutterRadius - fromPass * fromPass)) : 0
+        const bound = model + entry.stockToLeave + fillet + allowance
+        for (let k = 0; k < reference.angleBins; k++) {
+          const angle = (k + 0.5) * reference.angleDeg
+          const material = reference.material[i * reference.angleBins + k]
+          const over = material - (model + entry.stockToLeave)
+          wallLeaveChecks++
+          if (over > worstWallLeave) {
+            worstWallLeave = over
+            worstWallLeaveLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`
+          }
+          assert.ok(material <= bound,
+            `${entry.label}: the rough leaves ${over.toFixed(4)} mm above model + stock next to the `
+            + `${sign > 0 ? 'lower' : 'upper'} retained wall at along ${along.toFixed(2)} A${angle.toFixed(2)} `
+            + `(allowed ${(fillet + allowance).toFixed(4)} above model + stock)`)
+        }
+      }
+    }
+  }
+
+  // (2c) #1095 slice D: no emitted finish ring or pass is in the air over a
+  // retained wall. On the tall-wall cases the wall is three cutter radii above
+  // the model, so a ring the sampler lifts to the wall's top is unmistakably
+  // air; before the fix the round around finish's outermost ring was exactly
+  // that on both ends. The tight wall-leave sequence's finish is checked too,
+  // but its wall is only one radius above the model, so it cannot tell a lifted
+  // ring from a model ring by more than that radius. A rough's first layer is
+  // one stepdown below the blank by design (a real cut, not air), so only the
+  // finish is judged here.
+  if (entry.wallLeave || entry.wallLeaveSequence || entry.wallAir) {
+    if (entry.wallAir) {
+      assert.equal(entry.programKind, 'finish', `${entry.label}: the tall-wall check is finish-only`)
+      assert.ok(ball, `${entry.label}: the tall-wall check is a ball finish`)
+      assert.equal(entry.stockToLeave, 0, `${entry.label}: the tall-wall check leaves no stock`)
+      wallAirCaseCount++
+    }
+    if (finishRan) assertNoWallTopPass(entry, program.finishMoves, entry.finishKind, pivot)
+  }
+
   // (3) The finished surface: not below the model, and -- for a finish that
   // has a rough in front of it -- no more than the finish's own scallop above
   // model + stock. A finish-only program cuts to full depth in one pass and
@@ -2994,6 +3389,10 @@ console.log(`  interior engagement including frozen along stages: worst ${interi
   + `material ${interiorWorst.material.toFixed(3)} standing ${interiorWorst.standing.toFixed(3)}; `
   + `stepover ${interiorWorst.stepover.toFixed(3)} diameter ${interiorWorst.diameter.toFixed(3)})`)
 console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)} mm (${worstStubLabel || 'none'})`)
+console.log(`  retained-wall leave (#1095): ${wallLeaveChecks} cells in ${wallLeaveCaseCount} cases `
+  + `(${wallLeaveSequenceCount} rough+finish); `
+  + `worst ${worstWallLeave.toFixed(4)} mm above model + stock (${worstWallLeaveLabel || 'none'})`)
+console.log(`  retained-wall air passes (#1095 slice D): ${wallAirCaseCount} tall-wall cases, none emitted`)
 console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
   + `(${worstSurfaceOverLabel})`)
 console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
@@ -3023,6 +3422,11 @@ console.log(`  along finishes: ${alongFinishStages} stages (${alongFinishOnlyRou
   + `${alongFinishOnlySquare} finish-only square) — finish-only programs carry the advisory; `
   + `a finish after a rough keeps the radial bound with the rough's stepdown`)
 assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
+// #1095: the retained-wall leave cases must actually be replayed and checked.
+assert.ok(wallLeaveCaseCount >= 16, `the retained-wall leave cases are in the set (${wallLeaveCaseCount})`)
+assert.ok(wallLeaveChecks > 0, `the retained-wall leave assertion checked cells (${wallLeaveChecks})`)
+assert.ok(wallLeaveSequenceCount >= 8, `the rough+finish wall-leave sequences are in the set (${wallLeaveSequenceCount})`)
+assert.ok(wallAirCaseCount >= 4, `the tall-wall air-pass cases are in the set (${wallAirCaseCount})`)
 assert.ok(alongFinishStages >= 8, `the along-finish stages are in the seeded set (${alongFinishStages})`)
 assert.ok(alongFinishOnlyRound >= 1, `a finish-only along program on a round bar (${alongFinishOnlyRound})`)
 assert.ok(alongFinishOnlySquare >= 1, `a finish-only along program on a square blank (${alongFinishOnlySquare})`)

@@ -31,6 +31,14 @@ export interface RotaryModelMesh {
   /** Project coordinates of the model as placed in the unturned bar. */
   readonly positions: Float32Array
   readonly index: Uint32Array
+  /**
+   * The first triangle that is **retained-wall** geometry rather than the model
+   * (#1095 slice D), when a caller appended the wall's mesh to the model's
+   * (`withRetainedBar`). The cells such triangles cover are recorded in the
+   * height map, so a pass the cutter only *touches* at the wall face is not
+   * lifted to the wall's top. Omitted when the mesh is the model alone.
+   */
+  readonly retainedTriangleStart?: number
 }
 
 export interface RotarySampleOptions {
@@ -54,6 +62,25 @@ export interface RotarySampleOptions {
    * between-sample tolerance is the only remaining error.
    */
   readonly conservativeCellBounds?: boolean
+  /**
+   * Extra geometry whose envelope is **unioned** into the height-map grid's
+   * bounds (origin, extent and cell size) while `mesh` supplies the sampled
+   * values (#1095). A retained stub eroded by the stock to leave is smaller
+   * than the wall it stands for, so its mesh bounds would move the grid origin
+   * and re-rasterise every cell — the mid-bar included. Passing the un-eroded
+   * stub mesh here keeps the grid exactly where the stock-to-leave-zero run put
+   * it; only cells the erosion actually changed can read a different value.
+   * Omitted, the grid is `mesh`'s own envelope, which is the old single-mesh
+   * behaviour byte for byte.
+   */
+  readonly gridExtra?: RotaryModelMesh
+  /**
+   * The first triangle in `mesh` that is retained-wall geometry (#1095 slice D),
+   * passed to the height-map raster so a padded sample cannot mistake a tangent
+   * wall face for contact. Omitted when the mesh carries no walls, which is the
+   * old path byte for byte.
+   */
+  readonly wallTriangleStart?: number
 }
 
 export interface RotarySampling {
@@ -215,9 +242,19 @@ type RotaryPlanGeometry = Pick<RotaryStripPlan, 'across' | 'up' | 'hull' | 'minA
  */
 interface RotarySamplingWorkspace {
   geometry?: RotaryPlanGeometry
+  /**
+   * The union of the sampled mesh's envelope with `gridExtra` when the sampled
+   * mesh is eroded (#1095), cached beside the sampled mesh's geometry. Only the
+   * height-map bounds use it; the strip index stays the sampled mesh's because
+   * its triangles are the ones rasterised.
+   */
+  gridExtra?: RotaryModelMesh
+  gridGeometry?: RotaryPlanGeometry
   subset?: Uint32Array
   plan?: RotaryStripPlan
   reach?: number
+  /** The `gridExtra` the cached `plan`'s bounds were built from (#1095). */
+  planGridExtra?: RotaryModelMesh
   /** Contiguous per-triangle records for the fused around-mode raster. */
   raster?: RotaryRasterGeometry
 }
@@ -423,6 +460,41 @@ function bucketIndex(angle: number, bucketWidth: number): number {
   return Math.floor(value / bucketWidth) % STRIP_BUCKETS
 }
 
+/** The mesh-only plan geometry: cross-section, its hull and the along extremes. */
+function planGeometry(mesh: RotaryModelMesh, stock: BarStock): RotaryPlanGeometry {
+  const section = crossSection(mesh.positions, stock)
+  const hull = crossSectionHull(section.across, section.up)
+  const { min: minAlong, max: maxAlong } = alongExtremes(mesh.positions, stock)
+  return { ...section, hull, minAlong, maxAlong }
+}
+
+/**
+ * The envelope of two point sets: the convex hull of their hulls and the union
+ * of their along extremes. The hull of a union is the hull of the two hulls, so
+ * a small extra mesh widens the sampled mesh's bounds without re-sorting its
+ * vertices (#1095).
+ */
+function unionPlanGeometry(base: RotaryPlanGeometry, extra: RotaryPlanGeometry): RotaryPlanGeometry {
+  const count = base.hull.length / 2 + extra.hull.length / 2
+  const across = new Float64Array(count)
+  const up = new Float64Array(count)
+  for (let i = 0, v = 0; i < base.hull.length; i += 2, v++) {
+    across[v] = base.hull[i]
+    up[v] = base.hull[i + 1]
+  }
+  for (let i = 0, v = base.hull.length / 2; i < extra.hull.length; i += 2, v++) {
+    across[v] = extra.hull[i]
+    up[v] = extra.hull[i + 1]
+  }
+  return {
+    across: base.across,
+    up: base.up,
+    hull: crossSectionHull(across, up),
+    minAlong: Math.min(base.minAlong, extra.minAlong),
+    maxAlong: Math.max(base.maxAlong, extra.maxAlong),
+  }
+}
+
 /** Build the angle-independent strip plan for one `sampleRotaryModel` call. */
 function buildStripPlan(
   mesh: RotaryModelMesh,
@@ -431,16 +503,28 @@ function buildStripPlan(
   requestedCellSize: number,
   anglesDeg: readonly number[],
   workspace: RotarySamplingWorkspace,
+  gridExtra?: RotaryModelMesh,
 ): RotaryStripPlan {
   // The cross-section, its hull and the along extremes are the same at every
   // angle and in every refinement round; a 1.47 M-vertex hull and its sort are
   // paid once per operation rather than once per `sampleRotaryModel` call.
-  const { across, up, hull, minAlong, maxAlong } = workspace.geometry ??= (() => {
-    const section = crossSection(mesh.positions, stock)
-    const hull = crossSectionHull(section.across, section.up)
-    const { min: minAlong, max: maxAlong } = alongExtremes(mesh.positions, stock)
-    return { ...section, hull, minAlong, maxAlong }
-  })()
+  const geometry = workspace.geometry ??= planGeometry(mesh, stock)
+  const { across, up } = geometry
+  // #1095: an eroded sampling mesh borrows the envelope of the geometry it was
+  // eroded from, so the height-map grid keeps the origin and extent the same run
+  // had at stock to leave 0. The extra mesh is the un-eroded stub only, so the
+  // union costs a hull of a few hundred points, not a second sort of the model.
+  // The strip index and the rasterised triangles stay the sampled mesh's; only
+  // the bounds move.
+  let grid = geometry
+  if (gridExtra !== undefined) {
+    if (workspace.gridExtra !== gridExtra) {
+      workspace.gridExtra = gridExtra
+      workspace.gridGeometry = undefined
+    }
+    grid = workspace.gridGeometry ??= unionPlanGeometry(geometry, planGeometry(gridExtra, stock))
+  }
+  const { hull, minAlong, maxAlong } = grid
   const bucketWidth = TAU / STRIP_BUCKETS
   const triangleCount = Math.floor(mesh.index.length / 3)
   // The widest strip any angle of this operation reads: `safeToolTipZAt` reads
@@ -465,7 +549,8 @@ function buildStripPlan(
   const axialCell = cellSizes.size === 1 ? [...cellSizes][0] : undefined
   if (!(reach > 0) || !Number.isFinite(reach)) {
     // An infinite reach keeps every triangle; it is valid for every angle.
-    if (workspace.plan && workspace.reach === Number.POSITIVE_INFINITY) return workspace.plan
+    if (workspace.plan && workspace.reach === Number.POSITIVE_INFINITY
+      && workspace.planGridExtra === gridExtra) return workspace.plan
     const all = new Uint32Array(triangleCount * 3)
     for (let t = 0; t < all.length; t++) all[t] = t
     const plan: RotaryStripPlan = {
@@ -475,13 +560,15 @@ function buildStripPlan(
     }
     workspace.plan = plan
     workspace.reach = Number.POSITIVE_INFINITY
+    workspace.planGridExtra = gridExtra
     return plan
   }
   // A plan built for a wider reach contains every triangle this call can need:
   // the strip index only ever over-includes, and the buckets are direction-only.
-  // The axial cull must match the cell size it was built for.
+  // The axial cull must match the cell size it was built for, and the bounds the
+  // grid mesh they were taken from (#1095).
   if (workspace.plan && workspace.reach !== undefined && workspace.reach >= reach
-    && workspace.plan.axialCell === axialCell) {
+    && workspace.plan.axialCell === axialCell && workspace.planGridExtra === gridExtra) {
     return workspace.plan
   }
   let axialMask: Uint8Array | undefined
@@ -569,6 +656,7 @@ function buildStripPlan(
   }
   workspace.plan = plan
   workspace.reach = reach
+  workspace.planGridExtra = gridExtra
   return plan
 }
 
@@ -683,7 +771,7 @@ function sampleRotaryModelWithWorkspace(
     }
     // Built lazily so an immediate stop -- a cancelled worker -- never pays for
     // a 1.47 M-vertex hull and bucket index.
-    plan ??= buildStripPlan(mesh, stock, tool, options.requestedCellSize, options.anglesDeg, workspace)
+    plan ??= buildStripPlan(mesh, stock, tool, options.requestedCellSize, options.anglesDeg, workspace, options.gridExtra)
     const t = (angle * Math.PI) / 180
     const cos = Math.cos(t)
     const sin = Math.sin(t)
@@ -720,6 +808,9 @@ function sampleRotaryModelWithWorkspace(
       window,
       triangles: subset.subarray(0, count),
       ...(options.conservativeCellBounds ? { trackCellRise: true } : {}),
+      ...(options.conservativeCellBounds && options.wallTriangleStart !== undefined
+        ? { wallTriangleStart: options.wallTriangleStart }
+        : {}),
     }
     if (turned) turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
     const heightMap = turned
@@ -1511,10 +1602,24 @@ function modelOutsideBar(mesh: RotaryModelMesh, stock: BarStock, tolerance: numb
  * for a square blank would leave its corners unsupported and let a finite
  * cutter enter them. `null` for an empty span.
  */
-function retainedBarStub(stock: BarStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
+function retainedBarStub(
+  stock: BarStock,
+  units: Units,
+  alongFrom: number,
+  alongTo: number,
+  inset = 0,
+): RotaryModelMesh | null {
+  // #1095: erode the stub by `inset` in every direction — its own radius / half
+  // side, and both along ends. The sampler's tool is enlarged by the same
+  // amount, and a ball against an `s`-eroded solid is the real ball against the
+  // real solid, so the retained wall keeps exactly the clearance the real cutter
+  // needs instead of the stock to leave. A zero inset adds/subtracts exactly
+  // zero, so the stock-to-leave-zero output is untouched.
+  const from = alongFrom + inset
+  const to = alongTo - inset
   return isSquareStock(stock)
-    ? squareBlankRetainedStub(stock, alongFrom, alongTo)
-    : retainedRoundStub(stock, units, alongFrom, alongTo)
+    ? squareBlankRetainedStub(stock, from, to, inset)
+    : retainedRoundStub(stock, units, from, to, inset)
 }
 
 /**
@@ -1523,10 +1628,19 @@ function retainedBarStub(stock: BarStock, units: Units, alongFrom: number, along
  * sagitta `R (1 - cos(pi / segments))` stays within `minRenderHeight` of the
  * true surface, so the height map never reads the stub below the bar by more
  * than the 3D view's own minimum height (100 segments for a 40 mm bar at
- * 0.01 mm). Returns `null` for an empty span.
+ * 0.01 mm). `inset` erodes the cylinder by that distance (#1095): its radius and
+ * both along ends move in, so a sampling tool enlarged by the same amount meets
+ * the real wall exactly where the real cutter does. Returns `null` for an empty
+ * span.
  */
-function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, alongTo: number): RotaryModelMesh | null {
-  const radius = barInscribedRadius(stock)
+function retainedRoundStub(
+  stock: RoundStock,
+  units: Units,
+  alongFrom: number,
+  alongTo: number,
+  inset = 0,
+): RotaryModelMesh | null {
+  const radius = barInscribedRadius(stock) - inset
   if (!(alongTo - alongFrom > 0) || !(radius > 0)) return null
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
@@ -1584,6 +1698,13 @@ function retainedRoundStub(stock: RoundStock, units: Units, alongFrom: number, a
  * the raised samples) and left a corner the next layer then took more than
  * `stepdown` out of -- the overcut the export guard found. The along pass keeps
  * the stub in its mesh byte for byte.
+ *
+ * `wallInset` erodes both stubs by that distance (#1095). `rotaryTargets`
+ * passes the stock to leave here for a rough and a finish alike, because the
+ * sampler is about to enlarge its tool by the same amount:
+ * `(wall ⊖ s) ⊕ (R + s) = wall ⊕ R`, so the retained wall is met by the real
+ * cutter instead of one thickened by the leave. Zero adds and subtracts exactly
+ * zero, so stock-to-leave-zero output is untouched.
  */
 function withRetainedBar(
   mesh: RotaryModelMesh,
@@ -1592,15 +1713,10 @@ function withRetainedBar(
   alongStart: number,
   alongEnd: number,
   includeSquareStubs = true,
+  wallInset = 0,
 ): RotaryModelMesh {
   if (isSquareStock(stock) && !includeSquareStubs) return mesh
-  const bounds = getStockBounds(stock)
-  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-  const stubs = [
-    retainedBarStub(stock, units, lower, alongStart),
-    retainedBarStub(stock, units, alongEnd, upper),
-  ].filter((stub): stub is RotaryModelMesh => stub !== null)
+  const stubs = retainedBarStubs(stock, units, alongStart, alongEnd, wallInset)
   if (stubs.length === 0) return mesh
   const positions = new Float32Array(mesh.positions.length + stubs.reduce((total, stub) => total + stub.positions.length, 0))
   positions.set(mesh.positions)
@@ -1615,6 +1731,50 @@ function withRetainedBar(
     positionOffset += stub.positions.length
     indexOffset += stub.index.length
     vertexOffset += stub.positions.length / 3
+  }
+  // #1095 slice D: the stubs are appended after the model, so every triangle
+  // from this one on is retained-wall geometry. The sampler uses the boundary to
+  // tell a wall cell from a model cell; without it a pass tangent to the wall's
+  // face reads the wall's top and lifts off the model.
+  return { positions, index, retainedTriangleStart: mesh.index.length / 3 }
+}
+
+/**
+ * The two retained stubs an operation's cut range leaves at the bar's ends,
+ * each already closed, with no model attached. `wallInset` is `withRetainedBar`'s
+ * erosion (#1095). `withRetainedBar` concatenates these with the model; the
+ * un-eroded set is also what the height-map grid is widened back to, so the
+ * erosion cannot move the grid origin.
+ */
+function retainedBarStubs(
+  stock: BarStock,
+  units: Units,
+  alongStart: number,
+  alongEnd: number,
+  wallInset = 0,
+): RotaryModelMesh[] {
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  return [
+    retainedBarStub(stock, units, lower, alongStart, wallInset),
+    retainedBarStub(stock, units, alongEnd, upper, wallInset),
+  ].filter((stub): stub is RotaryModelMesh => stub !== null)
+}
+
+/** Concatenate meshes into one; the stubs are a few hundred vertices each. */
+function concatRotaryMeshes(meshes: readonly RotaryModelMesh[]): RotaryModelMesh {
+  const positions = new Float32Array(meshes.reduce((total, mesh) => total + mesh.positions.length, 0))
+  const index = new Uint32Array(meshes.reduce((total, mesh) => total + mesh.index.length, 0))
+  let positionOffset = 0
+  let indexOffset = 0
+  let vertexOffset = 0
+  for (const mesh of meshes) {
+    positions.set(mesh.positions, positionOffset)
+    for (let i = 0; i < mesh.index.length; i++) index[indexOffset + i] = mesh.index[i] + vertexOffset
+    positionOffset += mesh.positions.length
+    indexOffset += mesh.index.length
+    vertexOffset += mesh.positions.length / 3
   }
   return { positions, index }
 }
@@ -1963,8 +2123,10 @@ function refineAroundSampling(args: {
   warnings: ToolpathWarning[]
   conservativeCellBounds: boolean
   shouldStop?: () => boolean
+  /** The un-eroded grid envelope (#1095); defaults to `mesh`. */
+  gridExtra?: RotaryModelMesh
 }): { angles: number[]; tips: Float32Array[]; stopped: boolean } | null {
-  const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, conservativeCellBounds, shouldStop } = args
+  const { mesh, stock, tool, samplingTool, along, requestedCellSize, warnings, conservativeCellBounds, shouldStop, gridExtra } = args
   let angles = [...args.angles]
   let tips: Float32Array[] = [...args.tips]
   // A midpoint row is a pure function of (mesh, tool, along positions, cell
@@ -1987,6 +2149,10 @@ function refineAroundSampling(args: {
         requestedCellSize,
         ...(conservativeCellBounds ? { conservativeCellBounds: true } : {}),
         ...(shouldStop ? { shouldStop } : {}),
+        ...((gridExtra !== undefined) ? { gridExtra } : {}),
+        ...(mesh.retainedTriangleStart !== undefined
+          ? { wallTriangleStart: mesh.retainedTriangleStart }
+          : {}),
       }, warnings, args.workspace)
       if (!sampled.valid) return null
       if (sampled.stopped) return { angles, tips, stopped: true }
@@ -2169,6 +2335,16 @@ function rotaryTargets(
     radius: tool.radius + stockToLeave,
     diameter: tool.diameter + 2 * stockToLeave,
   }
+  // #1095: the enlarged sampling tool is what applies the leave, and it applies
+  // it to the retained stubs too unless they are handed to the sampler eroded by
+  // the same amount. The leave belongs to the **model surface alone** for both a
+  // rough and a finish: erosion by `s` plus the sampler's tool enlargement by
+  // `s` is the real cutter against the real wall, so the outermost pass -- pulled
+  // in exactly one cutter radius -- is limited by the wall itself and not lifted
+  // to clear a thickened top corner. A zero leave adds exactly zero, so the old
+  // mesh (and its bit-identical output) is unchanged.
+  const wallInset = stockToLeave
+  const includeSquareStubs = !(isSquareStock(stock) && params.passDirection === 'around')
   const samplingMesh = withRetainedBar(
     mesh,
     stock,
@@ -2179,8 +2355,20 @@ function rotaryTargets(
     // cutter-centre span pull and the exact stub floor, not by the height map;
     // including the stub here lifted every ring's tip near an end to the blank's
     // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
-    !(isSquareStock(stock) && params.passDirection === 'around'),
+    includeSquareStubs,
+    wallInset,
   )
+  // #1095: the erosion must move the wall's sampled height, not the height-map
+  // grid. The un-eroded stubs (the ones the stock-to-leave-zero run sampled) are
+  // unioned back into the grid envelope, so every sample more than one cutter
+  // radius from a retained wall keeps the exact cell it had before: the eroded
+  // stub only changes the cells its own footprint can read, instead of shifting
+  // the origin under the whole bar. A zero inset adds nothing, so the old
+  // single-mesh path stays byte for byte.
+  const unErodedStubs = wallInset !== 0 && includeSquareStubs
+    ? retainedBarStubs(stock, tool.units, params.alongStart, params.alongEnd)
+    : []
+  const gridExtra = unErodedStubs.length > 0 ? concatRotaryMeshes(unErodedStubs) : undefined
   // One workspace for the base grid and every refinement round: the mesh, tool
   // and along positions are the same in all of them, so the hull, the strip
   // index and the candidate buffer are built once (issue #1045 slice T).
@@ -2195,6 +2383,10 @@ function rotaryTargets(
       requestedCellSize: params.requestedCellSize,
       ...(params.passDirection === 'around' ? { conservativeCellBounds: true } : {}),
       ...hooks,
+      ...((gridExtra !== undefined) ? { gridExtra } : {}),
+      ...(samplingMesh.retainedTriangleStart !== undefined
+        ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+        : {}),
     },
     warnings,
     workspace,
@@ -2221,6 +2413,7 @@ function rotaryTargets(
       warnings,
       conservativeCellBounds: true,
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
+      ...((gridExtra !== undefined) ? { gridExtra } : {}),
     })
     if (refined === null) {
       return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: 'operationStepoverRatioRange' }
@@ -2359,6 +2552,10 @@ function rotaryTargets(
         along: linkAlong,
         requestedCellSize: params.requestedCellSize,
         conservativeCellBounds: true,
+        ...((gridExtra !== undefined) ? { gridExtra } : {}),
+        ...(samplingMesh.retainedTriangleStart !== undefined
+          ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+          : {}),
       },
       warnings,
       workspace,
@@ -2457,7 +2654,10 @@ function rotaryTargets(
  * operation adapter (`rotaryOperation.ts`) warns about that from the project's
  * operation list, and that warning is advisory only -- it changes no motion.
  * This is the 2026-10-22 decision that replaced the self-protecting finish
- * rules of #1045 slices M/P/R/R2.
+ * rules of #1045 slices M/P/R/R2. Its radial stock to leave follows the same
+ * rule as the rough's (#1095): it applies to the model surface only, so the
+ * retained end walls keep their real size and the pass beside them is not
+ * lifted over a wall thickened by the leave.
  */
 export function generateRotaryFinish(
   operationId: string,
@@ -2727,6 +2927,11 @@ export function generateRotaryRough(
     return { operationId, moves: [], warnings: [{ code: 'rotaryStepdownBelowMinimum', params: { operation: operationId } }], bounds: null }
   }
   const warnings: ToolpathWarning[] = []
+  // #1095: the radial leave belongs to the model surface alone on a rough too.
+  // The retained end walls keep their real size, so the outermost pass -- one
+  // cutter radius from the wall -- reaches model + leave instead of being lifted
+  // over a thickened wall's corner. `rotaryTargets` applies the same rule to
+  // every operation, the finish included.
   const sampling = rotaryTargets(operationId, mesh, stock, tool, params, hooks, warnings)
   if (sampling.refusal) {
     return { operationId, moves: [], warnings: [{ code: sampling.refusal, params: { operation: operationId } }], bounds: null }

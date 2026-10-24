@@ -119,6 +119,23 @@ function lathe(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
+/** Concatenate meshes into one, the way `withRetainedBar` adds a stub. */
+function concatMeshes(meshes: readonly RotaryModelMesh[]): RotaryModelMesh {
+  const positions = new Float32Array(meshes.reduce((total, mesh) => total + mesh.positions.length, 0))
+  const index = new Uint32Array(meshes.reduce((total, mesh) => total + mesh.index.length, 0))
+  let positionOffset = 0
+  let indexOffset = 0
+  let vertexOffset = 0
+  for (const mesh of meshes) {
+    positions.set(mesh.positions, positionOffset)
+    for (let i = 0; i < mesh.index.length; i++) index[indexOffset + i] = mesh.index[i] + vertexOffset
+    positionOffset += mesh.positions.length
+    indexOffset += mesh.index.length
+    vertexOffset += mesh.positions.length / 3
+  }
+  return { positions, index }
+}
+
 for (const axis of ['x', 'y'] as const) {
   // Deliberately translated across-axis stock: catches using R as the centre.
   const stock = roundStock(40, 80, axis, axis === 'x' ? { x: 0, y: 7 } : { x: 7, y: 0 })
@@ -2193,5 +2210,278 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
   assert.equal(invalidSampling.valid, false, 'the round sampler reports invalid tool geometry')
   assert.deepEqual(invalidSampling.anglesDeg, [], 'invalid round geometry produced no angle rows')
   assert.deepEqual(invalidSampling.tipRadius, [], 'invalid round geometry cannot look like empty space')
+}
+
+// ── #1095: the radial stock to leave applies to the model only ───────
+//
+// The rough used to hand the retained end stubs to a sampler whose tool was
+// enlarged by the leave, so the walls were thickened by the same amount. The
+// outermost pass is pulled exactly one cutter radius inside the wall, so it
+// landed inside the thickened wall and was lifted to clear its top corner.
+//
+// The fixture makes the wall the binding material with no leave: bar radius 6,
+// ball radius 2, model radius 4, so the real wall's contact and the model are
+// the same height at the outermost pass. With a leave the only difference at
+// that pass must be the leave itself, never the wall's lifted corner. The two
+// ends are retained (the band is 3..9 inside a 12 mm bar), and the height-map
+// cell is requested at 0.01 mm, so the pass's own discretisation is a fraction
+// of the old lift.
+{
+  const stock = roundStock(12, 12, 'x')
+  const pivot = stock.thickness / 2
+  const modelRadius = 4
+  const leave = 0.05
+  const ball: NormalizedTool = { ...BALL, diameter: 4, radius: 2 }
+  const mesh = lathe(stock, () => modelRadius, 3, 9, 1, 192)
+  const base = {
+    stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9,
+    safeRadius: 9, requestedCellSize: 0.01, stepdown: 0.5,
+  }
+  /** The lowest tip the outermost pass reaches at its first along position. */
+  const outermost = (result: ReturnType<typeof generateRotaryRough>, along: number): number => {
+    const values: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut') continue
+      for (const point of [move.from, move.to]) {
+        if (Math.abs(point.x - along) > 1e-6) continue
+        const tip = point.z - pivot
+        // A plunge's start and a link's rise sit at the travel height, which is
+        // above the bar; they are not a cut into the band.
+        if (tip > stock.thickness / 2) continue
+        values.push(tip)
+      }
+    }
+    assert.ok(values.length > 0, `the outermost pass at ${along} has a cut`)
+    return Math.min(...values)
+  }
+  for (const direction of ['along', 'around'] as const) {
+    const without = generateRotaryRough('no-leave', mesh, stock, ball,
+      { ...base, stockToLeave: 0, passDirection: direction }, {})
+    const withLeave = generateRotaryRough('leave', mesh, stock, ball,
+      { ...base, stockToLeave: leave, passDirection: direction }, {})
+    // s = 0 was the frozen baseline captured from HEAD before #1095 (the same
+    // fixture, same parameters). Recaptured for #1095 slice D: the around
+    // pass's outermost position, one cutter radius from the wall, no longer
+    // reads the tangent wall cell as contact, so those rings drop by the cell's
+    // 0.09 mm lift. Every interior position is unchanged and the along pass
+    // never had the lift (its sampler has no cell pad).
+    assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? 'cdda0e6f02fecdc9' : 'cc4b7b7ebb3238bd',
+      `rough ${direction}: zero stock to leave is the expected program`)
+    const spanStart = base.alongStart + ball.radius
+    const first = outermost(withLeave, spanStart)
+    // The old generator lifted the first pass to ~4.41 on this fixture.
+    assert.ok(first <= modelRadius + leave + 0.12,
+      `rough ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.12).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `rough ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < stock.thickness / 2 - 0.5,
+      `rough ${direction}: the outermost pass is not lifted to the bar top (${first.toFixed(4)})`)
+    // The real cutter's body is one radius wide along the bar at every point
+    // it makes, so a point at least a radius inside each end keeps the body
+    // clear of the retained walls. This is the pull-in's one-radius rule: a
+    // pull shorter than the cutter radius enters the wall and fails here.
+    for (const move of withLeave.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - ball.radius >= base.alongStart - 1e-9,
+          `rough ${direction}: the cutter body stays out of the lower retained wall at x ${point.x}`)
+        assert.ok(point.x + ball.radius <= base.alongEnd + 1e-9,
+          `rough ${direction}: the cutter body stays out of the upper retained wall at x ${point.x}`)
+      }
+    }
+  }
+  // #1095 applies the same rule to the finish: it no longer applies its radial
+  // leave to the retained walls, so the outermost pass stays at model + leave
+  // instead of being lifted over the thickened wall's corner. With leave 0
+  // nothing is eroded and no grid extra is built, so the output is byte-
+  // identical to HEAD (the zero-leave fingerprints were captured there) apart
+  // from the around pass's outermost position, recaptured for slice D: the
+  // tangent wall cell no longer lifts that ring by its 0.09 mm.
+  for (const direction of ['along', 'around'] as const) {
+    const params = {
+      stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9, safeRadius: 9,
+      requestedCellSize: 0.01, passDirection: direction,
+    } as const
+    const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
+    const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
+    assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? '8b430361116b9874' : '837073be35027cc7',
+      `finish ${direction}: zero stock to leave is the expected program`)
+    // Recaptured for #1095: the positive-leave fingerprints now carry the
+    // un-thickened walls (the old values lifted the outermost pass to ~4.42).
+    // Recaptured for #1095 slice D: the around pass's outermost position no
+    // longer reads the tangent wall cell, so its ring drops by the cell's lift.
+    assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
+      direction === 'along' ? '45837f8a39449e24' : '7d45b3fdda607198',
+      `finish ${direction}: the leave reaches the model, not the retained wall`)
+    const first = outermost(finish, base.alongStart + ball.radius)
+    assert.ok(first <= modelRadius + leave + 0.03,
+      `finish ${direction}: the outermost pass reaches model + stock to leave `
+      + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.03).toFixed(4)})`)
+    assert.ok(first >= modelRadius + leave - 0.03,
+      `finish ${direction}: the outermost pass does not cut below model + stock to leave (${first.toFixed(4)})`)
+    assert.ok(first < stock.thickness / 2 - 0.5,
+      `finish ${direction}: the outermost pass is not lifted to the bar top (${first.toFixed(4)})`)
+    for (const move of finish.moves) {
+      if (move.kind === 'rapid') continue
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.x - ball.radius >= base.alongStart - 1e-9,
+          `finish ${direction}: the cutter body stays out of the lower retained wall at x ${point.x}`)
+        assert.ok(point.x + ball.radius <= base.alongEnd + 1e-9,
+          `finish ${direction}: the cutter body stays out of the upper retained wall at x ${point.x}`)
+      }
+    }
+  }
+
+  // The requested amount in all cases: in the middle of the band, away from
+  // both retained walls, a rough and a finish leave exactly model + stock to
+  // leave. The tolerance is the height-map cell -- 0.005 mm here -- because the
+  // sampler's conservative cell bounds are its documented lift (a sample can
+  // read up to one cell above the true surface); the between-pass scallop does
+  // not apply at the sample points this reads. A leave that is 0.01 mm too big
+  // therefore fails, which the 0.01 mm fingerprints above could not see.
+  {
+    const cell = 0.005
+    const tolerance = cell
+    // A longer bar gives the along mode interior passes too: on the 12 mm
+    // fixture its cutter-centre span is only 5..7, so both passes sit one radius
+    // from a wall.
+    const leftoverStock = roundStock(12, 20, 'x')
+    const leftoverMesh = lathe(leftoverStock, () => modelRadius, 3, 17, 1, 192)
+    // An along-mode pass is one long cut along the bar, so its midpoint is read
+    // from the commanded segment rather than from an emitted vertex. The model
+    // is a cylinder, so the tip on that segment is constant; an around ring has
+    // a zero-length x span and is read at its own x.
+    const probe = 10
+    for (const direction of ['along', 'around'] as const) {
+      for (const kind of ['rough', 'finish'] as const) {
+        const params = {
+          stepover: 1, stepdown: 0.5, sampleSpacing: 1, alongStart: 3, alongEnd: 17, safeRadius: 9,
+          requestedCellSize: cell, stockToLeave: leave, passDirection: direction,
+        } as const
+        const result = kind === 'rough'
+          ? generateRotaryRough(`${kind}-mid`, leftoverMesh, leftoverStock, ball, params, {})
+          : generateRotaryFinish(`${kind}-mid`, leftoverMesh, leftoverStock, ball, params, {})
+        let lowest = Number.POSITIVE_INFINITY
+        let highest = Number.NEGATIVE_INFINITY
+        for (const move of result.moves) {
+          if (move.kind !== 'cut') continue
+          const lo = Math.min(move.from.x, move.to.x)
+          const hi = Math.max(move.from.x, move.to.x)
+          if (probe < lo - 1e-9 || probe > hi + 1e-9) continue
+          const fraction = hi - lo > 1e-9 ? (probe - move.from.x) / (move.to.x - move.from.x) : 0
+          const tip = move.from.z + (move.to.z - move.from.z) * fraction - pivot
+          // The rough's earlier layers sit above the outermost one; they are
+          // not the leftover the band is asked about.
+          if (tip > leftoverStock.thickness / 2) continue
+          lowest = Math.min(lowest, tip)
+          highest = Math.max(highest, tip)
+        }
+        assert.ok(Number.isFinite(lowest), `${kind} ${direction}: the mid band is cut`)
+        assert.ok(lowest >= modelRadius + leave - tolerance,
+          `${kind} ${direction}: the mid band is not cut below model + stock to leave (${lowest.toFixed(4)})`)
+        // A rough's higher layers are above the leave; only its lowest cut is
+        // the leftover. A finish has one model-following surface, so every
+        // point of it must stay within the cell.
+        const top = kind === 'finish' ? highest : lowest
+        assert.ok(top <= modelRadius + leave + tolerance,
+          `${kind} ${direction}: the mid band leaves at most model + stock to leave + one cell `
+          + `(${top.toFixed(4)} <= ${(modelRadius + leave + tolerance).toFixed(4)})`)
+      }
+    }
+  }
+
+  // Slice B: eroding the wall changes the wall, never the height-map grid. The
+  // grid is taken from the un-eroded stub (`gridExtra`), so every sample more
+  // than one cutter radius from the wall stays bit-identical to the un-eroded
+  // reference; without it the eroded stub's narrower bounds shift the grid
+  // origin and re-rasterise the whole bar. The cell is deliberately not a whole
+  // fraction of the leave, so the pre-fix origin shift cannot land on the same
+  // cell centres.
+  {
+    const wall = stock.thickness / 2
+    const stub = (radius: number, from: number, to: number): RotaryModelMesh =>
+      lathe(stock, () => radius, from, to, 1, 192)
+    const unEroded = concatMeshes([mesh, stub(wall, 0, 3), stub(wall, 9, 12)])
+    const eroded = concatMeshes([mesh, stub(wall - leave, leave, 3 - leave), stub(wall - leave, 9 + leave, 12 - leave)])
+    const gridExtra = concatMeshes([stub(wall, 0, 3), stub(wall, 9, 12)])
+    const sampling = { ...ball, radius: ball.radius + leave, diameter: ball.diameter + 2 * leave }
+    const along = Array.from({ length: 21 }, (_, i) => 5 + 2 * i / 20)
+    const options = { anglesDeg: [0, 90], along, requestedCellSize: 0.07 }
+    const reference = sampleRotaryModel(unEroded, stock, sampling, options, [])
+    const fixed = sampleRotaryModel(eroded, stock, sampling, { ...options, gridExtra }, [])
+    const buggy = sampleRotaryModel(eroded, stock, sampling, options, [])
+    let interiorDiffs = 0
+    let buggyInteriorDiffs = 0
+    for (let k = 0; k < options.anglesDeg.length; k++) {
+      for (let i = 0; i < along.length; i++) {
+        if (along[i] < 5.5) continue
+        if (fixed.tipRadius[k][i] !== reference.tipRadius[k][i]) interiorDiffs++
+        if (buggy.tipRadius[k][i] !== reference.tipRadius[k][i]) buggyInteriorDiffs++
+      }
+    }
+    assert.equal(interiorDiffs, 0, 'every sample more than one cutter radius from the wall is bit-identical')
+    assert.ok(buggyInteriorDiffs > 0, 'without the un-eroded grid the eroded bounds shift the mid-bar samples')
+    assert.notEqual(fixed.tipRadius[0][0], reference.tipRadius[0][0], 'the wall-adjacent sample is no longer held up')
+  }
+}
+// ── #1095 slice D: a tangent wall face is not contact ────────────────
+//
+// The busto-round repro: the bar is much larger than the model, so the
+// retained wall stands well above it. The cutter-centre span pulls the
+// outermost ring exactly one cutter radius inside each wall, which makes the
+// ball tangent to the wall's vertical face. The height map used to read the
+// cell that straddles that face as the wall's top and lift the whole ring to it
+// — an air pass at the wall top while the model below was a radius and more
+// lower. A ball tangent to a vertical face cannot gouge it, so the ring must
+// follow the model. This fixture is the shape the tight #1095 wall fixture
+// cannot be: the wall is three cutter radii above the model, so a lifted ring
+// and a model-following ring cannot be confused.
+{
+  const stock = roundStock(8, 40, 'x')
+  const pivot = stock.thickness / 2
+  const wallTop = stock.thickness / 2
+  const modelRadius = 1
+  const ball: NormalizedTool = { ...BALL, diameter: 3, radius: 1.5 }
+  const mesh = lathe(stock, () => modelRadius, 10, 30, 1, 192)
+  const cell = 0.5
+  const result = generateRotaryFinish('wall-tangent', mesh, stock, ball, {
+    stepover: 2, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
+    safeRadius: 10, requestedCellSize: cell, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the wall-tangent finish warns about nothing')
+  const ringAt = (along: number): number[] => {
+    const radii: number[] = []
+    for (const move of result.moves) {
+      if (move.kind !== 'cut' || move.from.x !== move.to.x) continue
+      if (Math.abs(move.from.x - along) > 1e-6) continue
+      radii.push(move.from.z - pivot, move.to.z - pivot)
+    }
+    return radii
+  }
+  for (const [end, along] of [['lower', 10 + ball.radius], ['upper', 30 - ball.radius]] as const) {
+    const radii = ringAt(along)
+    assert.ok(radii.length > 0, `${end}: the outermost ring is emitted`)
+    // The whole ring cuts the model, not the air over the wall.
+    assert.ok(Math.max(...radii) <= modelRadius + cell + 1e-6,
+      `${end}: the outermost ring follows the model (${Math.max(...radii).toFixed(4)} <= ${(modelRadius + cell).toFixed(4)})`)
+    assert.ok(Math.max(...radii) < wallTop - ball.radius,
+      `${end}: no part of the outermost ring is lifted to the retained wall top`)
+    assert.ok(Math.min(...radii) >= modelRadius - 1e-6,
+      `${end}: the outermost ring does not cut below the model (${Math.min(...radii).toFixed(4)})`)
+  }
+  // The cutter body may touch the wall face, never cross it. A span pull even
+  // one cell short puts the body at `along - radius < 10` and fails here.
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    for (const point of [move.from, move.to]) {
+      assert.ok(point.x - ball.radius >= 10 - 1e-9,
+        `the cutter body stays out of the lower retained wall at x ${point.x}`)
+      assert.ok(point.x + ball.radius <= 30 + 1e-9,
+        `the cutter body stays out of the upper retained wall at x ${point.x}`)
+    }
+  }
 }
 console.log('engine/toolpaths/rotaryModel.test.ts: slice I property assertions passed')
