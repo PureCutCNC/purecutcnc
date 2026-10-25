@@ -142,6 +142,7 @@ export const camEn = {
   'cam.plan.summary': 'Plan summary',
   'cam.plan.operations': 'operations',
   'cam.plan.tools': 'tools',
+  'cam.plan.coveredByTopSetup': 'Covered by the {face} setup.',
   'cam.plan.existingOperations': 'existing operations',
   'cam.plan.needsReview': 'need review',
   'cam.plan.recommendations': 'Recommended plan',

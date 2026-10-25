@@ -143,6 +143,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.plan.summary': '方案摘要',
   'cam.plan.operations': '项操作',
   'cam.plan.tools': '把刀具',
+  'cam.plan.coveredByTopSetup': '已由{face}装夹覆盖。',
   'cam.plan.existingOperations': '项现有操作',
   'cam.plan.needsReview': '项待检查',
   'cam.plan.recommendations': '建议方案',

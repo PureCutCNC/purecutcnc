@@ -119,6 +119,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.plan.summary': 'Resumen del plan',
   'cam.plan.operations': 'operaciones',
   'cam.plan.tools': 'herramientas',
+  'cam.plan.coveredByTopSetup': 'Cubierto por la preparación {face}.',
   'cam.plan.existingOperations': 'operaciones existentes',
   'cam.plan.needsReview': 'requieren revisión',
   'cam.plan.recommendations': 'Plan recomendado',

@@ -139,6 +139,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.plan.summary': 'Planzusammenfassung',
   'cam.plan.operations': 'Operationen',
   'cam.plan.tools': 'Werkzeuge',
+  'cam.plan.coveredByTopSetup': 'Durch die Aufspannung {face} abgedeckt.',
   'cam.plan.existingOperations': 'bestehende Operationen',
   'cam.plan.needsReview': 'zu prüfen',
   'cam.plan.recommendations': 'Empfohlener Plan',

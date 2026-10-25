@@ -27,8 +27,11 @@ import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
-import { setupFace } from '../../setupOrientation'
-import { judgeTargetFromFace, withoutUnreachableSubtracts } from '../../setupTargets'
+import { translate } from '../../../i18n/store'
+import { projectInSetupFrame } from '../../setupFrameProject'
+import { camPlanSetupProject, camPlanRegionsInStockFrame, throughFeaturesCoveredByTop } from './setupPlanning'
+import { setupFace, setupFrame } from '../../setupOrientation'
+import { operationFace, judgeTargetFromFace, withoutUnreachableSubtracts } from '../../setupTargets'
 import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
@@ -59,6 +62,9 @@ export function camPlanProjectFingerprint(project: Project): string {
     modelAssets: Object.entries(project.modelAssets ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     tools: project.tools.map((tool) => [tool.id, tool.type, tool.units, tool.diameter, tool.maxCutDepth]),
     operations: project.operations.map((operation) => [operation.id, operation.kind, operation.pass, operation.enabled, operation.target, operation.toolRef]),
+    ...(setupFace(activeSetup(project)) === 'bottom'
+      ? { topCoverage: project.operations.filter((operation) => operationFace(project, operation) === 'top') }
+      : {}),
     tabs: project.tabs.map((tab) => [tab.id, tab.x, tab.y, tab.w, tab.h, tab.z_top, tab.z_bottom]),
   })
 }
@@ -135,6 +141,7 @@ interface PlanBuilder {
   reusedToolIds: Set<string>
   covered: Set<string>
   existing: Set<string>
+  coveredByTop: Set<string>
   unresolvedModels: Map<string, string>
   sequence: number
 }
@@ -217,6 +224,7 @@ function addPlannedOperation(
     },
   )
   operation.id = key
+  if (setupFace(activeSetup(builder.project)) === 'bottom') operation.setupId = builder.project.activeSetupId
   operation.target = target
   applyRoughStockToLeave(builder.project, operation)
   if (selected) builder.reusedToolIds.add(selected.id)
@@ -242,7 +250,7 @@ function addPlannedOperation(
       ? missingToolError
       : (!isOperationTargetValid(builder.project, kind, target)
         ? 'The proposed target is not valid for this operation.'
-        : activeSetupTurnsStock(builder.project) ? TURNED_SETUP_ERROR : null),
+        : activeSetupIsAround(builder.project) ? TURNED_SETUP_ERROR : null),
     staleReason: null,
     userOverrides: [],
   }
@@ -665,6 +673,9 @@ function coverageFor(
     if (unresolvedDetail) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'unresolved', detail: unresolvedDetail }]
     }
+    if (builder.coveredByTop.has(feature.id)) {
+      return [{ featureId: feature.id, featureName: feature.name, status: 'existing', detail: translate('cam.plan.coveredByTopSetup', { face: translate('cam.setup.top') }) }]
+    }
     if (builder.covered.has(feature.id)) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'planned', detail: 'Covered by one or more recommendations.' }]
     }
@@ -690,27 +701,28 @@ function coverageFor(
   })
 }
 
-/**
- * The plan reads depths from the top face, so it can only propose operations
- * for a setup that leaves the stock as drawn. On a turned setup every
- * proposal says so instead of being created with depths from the wrong side.
- */
+// Around planning remains out of scope.
 const TURNED_SETUP_ERROR = 'CAM Plan proposes operations for the Top setup only. Switch the workspace to Top, or add this operation by hand.'
 
 
-function activeSetupTurnsStock(project: Project): boolean {
+function activeSetupIsAround(project: Project): boolean {
   const setup = activeSetup(project)
-  return setup !== undefined && (setup.kind === 'around' || setup.orientation.angleDeg !== 0)
+  return setup?.kind === 'around'
 }
 
-export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]): CamPlanDraft {
+export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEntry[]): CamPlanDraft {
   // Planned operations join the active setup, so only what that setup may
   // target is planned (issue #946): features drawn on its face, and
   // through-features. With a single Top setup that is every feature.
-  const setup = activeSetup(project)
-  const face = setup ? setupFace(setup) : 'top'
-  const features = resolveFeatureInstances(project)
-    .filter((feature) => judgeTargetFromFace(project, feature, face).status !== 'rejected')
+  const setup = activeSetup(stockProject)
+  const face = setupFace(setup)
+  const selected = resolveFeatureInstances(stockProject)
+    .filter((feature) => judgeTargetFromFace(stockProject, feature, face).status !== 'rejected')
+  const coveredByTop = throughFeaturesCoveredByTop(stockProject, selected)
+  const project = camPlanSetupProject(stockProject)
+  const selectedIds = new Set(selected.map((feature) => feature.id))
+  const allFeatures = resolveFeatureInstances(project).filter((feature) => selectedIds.has(feature.id))
+  const features = allFeatures.filter((feature) => !coveredByTop.has(feature.id))
   const tools = camPlanToolPool(project, libraryTools)
   // The plan's analysis reads related (non-target) features — island and
   // non-target-subtract discovery, and the rest passes derived from them — and
@@ -719,6 +731,10 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
   // in a Top pocket's rest regions or be reported as machined by the Top plan.
   const analysisProject = withoutUnreachableSubtracts({
     ...project,
+    operations: [...project.operations, ...stockProject.operations.filter((operation) =>
+      operationFace(stockProject, operation) === 'top' && operation.target.source === 'features'
+      && operation.target.featureIds.some((id) => coveredByTop.has(id)),
+    )],
     tools: [...project.tools, ...tools.filter((candidate) => candidate.source === 'library').map((candidate) => candidate.tool)],
   }, face)
   const builder: PlanBuilder = {
@@ -729,6 +745,7 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     reusedToolIds: new Set(),
     covered: new Set(),
     existing: new Set(),
+    coveredByTop,
     unresolvedModels: new Map(),
     sequence: 0,
   }
@@ -827,11 +844,21 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
   }
 
   const sharedTabs = buildSharedTabs(builder)
+  // Recognition and residuals use cutting space; persisted masks/tabs use
+  // stock space. A half-turn is its own inverse. Operations carry only IDs.
+  if (face === 'bottom') {
+    for (const draft of builder.operations) {
+      if (draft.rest) draft.rest.regions = camPlanRegionsInStockFrame(stockProject, draft.rest.regions)
+    }
+    for (const group of sharedTabs) {
+      group.tabs = projectInSetupFrame({ ...project, tabs: group.tabs }, setupFrame(setup.orientation, project.stock)).tabs
+    }
+  }
   return {
-    sourceFingerprint: camPlanProjectFingerprint(project),
+    sourceFingerprint: camPlanProjectFingerprint(stockProject),
     tools,
     operations: builder.operations,
     sharedTabs,
-    coverage: coverageFor(features, builder),
+    coverage: coverageFor(allFeatures, builder),
   }
 }
