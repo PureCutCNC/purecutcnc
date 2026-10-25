@@ -1030,11 +1030,6 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 // instead of adding a full turn per layer (A stays within [0, 360]); the finish
 // fingerprints and both warnings are unchanged.
 //
-// Re-captured for #1050: the height map now raises the cells a no-centre
-// triangle overlaps to that triangle's clipped maximum, so both round finish
-// fingerprints and the x-axis mm rough move (the y-axis inch rough's triangles
-// happen to cover a centre in every cell they overlap, so it is unchanged).
-
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
     createHash('sha256').update(JSON.stringify(result.moves)).digest('hex').slice(0, 16),
@@ -1043,9 +1038,9 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 }
 
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/flat_endmill/finish/chuck-model': '64448e2ac04c51bb|rotaryFinishWithoutRough',
-  'x/mm/ball_endmill/rough/model-model': '9b123df19b160568|',
-  'y/mm/flat_endmill/finish/chuck-model': '5d2d8efaf3c6e7f8|rotaryFinishWithoutRough',
+  'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|rotaryFinishWithoutRough',
+  'x/mm/ball_endmill/rough/model-model': '3f4cd140ae9761e1|',
+  'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|rotaryFinishWithoutRough',
   'y/inch/ball_endmill/rough/model-model': '73b8d4775f59cdb1|',
 }
 

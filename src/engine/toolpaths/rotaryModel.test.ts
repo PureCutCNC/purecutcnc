@@ -1612,14 +1612,15 @@ for (const axis of ['x', 'y'] as const) {
   // order and direction differ, and the seam between two layers costs one more
   // merge point (2092 -> 2093).
   //
-  // Re-captured for #1050: the height map now raises the cells a no-centre
-  // triangle overlaps to that triangle's clipped maximum, so the fixture's
-  // thin, off-lattice triangles contribute heights the centre sample missed.
-  // The sampled tips move, which changes how many merges a run survives and
-  // where the layer boundaries fall: 2093 -> 2157 moves.
-  assert.equal(result.moves.length, 2157, 'rough fixture keeps its move count')
+  // Re-captured for #1050 slice B: a no-centre triangle now raises a cell only
+  // where its clipped maximum is a local peak over the cell and its eight
+  // neighbours, so the fixture's real wall edges still lift a few cells the
+  // centre sampling missed; a smooth plane moves nothing. The
+  // sampled tips move at those edges, which changes how many merges a run keeps:
+  // 2093 -> 2101 moves.
+  assert.equal(result.moves.length, 2101, 'rough fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    '03e918818dc108bb52da26833dffe8918f7fe3448db9a0833aa6ec2ce5fcf9b6', 'rough fixture keeps its exact points')
+    'ea745df1c29324b6d1d3bd65e0745d522339e3ccdfec9344e2d13c419d4bee4f', 'rough fixture keeps its exact points')
   assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
@@ -1657,12 +1658,12 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
   }, {})
-  // Re-captured for #1050 for the same reason as the rough fixture above: the
-  // clipped no-centre contributions move the sampled tips, so the merged run
-  // count and the positions it keeps change. 8844 -> 9075 moves.
-  assert.equal(result.moves.length, 9075, 'finish fixture keeps its move count')
+  // Re-captured for #1050 slice B for the same reason as the rough fixture
+  // above: the wall edges still lift a few cells, so the sampled tips move and
+  // the merged run count and positions change. 8844 -> 8866 moves.
+  assert.equal(result.moves.length, 8866, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'd93e82e5ecb9b275f1d5906ec4defe83853dd1bfc789222bd1d77f2f828ba2e4', 'finish fixture keeps its exact points')
+    'fb7ed1fcc4f447edccf6dec0736e750f386e55bdb5a703cc8c3d3e513558b8bc', 'finish fixture keeps its exact points')
 }
 
 // ---------------------------------------------------------------------------

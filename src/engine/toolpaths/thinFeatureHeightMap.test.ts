@@ -20,10 +20,13 @@
  * The raster samples each cell at its centre, so before #1050 a triangle that
  * contained no centre added nothing and a feature narrower than a cell was
  * invisible: a 0.02 mm fin or a 1 mm tube on a 1 mm grid was cut straight
- * through. A triangle that covers no centre now raises every cell it overlaps
- * to the highest point of the triangle inside that cell. These tests pin both
- * kernels (the flat raster and the fused rotary one), the clipped maximum and
- * its cellRise semantics, and the field reproductions.
+ * through. A triangle that covers no centre now raises a cell to the highest
+ * point of the triangle inside that cell -- but only where that height is a
+ * local peak over the cell and its eight neighbours (issue #1050 slice B), so a
+ * smooth steep surface keeps its centre-sampled map. These tests pin both
+ * kernels (the flat raster and the fused rotary one), the peak test and its
+ * threshold, the clipped maximum and its cellRise semantics, the wall beside a
+ * floor (which must not raise), and the field reproductions.
  *
  * Run with: npx tsx src/engine/toolpaths/thinFeatureHeightMap.test.ts
  */
@@ -33,7 +36,7 @@ import { defaultTool, newProject, rectProfile, type Operation, type Project, typ
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { generateFinishSurfaceToolpath } from './finishSurface'
-import { buildHeightMap } from './finishSurfaceParallel'
+import { buildHeightMap, clippedMaxIsLocalPeak, thinFeaturePeakThreshold } from './finishSurfaceParallel'
 import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool } from './types'
@@ -132,6 +135,131 @@ function testSliverUsesTheClippedMax(): void {
   assert.equal(map.cellRise, 0,
     'a clipped no-centre triangle adds no cellRise; its value is already exact')
   console.log('sliver: clipped maximum, no global-max over-raise, cellRise kept')
+}
+
+function testPeakThreshold(): void {
+  console.log('Testing the local-peak threshold...')
+  const threshold = thinFeaturePeakThreshold(1)
+  assert.equal(threshold, 0.01, 'the threshold is one percent of a cell')
+  const data = new Float32Array(9).fill(5)
+  const peak = (z: number): boolean => clippedMaxIsLocalPeak(z, data, 3, 3, 1, 1, threshold, 1, 0, 2, 0, 2)
+  assert.equal(peak(5 + threshold * 0.5), false, 'less than a threshold above the neighbourhood is not a peak')
+  assert.equal(peak(5 + threshold - 1e-9), false, 'the threshold is a strict "more than"')
+  assert.equal(peak(5 + threshold * 2), true, 'a protrusion above every neighbour is a peak')
+  data[0] = 10
+  assert.equal(peak(5 + threshold * 2), false, 'one high neighbour disqualifies the peak')
+  console.log('peak threshold: 1 % of a cell, strict, one high neighbour disqualifies')
+}
+
+/**
+ * A fine height-field mesh over `[x0, x1] x [y0, y1]`. The triangles are much
+ * smaller than a cell, and the vertex grid is offset from the cell lattice, so
+ * many of them cover no cell centre -- exactly the mesh slice A turned into a
+ * conservative raster.
+ */
+function heightFieldMesh(
+  x0: number, x1: number, y0: number, y1: number, step: number,
+  heightAt: (x: number) => number,
+): { positions: Float32Array; index: Uint32Array } {
+  const nx = Math.ceil((x1 - x0) / step)
+  const ny = Math.ceil((y1 - y0) / step)
+  const positions: number[] = []
+  const index: number[] = []
+  for (let j = 0; j <= ny; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const x = x0 + (x1 - x0) * i / nx
+      const y = y0 + (y1 - y0) * j / ny
+      positions.push(x, y, heightAt(x))
+    }
+  }
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const a = j * (nx + 1) + i
+      const b = a + 1
+      const c = a + nx + 1
+      const d = c + 1
+      index.push(a, b, d, a, d, c)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+function testSmoothSteepMeshDoesNotTrigger(): void {
+  console.log('Testing a smooth steep mesh does not trigger the peak rule...')
+  // An 87-degree ramp between two flats, triangulated at 0.05 mm on 1 mm cells.
+  // Every ramp cell's uphill neighbour reads a full cell of rise while a clipped
+  // maximum can add at most half a cell's, so no cell may move at all.
+  const slope = 20
+  const heightAt = (x: number): number => x <= 1 ? 0 : x >= 3 ? slope * 2 : slope * (x - 1)
+  const mesh = heightFieldMesh(0, 4, 0, 4, 0.05, heightAt)
+  const map = buildHeightMap(mesh.positions, mesh.index,
+    { minX: 0, maxX: 4, minY: 0, maxY: 4 }, 1, { trackCellRise: true })
+  assert.ok((map.cellRise ?? 0) > 1,
+    `the fixture is genuinely steep (cellRise ${map.cellRise?.toFixed(3)})`)
+  for (let row = 0; row < map.height; row++) {
+    for (let col = 0; col < map.width; col++) {
+      const expected = heightAt((col + 0.5) * map.cellSize)
+      const actual = map.data[row * map.width + col]
+      assert.ok(Math.abs(actual - expected) < 1e-4,
+        `cell ${col},${row} keeps its centre sample ${expected} (got ${actual})`)
+    }
+  }
+  console.log('smooth steep ramp: every cell unchanged, the peak rule never fires')
+}
+
+/** Interleave a flat mesh into the fused rotary kernel's `(across, up)` layout. */
+function rotaryGeometryFromFlat(
+  positions: Float32Array,
+  index: Uint32Array,
+): { section: Float64Array; along: Float32Array } {
+  const count = Math.floor(index.length / 3)
+  const section = new Float64Array(count * 6)
+  const along = new Float32Array(count * 3)
+  for (let t = 0; t < count; t++) {
+    for (let j = 0; j < 3; j++) {
+      const p = index[t * 3 + j] * 3
+      section[t * 6 + j * 2] = positions[p + 1]
+      section[t * 6 + j * 2 + 1] = positions[p + 2]
+      along[t * 3 + j] = positions[p]
+    }
+  }
+  return { section, along }
+}
+
+/**
+ * A floor at Z 0 and a near-vertical wall rising to Z 10 at x 0.85-0.95, with
+ * its top surface covering the cell centre on the high side. The wall's face
+ * triangles cover no cell centre, so slice A raised the floor cell beside them
+ * to the wall's top; the peak rule must not, because the neighbour already
+ * reads that top.
+ */
+function wallNextToFloorMesh(): { positions: Float32Array; index: Uint32Array } {
+  const positions: number[] = []
+  const index: number[] = []
+  const quad = (a: readonly number[], b: readonly number[], c: readonly number[], d: readonly number[]): void => {
+    const base = positions.length / 3
+    for (const point of [a, b, c, d]) positions.push(point[0], point[1], point[2])
+    index.push(base, base + 1, base + 2, base, base + 2, base + 3)
+  }
+  quad([0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0])
+  quad([0.85, 0, 10], [2, 0, 10], [2, 2, 10], [0.85, 2, 10])
+  quad([0.95, 0, 0], [0.95, 2, 0], [0.85, 2, 10], [0.85, 0, 10])
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+function testWallNextToFloorDoesNotOverRaise(): void {
+  console.log('Testing a wall beside a floor does not raise the floor cell...')
+  const mesh = wallNextToFloorMesh()
+  const bbox = { minX: 0, maxX: 2, minY: 0, maxY: 2 }
+  const map = buildHeightMap(mesh.positions, mesh.index, bbox, 1)
+  assert.deepEqual(Array.from(map.data), [0, 10, 0, 10],
+    'the floor cells stay at 0 while the high-side cells read the wall top (10)')
+  const rotary = buildRotaryHeightMap({
+    axis: 'x', centre: 0, pivot: 0, cos: 1, sin: 0,
+    geometry: rotaryGeometryFromFlat(mesh.positions, mesh.index),
+  }, bbox, 1)
+  assert.deepEqual(rotary, map, 'the fused rotary kernel applies the same peak rule to the wall')
+  console.log('wall beside floor: floor stays at 0, high side at 10, both kernels agree')
 }
 
 /** A closed rectangular bar with a thin fin standing on top of it. */
@@ -334,8 +462,11 @@ function testFlatParallelFinishSeesTheFin(): void {
   console.log(`flat parallel fin: ${seen} cuts at or above the fin top`)
 }
 
+testPeakThreshold()
 testThinFinRaisesItsCells()
 testSliverUsesTheClippedMax()
+testSmoothSteepMeshDoesNotTrigger()
+testWallNextToFloorDoesNotOverRaise()
 testRotaryAroundFinishSeesTheFin()
 testTinyBlankRoughDoesNotCutIntoTheTube()
 testFlatParallelFinishSeesTheFin()

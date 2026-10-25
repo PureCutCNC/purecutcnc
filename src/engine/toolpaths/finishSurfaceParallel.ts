@@ -458,15 +458,184 @@ export function triangleMaxZInCell(
 }
 
 /**
+ * The fraction of a cell by which a no-centre triangle's clipped maximum must
+ * stand above the cell's own centre sample **and** all eight of its neighbours'
+ * before it counts as a local peak the centre sampling missed (issue #1050
+ * slice B).
+ *
+ * A smooth surface cannot clear a positive threshold. Across one cell a plane's
+ * height changes by at most `g * cell` for a gradient magnitude `g`; the highest
+ * of the eight neighbours is the uphill diagonal, at least `g * cell` above the
+ * centre, while the clipped maximum inside the cell is at most
+ * `g * cell * sqrt(2) / 2` above it. A curved-but-smooth surface leaves only
+ * the sagitta of one cell -- a fraction of a percent of the cell on the meshes
+ * that matter -- and float32 vertex noise is smaller again. One percent is two
+ * orders of magnitude below a real thin feature (the 0.02 mm fin on 0.1 mm
+ * cells is 20 % of a cell, the 1 mm tube on 1 mm cells 50 %), so a fin or tube
+ * clears it while a smooth steep wall never does.
+ */
+export const THIN_FEATURE_PEAK_FRACTION = 0.01
+
+/** The absolute height, in project units, of the local-peak test above. */
+export function thinFeaturePeakThreshold(cellSize: number): number {
+  return cellSize * THIN_FEATURE_PEAK_FRACTION
+}
+
+/** Which height category a triangle contributes to the #1095 wall bookkeeping. */
+type CoverageBit = 1 | 2
+
+/**
+ * What the centre-sampled map already reads, for the height category a triangle
+ * belongs to. A retained wall's top is not the model surface (#1095 slice D), so
+ * a model triangle is compared with the *model-only* height of a wall-covered
+ * cell and a wall triangle with the cell's full top. Without that split a wall
+ * standing beside a floor would mask -- or be masked by -- the other surface.
+ */
+function readCellHeight(
+  data: Float32Array,
+  idx: number,
+  coverageBit: CoverageBit,
+  wallCoverage: Uint8Array | undefined,
+  modelOnly: Float32Array | undefined,
+): number {
+  if (coverageBit === 1 && wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0) {
+    return modelOnly !== undefined ? modelOnly[idx] : data[idx]
+  }
+  return data[idx]
+}
+
+/**
+ * The highest centre-sampled height in a cell's 3x3 neighbourhood, for the
+ * height category a triangle belongs to (issue #1050 slice B). A clipped
+ * maximum is a local peak only when it beats this by more than the threshold.
+ *
+ * `windowMinRow..windowMaxRow`/`windowMinCol..windowMaxCol` are the cells the
+ * caller actually rasterised. A neighbour outside that band (but inside the
+ * grid) has no sample, so the cell cannot be judged: `+Infinity` makes every
+ * comparison against it fail. Only a full map -- whose band is the whole grid --
+ * decides the grid's own edge cells; a neighbour outside the grid proper is
+ * genuinely absent, exactly as in a full map. (The window's edge cells are
+ * outside the tool's reach, so the sampler never reads them.)
+ */
+function neighbourhoodLimit(
+  data: Float32Array,
+  width: number,
+  height: number,
+  row: number,
+  col: number,
+  coverageBit: CoverageBit,
+  windowMinRow: number,
+  windowMaxRow: number,
+  windowMinCol: number,
+  windowMaxCol: number,
+  wallCoverage?: Uint8Array,
+  modelOnly?: Float32Array,
+): number {
+  const minRow = Math.max(0, row - 1)
+  const maxRow = Math.min(height - 1, row + 1)
+  const minCol = Math.max(0, col - 1)
+  const maxCol = Math.min(width - 1, col + 1)
+  let limit = Number.NEGATIVE_INFINITY
+  for (let nr = minRow; nr <= maxRow; nr++) {
+    for (let nc = minCol; nc <= maxCol; nc++) {
+      if ((nr < windowMinRow || nr > windowMaxRow || nc < windowMinCol || nc > windowMaxCol)
+        && nr >= 0 && nr < height && nc >= 0 && nc < width) {
+        return Number.POSITIVE_INFINITY
+      }
+      const read = readCellHeight(data, nr * width + nc, coverageBit, wallCoverage, modelOnly)
+      if (read > limit) limit = read
+    }
+  }
+  return limit
+}
+
+/**
+ * Precompute {@link neighbourhoodLimit} for every cell in the rasterised window
+ * (issue #1050 slice B). The clip pass then tests a candidate with one array read
+ * per cell instead of nine, which is what keeps a fine smooth mesh close to the
+ * centre-sampled raster's cost. Only window cells are written, and the clip
+ * pass never reads outside the window.
+ */
+export function buildPeakLimitMap(
+  data: Float32Array,
+  width: number,
+  height: number,
+  minRow: number,
+  maxRow: number,
+  minCol: number,
+  maxCol: number,
+  coverageBit: CoverageBit,
+  wallCoverage?: Uint8Array,
+  modelOnly?: Float32Array,
+): Float32Array {
+  // Only the window is written, and only the window is ever read: the clip pass
+  // clamps candidate cells to the window, so the zero-filled rest is inert. That
+  // keeps a windowed map from paying a full-grid fill on every angle.
+  const limit = new Float32Array(width * height)
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let col = minCol; col <= maxCol; col++) {
+      limit[row * width + col] = neighbourhoodLimit(data, width, height, row, col,
+        coverageBit, minRow, maxRow, minCol, maxCol, wallCoverage, modelOnly)
+    }
+  }
+  return limit
+}
+
+/**
+ * Whether a no-centre triangle's clipped maximum inside a cell is a local peak
+ * the centre sampling missed (issue #1050 slice B).
+ *
+ * It has to beat the cell's own centre-sampled height **and** every one of the
+ * eight neighbours' by more than `threshold`. A fin or a thin tube between
+ * centres is such a peak; a wall's vertical face beside a floor is not, because
+ * the neighbour on the high side already reads the wall's top, and a smooth
+ * surface never is, because its uphill neighbour reads at least what the
+ * clipped maximum can add (see {@link THIN_FEATURE_PEAK_FRACTION}).
+ *
+ * This is the reference form of the rule, used by the tests and by the
+ * rare-candidate fallback; the kernels compare against a precomputed
+ * {@link buildPeakLimitMap} instead.
+ */
+export function clippedMaxIsLocalPeak(
+  z: number,
+  data: Float32Array,
+  width: number,
+  height: number,
+  row: number,
+  col: number,
+  threshold: number,
+  coverageBit: CoverageBit,
+  windowMinRow: number,
+  windowMaxRow: number,
+  windowMinCol: number,
+  windowMaxCol: number,
+  wallCoverage?: Uint8Array,
+  modelOnly?: Float32Array,
+): boolean {
+  return z > neighbourhoodLimit(data, width, height, row, col, coverageBit,
+    windowMinRow, windowMaxRow, windowMinCol, windowMaxCol, wallCoverage, modelOnly) + threshold
+}
+
+/**
  * Rasterise a triangle mesh into a height map, one value per cell.
  *
- * Normally a cell's value is the highest triangle at the cell's centre. That
+ * A cell's value is normally the highest triangle at the cell's centre. That
  * loses any feature narrower than a cell (issue #1050), so a triangle that
- * covers **no** cell centre instead raises every cell it overlaps to the
- * highest point of the triangle inside that cell. A triangle that covers a
- * centre is rasterised exactly as before, and the no-centre decision is made
- * over the whole grid even when a window is rasterised, so a windowed map still
- * agrees with a full one.
+ * covers **no** cell centre may also raise a cell to the highest point of the
+ * triangle inside it -- but only when that height is a local peak the centre
+ * sampling missed ({@link clippedMaxIsLocalPeak}). A smooth fine mesh therefore
+ * keeps exactly its centre-sampled map and its old cost.
+ *
+ * The rule is two-pass: all centre samples are rasterised first (collecting the
+ * no-centre triangles as candidates), then only those candidates are clipped
+ * and tested. The comparison heights are always the centre-sampled map before
+ * any clipped contribution -- a precomputed peak-limit map, or deferred raises
+ * in the rare-candidate fallback -- so the order candidates are visited in
+ * cannot change the result. A triangle that covers a centre is rasterised
+ * exactly as before, and the no-centre decision is made over the whole grid even
+ * when a window is rasterised, so a windowed map still agrees with a full one
+ * apart from cells at the window edge (whose missing neighbours read
+ * `-Infinity`; those cells are outside the tool's reach).
  */
 export function buildHeightMap(
   positions: Float32Array,
@@ -504,9 +673,53 @@ export function buildHeightMap(
   }
 
   const wallStartIndex = wallStart !== undefined ? wallStart * 3 : Infinity
+  const peakThreshold = thinFeaturePeakThreshold(cellSize)
+  // #1050 slice B: a no-centre triangle is only a *candidate*. It can raise a
+  // cell only after every centre sample is in place, because the rule compares
+  // against the cell's eight neighbours, so the centre pass collects candidates
+  // and the clip pass visits them. On a fine smooth mesh the clip pass rejects
+  // each candidate with a handful of comparisons instead of clipping it.
+  // One record per candidate: the cell index for a triangle fully inside one
+  // cell (`-1` otherwise), its global maximum, and its triangle start. A
+  // single-cell candidate needs no second projection at all, which is most of
+  // them on a fine mesh; only a multi-cell one is projected again.
+  let candidateCells: Int32Array | undefined
+  let candidateZ: Float32Array | undefined
+  let candidateTriangles: Int32Array | undefined
+  let candidateCount = 0
+  // The peak limit is computed once, from the centre-sampled map, before any
+  // clipped contribution, so the order candidates are visited in cannot change
+  // the result. Two maps only when the caller marks retained walls (#1095
+  // slice D): a model triangle is judged against the model surface, a wall
+  // triangle against the cell's full top.
+  let peakLimit: Float32Array | undefined
+  let modelPeakLimit: Float32Array | undefined
+  // The rare-candidate fallback below must compare against the untouched
+  // centre-sampled map, so its raises are collected and applied afterwards.
+  const pendingRaises: Array<[number, number, CoverageBit]> = []
+  const raiseCell = (idx: number, z: number, coverageBit: CoverageBit): void => {
+    if (wallCoverage !== undefined && modelOnly !== undefined) {
+      const coverage = wallCoverage[idx]
+      if (coverageBit === 2) {
+        // First wall touch: `data` is still the model-only maximum here, so it
+        // is the value a padded sample must use. Later wall triangles must not
+        // overwrite it.
+        if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+        wallCoverage[idx] = coverage | 2
+      } else {
+        if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+        wallCoverage[idx] |= 1
+      }
+    }
+    if (z > data[idx]) data[idx] = z
+  }
+
+  // Centre pass. This is the pre-#1050 raster plus candidate collection; it is
+  // kept a flat loop rather than a closure called once per triangle, because on
+  // a real mesh this loop is the whole cost and the closure call is measurable.
   for (let t = 0; t < triangleCount; t++) {
     const i = triangles ? triangles[t] : t * 3
-    const coverageBit = i >= wallStartIndex ? 2 : 1
+    const coverageBit: CoverageBit = i >= wallStartIndex ? 2 : 1
     const i0 = index[i] * 3
     const i1 = index[i + 1] * 3
     const i2 = index[i + 2] * 3
@@ -560,9 +773,6 @@ export function buildHeightMap(
         if (wallCoverage !== undefined && modelOnly !== undefined) {
           const coverage = wallCoverage[idx]
           if (coverageBit === 2) {
-            // First wall touch: `data` is still the model-only maximum here, so
-            // it is the value a padded sample must use. Later wall triangles
-            // must not overwrite it.
             if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
             wallCoverage[idx] = coverage | 2
           } else {
@@ -574,82 +784,175 @@ export function buildHeightMap(
         touched = true
       }
     }
-    if (!touched) {
-      // #1050: a triangle that covers no cell centre contributes nothing to
-      // the centre-sampled map, which is how a fin narrower than a cell used to
-      // vanish. Before clipping it to the cells it overlaps, decide whether it
-      // covers a centre *outside* this window: a full map would then have
-      // sampled it normally and must not also clip, so a windowed map has to
-      // agree with the full one (the strip-culling sampler relies on that).
-      let centreOutsideWindow = false
-      if (fullColStart < colStart || fullColEnd > colEnd || fullRowStart < rowStart || fullRowEnd > rowEnd) {
-        for (let row = fullRowStart; row <= fullRowEnd && !centreOutsideWindow; row++) {
-          const rowInWindow = row >= rowStart && row <= rowEnd
-          for (let col = fullColStart; col <= fullColEnd; col++) {
-            if (rowInWindow && col >= colStart && col <= colEnd) continue
-            const cx = bbox.minX + (col + 0.5) * cellSize
-            const cy = bbox.minY + (row + 0.5) * cellSize
-            const px = cx - v0x, py = cy - v0y
-            const u = (px * e1y - py * e1x) / denom
-            const v = (py * e0x - px * e0y) / denom
-            if (u >= 0 && v >= 0 && u + v <= 1) {
-              centreOutsideWindow = true
-              break
-            }
-          }
-        }
-      }
-      if (!centreOutsideWindow) {
-        // The triangle is entirely inside one cell's bounding box: the whole
-        // triangle lies in that cell, so its clipped maximum is its global
-        // maximum (and most fine-mesh triangles take this path).
-        const singleCell = colStart === colEnd && rowStart === rowEnd
-          && tMinX >= bbox.minX + colStart * cellSize
-          && tMaxX <= bbox.minX + (colStart + 1) * cellSize
-          && tMinY >= bbox.minY + rowStart * cellSize
-          && tMaxY <= bbox.minY + (rowStart + 1) * cellSize
-        const globalMaxZ = v0z > v1z ? (v0z > v2z ? v0z : v2z) : (v1z > v2z ? v1z : v2z)
-        for (let row = rowStart; row <= rowEnd; row++) {
-          for (let col = colStart; col <= colEnd; col++) {
-            const idx = row * width + col
-            // The global maximum is an upper bound for the clipped maximum, so
-            // a cell it cannot beat needs no clip. The model-only height is the
-            // relevant ceiling for a model triangle over a wall cell.
-            if (coverageBit === 1) {
-              if (wallCoverage !== undefined || modelOnly !== undefined) {
-                const coveredByWall = wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0
-                if (coveredByWall ? globalMaxZ <= (modelOnly?.[idx] ?? Number.NEGATIVE_INFINITY) : globalMaxZ <= data[idx]) continue
-              } else if (globalMaxZ <= data[idx]) continue
-            } else if (globalMaxZ <= data[idx] && wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0) {
-              continue
-            }
-            const cellMinX = bbox.minX + col * cellSize
-            const cellMinY = bbox.minY + row * cellSize
-            const z = singleCell
-              ? globalMaxZ
-              : triangleMaxZInCell(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z,
-                cellMinX, cellMinY, cellMinX + cellSize, cellMinY + cellSize)
-            if (z === Number.NEGATIVE_INFINITY) continue
-            if (wallCoverage !== undefined && modelOnly !== undefined) {
-              const coverage = wallCoverage[idx]
-              if (coverageBit === 2) {
-                if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
-                wallCoverage[idx] = coverage | 2
-              } else {
-                if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
-                wallCoverage[idx] |= 1
-              }
-            }
-            if (z > data[idx]) data[idx] = z
+    if (touched) {
+      // Only a centre-sampled triangle can under-read the surface between its
+      // centre and the cell edge. A no-centre triangle contributes the exact
+      // maximum inside the cell, so it needs no rise allowance and must not
+      // inflate the one scalar the around sampler adds to every sample.
+      if (triangleRise > cellRise) cellRise = triangleRise
+      continue
+    }
+    // A triangle that covers no cell centre contributes nothing to the
+    // centre-sampled map, which is how a fin narrower than a cell used to
+    // vanish. Before treating it as a clip candidate, decide whether it covers
+    // a centre *outside* this window: a full map would then have sampled it
+    // normally and must not also clip, so a windowed map has to agree with the
+    // full one (the strip-culling sampler relies on that).
+    let centreOutsideWindow = false
+    if (fullColStart < colStart || fullColEnd > colEnd || fullRowStart < rowStart || fullRowEnd > rowEnd) {
+      for (let row = fullRowStart; row <= fullRowEnd && !centreOutsideWindow; row++) {
+        const rowInWindow = row >= rowStart && row <= rowEnd
+        for (let col = fullColStart; col <= fullColEnd; col++) {
+          if (rowInWindow && col >= colStart && col <= colEnd) continue
+          const cx = bbox.minX + (col + 0.5) * cellSize
+          const cy = bbox.minY + (row + 0.5) * cellSize
+          const px = cx - v0x, py = cy - v0y
+          const u = (px * e1y - py * e1x) / denom
+          const v = (py * e0x - px * e0y) / denom
+          if (u >= 0 && v >= 0 && u + v <= 1) {
+            centreOutsideWindow = true
+            break
           }
         }
       }
     }
-    // Only a centre-sampled triangle can under-read the surface between its
-    // centre and the cell edge. A no-centre triangle contributes the exact
-    // maximum inside the cell, so it needs no rise allowance and must not
-    // inflate the one scalar the around sampler adds to every sample.
-    if (touched && triangleRise > cellRise) cellRise = triangleRise
+    if (!centreOutsideWindow) {
+      const cells = candidateCells ?? (candidateCells = new Int32Array(triangleCount))
+      const maxes = candidateZ ?? (candidateZ = new Float32Array(triangleCount))
+      const tris = candidateTriangles ?? (candidateTriangles = new Int32Array(triangleCount))
+      const k = candidateCount++
+      tris[k] = i
+      const triangleMaxZ = v0z > v1z ? (v0z > v2z ? v0z : v2z) : (v1z > v2z ? v1z : v2z)
+      const singleCell = colStart === colEnd && rowStart === rowEnd
+        && tMinX >= bbox.minX + colStart * cellSize
+        && tMaxX <= bbox.minX + (colStart + 1) * cellSize
+        && tMinY >= bbox.minY + rowStart * cellSize
+        && tMaxY <= bbox.minY + (rowStart + 1) * cellSize
+      cells[k] = singleCell ? rowStart * width + colStart : -1
+      maxes[k] = singleCell ? triangleMaxZ : 0
+    }
+  }
+
+  // Clip pass, #1050 slice B: only a no-centre triangle whose clipped maximum is
+  // a local peak the centre sampling missed may raise a cell.
+  const clipCandidate = (i: number): void => {
+    const coverageBit: CoverageBit = i >= wallStartIndex ? 2 : 1
+    const i0 = index[i] * 3
+    const i1 = index[i + 1] * 3
+    const i2 = index[i + 2] * 3
+
+    const v0x = positions[i0],     v0y = positions[i0 + 1], v0z = positions[i0 + 2]
+    const v1x = positions[i1],     v1y = positions[i1 + 1], v1z = positions[i1 + 2]
+    const v2x = positions[i2],     v2y = positions[i2 + 1], v2z = positions[i2 + 2]
+
+    const tMinX = Math.min(v0x, v1x, v2x)
+    const tMaxX = Math.max(v0x, v1x, v2x)
+    const tMinY = Math.min(v0y, v1y, v2y)
+    const tMaxY = Math.max(v0y, v1y, v2y)
+
+    const colStart = Math.max(minCol, Math.max(0, Math.floor((tMinX - bbox.minX) / cellSize)))
+    const colEnd   = Math.min(maxCol, Math.min(width - 1, Math.floor((tMaxX - bbox.minX) / cellSize)))
+    const rowStart = Math.max(minRow, Math.max(0, Math.floor((tMinY - bbox.minY) / cellSize)))
+    const rowEnd   = Math.min(maxRow, Math.min(height - 1, Math.floor((tMaxY - bbox.minY) / cellSize)))
+    if (colStart > colEnd || rowStart > rowEnd) return
+
+    const e0x = v1x - v0x, e0y = v1y - v0y
+    const e1x = v2x - v0x, e1y = v2y - v0y
+    if (Math.abs(e0x * e1y - e0y * e1x) < 1e-15) return
+
+    const limit = coverageBit === 1 && modelPeakLimit !== undefined ? modelPeakLimit : peakLimit
+    const singleCell = colStart === colEnd && rowStart === rowEnd
+      && tMinX >= bbox.minX + colStart * cellSize
+      && tMaxX <= bbox.minX + (colStart + 1) * cellSize
+      && tMinY >= bbox.minY + rowStart * cellSize
+      && tMaxY <= bbox.minY + (rowStart + 1) * cellSize
+    const globalMaxZ = v0z > v1z ? (v0z > v2z ? v0z : v2z) : (v1z > v2z ? v1z : v2z)
+    if (singleCell) {
+      // The whole triangle lies in one cell, so its clipped maximum is its
+      // global maximum and most fine-mesh triangles take this path.
+      const idx = rowStart * width + colStart
+      const raises = limit !== undefined
+        ? globalMaxZ > limit[idx] + peakThreshold
+        : clippedMaxIsLocalPeak(globalMaxZ, data, width, height, rowStart, colStart,
+          peakThreshold, coverageBit, minRow, maxRow, minCol, maxCol, wallCoverage, modelOnly)
+      if (!raises) return
+      if (limit !== undefined) raiseCell(idx, globalMaxZ, coverageBit)
+      else pendingRaises.push([idx, globalMaxZ, coverageBit])
+      return
+    }
+    if (limit !== undefined) {
+      // The global maximum is an upper bound for every clipped maximum, so the
+      // triangle can only raise a cell if it beats the *smallest* per-cell
+      // limit it overlaps (not the largest: a high cell elsewhere in the bbox
+      // says nothing about a cell whose own neighbourhood is low).
+      let unionLimit = Number.POSITIVE_INFINITY
+      for (let row = rowStart; row <= rowEnd; row++) {
+        for (let col = colStart; col <= colEnd; col++) {
+          const cellLimit = limit[row * width + col]
+          if (cellLimit < unionLimit) unionLimit = cellLimit
+        }
+      }
+      if (!(globalMaxZ > unionLimit + peakThreshold)) return
+      for (let row = rowStart; row <= rowEnd; row++) {
+        for (let col = colStart; col <= colEnd; col++) {
+          const cellMinX = bbox.minX + col * cellSize
+          const cellMinY = bbox.minY + row * cellSize
+          const z = triangleMaxZInCell(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z,
+            cellMinX, cellMinY, cellMinX + cellSize, cellMinY + cellSize)
+          if (z === Number.NEGATIVE_INFINITY) continue
+          if (!(z > limit[row * width + col] + peakThreshold)) continue
+          raiseCell(row * width + col, z, coverageBit)
+        }
+      }
+      return
+    }
+    for (let row = rowStart; row <= rowEnd; row++) {
+      for (let col = colStart; col <= colEnd; col++) {
+        const cellMinX = bbox.minX + col * cellSize
+        const cellMinY = bbox.minY + row * cellSize
+        const z = triangleMaxZInCell(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z,
+          cellMinX, cellMinY, cellMinX + cellSize, cellMinY + cellSize)
+        if (z === Number.NEGATIVE_INFINITY) continue
+        if (!clippedMaxIsLocalPeak(z, data, width, height, row, col, peakThreshold, coverageBit,
+          minRow, maxRow, minCol, maxCol, wallCoverage, modelOnly)) continue
+        pendingRaises.push([row * width + col, z, coverageBit])
+      }
+    }
+  }
+
+  const candidateCell = candidateCells
+  const candidateMax = candidateZ
+  const candidateTriangle = candidateTriangles
+  if (candidateCell !== undefined && candidateMax !== undefined && candidateTriangle !== undefined) {
+    // One limit lookup per candidate is cheaper than nine when the candidates
+    // outnumber the cells they can query; the other way round (a big window and
+    // a handful of thin triangles, as in a rotary strip) the on-the-fly test is.
+    const windowCells = (maxRow - minRow + 1) * (maxCol - minCol + 1)
+    if (candidateCount * 8 >= windowCells) {
+      peakLimit = buildPeakLimitMap(data, width, height, minRow, maxRow, minCol, maxCol,
+        wallCoverage !== undefined ? 2 : 1, wallCoverage, modelOnly)
+      if (wallCoverage !== undefined) {
+        modelPeakLimit = buildPeakLimitMap(data, width, height, minRow, maxRow, minCol, maxCol,
+          1, wallCoverage, modelOnly)
+      }
+    }
+    for (let k = 0; k < candidateCount; k++) {
+      const idx = candidateCell[k]
+      if (idx < 0) {
+        clipCandidate(candidateTriangle[k])
+        continue
+      }
+      const coverageBit: CoverageBit = candidateTriangle[k] >= wallStartIndex ? 2 : 1
+      const z = candidateMax[k]
+      if (peakLimit !== undefined) {
+        const limit = coverageBit === 1 && modelPeakLimit !== undefined ? modelPeakLimit : peakLimit
+        if (z > limit[idx] + peakThreshold) raiseCell(idx, z, coverageBit)
+      } else if (clippedMaxIsLocalPeak(z, data, width, height, Math.floor(idx / width), idx % width,
+        peakThreshold, coverageBit, minRow, maxRow, minCol, maxCol, wallCoverage, modelOnly)) {
+        pendingRaises.push([idx, z, coverageBit])
+      }
+    }
+    for (const [idx, z, coverageBit] of pendingRaises) raiseCell(idx, z, coverageBit)
   }
 
   return {
