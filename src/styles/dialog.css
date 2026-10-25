@@ -59,7 +59,7 @@
   padding: 14px;
   column-gap: 18px;
   row-gap: 14px;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
   grid-template-areas:
     "form preview"
     "examples examples";
@@ -1291,6 +1291,19 @@
 
 .project-template-preview__row--stock {
   align-items: start;
+}
+
+/* In the narrower preview column (issue #1102 slice K) the "Stock" label sits
+ * above its fields, so the width / height / thickness inputs get the whole
+ * column instead of sharing it with the label. */
+.dialog--new-project .project-template-preview__row--stock {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-preview__row--stock .new-project-stock-dimensions {
+  flex: 1 1 auto;
 }
 
 .project-template-preview__row strong {
