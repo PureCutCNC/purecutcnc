@@ -96,6 +96,10 @@ export function inferManualFeatureOperation(
   if (!profile.closed) return 'subtract'
   const material = barMaterialProfile([profile, ...existingSolids.map((solid) => solid.profile)])
   if (!material) return 'subtract'
+  // A shape the classifier cannot nest (self-intersecting) falls back to
+  // 'add' there; on a bar a base solid means nothing, so it stays a cut, as it
+  // was before #1108. Inside the material alone, any nestable shape is a cut.
+  if (inferNestedSolidOperation(profile, [{ profile: material, operation: 'add' }]) !== 'subtract') return 'subtract'
   return inferNestedSolidOperation(profile, [
     ...existingSolids,
     { profile: material, operation: 'add' },

@@ -25,7 +25,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
+import { defaultTool, newProject, polygonProfile, rectProfile, roundStock } from '../../types/project'
 import type { MachiningSetup, Project, SetupFace, SketchFeature, SketchProfile, Stock } from '../../types/project'
 import { squareStock } from '../../types/barStock'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -104,6 +104,9 @@ const line: SketchProfile = {
   closed: false,
 }
 
+// A self-intersecting outline (a bow tie) the classifier cannot nest.
+const bowTie = polygonProfile([{ x: 30, y: 45 }, { x: 38, y: 53 }, { x: 38, y: 45 }, { x: 30, y: 53 }])
+
 const barStocks: Array<[string, Stock]> = [
   ['round bar', roundStock(40, 200, 'x', { x: 10, y: 30 })],
   ['square blank', squareStock(40, 200, 'x', { x: 10, y: 30 })],
@@ -136,6 +139,11 @@ for (const [label, stock] of barStocks) {
       inferManualFeatureOperation(barProject(face, stock), line),
       'subtract',
       `an open profile on a ${label} ${face} stays a cut`,
+    )
+    assert.equal(
+      inferManualFeatureOperation(barProject(face, stock), bowTie),
+      'subtract',
+      `a self-intersecting shape on a ${label} ${face} stays a cut, never a base solid`,
     )
   }
 }
