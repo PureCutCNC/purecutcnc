@@ -15,7 +15,7 @@
  */
 
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, isFaceEditInProgress } from '../../store/helpers/activeFace'
+import { activeFace, canChangeAuthoringFace, isFaceEditInProgress } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import { requestAuthoringFaceChange } from '../../store/workspaceFace'
 import type { SetupFace } from '../../types/project'
@@ -38,11 +38,19 @@ export function FaceChip({ face }: { face: SetupFace }) {
  * between a flat face and the unrolled bar. The workspace being on Around
  * hides it too (issue #1015 slice K): the change is refused there, so a
  * button that silently does nothing is worse than none.
+ *
+ * A flat-face feature that does not go through the whole stock cannot move
+ * either (issue #1102 slice L): a blind pocket belongs to the face it was
+ * cut from. There the control stays visible but disabled and says why, so
+ * the rule is discoverable instead of looking like a missing feature.
  */
 export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featureIds: readonly string[] }) {
   const { t } = useI18n()
   const busy = useProjectStore(isFaceEditInProgress)
   const workspaceFace = useProjectStore((state) => activeFace(state.project))
+  const canChange = useProjectStore((state) => state.project.features.some(
+    (feature) => featureIds.includes(feature.id) && canChangeAuthoringFace(state.project, feature),
+  ))
   return (
     <div className="properties-field face-row">
       <span>{t('featureTree.face.authoringFace')}</span>
@@ -53,8 +61,12 @@ export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featur
             className="feat-btn face-row__change"
             type="button"
             onClick={() => requestAuthoringFaceChange(featureIds)}
-            disabled={busy}
-            title={busy ? t('featureTree.face.changeBusy') : undefined}
+            disabled={busy || !canChange}
+            title={
+              busy
+                ? t('featureTree.face.changeBusy')
+                : canChange ? undefined : t('featureTree.face.changeNotThrough')
+            }
           >
             {t('featureTree.face.change')}
           </button>

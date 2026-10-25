@@ -23,7 +23,7 @@ import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, Oper
 import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 import { useProjectStore } from '../../store/projectStore'
-import { activeFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 
 interface FeatureContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -105,6 +105,12 @@ export function FeatureContextMenu({
   // change-face entry is left out for an Around selection (issue #395).
   const selectionOnAround = workspaceFace === 'around'
     || project.features.some((feature) => ids.includes(feature.id) && (feature.authoringFace ?? 'top') === 'around')
+  // Only a feature that goes through the whole stock can change face (issue
+  // #1102 slice L). The entry stays, disabled with the reason, because a
+  // control that silently does nothing is worse than none.
+  const selectionCanChangeFace = project.features.some(
+    (feature) => ids.includes(feature.id) && canChangeAuthoringFace(project, feature),
+  )
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -119,6 +125,7 @@ export function FeatureContextMenu({
   // to its own face and the explicit face change, and no edit (issue #945).
   const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
   if (menuFeature && menuFeatureFace !== workspaceFace) {
+    const ghostCanChangeFace = canChangeAuthoringFace(project, menuFeature)
     return (
       <div
         ref={menuRef}
@@ -144,8 +151,14 @@ export function FeatureContextMenu({
               className="feature-context-menu__item"
               type="button"
               onClick={() => actions.changeAuthoringFace([menuFeature.id])}
-              disabled={menuFeature.locked || faceBusy}
-              title={menuFeature.locked ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
+              disabled={menuFeature.locked || faceBusy || !ghostCanChangeFace}
+              title={
+                menuFeature.locked
+                  ? t('featureTree.contextMenu.lockedTooltip')
+                  : faceBusy
+                    ? t('featureTree.face.changeBusy')
+                    : ghostCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
+              }
             >
               {t('featureTree.face.changeAuthoringFace')}
             </button>
@@ -511,8 +524,14 @@ export function FeatureContextMenu({
                 className="feature-context-menu__item"
                 type="button"
                 onClick={() => actions.changeAuthoringFace([...ids])}
-                disabled={menuHasLockedSelection || faceBusy}
-                title={menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
+                disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace}
+                title={
+                  menuHasLockedSelection
+                    ? t('featureTree.contextMenu.lockedTooltip')
+                    : faceBusy
+                      ? t('featureTree.face.changeBusy')
+                      : selectionCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
+                }
               >
                 {t('featureTree.face.changeAuthoringFace')}
               </button>

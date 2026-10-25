@@ -16,7 +16,7 @@
 
 import type { SetupFace } from '../types/project'
 import { useFaceViewStore } from './faceViewStore'
-import { aroundUnavailableReason, activeFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
+import { aroundUnavailableReason, activeFace, canChangeAuthoringFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
 import { provisionalSetupId } from './helpers/provisionalSetup'
 import { useProjectStore } from './projectStore'
 
@@ -46,12 +46,17 @@ export function switchWorkspaceFace(face: SetupFace): boolean {
 /**
  * Ask for the confirmation that moves features to the other face. Refused
  * while an edit is in progress, for the same reason the switch is: the
- * feature being edited would become a ghost under the edit.
+ * feature being edited would become a ghost under the edit. Refused too when
+ * no requested feature goes through the whole stock (issue #1102 slice L):
+ * a blind pocket has no second face to be measured from, so there is nothing
+ * to confirm.
  */
 export function requestAuthoringFaceChange(featureIds: readonly string[]): boolean {
-  if (isFaceEditInProgress(useProjectStore.getState())) return false
-  const project = useProjectStore.getState().project
+  const store = useProjectStore.getState()
+  if (isFaceEditInProgress(store)) return false
+  const project = store.project
   if (activeFace(project) === 'around' || project.features.some((feature) => featureIds.includes(feature.id) && feature.authoringFace === 'around')) return false
+  if (!project.features.some((feature) => featureIds.includes(feature.id) && canChangeAuthoringFace(project, feature))) return false
   useFaceViewStore.getState().requestFaceChange(featureIds)
   return true
 }
