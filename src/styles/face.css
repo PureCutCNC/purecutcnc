@@ -78,6 +78,14 @@
   color: var(--text);
 }
 
+/* The pill sets the height. `.app-shell button` gives every button the hit
+ * target as a minimum, which pushed the segments out of their track on
+ * desktop; tablet shells restore the touch target further down. */
+.face-switch .face-switch__segment,
+.face-switch .face-switch__ghost {
+  min-height: 0;
+}
+
 /* Inactive segments are plain text on the track; the hover is only a hint. */
 .face-switch__segment:hover:not(:disabled) {
   background: var(--surface-hover);
