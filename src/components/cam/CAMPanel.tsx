@@ -19,7 +19,7 @@ import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import { PlasmaOperationFields } from './PlasmaOperationFields'
 
 import { activeSetup } from '../../store/helpers/activeFace'
-import { camSetupSections, crossFaceTargets } from './setupSections'
+import { camSetupSections, crossFaceTargets, operationOnActiveSetup } from './setupSections'
 import { CamSetupSectionView } from './CamSetupSectionView'
 import { SetupPropertiesDialog } from './SetupPropertiesDialog'
 import { SetupOperationControls } from './SetupOperationControls'
@@ -2340,30 +2340,44 @@ export function CAMPanel({
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
                         <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
-                        {section.operations.map((operation) => (
+                        {section.operations.map((operation) => {
+                        // An operation of a setup the workspace is not on is a
+                        // ghost row (issue #1102), like a feature from the other
+                        // face in the feature tree: listed, with its eye, never
+                        // selected, reordered or edited from here.
+                        const ghost = !operationOnActiveSetup(project, operation)
+                        const ghostTitle = ghost
+                          ? camT(section.face === 'bottom'
+                            ? 'cam.treeRow.ghostBottom'
+                            : section.face === 'around' ? 'cam.treeRow.ghostAround' : 'cam.treeRow.ghostTop')
+                          : undefined
+                        return (
                         <div
                           key={operation.id}
                           className={[
                             'tree-row',
                             'tree-row--feature',
-                            operation.id === selectedOperationId ? 'tree-row--selected' : '',
-                            dragOperationId === operation.id ? 'tree-row--dragging' : '',
-                            warningOperationIds?.has(operation.id) ? 'cam-operation-row--warning' : '',
+                            ghost ? 'tree-row--ghost' : '',
+                            !ghost && operation.id === selectedOperationId ? 'tree-row--selected' : '',
+                            !ghost && dragOperationId === operation.id ? 'tree-row--dragging' : '',
+                            !ghost && warningOperationIds?.has(operation.id) ? 'cam-operation-row--warning' : '',
                           ].join(' ')}
-                          onClick={() => handleSelectOperation(operation.id)}
-                          onKeyDown={(event) => {
+                          data-ghost={ghost ? 'true' : undefined}
+                          title={ghostTitle}
+                          onClick={ghost ? undefined : () => handleSelectOperation(operation.id)}
+                          onKeyDown={ghost ? undefined : (event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
                               handleSelectOperation(operation.id)
                             }
                           }}
-                          role="button"
-                          tabIndex={0}
-                          draggable
-                          onDragStart={() => handleOperationDragStart(operation.id)}
-                          onDragEnd={() => setDragOperationId(null)}
-                          onDragOver={(event) => handleOperationDragOver(event, operation.id)}
-                          onDrop={handleOperationDrop}
+                          role={ghost ? undefined : 'button'}
+                          tabIndex={ghost ? undefined : 0}
+                          draggable={ghost ? undefined : true}
+                          onDragStart={ghost ? undefined : () => handleOperationDragStart(operation.id)}
+                          onDragEnd={ghost ? undefined : () => setDragOperationId(null)}
+                          onDragOver={ghost ? undefined : (event) => handleOperationDragOver(event, operation.id)}
+                          onDrop={ghost ? undefined : handleOperationDrop}
                         >
                           <span
                             className={
@@ -2373,7 +2387,7 @@ export function CAMPanel({
                             }
                             aria-hidden="true"
                           />
-                          {tabletShell && project.operations.length > 1 ? (
+                          {!ghost && tabletShell && project.operations.length > 1 ? (
                             <button
                               className="tree-action-btn tree-drag-grip"
                               type="button"
@@ -2452,6 +2466,7 @@ export function CAMPanel({
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">{camT('cam.treeRow.off')}</span> : null}
                             {!operationCutOnMachine(machine, operation.kind) ? <span className="cam-operation-badge">{camT('cam.treeRow.notForProjectType')}</span> : null}
+                            {ghost ? null : <>
                             <button
                               className="tree-action-btn"
                               type="button"
@@ -2476,9 +2491,11 @@ export function CAMPanel({
                             >
                               <Icon id="trash" />
                             </button>
+                            </>}
                           </span>
                         </div>
-                      ))}
+                        )
+                        })}
                         </CamSetupSectionView>
                       ))}
                     </div>

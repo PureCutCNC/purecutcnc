@@ -519,3 +519,12 @@
 
 .cam-operation-tree .cam-operation-label { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .cam-operation-tree .cam-operation-name { width: 100%; }
+
+/* An operation of a setup the workspace is not on (issue #1102): listed like a
+   feature-tree ghost — dimmed by `.tree-row--ghost` above — and with no hover
+   or selection of its own. It keeps its eye: showing its toolpath still works. */
+.cam-operation-tree .tree-row--ghost,
+.cam-operation-tree .tree-row--ghost:hover {
+  cursor: default;
+  background: transparent;
+}
