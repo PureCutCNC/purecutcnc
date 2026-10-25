@@ -376,7 +376,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
             <div className="dialog-section-group">
               <label className="dialog-section-title">{td('dialogs.newProject.template')}</label>
-              <div className="project-template-list">
+              <div className="project-template-list project-template-list--template">
                 <button
                   className={`project-template-card ${templateKind === 'blank_metric' ? 'project-template-card--active' : ''}`}
                   type="button"
