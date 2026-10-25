@@ -61,7 +61,7 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
       </button>
       <button className="tree-action-btn" type="button" aria-label={t('cam.setup.propertiesFor', { name: section.setup.name })} onClick={onProperties}><Icon id="gear" /></button>
       {header.empty ? null : (
-        <button className="tree-action-btn" type="button" aria-label={t('cam.setup.export', { name: section.setup.name })} disabled={!section.operations.some((op) => op.enabled)} onClick={() => onExport(section.operations.filter((op) => op.enabled).map((op) => op.id))}><Icon id="export" /></button>
+        <button className="tree-action-btn" type="button" aria-label={t('cam.setup.export', { name: section.setup.name })} disabled={!section.operations.some((op) => op.enabled)} onClick={() => onExport(section.operations.filter((op) => op.enabled).map((op) => op.id))}><Icon id="gcode-export" /></button>
       )}
     </div>
     {open && !header.empty ? <div className="cam-setup-group__body">
