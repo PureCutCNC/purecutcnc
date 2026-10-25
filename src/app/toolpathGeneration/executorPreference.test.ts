@@ -15,20 +15,25 @@
  */
 
 /**
- * The shipped backend default and how a stored choice is read (issue #1087).
+ * How the stored backend resolves, now that there is no choice (issue #1102
+ * slice D1).
  *
- * The default moved from `inline` to `worker` in 0.6.0. The thing that has to
- * stay true alongside it is the promise made to someone who chose `inline`
- * deliberately: their stored value is still what they get, and an environment
- * that has no `Worker` still resolves to the main thread rather than failing.
+ * Three things have to stay true together: production always uses the worker
+ * when the runtime has one (a stored `inline` from an older build is ignored),
+ * a runtime without a `Worker` still runs on the main thread, and a development
+ * build still honours a stored `inline` so the parity spec can force the main
+ * thread. The shipped default is still `worker`, which is what a fresh profile
+ * gets written on first load.
+ *
+ * Run with: npx tsx src/app/toolpathGeneration/executorPreference.test.ts
  */
 
 import assert from 'node:assert/strict'
 import {
   DEFAULT_EXECUTOR_KIND,
   EXECUTOR_PREFERENCE_STORAGE_KEY,
+  effectiveExecutorKind,
   parseExecutorPreference,
-  resolveExecutorKind,
   serializeExecutorPreference,
   workerBackendAvailable,
 } from './executorPreference'
@@ -36,14 +41,15 @@ import {
 assert.equal(EXECUTOR_PREFERENCE_STORAGE_KEY, 'purecut.generation.executor')
 assert.equal(DEFAULT_EXECUTOR_KIND, 'worker', 'a fresh profile must get the worker backend')
 
-// A stored choice survives. `inline` is the explicit opt-out, not a stale value.
+// A stored value still round-trips through the codec: development depends on
+// it, even though production ignores what it resolves to.
 for (const kind of ['inline', 'worker'] as const) {
-  assert.equal(parseExecutorPreference(kind), kind, `a stored ${kind} preference must be kept`)
+  assert.equal(parseExecutorPreference(kind), kind, `a stored ${kind} must survive parsing`)
   assert.equal(parseExecutorPreference(serializeExecutorPreference(kind)), kind)
 }
 
 // Unrecognised and older text falls back to the shipped default instead of
-// throwing or wedging the user into an unusable backend.
+// throwing.
 for (const raw of [null, '', 'inline ', ' INLINE', 'thread', 'gpu', '{"kind":"inline"}', 'null']) {
   assert.equal(parseExecutorPreference(raw), DEFAULT_EXECUTOR_KIND, `unrecognised value ${String(raw)} must fall back`)
 }
@@ -52,9 +58,17 @@ for (const raw of [null, '', 'inline ', ' INLINE', 'thread', 'gpu', '{"kind":"in
 // asking the user to change a setting.
 assert.equal(workerBackendAvailable({}), false)
 assert.equal(workerBackendAvailable({ Worker: function Worker() {} }), true)
-assert.equal(resolveExecutorKind('worker', true), 'worker')
-assert.equal(resolveExecutorKind('worker', false), 'inline', 'no Worker means inline')
-assert.equal(resolveExecutorKind('inline', true), 'inline')
-assert.equal(resolveExecutorKind('inline', false), 'inline')
+
+// Production: the stored value cannot pick the main thread. This is the rule
+// that makes a build from before #1102 behave like a fresh one.
+assert.equal(effectiveExecutorKind('inline', true, false), 'worker', 'production ignores a stored inline')
+assert.equal(effectiveExecutorKind('worker', true, false), 'worker')
+assert.equal(effectiveExecutorKind('inline', false, false), 'inline', 'no Worker means inline')
+assert.equal(effectiveExecutorKind('worker', false, false), 'inline', 'no Worker means inline')
+
+// Development: a stored inline is honoured, which is the parity spec's seam.
+assert.equal(effectiveExecutorKind('inline', true, true), 'inline', 'development honours a stored inline')
+assert.equal(effectiveExecutorKind('worker', true, true), 'worker')
+assert.equal(effectiveExecutorKind('inline', false, true), 'inline', 'development has no Worker to use')
 
 console.log('executorPreference tests passed')

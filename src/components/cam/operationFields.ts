@@ -623,6 +623,16 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
 ]
 
 /**
+ * Whether the operation description shows its textarea (issue #1102,
+ * proposal 10). An empty note starts as a "+ Add note" link; revealing it or
+ * having a stored note shows the textarea. `revealed` is the user's click —
+ * kept here rather than in the component so the rule is testable on its own.
+ */
+export function operationNoteShowsTextarea(revealed: boolean, storedDescription: string): boolean {
+  return revealed || storedDescription.trim().length > 0
+}
+
+/**
  * The fields of `group` that apply to `operation`, in render order. An empty
  * result means the group must not render at all.
  */

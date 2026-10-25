@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
+import { operationOnActiveSetup } from './components/cam/setupSections'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import type { OperationKind } from './types/project'
 import { FeatureContextMenu } from './components/feature-tree/FeatureContextMenu'
@@ -101,7 +102,10 @@ function App() {
   const { zoomWindowActive, onZoomWindow, onZoomWindowComplete } = useZoomWindow()
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
     DEPTH_LEGEND_COLLAPSED_STORAGE_KEY,
-    false,
+    // The feature-colour legend starts collapsed: it is a reference, not a
+    // control, and it was taking the corner of the sketch (issue #1102 slice
+    // D1). A stored choice from either direction is still honoured.
+    true,
     { codec: DEPTH_LEGEND_CODEC },
   )
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
@@ -155,9 +159,14 @@ function App() {
     openRemoveFromOperationSubmenu,
   } = useTreeContextMenu({ project })
 
+  // Selection follows the face (issue #1102): an operation of the setup the
+  // workspace is not on is selected nowhere — not in the CAM list, the sketch
+  // toolpaths or the simulation. The stored id is kept, so switching back to
+  // its face restores the selection; only what reads it is derived.
+  const selectedOperationForSetup = project.operations.find((operation) => operation.id === selectedOperationId)
   const effectiveSelectedOperationId =
-    selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
-      ? selectedOperationId
+    selectedOperationForSetup && operationOnActiveSetup(project, selectedOperationForSetup)
+      ? selectedOperationForSetup.id
       : null
 
   const selectedOperation = useMemo(
@@ -475,9 +484,6 @@ function App() {
             generationPaused={generationStatus.automaticPaused}
             generationSettings={{
               status: generationStatus,
-              executor: generationBackend.preference,
-              onExecutorChange: generationBackend.setPreference,
-              workerAvailable: generationBackend.workerAvailable,
               // Read from the service, not the preference: a worker that could
               // not start falls back to the main thread mid-session, and Stop
               // must stop being offered at the same moment (issue #1087).

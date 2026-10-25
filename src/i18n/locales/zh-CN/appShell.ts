@@ -140,10 +140,7 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.retry': '重试',
   'appShell.generation.backend': '计算',
   'appShell.generation.menuAria': '刀具路径生成设置',
-  'appShell.generation.backendInline': '主线程',
-  'appShell.generation.backendInlineDetail': '生成期间窗口无法响应，“停止”必须等待该操作结束。',
-  'appShell.generation.backendWorker': '后台线程',
-  'appShell.generation.backendWorkerDetail': '生成期间保持窗口可操作，并使“停止”立即生效。',
+  'appShell.generation.display': '显示',
   'appShell.status.about': '关于 PureCutCNC',
   'appShell.status.shellMode': 'Shell 模式（仅开发环境）',
 
@@ -195,9 +192,9 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.face.around': '环绕',
   'appShell.face.switchToTop': '在顶面上工作',
   'appShell.face.switchToBottom': '在底面上工作',
-  'appShell.face.switchToAround': '绕棒料工作',
   'appShell.face.busy': '请先完成当前编辑，再切换加工面',
   'appShell.face.otherSide': '另一面',
   'appShell.face.showOtherSide': '以虚影显示另一面',
   'appShell.face.hideOtherSide': '隐藏另一面',
+  'appShell.face.flipped': '已绕 {axis} 轴翻转',
 }

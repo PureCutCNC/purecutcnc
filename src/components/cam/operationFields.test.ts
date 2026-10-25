@@ -31,6 +31,7 @@ import {
   OPERATION_FIELD_GROUP_IDS,
   OPERATION_FIELD_IDS,
   operationFieldsForGroup,
+  operationNoteShowsTextarea,
   resolvedEntryStrategy,
   type OperationFieldId,
 } from './operationFields'
@@ -548,6 +549,19 @@ function testRotaryPassesIsARotaryStrategyField() {
   }
 }
 
+/**
+ * The description field (issue #1102, proposal 10): an empty note is a compact
+ * link until it is clicked, while a stored note always renders the textarea —
+ * someone who wrote one is editing it, not adding it.
+ */
+function testEmptyNoteStartsAsALink() {
+  assert(!operationNoteShowsTextarea(false, ''), 'an empty note starts collapsed')
+  assert(operationNoteShowsTextarea(true, ''), 'revealing an empty note shows the textarea')
+  assert(operationNoteShowsTextarea(false, 'cast finish'), 'a stored note always shows the textarea')
+  assert(operationNoteShowsTextarea(true, 'cast finish'), 'and stays shown while editing')
+  assert(!operationNoteShowsTextarea(false, '   '), 'a whitespace-only note is still empty')
+}
+
 testEveryDeclaredIdHasExactlyOneRow()
 testEveryFieldNamesADeclaredGroup()
 testEveryFieldIsReachable()
@@ -565,5 +579,6 @@ testDrillingHidesTheTwoDimensionalStrategyFields()
 testRotaryPassesIsARotaryStrategyField()
 testClearingControlsMatchTheDeclaration()
 testScallopHeightHidesTheOverridesItReplaces()
+testEmptyNoteStartsAsALink()
 
 console.log('operationFields tests passed')

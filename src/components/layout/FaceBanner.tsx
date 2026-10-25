@@ -15,9 +15,7 @@
  */
 
 import { useProjectStore } from '../../store/projectStore'
-import { activeFace, activeSetup, projectUsesBothFaces } from '../../store/helpers/activeFace'
-import { useI18n } from '../../i18n/i18nContext'
-import { Icon } from '../Icon'
+import { projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { FaceSwitch } from './FaceSwitch'
 import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 
@@ -30,47 +28,22 @@ interface FaceBannerProps {
 }
 
 /**
- * The row above the sketch that says which face it is on (issue #945): how
- * the stock was turned for Bottom, and which face a new feature lands on. A
- * Top-only project shows none of that — only the switch, where the row
- * carries it.
+ * The row above the sketch that carries the face switch on a tablet shell
+ * (issue #945, #1102 slice E). It holds nothing else: a desktop shell keeps the
+ * switch in the workspace header and shows no row at all, and the switch
+ * itself explains the flip and the Around view through its tooltips, so the
+ * row cannot be cut off at tablet width.
  */
 export function FaceBanner({ withSwitch = false }: FaceBannerProps) {
-  const { t } = useI18n()
-  const face = useProjectStore((state) => activeFace(state.project))
-  const flipAxis = useProjectStore((state) => activeSetup(state.project).orientation.axis)
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
   const machine = useProjectStore((state) => machineMode(state.project))
-  // The switch follows the machine's rule, and the row only exists when it has
-  // something to carry: a hidden switch must not leave an empty banner behind.
-  const showSwitch = withSwitch && showsFaceSwitch(machine, bothFaces)
-  if (!bothFaces && !showSwitch) return null
+  // The row only exists when it has something to carry: a hidden switch must
+  // not leave an empty banner behind, and a desktop shell has no row at all.
+  if (!withSwitch || !showsFaceSwitch(machine, bothFaces)) return null
 
   return (
-    <div className={`face-banner face-banner--${face}`} data-face={face}>
-      {showSwitch ? <FaceSwitch /> : null}
-      {bothFaces && face === 'bottom' && (
-        <div className="face-banner__note" role="status">
-          <Icon id="refresh" size={16} />
-          <span>
-            {t(flipAxis === 'x' ? 'canvas.face.flippedAboutX' : 'canvas.face.flippedAboutY')}
-            {' '}
-            {t('canvas.face.topIsGhost')}
-          </span>
-        </div>
-      )}
-      {bothFaces && face === 'around' && (
-        <div className="face-banner__note" role="status">
-          <Icon id="face-around" size={16} />
-          <span>{t('canvas.face.aroundTurnsBar')}</span>
-        </div>
-      )}
-      {bothFaces && (
-        <div className="face-banner__hint">
-          <Icon id={face === 'top' ? 'face-top' : face === 'bottom' ? 'face-bottom' : 'face-around'} size={16} />
-          <span>{t(face === 'top' ? 'canvas.face.drawingOnTop' : face === 'bottom' ? 'canvas.face.drawingOnBottom' : 'canvas.face.drawingOnAround')}</span>
-        </div>
-      )}
+    <div className="face-banner">
+      <FaceSwitch />
     </div>
   )
 }
