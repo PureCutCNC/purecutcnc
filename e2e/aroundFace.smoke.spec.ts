@@ -360,9 +360,11 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // A flat face and Around share no plane: the other-side toggle is gone.
   await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
 
-  // ── A base and a pocket target, both Around ──
+  // ── Two cuts side by side, both Around ──
+  // Side by side, not nested: a shape drawn inside an Around cut is an add
+  // island now (issue #1108), and the second one is the pocket target below.
   await drawRect(page, 10, ZERO + 5, 100, ZERO + 15)
-  await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
+  await drawRect(page, 104, ZERO + 8, 116, ZERO + 12)
   const drawn = await getProject(page)
   const features = drawn.features as SavedFeature[]
   // A feature's operation lives on its shared definition, not on the instance.
@@ -370,7 +372,7 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   expect(features).toHaveLength(2)
   for (const feature of features) {
     expect(feature.authoringFace).toBe('around')
-    // The bar is already solid, so a shape drawn on it is a cut, never a base.
+    // The bar is already solid, so a lone shape drawn on it is a cut, never a base.
     expect(definitions[(feature as unknown as { definitionId: string }).definitionId]?.operation).toBe('subtract')
   }
   // The tree shows its face layers once the project has a feature; before that
