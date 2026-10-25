@@ -106,10 +106,10 @@ test('a Rotary round bar mounts the lower half in the static and playback views'
   expect(created.meta.projectType).toBe('rotary')
   expect(created.stock.shape).toBe('round')
 
-  // A base solid and a pocket inside it: the inner rectangle infers 'subtract',
-  // which is what the Pocket operation accepts. Stock is 200 long across X and
-  // Ø40 across Y.
-  await drawRect(page, 20, 5, 180, 35)
+  // The bar is the material (#1054), so a lone rectangle infers 'subtract', a
+  // cut into it, which is what the Pocket operation accepts. (A rectangle
+  // drawn inside it would be an island, issue #1108.) Stock is 200 long
+  // across X and Ø40 across Y.
   await drawRect(page, 60, 12, 140, 28)
   await addPocketRoughAndSelect(page, ui)
 
