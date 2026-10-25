@@ -45,9 +45,9 @@ function hasBottomContent(project: Project): boolean {
 }
 
 /**
- * The Top | Bottom | Around segmented control in the workspace header, plus
- * the "Other side" ghost toggle and, on a flipped Bottom view, the short
- * "Flipped about X/Y" chip (issue #1102 slice E).
+ * The Top | Bottom | Around segmented toggle in the workspace header, then —
+ * on a flipped Bottom view — the short "Flipped about X/Y" chip, and last the
+ * "Other side" ghost toggle (issue #1102 slices E and J).
  *
  * The Around segment appears only on a rotary project with a round bar
  * (issue #1028): those two authoring conditions are the whole reason the
@@ -111,6 +111,19 @@ export function FaceSwitch() {
           )
         })}
       </div>
+      {/* The flip chip explains the face just selected, so it sits beside the
+       * segments; the eye that shows the other side stays out to its right
+       * (issue #1102 slice J). */}
+      {extras.flipChip !== null && (
+        <span
+          className="face-switch__chip"
+          role="status"
+          title={`${t(extras.flipChip === 'x' ? 'canvas.face.flippedAboutX' : 'canvas.face.flippedAboutY')} ${t('canvas.face.topIsGhost')}`}
+        >
+          <Icon id="refresh" size={16} />
+          <span>{t('appShell.face.flipped', { axis: extras.flipChip.toUpperCase() })}</span>
+        </span>
+      )}
       {bothFaces && flatOtherSide && (
         <button
           type="button"
@@ -122,16 +135,6 @@ export function FaceSwitch() {
         >
           <Icon id={showOtherSide ? 'eye' : 'eye-off'} size={16} />
         </button>
-      )}
-      {extras.flipChip !== null && (
-        <span
-          className="face-switch__chip"
-          role="status"
-          title={`${t(extras.flipChip === 'x' ? 'canvas.face.flippedAboutX' : 'canvas.face.flippedAboutY')} ${t('canvas.face.topIsGhost')}`}
-        >
-          <Icon id="refresh" size={16} />
-          <span>{t('appShell.face.flipped', { axis: extras.flipChip.toUpperCase() })}</span>
-        </span>
       )}
     </div>
   )

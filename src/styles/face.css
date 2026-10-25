@@ -18,9 +18,16 @@
  * Bottom has its own amber, which marks a place and never a problem —
  * warnings stay on --warning-text and errors on --danger-text. */
 
-/* ── Workspace face switch ── */
+/* ── Workspace face switch ──
+ * A segmented toggle, not a second set of tabs (issue #1102 slice J): one
+ * soft rounded track and a single filled pill for the active face. The group
+ * carries no outer border and the segments carry no borders or underlines, so
+ * it cannot be read as another row of workspace tabs. `--face-switch-height`
+ * is the track's height; the flip chip and the eye take it too, which lines
+ * the row up and keeps the whole switch clear of the header's bottom line. */
 
 .face-switch {
+  --face-switch-height: 30px;
   display: flex;
   align-items: center;
   align-self: center;
@@ -35,9 +42,12 @@
 .face-switch__segments {
   display: flex;
   flex-shrink: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  overflow: hidden;
+  gap: 2px;
+  height: var(--face-switch-height);
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--line-strong) 55%, transparent);
 }
 
 .face-switch__segment,
@@ -56,19 +66,21 @@
 }
 
 .face-switch__segment {
+  height: calc(var(--face-switch-height) - 4px);
   border: 0;
-  border-right: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface-subtle);
-}
-
-.face-switch__segment:last-child {
-  border-right: 0;
+  border-radius: 8px;
+  background: transparent;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .face-switch__segment:hover:not(:disabled),
 .face-switch__ghost:hover {
   color: var(--text);
+}
+
+/* Inactive segments are plain text on the track; the hover is only a hint. */
+.face-switch__segment:hover:not(:disabled) {
+  background: var(--surface-hover);
 }
 
 .face-switch__segment:disabled {
@@ -82,24 +94,22 @@
   outline-offset: -2px;
 }
 
+/* The active face is a filled pill in that face's own colour, never an
+ * underline: top takes the accent, bottom its amber, Around the region violet
+ * (issue #395: the bar's unrolled surface, reusing the region token). */
 .face-switch__segment--top.face-switch__segment--active {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent-strong);
 }
 
 .face-switch__segment--bottom.face-switch__segment--active {
-  background: color-mix(in srgb, var(--face-bottom) 18%, transparent);
+  background: color-mix(in srgb, var(--face-bottom) 28%, transparent);
   color: var(--face-bottom-text);
-  box-shadow: inset 0 -2px 0 var(--face-bottom);
 }
 
-/* Around (issue #395): the bar's unrolled surface. It reuses the region
- * violet rather than adding a theme token. */
 .face-switch__segment--around.face-switch__segment--active {
-  background: color-mix(in srgb, var(--role-region) 18%, transparent);
+  background: color-mix(in srgb, var(--role-region) 28%, transparent);
   color: var(--role-region-text);
-  box-shadow: inset 0 -2px 0 var(--role-region);
 }
 
 .face-switch__ghost {
@@ -108,8 +118,8 @@
   background: var(--surface-subtle);
   /* Icon-only everywhere (issue #1102 slice E 15): the tablet look, squared. */
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--face-switch-height);
+  height: var(--face-switch-height);
   padding: 0;
 }
 
@@ -123,9 +133,12 @@
   /* Never smaller than its icon. */
   min-width: 34px;
   overflow: hidden;
-  padding: 3px 9px;
+  height: var(--face-switch-height);
+  padding: 0 9px;
   border: 1px solid color-mix(in srgb, var(--face-bottom) 60%, transparent);
-  border-radius: 14px;
+  /* Fully round at any height: the chip shares the track's height, which is
+   * the 30px toggle on desktop and the 44px tap target on a tablet shell. */
+  border-radius: 999px;
   background: color-mix(in srgb, var(--face-bottom) 9%, transparent);
   color: var(--face-bottom-text);
   font-size: 12px;
@@ -157,10 +170,12 @@
 
 
 /* Tablet shells carry the switch in the sketch's face row: full tap targets,
- * no label, and the row grows to hold them. */
+ * no label, and the row grows to hold them. The track takes the extra 2px of
+ * its own padding so the segments stay a full 44px. */
 [data-shell-mode='tablet'] .face-switch,
 [data-shell-mode='tablet-compact'] .face-switch {
   padding: 0;
+  --face-switch-height: calc(var(--touch-target, 44px) + 4px);
 }
 
 [data-shell-mode='tablet'] .centre-view--face-banner,
