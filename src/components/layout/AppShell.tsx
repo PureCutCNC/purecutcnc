@@ -619,9 +619,12 @@ export function AppShell({
                   {t('appShell.workspace.simulation')}
                 </button>
               </div>
-              <div className="panel-tabs-spacer" />
-              {/* Tablet shells hide this header; their switch sits in the sketch's face row. */}
+              {/* Tablet shells hide this header; their switch sits in the sketch's face row.
+                  The switch follows the tabs and the spacer comes after it, so
+                  the Bottom flip chip grows the row to the right and the face
+                  pills never move (issue #1102). */}
               {!tabletShell && <FaceSwitch />}
+              <div className="panel-tabs-spacer" />
               {!tabletShell && (
                 <button
                   id="panel-handle-right"
