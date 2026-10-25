@@ -24,7 +24,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { originFromFrontLeft, setupDialogSections } from './setupDialogSections'
+import { setupDialogSections } from './setupDialogSections'
 
 // Top: face up and the shared origin, nothing to flip or register.
 assert.deepEqual(setupDialogSections('top'), { flip: false, registration: false, faceUp: true }, 'Top hides flip and registration')
@@ -34,12 +34,5 @@ assert.deepEqual(setupDialogSections('bottom'), { flip: true, registration: true
 
 // Around: not a flip and not a face, so no face, flip or registration section.
 assert.deepEqual(setupDialogSections('around'), { flip: false, registration: false, faceUp: false }, 'Around shows only name and notes')
-
-// The origin reads from the front-left corner (issue #1102): sketch Y grows
-// towards the front, so a front-left origin on a 4 × 3 stock at (0, 3) is 0, 0.
-const bounds = { minX: 0, maxY: 3 }
-assert.deepEqual(originFromFrontLeft({ x: 0, y: 3, z: 0.75 }, bounds), { x: 0, y: 0, z: 0.75 }, 'front-left corner reads 0, 0')
-assert.deepEqual(originFromFrontLeft({ x: 4, y: 0, z: 0 }, bounds), { x: 4, y: 3, z: 0 }, 'back-right corner reads 4, 3')
-assert.deepEqual(originFromFrontLeft({ x: 3, y: 1, z: 0 }, { minX: 1, maxY: 4 }), { x: 2, y: 3, z: 0 }, 'measured from the stock, not from sketch zero')
 
 console.log('setup dialog section tests passed')

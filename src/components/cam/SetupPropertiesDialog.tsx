@@ -15,16 +15,15 @@
  */
 
 import { useState } from 'react'
-import { getStockBounds, type MachiningSetup, type Project } from '../../types/project'
-import { setupFace, setupOriginInCanonical, setupFrame } from '../../engine/setupOrientation'
+import type { MachiningSetup, Project } from '../../types/project'
+import { setupFace } from '../../engine/setupOrientation'
 import { useProjectStore } from '../../store/projectStore'
 import { activeSetup } from '../../store/helpers/activeFace'
 import { operationsDeletedWithSetup } from './setupSections'
-import { originFromFrontLeft, setupDialogSections } from './setupDialogSections'
+import { setupDialogSections } from './setupDialogSections'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
-import { formatLength } from '../../utils/units'
 
 export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup: MachiningSetup; onClose: () => void }) {
   const { t } = useI18n()
@@ -42,8 +41,6 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
   // A dialog cannot save over an intervening undo/edit to the setup.
   const unchanged = current && JSON.stringify(current) === JSON.stringify(setup)
-  // Shown the way the operator measures it: from the front-left corner, +Y away.
-  const origin = originFromFrontLeft(setupOriginInCanonical(project.origin, setupFrame({ ...setup.orientation, axis }, project.stock)), getStockBounds(project.stock))
   const removed = operationsDeletedWithSetup(project, setup.id)
   function save() {
     if (!unchanged) return
@@ -69,7 +66,7 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
         <FlipSketch axis={axis} />
       </> : null}
       {sections.faceUp ? <>
-        <div className="properties-field"><span>{t('cam.setup.sharedOrigin')}</span><span>{formatLength(origin.x, project.meta.units)}, {formatLength(origin.y, project.meta.units)}, {formatLength(origin.z, project.meta.units)} {project.meta.units}</span></div>
+        {/* No coordinates (Frank, #1102): measured from a corner they mean nothing on a round or freeform stock. */}
         <p className="properties-hint">{t('cam.setup.touchOff')}</p>
       </> : null}
       {sections.registration ? <>
