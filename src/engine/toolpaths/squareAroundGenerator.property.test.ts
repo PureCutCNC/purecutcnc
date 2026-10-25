@@ -3070,7 +3070,15 @@ for (const { entry, program } of CASES) {
             tip,
             moveSurfaceCell.material,
           )
-          const alongBound = standingAllowed ? Math.max(reachedBound, standingBound) : reachedBound
+          // #1050: a clipped no-centre triangle can raise a cell by up to one
+          // requested cell, and a rough stops one layer above that raised
+          // height, so a finish after a rough may remove that much extra stock
+          // in one pass. The same one-cell allowance is already part of the
+          // finished-surface over bound above; a rough's own cut gets none,
+          // because its own stepdown is the bound it must hold.
+          const samplerCellAllowance = stage.finish ? entry.requestedCellSize : 0
+          const alongBound = (standingAllowed ? Math.max(reachedBound, standingBound) : reachedBound)
+            + samplerCellAllowance
           if (!unlicensedFinish) {
             const alongMargin = alongBound - moveSurfaceWorst
             if (alongMargin < worstAlongMargin) {

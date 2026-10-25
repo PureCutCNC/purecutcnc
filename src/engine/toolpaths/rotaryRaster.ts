@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { triangleMaxZInCell } from './finishSurfaceParallel'
 import type { HeightMap, HeightMapBuildOptions } from './finishSurfaceParallel'
 
 /**
@@ -91,13 +92,12 @@ export const CENTRE_SLACK = 1e-7
 /**
  * Per-triangle range of cell **centres** on the bar's axis at `cellSize`.
  *
- * The map only ever samples cell centres, so a triangle whose axial span
- * contains none cannot contribute a value at any angle -- rotation never moves
- * that axis. On a mesh finer than the cell (the 1.47 M-vertex bust has ~0.005"
- * triangles against a 0.02" cell) that is most of the mesh: three quarters of
- * the triangles are dropped once, for every angle of the operation. The range
- * is also the exact axial band the raster must visit for the triangles that
- * survive, so the kernel never walks a cell whose centre is outside them.
+ * This is the centre-sampling range: it is the exact axial band the raster must
+ * visit to catch a triangle that covers a cell centre at some angle, because
+ * rotation never moves that axis. It is **not** a cull any more: since #1050 a
+ * triangle whose axial span contains no centre still contributes the maximum
+ * over each cell it overlaps, so the kernel also visits that triangle's bbox
+ * range when it reaches the clip pass.
  *
  * It is a superset of the centres inside the triangle: a centre outside the
  * corner span is rejected by the barycentric test anyway, and the range being
@@ -151,12 +151,14 @@ function axisCellRange(
  *   candidate whose axial range misses the window is rejected before it is
  *   turned at all (the window is the strip the cutter actually reads);
  * - no turned vertex buffer is written for a triangle whose projected bounds
- *   fall outside the window, and no z is computed for a triangle that covers no
- *   cell centre in it (the projection of a fine mesh is dominated by triangles
- *   smaller than one cell);
+ *   fall outside the window, and no cell is walked for a triangle outside it;
  * - a cell's value is the maximum over the triangles covering it, so
  *   rasterising exactly the submitted subset into exactly the windowed cells
- *   keeps the map a full map would have there (issue #1015 slice L).
+ *   keeps the map a full map would have there (issue #1015 slice L);
+ * - #1050's no-centre rule is implemented identically: a triangle that covers
+ *   no cell centre anywhere raises every cell it overlaps to its clipped
+ *   maximum, and one that covers a centre elsewhere on the map is left to the
+ *   centre samples alone so a windowed map agrees with a full one.
  */
 export function buildRotaryHeightMap(
   frame: RotaryRasterFrame,
@@ -219,12 +221,23 @@ export function buildRotaryHeightMap(
     const t = triangles ? triangles[n] / 3 : n
     const coverageBit = wallStart !== undefined && t >= wallStart ? 2 : 1
     // The bar-axis bounds never change with the turn: reject a triangle that
-    // cannot touch the window before paying for its projection.
+    // cannot touch the window before paying for its projection. The rejection
+    // uses the triangle's **bbox** cell range, not its centre range: a
+    // triangle narrower than a cell can have an empty centre range and still
+    // overlap a cell (#1050).
     const fixedFirst = axisFirst[t * 2]
     const fixedLast = axisFirst[t * 2 + 1]
-    if (fixedLast < axisMin || fixedFirst > axisMax) continue
     const s = t * 6
     const l = t * 3
+    let fixedMinAlong = along[l]
+    let fixedMaxAlong = fixedMinAlong
+    if (along[l + 1] < fixedMinAlong) fixedMinAlong = along[l + 1]
+    else if (along[l + 1] > fixedMaxAlong) fixedMaxAlong = along[l + 1]
+    if (along[l + 2] < fixedMinAlong) fixedMinAlong = along[l + 2]
+    else if (along[l + 2] > fixedMaxAlong) fixedMaxAlong = along[l + 2]
+    const fixedBBoxFirst = Math.floor((fixedMinAlong - (xAxis ? minX : minY)) * invCell)
+    const fixedBBoxLast = Math.floor((fixedMaxAlong - (xAxis ? minX : minY)) * invCell)
+    if (fixedBBoxLast < axisMin || fixedBBoxFirst > axisMax) continue
     // The same arithmetic `turnStripTriangles` writes into the turned buffer,
     // rounded the same way by the Float32 store; here it stays in registers.
     const a0 = section[s]
@@ -233,8 +246,17 @@ export function buildRotaryHeightMap(
     const u1 = section[s + 3]
     const a2 = section[s + 4]
     const u2 = section[s + 5]
+    const v0z = Math.fround(pivot + a0 * sin + u0 * cos)
+    const v1z = Math.fround(pivot + a1 * sin + u1 * cos)
+    const v2z = Math.fround(pivot + a2 * sin + u2 * cos)
     let v0x: number, v0y: number, v1x: number, v1y: number, v2x: number, v2y: number
     let colStart: number, colEnd: number, rowStart: number, rowEnd: number
+    // Centre ranges over the whole grid, and the projected bounds: #1050 needs
+    // both to tell a triangle that only misses this window's centres from one
+    // that misses every centre, and to clip to the cells it actually overlaps.
+    let fixedFullStart: number, fixedFullEnd: number
+    let crossFullStart: number, crossFullEnd: number
+    let tMinX: number, tMaxX: number, tMinY: number, tMaxY: number
     if (xAxis) {
       v0x = along[l]
       v1x = along[l + 1]
@@ -242,16 +264,26 @@ export function buildRotaryHeightMap(
       v0y = Math.fround(centre + a0 * cos - u0 * sin)
       v1y = Math.fround(centre + a1 * cos - u1 * sin)
       v2y = Math.fround(centre + a2 * cos - u2 * sin)
-      colStart = Math.max(minCol, fixedFirst)
-      colEnd = Math.min(maxCol, fixedLast)
-      let tMinY = v0y
-      let tMaxY = v0y
+      tMinX = v0x
+      tMaxX = v0x
+      if (v1x < tMinX) tMinX = v1x
+      else if (v1x > tMaxX) tMaxX = v1x
+      if (v2x < tMinX) tMinX = v2x
+      else if (v2x > tMaxX) tMaxX = v2x
+      tMinY = v0y
+      tMaxY = v0y
       if (v1y < tMinY) tMinY = v1y
       else if (v1y > tMaxY) tMaxY = v1y
       if (v2y < tMinY) tMinY = v2y
       else if (v2y > tMaxY) tMaxY = v2y
-      rowStart = Math.max(minRow, Math.ceil((tMinY - minY) * invCell - 0.5 - CENTRE_SLACK))
-      rowEnd = Math.min(maxRow, Math.floor((tMaxY - minY) * invCell - 0.5 + CENTRE_SLACK))
+      fixedFullStart = Math.max(0, fixedFirst)
+      fixedFullEnd = Math.min(width - 1, fixedLast)
+      colStart = Math.max(minCol, fixedFullStart)
+      colEnd = Math.min(maxCol, fixedFullEnd)
+      crossFullStart = Math.max(0, Math.ceil((tMinY - minY) * invCell - 0.5 - CENTRE_SLACK))
+      crossFullEnd = Math.min(height - 1, Math.floor((tMaxY - minY) * invCell - 0.5 + CENTRE_SLACK))
+      rowStart = Math.max(minRow, crossFullStart)
+      rowEnd = Math.min(maxRow, crossFullEnd)
     } else {
       v0y = along[l]
       v1y = along[l + 1]
@@ -259,69 +291,159 @@ export function buildRotaryHeightMap(
       v0x = Math.fround(centre + a0 * cos - u0 * sin)
       v1x = Math.fround(centre + a1 * cos - u1 * sin)
       v2x = Math.fround(centre + a2 * cos - u2 * sin)
-      rowStart = Math.max(minRow, fixedFirst)
-      rowEnd = Math.min(maxRow, fixedLast)
-      let tMinX = v0x
-      let tMaxX = v0x
+      tMinX = v0x
+      tMaxX = v0x
       if (v1x < tMinX) tMinX = v1x
       else if (v1x > tMaxX) tMaxX = v1x
       if (v2x < tMinX) tMinX = v2x
       else if (v2x > tMaxX) tMaxX = v2x
-      colStart = Math.max(minCol, Math.ceil((tMinX - minX) * invCell - 0.5 - CENTRE_SLACK))
-      colEnd = Math.min(maxCol, Math.floor((tMaxX - minX) * invCell - 0.5 + CENTRE_SLACK))
+      tMinY = v0y
+      tMaxY = v0y
+      if (v1y < tMinY) tMinY = v1y
+      else if (v1y > tMaxY) tMaxY = v1y
+      if (v2y < tMinY) tMinY = v2y
+      else if (v2y > tMaxY) tMaxY = v2y
+      fixedFullStart = Math.max(0, fixedFirst)
+      fixedFullEnd = Math.min(height - 1, fixedLast)
+      rowStart = Math.max(minRow, fixedFullStart)
+      rowEnd = Math.min(maxRow, fixedFullEnd)
+      crossFullStart = Math.max(0, Math.ceil((tMinX - minX) * invCell - 0.5 - CENTRE_SLACK))
+      crossFullEnd = Math.min(width - 1, Math.floor((tMaxX - minX) * invCell - 0.5 + CENTRE_SLACK))
+      colStart = Math.max(minCol, crossFullStart)
+      colEnd = Math.min(maxCol, crossFullEnd)
     }
-    if (colStart > colEnd || rowStart > rowEnd) continue
-
     const e0x = v1x - v0x, e0y = v1y - v0y
     const e1x = v2x - v0x, e1y = v2y - v0y
     const denom = e0x * e1y - e0y * e1x
     if (Math.abs(denom) < 1e-15) continue
-    let v0z = 0
-    let v1z = 0
-    let v2z = 0
     let triangleRise = 0
+    if (trackCellRise) {
+      const dz0 = v1z - v0z
+      const dz1 = v2z - v0z
+      const dzdx = (dz0 * e1y - dz1 * e0y) / denom
+      const dzdy = (dz1 * e0x - dz0 * e1x) / denom
+      const rise = (Math.abs(dzdx) + Math.abs(dzdy)) * cell / 2
+      if (Number.isFinite(rise)) triangleRise = rise
+    }
     let touched = false
-    for (let row = rowStart; row <= rowEnd; row++) {
-      for (let col = colStart; col <= colEnd; col++) {
-        const cx = minX + (col + 0.5) * cell
-        const cy = minY + (row + 0.5) * cell
+    // An empty centre range is normal for a triangle narrower than a cell; it
+    // still reaches the clip pass below.
+    if (colStart <= colEnd && rowStart <= rowEnd) {
+      for (let row = rowStart; row <= rowEnd; row++) {
+        for (let col = colStart; col <= colEnd; col++) {
+          const cx = minX + (col + 0.5) * cell
+          const cy = minY + (row + 0.5) * cell
 
-        const px = cx - v0x, py = cy - v0y
-        const u = (px * e1y - py * e1x) / denom
-        const v = (py * e0x - px * e0y) / denom
-        if (u < 0 || v < 0 || u + v > 1) continue
+          const px = cx - v0x, py = cy - v0y
+          const u = (px * e1y - py * e1x) / denom
+          const v = (py * e0x - px * e0y) / denom
+          if (u < 0 || v < 0 || u + v > 1) continue
 
-        if (!touched) {
-          v0z = Math.fround(pivot + a0 * sin + u0 * cos)
-          v1z = Math.fround(pivot + a1 * sin + u1 * cos)
-          v2z = Math.fround(pivot + a2 * sin + u2 * cos)
-          if (trackCellRise) {
-            const dz0 = v1z - v0z
-            const dz1 = v2z - v0z
-            const dzdx = (dz0 * e1y - dz1 * e0y) / denom
-            const dzdy = (dz1 * e0x - dz0 * e1x) / denom
-            const rise = (Math.abs(dzdx) + Math.abs(dzdy)) * cell / 2
-            if (Number.isFinite(rise)) triangleRise = rise
+          const w = 1 - u - v
+          const z = w * v0z + u * v1z + v * v2z
+          const idx = row * width + col
+          if (wallCoverage !== undefined && modelOnly !== undefined) {
+            const coverage = wallCoverage[idx]
+            if (coverageBit === 2) {
+              if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+              wallCoverage[idx] = coverage | 2
+            } else {
+              if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+              wallCoverage[idx] |= 1
+            }
           }
+          if (z > data[idx]) data[idx] = z
+          touched = true
         }
-
-        const w = 1 - u - v
-        const z = w * v0z + u * v1z + v * v2z
-        const idx = row * width + col
-        if (wallCoverage !== undefined && modelOnly !== undefined) {
-          const coverage = wallCoverage[idx]
-          if (coverageBit === 2) {
-            if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
-            wallCoverage[idx] = coverage | 2
-          } else {
-            if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
-            wallCoverage[idx] = coverage | 1
-          }
-        }
-        if (z > data[idx]) data[idx] = z
-        touched = true
       }
     }
+    if (!touched) {
+      // #1050: the triangle covers no cell centre in this window. If it covers
+      // one outside the window, a full map would have sampled it normally and
+      // must not clip, so the windowed map must not either (the strip-culled
+      // sampler is asserted bit-identical to the full map).
+      let centreOutsideWindow = false
+      const fixedWinStart = xAxis ? colStart : rowStart
+      const fixedWinEnd = xAxis ? colEnd : rowEnd
+      const crossWinStart = xAxis ? rowStart : colStart
+      const crossWinEnd = xAxis ? rowEnd : colEnd
+      if (fixedFullStart < fixedWinStart || fixedFullEnd > fixedWinEnd
+        || crossFullStart < crossWinStart || crossFullEnd > crossWinEnd) {
+        for (let row = crossFullStart; row <= crossFullEnd && !centreOutsideWindow; row++) {
+          const rowInWindow = row >= rowStart && row <= rowEnd
+          for (let col = fixedFullStart; col <= fixedFullEnd; col++) {
+            if (rowInWindow && col >= colStart && col <= colEnd) continue
+            const cx = minX + (col + 0.5) * cell
+            const cy = minY + (row + 0.5) * cell
+            const px = cx - v0x, py = cy - v0y
+            const u = (px * e1y - py * e1x) / denom
+            const v = (py * e0x - px * e0y) / denom
+            if (u >= 0 && v >= 0 && u + v <= 1) {
+              centreOutsideWindow = true
+              break
+            }
+          }
+        }
+      }
+      if (!centreOutsideWindow) {
+        // The cells the triangle *overlaps* (its projected bounding box), not
+        // the cells whose centres can lie inside it.
+        const clipFixedBBoxFirst = Math.max(0, fixedBBoxFirst)
+        const clipFixedBBoxLast = Math.min((xAxis ? width : height) - 1, fixedBBoxLast)
+        let crossBBoxFirst: number, crossBBoxLast: number
+        if (xAxis) {
+          crossBBoxFirst = Math.max(0, Math.floor((tMinY - minY) * invCell))
+          crossBBoxLast = Math.min(height - 1, Math.floor((tMaxY - minY) * invCell))
+        } else {
+          crossBBoxFirst = Math.max(0, Math.floor((tMinX - minX) * invCell))
+          crossBBoxLast = Math.min(width - 1, Math.floor((tMaxX - minX) * invCell))
+        }
+        const clipColStart = Math.max(minCol, xAxis ? clipFixedBBoxFirst : crossBBoxFirst)
+        const clipColEnd = Math.min(maxCol, xAxis ? clipFixedBBoxLast : crossBBoxLast)
+        const clipRowStart = Math.max(minRow, xAxis ? crossBBoxFirst : clipFixedBBoxFirst)
+        const clipRowEnd = Math.min(maxRow, xAxis ? crossBBoxLast : clipFixedBBoxLast)
+        if (clipColStart <= clipColEnd && clipRowStart <= clipRowEnd) {
+          const globalMaxZ = v0z > v1z ? (v0z > v2z ? v0z : v2z) : (v1z > v2z ? v1z : v2z)
+          const singleCell = clipColStart === clipColEnd && clipRowStart === clipRowEnd
+            && tMinX >= minX + clipColStart * cell && tMaxX <= minX + (clipColStart + 1) * cell
+            && tMinY >= minY + clipRowStart * cell && tMaxY <= minY + (clipRowStart + 1) * cell
+          for (let row = clipRowStart; row <= clipRowEnd; row++) {
+            for (let col = clipColStart; col <= clipColEnd; col++) {
+              const idx = row * width + col
+              if (coverageBit === 1) {
+                if (wallCoverage !== undefined && modelOnly !== undefined) {
+                  const coveredByWall = (wallCoverage[idx] & 2) !== 0
+                  if (coveredByWall ? globalMaxZ <= modelOnly[idx] : globalMaxZ <= data[idx]) continue
+                } else if (globalMaxZ <= data[idx]) continue
+              } else if (globalMaxZ <= data[idx] && wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0) {
+                continue
+              }
+              const cellMinX = minX + col * cell
+              const cellMinY = minY + row * cell
+              const z = singleCell
+                ? globalMaxZ
+                : triangleMaxZInCell(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z,
+                  cellMinX, cellMinY, cellMinX + cell, cellMinY + cell)
+              if (z === Number.NEGATIVE_INFINITY) continue
+              if (wallCoverage !== undefined && modelOnly !== undefined) {
+                const coverage = wallCoverage[idx]
+                if (coverageBit === 2) {
+                  if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+                  wallCoverage[idx] = coverage | 2
+                } else {
+                  if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+                  wallCoverage[idx] |= 1
+                }
+              }
+              if (z > data[idx]) data[idx] = z
+            }
+          }
+        }
+      }
+    }
+    // No-centre clip contributions are exact within their cell, so they add no
+    // rise allowance; only a centre sample can under-read between centre and
+    // cell edge (issue #1050).
     if (touched && triangleRise > cellRise) cellRise = triangleRise
   }
 

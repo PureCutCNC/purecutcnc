@@ -61,26 +61,34 @@ import type { Project } from '../../types/project'
 // here writes a tool change, and a tool change now carries one restart block
 // (`G90 G94 G17`, the units word, a safe-Z rapid and the start plane). The
 // `motion` hashes did not move — the generated toolpaths are unchanged.
+// #1050 re-captures six rows on the two mesh fixtures and both model-in-pocket
+// rows: the height map now raises the cells a triangle-with-no-cell-centre
+// overlaps to its clipped maximum, so thin/off-lattice triangles add surface
+// height the centre samples missed. `3d-imported-block-test3.camj` parallel
+// 3990 -> 3989 and waterline 3323 -> 3320 (both operations); `model-in-pocket`
+// parallel 786 -> 794 and waterline 3836 -> 3964. `issue-401-cone-finish.camj`
+// is byte-identical. The maximum height-map and emitted-tip changes on these
+// fixtures are measured and reported in the #1050 PR.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
-    "moves": 3990,
-    "motion": "6da5830f50426c7f9ff513b39403c867f41d373f0ce2c08d1a2ba42f75834929",
-    "gcode": "87af0d9dbe5263995989911099ddfb43284b58f629a3040b2ec5325bc95bb10c"
+    "moves": 3989,
+    "motion": "b58421690f0f37fce1da777d0f38b96d697fcdc8e3f6d5f7ca74e97aae0fbb4e",
+    "gcode": "f82ea47b966efa60e8a5e21ed98f80d516598c389bfbccde3013e0e08809c505"
   },
   "3d-imported-block-test3.camj/op6792424/waterline": {
-    "moves": 3323,
-    "motion": "0e082c29859152dec78d32443feb592b3a4256abeb87ece9167a1848857dec0b",
-    "gcode": "9b1a60cd5c72c34462057f278be6d96f2e2ba566ce25b60d80d8cbf494067aeb"
+    "moves": 3320,
+    "motion": "e16e9b1040b0af20d325d5cbe324daaed3c52c5d1e5299fb4440e345cb3263e1",
+    "gcode": "4c279a67b4743df97a4824abe7603f47c2de736a32794c30234b9768bb745f56"
   },
   "3d-imported-block-test3.camj/op6792425/parallel": {
-    "moves": 3990,
-    "motion": "a92478eeb03c84cb5a2d005c3a3ed349aa39aaee43de7e1cda73a16976d22a7d",
-    "gcode": "8cc7b66eecd2b390667b87f284b98e41daa4ac5f6e267289a9963a70032f087f"
+    "moves": 3989,
+    "motion": "a6bd146c39df22714fb90a5c33b248a32b19db02c132d639230f09751df6f716",
+    "gcode": "bbac4da1fa1cf19c384832f7b2dd54ece2467d7ede0ffd130acf2a3ca106a14f"
   },
   "3d-imported-block-test3.camj/op6792425/waterline": {
-    "moves": 3323,
-    "motion": "dd1417225749dffb93f8116706437a5826204538ff14c239f146e7ed2f240292",
-    "gcode": "350a707ef252724ab201da594e2f5ee8859417f637eb84182c72ac57f3d0ced1"
+    "moves": 3320,
+    "motion": "fafcde5e2eca99cbbd99616f412cd1472279bf3834e2dc7bb7ab37508854a23f",
+    "gcode": "613fdb54453a4317571650a87203f5398c8880f2331820071ba47ccad6cbdac5"
   },
   "issue-401-cone-finish.camj/op0925/parallel": {
     "moves": 28245,
@@ -103,14 +111,14 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "aa5559d91531f8cccc95f0c26eb7a15c0d3b53ee58cf22e0d8326569b695bd7e"
   },
   "model-in-pocket.camj/op6792442/parallel": {
-    "moves": 786,
-    "motion": "b7172e3a6f328fd188198a366eaf384b4ff74a2b12c1f204d2a468e3a3c6d6fc",
-    "gcode": "dc580bbad5da62283abb49e3cc20cdc1e3b594f712104213d5a56a970c5d49cf"
+    "moves": 794,
+    "motion": "c8464da06323d0890cf2a50fc12d72d6d9fcc6bee330d8dfeb4148905abfe62a",
+    "gcode": "e246749c6d010e20d4bc0104ea59e77ff9f1199d0cbeb0ae00d7e5021a735d90"
   },
   "model-in-pocket.camj/op6792442/waterline": {
-    "moves": 3836,
-    "motion": "e31625615929fefa03233a3dd1eb3554ecdcd27beb0578724958c5ddaa706a22",
-    "gcode": "b146c8c4db7a47bad60d4dff623d7ba4a2b64a121944649761ea1f5e6b3da330"
+    "moves": 3964,
+    "motion": "154bf083f83c2f286eb2e341261c57a3375af679e3f6de2bee170bfde1c24be6",
+    "gcode": "e0c603e2671e129dc7d5e60d2d3eb7018f31d1894bbce44a94eae4ac9757d158"
   }
 }
 

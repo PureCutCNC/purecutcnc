@@ -1611,9 +1611,15 @@ for (const axis of ['x', 'y'] as const) {
   // [0, 360] for the whole program. The same cuts and depths are made; their
   // order and direction differ, and the seam between two layers costs one more
   // merge point (2092 -> 2093).
-  assert.equal(result.moves.length, 2093, 'rough fixture keeps its move count')
+  //
+  // Re-captured for #1050: the height map now raises the cells a no-centre
+  // triangle overlaps to that triangle's clipped maximum, so the fixture's
+  // thin, off-lattice triangles contribute heights the centre sample missed.
+  // The sampled tips move, which changes how many merges a run survives and
+  // where the layer boundaries fall: 2093 -> 2157 moves.
+  assert.equal(result.moves.length, 2157, 'rough fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    '9acf48a01a0a0e7256b922643680ed7e6ce23fdb8a0fff904f35fb5c9471efb4', 'rough fixture keeps its exact points')
+    '03e918818dc108bb52da26833dffe8918f7fe3448db9a0833aa6ec2ce5fcf9b6', 'rough fixture keeps its exact points')
   assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
@@ -1651,9 +1657,12 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
     stepover: 0.5, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 150,
     safeRadius: 21.6, requestedCellSize: fixtureCell,
   }, {})
-  assert.equal(result.moves.length, 8844, 'finish fixture keeps its move count')
+  // Re-captured for #1050 for the same reason as the rough fixture above: the
+  // clipped no-centre contributions move the sampled tips, so the merged run
+  // count and the positions it keeps change. 8844 -> 9075 moves.
+  assert.equal(result.moves.length, 9075, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'e9067d81a3ad5bc657224f7f908db815dd16aaa8fefdd48de885211025d706e6', 'finish fixture keeps its exact points')
+    'd93e82e5ecb9b275f1d5906ec4defe83853dd1bfc789222bd1d77f2f828ba2e4', 'finish fixture keeps its exact points')
 }
 
 // ---------------------------------------------------------------------------

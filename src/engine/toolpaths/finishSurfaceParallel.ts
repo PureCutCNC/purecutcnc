@@ -238,8 +238,10 @@ export interface HeightMap {
   cellSize: number
   /**
    * With `trackCellRise`, the largest `(|dz/dx| + |dz/dy|) * cellSize / 2` over
-   * the triangles that rasterised a cell (issue #1045 slice F). Omitted (or 0)
-   * otherwise.
+   * the **centre-sampled** triangles that rasterised a cell (issue #1045 slice
+   * F). A #1050 no-centre triangle contributes its exact maximum inside the
+   * cell, so it is excluded: it cannot under-read and must not inflate this one
+   * scalar. Omitted (or 0) otherwise.
    */
   cellRise?: number
   /**
@@ -316,11 +318,12 @@ export interface HeightMapBuildOptions {
    */
   readonly triangles?: Uint32Array
   /**
-   * Track the largest rise a rasterised triangle's plane makes across half of
-   * one cell (issue #1045 slice F). Reported as {@link HeightMap.cellRise}, it
-   * bounds how far a cell-centre height can sit below the true surface inside
-   * that cell, so a caller that reads the map as a support can pad its tip by
-   * exactly that much.
+   * Track the largest rise a centre-sampled triangle's plane makes across half
+   * of one cell (issue #1045 slice F). Reported as {@link HeightMap.cellRise},
+   * it bounds how far a cell-centre height can sit below the true surface
+   * inside that cell, so a caller that reads the map as a support can pad its
+   * tip by exactly that much. #1050's clipped no-centre contributions are exact
+   * and are deliberately not counted.
    */
   readonly trackCellRise?: boolean
   /**
@@ -340,6 +343,131 @@ export interface HeightMapBuildOptions {
   readonly wallTriangleStart?: number
 }
 
+/**
+ * Scratch polygons for {@link triangleMaxZInCell}. A triangle clipped by four
+ * cell edges has at most 7 vertices, so 8 is enough; module scope keeps the
+ * no-centre path allocation-free, and the helper never calls itself.
+ */
+const CLIP_VERTICES = 8
+const clipA = new Float64Array(CLIP_VERTICES * 3)
+const clipB = new Float64Array(CLIP_VERTICES * 3)
+
+/**
+ * Clip one polygon against one axis-aligned cell edge, carrying Z by linear
+ * interpolation so a clipped vertex keeps the triangle's plane height.
+ *
+ * `keepAbove` selects `coord >= limit` (the cell's low edge) instead of
+ * `coord <= limit` (its high edge). Vertices are packed `x, y, z`.
+ */
+function clipPolygonAtEdge(
+  src: Float64Array,
+  srcCount: number,
+  axis: 0 | 1,
+  limit: number,
+  keepAbove: boolean,
+  dst: Float64Array,
+): number {
+  let out = 0
+  let prev = srcCount - 1
+  let prevX = src[prev * 3]
+  let prevY = src[prev * 3 + 1]
+  let prevZ = src[prev * 3 + 2]
+  let prevInside = keepAbove
+    ? (axis === 0 ? prevX : prevY) >= limit
+    : (axis === 0 ? prevX : prevY) <= limit
+  for (let v = 0; v < srcCount; v++) {
+    const curX = src[v * 3]
+    const curY = src[v * 3 + 1]
+    const curZ = src[v * 3 + 2]
+    const curCoord = axis === 0 ? curX : curY
+    const inside = keepAbove ? curCoord >= limit : curCoord <= limit
+    if (inside !== prevInside) {
+      // The edge crosses the boundary. On the way **in**, the intersection
+      // comes before the vertex; on the way out, after it. Keeping that order
+      // is what stops the clipped polygon from self-intersecting (and its
+      // signed area from cancelling to zero) at a cell edge.
+      const prevCoord = axis === 0 ? prevX : prevY
+      const denom = curCoord - prevCoord
+      const t = denom !== 0 ? (limit - prevCoord) / denom : 0
+      dst[out * 3] = prevX + (curX - prevX) * t
+      dst[out * 3 + 1] = prevY + (curY - prevY) * t
+      dst[out * 3 + 2] = prevZ + (curZ - prevZ) * t
+      out++
+    }
+    if (inside) {
+      dst[out * 3] = curX
+      dst[out * 3 + 1] = curY
+      dst[out * 3 + 2] = curZ
+      out++
+    }
+    prev = v
+    prevX = curX
+    prevY = curY
+    prevZ = curZ
+    prevInside = inside
+  }
+  return out
+}
+
+/**
+ * The highest point of a triangle inside an axis-aligned cell (issue #1050).
+ *
+ * The height map samples one cell centre, so a narrow feature that misses
+ * every centre used to contribute nothing and could be cut through silently.
+ * For a triangle that covers no cell centre the rasteriser raises each cell it
+ * overlaps to this value instead: clip the triangle to the cell and take the
+ * maximum Z at a clipped-polygon vertex, because Z is linear over the triangle
+ * and a linear function on a convex polygon peaks at a vertex.
+ *
+ * Returns `-Infinity` when the triangle only touches the cell boundary: a
+ * zero-area sliver occupies no cell, so it must not lift one.
+ */
+export function triangleMaxZInCell(
+  ax: number, ay: number, az: number,
+  bx: number, by: number, bz: number,
+  cx: number, cy: number, cz: number,
+  minX: number, minY: number, maxX: number, maxY: number,
+): number {
+  clipA[0] = ax; clipA[1] = ay; clipA[2] = az
+  clipA[3] = bx; clipA[4] = by; clipA[5] = bz
+  clipA[6] = cx; clipA[7] = cy; clipA[8] = cz
+  let count = clipPolygonAtEdge(clipA, 3, 0, minX, true, clipB)
+  if (count === 0) return Number.NEGATIVE_INFINITY
+  count = clipPolygonAtEdge(clipB, count, 0, maxX, false, clipA)
+  if (count === 0) return Number.NEGATIVE_INFINITY
+  count = clipPolygonAtEdge(clipA, count, 1, minY, true, clipB)
+  if (count === 0) return Number.NEGATIVE_INFINITY
+  count = clipPolygonAtEdge(clipB, count, 1, maxY, false, clipA)
+  if (count === 0) return Number.NEGATIVE_INFINITY
+  // A boundary touch clips to a line: area zero. Reject it before its (real)
+  // Z can lift a cell the triangle does not actually occupy.
+  let area2 = 0
+  for (let v = 0; v < count; v++) {
+    const next = (v + 1) % count
+    area2 += clipA[v * 3] * clipA[next * 3 + 1] - clipA[next * 3] * clipA[v * 3 + 1]
+  }
+  if (!(Math.abs(area2) > 1e-12 * (maxX - minX) * (maxY - minY))) {
+    return Number.NEGATIVE_INFINITY
+  }
+  let maxZ = Number.NEGATIVE_INFINITY
+  for (let v = 0; v < count; v++) {
+    const z = clipA[v * 3 + 2]
+    if (z > maxZ) maxZ = z
+  }
+  return maxZ
+}
+
+/**
+ * Rasterise a triangle mesh into a height map, one value per cell.
+ *
+ * Normally a cell's value is the highest triangle at the cell's centre. That
+ * loses any feature narrower than a cell (issue #1050), so a triangle that
+ * covers **no** cell centre instead raises every cell it overlaps to the
+ * highest point of the triangle inside that cell. A triangle that covers a
+ * centre is rasterised exactly as before, and the no-centre decision is made
+ * over the whole grid even when a window is rasterised, so a windowed map still
+ * agrees with a full one.
+ */
 export function buildHeightMap(
   positions: Float32Array,
   index: Uint32Array,
@@ -392,10 +520,14 @@ export function buildHeightMap(
     const tMinY = Math.min(v0y, v1y, v2y)
     const tMaxY = Math.max(v0y, v1y, v2y)
 
-    const colStart = Math.max(minCol, Math.floor((tMinX - bbox.minX) / cellSize))
-    const colEnd   = Math.min(maxCol, Math.floor((tMaxX - bbox.minX) / cellSize))
-    const rowStart = Math.max(minRow, Math.floor((tMinY - bbox.minY) / cellSize))
-    const rowEnd   = Math.min(maxRow, Math.floor((tMaxY - bbox.minY) / cellSize))
+    const fullColStart = Math.max(0, Math.floor((tMinX - bbox.minX) / cellSize))
+    const fullColEnd   = Math.min(width - 1, Math.floor((tMaxX - bbox.minX) / cellSize))
+    const fullRowStart = Math.max(0, Math.floor((tMinY - bbox.minY) / cellSize))
+    const fullRowEnd   = Math.min(height - 1, Math.floor((tMaxY - bbox.minY) / cellSize))
+    const colStart = Math.max(minCol, fullColStart)
+    const colEnd   = Math.min(maxCol, fullColEnd)
+    const rowStart = Math.max(minRow, fullRowStart)
+    const rowEnd   = Math.min(maxRow, fullRowEnd)
     if (colStart > colEnd || rowStart > rowEnd) continue
 
     const e0x = v1x - v0x, e0y = v1y - v0y
@@ -435,13 +567,88 @@ export function buildHeightMap(
             wallCoverage[idx] = coverage | 2
           } else {
             if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
-            wallCoverage[idx] = coverage | 1
+            wallCoverage[idx] |= 1
           }
         }
         if (z > data[idx]) data[idx] = z
         touched = true
       }
     }
+    if (!touched) {
+      // #1050: a triangle that covers no cell centre contributes nothing to
+      // the centre-sampled map, which is how a fin narrower than a cell used to
+      // vanish. Before clipping it to the cells it overlaps, decide whether it
+      // covers a centre *outside* this window: a full map would then have
+      // sampled it normally and must not also clip, so a windowed map has to
+      // agree with the full one (the strip-culling sampler relies on that).
+      let centreOutsideWindow = false
+      if (fullColStart < colStart || fullColEnd > colEnd || fullRowStart < rowStart || fullRowEnd > rowEnd) {
+        for (let row = fullRowStart; row <= fullRowEnd && !centreOutsideWindow; row++) {
+          const rowInWindow = row >= rowStart && row <= rowEnd
+          for (let col = fullColStart; col <= fullColEnd; col++) {
+            if (rowInWindow && col >= colStart && col <= colEnd) continue
+            const cx = bbox.minX + (col + 0.5) * cellSize
+            const cy = bbox.minY + (row + 0.5) * cellSize
+            const px = cx - v0x, py = cy - v0y
+            const u = (px * e1y - py * e1x) / denom
+            const v = (py * e0x - px * e0y) / denom
+            if (u >= 0 && v >= 0 && u + v <= 1) {
+              centreOutsideWindow = true
+              break
+            }
+          }
+        }
+      }
+      if (!centreOutsideWindow) {
+        // The triangle is entirely inside one cell's bounding box: the whole
+        // triangle lies in that cell, so its clipped maximum is its global
+        // maximum (and most fine-mesh triangles take this path).
+        const singleCell = colStart === colEnd && rowStart === rowEnd
+          && tMinX >= bbox.minX + colStart * cellSize
+          && tMaxX <= bbox.minX + (colStart + 1) * cellSize
+          && tMinY >= bbox.minY + rowStart * cellSize
+          && tMaxY <= bbox.minY + (rowStart + 1) * cellSize
+        const globalMaxZ = v0z > v1z ? (v0z > v2z ? v0z : v2z) : (v1z > v2z ? v1z : v2z)
+        for (let row = rowStart; row <= rowEnd; row++) {
+          for (let col = colStart; col <= colEnd; col++) {
+            const idx = row * width + col
+            // The global maximum is an upper bound for the clipped maximum, so
+            // a cell it cannot beat needs no clip. The model-only height is the
+            // relevant ceiling for a model triangle over a wall cell.
+            if (coverageBit === 1) {
+              if (wallCoverage !== undefined || modelOnly !== undefined) {
+                const coveredByWall = wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0
+                if (coveredByWall ? globalMaxZ <= (modelOnly?.[idx] ?? Number.NEGATIVE_INFINITY) : globalMaxZ <= data[idx]) continue
+              } else if (globalMaxZ <= data[idx]) continue
+            } else if (globalMaxZ <= data[idx] && wallCoverage !== undefined && (wallCoverage[idx] & 2) !== 0) {
+              continue
+            }
+            const cellMinX = bbox.minX + col * cellSize
+            const cellMinY = bbox.minY + row * cellSize
+            const z = singleCell
+              ? globalMaxZ
+              : triangleMaxZInCell(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z,
+                cellMinX, cellMinY, cellMinX + cellSize, cellMinY + cellSize)
+            if (z === Number.NEGATIVE_INFINITY) continue
+            if (wallCoverage !== undefined && modelOnly !== undefined) {
+              const coverage = wallCoverage[idx]
+              if (coverageBit === 2) {
+                if ((coverage & 2) === 0) modelOnly[idx] = data[idx]
+                wallCoverage[idx] = coverage | 2
+              } else {
+                if ((coverage & 2) !== 0 && z > modelOnly[idx]) modelOnly[idx] = z
+                wallCoverage[idx] |= 1
+              }
+            }
+            if (z > data[idx]) data[idx] = z
+          }
+        }
+      }
+    }
+    // Only a centre-sampled triangle can under-read the surface between its
+    // centre and the cell edge. A no-centre triangle contributes the exact
+    // maximum inside the cell, so it needs no rise allowance and must not
+    // inflate the one scalar the around sampler adds to every sample.
     if (touched && triangleRise > cellRise) cellRise = triangleRise
   }
 
