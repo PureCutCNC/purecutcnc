@@ -120,8 +120,18 @@ test('provisional Bottom cross-face Add does not select a ghost', async ({ app, 
 test('Move lists removed targets and setup deletion lists its operations', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
+  // Operations are selected on their own face (issue #1102), and Move lists
+  // only real setups from there: give Bottom its setup first by adding an
+  // operation to it, then pick Top pass on Top.
   await ui.face.segment(page,'Bottom').click()
-  await ui.setupCam.section(page,'top').getByRole('button',{ name:/Top operations/ }).click()
+  await ui.setupCam.add(page).click()
+  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
+  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
+  await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
+  await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
+  await ui.face.segment(page,'Top').click()
+  // From Top, the Bottom operation is a ghost row: listed, never selected.
+  await expect(ui.setupCam.section(page,'bottom').locator('.tree-row--ghost')).toHaveCount(1)
   await ui.operations.rowByName(page,'Top pass').click()
   await ui.setupCam.properties(page).getByRole('button',{ name:'Move…',exact:true }).click()
   const move = ui.setupCam.dialog(page)

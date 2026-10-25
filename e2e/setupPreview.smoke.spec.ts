@@ -82,8 +82,8 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   const project = await seedTwoSetups(page)
   const topId = project.setups[0].id
 
-  // The inactive setup's section starts collapsed.
-  await ui.setupCam.section(page, 'bottom').getByRole('button', { name: /Bottom operations/ }).click()
+  // An operation is selected on its own face (issue #1102).
+  await ui.face.segment(page, 'Bottom').click()
   await ui.operations.rowByName(page, 'Bottom pass').click()
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
@@ -114,7 +114,9 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   await page.screenshot({ path: testInfo.outputPath('top-simulation.png') })
 
   // Selecting an operation hands the choice back to its setup.
+  await ui.face.segment(page, 'Top').click()
   await ui.operations.rowByName(page, 'Top pass').click()
+  await ui.face.segment(page, 'Bottom').click()
   await ui.operations.rowByName(page, 'Bottom pass').click()
   await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
 })
