@@ -77,10 +77,44 @@ export function camSetupSections(project: Project): { grouped: boolean; sections
     registrationCount: setup.registration.length,
     registrationMissing: setupLacksRegistration(project, setup) || (!saved.includes(setup) && saved.length > 0),
   }))
-  // An Around setup is always its own section (issue #395), even as the
-  // project's only setup, so its "Around operations" heading and "Add to
-  // Around" target are never the flat, unlabelled list.
-  return { grouped: projectExportsPerSetup(project) || setups.length > saved.length || setups.some((setup) => setup.kind === 'around'), sections }
+  return { grouped: setupListGrouped(project, setups), sections }
+}
+
+/**
+ * Whether the operations list is split into one section per setup — what
+ * `camSetupSections` reports as `grouped`. An Around setup is always its own
+ * section (issue #395), even as the project's only setup, so its "Around
+ * operations" heading and "Add to Around" target are never the flat,
+ * unlabelled list. `listed` is the setup list the sections are built from,
+ * which may include a provisional setup the project does not hold yet.
+ */
+function setupListGrouped(project: Pick<Project, 'setups'>, listed: readonly MachiningSetup[]): boolean {
+  const saved = project.setups ?? []
+  return projectExportsPerSetup(project) || listed.length > saved.length || listed.some((setup) => setup.kind === 'around')
+}
+
+/**
+ * Whether an operation is on the setup the workspace is on (issue #1102).
+ *
+ * The operations list shows every setup's operations, but only the active
+ * setup's can be used from the face in view: an operation from another face is
+ * listed as a ghost row, like a feature from the other face in the feature
+ * tree. A project that is not grouped has one flat setup, so every operation
+ * in it is on the active setup.
+ *
+ * Membership follows the panel's own: an operation belongs to the setup its
+ * `setupId` names, and one with no `setupId` reads as the first setup listed —
+ * the provisional setup the workspace is on is listed too, since it is the
+ * card being shown. Setups are compared by id, never by face: two setups can
+ * turn the same face up and stay distinct programs.
+ */
+export function operationOnActiveSetup(project: Project, operation: Operation): boolean {
+  const active = activeSetup(project)
+  const saved = project.setups ?? []
+  const listed = saved.some((setup) => setup.id === active.id) ? saved : [...saved, active]
+  if (!setupListGrouped(project, listed)) return true
+  const owner = setupForOperation(project, operation) ?? listed[0]
+  return owner !== undefined && owner.id === active.id
 }
 
 /** What one setup card's header shows (issue #1102). */

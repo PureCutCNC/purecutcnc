@@ -371,6 +371,9 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.treeRow.duplicateOperation': 'Operation duplizieren',
   'cam.treeRow.deleteOperation': 'Operation löschen',
   'cam.treeRow.dragToReorder': 'Zum Umsortieren ziehen',
+  'cam.treeRow.ghostTop': 'Auf der Oberseite. Zum Bearbeiten zur Oberseite wechseln.',
+  'cam.treeRow.ghostBottom': 'Auf der Unterseite. Zum Bearbeiten zur Unterseite wechseln.',
+  'cam.treeRow.ghostAround': 'Auf der Rundum-Fläche. Zum Bearbeiten dorthin wechseln.',
 
   // ── Add operation menu ──
   'cam.addMenu.operation': 'Operation',

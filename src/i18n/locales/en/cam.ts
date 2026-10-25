@@ -374,6 +374,9 @@ export const camEn = {
   'cam.treeRow.duplicateOperation': 'Duplicate operation',
   'cam.treeRow.deleteOperation': 'Delete operation',
   'cam.treeRow.dragToReorder': 'Drag to reorder',
+  'cam.treeRow.ghostTop': 'On the top face. Switch to the top face to edit it.',
+  'cam.treeRow.ghostBottom': 'On the bottom face. Switch to the bottom face to edit it.',
+  'cam.treeRow.ghostAround': 'On the around face. Switch to it to edit.',
 
   // ── Add operation menu ──
   'cam.addMenu.operation': 'Operation',

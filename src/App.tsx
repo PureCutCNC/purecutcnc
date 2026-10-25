@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
+import { operationOnActiveSetup } from './components/cam/setupSections'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import type { OperationKind } from './types/project'
 import { FeatureContextMenu } from './components/feature-tree/FeatureContextMenu'
@@ -158,9 +159,14 @@ function App() {
     openRemoveFromOperationSubmenu,
   } = useTreeContextMenu({ project })
 
+  // Selection follows the face (issue #1102): an operation of the setup the
+  // workspace is not on is selected nowhere — not in the CAM list, the sketch
+  // toolpaths or the simulation. The stored id is kept, so switching back to
+  // its face restores the selection; only what reads it is derived.
+  const selectedOperationForSetup = project.operations.find((operation) => operation.id === selectedOperationId)
   const effectiveSelectedOperationId =
-    selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
-      ? selectedOperationId
+    selectedOperationForSetup && operationOnActiveSetup(project, selectedOperationForSetup)
+      ? selectedOperationForSetup.id
       : null
 
   const selectedOperation = useMemo(

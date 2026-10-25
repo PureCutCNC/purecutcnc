@@ -375,6 +375,9 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.treeRow.duplicateOperation': '复制操作',
   'cam.treeRow.deleteOperation': '删除操作',
   'cam.treeRow.dragToReorder': '拖动以重新排序',
+  'cam.treeRow.ghostTop': '位于顶面。切换到顶面后可编辑。',
+  'cam.treeRow.ghostBottom': '位于底面。切换到底面后可编辑。',
+  'cam.treeRow.ghostAround': '位于环绕面。切换到该面后可编辑。',
 
   // ── Add operation menu ──
   'cam.addMenu.operation': '加工操作',
