@@ -2265,8 +2265,13 @@ export function CAMPanel({
                         ref={camPlanButtonRef}
                         className="cam-header-action cam-header-action--plan"
                         type="button"
-                        disabled={project.features.length === 0 || currentSetupFace === 'around'}
-                        title={currentSetupFace === 'around' ? camT('cam.plan.unavailableAround') : undefined}
+                        // CAM Plan reads depths from the top face, so it plans the
+                        // Top setup only: disabled on Bottom and Around with the
+                        // reason, rather than a dialog of blocked proposals (#1102).
+                        disabled={project.features.length === 0 || currentSetupFace !== 'top'}
+                        title={currentSetupFace === 'around'
+                          ? camT('cam.plan.unavailableAround')
+                          : currentSetupFace === 'bottom' ? camT('cam.plan.unavailableBottom') : undefined}
                         onClick={() => void handleOpenCamPlan()}
                       >
                         {camT('cam.plan.launch')}

@@ -133,6 +133,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.panel.add': 'Hinzufügen',
   'cam.plan.launch': 'Plan',
   'cam.plan.unavailableAround': 'Der automatische Plan ist auf der Rundum-Fläche nicht verfügbar',
+  'cam.plan.unavailableBottom': 'Der automatische Plan gilt nur für die Oben-Aufspannung. Zu Oben wechseln oder Unten-Operationen von Hand hinzufügen.',
   'cam.plan.title': 'CAM-Plan',
   'cam.plan.subtitle': 'Prüfen Sie die hinzuzufügenden Operationen, Werkzeuge und gemeinsamen Einstellungen. Bestehende Operationen bleiben unverändert.',
   'cam.plan.summary': 'Planzusammenfassung',

@@ -55,6 +55,9 @@ for (const machine of ['grbl','shopbot']) {
     await seed(page,true,machine)
     writeFileSync(testInfo.outputPath('two-sides.camj'),JSON.stringify(await getProject(page),null,2))
     await ui.face.segment(page,'Bottom').click()
+    // CAM Plan plans the Top setup only (issue #1102): disabled here, with the reason.
+    await expect(ui.setupCam.planButton(page)).toBeDisabled()
+    await expect(ui.setupCam.planButton(page)).toHaveAttribute('title',/top face only/)
     await rowByName(page,'Bottom pocket').click()
     await ui.setupCam.add(page).click()
     await ui.setupCam.addMenu(page).getByText('Pocket',{ exact:true }).first().click()

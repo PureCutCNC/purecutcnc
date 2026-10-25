@@ -113,6 +113,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.panel.add': 'Añadir',
   'cam.plan.launch': 'Plan',
   'cam.plan.unavailableAround': 'El plan automático no está disponible en la cara alrededor',
+  'cam.plan.unavailableBottom': 'El plan automático solo sirve para la sujeción superior. Cambie a la cara superior o añada las operaciones inferiores a mano.',
   'cam.plan.title': 'Plan CAM',
   'cam.plan.subtitle': 'Revise las operaciones, herramientas y ajustes compartidos que se añadirán. Las operaciones existentes no cambian.',
   'cam.plan.summary': 'Resumen del plan',
