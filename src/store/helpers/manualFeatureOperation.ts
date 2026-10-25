@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import { inferNestedSolidOperation } from '../../import/classifier'
+import { rectProfile } from '../../types/project'
 import type { DimensionRef, FeatureOperation, Project, SketchProfile } from '../../types/project'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -32,29 +33,73 @@ const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
 }).PointInPolygon
 
 /**
+ * A rectangle standing in for the bar as a solid, so nesting has something to
+ * be inside of (#1108). It encloses the new profile and every existing solid,
+ * with a margin half as wide as the widest span — so it is strictly larger
+ * than any real container and only becomes the parent when nothing else
+ * contains the shape. Returns `null` when there is no geometry to enclose.
+ *
+ * Around nests in the unrolled sheet: a container that crosses the seam does
+ * not contain a shape drawn on the other side of it.
+ */
+function barMaterialProfile(profiles: readonly SketchProfile[]): SketchProfile | null {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let hasPoint = false
+  for (const profile of profiles) {
+    for (const point of flattenProfile(profile).points) {
+      hasPoint = true
+      if (point.x < minX) minX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.x > maxX) maxX = point.x
+      if (point.y > maxY) maxY = point.y
+    }
+  }
+  if (!hasPoint) return null
+  const span = Math.max(maxX - minX, maxY - minY)
+  const pad = span > 0 ? span / 2 : 1
+  return rectProfile(minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad)
+}
+
+/**
  * Infer a newly-created closed feature's role from resolved existing solids —
  * the ones present at the face being drawn on (issue #945): a pocket cut
  * part-way in from the other face is solid material here, so a shape drawn
  * over its outline is not an island in it.
  *
- * Around is the exception (issue #395): the bar is already solid, so a shape
- * drawn on its surface is always a cut into it, never a base solid — whatever
- * the project holds. A rotary project's Top and Bottom are no different
- * (#1054): the bar is the material on every face, so a closed shape there also
- * starts as a cut. A block project keeps the inferred base-solid role.
+ * When the bar is the material (a rotary project, or the Around face) the bar
+ * itself joins the nesting set as a virtual `add` (#395, #1054, #1108): a
+ * shape inside nothing is a cut into the bar, a shape inside that cut is an
+ * island, and a shape inside the island is a cut again. In other words the
+ * bar's first shape is a cut, but nesting below it is unchanged. A block
+ * project keeps the inferred base-solid role.
+ *
+ * Around nests in the unrolled sheet coordinates. An open profile on a bar
+ * stays a cut, as it was before #1108, so lines remain engravings rather than
+ * becoming a base solid on the bar.
  */
 export function inferManualFeatureOperation(
   project: Project,
   profile: SketchProfile,
 ): FeatureOperation {
-  if (activeFace(project) === 'around' || barSeedsModel(project)) return 'subtract'
   const existingSolids = featuresAtActiveFace(project, resolveFeatureInstances(project))
     .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .map((feature) => ({
       profile: feature.sketch.profile,
       operation: feature.operation as 'add' | 'subtract',
     }))
-  return inferNestedSolidOperation(profile, existingSolids)
+  if (activeFace(project) !== 'around' && !barSeedsModel(project)) {
+    return inferNestedSolidOperation(profile, existingSolids)
+  }
+  if (!profile.closed) return 'subtract'
+  const material = barMaterialProfile([profile, ...existingSolids.map((solid) => solid.profile)])
+  if (!material) return 'subtract'
+  return inferNestedSolidOperation(profile, [
+    ...existingSolids,
+    { profile: material, operation: 'add' },
+  ])
 }
 
 /**
