@@ -99,6 +99,11 @@ test('a GPU toolpath renderer falls back to Canvas and says so with the legend c
   const toggle = ui.toolpathVis.toggle(page)
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  // The sketch legend still marks it while collapsed: the gear can be hidden
+  // with the CAM panel (review of PR #1105).
+  const legendMark = page.locator('.viewport-toolpath-vis__fallback')
+  await expect(legendMark).toBeVisible()
+  await expect(legendMark).toHaveAttribute('title', 'GPU unavailable; using Canvas.')
   await expect(rendererGear(page)).toHaveClass(/cam-generation-gear--flagged/)
   await expect(rendererGear(page)).toHaveAttribute('aria-label', /GPU unavailable; using Canvas\./)
   await openRendererMenu(page)

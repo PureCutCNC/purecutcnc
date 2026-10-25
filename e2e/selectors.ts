@@ -860,7 +860,8 @@ export const face = {
   /** The short "Flipped about X/Y" chip beside the switch on Bottom (issue #1102); its title is the full sentence. */
   flipChip: (page: Page) => page.locator('.face-switch__chip'),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
-  ghostRows: (page: Page) => page.locator('.tree-row--feature[data-ghost="true"]'),
+  /** Feature-tree ghost rows only: CAM operation ghost rows (#1102) carry the same classes. */
+  ghostRows: (page: Page) => page.locator('.feature-tree-panel:not(.cam-operation-tree) .tree-row--feature[data-ghost="true"]'),
   /** The face tag on a tree row or properties row. */
   chip: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`.face-chip--${which}`),
   /** The Z range of a Bottom feature: the same slider Top uses, read with the stock flipped. */

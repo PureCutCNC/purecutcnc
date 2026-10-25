@@ -24,7 +24,7 @@
  * e2e parity spec needs a way to force the main thread.
  */
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useLocalStorageState } from '../../hooks/useLocalStorageState'
 import {
   DEFAULT_EXECUTOR_KIND,
@@ -63,6 +63,13 @@ export function useExecutorPreference(): ExecutorPreferenceBinding {
     () => effectiveExecutorKind(stored, workerAvailable, import.meta.env.DEV),
     [stored, workerAvailable],
   )
+  // The dev-only seam must not be silent: a developer who once picked the old
+  // "Main thread" option would otherwise never exercise the worker locally.
+  useEffect(() => {
+    if (import.meta.env.DEV && workerAvailable && resolved === 'inline') {
+      console.warn(`Dev build: toolpaths generate on the main thread because localStorage "${EXECUTOR_PREFERENCE_STORAGE_KEY}" is "inline". Remove it to use the worker.`)
+    }
+  }, [resolved, workerAvailable])
 
   return {
     resolved,

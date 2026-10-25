@@ -70,7 +70,8 @@ for (const machine of ['grbl','shopbot']) {
     await expect(ui.setupCam.section(page,'bottom').getByRole('button',{ name:/^Bottom operations 1 PROGRAM 02$/ })).toBeVisible()
     await expect(ui.setupCam.section(page,'bottom')).toHaveAttribute('data-active','true')
     const panel = await page.locator('.cam-panel').boundingBox()
-    for (const control of await page.locator('.cam-section-header-actions > button').all()) {
+    // Every toolbar control, the eye and gear in their own group included (#1102).
+    for (const control of await page.locator('.cam-operations-toolbar button').all()) {
       const box = await control.boundingBox()
       expect(box!.x+box!.width).toBeLessThanOrEqual(panel!.x+panel!.width+1)
     }

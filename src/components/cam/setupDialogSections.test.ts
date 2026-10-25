@@ -16,7 +16,7 @@
 
 /**
  * What the setup properties dialog shows on each face (issue #1102). Top
- * shows the face and the shared origin but hides the flip controls and the
+ * shows the face and the touch-off note but hides the flip controls and the
  * registration editor; Bottom shows everything; Around shows neither the
  * flip controls nor registration, only its name and notes.
  *

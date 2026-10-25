@@ -842,8 +842,11 @@ export function CAMPanel({
   }
 
   function handleDeleteOperation(operationId: string) {
-    const currentIndex = project.operations.findIndex((operation) => operation.id === operationId)
-    const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
+    // The next selection is a neighbour on the face in view (issue #1102):
+    // an operation from the other face is never selected from here.
+    const onFace = project.operations.filter((operation) => operation.id === operationId || operationOnActiveSetup(project, operation))
+    const currentIndex = onFace.findIndex((operation) => operation.id === operationId)
+    const fallback = onFace[currentIndex - 1]?.id ?? onFace[currentIndex + 1]?.id ?? null
     deleteOperation(operationId)
     onSelectedOperationIdChange(fallback)
   }

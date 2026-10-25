@@ -66,8 +66,9 @@ export function GenerationSettingsMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const menuId = useId()
-  // Published by whichever sketch canvas is mounted; null elsewhere, which is
-  // why the Display section appears only in the sketch.
+  // Published by the sketch canvas, which stays mounted on every centre tab,
+  // so the Display section shows whenever a project is open; it switches the
+  // sketch's toolpath renderer and is harmless to offer from 3D or Simulation.
   const renderer = useToolpathRendererStore(state => state.renderer)
 
   const busy = status.activeOperationId !== null || status.queuedCount > 0

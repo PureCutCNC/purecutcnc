@@ -19,9 +19,9 @@ import type { SetupFace } from '../../types/project'
 /**
  * What the setup properties dialog shows for a face (issue #1102).
  *
- * A Top setup only has a face and an origin; its flip axis and registration
- * are fixed no-ops, so the dialog hides them and the stored values pass
- * through untouched. A Bottom setup is the flip, so it shows all of them.
+ * A Top setup only has a face (and the touch-off note); its flip axis and
+ * registration are fixed no-ops, so the dialog hides them and the stored
+ * values pass through untouched. A Bottom setup is the flip, so it shows all of them.
  * An Around setup is not a flip at all: only its name and notes are written.
  */
 export function setupDialogSections(face: SetupFace): { flip: boolean; registration: boolean; faceUp: boolean } {

@@ -105,8 +105,9 @@ function setupListGrouped(project: Pick<Project, 'setups'>, listed: readonly Mac
  * Membership follows the panel's own: an operation belongs to the setup its
  * `setupId` names, and one with no `setupId` reads as the first setup listed —
  * the provisional setup the workspace is on is listed too, since it is the
- * card being shown. Setups are compared by id, never by face: two setups can
- * turn the same face up and stay distinct programs.
+ * card being shown. Setups are compared by the face they turn up, as the
+ * feature tree compares features: switching face is the only way the user
+ * changes setup, so a second setup on the same face must stay usable from it.
  */
 export function operationOnActiveSetup(project: Project, operation: Operation): boolean {
   const active = activeSetup(project)
@@ -114,7 +115,7 @@ export function operationOnActiveSetup(project: Project, operation: Operation): 
   const listed = saved.some((setup) => setup.id === active.id) ? saved : [...saved, active]
   if (!setupListGrouped(project, listed)) return true
   const owner = setupForOperation(project, operation) ?? listed[0]
-  return owner !== undefined && owner.id === active.id
+  return owner !== undefined && setupFace(owner) === setupFace(active)
 }
 
 /** What one setup card's header shows (issue #1102). */

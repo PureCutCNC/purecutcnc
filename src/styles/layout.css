@@ -5466,3 +5466,15 @@
 .example-project-list__status--error {
   color: var(--danger);
 }
+
+/* GPU fell back to Canvas (issue #1102, keeping #786): a small mark beside the
+ * sketch legend's toggle, visible whether the legend is expanded or not. The
+ * full notice and Retry GPU are in the generation gear menu. */
+.viewport-toolpath-vis__fallback {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--warning-text);
+  font-size: 13px;
+  cursor: help;
+}

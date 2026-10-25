@@ -133,8 +133,9 @@ function testAround(): void {
 
 function testSameFaceSetups(): void {
   console.log('Testing two setups that turn the same face up...')
-  // Setups are compared by id, never by face: a second Top setup is a separate
-  // program, and its operations cannot be selected from the first one's face.
+  // Setups are compared by face, as the feature tree compares features: the
+  // face switch is the only way to change setup, so an operation on a second
+  // Top setup must stay usable from Top (review of PR #1105).
   const base = newProject('two top setups', 'mm')
   const secondTop: MachiningSetup = { ...defaultTopSetup(), id: 'su-top-2', name: 'Top 2' }
   const project = syncProjectSetups({
@@ -145,7 +146,7 @@ function testSameFaceSetups(): void {
   })
   const secondOp = find(project, 'secondTopOp')
   assertEqual(setupFace(activeSetup(project)), setupFace(secondTop), 'fixture: both setups turn the same face up')
-  assertEqual(operationOnActiveSetup(project, secondOp), false, 'same face, different setup: not on the active setup')
+  assertEqual(operationOnActiveSetup(project, secondOp), true, 'same face, different setup: still usable, since switching face cannot pick between them')
 }
 
 function testSingleSetup(): void {

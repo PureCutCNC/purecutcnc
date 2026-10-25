@@ -24,6 +24,7 @@ import { Icon } from './Icon'
 import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
 import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
 import { ToolpathLevelRail } from './ToolpathLevelRail'
+import { useToolpathRendererStore } from '../store/toolpathRendererStore'
 import type { Units } from '../utils/units'
 
 interface ToolpathVisibilityPanelProps {
@@ -73,6 +74,7 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
 
 export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps, renderer, levelValues = [], selectedLevel = null, onLevelChange, units }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
+  const rendererFallback = useToolpathRendererStore((state) => state.renderer?.status === 'fallback')
   const { palette } = useTheme()
 
   // The feed-colour toggle is tri-state at the data level: undefined defers
@@ -99,8 +101,18 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       >
         <Icon id="gcode" />
       </button>
-      {/* The GPU/Canvas switch and its fallback notice moved to the generation
-          gear (issue #1102 slice D1); the suggestion stays with the legend. */}
+      {/* The GPU/Canvas switch and its full notice live in the generation gear
+          (issue #1102 slice D1). The fallback still marks the sketch legend,
+          expanded or not (#786): the gear is hidden whenever the CAM panel is
+          collapsed, on the Tools tab or in a closed tablet drawer. */}
+      {renderer && rendererFallback ? (
+        <span
+          className="viewport-toolpath-vis__fallback"
+          role="status"
+          title={t('appShell.toolpath.rendererFallback')}
+          aria-label={t('appShell.toolpath.rendererFallback')}
+        >⚠</span>
+      ) : null}
       {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
       {expanded && levelValues.length > 0 && onLevelChange && units && (
         <ToolpathLevelRail
