@@ -381,15 +381,25 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator(`.tree-row--feature.tree-row--selected[data-feature-id="${pocket.id}"]`)).toHaveCount(1)
 
-  // Changing the authoring face opens a confirmation; cancelling changes nothing.
-  await page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' }).click()
+  // A blind pocket cannot change face: from the other side nothing could
+  // reach it (issue #1102). The control stays, disabled, and says why.
+  const change = page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' })
+  await expect(change).toBeDisabled()
+  await expect(change).toHaveAttribute('title', /through the whole stock/)
+
+  // Through the whole stock it can. Changing the authoring face opens a
+  // confirmation; cancelling changes nothing.
+  await zBottom.fill('0')
+  await zBottom.press('Enter')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.75 → 0 in')
+  await change.click()
   const dialog = ui.face.changeFaceDialog(page)
   await expect(dialog).toBeVisible()
-  // On Bottom it reads 0.75 → 0.5 (stock flipped); on Top it will read its stored span.
-  await expect(dialog.getByTestId('change-face-z-now')).toHaveText('0.75 → 0.5')
-  await expect(dialog.getByTestId('change-face-z-after')).toHaveText('0.25 → 0')
-  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0.25 → 0')
-  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0.25 → 0')
+  // The stock span is the same on both faces; so is the Z range of a through cut.
+  await expect(dialog.getByTestId('change-face-z-now')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-z-after')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0.75 → 0')
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toHaveCount(0)
   expect((await features(page))[1].authoringFace).toBe('bottom')
@@ -399,7 +409,7 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.changeFaceDialog(page)).toHaveCount(0)
   const moved = (await features(page))[1]
   expect(moved.authoringFace).toBe('top')
-  expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.25])
+  expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.75])
   // It is now a ghost on Bottom, and no longer selected.
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
   await expect(ui.face.ghostRows(page)).toHaveCount(2)
