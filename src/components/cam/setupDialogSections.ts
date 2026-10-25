@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { SetupFace } from '../../types/project'
+import type { Bounds2D, SetupFace } from '../../types/project'
 
 /**
  * What the setup properties dialog shows for a face (issue #1102).
@@ -27,4 +27,18 @@ import type { SetupFace } from '../../types/project'
 export function setupDialogSections(face: SetupFace): { flip: boolean; registration: boolean; faceUp: boolean } {
   const flip = face === 'bottom'
   return { flip, registration: flip, faceUp: face !== 'around' }
+}
+
+/**
+ * A stock-space point as the operator measures it (issue #1102): X and Y from
+ * the stock's front-left corner in machine directions (+X right, +Y away from
+ * the operator), Z up from the bottom of the stock. Sketch Y grows towards the
+ * front, so Y is flipped; the setup program header describes the origin the
+ * same way (`describeTouchOff`).
+ */
+export function originFromFrontLeft(
+  point: { x: number; y: number; z: number },
+  bounds: Pick<Bounds2D, 'minX' | 'maxY'>,
+): { x: number; y: number; z: number } {
+  return { x: point.x - bounds.minX, y: bounds.maxY - point.y, z: point.z }
 }

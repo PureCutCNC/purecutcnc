@@ -15,12 +15,12 @@
  */
 
 import { useState } from 'react'
-import type { MachiningSetup, Project } from '../../types/project'
+import { getStockBounds, type MachiningSetup, type Project } from '../../types/project'
 import { setupFace, setupOriginInCanonical, setupFrame } from '../../engine/setupOrientation'
 import { useProjectStore } from '../../store/projectStore'
 import { activeSetup } from '../../store/helpers/activeFace'
 import { operationsDeletedWithSetup } from './setupSections'
-import { setupDialogSections } from './setupDialogSections'
+import { originFromFrontLeft, setupDialogSections } from './setupDialogSections'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
@@ -42,7 +42,8 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
   // A dialog cannot save over an intervening undo/edit to the setup.
   const unchanged = current && JSON.stringify(current) === JSON.stringify(setup)
-  const origin = setupOriginInCanonical(project.origin, setupFrame({ ...setup.orientation, axis }, project.stock))
+  // Shown the way the operator measures it: from the front-left corner, +Y away.
+  const origin = originFromFrontLeft(setupOriginInCanonical(project.origin, setupFrame({ ...setup.orientation, axis }, project.stock)), getStockBounds(project.stock))
   const removed = operationsDeletedWithSetup(project, setup.id)
   function save() {
     if (!unchanged) return
