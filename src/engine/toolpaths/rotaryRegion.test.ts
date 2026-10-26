@@ -35,7 +35,9 @@
  *  - the seam not wrapped -> the left-edge region emits no cut at all, and the
  *    A-range assertion fails;
  *  - a square turn taken below the travel envelope outside the region -> the
- *    square block's turn-height assertion.
+ *    square block's turn-height assertion;
+ *  - a region-clipped finish ring treated as split again -> the partial-angle
+ *    block's one-plunge assertion (22 plunges, one per ring, on that fixture).
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryRegion.test.ts
  */
@@ -85,12 +87,11 @@ function insideSheetRect(stock: Parameters<typeof barCentre>[0], rect: SheetRect
   return false
 }
 
-/** The production mask for one sheet rectangle: `buildRegionMask` with the
- *  circumferential repeat the rotary adapter asks for. */
-function productionMask(stock: BarStock, rect: SheetRect, maskMode?: 'include' | 'exclude'): RotaryRegionMask {
-  const region: SketchFeature = {
-    id: 'region',
-    name: 'region',
+/** One Around-region sketch feature for a sheet rectangle. */
+function regionFeature(stock: BarStock, id: string, rect: SheetRect, maskMode?: 'include' | 'exclude'): SketchFeature {
+  return {
+    id,
+    name: id,
     kind: 'rect',
     operation: 'region',
     authoringFace: 'around',
@@ -108,12 +109,25 @@ function productionMask(stock: BarStock, rect: SheetRect, maskMode?: 'include' |
     locked: false,
     ...(maskMode === undefined ? {} : { regionMaskMode: maskMode }),
   }
-  const mask = buildRegionMask([region], {
-    axis: stock.axis === 'x' ? 'y' : 'x',
-    period: Math.PI * stock.thickness,
-  })
+}
+
+/** The production mask for one or more sheet rectangles: `buildRegionMask`
+ *  with the circumferential repeat the rotary adapter asks for. */
+function productionMaskFor(stock: BarStock, rects: readonly SheetRect[], maskMode?: 'include' | 'exclude'): RotaryRegionMask {
+  const mask = buildRegionMask(
+    rects.map((rect, index) => regionFeature(stock, `region-${index}`, rect, maskMode)),
+    {
+      axis: stock.axis === 'x' ? 'y' : 'x',
+      period: Math.PI * stock.thickness,
+    },
+  )
   assert.ok(mask, 'the production seam mask builds')
   return mask
+}
+
+/** The production mask for one sheet rectangle. */
+function productionMask(stock: BarStock, rect: SheetRect, maskMode?: 'include' | 'exclude'): RotaryRegionMask {
+  return productionMaskFor(stock, [rect], maskMode)
 }
 
 // ── fixtures ──────────────────────────────────────────────────────────────
@@ -163,6 +177,25 @@ function withTarget(operation: Operation, regionId: string, direction: 'along' |
 function cuttingMoves(result: ToolpathResult, travelZ: number): ToolpathMove[] {
   return result.moves.filter((move) => move.kind !== 'rapid'
     && Math.min(move.from.z, move.to.z) < travelZ - 1e-9)
+}
+
+/** A ring-to-ring surface link: a cut at one angle that changes the along
+ *  coordinate. A ring's own cut turns A at one along position. */
+function ringLinks(result: ToolpathResult): ToolpathMove[] {
+  return result.moves.filter((move) => move.kind === 'cut'
+    && move.from.a !== undefined && move.to.a !== undefined
+    && move.from.a === move.to.a
+    && (move.from.x !== move.to.x || move.from.y !== move.to.y))
+}
+
+/** The number of around rings: the distinct along positions of the cuts that
+ *  turn A, independent of how many pieces a region or the model gives each. */
+function ringCount(result: ToolpathResult): number {
+  const rings = new Set<number>()
+  for (const move of result.moves) {
+    if (move.kind === 'cut' && move.from.a !== undefined && move.from.a !== move.to.a) rings.add(move.from.x)
+  }
+  return rings.size
 }
 
 function barStockOf(project: Project): BarStock {
@@ -339,6 +372,23 @@ function cylinderMesh(stock: { axis: 'x' | 'y'; thickness: number }, radius: num
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
+/** The seam and arc fixtures' finish tool: a 3 mm ball, whose radius sets the
+ *  link row's along sample no coarser than 0.75 mm. */
+const ROUND_FINISH_TOOL: NormalizedTool = {
+  id: 'ball-3', name: '3 mm ball nose', sourceUnits: 'mm', units: 'mm',
+  type: 'ball_endmill', diameter: 3, radius: 1.5, vBitAngle: null,
+  flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+  defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+}
+
+/** Their finish parameters, around mode: 1 mm along step (22 rings over
+ *  3..27) and a quarter of the ball round the bar. */
+const ROUND_FINISH_PARAMS = {
+  stepover: 1, sampleSpacing: 1.5 / 4, stockToLeave: 0,
+  alongStart: 3, alongEnd: 27, safeRadius: 25, requestedCellSize: 0.5,
+  passDirection: 'around' as const,
+}
+
 {
   const stock = roundStock(12, 30, 'x')
   const centre = barCentre(stock)
@@ -353,20 +403,9 @@ function cylinderMesh(stock: { axis: 'x' | 'y'; thickness: number }, radius: num
     acrossMin: leftEdge, acrossMax: leftEdge + 3,
   }
   const angleSpan = 3 * 360 / circumference
-  const tool: NormalizedTool = {
-    id: 'ball-3', name: '3 mm ball nose', sourceUnits: 'mm', units: 'mm',
-    type: 'ball_endmill', diameter: 3, radius: 1.5, vBitAngle: null,
-    flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
-    defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
-  }
-  const params = {
-    stepover: 1, sampleSpacing: 1.5 / 4, stockToLeave: 0,
-    alongStart: 3, alongEnd: 27, safeRadius: 25, requestedCellSize: 0.5,
-    passDirection: 'around' as const,
-  }
   const withMask = generateRotaryFinish(
-    'seam', cylinderMesh(stock, 4, 3, 27), stock, tool,
-    { ...params, region: productionMask(stock, seamRect) }, {},
+    'seam', cylinderMesh(stock, 4, 3, 27), stock, ROUND_FINISH_TOOL,
+    { ...ROUND_FINISH_PARAMS, region: productionMask(stock, seamRect) }, {},
   )
   assert.ok(withMask.moves.length > 0, 'the left-edge region still cuts through the seam')
   const angles = withMask.moves.flatMap((move) => [move.from.a, move.to.a])
@@ -380,7 +419,7 @@ function cylinderMesh(stock: { axis: 'x' | 'y'; thickness: number }, radius: num
   // The mutation: without the seam wrap this mask can never match, because the
   // sheet's left edge is below the zero line and every tool A maps above it.
   const unwrapped = generateRotaryFinish(
-    'seam-free', cylinderMesh(stock, 4, 3, 27), stock, tool, params, {},
+    'seam-free', cylinderMesh(stock, 4, 3, 27), stock, ROUND_FINISH_TOOL, ROUND_FINISH_PARAMS, {},
   )
   const unwrappedAngles = unwrapped.moves.flatMap((move) => [move.from.a, move.to.a])
     .filter((angle): angle is number => angle !== undefined)
@@ -395,13 +434,117 @@ function cylinderMesh(stock: { axis: 'x' | 'y'; thickness: number }, radius: num
     acrossMin: rightEdge - 3, acrossMax: rightEdge + 3,
   }
   const straddled = generateRotaryFinish(
-    'straddle', cylinderMesh(stock, 4, 3, 27), stock, tool,
-    { ...params, region: productionMask(stock, straddle) }, {},
+    'straddle', cylinderMesh(stock, 4, 3, 27), stock, ROUND_FINISH_TOOL,
+    { ...ROUND_FINISH_PARAMS, region: productionMask(stock, straddle) }, {},
   )
   const straddleAngles = straddled.moves.flatMap((move) => [move.from.a, move.to.a])
     .filter((angle): angle is number => angle !== undefined)
   assert.ok(straddleAngles.some((angle) => angle < 180), 'the seam region cuts on the A<180 side')
   assert.ok(straddleAngles.some((angle) => angle > 180), 'the seam region cuts on the A>180 side')
+}
+
+// ── a partial-angle region: region-clipped rings still link ───────────────
+
+// Frank's repro (#1096): a finish inside a region retracted and plunged on
+// every ring, while the rough linked its rings across the same region. A region
+// that trims each ring to one interior arc leaves the arc's end at the same
+// boundary angle on the forward ring and on the reversed one, so the existing
+// surface link (`followLink`) joins them exactly as it joins two full rings at
+// A0/A360. The mutation this block rejects is the old fallback: treating a
+// region-clipped ring as split again turns the single plunge below into one per
+// ring (22 on this fixture).
+{
+  const stock = roundStock(12, 30, 'x')
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const pivot = barPivotZ(stock)
+  const travelZ = rotaryTravelZ(stock, 'mm')
+  const mesh = cylinderMesh(stock, 4, 3, 27)
+  // A60..A120: interior, so it never contains the ring's own A0/A360 ends. An
+  // interior arc is the case that can link; a band containing A0 arrives as two
+  // pieces (below) and keeps the retract.
+  const arc: SheetRect = {
+    alongMin: 0, alongMax: 30,
+    acrossMin: centre + circumference / 6,
+    acrossMax: centre + circumference / 3,
+  }
+  const free = generateRotaryFinish('arc-free', mesh, stock, ROUND_FINISH_TOOL, ROUND_FINISH_PARAMS, {})
+  const clipped = generateRotaryFinish('arc', mesh, stock, ROUND_FINISH_TOOL, {
+    ...ROUND_FINISH_PARAMS, region: productionMask(stock, arc),
+  }, {})
+  assert.deepEqual(clipped.warnings, [], 'the region finish has no warning')
+  const rings = ringCount(clipped)
+  assert.equal(ringCount(free), rings, 'the region emits the same rings, trimmed')
+  assert.ok(rings > 1, 'the fixture has several rings to link')
+  assert.equal(free.moves.filter((move) => move.kind === 'plunge').length, 1,
+    'the region-free control links its full rings and plunges once')
+  assert.equal(clipped.moves.filter((move) => move.kind === 'plunge').length, 1,
+    `one contiguous region arc plunges once for the operation, not once per ring (${rings} rings)`)
+
+  const links = ringLinks(clipped)
+  assert.ok(links.length >= rings - 1,
+    `every ring boundary inside the region is linked (${links.length} link legs)`)
+  for (const link of links) {
+    assert.equal(link.from.a, link.to.a, 'a region link keeps the rings\' shared angle')
+    assert.ok(link.to.x > link.from.x, 'the link runs along the bar in ring order')
+    for (const point of [link.from, link.to]) {
+      assert.ok(insideSheetRect(stock, arc, point.x, point.a ?? 0),
+        `a region link stays inside the region (X${point.x.toFixed(3)} A${(point.a ?? 0).toFixed(3)})`)
+      const tip = point.z - pivot
+      assert.ok(tip < travelZ - pivot - 1e-6,
+        `a region link follows the model (tip ${tip.toFixed(4)}), not the travel height`)
+      assert.ok(Math.abs(tip - 4) <= ROUND_FINISH_PARAMS.requestedCellSize + 1e-6,
+        `a region link stays on the 4 mm model (tip ${tip.toFixed(4)})`)
+    }
+  }
+  for (const move of cuttingMoves(clipped, travelZ)) {
+    for (const point of [move.from, move.to]) {
+      assert.ok(insideSheetRect(stock, arc, point.x, point.a ?? 0),
+        `a cut stays inside the region (X${point.x.toFixed(3)} A${(point.a ?? 0).toFixed(3)})`)
+    }
+  }
+
+  // Two separate angle pieces: every ring's two arcs are genuinely split, so the
+  // finish retracts between them and never links across the gap.
+  const piece = (angle: number): SheetRect => {
+    const across = centre + angle * Math.PI * stock.thickness / 360
+    const half = 30 * Math.PI * stock.thickness / 360 / 2
+    return { alongMin: 0, alongMax: 30, acrossMin: across - half, acrossMax: across + half }
+  }
+  const two = generateRotaryFinish('arc-two', mesh, stock, ROUND_FINISH_TOOL, {
+    ...ROUND_FINISH_PARAMS, region: productionMaskFor(stock, [piece(90), piece(270)]),
+  }, {})
+  const twoRings = ringCount(two)
+  assert.ok(twoRings > 1, 'the two-piece fixture has several rings')
+  assert.equal(two.moves.filter((move) => move.kind === 'plunge').length, 2 * twoRings,
+    'each ring plunges into each of its two region pieces')
+  assert.equal(ringLinks(two).length, 0, 'the two angle pieces are never joined by a surface link')
+  const turn = two.moves.find((move) => move.kind === 'rapid'
+    && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a
+    && move.from.x === move.to.x && Math.min(move.from.z, move.to.z) >= travelZ - 1e-9)
+  assert.ok(turn, 'the finish retracts to the travel height between the two pieces')
+
+  // A region that wraps the A0/A360 seam arrives as two pieces per ring (the arc
+  // is split by the ring's own ends), and deliberately keeps today's retract.
+  const seam = generateRotaryFinish('arc-seam', mesh, stock, ROUND_FINISH_TOOL, {
+    ...ROUND_FINISH_PARAMS,
+    region: productionMask(stock, { alongMin: 0, alongMax: 30, acrossMin: centre - 1, acrossMax: centre + 1 }),
+  }, {})
+  assert.equal(ringLinks(seam).length, 0, 'a seam-wrapping region keeps the old retract, not a link')
+  assert.ok(seam.moves.filter((move) => move.kind === 'plunge').length > 1,
+    'the seam-wrapping region still plunges piece by piece')
+
+  // A region covering the whole sheet drops no sample, so it is the identity on
+  // the motion: the linking rule only ever fires for a ring the region actually
+  // trimmed, never for one that was already whole.
+  const full = generateRotaryFinish('arc-full', mesh, stock, ROUND_FINISH_TOOL, {
+    ...ROUND_FINISH_PARAMS,
+    region: productionMask(stock, {
+      alongMin: 0, alongMax: 30,
+      acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
+    }),
+  }, {})
+  assert.deepEqual(full.moves, free.moves, 'a region covering the sheet changes no motion')
 }
 
 // ── no region: byte-identical output ──────────────────────────────────────
