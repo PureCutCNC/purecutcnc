@@ -1067,6 +1067,13 @@ function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
  * the rough where material is still standing at a layer, the finish where the
  * model leaves the line over the centreline -- and the shared emitter below is
  * the unit that links two runs or retracts between them.
+ *
+ * A finish ring that a region cuts to one contiguous arc (#1096 slice D) is
+ * marked both `atStart` and `atEnd`: the region-clipped piece *is* the ring the
+ * operation cuts there, and its boundary angle is exactly where the reversed
+ * next ring's piece begins. `followLink` still decides whether those angles
+ * really match and the path stays inside the region, so a ring the region or a
+ * model gap splits into several runs keeps the old retract.
  */
 interface RotaryRun {
   readonly points: readonly ToolpathPoint[]
@@ -1264,7 +1271,9 @@ function emitRotaryRuns(
    * share those boundary angles. The caller enables this only for a ring after
    * the first in its layer, so a layer boundary keeps the travel-height
    * retract. The finish leaves it off: a split ring retracts, as the issue
-   * requires.
+   * requires. The finish instead marks a region-clipped single run as its own
+   * pass start and end (#1096 slice D), so the exact-angle check in `link` still
+   * decides whether it links.
    */
   linkPartial?: boolean,
 ): { here: ToolpathPoint | undefined; endedAtEnd: boolean } {
@@ -2639,7 +2648,14 @@ function rotaryTargets(
  * ring's start are the same physical angle, so #1093 links them with a feed
  * along the bar that follows the model at that angle through a sample row no
  * coarser than the ring spacing or a quarter of the tool radius; only a split
- * ring or a gap in the reachable surface retracts. A `NaN` sample
+ * ring or a gap in the reachable surface retracts. A **region** (#1096 slice D)
+ * trims every ring to the same interior arc: the ring's piece ends at the
+ * region boundary angle, the reversed next ring's piece starts there, and the
+ * same surface link joins them -- a region-clipped ring is not a split ring. A
+ * ring the model leaves as a separate piece inside the region, a ring the
+ * region cuts into several angular pieces, or a region whose arc wraps the
+ * A0/A360 seam (it arrives as two pieces, one at each end of the ring) retracts
+ * as before. A `NaN` sample
  * is still not cut, the layer links are the same emitter's, and the steep-step
  * rule measures their surface distance along the arc rather than across X/Y. A saved operation
  * without the field keeps the along motion above byte for byte -- the shape of
@@ -2789,19 +2805,54 @@ export function generateRotaryFinish(
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const forward = ring % 2 === 0
       const samples: (ToolpathPoint | null)[] = []
+      // #1096 slice D: the region's own membership on this ring, counted apart
+      // from the model's `NaN` samples, so a ring the *region boundary* trimmed
+      // is not confused with a ring the model split.
+      let regionPieces = 0
+      let regionStart = -1
+      let regionEnd = -1
+      let regionGap = false
+      let inRegion = false
       for (let step = 0; step <= last; step++) {
         const k = forward ? step : last - step
         const tip = sampling.tips[k][ring]
-        const cuts = Number.isFinite(tip)
-          && (insideRegion === null || insideRegion(along[ring], angles[k]))
-        samples.push(cuts ? point(along[ring], tip, angles[k]) : null)
+        const finite = Number.isFinite(tip)
+        const inside = insideRegion === null || insideRegion(along[ring], angles[k])
+        if (inside) {
+          if (!inRegion) {
+            regionPieces++
+            if (regionStart < 0) regionStart = step
+          }
+          inRegion = true
+          regionEnd = step
+          if (!finite) regionGap = true
+        } else {
+          inRegion = false
+        }
+        samples.push(finite && inside ? point(along[ring], tip, angles[k]) : null)
       }
       const runs = ringRuns(samples)
+      // A ring the region cuts to **one** contiguous interior arc, with no model
+      // gap inside that arc, is the ring trimmed to the region -- not a split
+      // ring. Mark its run as both the start and the end of the pass it cuts:
+      // the reversed next ring begins at the same boundary angle, so the
+      // existing `followLink` feeds across it instead of retracting, exactly as
+      // two full rings link at A0/A360. `followLink` still refuses the link when
+      // the two boundary angles do not match exactly or the path leaves the
+      // region, so a boundary that moves between rings falls back. A region that
+      // wraps the A0/A360 seam arrives as **two** pieces (the arc is split by
+      // the ring's own ends) and is deliberately left with today's retract, as
+      // is a ring split by a model gap.
+      if (regionPieces === 1 && !regionGap && runs.length === 1
+        && regionStart > 0 && regionEnd < last) {
+        runs[0] = { ...runs[0], atStart: true, atEnd: true }
+      }
       const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
       here = emitted.here
       // A split ring is partial arcs: its last run can still reach the ring end,
       // but the issue's contract is that a split ring retracts rather than
-      // feeding to the next ring. Only a ring that emitted one run may link.
+      // feeding to the next ring. Only a ring that emitted one run may link --
+      // a region-clipped ring's single run is marked above, so it may.
       previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
     }
   } else {
