@@ -998,9 +998,16 @@ function findRampPlacement(
  *
  * Each candidate is truncated to the longest prefix that stays inside ONE
  * clearance region, which is what keeps a tab, clamp or region edge from being
- * bridged: no gap is ever crossed, the run simply stops before it. A run below
- * the meaningful-stroke floor is rejected so a contour too short to ramp falls
- * back with the existing warning instead of reciprocating on a few chords.
+ * bridged: no gap is ever crossed, the run simply stops before it. A blocked
+ * segment is clipped at its first exit rather than dropped whole (issue #1109):
+ * on a straight cut the 3D cap is usually a single interpolated segment, so
+ * dropping it discarded the clear travel before a tab even when that travel was
+ * several tool diameters. The clip keeps its existing boundary safety margin,
+ * stops at the first exit (it never skips an island and re-enters), and backs
+ * up across earlier vertices if the margin reaches into them, so a subdivided
+ * straight run reaches the same safe point as the unsplit one. A run below the
+ * meaningful-stroke floor is rejected so a contour too short to ramp falls back
+ * with the existing warning instead of reciprocating on a few chords.
  */
 function findConstrainedRampPlacement(
   target: ToolpathPoint,
@@ -1016,6 +1023,7 @@ function findConstrainedRampPlacement(
 
   const maxRun = toolDiameter * MAX_RAMP_RUN_DIAMETERS
   const minRun = Math.max(ENTRY_EPSILON, toolDiameter * MIN_CONTOUR_RAMP_RUN_DIAMETERS)
+  const safety = entryBoundarySafety(toolDiameter)
   const directions: Array<1 | -1> = rampPath.closed ? [1, -1] : [1]
   let best: RampPlacement | null = null
   let bestLength = 0
@@ -1023,7 +1031,7 @@ function findConstrainedRampPlacement(
     const run = contourRun(points, entryIndex, direction, rampPath.closed, maxRun)
     if (!run || run.length < 2) continue
     for (const region of regions) {
-      const valid = trimContourRunToRegion(run, region, minRun)
+      const valid = trimContourRunToRegion(run, region, minRun, safety)
       if (!valid || !(valid.length > bestLength + ENTRY_EPSILON)) continue
       bestLength = valid.length
       const contour = [...valid.points]
@@ -1087,22 +1095,127 @@ function contourRun(
  * The longest prefix of `run` whose every segment stays in `region`. This is
  * where a tab or obstacle cuts the stroke short; the caller then either uses the
  * prefix (if it is long enough to be useful) or falls back.
+ *
+ * A segment that leaves the region is clipped, not dropped (issue #1109). The
+ * clip lands `safety` back from the FIRST exit along the run's arclength; it
+ * may cut into geometry that was already accepted, so a long straight run and
+ * its equivalent subdivision reach the same safe point instead of the
+ * subdivided one stopping one chord short. Everything after the first exit is
+ * ignored — an island can be crossed and left, but the ramp must not fly over
+ * it and resume on the far side.
  */
 function trimContourRunToRegion(
   run: Point[],
   region: EntryClearanceRegion,
   minRun: number,
+  safety: number,
 ): { points: Point[]; length: number } | null {
   const points: Point[] = [run[0]]
   let length = 0
   for (let index = 1; index < run.length; index += 1) {
     const previous = points[points.length - 1]
-    if (!segmentInsideRegion(previous, run[index], region)) break
-    points.push(run[index])
-    length += Math.hypot(run[index].x - previous.x, run[index].y - previous.y)
+    const next = run[index]
+    if (segmentInsideRegion(previous, next, region)) {
+      points.push(next)
+      length += Math.hypot(next.x - previous.x, next.y - previous.y)
+      continue
+    }
+
+    // The segment is blocked somewhere ahead. Its exit parameter is found from
+    // the interval boundaries and a point strictly inside each interval, not by
+    // testing the endpoint: region membership is not monotonic along a segment
+    // (an island can be crossed, a concave wall can re-enter), so the first
+    // outside interval is the only safe stopping point.
+    const segmentLength = Math.hypot(next.x - previous.x, next.y - previous.y)
+    if (!(segmentLength > ENTRY_EPSILON)) break
+    const exit = firstRegionExitParameter(previous, next, region)
+    if (exit === null) break
+    const targetLength = length + exit * segmentLength - safety
+    if (!(targetLength > ENTRY_EPSILON)) return null
+
+    // Truncate to `targetLength` of arclength, interpolating inside the segment
+    // that contains the cut. `points` ends at the blocked segment's start, so
+    // the clip may land inside that segment as well as inside an earlier
+    // accepted one; removing already-accepted vertices is deliberate, because
+    // leaving one inside the margin would keep the cutter closer to the tab
+    // than the margin allows.
+    const extended = [...points, next]
+    const clipped: Point[] = [extended[0]]
+    let travelled = 0
+    for (let pointIndex = 1; pointIndex < extended.length; pointIndex += 1) {
+      const before = extended[pointIndex - 1]
+      const after = extended[pointIndex]
+      const segment = Math.hypot(after.x - before.x, after.y - before.y)
+      if (travelled + segment <= targetLength + ENTRY_EPSILON) {
+        clipped.push(after)
+        travelled += segment
+        if (travelled >= targetLength - ENTRY_EPSILON) break
+        continue
+      }
+      const ratio = (targetLength - travelled) / segment
+      if (ratio > ENTRY_EPSILON) {
+        clipped.push({
+          x: before.x + (after.x - before.x) * ratio,
+          y: before.y + (after.y - before.y) * ratio,
+        })
+      }
+      break
+    }
+    if (clipped.length < 2) return null
+
+    // Revalidate the one segment the clip may have created. Every retained
+    // whole segment was already accepted above; a clip that lands inside one is
+    // a prefix of accepted geometry. If the new partial fails its own check the
+    // run is refused rather than trusting a point near the boundary.
+    const end = clipped[clipped.length - 1]
+    const tail = clipped[clipped.length - 2]
+    if (!segmentInsideRegion(tail, end, region)) return null
+    const clippedLength = contourLength(clipped)
+    if (!(clippedLength >= minRun - ENTRY_EPSILON)) return null
+    return { points: clipped, length: clippedLength }
   }
   if (points.length < 2 || !(length >= minRun - ENTRY_EPSILON)) return null
   return { points, length }
+}
+
+/**
+ * The parameter of the first point along `from`-`to` where continuous travel
+ * stops being inside `region`. Returns 0 when the segment starts outside and 1
+ * when only its endpoint leaves; `null` means every sampled interval is inside.
+ *
+ * Intersections are interval boundaries only. Each interval is classified by a
+ * point strictly between its ends, which is what makes a tangency, a collinear
+ * stretch along the boundary, or an island crossed and left behave correctly:
+ * boundary contact is inside (the cut path itself rides the outside domain's
+ * wall), and the first genuinely outside interval is the exit.
+ */
+function firstRegionExitParameter(
+  from: Point,
+  to: Point,
+  region: EntryClearanceRegion,
+): number | null {
+  if (!pointInRegion(from, region)) return 0
+  const parameters: number[] = [0, 1]
+  for (const contour of [region.outer, ...region.islands]) {
+    forEachEdge(contour, (a, b) => {
+      const parameter = segmentIntersectionParameter(from, to, a, b)
+      if (parameter !== null) parameters.push(parameter)
+    })
+  }
+  const sorted = [...new Set(parameters.map((value) => Number(value.toFixed(12))))]
+    .sort((left, right) => left - right)
+  for (let index = 0; index + 1 < sorted.length; index += 1) {
+    const start = sorted[index]
+    const end = sorted[index + 1]
+    if (!(end - start > ENTRY_EPSILON)) continue
+    const middle = (start + end) / 2
+    const sample = {
+      x: from.x + (to.x - from.x) * middle,
+      y: from.y + (to.y - from.y) * middle,
+    }
+    if (!pointInRegion(sample, region)) return start
+  }
+  return pointInRegion(to, region) ? null : 1
 }
 
 /** Drop the repeated closing vertex some callers leave on a closed polyline. */

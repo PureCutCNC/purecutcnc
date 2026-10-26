@@ -1,0 +1,437 @@
+{
+  "version": "3.2",
+  "meta": {
+    "name": "sm_wall",
+    "created": "2026-10-25T06:53:08.205Z",
+    "modified": "2026-10-25T06:53:08.205Z",
+    "units": "inch",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 2,
+    "operationClearanceZ": 0.2,
+    "clampClearanceXY": 0.08,
+    "clampClearanceZ": 0.2,
+    "machineDefinitions": [
+      {
+        "id": "avid-mach4-inch-shop",
+        "name": "Avid Mach4 (inch, shop)",
+        "description": "AvidCNC_inch.pp converted by PureCutCNC 0.5.1, then hand-tuned to the program the shop cut (cad-toolbox bake-off 2026-10-22).",
+        "vendor": "Avid CNC",
+        "builtin": false,
+        "fileExtension": "nc",
+        "coordinateSystem": {
+          "xAxis": "X",
+          "yAxis": "Y",
+          "zAxis": "Z"
+        },
+        "numberFormat": {
+          "decimalPlaces": {
+            "mm": 3,
+            "inch": 4
+          },
+          "trailingZeros": false,
+          "leadingZero": true
+        },
+        "units": {
+          "mmCommand": "G21",
+          "inchCommand": "G20"
+        },
+        "program": {
+          "header": [
+            "( {programName} )",
+            "( for Avid CNC Machines, PureCutCNC post from AvidCNC_inch.pp )",
+            "G94 {unitsCommand} G17 G90 G40 G49 G80",
+            "( G91.1 )"
+          ],
+          "operationHeader": [
+            "(Toolpath: {operationName} Tool: {toolName})"
+          ],
+          "footer": [
+            "G00Z0.8000",
+            "G00X0.0000Y0.0000",
+            "M09"
+          ],
+          "commentPrefix": "(",
+          "commentSuffix": ")",
+          "lineNumbers": false,
+          "lineNumberIncrement": 10
+        },
+        "workCoordinates": {
+          "selectCommand": null
+        },
+        "motion": {
+          "rapidCommand": "G00",
+          "linearCommand": "G1",
+          "cwArcCommand": "G2",
+          "ccwArcCommand": "G3",
+          "arcFormat": "ij",
+          "modalMotion": true,
+          "arcInterpolation": true
+        },
+        "feedSpeed": {
+          "feedCommand": "F",
+          "rpmCommand": "S",
+          "spindleOnCW": "M03",
+          "spindleOnCCW": "M4",
+          "spindleOff": "M5",
+          "inlineWithMotion": true,
+          "modalFeedSpeed": true
+        },
+        "toolChange": {
+          "commands": [
+            "T{toolNumber} M6",
+            "M07",
+            "G00 G43 Z0.8000 H{toolNumber}"
+          ],
+          "stopSpindleFirst": true,
+          "pauseAfterChange": false,
+          "pauseCommand": "M0"
+        },
+        "cannedCycles": null,
+        "coolant": null,
+        "stop": {
+          "programEndCommand": "M30"
+        }
+      }
+    ],
+    "selectedMachineId": "avid-mach4-inch-shop"
+  },
+  "grid": {
+    "extent": 8,
+    "majorSpacing": 1,
+    "minorSpacing": 0.25,
+    "snapEnabled": true,
+    "snapIncrement": 0.125,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 6.25,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 6.25,
+            "y": 8
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 0.55,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 8,
+    "z": 0.55,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "f_Profile_cutout_1": {
+      "id": "f_Profile_cutout_1",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 3.6875,
+          "y": 7.75
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 6,
+              "y": 7.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 6,
+              "y": 0.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 0.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 7.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.5625,
+              "y": 7.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.5625,
+              "y": 6.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.6875,
+              "y": 6.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.6875,
+              "y": 7.75
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    }
+  },
+  "features": [
+    {
+      "id": "f_Profile_cutout_1",
+      "name": "Profile_cutout_1",
+      "definitionId": "f_Profile_cutout_1",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.55,
+      "z_bottom": -0.014999999999999902,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "f_Profile_cutout_1"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "T6",
+      "name": "End Mill_Down Cut Spiral- 3/4\" CL_Whiteside (RD2075)",
+      "units": "inch",
+      "type": "flat_endmill",
+      "diameter": 0.25,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 20000,
+      "defaultFeed": 160,
+      "defaultPlungeFeed": 20,
+      "defaultStepdown": 0.25,
+      "defaultStepover": 0.8,
+      "maxCutDepth": 0.75
+    }
+  ],
+  "operations": [
+    {
+      "id": "op2",
+      "name": "Profile_cutout",
+      "description": "",
+      "kind": "edge_route_outside",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f_Profile_cutout_1"
+        ]
+      },
+      "toolRef": "T6",
+      "stepdown": 0.18833333333333332,
+      "stepover": 0.8,
+      "feed": 180,
+      "plungeFeed": 90,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "ramp",
+      "entryRampAngle": 5,
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
+      "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "climb",
+      "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.2,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab1",
+      "name": "Tab 1",
+      "x": 0.0625,
+      "y": 1.1142000000000003,
+      "w": 0.125,
+      "h": 0.75,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab2",
+      "name": "Tab 2",
+      "x": 1.0002,
+      "y": 0.0625,
+      "w": 0.75,
+      "h": 0.125,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab3",
+      "name": "Tab 3",
+      "x": 4.773,
+      "y": 0.0625,
+      "w": 0.75,
+      "h": 0.125,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab4",
+      "name": "Tab 4",
+      "x": 6.0625,
+      "y": 1.0621,
+      "w": 0.125,
+      "h": 0.75,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab5",
+      "name": "Tab 5",
+      "x": 6.0625,
+      "y": 6.4481,
+      "w": 0.125,
+      "h": 0.75,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab6",
+      "name": "Tab 6",
+      "x": 4.799,
+      "y": 7.8125,
+      "w": 0.75,
+      "h": 0.125,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab7",
+      "name": "Tab 7",
+      "x": 0.7270000000000001,
+      "y": 7.8125,
+      "w": 0.75,
+      "h": 0.125,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab8",
+      "name": "Tab 8",
+      "x": 0.0625,
+      "y": 6.292,
+      "w": 0.125,
+      "h": 0.75,
+      "z_top": 0.1725000000000001,
+      "z_bottom": -0.014999999999999902,
+      "visible": true,
+      "shape": "smooth"
+    }
+  ],
+  "clamps": []
+}
