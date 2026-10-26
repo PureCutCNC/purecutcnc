@@ -221,6 +221,14 @@ function sameRotaryPrecedingRoughs(
 ): boolean {
   const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
     left.length === right.length && left.every((id, index) => id === right[index])
+  // #1096 re-review (P2): the mask is order-sensitive, so the composition
+  // order is an advisory input too. Comparing only the sorted include/exclude
+  // ids would serve a stale warning after a region is reordered.
+  const sameEntries = (
+    left: RotaryRoughDependency['regions']['entries'],
+    right: RotaryRoughDependency['regions']['entries'],
+  ): boolean => left.length === right.length
+    && left.every((entry, index) => entry.id === right[index].id && entry.mode === right[index].mode)
   return before.length === after.length && before.every((entry, index) => {
     const other = after[index]
     return entry.setupId === other.setupId
@@ -230,6 +238,7 @@ function sameRotaryPrecedingRoughs(
       // the models are (#1096 review, P2).
       && sameIds(entry.regions.includeIds, other.regions.includeIds)
       && sameIds(entry.regions.excludeIds, other.regions.excludeIds)
+      && sameEntries(entry.regions.entries, other.regions.entries)
   })
 }
 

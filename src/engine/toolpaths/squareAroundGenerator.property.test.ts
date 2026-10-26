@@ -2058,8 +2058,12 @@ function generate(entry: Case): Program {
     // half of the rule stays satisfied -- the emitted-move region check owns
     // that.
     const regions = entry.region === undefined
-      ? { includeIds: [] as string[], excludeIds: [] as string[] }
-      : { includeIds: ['region'], excludeIds: [] as string[] }
+      ? { includeIds: [] as string[], excludeIds: [] as string[], entries: [] }
+      : {
+          includeIds: ['region'],
+          excludeIds: [] as string[],
+          entries: [{ id: 'region', mode: 'include' as const }],
+        }
     const precedingRoughs = entry.programKind === 'finish'
       ? []
       : [{ setupId: 'setup', modelIds: ['model'], regions }]
