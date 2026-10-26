@@ -216,13 +216,13 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   )
   assert.deepEqual(
     rotaryTargetRegions(project, finish),
-    { includeIds: [], excludeIds: [] },
+    { includeIds: [], excludeIds: [], entries: [] },
     'a finish without a region filters nothing',
   )
   assert.deepEqual(
     rotaryTargetRegions(project, withRegion),
-    { includeIds: ['region'], excludeIds: [] },
-    'the region id and its include mode are the finish filter',
+    { includeIds: ['region'], excludeIds: [], entries: [{ id: 'region', mode: 'include' }] },
+    'the region id and its include mode are the finish filter, in composition order',
   )
   // The rule the adapter and the cache share: build the dependency list the
   // real helper consumes, then decide.
@@ -312,6 +312,46 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   assert.equal(
     decide(excludeProject, [rough('ab-e', ['model', 'second', 'exclude'])], withRegion), true,
     'an exclude-only rough is not the same include set as an include-region finish',
+  )
+  // #1096 re-review (P2): the mask order decides, so the same ids in the other
+  // order are not the same coverage. `exclude E` before `include R` leaves the
+  // finish cutting everything outside E, including area outside R that a rough
+  // on R alone never touched; `include R` before `exclude E` cuts only R.
+  const excludeFeature = excludeProject.features.find((feature) => feature.id === 'exclude')!
+  const excludeFirstProject = {
+    ...excludeProject,
+    features: [
+      ...excludeProject.features.filter((feature) => feature.id !== 'region' && feature.id !== 'exclude'),
+      excludeFeature,
+      regionFeature,
+    ],
+  }
+  assert.deepEqual(
+    rotaryTargetRegions(excludeFirstProject, finishWithExclude),
+    {
+      includeIds: ['region'],
+      excludeIds: ['exclude'],
+      entries: [{ id: 'exclude', mode: 'exclude' }, { id: 'region', mode: 'include' }],
+    },
+    'the filter keeps the project-feature order the mask is composed in',
+  )
+  assert.equal(
+    decide(excludeFirstProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), true,
+    'an exclude before the include lets the finish cut outside R: warn despite the same id sets',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), false,
+    'the same ids with the include first cut only R: stay quiet',
+  )
+  // #1096 re-review (P2): coverage is containment, not set equality. A rough on
+  // R + S covers a finish on R alone; the exact-set rule warned here.
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-rs', ['model', 'second', 'region', 'region-2'])], withRegion), false,
+    'a rough on R and S covers a finish on R: a superset of includes is covered',
+  )
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-s', ['model', 'second', 'region-2'])], withRegion), true,
+    'a rough on S alone does not cover a finish on R',
   )
   const warned = (operations: Operation[], target: Operation = finish) => computeOperationToolpath({
     ...project, operations: [...operations, target],

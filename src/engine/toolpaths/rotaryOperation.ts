@@ -72,8 +72,15 @@ export function rotaryTargetModelIds(project: Project, operation: Operation): st
   return targetModels(splitFeatureTargets(project, operation.target.featureIds)).map((feature) => feature.id)
 }
 
+/** One closed region in a rotary target, with the mask mode it carries. */
+export interface RotaryRegionEntry {
+  readonly id: string
+  readonly mode: 'include' | 'exclude'
+}
+
 /**
- * A rotary operation's closed regions, split by mask mode and sorted (#1096).
+ * A rotary operation's closed regions, in the order its mask is composed
+ * (#1096).
  *
  * The ids -- not the geometry -- are what the preceding-rough advisory and the
  * cache compare: the approved rule is "the same region, or no region on the
@@ -83,28 +90,35 @@ export function rotaryTargetModelIds(project: Project, operation: Operation): st
  * `include R + exclude E` does not prepare E for a finish on R. An open region
  * contributes nothing to the mask `buildRegionMask` builds, so it is left out
  * here too.
+ *
+ * `entries` keeps the project-feature order `buildRegionMask` composes the
+ * mask in, which is the order the generator's `containsPoint` reads. The
+ * sorted id lists below lose that order, and the order decides: `exclude E`
+ * before `include R` cuts area outside R that `include R` alone does not
+ * (#1096 re-review, P2).
  */
 export interface RotaryRegionFilter {
   /** Closed include (positive) region ids, sorted. */
   readonly includeIds: readonly string[]
   /** Closed exclude (negative) region ids, sorted. */
   readonly excludeIds: readonly string[]
+  /** The same closed regions in mask-composition order. */
+  readonly entries: readonly RotaryRegionEntry[]
 }
 
 /** No region at all: the operation cuts the whole bar. */
-const ROTARY_WHOLE_BAR: RotaryRegionFilter = { includeIds: [], excludeIds: [] }
+const ROTARY_WHOLE_BAR: RotaryRegionFilter = { includeIds: [], excludeIds: [], entries: [] }
 
 function regionFilterOf(regionFeatures: SplitFeatureTargets['regionFeatures']): RotaryRegionFilter {
   const closed = regionFeatures.filter((feature) => feature.sketch.profile.closed)
+  const entries: RotaryRegionEntry[] = closed.map((feature) => ({
+    id: feature.id,
+    mode: feature.regionMaskMode === 'exclude' ? 'exclude' : 'include',
+  }))
   return {
-    includeIds: closed
-      .filter((feature) => (feature.regionMaskMode ?? 'include') === 'include')
-      .map((feature) => feature.id)
-      .sort(),
-    excludeIds: closed
-      .filter((feature) => feature.regionMaskMode === 'exclude')
-      .map((feature) => feature.id)
-      .sort(),
+    includeIds: entries.filter((entry) => entry.mode === 'include').map((entry) => entry.id).sort(),
+    excludeIds: entries.filter((entry) => entry.mode === 'exclude').map((entry) => entry.id).sort(),
+    entries,
   }
 }
 
@@ -234,34 +248,57 @@ export function rotaryPrecedingRoughs(project: Project, operation: Operation): R
 }
 
 /**
- * True when a rough's own region covers the area a finish cuts (#1096).
+ * True when a rough's effective region covers everywhere a finish may cut
+ * (#1096).
  *
  * A rough with **no region** cuts the whole bar, so it covers any finish. A
- * rough with a region covers only a finish whose effective mask it contains:
- * the same include set, and no exclude the finish does not also carry
- * (#1096 review, P2). An exclude removes the same area at every layer, so a
- * rough targeting `include R + exclude E` leaves E standing even when the
- * finish cuts R alone -- the earlier rule compared ids only and wrongly called
- * that covered. A finish with no region cuts the whole bar and is covered only
- * by a rough that also has none. Ids, not geometry: two geometrically identical
- * masks authored separately are different regions, the approved simple rule.
+ * finish with no region cuts the whole bar, so only a whole-bar rough covers
+ * it. Otherwise the two masks are compared as the predicates the generators
+ * read -- `buildRegionMask.containsPoint`, where the last region touching a
+ * point wins and the base is "included" when the first region is an exclude --
+ * not as sets of ids (#1096 re-review, P2). Comparing include/exclude sets
+ * wrongly called two counterexamples covered:
+ *
+ * - `exclude E` before `include R` on the finish cuts everything outside E,
+ *   including area outside R, which a rough on R alone never touches;
+ * - a rough with `include R + include S` fully covers a finish on R alone
+ *   (the earlier rule demanded equal include sets and warned).
+ *
+ * The comparison is over region membership, not geometry: two geometrically
+ * identical masks authored as different regions are still different regions,
+ * the approved simple rule. A membership that cuts in the finish but not the
+ * rough can always be reduced to at most two of its regions -- the last region
+ * whose geometry contains the point decides each mask -- so checking the empty,
+ * single- and paired-region memberships is exact, not an approximation.
  */
+function regionMaskCuts(filter: RotaryRegionFilter, present: readonly string[]): boolean {
+  const { entries } = filter
+  // No region at all: the whole bar is cut.
+  if (entries.length === 0) return true
+  let included = entries[0].mode === 'exclude'
+  for (const entry of entries) {
+    if (present.includes(entry.id)) included = entry.mode === 'include'
+  }
+  return included
+}
+
 function roughCoversFinishRegion(
   rough: RotaryRegionFilter,
   finish: RotaryRegionFilter,
 ): boolean {
-  const roughHasRegion = rough.includeIds.length > 0 || rough.excludeIds.length > 0
-  if (!roughHasRegion) return true
-  const finishHasRegion = finish.includeIds.length > 0 || finish.excludeIds.length > 0
-  if (!finishHasRegion) return false
-  // Same include set...
-  if (rough.includeIds.length !== finish.includeIds.length) return false
-  const includes = new Set(finish.includeIds)
-  if (!rough.includeIds.every((id) => includes.has(id))) return false
-  // ...and every rough exclude is also excluded by the finish, so the rough
-  // never skips material the finish is about to cut.
-  const excludes = new Set(finish.excludeIds)
-  return rough.excludeIds.every((id) => excludes.has(id))
+  // Every region either mask names, in first-appearance order. Ids outside
+  // both masks cannot change either predicate, so they need no membership.
+  const ids = [...new Set([...rough.entries, ...finish.entries].map((entry) => entry.id))]
+  const uncovered = (present: readonly string[]): boolean =>
+    regionMaskCuts(finish, present) && !regionMaskCuts(rough, present)
+  if (uncovered([])) return false
+  for (let i = 0; i < ids.length; i++) {
+    if (uncovered([ids[i]])) return false
+    for (let j = i + 1; j < ids.length; j++) {
+      if (uncovered([ids[i], ids[j]])) return false
+    }
+  }
+  return true
 }
 
 /**
