@@ -115,5 +115,13 @@ export const shellEs: Record<keyof typeof shellEn, string> = {
   'platform.confirmDiscard': 'Hay cambios sin guardar. ¿Descartarlos y continuar?',
   'platform.readProjectFailed': 'No se pudo leer el archivo del proyecto.',
   'platform.openProjectFailed': 'No se pudo abrir el archivo del proyecto.',
+  'shell.commandPalette.title': 'Paleta de comandos',
+  'shell.commandPalette.placeholder': 'Buscar comandos…',
+  'shell.commandPalette.noResults': 'No hay comandos coincidentes',
+  'shell.commandPalette.hint': 'Escribe para buscar · ↑↓ para navegar · Enter para ejecutar · Esc para cerrar',
+  'shell.commandPalette.group.file': 'Archivo',
+  'shell.commandPalette.group.sketch': 'Boceto',
+  'shell.commandPalette.group.create': 'Crear',
+  'shell.commandPalette.group.view': 'Vista',
   'platform.readFileError': 'No se pudo leer "{name}". Es posible que el archivo sea demasiado grande o inaccesible.',
 }

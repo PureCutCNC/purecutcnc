@@ -15,12 +15,14 @@
  */
 
 import { useProjectStore } from '../../../store/projectStore'
+import { CommandPaletteButton } from './CommandPaletteButton'
 import { GlobalActions } from './GlobalActions'
 import { MeasureActions } from './MeasureActions'
 import { ProjectNameControl } from './ProjectNameControl'
 import { SnapActions } from './SnapActions'
 import { ToolbarDialog } from './ToolbarDialog'
 import { useToolbarState } from './useToolbarState'
+import { useToolbarPaletteEvents } from './useToolbarPaletteEvents'
 import type { SnapToolbarProps, ToolbarProps } from './shared'
 import { AppearanceControl } from '../AppearanceControl'
 import { LanguageControl } from '../LanguageControl'
@@ -38,6 +40,10 @@ export function GlobalToolbar({
   onToggleSnapMode,
 }: ToolbarProps & SnapToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete, onExportModel, onPrintDesign)
+  useToolbarPaletteEvents({
+    onImportGeometry: () => toolbar.setShowImportDialog(true),
+    onRequestText: () => toolbar.setShowTextDialog(true),
+  })
 
   return (
     <>
@@ -84,6 +90,9 @@ export function GlobalToolbar({
           onDeleteDimension={toolbar.sketchCommands.dimension.deleteDimension.onActivate}
           onToggleShowDimensions={toolbar.sketchCommands.dimension.showDimensions.onActivate}
         />
+        <div className="toolbar-group">
+          <CommandPaletteButton />
+        </div>
         <div className="toolbar-group toolbar-group--appearance">
           <AppearanceControl />
           <LanguageControl />

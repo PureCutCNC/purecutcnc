@@ -24,6 +24,7 @@ import type { TextToolConfig } from '../../text'
 import { useCreationShapeCommands, type CreationShape } from '../../commands/creationShapes'
 import { useSketchCommands } from '../../commands/sketchCommands'
 import { useI18n } from '../../i18n/i18nContext'
+import { useToolbarPaletteEvents } from './toolbar/useToolbarPaletteEvents'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { CreationTarget } from '../../store/types'
 
@@ -146,6 +147,9 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const { t } = useI18n()
   const sketchCommands = useSketchCommands()
   const creationCommands = useCreationShapeCommands({
+    onRequestText: () => setShowTextDialog(true),
+  })
+  useToolbarPaletteEvents({
     onRequestText: () => setShowTextDialog(true),
   })
 
