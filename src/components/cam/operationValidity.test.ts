@@ -44,7 +44,7 @@ import type { SelectionState } from '../../store/types'
 import { squareStock } from '../../types/barStock'
 import { operationCutsInProject } from '../../store/helpers/projectType'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { rotaryMultiModelFixture, rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { camT } from './camI18n'
 import { getTextFontOptions } from '../../text'
 import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
@@ -846,8 +846,10 @@ function testRotaryAddRowsAreOfferedOnlyOnAround(): void {
 
 // ── rotary target picker (issue #1015 slice K) ────────────────────
 //
-// The rotary operation's properties replace "Use current selection" with a
-// checklist of the project's imported models. This helper is the whole rule;
+// The rotary operation's properties carry a checklist of the project's
+// imported models (the model is not selectable on the Around sheet), and since
+// #1096 the standard "Use current selection" control beside it adds a region
+// filter. `rotaryTargetToggle` is the checklist's whole rule;
 // mutations checked one at a time against these assertions:
 // - the result written in click order instead of project order → "the write is
 //   in project order, not click order" fails;
@@ -956,6 +958,26 @@ testRotaryAddRowsAreOfferedOnlyOnAround()
 testRotaryTargetModelsListTheProject()
 testRotaryTargetToggleKeepsProjectOrder()
 testRotaryTargetToggleOffAndLastBox()
+/** #1096: a region filter riding on a rotary target survives the model checklist. */
+function testRotaryTargetToggleKeepsRegionFilters(): void {
+  const project = rotaryMultiModelFixture('x', 'rotary_finish')
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'region'] }, 'second'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'second', 'region'] }),
+    'ticking a model keeps the region filter',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'second', 'region'] }, 'second'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'region'] }),
+    'unticking a model keeps the region filter',
+  )
+  assert(
+    JSON.stringify(rotaryTargetToggle(project, { source: 'features', featureIds: ['model', 'region'] }, 'gone'))
+      === JSON.stringify({ source: 'features', featureIds: ['model', 'region'] }),
+    'a stale id is dropped and the region filter stays',
+  )
+}
+testRotaryTargetToggleKeepsRegionFilters()
 testRotaryTargetToggleDropsStaleIds()
 
 // ── square rotary model hints (issue #1016 C2-U1) ─────────────────

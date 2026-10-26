@@ -435,7 +435,10 @@ function pocketPatternLabel(pattern: PocketPattern): string {
 }
 
 function getOperationTargetUpdateHint(project: Project, selection: SelectionState, operation: Project['operations'][number]): string | null {
-  const nextTarget = operationTargetFromSelection(project, selection, operation.kind)
+  // An update needs a real selection: adding a rotary operation may default to
+  // every model, but "Use current selection" on an existing one must not reset
+  // its target (and its region filter) from an empty selection (#1096).
+  const nextTarget = operationTargetFromSelection(project, selection, operation.kind, { requireSelection: true })
   if (nextTarget) {
     return null
   }
@@ -935,7 +938,7 @@ export function CAMPanel({
       return
     }
 
-    const target = operationTargetFromSelection(project, selection, selectedOperation.kind)
+    const target = operationTargetFromSelection(project, selection, selectedOperation.kind, { requireSelection: true })
     if (!target) {
       setTargetUpdateMessage(
         {
@@ -1157,34 +1160,42 @@ export function CAMPanel({
           ) : null}
         </>
       ),
-      targetSource: () => isRotaryOperationKind(operation.kind) ? (
-        // A rotary operation machines the imported model inside the bar, which
-        // is not selectable on the Around sheet: pick it from the list instead
-        // of from the selection (issue #1015 slice K).
-        <RotaryTargetPicker
-          project={project}
-          target={operation.target}
-          onChange={(target) => updateOperation(operation.id, { target })}
-        />
-      ) : (
-        <div className="properties-field">
-          <span>{camT('cam.operation.targetSource')}</span>
-          <button
-            className="feat-btn"
-            type="button"
-            title={getOperationTargetUpdateHint(project, selection, operation) ?? undefined}
-            onClick={handleApplySelectionToOperation}
-          >
-            {camT('cam.operation.useCurrentSelection')}
-          </button>
-          {selectionUpdateConfirm === operation.id ? (
-            <span className="cam-field-message cam-field-message--success">{camT('cam.operation.targetUpdated')}</span>
-          ) : targetUpdateMessage
-            && targetUpdateMessage.operationId === operation.id
-            && targetUpdateMessage.selectionKey === selectionKey ? (
-            <span className="cam-field-message">{targetUpdateMessage.text}</span>
+      targetSource: () => (
+        <>
+          {isRotaryOperationKind(operation.kind) ? (
+            // A rotary operation machines the imported model inside the bar,
+            // which is not selectable on the Around sheet: pick it from the
+            // list instead of from the selection (issue #1015 slice K).
+            <RotaryTargetPicker
+              project={project}
+              target={operation.target}
+              onChange={(target) => updateOperation(operation.id, { target })}
+            />
           ) : null}
-        </div>
+          {/* #1096: the same target control every other operation has. For a
+              rotary operation it adds a selected closed Around region as the
+              mask that limits where the operation may cut; the model checklist
+              above still chooses the model. An update needs a real selection,
+              so a stray click cannot reset the target to every model. */}
+          <div className="properties-field">
+            <span>{camT('cam.operation.targetSource')}</span>
+            <button
+              className="feat-btn"
+              type="button"
+              title={getOperationTargetUpdateHint(project, selection, operation) ?? undefined}
+              onClick={handleApplySelectionToOperation}
+            >
+              {camT('cam.operation.useCurrentSelection')}
+            </button>
+            {selectionUpdateConfirm === operation.id ? (
+              <span className="cam-field-message cam-field-message--success">{camT('cam.operation.targetUpdated')}</span>
+            ) : targetUpdateMessage
+              && targetUpdateMessage.operationId === operation.id
+              && targetUpdateMessage.selectionKey === selectionKey ? (
+              <span className="cam-field-message">{targetUpdateMessage.text}</span>
+            ) : null}
+          </div>
+        </>
       ),
       restMachining: () => (
         <div className="properties-field">

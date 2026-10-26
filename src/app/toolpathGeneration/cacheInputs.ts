@@ -224,6 +224,10 @@ function sameRotaryPrecedingRoughs(
     return entry.setupId === other.setupId
       && entry.modelIds.length === other.modelIds.length
       && entry.modelIds.every((modelId, modelIndex) => modelId === other.modelIds[modelIndex])
+      // #1096: a rough's region decides whether it covers the finish, so it is
+      // an input of the advisory exactly as the models are.
+      && entry.regionIds.length === other.regionIds.length
+      && entry.regionIds.every((regionId, regionIndex) => regionId === other.regionIds[regionIndex])
   })
 }
 

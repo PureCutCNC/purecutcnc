@@ -147,17 +147,53 @@ console.log('\nToolpath cache: a rotary finish depends on the roughs before it')
   )
 }
 
-// ── 5. Region targets and unrelated operations do not invalidate ─────
+// ── 5. Region targets and unrelated operations ───────────────────────
 {
   const withRegion = rough('rough-a', ['model', 'region'])
+  // #1096: a rough's region decides whether it covers the finish's area, so
+  // adding one to a rough that used to cut the whole bar changes the advisory.
   check(
-    'adding a region target to the rough does NOT invalidate',
-    cacheInputsValid(
+    'adding a region target to the rough invalidates',
+    !cacheInputsValid(
       captureCacheInputs(withOperations([roughA, finish]), finish),
       finish,
       withOperations([withRegion, finish]),
     ),
-    'only STL model ids are the advisory dependency; a region id shared with the target is not a model',
+    'a rough with a region no longer covers a whole-bar finish',
+  )
+  check(
+    'removing the rough region invalidates',
+    !cacheInputsValid(
+      captureCacheInputs(withOperations([withRegion, finish]), finish),
+      finish,
+      withOperations([roughA, finish]),
+    ),
+    'a whole-bar rough covers the finish, so the warning must go away',
+  )
+  // A second region feature, so "same region" and "another region" differ.
+  const regionFeature = BASE.features.find((feature) => feature.id === 'region')!
+  const withTwoRegions: Project = {
+    ...BASE,
+    features: [...BASE.features, { ...regionFeature, id: 'region-2', name: 'Region 2' }],
+  }
+  const operationsFor = (project: Project, operations: Operation[]): Project => ({ ...project, operations })
+  check(
+    'swapping one region for another invalidates',
+    !cacheInputsValid(
+      captureCacheInputs(operationsFor(withTwoRegions, [withRegion, finish]), finish),
+      finish,
+      operationsFor(withTwoRegions, [rough('rough-a', ['model', 'region-2']), finish]),
+    ),
+    'the advisory compares the rough region ids, so a different region is a different input',
+  )
+  check(
+    'reordering a rough\'s region targets does NOT invalidate',
+    cacheInputsValid(
+      captureCacheInputs(operationsFor(withTwoRegions, [rough('rough-a', ['model', 'region-2', 'region']), finish]), finish),
+      finish,
+      operationsFor(withTwoRegions, [rough('rough-a', ['model', 'region', 'region-2']), finish]),
+    ),
+    'region ids are compared as a sorted set',
   )
   const pocket: Operation = {
     ...finish,

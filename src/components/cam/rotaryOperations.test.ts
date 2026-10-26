@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { rotaryMultiModelFixture, rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../store/helpers/operationDefaults'
 import { operationTargetVerdicts, targetAllowedInSetup, setupGenerationBlock } from '../../engine/setupTargets'
 import { getOperationAddHint, rotaryOperationHint, selectAllCompatibleFeatureIds, operationTargetFromSelection } from './operationValidity'
@@ -88,6 +88,43 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   assert.equal(store().project.operations.find((row) => row.id === id)!.kind, kind)
   assert.equal(store().project.operations.find((row) => row.id === id)!.rotaryChuckSupport, 9)
   assert.equal(store().project.operations.find((row) => row.id === id)!.rotaryTailSupport, 7)
+}
+// #1096: a closed Around region is a filter a rotary target may carry beside
+// its model, through the same selection UI the other Around operations use.
+for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+  const project = rotaryMultiModelFixture('x', kind)
+  const operation = project.operations[0]
+  const target = { source: 'features' as const, featureIds: ['model', 'region'] }
+  assert.ok(isOperationTargetValid(project, kind, target), `${kind}: a model plus an Around region is a valid target`)
+  assert.ok(targetAllowedInSetup(project, target, 'around', kind), `${kind}: the region filter is reachable from Around`)
+  assert.equal(rotaryOperationHint(project, { ...operation, target }), null, `${kind}: a region filter is not a model-only refusal`)
+  assert.ok(!isOperationTargetValid(project, kind, { source: 'features', featureIds: ['region'] }), `${kind}: a region alone is not a target`)
+  assert.ok(!targetAllowedInSetup(project, target, project.setups[0].id, kind), `${kind}: the region filter is refused on Top`)
+  const regionSelection: SelectionState = {
+    ...useProjectStore.getState().selection, selectedFeatureId: 'region', selectedFeatureIds: ['region'],
+  }
+  assert.deepEqual(
+    operationTargetFromSelection(project, regionSelection, kind),
+    { source: 'features', featureIds: ['model', 'second', 'region'] },
+    `${kind}: a selected region joins the target as a filter beside every model`,
+  )
+  const bothSelection: SelectionState = { ...regionSelection, selectedFeatureId: 'model', selectedFeatureIds: ['model', 'region'] }
+  assert.deepEqual(
+    operationTargetFromSelection(project, bothSelection, kind),
+    { source: 'features', featureIds: ['model', 'region'] },
+    `${kind}: a selected model narrows the target and keeps the region`,
+  )
+  const emptySelection: SelectionState = { ...regionSelection, selectedFeatureId: null, selectedFeatureIds: [] }
+  assert.deepEqual(
+    operationTargetFromSelection(project, emptySelection, kind),
+    { source: 'features', featureIds: ['model', 'second'] },
+    `${kind}: adding with nothing selected still targets every model`,
+  )
+  assert.equal(
+    operationTargetFromSelection(project, emptySelection, kind, { requireSelection: true }),
+    null,
+    `${kind}: an update needs a real selection, so a stray click cannot reset the target`,
+  )
 }
 // Existing 3.3 file has no new values: normal import/export must not backfill them.
 const oldText = readFileSync(new URL('../../../public/examples/badge.camj', import.meta.url), 'utf8')

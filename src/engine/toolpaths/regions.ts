@@ -130,7 +130,30 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
   }
 }
 
-export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | null {
+/** Repeat a region's geometry every `period` along one axis (#1096). */
+export interface RegionRepeat {
+  /** The coordinate the geometry repeats along: across the bar for rotary. */
+  readonly axis: 'x' | 'y'
+  readonly period: number
+}
+
+/**
+ * The mask a set of region features builds (#1096 carries a second caller).
+ *
+ * `repeat` replicates every feature's geometry one period each way. A rotary
+ * operation's region is drawn on the Around sheet, which is one circumference
+ * wide and centred on A0: the same bar surface is reachable at `a`, `a - 360`
+ * and `a + 360`, so the mask is tested at a position that may be one sheet turn
+ * away from the drawn shape. Replicating the **geometry** before the ordered
+ * include/exclude composition is what makes an `exclude` region mean the same
+ * area on every sheet turn; replicating the point instead would turn an
+ * exclude's "not here" into a match at a neighbouring turn. Absent, the mask
+ * is exactly the pre-#1096 geometry.
+ */
+export function buildRegionMask(
+  regionFeatures: SketchFeature[],
+  repeat?: RegionRepeat,
+): RegionMask | null {
   let paths: ClipperPath[] = []
   let excludePaths: ClipperPath[] = []
   let boundaryPaths: ClipperPath[] = []
@@ -138,12 +161,20 @@ export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | n
   let hasIncludeRegions = false
   let baseIncludesSubject = false
   let sawValidRegion = false
+  const repeatShifts = repeat === undefined ? [0] : [-repeat.period, 0, repeat.period]
 
   for (const feature of regionFeatures) {
     if (feature.operation !== 'region' || !feature.sketch.profile.closed) continue
     const flattened = flattenProfile(feature.sketch.profile)
     if (flattened.points.length < 3) continue
-    const featurePaths = [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
+    const featurePaths = repeatShifts.map((shift) => toClipperPath(normalizeWinding(
+      repeat === undefined || shift === 0
+        ? flattened.points
+        : flattened.points.map((point) => (repeat.axis === 'y'
+          ? { x: point.x, y: point.y + shift }
+          : { x: point.x + shift, y: point.y })),
+      false,
+    ), DEFAULT_CLIPPER_SCALE))
     const mode = feature.regionMaskMode ?? 'include'
     if (!sawValidRegion) {
       baseIncludesSubject = mode === 'exclude'

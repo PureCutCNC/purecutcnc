@@ -117,9 +117,21 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
   }
 
   if (isRotaryOperationKind(kind)) {
-    return target.source === 'features' && target.featureIds.length > 0
-      && target.featureIds.every((id) => project.features.some((feature) =>
-        feature.id === id && feature.kind === 'stl' && feature.operation === 'model'))
+    if (target.source !== 'features' || target.featureIds.length === 0) return false
+    const features = target.featureIds.flatMap((id) => {
+      const feature = project.features.find((entry) => entry.id === id)
+      return feature ? [feature] : []
+    })
+    if (features.length !== target.featureIds.length) return false
+    const models = features.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+    const regions = features.filter((feature) => isRegion(feature))
+    // A rotary operation always machines at least one imported model, and may
+    // carry closed Around regions as filters (#1096) -- the same mask the 2.5D
+    // Around operations accept, drawn in the sheet's own coordinates. Anything
+    // else is not a rotary target.
+    return models.length > 0
+      && regions.every((region) => region.authoringFace === 'around' && featureHasClosedGeometry(region))
+      && features.length === models.length + regions.length
   }
 
   if (kind === 'plasma_profile') {

@@ -841,6 +841,25 @@ export interface RotaryFinishParams {
    * is unchanged.
    */
   readonly passDirection?: RotaryPassDirection
+  /**
+   * The operation target's region features as one mask, in the Around sheet's
+   * **unwrapped** coordinates (#1096): along is the bar's axis, across is
+   * `zero + a * pi * thickness / 360` -- the same convention the 2.5D Around
+   * operations use. Omitted or null means no region and cuts the whole sampled
+   * surface exactly as before.
+   */
+  readonly region?: RotaryRegionMask | null
+}
+
+/**
+ * A region mask in the Around sheet's unwrapped coordinates (#1096).
+ *
+ * `RegionMask` in `regions.ts` satisfies this structurally; the generators
+ * only ever ask whether one tool position is inside, so that is the whole
+ * contract here and the rotary engine does not depend on Clipper.
+ */
+export interface RotaryRegionMask {
+  containsPoint(point: { x: number; y: number }): boolean
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -1092,6 +1111,31 @@ function sameRotaryAngle(a: number, b: number): boolean {
 /** The along-bar coordinate of a point on either bar axis. */
 function alongCoordinate(stock: BarStock, point: { x: number; y: number }): number {
   return stock.axis === 'x' ? point.x : point.y
+}
+
+/**
+ * Is this tool position inside the operation's region (#1096)?
+ *
+ * The mask is drawn on the Around sketch's unwrapped sheet, so a position is
+ * tested at `(along, across)` for either bar axis -- the same mapping
+ * `wrapPoint`/`unwrapPoint` use in `aroundFrame.ts`: across is the bar's
+ * centreline plus `a / 360` of one circumference, never reduced to one turn.
+ *
+ * A tool's A runs 0..360 while the sheet spans one circumference centred on
+ * A0, so the same bar surface is reachable from both ends of the sheet. The
+ * mask handed in by the adapter has its geometry repeated one circumference
+ * each way (`buildRegionMask`'s `repeat`), so this mapping is a single test:
+ * a region that crosses the sheet seam, or is drawn past either edge of it,
+ * means one continuous area of the bar.
+ */
+export function rotaryRegionContains(
+  mask: RotaryRegionMask,
+  stock: BarStock,
+  along: number,
+  angleDeg: number,
+): boolean {
+  const across = barCentre(stock) + angleDeg * Math.PI * stock.thickness / 360
+  return mask.containsPoint(stock.axis === 'x' ? { x: along, y: across } : { x: across, y: along })
 }
 
 /**
@@ -2683,6 +2727,15 @@ export function generateRotaryFinish(
     : { x: centre, y: alongPosition, z: pivot + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
   const forceStep = retainedStubStepForced(stock, params, tool)
+  // #1096: a region limits where the tool may cut. Every sample whose tool
+  // position falls outside it is dropped before it can become a cut, so a ring
+  // or pass splits into the runs that are inside. The mask is null when the
+  // operation targets no region, and then nothing below reads it -- the motion
+  // is exactly the pre-region output.
+  const region = params.region ?? null
+  const insideRegion = region === null
+    ? null
+    : (alongPosition: number, angle: number) => rotaryRegionContains(region, stock, alongPosition, angle)
   // #1093: link consecutive full rings with a feed along the bar at their
   // shared end angle, following the model at that angle through the dense link
   // row. The finish assumes no rough: the height is the model's own safe tip,
@@ -2709,6 +2762,11 @@ export function generateRotaryFinish(
     for (let i = 0; i < linkRow.along.length; i++) {
       const x = linkRow.along[i]
       if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      // #1096: this leg is a **cut** at the model's own surface, so it must
+      // stay inside the region too. A link whose along span leaves the region
+      // anywhere between the two rings is not a link: the caller falls back to
+      // the ordinary retract, traverse and plunge, which does not cut.
+      if (insideRegion !== null && !insideRegion(x, from.a)) return null
       const tip = linkRow.tips[i]
       if (!Number.isFinite(tip)) return null
       points.push({ to: point(x, tip, from.a), kind: 'cut' })
@@ -2734,7 +2792,9 @@ export function generateRotaryFinish(
       for (let step = 0; step <= last; step++) {
         const k = forward ? step : last - step
         const tip = sampling.tips[k][ring]
-        samples.push(Number.isFinite(tip) ? point(along[ring], tip, angles[k]) : null)
+        const cuts = Number.isFinite(tip)
+          && (insideRegion === null || insideRegion(along[ring], angles[k]))
+        samples.push(cuts ? point(along[ring], tip, angles[k]) : null)
       }
       const runs = ringRuns(samples)
       const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
@@ -2749,13 +2809,16 @@ export function generateRotaryFinish(
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       // A `NaN` sample has no model under the tool: the finish follows the model,
       // and removing waste is the rough's job, so it is not cut. Each pass is the
-      // runs of finite samples; a pass with none emits nothing at all.
+      // runs of finite samples; a pass with none emits nothing at all. #1096: a
+      // sample outside the operation's region is not cut for the same reason.
+      const cutsAt = (i: number): boolean => Number.isFinite(tipAt(k, i))
+        && (insideRegion === null || insideRegion(alongAt(k, i), angles[k]))
       const runs: RotaryRun[] = []
       let i = 0
       while (i < along.length) {
-        if (!Number.isFinite(tipAt(k, i))) { i++; continue }
+        if (!cutsAt(i)) { i++; continue }
         const start = i
-        while (i + 1 < along.length && Number.isFinite(tipAt(k, i + 1))) i++
+        while (i + 1 < along.length && cutsAt(i + 1)) i++
         const end = i
         const points: ToolpathPoint[] = []
         for (let j = start; j <= end; j++) points.push(point(alongAt(k, j), tipAt(k, j), angles[k]))
@@ -2963,6 +3026,13 @@ export function generateRotaryRough(
     return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
   }
   const forceStep = retainedStubStepForced(stock, params, tool)
+  // #1096: a sample outside the operation's region is not cut, at any layer.
+  // The mask is null when the operation targets no region, and then nothing
+  // below reads it -- the motion is exactly the pre-region output.
+  const region = params.region ?? null
+  const insideRegion = region === null
+    ? null
+    : (alongPosition: number, angle: number) => rotaryRegionContains(region, stock, alongPosition, angle)
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   const point = (position: number, tip: number, angle: number): ToolpathPoint => stock.axis === 'x'
@@ -3188,6 +3258,7 @@ export function generateRotaryRough(
           const k = forward ? step : last - step
           const tip = tips[k][i]
           const cuts = tip < previousRadius && (touchesMaterial === null || touchesMaterial[k])
+            && (insideRegion === null || insideRegion(along[i], angles[k]))
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
         const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, layerLink, i > 0)
@@ -3225,6 +3296,7 @@ export function generateRotaryRough(
         const indexAt = (i: number): number => (layerPass + pass) % 2 === 0 ? i : along.length - 1 - i
         const needsCut = (i: number): boolean =>
           touchesMaterial && tips[angleIndex][indexAt(i)] < previousRadius
+          && (insideRegion === null || insideRegion(along[indexAt(i)], angle))
         const at = (i: number): ToolpathPoint => {
           const index = indexAt(i)
           return point(along[index], Math.max(tips[angleIndex][index], layerRadius), angle)

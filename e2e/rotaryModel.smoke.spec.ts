@@ -253,9 +253,11 @@ test('the rotary operation shows the model it machines, checked and locked', asy
     .filter({ has: page.getByRole('button', { name: 'Rotary finish', exact: true }) })
     .getByRole('button', { name: 'Add', exact: true }).click()
 
-  // Its target field is the model checklist, not "Use current selection": the
-  // model is not selectable on the Around sheet, so the selection could never
-  // express it (issue #1015 slice K).
+  // Its target field is the model checklist: the model is not selectable on the
+  // Around sheet, so the selection could never express it alone (issue #1015
+  // slice K). Since #1096 the same "Use current selection" control every other
+  // operation has is there too, so a selected closed Around region joins the
+  // target as a filter; with nothing selected it only reports the hint.
   const properties = page.locator('.cam-operation-properties')
   await expect(properties).toBeVisible()
   const picker = properties.locator('[data-rotary-targets]')
@@ -268,7 +270,7 @@ test('the rotary operation shows the model it machines, checked and locked', asy
   await expect(box).toBeChecked()
   await expect(box).toBeDisabled()
   await expect(picker.locator('.properties-check span')).toHaveText('Model')
-  await expect(properties.getByRole('button', { name: 'Use current selection', exact: true })).toHaveCount(0)
+  await expect(properties.getByRole('button', { name: 'Use current selection', exact: true })).toHaveCount(1)
 })
 
 test('the rotary operations machine the model inside the bar', async ({ app, ui }, testInfo) => {

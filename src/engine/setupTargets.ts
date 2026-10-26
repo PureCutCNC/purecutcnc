@@ -127,6 +127,23 @@ function crossFaceReach(project: TargetProject, feature: TargetFeature): { throu
 }
 
 /**
+ * True for a closed Region mask row authored on the Around face. A rotary
+ * operation may carry one as a **filter** (#1096) -- it limits where the
+ * operation cuts and is never machined itself -- exactly as the 2.5D Around
+ * operations accept one. A region drawn on another face is not in the sheet's
+ * coordinates, so it is not a rotary filter.
+ */
+function isRotaryRegion(
+  project: Pick<Project, 'featureDefinitions'>,
+  feature: TargetFeature & Pick<FeatureInstance, 'authoringFace'>,
+): boolean {
+  const definition = project.featureDefinitions[feature.definitionId]
+  return definition?.operation === 'region'
+    && (feature.authoringFace ?? 'top') === 'around'
+    && definition.profile.closed
+}
+
+/**
  * Whether `face` may target a feature at all. The same answer as
  * `judgeTargetFromFace(...).status !== 'rejected'`, without building the
  * verdict — and without reading anything for a feature drawn on that face,
@@ -139,7 +156,8 @@ export function featureReachableFromFace(
   kind?: OperationKind,
 ): boolean {
   if (kind && isRotaryOperationKind(kind)) {
-    return aroundFeaturesActive(project) && face === 'around' && isImportedModel(project, feature)
+    return aroundFeaturesActive(project) && face === 'around'
+      && (isImportedModel(project, feature) || isRotaryRegion(project, feature))
   }
   // A square blank has no constant-depth cylinder wrapping (#1016 C2-S4): only
   // a rotary rough/finish on a real model may target its Around face, so every
@@ -236,7 +254,8 @@ export function judgeTargetFromFace(
   const { through, model } = crossFaceReach(project, feature)
   const span = featureStockSpan(project, feature)
   const status: TargetFaceStatus = kind && isRotaryOperationKind(kind)
-    ? aroundFeaturesActive(project) && face === 'around' && model ? 'same-face' : 'rejected'
+    ? aroundFeaturesActive(project) && face === 'around'
+      && (model || isRotaryRegion(project, feature)) ? 'same-face' : 'rejected'
     : face === 'around' && model ? 'rejected'
     : authoringFace === face ? 'same-face'
     : face !== 'around' && authoringFace !== 'around' && (through || model) ? 'cross-face' : 'rejected'
@@ -339,12 +358,20 @@ export interface SetupGenerationBlock {
 function targetsAreModels(project: Project, operation: Operation): boolean {
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) return false
+  let models = 0
   return target.featureIds.every((featureId) => {
     const feature = project.features.find((entry) => entry.id === featureId)
     if (!feature) return false
     const definition = project.featureDefinitions[feature.definitionId]
-    return definition?.kind === 'stl' && definition.operation === 'model'
-  })
+    if (definition?.kind === 'stl' && definition.operation === 'model') {
+      models++
+      return true
+    }
+    // A closed Around region is a filter on the model, not a second target
+    // kind (#1096): a square turning job may carry one exactly as a round bar's
+    // 2.5D Around operation does.
+    return isRotaryRegion(project, feature)
+  }) && models > 0
 }
 
 /**
