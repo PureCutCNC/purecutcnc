@@ -3121,12 +3121,59 @@ export function generateRotaryRough(
     // The blank's own height over the body's window: a square blank's corner is
     // higher than its face, and an earlier layer that did not cut at a face
     // angle leaves that support standing.
+    const blankAt = (kk: number): number => square
+      ? squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type)
+      : maxRadius
     let support = maxRadius
     if (square) {
       support = Number.NEGATIVE_INFINITY
+      for (const kk of windowRows) support = Math.max(support, blankAt(kk))
+    }
+    if (insideRegion !== null) {
+      // #1096 review (P1): outside the operation's region no layer removes
+      // anything, so the link must clear the **uncut blank** there, not the
+      // model height the earlier layers would have reached on a full-bar job.
+      // A link between two region bands crosses the gap between them; sizing it
+      // from the model sent it through stock no pass had touched.
+      //
+      // Per window angle, the remaining top at each along position is the
+      // blank where the mask never cut and the shallowest cut where it did;
+      // the body must clear the highest of those tops over the whole window.
+      // This also covers a narrow angular region: the link's own ray can be
+      // inside the mask while the cutter body reaches material outside it,
+      // which must still stand at the blank's height.
+      const remaining = new Array<number>(row.along.length).fill(Number.NEGATIVE_INFINITY)
+      const radius = tool.radius
+      const ball = tool.type === 'ball_endmill'
       for (const kk of windowRows) {
-        support = Math.max(support, squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type))
+        const angle = angles[kk]
+        const surface = new Array<number>(row.along.length).fill(blankAt(kk))
+        const rowTips = tips[kk]
+        for (let j = 1; j < layer; j++) {
+          const layerRadius = Math.max(lowest, maxRadius - j * params.stepdown)
+          const previousRadius = maxRadius - (j - 1) * params.stepdown
+          if (square && !(layerRadius < blankAt(kk))) continue
+          for (let p = 0; p < along.length; p++) {
+            // No cut at this layer, or no cut permitted here by the mask: the
+            // material at this angle keeps whatever stood before it.
+            if (!(rowTips[p] < previousRadius)) continue
+            if (!insideRegion(along[p], angle)) continue
+            const cutTip = Math.max(rowTips[p], layerRadius)
+            for (let i = 0; i < row.along.length; i++) {
+              const dx = row.along[i] - along[p]
+              if (Math.abs(dx) > radius) continue
+              const rise = ball ? radius - Math.sqrt(Math.max(0, radius * radius - dx * dx)) : 0
+              const contact = cutTip + rise
+              if (contact < surface[i]) surface[i] = contact
+            }
+          }
+        }
+        for (let i = 0; i < row.along.length; i++) {
+          if (surface[i] > remaining[i]) remaining[i] = surface[i]
+        }
       }
+      leftoverCache.set(key, remaining)
+      return remaining
     }
     const leftover = new Array<number>(row.along.length).fill(support)
     const radius = tool.radius

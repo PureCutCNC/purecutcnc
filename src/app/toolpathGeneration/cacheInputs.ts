@@ -219,15 +219,17 @@ function sameRotaryPrecedingRoughs(
   before: readonly RotaryRoughDependency[],
   after: readonly RotaryRoughDependency[],
 ): boolean {
+  const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
+    left.length === right.length && left.every((id, index) => id === right[index])
   return before.length === after.length && before.every((entry, index) => {
     const other = after[index]
     return entry.setupId === other.setupId
-      && entry.modelIds.length === other.modelIds.length
-      && entry.modelIds.every((modelId, modelIndex) => modelId === other.modelIds[modelIndex])
-      // #1096: a rough's region decides whether it covers the finish, so it is
-      // an input of the advisory exactly as the models are.
-      && entry.regionIds.length === other.regionIds.length
-      && entry.regionIds.every((regionId, regionIndex) => regionId === other.regionIds[regionIndex])
+      && sameIds(entry.modelIds, other.modelIds)
+      // #1096: a rough's region decides whether it covers the finish, so both
+      // of its halves -- include and exclude -- are advisory inputs exactly as
+      // the models are (#1096 review, P2).
+      && sameIds(entry.regions.includeIds, other.regions.includeIds)
+      && sameIds(entry.regions.excludeIds, other.regions.excludeIds)
   })
 }
 

@@ -59,7 +59,7 @@
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { getProject, seedProject } from './helpers'
+import { getProject, seedProject, selectFeatures } from './helpers'
 import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
 import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
@@ -121,6 +121,21 @@ function rotaryModelProject(): Project {
   base.featureDefinitions = { model: definition }
   base.features = [feature]
   base.featureTree = [{ type: 'feature', featureId: 'model' }]
+  // A closed Around region, selectable on the sheet: the rotary operation's
+  // "Use current selection" adds it to the target as a mask, so the test can
+  // exercise the region addition rather than only the button's presence
+  // (#1096).
+  const regionDefinition: FeatureDefinition = {
+    id: 'region', kind: 'rect', profile: rectProfile(8, 5, 12, 2), dimensions: [], text: null,
+    stl: null, operation: 'region',
+  }
+  const region: FeatureInstance = {
+    id: 'region', name: 'Region', definitionId: 'region', transform: IDENTITY_MATRIX, textLayout: null,
+    constraints: [], z_top: 12, z_bottom: 0, authoringFace: 'around', folderId: null, visible: true, locked: false,
+  }
+  base.featureDefinitions = { ...base.featureDefinitions, region: regionDefinition }
+  base.features = [...base.features, region]
+  base.featureTree = [...base.featureTree, { type: 'feature', featureId: 'region' }]
   base.setups = [...base.setups, { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }]
   base.activeSetupId = 'around'
   // The app's own workholding for this bar, not an arbitrary 12 mm block: the
@@ -270,7 +285,26 @@ test('the rotary operation shows the model it machines, checked and locked', asy
   await expect(box).toBeChecked()
   await expect(box).toBeDisabled()
   await expect(picker.locator('.properties-check span')).toHaveText('Model')
-  await expect(properties.getByRole('button', { name: 'Use current selection', exact: true })).toHaveCount(1)
+  const apply = properties.getByRole('button', { name: 'Use current selection', exact: true })
+  await expect(apply).toHaveCount(1)
+
+  // #1096: actually add the seeded Around region through the control. The
+  // region note renders only when the operation's target carries a region, so
+  // it is the observable that the click wrote the filter; the model box must
+  // still be ticked afterwards (adding a region does not reset the model
+  // choice).
+  await expect(properties.locator('.cam-region-note')).toHaveCount(0)
+  await selectFeatures(page, ['region'])
+  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await expect(properties).toBeVisible()
+  await apply.click()
+  await expect(properties.locator('.cam-region-note')).toBeVisible()
+  await expect(box).toBeChecked()
+  // The target summary names the model and the region filter.
+  await expect(properties.locator('.properties-field input[readonly]').first())
+    .toHaveValue(/Model/)
+  await expect(properties.locator('.properties-field input[readonly]').first())
+    .toHaveValue(/Region/)
 })
 
 test('the rotary operations machine the model inside the bar', async ({ app, ui }, testInfo) => {

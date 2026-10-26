@@ -437,8 +437,13 @@ function pocketPatternLabel(pattern: PocketPattern): string {
 function getOperationTargetUpdateHint(project: Project, selection: SelectionState, operation: Project['operations'][number]): string | null {
   // An update needs a real selection: adding a rotary operation may default to
   // every model, but "Use current selection" on an existing one must not reset
-  // its target (and its region filter) from an empty selection (#1096).
-  const nextTarget = operationTargetFromSelection(project, selection, operation.kind, { requireSelection: true })
+  // its target (and its region filter) from an empty selection (#1096). The
+  // current target keeps the model half when the selection is only a region
+  // (#1096 review, P2).
+  const nextTarget = operationTargetFromSelection(project, selection, operation.kind, {
+    requireSelection: true,
+    currentTarget: operation.target,
+  })
   if (nextTarget) {
     return null
   }
@@ -938,7 +943,10 @@ export function CAMPanel({
       return
     }
 
-    const target = operationTargetFromSelection(project, selection, selectedOperation.kind, { requireSelection: true })
+    const target = operationTargetFromSelection(project, selection, selectedOperation.kind, {
+      requireSelection: true,
+      currentTarget: selectedOperation.target,
+    })
     if (!target) {
       setTargetUpdateMessage(
         {

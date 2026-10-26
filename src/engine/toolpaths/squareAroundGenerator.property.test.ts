@@ -195,19 +195,29 @@ interface CaseRegion {
   readonly acrossTo: number
 }
 
+/** One rectangle, or several disjoint ones (two bands leave untouched stock). */
+type CaseRegionSpec = CaseRegion | readonly CaseRegion[]
+
+function regionList(region: CaseRegionSpec): readonly CaseRegion[] {
+  return Array.isArray(region) ? region as readonly CaseRegion[] : [region as CaseRegion]
+}
+
 /** The region as a periodic mask: one sheet turn each way, like the generator's. */
-function regionMask(stock: BarStock, region: CaseRegion): RotaryRegionMask {
+function regionMask(stock: BarStock, region: CaseRegionSpec): RotaryRegionMask {
   const circumference = Math.PI * stock.thickness
+  const regions = regionList(region)
   return {
     containsPoint(point: { x: number; y: number }): boolean {
       const along = stock.axis === 'x' ? point.x : point.y
       const across = stock.axis === 'x' ? point.y : point.x
-      if (along < region.alongFrom || along > region.alongTo) return false
-      for (let turn = -1; turn <= 1; turn++) {
-        const shifted = across + turn * circumference
-        if (shifted >= region.acrossFrom && shifted <= region.acrossTo) return true
-      }
-      return false
+      return regions.some((rect) => {
+        if (along < rect.alongFrom || along > rect.alongTo) return false
+        for (let turn = -1; turn <= 1; turn++) {
+          const shifted = across + turn * circumference
+          if (shifted >= rect.acrossFrom && shifted <= rect.acrossTo) return true
+        }
+        return false
+      })
     },
   }
 }
@@ -1146,9 +1156,10 @@ interface Case {
    * #1096: a region the operation is limited to, in the Around sheet's
    * unwrapped coordinates. Every non-air emitted move must keep its tool centre
    * inside this area (plus the cutter radius), and -- on a square blank -- a
-   * turn that leaves it must be at the travel height.
+   * turn that leaves it must be at the travel height. More than one rectangle
+   * makes disjoint bands with untouched stock between them.
    */
-  region?: CaseRegion
+  region?: CaseRegionSpec
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
@@ -1925,6 +1936,62 @@ function drawRegionCase(seed: number, direction: 'around' | 'along', square: boo
   }
 }
 
+/**
+ * #1096 review (P1): two along bands with untouched stock between them. A
+ * link from the last ring of one band to the first ring of the next can cross
+ * the gap, where no layer removed anything; it must clear the uncut blank, not
+ * the model height. The band widths leave the two link ends at the same A for
+ * the round cases; the run-level counter requires at least one crossing rapid,
+ * and the square cases still replay a two-band region. Both cutters are drawn.
+ */
+function drawGapRegionCase(seed: number, square: boolean): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 16
+  const stock = square ? squareStock(side, length, 'x', { x: 0, y: 0 }) : roundStock(side, length)
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const alongStart = 2
+  const alongEnd = 14
+  const radius = 2
+  const diameter = 1.5
+  const toolRadius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${square ? 'square' : 'round'} `
+      + `${side}x${length} around region bands 3..4 and 9..11 across the full sheet`,
+    stock,
+    profile: [{ along: alongStart, radius }, { along: alongEnd, radius }],
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: Math.max(0.75 * diameter, 1e-3),
+    roughSpacing: Math.max(toolRadius / 2, 1e-3),
+    finishSpacing: Math.max(toolRadius / 4, 1e-3),
+    requestedCellSize: Math.min(toolRadius / 3, 0.75 * diameter * 0.5),
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // A region band splits every ring, so the replay touches the whole circle
+    // at each band ring. Give this case the larger budget rather than letting
+    // `fitEntry` coarsen the stepover until a band has no ring left -- which is
+    // exactly the gap rapid this case exists to exercise.
+    maxReplayCells: 8_000_000,
+    region: [
+      // The first band is one ring wide and the second starts an odd number of
+      // rings later, so the ring directions leave both link ends at A0 and the
+      // rough does link across the untouched gap rather than retracting.
+      { alongFrom: 3, alongTo: 4, acrossFrom: centre - circumference / 2, acrossTo: centre + circumference / 2 },
+      { alongFrom: 9, alongTo: 11, acrossFrom: centre - circumference / 2, acrossTo: centre + circumference / 2 },
+    ],
+  }
+}
+
 /** The reference grid limit for one case. Default-parameter cases keep the full
  *  resolution; a coarsened non-compact case may run on a smaller grid, which
  *  coarsens the generator's requested cells too (the 4x relationship holds). */
@@ -1987,13 +2054,16 @@ function generate(entry: Case): Program {
     // The adapter decides the advisory from the ordered rough dependency the
     // cache captures. Reproduce that here so a finish-only program asserts the
     // real helper's answer; the motion above is unchanged either way. A region
-    // case carries the same region ids on both operations, so the region half
-    // of the rule stays satisfied -- the emitted-move region check owns that.
-    const regionIds = entry.region === undefined ? [] : ['region']
+    // case carries the same include region on both operations, so the region
+    // half of the rule stays satisfied -- the emitted-move region check owns
+    // that.
+    const regions = entry.region === undefined
+      ? { includeIds: [] as string[], excludeIds: [] as string[] }
+      : { includeIds: ['region'], excludeIds: [] as string[] }
     const precedingRoughs = entry.programKind === 'finish'
       ? []
-      : [{ setupId: 'setup', modelIds: ['model'], regionIds }]
-    if (rotaryFinishWithoutRough(precedingRoughs, ['model'], regionIds)) finishCodes.push('rotaryFinishWithoutRough')
+      : [{ setupId: 'setup', modelIds: ['model'], regions }]
+    if (rotaryFinishWithoutRough(precedingRoughs, ['model'], regions)) finishCodes.push('rotaryFinishWithoutRough')
   }
   return {
     roughMoves: rough.moves,
@@ -2771,6 +2841,14 @@ const CASES = [
   fitEntry(drawRegionCase(1, 'around', true)),
   fitEntry(drawRegionCase(2, 'along', false)),
   fitEntry(drawRegionCase(3, 'along', true)),
+  // #1096 review: two bands leave untouched stock between them, and the rough's
+  // ring-to-ring link can cross it. Round and square, ball and flat; the
+  // crossing rapid is checked against the uncut blank, and the run asserts at
+  // least one case actually produces one (the ring parity gates the link).
+  fitEntry(drawGapRegionCase(0, false)),
+  fitEntry(drawGapRegionCase(1, false)),
+  fitEntry(drawGapRegionCase(2, true)),
+  fitEntry(drawGapRegionCase(3, true)),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -2794,6 +2872,9 @@ let alongFinishOnlyRound = 0
 let alongFinishOnlySquare = 0
 let casesDone = 0
 let checkedRapids = 0
+// #1096 review (P1): rapids that leave the region and are checked against the
+// uncut blank. At least one gap case must exercise one.
+let regionCrossingRapids = 0
 let checkedSurfaceCells = 0
 let defaultCases = 0
 let defaultFinishOnly = 0
@@ -2908,6 +2989,12 @@ for (const { entry, program } of CASES) {
   const windowHigh = Math.min(bounds.maxX, maxCutAlong + cutterRadius + 1)
   const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
 
+  // #1093: a rough link is sized from the material its own earlier layers left
+  // plus the 1 mm clearance, so it is in air. The reference's cell and ball
+  // discretisation is the only removal it may report. Defined before the region
+  // block because a rapid crossing a region gap is judged with the same bound.
+  const linkBiteAllowance = budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+
   // #1096: a region the operation is limited to. The mask is this file's own,
   // built from the sheet's unwrapped coordinates, and the checks below are on
   // the **emitted** motion: a move that is not in air at the travel height must
@@ -2919,18 +3006,23 @@ for (const { entry, program } of CASES) {
     const centre = barCentre(stock)
     const circumference = Math.PI * stock.thickness
     const angleOf = (across: number): number => (across - centre) * 360 / circumference
-    // Distance outside the rectangle in mm: along directly, angle as an arc
-    // length. The mask is periodic, so the angle is tried one turn each way.
+    // Distance outside the region in mm: along directly, angle as an arc
+    // length. The mask is periodic, and a set of bands is a union, so the
+    // distance is the nearest band's.
     const outside = (along: number, angle: number): number => {
-      const alongOut = Math.max(0, entry.region!.alongFrom - along, along - entry.region!.alongTo)
-      let angleOut = Number.POSITIVE_INFINITY
-      for (let turn = -1; turn <= 1; turn++) {
-        const shifted = angle + turn * 360
-        angleOut = Math.min(angleOut, Math.max(0,
-          angleOf(entry.region!.acrossFrom) - shifted, shifted - angleOf(entry.region!.acrossTo)))
+      let distance = Number.POSITIVE_INFINITY
+      for (const rect of regionList(entry.region!)) {
+        const alongOut = Math.max(0, rect.alongFrom - along, along - rect.alongTo)
+        let angleOut = Number.POSITIVE_INFINITY
+        for (let turn = -1; turn <= 1; turn++) {
+          const shifted = angle + turn * 360
+          angleOut = Math.min(angleOut, Math.max(0,
+            angleOf(rect.acrossFrom) - shifted, shifted - angleOf(rect.acrossTo)))
+        }
+        const acrossOut = angleOut * circumference / 360
+        distance = Math.min(distance, Math.hypot(alongOut, acrossOut))
       }
-      const acrossOut = angleOut * circumference / 360
-      return Math.hypot(alongOut, acrossOut)
+      return distance
     }
     const at = (along: number, angle: number): { x: number; y: number } => (stock.axis === 'x'
       ? { x: along, y: centre + angle * circumference / 360 }
@@ -2957,10 +3049,12 @@ for (const { entry, program } of CASES) {
     // A turn that leaves the region on a square blank must be at the travel
     // height: the blank's corner envelope stands above every cut, so a turn
     // taken lower would drive the cutter body into a corner it did not machine.
-    // An around stage has such a turn by construction (the region splits every
-    // ring); an along stage's passes are separated by an angle change only
-    // where both passes cut, so it is not asserted to produce one.
-    if (stock.shape === 'square' && (entry.roughKind === 'around' || entry.finishKind === 'around')) {
+    // An around stage has such a turn by construction when the region splits a
+    // ring; a band spanning the whole circumference does not split one, so it
+    // has no turn to check. An along stage's passes are separated by an angle
+    // change only where both passes cut, so it is not asserted to produce one.
+    if (stock.shape === 'square' && (entry.roughKind === 'around' || entry.finishKind === 'around')
+      && regionList(entry.region!).some((rect) => rect.acrossTo - rect.acrossFrom < circumference - 1e-9)) {
       let turnChecks = 0
       for (const move of allMoves) {
         if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) continue
@@ -2977,6 +3071,32 @@ for (const { entry, program } of CASES) {
       }
       assert.ok(turnChecks > 0, `${entry.label}: the region splits a ring, so a turn outside it is exercised`)
     }
+    // #1096 review (P1): outside the region nothing is removed, so a rapid that
+    // leaves it must clear the **uncut blank** it crosses. `reference` still
+    // holds the blank here -- its cuts are replayed in the stage loop below --
+    // so `rapidClearance` is exactly that check. A link between two region
+    // bands crosses untouched stock and used to fly at the model height.
+    for (const move of program.roughMoves) {
+      if (move.kind !== 'rapid') continue
+      if (move.from.a === undefined || move.from.a !== move.to.a) continue
+      const from = alongOf(move.from)
+      const to = alongOf(move.to)
+      if (from === to || move.from.z !== move.to.z) continue
+      const steps = Math.max(1, Math.ceil(Math.abs(to - from) / budget.alongBin))
+      let leaves = false
+      for (let s = 0; s <= steps && !leaves; s++) {
+        leaves = !mask.containsPoint(at(from + (to - from) * s / steps, move.from.a))
+      }
+      if (!leaves) continue
+      regionCrossingRapids++
+      const margin = rapidClearance(reference, move, pivot, cutterRadius, ball, alongOf)
+      assert.ok(margin >= -linkBiteAllowance,
+        `${entry.label}: a rapid crossing outside the region at A${move.from.a.toFixed(2)} along `
+        + `${from.toFixed(2)}->${to.toFixed(2)} stands ${(-margin).toFixed(4)} mm below the uncut blank `
+        + `(allowed ${linkBiteAllowance.toFixed(4)}; tip ${rapidWorst.tip.toFixed(3)} `
+        + `material ${rapidWorst.material.toFixed(3)} at along ${rapidWorst.along.toFixed(2)} `
+        + `A${rapidWorst.angle.toFixed(2)})`)
+    }
     assert.ok(regionMoves > 0, `${entry.label}: the region still cuts inside itself`)
   }
 
@@ -2987,10 +3107,6 @@ for (const { entry, program } of CASES) {
   // finish has no clearing layers, and its single model-following ring can meet
   // the rough's between-pass ridge frontally, which is not a radial depth.
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
-  // #1093: a rough link is sized from the material its own earlier layers left
-  // plus the 1 mm clearance, so it is in air. The reference's cell and ball
-  // discretisation is the only removal it may report.
-  const linkBiteAllowance = budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
   if (roughRan) stageSpecs.push({
     moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE),
@@ -3643,6 +3759,12 @@ assert.ok(featureCases >= 4,
 assert.ok(meshSurfaceCells > 0,
   `the non-revolved cases assert the finished surface (${meshSurfaceCells} cells)`)
 assert.ok(rapidLinkChecks > 0, `the rough in-air links are replayed against the reference (${rapidLinkChecks})`)
+// #1096 review (P1): a rapid that leaves the region is judged against the
+// uncut blank, not the model. The two-band gap cases exist to produce one, and
+// the check above is silent if every case's ring parity happens to retract
+// instead of link, so require at least one.
+assert.ok(regionCrossingRapids > 0,
+  `a rapid crossing outside the region is checked against the uncut blank (${regionCrossingRapids})`)
 assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (${roundRapidLinkChecks})`)
 assert.ok(finishLinkChecks > 0, `the finish links are replayed against the reference (${finishLinkChecks})`)
 assert.ok(finishAfterRoughLinkChecks > 0,
