@@ -49,15 +49,63 @@ async function seed(page: Page, bottomFeature = true, machineId = 'grbl') {
   await seedProject(page,JSON.stringify(project))
 }
 
+test('CAM Plan on Bottom proposes its pocket and explains Top-covered through work (#1106)', async ({ app, ui }, testInfo) => {
+  const { page } = app
+  await seed(page)
+  const seeded = await getProject(page) as unknown as Project
+  seeded.tools = seeded.tools.map(tool => ({ ...tool, maxCutDepth: 3 }))
+  await seedProject(page, JSON.stringify(seeded))
+  await ui.face.segment(page, 'Bottom').click()
+  await expect(ui.setupCam.planButton(page)).toBeEnabled()
+  await ui.setupCam.planButton(page).click()
+  const dialog = page.getByRole('dialog', { name: 'CAM Plan', exact: true })
+  const pocketProposals = dialog.getByRole('button').filter({ hasText: 'Bottom pocket' })
+  await expect(pocketProposals.first()).toBeVisible()
+  const covered = dialog.locator('.cam-plan-field-note').filter({ hasText: 'Through hole' })
+  await expect(covered).toContainText('Covered by the Top setup.')
+  await expect(covered.locator('button, input, [tabindex]')).toHaveCount(0)
+  await expect(covered).not.toHaveAttribute('role', 'button')
+  await expect(dialog.getByRole('button').filter({ hasText: 'Through hole' })).toHaveCount(0)
+  await expect(dialog.locator('.cam-plan-coverage')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('bottom-cam-plan.png') })
+  const before = await getProject(page) as unknown as Project
+  const create = dialog.getByRole('button', { name: /^Create \d+ operations$/ })
+  await expect(create).toBeEnabled()
+  await create.click()
+  await expect(dialog).not.toBeVisible()
+  await expect(ui.setupCam.section(page, 'bottom')).toContainText('Pocket')
+  const after = await getProject(page) as unknown as Project
+  const bottom = after.setups.find(setup => setup.id === after.activeSetupId)!
+  expect(bottom.orientation.angleDeg).toBe(180)
+  const added = after.operations.filter(operation => !before.operations.some(existing => existing.id === operation.id))
+  expect(added.length).toBeGreaterThan(0)
+  expect(added.every(operation => operation.setupId === bottom.id && bottom.operationIds.includes(operation.id))).toBe(true)
+  expect(added.some(operation => operation.kind === 'pocket' && operation.target.source === 'features'
+    && operation.target.featureIds.includes('bottom'))).toBe(true)
+  expect(added.some(operation => operation.target.source === 'features' && operation.target.featureIds.includes('through'))).toBe(false)
+  expect(after.operations.find(operation => operation.id === before.operations[0].id)).toEqual(before.operations[0])
+})
+
+test('CAM Plan stays disabled on Around with its reason (#1106)', async ({ app, ui }) => {
+  const { page } = app
+  await seed(page)
+  const project = await getProject(page) as unknown as Project
+  project.meta.projectType = 'rotary'
+  project.stock = { ...project.stock, shape: 'round', diameter: 2, axis: 'x' }
+  await seedProject(page, JSON.stringify(project))
+  await ui.face.segment(page, 'Around').click()
+  await expect(ui.setupCam.planButton(page)).toBeDisabled()
+  await expect(ui.setupCam.planButton(page)).toHaveAttribute('title', 'The automatic plan is not available on the around face')
+})
+
 for (const machine of ['grbl','shopbot']) {
   test(`Bottom Add, cross-face target and two downloaded ${machine} programs`, async ({ app, ui },testInfo) => {
     const { page } = app
     await seed(page,true,machine)
     writeFileSync(testInfo.outputPath('two-sides.camj'),JSON.stringify(await getProject(page),null,2))
     await ui.face.segment(page,'Bottom').click()
-    // CAM Plan plans the Top setup only (issue #1102): disabled here, with the reason.
-    await expect(ui.setupCam.planButton(page)).toBeDisabled()
-    await expect(ui.setupCam.planButton(page)).toHaveAttribute('title',/top face only/)
+    await expect(ui.setupCam.planButton(page)).toBeEnabled()
+    await expect(ui.setupCam.planButton(page)).not.toHaveAttribute('title',/top face only/)
     await rowByName(page,'Bottom pocket').click()
     await ui.setupCam.add(page).click()
     await ui.setupCam.addMenu(page).getByText('Pocket',{ exact:true }).first().click()

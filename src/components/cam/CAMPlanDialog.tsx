@@ -431,6 +431,12 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
                   </button>
                 )
               })}
+              {plan.coverage.filter((coverage) => coverage.status === 'existing').map((coverage) => (
+                <p key={coverage.featureId} className="cam-plan-field-note">
+                  <span>{coverage.featureName}</span><br />
+                  {coverage.detail}
+                </p>
+              ))}
             </div>
             {uncovered.length > 0 ? (
               <div className="cam-plan-coverage">
