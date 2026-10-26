@@ -854,12 +854,15 @@ export interface RotaryFinishParams {
 /**
  * A region mask in the Around sheet's unwrapped coordinates (#1096).
  *
- * `RegionMask` in `regions.ts` satisfies this structurally; the generators
- * only ever ask whether one tool position is inside, so that is the whole
- * contract here and the rotary engine does not depend on Clipper.
+ * `RegionMask` in `regions.ts` satisfies this structurally, so the rotary
+ * engine does not depend on Clipper. A **cut** link is a straight segment, and
+ * a mask that can prove a whole segment inside answers that as well; point
+ * membership alone is not enough there, because a strip narrower than the
+ * sampling can fall between two tested points (#1096 review, P2).
  */
 export interface RotaryRegionMask {
   containsPoint(point: { x: number; y: number }): boolean
+  containsSegment?(from: { x: number; y: number }, to: { x: number; y: number }): boolean
 }
 
 /** Perpendicular distance of `point` from the line through `a` and `b`. */
@@ -1143,6 +1146,31 @@ export function rotaryRegionContains(
 ): boolean {
   const across = barCentre(stock) + angleDeg * Math.PI * stock.thickness / 360
   return mask.containsPoint(stock.axis === 'x' ? { x: along, y: across } : { x: across, y: along })
+}
+
+/**
+ * Is the whole along-bar span at one angle inside the operation's region
+ * (#1096 review, P2)?
+ *
+ * A surface link is one straight cut at one angle, so its membership must be
+ * decided for the segment, not for the dense row's sample points: an excluded
+ * strip 0.02 mm wide between two samples is still cut by the link that steps
+ * over it. The mask exposes its own boundary test (`containsSegment`); `null`
+ * means the mask has none, and the caller keeps its point check, so a
+ * hand-built mask with only point membership behaves exactly as before.
+ */
+export function rotaryRegionSegmentContains(
+  mask: RotaryRegionMask,
+  stock: BarStock,
+  fromAlong: number,
+  toAlong: number,
+  angleDeg: number,
+): boolean | null {
+  if (mask.containsSegment === undefined) return null
+  const across = barCentre(stock) + angleDeg * Math.PI * stock.thickness / 360
+  return stock.axis === 'x'
+    ? mask.containsSegment({ x: fromAlong, y: across }, { x: toAlong, y: across })
+    : mask.containsSegment({ x: across, y: fromAlong }, { x: across, y: toAlong })
 }
 
 /**
@@ -2774,14 +2802,23 @@ export function generateRotaryFinish(
     const fromAlong = alongCoordinate(stock, from)
     const toAlong = alongCoordinate(stock, to)
     if (!(toAlong > fromAlong)) return null
+    // #1096 review (P2): this link is a **cut** from `fromAlong` to `toAlong`
+    // at one angle, so the **whole span** must be inside the region -- not just
+    // the dense row's sample points. A 0.02 mm excluded strip between two
+    // samples was stepped over by a link that then cut it, because membership
+    // was only ever asked at the samples. The mask's own boundary geometry
+    // decides the segment; `null` means a hand-built mask with point membership
+    // only, which keeps the sample check below.
+    if (region !== null && insideRegion !== null) {
+      if (!insideRegion(fromAlong, from.a) || !insideRegion(toAlong, from.a)) return null
+      if (rotaryRegionSegmentContains(region, stock, fromAlong, toAlong, from.a) === false) return null
+    }
     const points: RotaryLinkStep[] = []
     for (let i = 0; i < linkRow.along.length; i++) {
       const x = linkRow.along[i]
       if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
-      // #1096: this leg is a **cut** at the model's own surface, so it must
-      // stay inside the region too. A link whose along span leaves the region
-      // anywhere between the two rings is not a link: the caller falls back to
-      // the ordinary retract, traverse and plunge, which does not cut.
+      // A point-only mask still gets the old per-sample test; an exact segment
+      // test above already subsumes it.
       if (insideRegion !== null && !insideRegion(x, from.a)) return null
       const tip = linkRow.tips[i]
       if (!Number.isFinite(tip)) return null

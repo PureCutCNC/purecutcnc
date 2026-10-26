@@ -547,6 +547,68 @@ const ROUND_FINISH_PARAMS = {
   assert.deepEqual(full.moves, free.moves, 'a region covering the sheet changes no motion')
 }
 
+// ── a surface link cannot step over a narrow excluded strip ──────────────
+
+// #1096 review (P2): the reviewer's production mask excludes X4.99..5.01 and
+// the finish links ring X4.5 to ring X5.5 as a cut at A117.624. The dense link
+// row samples X at 4.873 and 5.246, so testing only those samples stepped over
+// the 0.02 mm strip and cut it. The mask's own boundary geometry must refuse
+// the whole link, leaving the existing retract/rapid/plunge in its place.
+{
+  const stock = roundStock(12, 30, 'x')
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const travelZ = rotaryTravelZ(stock, 'mm')
+  const mesh = cylinderMesh(stock, 4, 3, 27)
+  // The cutter-centre span 3..27 pulls in one 1.5 mm ball radius at each end,
+  // so the rings land exactly on X4.5, X5.5, ...: the reviewer's link span.
+  const params = ROUND_FINISH_PARAMS
+  const acrossOfAngle = (angle: number): number => centre + angle * circumference / 360
+  // The ring arc ends at the reviewer's A117.624, which is a sample of this
+  // fixture's 360/101 degree grid: every ring-to-ring link uses that angle.
+  const arc: SheetRect = {
+    alongMin: 0, alongMax: 30,
+    acrossMin: acrossOfAngle(60), acrossMax: acrossOfAngle(117.624),
+  }
+  const strip: SheetRect = {
+    alongMin: 4.99, alongMax: 5.01,
+    acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
+  }
+  const stripMask = buildRegionMask(
+    [regionFeature(stock, 'arc', arc), regionFeature(stock, 'strip', strip, 'exclude')],
+    { axis: stock.axis === 'x' ? 'y' : 'x', period: circumference },
+  )
+  assert.ok(stripMask, 'the reviewer repro mask builds')
+  const linked = generateRotaryFinish('strip-free', mesh, stock, ROUND_FINISH_TOOL, {
+    ...params, region: productionMask(stock, arc),
+  }, {})
+  const excluded = generateRotaryFinish('strip', mesh, stock, ROUND_FINISH_TOOL, {
+    ...params, region: stripMask,
+  }, {})
+
+  /** A non-rapid move whose along span covers the whole strip. */
+  const crossingCuts = (result: ToolpathResult): ToolpathMove[] => result.moves.filter((move) => {
+    if (move.kind === 'rapid') return false
+    const from = alongOf(stock, move.from)
+    const to = alongOf(stock, move.to)
+    return Math.min(from, to) < strip.alongMin - 1e-9 && Math.max(from, to) > strip.alongMax + 1e-9
+  })
+
+  // The control proves the link exists and that this fixture's samples do land
+  // outside the strip, so the assertion below is not vacuous.
+  const control = crossingCuts(linked)
+  assert.ok(control.length > 0, 'the control links X4.5 -> X5.5 across the strip')
+  for (const move of control) {
+    assert.ok(Math.abs((move.from.a ?? 0) - 117.624) < 1e-3,
+      `the link uses the arc boundary angle (A${(move.from.a ?? 0).toFixed(3)})`)
+  }
+  assert.equal(crossingCuts(excluded).length, 0,
+    'a link covering the excluded strip is not cut; the finish retracts instead')
+  assert.ok(excluded.moves.some((move) => move.kind === 'cut'
+    && Math.min(move.from.z, move.to.z) < travelZ - 1e-9),
+  'the excluded finish still cuts inside the arc')
+}
+
 // ── no region: byte-identical output ──────────────────────────────────────
 
 // Captured from the base commit before #1096 existed, with the same fixtures:

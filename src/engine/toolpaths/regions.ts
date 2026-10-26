@@ -41,6 +41,16 @@ export interface RegionMask {
   baseIncludesSubject: boolean
   entries: RegionMaskEntry[]
   containsPoint(point: Point): boolean
+  /**
+   * Is the **whole straight segment** inside the mask (#1096)?
+   *
+   * Optional only because a mask can be built by hand from point membership;
+   * both builders in this file supply it. Point-sampling a segment can step
+   * over an excluded strip narrower than the sample spacing, so a caller that
+   * must prove a cut stays inside a region has to intersect the segment with
+   * the mask's own geometry rather than densify the samples.
+   */
+  containsSegment?(from: Point, to: Point): boolean
 }
 
 interface RegionMaskEntry {
@@ -48,6 +58,74 @@ interface RegionMaskEntry {
   paths: ClipperPath[]
 }
 
+/** The ordered include/exclude composition both mask builders share. */
+function composedContainsPoint(
+  entries: RegionMaskEntry[],
+  baseIncludesSubject: boolean,
+  point: Point,
+): boolean {
+  let included = baseIncludesSubject
+  for (const entry of entries) {
+    if (!pointInClipperPaths(point, entry.paths)) continue
+    included = entry.mode === 'include'
+  }
+  return included
+}
+
+/**
+ * Is a whole segment inside a mask built from `entries` (#1096)?
+ *
+ * Membership can change only where the segment crosses a boundary edge, so the
+ * segment is intersected with every edge of every entry and the resulting spans
+ * are tested at their midpoints. That is exact for the polygons the mask is
+ * made of, and unlike sampling it cannot jump across a strip narrower than the
+ * step. Both endpoints are tested separately: a span may be open at the cut
+ * itself. A segment collinear with an edge produces no crossing and is decided
+ * by its endpoints and the span between them.
+ */
+function segmentInsideEntries(
+  entries: RegionMaskEntry[],
+  baseIncludesSubject: boolean,
+  from: Point,
+  to: Point,
+): boolean {
+  const inside = (point: Point): boolean => composedContainsPoint(entries, baseIncludesSubject, point)
+  if (!inside(from) || !inside(to)) return false
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  if (dx === 0 && dy === 0) return true
+  const cuts: number[] = []
+  for (const entry of entries) {
+    for (const path of entry.paths) {
+      for (let i = 0; i < path.length; i++) {
+        const a = path[i]
+        const b = path[(i + 1) % path.length]
+        const ex = (b.X - a.X) / DEFAULT_CLIPPER_SCALE
+        const ey = (b.Y - a.Y) / DEFAULT_CLIPPER_SCALE
+        const denominator = dx * ey - dy * ex
+        // Parallel edges cannot change membership along the segment; a
+        // collinear one leaves the span whole, which the midpoint test covers.
+        if (denominator === 0) continue
+        const ax = a.X / DEFAULT_CLIPPER_SCALE - from.x
+        const ay = a.Y / DEFAULT_CLIPPER_SCALE - from.y
+        const t = (ax * ey - ay * ex) / denominator
+        if (!(t > 0 && t < 1)) continue
+        const u = (ax * dy - ay * dx) / denominator
+        if (u < 0 || u > 1) continue
+        cuts.push(t)
+      }
+    }
+  }
+  cuts.sort((left, right) => left - right)
+  let previous = 0
+  for (const cut of cuts) {
+    if (cut <= previous) continue
+    const mid = (previous + cut) / 2
+    if (!inside({ x: from.x + dx * mid, y: from.y + dy * mid })) return false
+    previous = cut
+  }
+  return true
+}
 
 function pointInClipperPaths(point: Point, paths: ClipperPath[]): boolean {
   const clipperPoint = {
@@ -201,27 +279,23 @@ export function buildRegionMask(
     boundaryPaths,
     baseIncludesSubject,
     entries,
-    containsPoint: (point) => {
-      let included = baseIncludesSubject
-      for (const entry of entries) {
-        if (!pointInClipperPaths(point, entry.paths)) continue
-        included = entry.mode === 'include'
-      }
-      return included
-    },
+    containsPoint: (point) => composedContainsPoint(entries, baseIncludesSubject, point),
+    containsSegment: (from, to) => segmentInsideEntries(entries, baseIncludesSubject, from, to),
   }
 }
 
 export function buildMaskFromClipperPaths(paths: ClipperPath[]): RegionMask | null {
   if (paths.length === 0) return null
+  const entries: RegionMaskEntry[] = [{ mode: 'include', paths }]
   return {
     paths,
     hasIncludeRegions: true,
     excludePaths: [],
     boundaryPaths: paths,
     baseIncludesSubject: false,
-    entries: [{ mode: 'include', paths }],
-    containsPoint: (point) => pointInClipperPaths(point, paths),
+    entries,
+    containsPoint: (point) => composedContainsPoint(entries, false, point),
+    containsSegment: (from, to) => segmentInsideEntries(entries, false, from, to),
   }
 }
 
