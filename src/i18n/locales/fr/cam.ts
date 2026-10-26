@@ -113,7 +113,6 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.panel.add': 'Ajouter',
   'cam.plan.launch': 'Plan',
   'cam.plan.unavailableAround': 'Le plan automatique n’est pas disponible sur la face autour',
-  'cam.plan.unavailableBottom': 'Le plan automatique ne vaut que pour le montage du dessus. Passez au dessus, ou ajoutez les opérations du dessous à la main.',
   'cam.plan.title': 'Plan FAO',
   'cam.plan.subtitle': 'Vérifiez les opérations, les outils et la configuration partagée à ajouter. Les opérations existantes restent inchangées.',
   'cam.plan.summary': 'Résumé du plan',

@@ -137,7 +137,6 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.panel.add': '添加',
   'cam.plan.launch': '方案',
   'cam.plan.unavailableAround': '环绕面上无法使用自动计划',
-  'cam.plan.unavailableBottom': '自动计划仅适用于顶面装夹。请切换到顶面，或手动添加底面操作。',
   'cam.plan.title': 'CAM 方案',
   'cam.plan.subtitle': '检查将添加的操作、刀具和共享设置。现有操作保持不变。',
   'cam.plan.summary': '方案摘要',
