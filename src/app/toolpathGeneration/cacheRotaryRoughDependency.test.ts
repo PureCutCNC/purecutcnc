@@ -195,6 +195,40 @@ console.log('\nToolpath cache: a rotary finish depends on the roughs before it')
     ),
     'region ids are compared as a sorted set',
   )
+  // #1096 review (P2): an exclude is part of the mask, so changing it changes
+  // whether the rough covers the finish and must invalidate the advisory.
+  const excludeFeature = {
+    ...BASE.featureDefinitions[regionFeature.definitionId],
+    id: 'exclude',
+    regionMaskMode: 'exclude' as const,
+  }
+  const withExclude: Project = {
+    ...withTwoRegions,
+    featureDefinitions: { ...BASE.featureDefinitions, exclude: excludeFeature },
+    features: [...BASE.features, { ...regionFeature, id: 'exclude', definitionId: 'exclude', name: 'Exclude' }],
+  }
+  const regionFinish: Operation = {
+    ...finish,
+    target: { source: 'features', featureIds: ['model', 'second', 'region'] },
+  }
+  check(
+    'adding an exclude to the rough invalidates',
+    !cacheInputsValid(
+      captureCacheInputs(operationsFor(withExclude, [rough('rough-a', ['model', 'region']), regionFinish]), regionFinish),
+      regionFinish,
+      operationsFor(withExclude, [rough('rough-a', ['model', 'region', 'exclude']), regionFinish]),
+    ),
+    'a rough that excludes an area stops covering a finish that cuts it',
+  )
+  check(
+    'removing the rough exclude invalidates',
+    !cacheInputsValid(
+      captureCacheInputs(operationsFor(withExclude, [rough('rough-a', ['model', 'region', 'exclude']), regionFinish]), regionFinish),
+      regionFinish,
+      operationsFor(withExclude, [rough('rough-a', ['model', 'region']), regionFinish]),
+    ),
+    'the exclude is an advisory input both ways',
+  )
   const pocket: Operation = {
     ...finish,
     id: 'pocket',

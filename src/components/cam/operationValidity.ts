@@ -439,12 +439,17 @@ function getOperationAddHintWithMap(
  * nothing selected, which is right when adding an operation and a silent
  * target reset when editing one. The panel asks for a selection there, so a
  * stray click can never drop a region filter or a narrowed model set.
+ *
+ * `currentTarget` is the operation being updated. A selection that names only a
+ * region has no model in it, and the rotary default would then add every
+ * imported model back -- including one the user had unchecked (#1096 review,
+ * P2). With the current target in hand the model half is kept instead.
  */
 export function operationTargetFromSelection(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
-  options: { requireSelection?: boolean } = {},
+  options: { requireSelection?: boolean; currentTarget?: OperationTarget } = {},
 ): OperationTarget | null {
   if (isRotaryOperationKind(kind)) {
     // The rotary rows do not depend on the selection (issue #1015): a selected
@@ -461,11 +466,20 @@ export function operationTargetFromSelection(
     const models = importedModelFeatureIds(project)
     const selected = new Set(selection.selectedFeatureIds)
     const chosen = models.filter((id) => selected.has(id))
-    const regions = resolveFeatureInstances(project, selection.selectedFeatureIds)
+    // #1096 review (P2): adding a region must keep the current model choice.
+    // Only a newly selected model replaces it; a region-only selection keeps
+    // the model ids the operation already targets (filtered to models that
+    // still exist), and only an operation with no usable model falls back to
+    // every model.
+    const currentModels = options.currentTarget?.source === 'features'
+      ? options.currentTarget.featureIds.filter((id) => models.includes(id))
+      : []
+    const regionIds = resolveFeatureInstances(project, selection.selectedFeatureIds)
       .filter((feature) => isRegion(feature) && feature.authoringFace === 'around' && featureHasClosedGeometry(feature))
       .map((feature) => feature.id)
       .sort()
-    return { source: 'features', featureIds: [...(chosen.length > 0 ? chosen : models), ...regions] }
+    const modelIds = chosen.length > 0 ? chosen : currentModels.length > 0 ? currentModels : models
+    return { source: 'features', featureIds: [...modelIds, ...regionIds] }
   }
 
   if (selection.selectedFeatureIds.length === 0) {

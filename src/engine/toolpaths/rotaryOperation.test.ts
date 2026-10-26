@@ -27,7 +27,7 @@ import {
   rotaryFinishWithoutRough,
   rotaryPrecedingRoughs,
   rotaryTargetModelIds,
-  rotaryTargetRegionIds,
+  rotaryTargetRegions,
 } from './rotaryOperation'
 
 for (const axis of ['x', 'y'] as const) {
@@ -214,8 +214,16 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
     rotaryTargetModelIds(project, withRegion), ['model', 'second'],
     'a region id in the target is not a model',
   )
-  assert.deepEqual(rotaryTargetRegionIds(project, finish), [], 'a finish without a region filters nothing')
-  assert.deepEqual(rotaryTargetRegionIds(project, withRegion), ['region'], 'the region id is the finish filter')
+  assert.deepEqual(
+    rotaryTargetRegions(project, finish),
+    { includeIds: [], excludeIds: [] },
+    'a finish without a region filters nothing',
+  )
+  assert.deepEqual(
+    rotaryTargetRegions(project, withRegion),
+    { includeIds: ['region'], excludeIds: [] },
+    'the region id and its include mode are the finish filter',
+  )
   // The rule the adapter and the cache share: build the dependency list the
   // real helper consumes, then decide.
   const decide = (
@@ -225,7 +233,7 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   ): boolean => rotaryFinishWithoutRough(
     rotaryPrecedingRoughs({ ...projectForDecide, operations: [...operations, target] }, target),
     rotaryTargetModelIds(projectForDecide, target),
-    rotaryTargetRegionIds(projectForDecide, target),
+    rotaryTargetRegions(projectForDecide, target),
   )
   assert.equal(
     decide(project, [rough('b', ['second'])], finish), true,
@@ -268,6 +276,43 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
     decide(otherRegionProject, [rough('ab-other', ['model', 'second', 'region-2'])], withOtherRegion), false,
     'the same other region does cover that finish',
   )
+  // #1096 review (P2): an exclude suppresses cutting in every layer, so it is
+  // part of the mask comparison too. A rough that excludes E does not prepare E
+  // for a finish that cuts it, even when both carry the same include region.
+  const excludeProject = {
+    ...project,
+    featureDefinitions: {
+      ...project.featureDefinitions,
+      exclude: {
+        ...project.featureDefinitions[regionFeature.definitionId],
+        id: 'exclude',
+        regionMaskMode: 'exclude' as const,
+      },
+    },
+    features: [...project.features, {
+      ...regionFeature, id: 'exclude', name: 'Exclude', definitionId: 'exclude',
+    }],
+  }
+  const finishWithExclude = {
+    ...finish,
+    target: { source: 'features' as const, featureIds: ['model', 'second', 'region', 'exclude'] },
+  }
+  assert.equal(
+    decide(excludeProject, [rough('ab-rxe', ['model', 'second', 'region', 'exclude'])], withRegion), true,
+    'a rough that adds an exclude the finish does not have leaves that area unroughed: warn',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-rxe', ['model', 'second', 'region', 'exclude'])], finishWithExclude), false,
+    'the same include set and no extra excludes covers the finish: stay quiet',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), false,
+    'a rough with the same include and fewer excludes covers a finish that excludes more',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-e', ['model', 'second', 'exclude'])], withRegion), true,
+    'an exclude-only rough is not the same include set as an include-region finish',
+  )
   const warned = (operations: Operation[], target: Operation = finish) => computeOperationToolpath({
     ...project, operations: [...operations, target],
   }, target)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
@@ -279,5 +324,11 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
     'the adapter stays quiet when a whole-bar rough precedes a region finish')
   assert.equal(warned([rough('region', ['region'])], withRegion).length, 1,
     'the adapter warns when the preceding rough covers only its own region')
+  // The adapter's own input path must read the exclude mode, not just the id.
+  const warnedWithExclude = computeOperationToolpath({
+    ...excludeProject, operations: [rough('ab-rxe', ['model', 'second', 'region', 'exclude']), withRegion],
+  }, withRegion)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
+  assert.equal(warnedWithExclude.length, 1,
+    'the adapter warns when the rough excludes an area the finish still cuts')
 }
 console.log('rotaryOperation integration tests passed')

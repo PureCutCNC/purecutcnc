@@ -42,7 +42,7 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { barCentre, isBarStock, squareStock } from '../../types/barStock'
+import { barCentre, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
 import { isRoundStock, rectProfile, roundStock } from '../../types/project'
 import type { BarStock, Operation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
@@ -55,7 +55,7 @@ import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import { buildRegionMask } from './regions'
 import { generateRotaryFinish } from './rotaryModel'
-import { rotaryTravelZ } from './squareRotaryStock'
+import { rotaryTravelZ, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathResult } from './types'
 
@@ -244,6 +244,55 @@ for (const shape of ['round', 'square'] as const) {
       }
     }
   }
+}
+
+// ── a link crossing the gap between two region bands ─────────────────────
+
+// #1096 review (P1): the reviewer's repro -- a 12 mm square blank, a 2 mm ball,
+// and two bands along X8-10 and X20-22 -- produced a link between the bands
+// whose height came from the model tips, not from what had actually been cut.
+// Outside a region nothing is removed, so a link crossing outside must clear
+// the **uncut blank**, not the model that a full-bar job would have reached.
+{
+  const base = squareProject('rotary_rough')
+  const stock = barStockOf(base)
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  // A band spanning the whole circumference: the region is a pair of along
+  // windows, exactly the reviewer's reproduction.
+  const profile = (alongMin: number): SketchProfile => rectProfile(
+    alongMin, centre - circumference / 2, 2, circumference,
+  )
+  const project = withRegion(withRegion(base, 'region-a', profile(8)), 'region-b', profile(20))
+  const operation: Operation = {
+    ...project.operations[0],
+    rotaryPassDirection: 'around',
+    target: { source: 'features', featureIds: ['model', 'region-a', 'region-b'] },
+  }
+  const result = computeOperationToolpath(project, operation)!.result
+  const pivot = barPivotZ(stock)
+  const tool = normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project)
+  const blankZ = (angle: number): number => pivot
+    + squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
+  let crossings = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'rapid') continue
+    if (move.from.a === undefined || move.from.a !== move.to.a) continue
+    const from = alongOf(stock, move.from)
+    const to = alongOf(stock, move.to)
+    // The link between the two bands crosses the untouched gap at X15.
+    if (!(Math.min(from, to) <= 15 && Math.max(from, to) >= 15)) continue
+    crossings++
+    const blank = blankZ(move.from.a)
+    assert.ok(move.from.z >= blank - 1e-6 && move.to.z >= blank - 1e-6,
+      `a link crossing the gap at X15, A${move.from.a.toFixed(2)} runs at `
+      + `Z${Math.min(move.from.z, move.to.z).toFixed(4)}, inside the uncut blank `
+      + `(top ${blank.toFixed(4)})`)
+  }
+  assert.ok(crossings > 0,
+    'the two region bands leave a gap, so a link crossing the untouched stock exists')
+  assert.ok(cuttingMoves(result, rotaryTravelZ(stock, 'mm')).length > 0,
+    'the bands still cut inside themselves')
 }
 
 // An 'exclude' region masks the other way round: the area it covers is *not*
