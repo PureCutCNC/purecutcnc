@@ -20,12 +20,25 @@ import { resolveFeatureInstances } from '../../../store/helpers/resolveFeatures'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
 import { materiallySmallerCamPlanTools, rankCamPlanTools, toolChoiceReason } from './toolPlanning'
+import { camPlanSetupProject, camPlanRegionsInStockFrame, throughFeaturesCoveredByTop } from './setupPlanning'
+import { activeSetup } from '../../../store/helpers/activeFace'
+import { operationFace } from '../../setupTargets'
+import { setupFace } from '../../setupOrientation'
 import type { CamPlanDraft, CamPlanOperationDraft, CamPlanOperationField, CamPlanTool } from './types'
 
 function analysisProject(project: Project, plan: CamPlanDraft): Project {
   const tools = new Map(project.tools.map((tool) => [tool.id, tool]))
   for (const candidate of plan.tools) tools.set(candidate.id, candidate.tool)
-  return { ...project, tools: [...tools.values()] }
+  const local = camPlanSetupProject({ ...project, tools: [...tools.values()] })
+  if (setupFace(activeSetup(project)) !== 'bottom') return local
+  const covered = throughFeaturesCoveredByTop(project, resolveFeatureInstances(project))
+  return {
+    ...local,
+    operations: [...local.operations, ...project.operations.filter((operation) =>
+      operationFace(project, operation) === 'top' && operation.target.source === 'features'
+      && operation.target.featureIds.some((id) => covered.has(id)),
+    )],
+  }
 }
 
 function candidateById(plan: CamPlanDraft, id: string | null): CamPlanTool | null {
@@ -141,6 +154,7 @@ function createRestOperation(
     },
   )
   operation.id = key
+  if (setupFace(activeSetup(project)) === 'bottom') operation.setupId = project.activeSetupId
   operation.name = `${finish?.operation.name ?? source.operation.name.replace('Rough', 'Finish')} Rest`
   operation.target = source.operation.target
   return operation
@@ -208,11 +222,11 @@ export function reconcileCamPlanRest(
 
   const reusedToolIds = reusedToolIdsOverride ?? sourceToolIds(plan.operations)
   const ranked = rankCamPlanTools(
-    project,
+    context,
     source.operation.kind,
     source.operation.target,
     plan.tools,
-    requiredCutDepth(project, source.operation),
+    requiredCutDepth(context, source.operation),
     reusedToolIds,
   )
   const candidates = sourceTool
@@ -265,7 +279,7 @@ export function reconcileCamPlanRest(
       sourceFeatureIds: source.operation.target.source === 'features'
         ? [...source.operation.target.featureIds]
         : [],
-      regions: result.drafts,
+      regions: camPlanRegionsInStockFrame(project, result.drafts),
     },
   }
 
@@ -313,11 +327,11 @@ export function reconcileCamPlanDownstream(project: Project, plan: CamPlanDraft,
       ? candidateById(plan, pairedRough.operation.toolRef)
       : null
     const ranked = rankCamPlanTools(
-      project,
+      camPlanSetupProject(project),
       draft.operation.kind,
       draft.operation.target,
       plan.tools,
-      draft.requiredCutDepth ?? requiredCutDepth(project, draft.operation),
+      draft.requiredCutDepth ?? requiredCutDepth(camPlanSetupProject(project), draft.operation),
       reusedToolIds,
       draft.maximumToolDiameter,
     )

@@ -482,14 +482,15 @@ function testCamPlanFollowsTheActiveSetup(): void {
   assert(applied.operationIds.length > 0, 'creating operations')
   assert(applied.project.operations.every((operation) => rejectedOperationTargets(applied.project, operation).length === 0), 'every one of which its setup can cut')
 
-  // Bottom is active: nothing can be created, and each proposal says why.
+  // Bottom is active: proposals use its cutting frame.
   const bottomActive: Project = { ...project, activeSetupId: BOTTOM_SETUP_ID }
   const onBottom = createCamPlan(bottomActive, [])
   const bottomTargets = targeted(onBottom)
   assert(bottomTargets.has('recess') && !bottomTargets.has('tray'), `Bottom plans its own features, not a blind Top one: ${[...bottomTargets].join(', ')}`)
-  assert(onBottom.operations.every((draft) => draft.hardError !== null), 'no Bottom proposal can be created')
-  assert(onBottom.operations.some((draft) => TURNED.test(draft.hardError ?? '')), 'and the reason is the setup')
-  assert(creatable(onBottom).operations.every((draft) => !draft.enabled), 'so nothing is left to apply')
+  assert(onBottom.operations.every((draft) => !TURNED.test(draft.hardError ?? '')), 'Bottom is supported')
+  const bottomApplied = materializeCamPlan(bottomActive, creatable(onBottom))
+  assert(bottomApplied.ok && bottomApplied.operationIds.length > 0, 'Bottom recommendations apply')
+  assert(bottomApplied.project.operations.filter((op) => bottomApplied.operationIds.includes(op.id)).every((op) => op.setupId === BOTTOM_SETUP_ID), 'Bottom recommendations join Bottom')
 
   // A plan belongs to the setup it was made for.
   assert(camPlanProjectFingerprint(project) !== camPlanProjectFingerprint(bottomActive), 'switching setups makes a plan stale')

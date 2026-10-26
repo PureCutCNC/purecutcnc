@@ -115,7 +115,7 @@ function appendRestRegions(
       locked: false,
     } satisfies SketchFeature)
     const created = createDefinitionForFeature(next, feature)
-    const instance = createFeatureInstance(feature, created.definitionId)
+    const instance = { ...createFeatureInstance(feature, created.definitionId), authoringFace: activeFace(next) }
     next = {
       ...next,
       features: [...next.features, instance],

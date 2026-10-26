@@ -57,7 +57,7 @@ const selection = { ...useProjectStore.getState().selection,selectedFeatureIds:[
 assert.equal(operationTargetFromSelection(before,selection,'pocket'),null)
 const plan = createCamPlan(before,[])
 assert.ok(plan.operations.length > 0)
-assert.ok(plan.operations.every((draft) => draft.hardError?.includes('Top setup only')), 'Bottom CAM Plan cannot silently propose Top cuts')
+assert.ok(plan.operations.every((draft) => !draft.hardError?.includes('Top setup only')), 'Bottom CAM Plan supports a provisional Bottom setup')
 // Both UI and engine use the same tolerance and subtract rule.
 const resolved = resolveFeatureInstance(before,'through')!
 assert.equal(isThroughFeature(before,{ ...resolved,z_bottom:5e-7 }),true)
