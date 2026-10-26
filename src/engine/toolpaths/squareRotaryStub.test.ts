@@ -1029,7 +1029,7 @@ console.log('Testing the simulated band reaches the target clear of the stubs...
 // because along-the-bar layers alternate the direction of their angle sequence
 // instead of adding a full turn per layer (A stays within [0, 360]); the finish
 // fingerprints and both warnings are unchanged.
-
+//
 function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Array<{ code: string }> }): string {
   return [
     createHash('sha256').update(JSON.stringify(result.moves)).digest('hex').slice(0, 16),

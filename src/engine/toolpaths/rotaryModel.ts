@@ -21,7 +21,7 @@ import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMapWindow } from './finishSurfaceParallel'
-import { CENTRE_SLACK, buildRotaryHeightMap, buildRotaryRasterGeometry } from './rotaryRaster'
+import { buildRotaryHeightMap, buildRotaryRasterGeometry } from './rotaryRaster'
 import type { RotaryRasterGeometry } from './rotaryRaster'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
@@ -222,13 +222,6 @@ interface RotaryStripPlan {
   /** Triangle starts (offsets into `index`) that reach the strip at every turn. */
   readonly always: Uint32Array
   readonly bucketWidth: number
-  /**
-   * The cell size the axial-centre cull was built for, when every angle of the
-   * call shares one. A triangle whose axial span holds no cell centre at that
-   * size cannot reach any cell of the map at any angle and is excluded from
-   * `always` and the buckets. `undefined` means no cull (mixed cell sizes).
-   */
-  readonly axialCell?: number
 }
 
 /** The mesh-only half of a plan: it does not depend on the tool or the angles. */
@@ -533,20 +526,17 @@ function buildStripPlan(
   // slack absorbs the grid arithmetic. A triangle that cannot reach this band
   // cannot touch any angle's window.
   let reach = 0
-  const cellSizes = new Set<number>()
   for (const angle of anglesDeg) {
     const bounds = turnedBounds(hull, minAlong, maxAlong, stock, angle)
     const cellSize = chooseHeightMapCellSize(bounds, requestedCellSize, [])
-    cellSizes.add(cellSize)
     const candidate = (Math.ceil(tool.radius / cellSize) + 2) * cellSize
     if (candidate > reach) reach = candidate
   }
-  // Rotation never moves the bar axis and the grid origin on it is
-  // `fround(minAlong)`, so when every angle of this call shares a cell size the
-  // set of triangles that can cover an axial cell centre is fixed. On a mesh
-  // finer than the cell most triangles cover none (three quarters of the bust);
-  // dropping them is exact and they are paid for at no angle.
-  const axialCell = cellSizes.size === 1 ? [...cellSizes][0] : undefined
+  // #1050: there is deliberately no axial-centre cull. A triangle whose axial
+  // span holds no cell centre can still overlap a cell, and the raster now
+  // clips such a triangle to every cell it overlaps instead of dropping it.
+  // Excluding it here would make the fused kernel disagree with the general
+  // one on exactly the thin features the clip exists for.
   if (!(reach > 0) || !Number.isFinite(reach)) {
     // An infinite reach keeps every triangle; it is valid for every angle.
     if (workspace.plan && workspace.reach === Number.POSITIVE_INFINITY
@@ -565,31 +555,10 @@ function buildStripPlan(
   }
   // A plan built for a wider reach contains every triangle this call can need:
   // the strip index only ever over-includes, and the buckets are direction-only.
-  // The axial cull must match the cell size it was built for, and the bounds the
-  // grid mesh they were taken from (#1095).
+  // The bounds must be the grid mesh's they were taken from (#1095).
   if (workspace.plan && workspace.reach !== undefined && workspace.reach >= reach
-    && workspace.plan.axialCell === axialCell && workspace.planGridExtra === gridExtra) {
+    && workspace.planGridExtra === gridExtra) {
     return workspace.plan
-  }
-  let axialMask: Uint8Array | undefined
-  if (axialCell !== undefined) {
-    axialMask = new Uint8Array(triangleCount)
-    const origin = Math.fround(minAlong)
-    for (let t = 0; t < triangleCount; t++) {
-      const offset = t * 3
-      const v0 = mesh.index[offset]
-      const v1 = mesh.index[offset + 1]
-      const v2 = mesh.index[offset + 2]
-      const axisOffset = stock.axis === 'x' ? 0 : 1
-      const p0 = mesh.positions[v0 * 3 + axisOffset]
-      const p1 = mesh.positions[v1 * 3 + axisOffset]
-      const p2 = mesh.positions[v2 * 3 + axisOffset]
-      const lo = Math.min(p0, p1, p2)
-      const hi = Math.max(p0, p1, p2)
-      const first = Math.ceil((lo - origin) / axialCell - 0.5 - CENTRE_SLACK)
-      const last = Math.floor((hi - origin) / axialCell - 0.5 + CENTRE_SLACK)
-      if (first <= last) axialMask[t] = 1
-    }
   }
   const arcFirst = new Int32Array(triangleCount)
   const arcLast = new Int32Array(triangleCount)
@@ -597,10 +566,6 @@ function buildStripPlan(
   let alwaysCount = 0
   for (let t = 0; t < triangleCount; t++) {
     const offset = t * 3
-    if (axialMask && axialMask[t] === 0) {
-      arcFirst[t] = -2
-      continue
-    }
     if (stripArc(across, up, mesh.index[offset], mesh.index[offset + 1], mesh.index[offset + 2], reach, arc)) {
       arcFirst[t] = -1
       alwaysCount++
@@ -652,7 +617,6 @@ function buildStripPlan(
   }
   const plan: RotaryStripPlan = {
     across, up, hull, minAlong, maxAlong, bucketStarts, bucketTriangles, always, bucketWidth,
-    ...(axialCell !== undefined ? { axialCell } : {}),
   }
   workspace.plan = plan
   workspace.reach = reach
