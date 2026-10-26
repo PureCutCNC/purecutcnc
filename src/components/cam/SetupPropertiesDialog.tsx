@@ -16,14 +16,14 @@
 
 import { useState } from 'react'
 import type { MachiningSetup, Project } from '../../types/project'
-import { setupFace, setupOriginInCanonical, setupFrame } from '../../engine/setupOrientation'
+import { setupFace } from '../../engine/setupOrientation'
 import { useProjectStore } from '../../store/projectStore'
 import { activeSetup } from '../../store/helpers/activeFace'
 import { operationsDeletedWithSetup } from './setupSections'
+import { setupDialogSections } from './setupDialogSections'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
-import { formatLength } from '../../utils/units'
 
 export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup: MachiningSetup; onClose: () => void }) {
   const { t } = useI18n()
@@ -37,10 +37,10 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const [registration, setRegistration] = useState(setup.registration)
   const [deleting, setDeleting] = useState(false)
   const face = setupFace(setup)
+  const sections = setupDialogSections(face)
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
   // A dialog cannot save over an intervening undo/edit to the setup.
   const unchanged = current && JSON.stringify(current) === JSON.stringify(setup)
-  const origin = setupOriginInCanonical(project.origin, setupFrame({ ...setup.orientation, axis }, project.stock))
   const removed = operationsDeletedWithSetup(project, setup.id)
   function save() {
     if (!unchanged) return
@@ -52,6 +52,7 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
     if (updateSetup(setup.id, next)) close()
   }
   return <SetupDialogShell title={t('cam.setup.propertiesFor', { name: setup.name })} onClose={close} footer={<>
+    {deleting ? null : <button className="btn-secondary setup-dialog__delete" type="button" disabled={project.setups.length < 2 || !project.setups.some((entry) => entry.id === setup.id)} onClick={() => { setDeleteSnapshot(project); setDeleting(true) }}>{t('cam.setup.delete')}</button>}
     <button className="btn-secondary" type="button" onClick={close}>{t('dialogs.common.cancel')}</button>
     {deleting ? <button className="btn-primary" type="button" disabled={!unchanged || deleteSnapshot !== project} onClick={() => { if (deleteSnapshot === project && deleteSetup(setup.id)) close() }}>{t('cam.setup.confirmDelete')}</button>
       : <button className="btn-primary" type="button" disabled={!name.trim() || !unchanged} onClick={save}>{t('cam.setup.save')}</button>}
@@ -59,22 +60,20 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
     {!unchanged ? <p role="alert">{t('cam.setup.changed')}</p> : null}
     {deleting ? <><p>{t('cam.setup.deleteWarning', { name: setup.name })}</p><ul>{removed.map((operation) => <li key={operation.id}>{operation.name}</li>)}</ul><p>{t('cam.setup.deleteCount', { count: removed.length })}</p></> : <>
       <label className="properties-field"><span>{t('cam.operation.name')}</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-      {face === 'around' ? null : (
-        // An Around setup has no face to turn up, no flip axis, no flip
-        // sketch and no registration to declare (issue #395).
-        <>
-          <div className="properties-field"><span>{t('cam.setup.faceUp')}</span><div className="setup-face-options">{(['top','bottom','left','right','front','back'] as const).map((value) => <button key={value} type="button" disabled aria-pressed={value === face} className={value === face ? `face-chip face-chip--${face}` : 'face-chip'}>{t(`cam.setup.${value}`)}</button>)}</div></div>
-          <p className="properties-hint">{t('cam.setup.faceFixed')}</p>
-          <label className="properties-field"><span>{t('cam.setup.flipAxis')}</span><select value={axis} onChange={(event) => setAxis(event.target.value as 'x' | 'y')}><option value="x">{t('cam.setup.axisX')}</option><option value="y">{t('cam.setup.axisY')}</option></select></label>
-          <FlipSketch axis={axis} />
-          <div className="properties-field"><span>{t('cam.setup.sharedOrigin')}</span><span>{formatLength(origin.x, project.meta.units)}, {formatLength(origin.y, project.meta.units)}, {formatLength(origin.z, project.meta.units)} {project.meta.units}</span></div>
-          <p className="properties-hint">{t('cam.setup.touchOff')}</p>
-          <SetupRegistrationEditor project={project} references={registration} onChange={setRegistration} />
-          {(project.setups.indexOf(setup) > 0 || !project.setups.includes(setup)) && registration.length === 0 ? <p className="cam-field-message" role="note">{t('cam.setup.noRegistration')}</p> : null}
-        </>
-      )}
+      {sections.faceUp ? <div className="properties-field"><span>{t('cam.setup.faceUp')}</span><span className={`face-chip face-chip--${face}`}>{t(face === 'bottom' ? 'cam.setup.bottom' : 'cam.setup.top')}</span></div> : null}
+      {sections.flip ? <>
+        <label className="properties-field"><span>{t('cam.setup.flipAxis')}</span><select value={axis} onChange={(event) => setAxis(event.target.value as 'x' | 'y')}><option value="x">{t('cam.setup.axisX')}</option><option value="y">{t('cam.setup.axisY')}</option></select></label>
+        <FlipSketch axis={axis} />
+      </> : null}
+      {sections.faceUp ? <>
+        {/* No coordinates (Frank, #1102): measured from a corner they mean nothing on a round or freeform stock. */}
+        <p className="properties-hint">{t('cam.setup.touchOff')}</p>
+      </> : null}
+      {sections.registration ? <>
+        <SetupRegistrationEditor project={project} references={registration} onChange={setRegistration} />
+        {(project.setups.indexOf(setup) > 0 || !project.setups.includes(setup)) && registration.length === 0 ? <p className="cam-field-message" role="note">{t('cam.setup.noRegistration')}</p> : null}
+      </> : null}
       <label className="properties-field properties-field--textarea"><span>{t('cam.setup.notes')}</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
-      <button className="feat-btn" type="button" disabled={project.setups.length < 2 || !project.setups.some((entry) => entry.id === setup.id)} onClick={() => { setDeleteSnapshot(project); setDeleting(true) }}>{t('cam.setup.delete')}</button>
     </>}
   </SetupDialogShell>
 }

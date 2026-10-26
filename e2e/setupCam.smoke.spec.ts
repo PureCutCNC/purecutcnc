@@ -55,21 +55,31 @@ for (const machine of ['grbl','shopbot']) {
     await seed(page,true,machine)
     writeFileSync(testInfo.outputPath('two-sides.camj'),JSON.stringify(await getProject(page),null,2))
     await ui.face.segment(page,'Bottom').click()
+    // CAM Plan plans the Top setup only (issue #1102): disabled here, with the reason.
+    await expect(ui.setupCam.planButton(page)).toBeDisabled()
+    await expect(ui.setupCam.planButton(page)).toHaveAttribute('title',/top face only/)
     await rowByName(page,'Bottom pocket').click()
     await ui.setupCam.add(page).click()
     await ui.setupCam.addMenu(page).getByText('Pocket',{ exact:true }).first().click()
     // Pass controls operate on the Bottom sketch selection.
     await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
     await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
-    await expect(ui.setupCam.section(page,'bottom')).toContainText('PROGRAM 02')
+    // A one-line card header shows the short chip; the toggle keeps the full
+    // wording as its accessible name (issue #1102).
+    await expect(ui.setupCam.section(page,'bottom')).toContainText('P02')
+    await expect(ui.setupCam.section(page,'bottom').getByRole('button',{ name:/^Bottom operations 1 PROGRAM 02$/ })).toBeVisible()
     await expect(ui.setupCam.section(page,'bottom')).toHaveAttribute('data-active','true')
     const panel = await page.locator('.cam-panel').boundingBox()
-    for (const control of await page.locator('.cam-section-header-actions > button').all()) {
+    // Every toolbar control, the eye and gear in their own group included (#1102).
+    for (const control of await page.locator('.cam-operations-toolbar button').all()) {
       const box = await control.boundingBox()
       expect(box!.x+box!.width).toBeLessThanOrEqual(panel!.x+panel!.width+1)
     }
+    // Other-face targets start folded away (issue #1102).
+    await ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary').click()
     const checkbox = ui.setupCam.properties(page).getByRole('checkbox',{ name:/Through hole/ })
     await checkbox.check()
+    await expect(ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary')).toContainText('Through hole ⇄')
     await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
@@ -100,6 +110,7 @@ test('provisional Bottom cross-face Add does not select a ghost', async ({ app, 
   await ui.face.segment(page,'Bottom').click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('No operations')
   await ui.setupCam.add(page).click()
+  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
   await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
@@ -113,8 +124,20 @@ test('provisional Bottom cross-face Add does not select a ghost', async ({ app, 
 test('Move lists removed targets and setup deletion lists its operations', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
+  // Operations are selected on their own face (issue #1102), and Move lists
+  // only real setups from there: give Bottom its setup first by adding an
+  // operation to it, then pick Top pass on Top.
   await ui.face.segment(page,'Bottom').click()
-  await ui.setupCam.section(page,'top').getByRole('button',{ name:/Top operations/ }).click()
+  await ui.setupCam.add(page).click()
+  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
+  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
+  await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
+  await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
+  await ui.face.segment(page,'Top').click()
+  // From Top, the Bottom operation is a ghost row: listed, never selected.
+  // The inactive setup's card starts collapsed.
+  await ui.setupCam.section(page,'bottom').getByRole('button',{ name:/Bottom operations/ }).click()
+  await expect(ui.setupCam.section(page,'bottom').locator('.tree-row--ghost')).toHaveCount(1)
   await ui.operations.rowByName(page,'Top pass').click()
   await ui.setupCam.properties(page).getByRole('button',{ name:'Move…',exact:true }).click()
   const move = ui.setupCam.dialog(page)
@@ -146,6 +169,7 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   const model = loaded.features.find((feature) => loaded.featureDefinitions[feature.definitionId].kind === 'stl')!
   await ui.face.segment(page,'Bottom').click()
   await ui.setupCam.add(page).click()
+  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
   await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker label').filter({ hasText:model.name }).locator('input').check()
   const row = ui.setupCam.addMenu(page).locator('.cam-operation-item').filter({ has:page.getByRole('button',{ name:'3D surface rough',exact:true }) })
   await row.getByRole('button',{ name:'Add',exact:true }).click()
@@ -173,11 +197,15 @@ test('setup properties fit a landscape tablet and keyboard cancel restores focus
   const box = await dialog.boundingBox()
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.y+box!.height).toBeLessThanOrEqual(768)
-  const topFaceBox = await dialog.getByRole('button',{ name:'Top',exact:true }).boundingBox()
-  const bottomFaceBox = await dialog.getByRole('button',{ name:'Bottom',exact:true }).boundingBox()
-  expect(topFaceBox!.y).toBe(bottomFaceBox!.y)
+  // Face up is one read-only chip, and Delete setup… shares the footer row
+  // with Save (issue #1102).
+  await expect(dialog.locator('.face-chip--bottom')).toHaveText('Bottom')
+  await expect(dialog.getByRole('button',{ name:'Top',exact:true })).toHaveCount(0)
   const saveBox = await dialog.getByRole('button',{ name:'Save setup' }).boundingBox()
   expect(saveBox!.height).toBeGreaterThanOrEqual(44)
+  const deleteBox = await dialog.getByRole('button',{ name:'Delete setup…' }).boundingBox()
+  expect(Math.abs(deleteBox!.y-saveBox!.y)).toBeLessThanOrEqual(1)
+  expect(deleteBox!.x).toBeLessThan(saveBox!.x)
   await page.screenshot({ path:testInfo.outputPath('tablet-dialog.png') })
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)

@@ -18,7 +18,7 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../../i18n/i18nContext'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { flippedZRange, linkedCopiesOffFace, resolveStockSpan } from '../../store/helpers/activeFace'
+import { flippedZRange, faceChangeSelection, linkedCopiesOffFace, resolveStockSpan } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import type { FeatureInstance, Project, FlatFace, SetupFace } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -52,6 +52,11 @@ function formatSpan(project: Project, feature: FeatureInstance): string {
  * The confirmation every authoring-face change goes through (issue #945).
  * It shows what changes — the face a feature is drawn on, and so how its Z
  * range reads — and what does not: its place in the stock.
+ *
+ * Only a feature that goes through the whole stock is offered (issue #1102
+ * slice L): a blind pocket belongs to the face it was cut from, so with a
+ * mixed selection the dialog moves the qualifying features and says how many
+ * stay behind.
  */
 export function ChangeFaceDialog() {
   const request = useFaceViewStore((state) => state.faceChangeRequest)
@@ -73,8 +78,11 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
   const fromFace: FlatFace = requestedFace === 'around' ? 'top' : requestedFace
   const toFace = oppositeFace(fromFace)
   // One direction per confirmation: the features on the first one's face.
-  const movable = requested.filter((feature) => feature.authoringFace === fromFace && !feature.locked)
-  const lockedCount = requested.filter((feature) => feature.locked).length
+  // Only the ones that go through the whole stock can move at all; the rest
+  // stay behind and are counted below (issue #1102 slice L).
+  const selection = faceChangeSelection(project, requested, fromFace)
+  const movable = selection.movable
+  const lockedCount = selection.locked
   // Linked copies that stay behind keep sharing the shape across the faces.
   const linkedStaying = linkedCopiesOffFace(project, movable.map((feature) => feature.id), toFace)
   const faceName = (face: FlatFace) => t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')
@@ -177,6 +185,11 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
                 `featureTree.face.dialog.linkedStay.${fromFace}.${linkedStaying === 1 ? 'one' : 'other'}`,
                 { count: linkedStaying },
               )}
+            </p>
+          ) : null}
+          {selection.notThrough > 0 ? (
+            <p className="change-face__linked" data-testid="change-face-not-through">
+              {t('featureTree.face.dialog.notThrough', { count: selection.notThrough })}
             </p>
           ) : null}
           {lockedCount > 0 ? (

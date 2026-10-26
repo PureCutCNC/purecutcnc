@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useLocalStorageState } from '../../hooks/useLocalStorageState'
 import { useToolpathGpuSuggestion } from './useToolpathGpuSuggestion'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { GpuToolpathRenderer } from './gpuToolpathRenderer'
+import { useToolpathRendererStore } from '../../store/toolpathRendererStore'
 import { DEFAULT_TOOLPATH_RENDERER, TOOLPATH_RENDERER_CODEC, TOOLPATH_RENDERER_STORAGE_KEY,
   toolpathRendererOverride, type ToolpathRendererChoice, type ToolpathRendererStatus } from './toolpathRendererPreference'
 
@@ -48,6 +49,28 @@ export function useSketchToolpathRenderer(canvasRef: RefObject<HTMLCanvasElement
     setChoice(next)
     setAttempt(value => value + 1)
   }
+  const retry = useCallback(() => setAttempt(value => value + 1), [])
+
+  // The gear in the CAM panel owns the GPU/Canvas switch now (issue #1102 slice
+  // D1), so the sketch publishes its state instead of drawing the control. The
+  // callbacks go through a ref and are exported as stable functions: a fresh
+  // function identity in the published object would republish it on every
+  // render, and the gear would re-render for no change at all.
+  const publish = useToolpathRendererStore(state => state.publish)
+  const clear = useToolpathRendererStore(state => state.clear)
+  const changeRendererRef = useRef(changeRenderer)
+  changeRendererRef.current = changeRenderer
+  const publishSetChoice = useCallback(
+    (next: ToolpathRendererChoice) => changeRendererRef.current(next),
+    [],
+  )
+
+  useEffect(() => {
+    publish({ choice, status, setChoice: publishSetChoice, retry })
+  }, [choice, status, publishSetChoice, retry, publish])
+
+  // Nothing left to display: the gear falls back to the status and actions.
+  useEffect(() => clear, [clear])
 
   useEffect(() => {
     const base = canvasRef.current
@@ -122,7 +145,7 @@ export function useSketchToolpathRenderer(canvasRef: RefObject<HTMLCanvasElement
     control: {
       choice, status,
       onChange: changeRenderer,
-      onRetry: () => setAttempt(value => value + 1),
+      onRetry: retry,
       suggestion: suggestion.visible ? { onEnable: () => changeRenderer('gpu'), onDismiss: suggestion.dismiss } : undefined,
     },
   }

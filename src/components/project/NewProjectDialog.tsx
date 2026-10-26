@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { ExampleProjectList } from './ExampleProjectList'
 import { Select } from '../Select'
@@ -35,6 +35,7 @@ import {
 import { machineCandidates } from '../../machine/registry'
 import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { PROJECT_TYPES, projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
+import { projectTypeKeyNav, projectTypeMetaKey } from './newProjectProjectType'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -150,6 +151,8 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const [projectName, setProjectName] = useState('Untitled')
   const [projectTypeChoice, setProjectTypeChoice] = useState<ProjectType>('milling')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /** One ref per project type tile, so an arrow key can take focus with it. */
+  const projectTypeTilesRef = useRef<Array<HTMLButtonElement | null>>([])
   const { library: machineLibrary } = useMachineLibrary()
 
   const metricTemplate = useMemo(() => newProject('Untitled', 'mm'), [])
@@ -273,6 +276,21 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     }
   }
 
+  /**
+   * Arrow keys move the project type choice across the three tiles and take
+   * focus with them, wrapping at both ends (issue #1102, proposal 16). Tab
+   * enters the group once, on the checked tile.
+   */
+  function handleProjectTypeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const next = projectTypeKeyNav(projectTypeChoice, event.key)
+    if (next === projectTypeChoice) {
+      return
+    }
+    event.preventDefault()
+    setProjectTypeChoice(next)
+    projectTypeTilesRef.current[PROJECT_TYPES.indexOf(next)]?.focus()
+  }
+
   function handleTemplateFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) {
@@ -311,6 +329,38 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
+              <div className="dialog-section-title">{td('dialogs.newProject.projectType')}</div>
+              <div
+                className="project-template-list project-template-list--project-type"
+                role="radiogroup"
+                aria-label={td('dialogs.newProject.projectType')}
+                onKeyDown={handleProjectTypeKeyDown}
+              >
+                {PROJECT_TYPES.map((type, index) => {
+                  const selected = projectTypeChoice === type
+                  const label = t(projectTypeLabelKey(type))
+                  return (
+                    <button
+                      key={type}
+                      ref={(element) => { projectTypeTilesRef.current[index] = element }}
+                      className={`project-template-card ${selected ? 'project-template-card--active' : ''}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={label}
+                      aria-describedby={`new-project-type-${type}-meta`}
+                      tabIndex={selected ? 0 : -1}
+                      onClick={() => setProjectTypeChoice(type)}
+                    >
+                      <span className="project-template-card__title">{label}</span>
+                      <span className="project-template-card__meta" id={`new-project-type-${type}-meta`}>{td(projectTypeMetaKey(type))}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="dialog-section-group">
               <label className="dialog-section-title" htmlFor="new-project-name">{td('dialogs.newProject.projectName')}</label>
               <div className="properties-field">
                 <input
@@ -326,7 +376,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
             <div className="dialog-section-group">
               <label className="dialog-section-title">{td('dialogs.newProject.template')}</label>
-              <div className="project-template-list">
+              <div className="project-template-list project-template-list--template">
                 <button
                   className={`project-template-card ${templateKind === 'blank_metric' ? 'project-template-card--active' : ''}`}
                   type="button"
@@ -368,17 +418,6 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                 style={{ display: 'none' }}
               />
               {fileError ? <div className="cam-field-message">{fileError}</div> : null}
-            </div>
-
-            <div className="dialog-section-group">
-              <label className="dialog-section-title">{td('dialogs.newProject.projectType')}</label>
-              <div className="properties-field properties-field--new-project-type">
-                <Select
-                  value={projectTypeChoice}
-                  options={PROJECT_TYPES.map((type) => ({ value: type, label: t(projectTypeLabelKey(type)) }))}
-                  onChange={setProjectTypeChoice}
-                />
-              </div>
             </div>
 
           </div>

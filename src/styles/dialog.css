@@ -51,12 +51,15 @@
 }
 
 /* Top row: name + template (left) beside the template preview (right);
-   the example projects span the full width underneath. */
+   the example projects span the full width underneath. The left column owns
+   the choices (three type tiles, the name, the four templates) and takes the
+   larger share; the preview is a readout, so it gets the smaller one
+   (issue #1102 slice K). */
 .dialog--new-project .dialog-body {
-  padding: 16px;
+  padding: 14px;
   column-gap: 18px;
-  row-gap: 16px;
-  grid-template-columns: 300px 1fr;
+  row-gap: 14px;
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
   grid-template-areas:
     "form preview"
     "examples examples";
@@ -64,21 +67,35 @@
 
 .dialog--new-project .dialog-section {
   grid-area: form;
-  gap: 12px;
+  gap: 8px;
 }
 
 .dialog--new-project .dialog-preview-container {
   grid-area: preview;
+  /* The preview is sized by its own rows: a template carries only its units,
+     stock and three counts, so stretching the card down the column showed
+     empty space without adding anything (issue #1102 slice K). */
+  grid-template-rows: auto auto;
+  align-content: start;
 }
 
 .dialog--new-project .new-project-examples {
   grid-area: examples;
   border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: 12px;
+}
+
+/* The example cards keep their layout, but their artwork is a banner in this
+   dialog: three cards across at 4:3 made the thumbnail 154 px tall on its own,
+   and the examples row is what pushed the dialog past 90vh at 1280×800
+   (issue #1102 slice K). The shared onboarding overlay keeps the 4:3 card. */
+.dialog--new-project .example-project-card__thumb {
+  height: 68px;
+  aspect-ratio: auto;
 }
 
 .dialog--new-project .dialog-section-group {
-  gap: 6px;
+  gap: 4px;
 }
 
 .dialog--new-project .dialog-section-title {
@@ -90,7 +107,57 @@
 }
 
 .dialog--new-project .project-template-card {
-  padding: 9px 12px;
+  padding: 8px 12px;
+}
+
+/* The four templates read as a 2×2 grid (issue #1102 slice K): Blank metric |
+   Blank imperial / Current project | Template file. The cards keep the same
+   look, handlers and active state; two rows instead of four stacked cards is
+   what lets the dialog fit without scrolling. */
+.dialog--new-project .project-template-list--template {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* The project type is the dialog's first choice and reads as three tiles in
+   one row (issue #1102, proposal 16). The tiles take the template card look
+   with tighter side padding; the meta line wraps inside its tile and the row
+   keeps a shared height. */
+.dialog--new-project .project-template-list--project-type {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-list--project-type .project-template-card {
+  min-width: 0;
+  padding: 8px 9px;
+}
+
+/* Below the tablet target the three tiles stack, one per row, rather than
+   squeezing the labels and their meta lines into a narrow column. */
+@media (max-width: 1023px) {
+  .dialog--new-project .project-template-list--project-type {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog--new-project .project-template-list--project-type .project-template-card {
+    padding: 9px 12px;
+  }
+}
+
+/* Below the tablet target the two columns stack (form, then preview, then the
+   examples) instead of splitting a 600 px dialog three-to-two and leaving the
+   stock fields in the preview too little room (issue #1102 slice K). */
+@media (max-width: 720px) {
+  .dialog--new-project .dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+    /* max-content rows: an auto row is sized before the stacked preview has
+       an intrinsic height and collapses the preview to nothing. */
+    grid-template-rows: max-content max-content max-content;
+    grid-template-areas:
+      "form"
+      "preview"
+      "examples";
+  }
 }
 
 .dialog--import {
@@ -1205,7 +1272,7 @@
 
 .project-template-preview__content {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .project-template-preview__title {
@@ -1224,6 +1291,19 @@
 
 .project-template-preview__row--stock {
   align-items: start;
+}
+
+/* In the narrower preview column (issue #1102 slice K) the "Stock" label sits
+ * above its fields, so the width / height / thickness inputs get the whole
+ * column instead of sharing it with the label. */
+.dialog--new-project .project-template-preview__row--stock {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-preview__row--stock .new-project-stock-dimensions {
+  flex: 1 1 auto;
 }
 
 .project-template-preview__row strong {

@@ -486,9 +486,6 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.face.flippedAboutX': 'Brut retourné autour de X (bord avant ↔ bord arrière).',
   'canvas.face.flippedAboutY': 'Brut retourné autour de Y (bord gauche ↔ bord droit).',
   'canvas.face.topIsGhost': 'Les entités du dessus sont affichées en fantôme et ne peuvent pas être modifiées ici.',
-  'canvas.face.drawingOnTop': 'Dessin sur la face supérieure',
-  'canvas.face.drawingOnBottom': 'Dessin sur la face inférieure',
   'canvas.face.aroundTurnsBar': 'La barre tourne dans le rotatif. Cette vue est sa surface déroulée : le long de la barre et autour d’elle.',
-  'canvas.face.drawingOnAround': 'Dessin sur la surface de la barre',
   'canvas.around.modelBand': '{name} — à l’intérieur de la barre, usiné par Ébauche rotative et Finition rotative',
 }

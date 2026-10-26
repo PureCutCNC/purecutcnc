@@ -134,10 +134,7 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.retry': 'Erneut versuchen',
   'appShell.generation.backend': 'Berechnung',
   'appShell.generation.menuAria': 'Einstellungen zur Werkzeugweg-Berechnung',
-  'appShell.generation.backendInline': 'Hauptthread',
-  'appShell.generation.backendInlineDetail': 'Das Fenster reagiert während einer Berechnung nicht, und Stopp muss deren Ende abwarten.',
-  'appShell.generation.backendWorker': 'Hintergrundthread',
-  'appShell.generation.backendWorkerDetail': 'Hält das Fenster während der Berechnung bedienbar und lässt Stopp sofort wirken.',
+  'appShell.generation.display': 'Anzeige',
   'appShell.status.about': 'Über PureCutCNC',
   'appShell.status.shellMode': 'Shell-Modus (nur Entwicklung)',
 
@@ -189,9 +186,9 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.face.around': 'Rundum',
   'appShell.face.switchToTop': 'Auf der Oberseite arbeiten',
   'appShell.face.switchToBottom': 'Auf der Unterseite arbeiten',
-  'appShell.face.switchToAround': 'Rund um die Stange arbeiten',
   'appShell.face.busy': 'Aktuelle Bearbeitung abschließen, bevor die Seite gewechselt wird',
   'appShell.face.otherSide': 'Andere Seite',
   'appShell.face.showOtherSide': 'Andere Seite als Geisterbild anzeigen',
   'appShell.face.hideOtherSide': 'Andere Seite ausblenden',
+  'appShell.face.flipped': 'Um {axis} gewendet',
 }
