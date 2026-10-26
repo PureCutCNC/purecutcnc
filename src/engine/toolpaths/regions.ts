@@ -75,13 +75,16 @@ function composedContainsPoint(
 /**
  * Is a whole segment inside a mask built from `entries` (#1096)?
  *
- * Membership can change only where the segment crosses a boundary edge, so the
- * segment is intersected with every edge of every entry and the resulting spans
- * are tested at their midpoints. That is exact for the polygons the mask is
- * made of, and unlike sampling it cannot jump across a strip narrower than the
- * step. Both endpoints are tested separately: a span may be open at the cut
- * itself. A segment collinear with an edge produces no crossing and is decided
- * by its endpoints and the span between them.
+ * One rule decides it: membership is sampled at every point where the segment
+ * meets a boundary edge, and once between each pair of consecutive meeting
+ * points. The meeting points are the crossings and touches (a vertex counts),
+ * the end points of a collinear overlap, and the segment's own ends, so the
+ * first and last sub-spans are tested like any other and the no-crossing case
+ * still gets its midpoint tested. The points are tested themselves, not only
+ * their spans: a segment ending on an include boundary is inside (the mask's
+ * point test treats a boundary as inside), while one touching an exclude's
+ * vertex is not. That is exact for the polygons the mask is made of, and
+ * unlike sampling it cannot jump across a strip narrower than the step.
  */
 function segmentInsideEntries(
   entries: RegionMaskEntry[],
@@ -90,39 +93,58 @@ function segmentInsideEntries(
   to: Point,
 ): boolean {
   const inside = (point: Point): boolean => composedContainsPoint(entries, baseIncludesSubject, point)
-  if (!inside(from) || !inside(to)) return false
   const dx = to.x - from.x
   const dy = to.y - from.y
-  if (dx === 0 && dy === 0) return true
-  const cuts: number[] = []
+  if (dx === 0 && dy === 0) return inside(from)
+  const lengthSquared = dx * dx + dy * dy
+  // Both ends always qualify: they are where the segment meets its own span,
+  // and testing them also covers a segment with no interior meeting at all.
+  const cuts: number[] = [0, 1]
   for (const entry of entries) {
     for (const path of entry.paths) {
       for (let i = 0; i < path.length; i++) {
         const a = path[i]
         const b = path[(i + 1) % path.length]
+        const ax = a.X / DEFAULT_CLIPPER_SCALE - from.x
+        const ay = a.Y / DEFAULT_CLIPPER_SCALE - from.y
         const ex = (b.X - a.X) / DEFAULT_CLIPPER_SCALE
         const ey = (b.Y - a.Y) / DEFAULT_CLIPPER_SCALE
         const denominator = dx * ey - dy * ex
-        // Parallel edges cannot change membership along the segment; a
-        // collinear one leaves the span whole, which the midpoint test covers.
-        if (denominator === 0) continue
-        const ax = a.X / DEFAULT_CLIPPER_SCALE - from.x
-        const ay = a.Y / DEFAULT_CLIPPER_SCALE - from.y
+        if (denominator === 0) {
+          // Parallel: only a collinear edge meets the segment, and then the
+          // meeting is its overlap, whose ends are the edge's own end points.
+          if (ax * dy - ay * dx !== 0) continue
+          for (const t of [
+            (ax * dx + ay * dy) / lengthSquared,
+            ((ax + ex) * dx + (ay + ey) * dy) / lengthSquared,
+          ]) {
+            if (t >= 0 && t <= 1) cuts.push(t)
+          }
+          continue
+        }
         const t = (ax * ey - ay * ex) / denominator
-        if (!(t > 0 && t < 1)) continue
+        if (!(t >= 0 && t <= 1)) continue
         const u = (ax * dy - ay * dx) / denominator
+        // u outside the edge is a miss; u on 0 or 1 is a touch at its vertex,
+        // which changes membership exactly like a crossing does.
         if (u < 0 || u > 1) continue
         cuts.push(t)
       }
     }
   }
   cuts.sort((left, right) => left - right)
-  let previous = 0
+  const points: number[] = []
   for (const cut of cuts) {
-    if (cut <= previous) continue
-    const mid = (previous + cut) / 2
-    if (!inside({ x: from.x + dx * mid, y: from.y + dy * mid })) return false
-    previous = cut
+    const previous = points[points.length - 1]
+    if (previous !== undefined && cut - previous <= 1e-12) continue
+    points.push(cut)
+  }
+  const at = (t: number): Point => ({ x: from.x + dx * t, y: from.y + dy * t })
+  for (const t of points) {
+    if (!inside(at(t))) return false
+  }
+  for (let i = 1; i < points.length; i++) {
+    if (!inside(at((points[i - 1] + points[i]) / 2))) return false
   }
   return true
 }

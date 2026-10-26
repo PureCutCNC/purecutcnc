@@ -45,7 +45,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { barCentre, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
-import { isRoundStock, rectProfile, roundStock } from '../../types/project'
+import { isRoundStock, polygonProfile, rectProfile, roundStock } from '../../types/project'
 import type { BarStock, Operation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -54,8 +54,8 @@ import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
 import { computeOperationToolpath } from './generateOperation'
-import { normalizeToolForProject } from './geometry'
-import { buildRegionMask } from './regions'
+import { normalizeToolForProject, toClipperPath } from './geometry'
+import { buildMaskFromClipperPaths, buildRegionMask } from './regions'
 import { generateRotaryFinish } from './rotaryModel'
 import { rotaryTravelZ, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
@@ -111,6 +111,30 @@ function regionFeature(stock: BarStock, id: string, rect: SheetRect, maskMode?: 
   }
 }
 
+/** One Around-region sketch feature from any closed profile. */
+function profileRegionFeature(id: string, profile: SketchProfile, maskMode?: 'include' | 'exclude'): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    operation: 'region',
+    authoringFace: 'around',
+    folderId: null,
+    sketch: {
+      profile,
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+    ...(maskMode === undefined ? {} : { regionMaskMode: maskMode }),
+  }
+}
+
 /** The production mask for one or more sheet rectangles: `buildRegionMask`
  *  with the circumferential repeat the rotary adapter asks for. */
 function productionMaskFor(stock: BarStock, rects: readonly SheetRect[], maskMode?: 'include' | 'exclude'): RotaryRegionMask {
@@ -128,6 +152,16 @@ function productionMaskFor(stock: BarStock, rects: readonly SheetRect[], maskMod
 /** The production mask for one sheet rectangle. */
 function productionMask(stock: BarStock, rect: SheetRect, maskMode?: 'include' | 'exclude'): RotaryRegionMask {
   return productionMaskFor(stock, [rect], maskMode)
+}
+
+type SegmentTest = (from: { x: number; y: number }, to: { x: number; y: number }) => boolean
+
+/** The mask's whole-segment test, asserted present (#1096). */
+function segmentTest(mask: RotaryRegionMask | null): SegmentTest {
+  assert.ok(mask, 'the segment-test mask builds')
+  const segment = mask.containsSegment
+  assert.ok(segment, 'the mask exposes its whole-segment test')
+  return segment
 }
 
 // ── fixtures ──────────────────────────────────────────────────────────────
@@ -545,6 +579,108 @@ const ROUND_FINISH_PARAMS = {
     }),
   }, {})
   assert.deepEqual(full.moves, free.moves, 'a region covering the sheet changes no motion')
+}
+
+// ── the segment test: meeting points and every sub-span ───────────────────
+
+// #1096 review of slice E (P2). `segmentInsideEntries` sampled only the spans
+// between interior crossings, so the final span -- and the whole segment when
+// it had no interior crossing -- was never tested, and a crossing point was
+// never tested at all. Three segments were accepted although the mask excludes
+// part of them: the 0.02 gap between two include boundaries that are the
+// segment's own ends, a chord across a hole between its boundary points, and a
+// segment touching an excluded triangle's vertex. The one rule now collects
+// every meeting point (crossings, touches, collinear overlap ends, both segment
+// ends), tests those points against the mask's own `containsPoint`, and tests
+// the midpoint of every span between consecutive points.
+{
+  const stock = roundStock(12, 30, 'x')
+  const rect = (id: string, minX: number, minY: number, maxX: number, maxY: number, mode?: 'include' | 'exclude'): SketchFeature =>
+    regionFeature(stock, id, { alongMin: minX, alongMax: maxX, acrossMin: minY, acrossMax: maxY }, mode)
+
+  // Segment wholly inside the include.
+  const box = buildRegionMask([rect('box', 0, 0, 10, 10)])
+  const boxSegment = segmentTest(box)
+  assert.equal(boxSegment({ x: 1, y: 1 }, { x: 9, y: 9 }), true,
+    'a segment wholly inside the include is inside')
+
+  // Along an include edge. The mask's point test treats a boundary as inside,
+  // so the whole edge is too; the collinear edge must not add a false cut.
+  assert.ok(box, 'the include mask builds')
+  assert.equal(box.containsPoint({ x: 5, y: 0 }), true, 'an include boundary reads as inside')
+  assert.equal(boxSegment({ x: 2, y: 0 }, { x: 8, y: 0 }), true,
+    'a segment along an include edge is inside')
+
+  // Repro 1a: two includes whose facing boundaries are exactly 4.99 and 5.01.
+  // Both ends are boundary points (inside), the midpoint is the excluded gap,
+  // and there is no interior crossing for the old rule to split on.
+  const gapSegment = segmentTest(buildRegionMask([
+    rect('left', 0, 0, 4.99, 10),
+    rect('right', 5.01, 0, 10, 10),
+  ]))
+  assert.equal(gapSegment({ x: 4.99, y: 5 }, { x: 5.01, y: 5 }), false,
+    'the 0.02 gap between two include boundaries is not inside, though both ends are inside')
+
+  // Repro 1b: an include path set with a hole (even-odd). A chord between two
+  // points on the hole boundary has both ends inside the mask's point test, and
+  // no boundary crossing strictly between them.
+  const holed = buildMaskFromClipperPaths([
+    toClipperPath([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]),
+    toClipperPath([{ x: 4, y: 4 }, { x: 6, y: 4 }, { x: 6, y: 6 }, { x: 4, y: 6 }]),
+  ])
+  const holeSegment = segmentTest(holed)
+  assert.ok(holed, 'the holed mask builds')
+  assert.equal(holed.containsPoint({ x: 4, y: 5 }), true, 'the hole boundary reads as inside')
+  assert.equal(holed.containsPoint({ x: 5, y: 5 }), false, 'the hole itself reads as outside')
+  assert.equal(holeSegment({ x: 4, y: 5 }, { x: 6, y: 5 }), false,
+    'a chord across the hole between its boundary points is not inside')
+
+  // A segment that crosses an exclude (its interior, not only a boundary).
+  const crossedSegment = segmentTest(buildRegionMask([
+    rect('outer', 0, 0, 10, 10),
+    rect('strip', 4, 0, 6, 10, 'exclude'),
+  ]))
+  assert.equal(crossedSegment({ x: 2, y: 5 }, { x: 8, y: 5 }), false,
+    'a segment crossing an exclude is not inside')
+
+  // Repro 2: a horizontal segment touching an excluded triangle's vertex. The
+  // vertex reads as outside; the old rule never tested the touch point and
+  // accepted the segment because both spans beside it are inside the include.
+  const notch = buildRegionMask([
+    rect('outer', 0, 0, 10, 10),
+    profileRegionFeature('notch', polygonProfile([{ x: 4, y: 3 }, { x: 6, y: 3 }, { x: 5, y: 6 }]), 'exclude'),
+  ])
+  const touchSegment = segmentTest(notch)
+  assert.ok(notch, 'the notched mask builds')
+  assert.equal(notch.containsPoint({ x: 5, y: 6 }), false, 'the excluded vertex is outside the mask')
+  assert.equal(touchSegment({ x: 3, y: 6 }, { x: 7, y: 6 }), false,
+    'a segment touching an excluded vertex is not inside')
+
+  // The seam repeat: a region drawn at the sheet's left edge is reachable at
+  // A181 only through its +one-turn copy. Without the repeat the same segment
+  // is off the drawn sheet, so the test is live.
+  {
+    const centre = barCentre(stock)
+    const circumference = Math.PI * stock.thickness
+    const leftEdge = centre - circumference / 2
+    const seamRect: SheetRect = {
+      alongMin: 0, alongMax: 30,
+      acrossMin: leftEdge, acrossMax: leftEdge + 2,
+    }
+    const across181 = centre + 181 * Math.PI * stock.thickness / 360
+    assert.equal(
+      segmentTest(productionMask(stock, seamRect))({ x: 5, y: across181 }, { x: 25, y: across181 }),
+      true,
+      'the +one-turn copy of the seam region covers A181',
+    )
+    assert.equal(
+      segmentTest(buildRegionMask([regionFeature(stock, 'seam', seamRect)]))(
+        { x: 5, y: across181 }, { x: 25, y: across181 },
+      ),
+      false,
+      'without the repeat the same segment is off the drawn sheet',
+    )
+  }
 }
 
 // ── a surface link cannot step over a narrow excluded strip ──────────────
