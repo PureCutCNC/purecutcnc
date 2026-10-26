@@ -96,6 +96,23 @@ async function openSimulation(page: Page, ui: Ui): Promise<void> {
   await expect(viewport).toHaveAttribute('data-simulation-surface', 'heightfield', { timeout: 60_000 })
 }
 
+// Issue #1108: on a bar the bar is the material, so drawing nests — a lone
+// shape is a cut, a shape inside the cut is an island, and a shape inside the
+// island is a cut again. Drawn through the real placement path, not the store.
+test('on a Rotary round bar a shape inside a cut is an island, and inside the island a cut', async ({ app, ui }) => {
+  const { page } = app
+  await createNewProject(page, ui, { type: 'Rotary', shape: 'Round bar', size: '40', length: '200', axis: 'X' })
+  await drawRect(page, 20, 5, 180, 35)
+  await drawRect(page, 60, 12, 140, 28)
+  await drawRect(page, 90, 16, 110, 24)
+  const project = await getProject(page) as unknown as {
+    features: Array<{ definitionId: string }>
+    featureDefinitions: Record<string, { operation?: string }>
+  }
+  expect(project.features.map((feature) => project.featureDefinitions[feature.definitionId]?.operation))
+    .toEqual(['subtract', 'add', 'subtract'])
+})
+
 test('a Rotary round bar mounts the lower half in the static and playback views', async ({ app, ui }) => {
   test.setTimeout(180_000)
   const { page } = app
@@ -106,10 +123,10 @@ test('a Rotary round bar mounts the lower half in the static and playback views'
   expect(created.meta.projectType).toBe('rotary')
   expect(created.stock.shape).toBe('round')
 
-  // A base solid and a pocket inside it: the inner rectangle infers 'subtract',
-  // which is what the Pocket operation accepts. Stock is 200 long across X and
-  // Ø40 across Y.
-  await drawRect(page, 20, 5, 180, 35)
+  // The bar is the material (#1054), so a lone rectangle infers 'subtract', a
+  // cut into it, which is what the Pocket operation accepts. (A rectangle
+  // drawn inside it would be an island, issue #1108.) Stock is 200 long
+  // across X and Ø40 across Y.
   await drawRect(page, 60, 12, 140, 28)
   await addPocketRoughAndSelect(page, ui)
 

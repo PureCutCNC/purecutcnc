@@ -139,10 +139,7 @@ export const appShellEn = {
   'appShell.generation.retry': 'Retry',
   'appShell.generation.backend': 'Compute',
   'appShell.generation.menuAria': 'Toolpath generation settings',
-  'appShell.generation.backendInline': 'Main thread',
-  'appShell.generation.backendInlineDetail': 'The window cannot respond while an operation is generating, and stopping has to wait for it to finish.',
-  'appShell.generation.backendWorker': 'Background thread',
-  'appShell.generation.backendWorkerDetail': 'Keeps the window responsive while generating, and stopping takes effect immediately.',
+  'appShell.generation.display': 'Display',
   'appShell.status.about': 'About PureCutCNC',
   'appShell.status.shellMode': 'Shell mode (dev only)',
 
@@ -194,9 +191,9 @@ export const appShellEn = {
   'appShell.face.around': 'Around',
   'appShell.face.switchToTop': 'Work on the top face',
   'appShell.face.switchToBottom': 'Work on the bottom face',
-  'appShell.face.switchToAround': 'Work around the bar',
   'appShell.face.busy': 'Finish the current edit before switching face',
   'appShell.face.otherSide': 'Other side',
   'appShell.face.showOtherSide': 'Show the other side as a ghost',
   'appShell.face.hideOtherSide': 'Hide the other side',
+  'appShell.face.flipped': 'Flipped about {axis}',
 } as const satisfies Record<string, string>

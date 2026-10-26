@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { seedProject } from './helpers'
 
 function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
@@ -160,7 +160,7 @@ export async function seedToolpathVisProject(page: Page): Promise<void> {
 /** Synthetic clock only: charge one real Canvas cut stroke per frame, without
  * busy-waiting or changing production code. This tests policy, not performance. */
 export async function installSlowCanvasClock(page: Page): Promise<void> {
-  await expect(page.getByRole('button', { name: 'GPU', exact: true })).toBeVisible()
+  await expect(page.locator('#workspace-panel-sketch .viewport-toolpath-vis')).toBeVisible()
   await page.evaluate(() => {
     const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')!
     const now = performance.now.bind(performance)
@@ -202,4 +202,46 @@ export async function panForGpuSuggestion(page: Page): Promise<void> {
   } finally {
     await page.mouse.up({ button: 'middle' })
   }
+}
+
+// ── GPU / Canvas renderer (issue #1102) ──────────────────────────────
+// The switch and its fallback notice moved from the toolpath legend into the
+// generation gear menu in the CAM panel. On a tablet shell that panel is a
+// drawer, so it is opened first and closed again afterwards.
+
+/** The generation gear; flagged while the GPU has fallen back to Canvas. */
+export const rendererGear = (page: Page): Locator => page.locator('.cam-generation-gear')
+/** The open gear menu. */
+export const rendererMenu = (page: Page): Locator => page.locator('.cam-generation-menu')
+/** The GPU or Canvas button in the gear menu's Display section. */
+export const rendererButton = (page: Page, choice: 'GPU' | 'Canvas'): Locator =>
+  rendererMenu(page).getByRole('button', { name: choice, exact: true })
+/** The "GPU unavailable; using Canvas." line with its Retry GPU button. */
+export const rendererFallbackNotice = (page: Page): Locator =>
+  rendererMenu(page).locator('.cam-generation-menu__renderer-note--fallback')
+
+export async function openRendererMenu(page: Page): Promise<Locator> {
+  const menu = rendererMenu(page)
+  if (await menu.isVisible()) return menu
+  const drawer = page.getByRole('button', { name: 'Open operations panel', exact: true })
+  if (await drawer.isVisible()) await drawer.click()
+  await rendererGear(page).click()
+  await expect(menu).toBeVisible()
+  return menu
+}
+
+export async function closeRendererMenu(page: Page): Promise<void> {
+  if (await rendererMenu(page).isVisible()) {
+    await page.keyboard.press('Escape')
+    await expect(rendererMenu(page)).toHaveCount(0)
+  }
+  const drawer = page.getByRole('button', { name: 'Close operations panel', exact: true })
+  if (await drawer.isVisible()) await drawer.click()
+}
+
+/** Choose GPU or Canvas the way a user does now: through the gear menu. */
+export async function chooseRenderer(page: Page, choice: 'GPU' | 'Canvas'): Promise<void> {
+  await openRendererMenu(page)
+  await rendererButton(page, choice).click()
+  await closeRendererMenu(page)
 }

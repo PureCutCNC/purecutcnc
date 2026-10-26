@@ -21,10 +21,10 @@ import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
 import { canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
-import { ToolpathRendererControl, ToolpathRendererFallback } from './ToolpathRendererControl'
 import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
 import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
 import { ToolpathLevelRail } from './ToolpathLevelRail'
+import { useToolpathRendererStore } from '../store/toolpathRendererStore'
 import type { Units } from '../utils/units'
 
 interface ToolpathVisibilityPanelProps {
@@ -47,8 +47,13 @@ interface ToolpathVisibilityPanelProps {
    * toolpath emits (and missed rungs other operations did emit).
    */
   legendSteps?: ReadonlyArray<FeedColourLegendStep>
-  /** Present only in the sketch; the 3D renderer has no backend selector. */
-  renderer?: RendererControl
+  /**
+   * Present only in the sketch. The GPU/Canvas switch and the GPU fallback
+   * notice live behind the generation gear since issue #1102 slice D1; the
+   * suggestion is the one renderer concern the legend still owns, because it
+   * is about the legend's own drawing cost.
+   */
+  renderer?: Pick<RendererControl, 'suggestion'>
   /** Eligible planar cut depths, high to low. Empty leaves the rail hidden. */
   levelValues?: readonly number[]
   selectedLevel?: number | null
@@ -69,6 +74,7 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
 
 export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps, renderer, levelValues = [], selectedLevel = null, onLevelChange, units }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
+  const rendererFallback = useToolpathRendererStore((state) => state.renderer?.status === 'fallback')
   const { palette } = useTheme()
 
   // The feed-colour toggle is tri-state at the data level: undefined defers
@@ -95,9 +101,18 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       >
         <Icon id="gcode" />
       </button>
-      {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
-      {/* Not gated on `expanded`: collapsing the panel must not hide that GPU fell back to Canvas (issue #786). */}
-      {renderer?.status === 'fallback' ? <ToolpathRendererFallback onRetry={renderer.onRetry} /> : null}
+      {/* The GPU/Canvas switch and its full notice live in the generation gear
+          (issue #1102 slice D1). The fallback still marks the sketch legend,
+          expanded or not (#786): the gear is hidden whenever the CAM panel is
+          collapsed, on the Tools tab or in a closed tablet drawer. */}
+      {renderer && rendererFallback ? (
+        <span
+          className="viewport-toolpath-vis__fallback"
+          role="status"
+          title={t('appShell.toolpath.rendererFallback')}
+          aria-label={t('appShell.toolpath.rendererFallback')}
+        >⚠</span>
+      ) : null}
       {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
       {expanded && levelValues.length > 0 && onLevelChange && units && (
         <ToolpathLevelRail

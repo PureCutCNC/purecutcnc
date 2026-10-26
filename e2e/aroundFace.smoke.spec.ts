@@ -16,7 +16,7 @@
 
 /**
  * The Around face in the workspace (issue #395, slice D1): the face switch on
- * a round bar, its banner, the Around tree layer and chip, Top-style Z
+ * a round bar, its switch tooltip, the Around tree layer and chip, Top-style Z
  * properties with no face change, the CAM "Around operations" section and an
  * Around operation that generates, the export program card, and Print
  * disabled on Around.
@@ -251,7 +251,7 @@ test.describe('Around is authored by the project type and bar, never the machine
       const around = ui.face.segment(page, 'Around')
       await expect(around).toBeVisible()
       await expect(around).toBeEnabled()
-      await expect(around).toHaveAttribute('title', 'Work around the bar')
+      await expect(around).toHaveAttribute('title', /^The bar turns in the rotary\./)
       await around.click()
       await expect(around).toHaveAttribute('aria-pressed', 'true')
 
@@ -354,15 +354,17 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // ── The switch, the banner and the empty Around layer ──
   await ui.face.segment(page, 'Around').click()
   await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('title', 'Work around the bar')
-  await expect(ui.face.banner(page)).toContainText('The bar turns in the rotary.')
-  await expect(ui.face.banner(page)).toContainText('Drawing on the surface of the bar')
+  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('title', /^The bar turns in the rotary\./)
+  // The explanation is the Around button's tooltip; desktop has no banner row (issue #1102).
+  await expect(ui.face.banner(page)).toHaveCount(0)
   // A flat face and Around share no plane: the other-side toggle is gone.
   await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
 
-  // ── A base and a pocket target, both Around ──
+  // ── Two cuts side by side, both Around ──
+  // Side by side, not nested: a shape drawn inside an Around cut is an add
+  // island now (issue #1108), and the second one is the pocket target below.
   await drawRect(page, 10, ZERO + 5, 100, ZERO + 15)
-  await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
+  await drawRect(page, 104, ZERO + 8, 116, ZERO + 12)
   const drawn = await getProject(page)
   const features = drawn.features as SavedFeature[]
   // A feature's operation lives on its shared definition, not on the instance.
@@ -370,7 +372,7 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   expect(features).toHaveLength(2)
   for (const feature of features) {
     expect(feature.authoringFace).toBe('around')
-    // The bar is already solid, so a shape drawn on it is a cut, never a base.
+    // The bar is already solid, so a lone shape drawn on it is a cut, never a base.
     expect(definitions[(feature as unknown as { definitionId: string }).definitionId]?.operation).toBe('subtract')
   }
   // The tree shows its face layers once the project has a feature; before that
@@ -390,8 +392,9 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' })).toHaveCount(0)
 
   // ── CAM: "Around operations" and "Add to Around" adds a pocket that generates ──
-  await expect(ui.setupCam.section(page, 'around')).toContainText('Around operations')
-  await expect(ui.setupCam.section(page, 'around')).toContainText('Bar in the rotary')
+  // An empty Around setup is one slim row; the toggle keeps the full name (issue #1102).
+  await expect(ui.setupCam.section(page, 'around').getByRole('button', { name: /^Around operations 0 / })).toBeVisible()
+  await expect(ui.setupCam.section(page, 'around')).toContainText('No operations')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   // An Around setup gets no cross-face target picker.
@@ -458,7 +461,7 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     const around = ui.face.segment(page, 'Around')
     await expect(around).toBeVisible()
     await expect(around).toBeEnabled()
-    await expect(around).toHaveAttribute('title', 'Work around the bar')
+    await expect(around).toHaveAttribute('title', /^The bar turns in the rotary\./)
 
     // Keyboard focus reaches the segment and Enter enters Around.
     await around.focus()

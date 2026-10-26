@@ -20,7 +20,7 @@ import type { ToolpathResult } from '../../engine/toolpaths'
 import { useProjectStore } from '../../store/projectStore'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { planOperationMove } from '../../engine/setupOperationMove'
-import { operationTargetReach, camSetupSections } from './setupSections'
+import { canMoveOperation, operationTargetReach, camSetupSections, visibleTargetReach } from './setupSections'
 import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
 import { SetupDialogShell } from './SetupDialogShell'
 import { useI18n } from '../../i18n/i18nContext'
@@ -42,6 +42,9 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   const face = setupFace(setup)
   const ids = operation.target.source === 'features' ? operation.target.featureIds : []
   const reaches = operationTargetReach(project, operation, measured?.project === project ? measured.paths : new Map())
+  // Only where two faces meet: a single-sided target has nothing to verify.
+  const shownReaches = visibleTargetReach(face, reaches)
+  const movable = canMoveOperation(operation.kind)
   // Preview a provisional destination without adding it to the document.
   const dest = sections.find((section) => section.setup.id === destination)?.setup
   const preview = dest && !project.setups.includes(dest) ? { ...project, setups: [...project.setups, dest] } : project
@@ -63,12 +66,12 @@ export function SetupOperationControls({ operation, requestToolpath }: {
     finally { setChecking(false) }
   }
   return <div className="setup-operation-controls">
-    <div className="properties-field"><span>{t('cam.setup.setup')}</span><div className="face-row__value"><span className={`face-chip face-chip--${face}`}>{setup.name}</span><button className="feat-btn" type="button" onClick={() => { setMoving(true); setConfirmSnapshot(project); setDestination(sections.find((section) => section.setup.id !== setup.id)?.setup.id ?? '') }}>{t('cam.setup.move')}</button></div></div>
+    <div className="properties-field"><span>{t('cam.setup.setup')}</span><div className="face-row__value"><span className={`face-chip face-chip--${face}`}>{setup.name}</span>{movable ? <button className="feat-btn" type="button" onClick={() => { setMoving(true); setConfirmSnapshot(project); setDestination(sections.find((section) => section.setup.id !== setup.id)?.setup.id ?? '') }}>{t('cam.setup.move')}</button> : null}</div></div>
     {operation.target.source === 'features' && face !== 'around' ? <CrossFaceTargetPicker project={project} face={face} selectedIds={ids} kind={operation.kind} onChange={(featureIds) => updateOperation(operation.id, { target: { source: 'features', featureIds } })} /> : null}
-    {reaches.length > 0 ? <div className="cam-setup-reach">
+    {shownReaches.length > 0 ? <div className="cam-setup-reach">
       <button className="feat-btn" type="button" disabled={checking} onClick={() => void checkReach()}>{t(checking ? 'cam.setup.checkingReach' : 'cam.setup.checkReach')}</button>
-      {reaches.map((entry) => <div key={entry.featureId} className="cam-setup-reach__target">
-        <strong>{entry.featureName}</strong> {entry.verdict.status === 'cross-face' ? <span className="face-chip face-chip--thru">{t('cam.setup.crossFace')}</span> : null}
+      {shownReaches.map((entry) => <div key={entry.featureId} className="cam-setup-reach__target">
+        <strong>{entry.featureName}</strong> {entry.verdict.status === 'cross-face' ? <span className="cam-setup-reach__cross-face" title={t('cam.setup.crossFaceTitle')} aria-label={t('cam.setup.crossFaceTitle')}>⇄</span> : null}
         {entry.verdict.status === 'rejected' ? <p className="cam-field-message">{t('cam.setup.unreachable')}</p> : null}
         {entry.verdict.depth ? <p>{t(face === 'top' ? 'cam.setup.depthTop' : face === 'bottom' ? 'cam.setup.depthBottom' : 'cam.setup.depthAround', { start: formatLength(entry.verdict.depth.start,project.meta.units), end: formatLength(entry.verdict.depth.end,project.meta.units), units: project.meta.units })}</p> : null}
         <p>{entry.range ? t('cam.setup.stockReach', { min: formatLength(entry.range.min,project.meta.units), max: formatLength(entry.range.max,project.meta.units), units: project.meta.units }) : t('cam.setup.unverified')}</p>

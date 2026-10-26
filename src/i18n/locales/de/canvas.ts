@@ -537,9 +537,6 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.face.flippedAboutX': 'Rohteil um X gewendet (Vorderkante ↔ Hinterkante).',
   'canvas.face.flippedAboutY': 'Rohteil um Y gewendet (linke Kante ↔ rechte Kante).',
   'canvas.face.topIsGhost': 'Features der Oberseite sind ein Geisterbild und können hier nicht bearbeitet werden.',
-  'canvas.face.drawingOnTop': 'Zeichnen auf der Oberseite',
-  'canvas.face.drawingOnBottom': 'Zeichnen auf der Unterseite',
   'canvas.face.aroundTurnsBar': 'Die Stange dreht sich in der Drehachse. Diese Ansicht ist ihre abgewickelte Oberfläche: entlang der Stange und um sie herum.',
-  'canvas.face.drawingOnAround': 'Zeichnen auf der Oberfläche der Stange',
   'canvas.around.modelBand': '{name} — in der Stange, bearbeitet von Rotationsschruppen und Rotationsschlichten',
 }

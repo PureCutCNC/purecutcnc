@@ -118,8 +118,10 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
 
   await ui.face.segment(page, 'Bottom').click()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
-  await expect(ui.face.banner(page)).toContainText('Drawing on bottom face')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
+  // No banner row on desktop: the switch carries a short chip (issue #1102).
+  await expect(ui.face.flipChip(page)).toHaveText('Flipped about X')
+  await expect(ui.face.banner(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -174,7 +176,7 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
 
   // Back on Top the same feature is the ghost and the base is editable again.
   await ui.face.segment(page, 'Top').click()
-  await expect(ui.face.banner(page)).not.toContainText('Stock flipped')
+  await expect(ui.face.flipChip(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -193,7 +195,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
 
   await ui.face.segment(page, 'Bottom').click()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
@@ -223,7 +225,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   expect(undone.setups as unknown[]).toHaveLength(1)
   await expect(undo).toBeDisabled()
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 })
 
 // The review's finding 1: the header switch was disabled during a move, but a
@@ -379,15 +381,25 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator(`.tree-row--feature.tree-row--selected[data-feature-id="${pocket.id}"]`)).toHaveCount(1)
 
-  // Changing the authoring face opens a confirmation; cancelling changes nothing.
-  await page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' }).click()
+  // A blind pocket cannot change face: from the other side nothing could
+  // reach it (issue #1102). The control stays, disabled, and says why.
+  const change = page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' })
+  await expect(change).toBeDisabled()
+  await expect(change).toHaveAttribute('title', /through the whole stock/)
+
+  // Through the whole stock it can. Changing the authoring face opens a
+  // confirmation; cancelling changes nothing.
+  await zBottom.fill('0')
+  await zBottom.press('Enter')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.75 → 0 in')
+  await change.click()
   const dialog = ui.face.changeFaceDialog(page)
   await expect(dialog).toBeVisible()
-  // On Bottom it reads 0.75 → 0.5 (stock flipped); on Top it will read its stored span.
-  await expect(dialog.getByTestId('change-face-z-now')).toHaveText('0.75 → 0.5')
-  await expect(dialog.getByTestId('change-face-z-after')).toHaveText('0.25 → 0')
-  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0.25 → 0')
-  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0.25 → 0')
+  // The stock span is the same on both faces; so is the Z range of a through cut.
+  await expect(dialog.getByTestId('change-face-z-now')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-z-after')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0.75 → 0')
+  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0.75 → 0')
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toHaveCount(0)
   expect((await features(page))[1].authoringFace).toBe('bottom')
@@ -397,7 +409,7 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.changeFaceDialog(page)).toHaveCount(0)
   const moved = (await features(page))[1]
   expect(moved.authoringFace).toBe('top')
-  expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.25])
+  expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.75])
   // It is now a ghost on Bottom, and no longer selected.
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
   await expect(ui.face.ghostRows(page)).toHaveCount(2)
@@ -417,7 +429,7 @@ test('the face switch is reachable and operable from the keyboard', async ({ app
   await page.keyboard.press('Space')
   await expect(bottom).toHaveAttribute('aria-pressed', 'true')
   await expect(bottom).toBeFocused()
-  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 
   // The ghost toggle appears next in the tab order once both faces exist.
   await page.keyboard.press('Tab')
@@ -569,7 +581,7 @@ test.describe('landscape tablet', () => {
     }
 
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
-    await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+    await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
 
     await ui.face.otherSideToggle(page).tap()
     await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')

@@ -32,9 +32,12 @@ import {
 } from '../../engine/setupOrientation'
 import { defaultTopSetup, isRoundStock } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
-import { isThroughFeature as setupIsThroughFeature } from '../../engine/setupTargets'
+import { featureStockSpan, isThroughFeature as setupIsThroughFeature, spanReachesBothFaces } from '../../engine/setupTargets'
 import type {
   DimensionRef,
+  FeatureInstance,
+  FeatureOperation,
+  FlatFace,
   MachineOrigin,
   MachiningSetup,
   Matrix2D,
@@ -381,6 +384,75 @@ export function isThroughFeature(
   feature: Pick<SketchFeature, 'z_top' | 'z_bottom' | 'operation'>,
 ): boolean {
   return setupIsThroughFeature(project, feature)
+}
+
+/** A feature as the face-change rule reads it: a tree row or a resolved feature. */
+type FaceChangeFeature = Pick<FeatureInstance, 'z_top' | 'z_bottom'> & {
+  authoringFace?: SetupFace
+  definitionId?: string
+  operation?: FeatureOperation
+}
+
+/**
+ * Whether a feature's authoring face may be changed (issue #1102 slice L).
+ *
+ * Only a feature that goes through the whole stock has a second face to be
+ * measured from: a through hole cut top to bottom is the same hole whichever
+ * side is up, and a full-height solid stands on both faces. A blind pocket
+ * or a partial-height add belongs to the face it was cut from — seen from
+ * below it sits under material no Bottom operation can reach — so offering
+ * to move it would produce a feature that cannot be machined.
+ *
+ * The role is read from the shared definition, the way `isThroughFeature`
+ * does, and only Add and Subtract qualify: a region is a filter and
+ * construction geometry is never machined, whatever their span. Around is a
+ * different surface entirely and never moves between the flat faces. A span
+ * that cannot be resolved (a dangling dimension reference) answers false.
+ */
+export function canChangeAuthoringFace(
+  project: Pick<Project, 'stock' | 'dimensions'> & Partial<Pick<Project, 'featureDefinitions'>>,
+  feature: FaceChangeFeature,
+): boolean {
+  if (feature.authoringFace === 'around') return false
+  const operation = feature.operation
+    ?? (feature.definitionId === undefined ? undefined : project.featureDefinitions?.[feature.definitionId]?.operation)
+  if (operation !== 'subtract' && operation !== 'add') return false
+  const span = featureStockSpan(project, feature)
+  return span !== null && spanReachesBothFaces(span, project.stock)
+}
+
+/** What a face-change confirmation would do with the features it was asked for. */
+export interface FaceChangeSelection {
+  /** Requested features on `fromFace`, unlocked, that go through the whole stock. */
+  movable: FeatureInstance[]
+  /** Requested locked features, of either face: they cannot move at all. */
+  locked: number
+  /** Requested unlocked features on `fromFace` that do not go through the stock. */
+  notThrough: number
+}
+
+/**
+ * The confirmation's selection plan: what moves, and what stays because it is
+ * locked or does not go through the whole stock. `fromFace` is the face of the
+ * first requested feature, so one confirmation always moves one way.
+ */
+export function faceChangeSelection(
+  project: Pick<Project, 'stock' | 'dimensions'> & Partial<Pick<Project, 'featureDefinitions'>>,
+  requested: readonly FeatureInstance[],
+  fromFace: FlatFace,
+): FaceChangeSelection {
+  const movable: FeatureInstance[] = []
+  let locked = 0
+  let notThrough = 0
+  for (const feature of requested) {
+    if (feature.locked) {
+      locked += 1
+    } else if (feature.authoringFace === fromFace) {
+      if (canChangeAuthoringFace(project, feature)) movable.push(feature)
+      else notThrough += 1
+    }
+  }
+  return { movable, locked, notThrough }
 }
 
 // ── Face-local angles ─────────────────────────────────────────
