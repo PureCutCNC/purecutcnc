@@ -20,7 +20,7 @@ import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
-import { splitFeatureTargets, type SplitFeatureTargets } from './regions'
+import { splitFeatureTargets, buildRegionMask, type SplitFeatureTargets } from './regions'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
 import type { RotaryFinishParams } from './rotaryModel'
 import type { NormalizedTool, ToolpathResult } from './types'
@@ -46,6 +46,8 @@ interface RotaryContext {
   readonly params: RotaryFinishParams
   /** STL model feature ids this operation targets, in target order. */
   readonly modelIds: string[]
+  /** Closed regions this operation's target carries (#1096), split by mode. */
+  readonly regions: RotaryRegionFilter
 }
 
 function failure(code: ToolpathWarningCode): { code: ToolpathWarningCode } {
@@ -68,6 +70,62 @@ function targetModels(targets: SplitFeatureTargets): SplitFeatureTargets['machin
 export function rotaryTargetModelIds(project: Project, operation: Operation): string[] {
   if (operation.target.source !== 'features') return []
   return targetModels(splitFeatureTargets(project, operation.target.featureIds)).map((feature) => feature.id)
+}
+
+/** One closed region in a rotary target, with the mask mode it carries. */
+export interface RotaryRegionEntry {
+  readonly id: string
+  readonly mode: 'include' | 'exclude'
+}
+
+/**
+ * A rotary operation's closed regions, in the order its mask is composed
+ * (#1096).
+ *
+ * The ids -- not the geometry -- are what the preceding-rough advisory and the
+ * cache compare: the approved rule is "the same region, or no region on the
+ * rough, counts as covered", so a geometrically equivalent but differently
+ * authored mask is a different region. The **mode** matters too (#1096 review,
+ * P2): an exclude removes the same area for every layer, so a rough targeting
+ * `include R + exclude E` does not prepare E for a finish on R. An open region
+ * contributes nothing to the mask `buildRegionMask` builds, so it is left out
+ * here too.
+ *
+ * `entries` keeps the project-feature order `buildRegionMask` composes the
+ * mask in, which is the order the generator's `containsPoint` reads. The
+ * sorted id lists below lose that order, and the order decides: `exclude E`
+ * before `include R` cuts area outside R that `include R` alone does not
+ * (#1096 re-review, P2).
+ */
+export interface RotaryRegionFilter {
+  /** Closed include (positive) region ids, sorted. */
+  readonly includeIds: readonly string[]
+  /** Closed exclude (negative) region ids, sorted. */
+  readonly excludeIds: readonly string[]
+  /** The same closed regions in mask-composition order. */
+  readonly entries: readonly RotaryRegionEntry[]
+}
+
+/** No region at all: the operation cuts the whole bar. */
+const ROTARY_WHOLE_BAR: RotaryRegionFilter = { includeIds: [], excludeIds: [], entries: [] }
+
+function regionFilterOf(regionFeatures: SplitFeatureTargets['regionFeatures']): RotaryRegionFilter {
+  const closed = regionFeatures.filter((feature) => feature.sketch.profile.closed)
+  const entries: RotaryRegionEntry[] = closed.map((feature) => ({
+    id: feature.id,
+    mode: feature.regionMaskMode === 'exclude' ? 'exclude' : 'include',
+  }))
+  return {
+    includeIds: entries.filter((entry) => entry.mode === 'include').map((entry) => entry.id).sort(),
+    excludeIds: entries.filter((entry) => entry.mode === 'exclude').map((entry) => entry.id).sort(),
+    entries,
+  }
+}
+
+/** The closed regions an operation's target carries, split by mask mode. */
+export function rotaryTargetRegions(project: Project, operation: Operation): RotaryRegionFilter {
+  if (operation.target.source !== 'features') return ROTARY_WHOLE_BAR
+  return regionFilterOf(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
 }
 
 /**
@@ -119,6 +177,17 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   const rapidRadius = project.meta.maxTravelZ - pivot
   const safeRadius = rapidRadius > maxRadius ? rapidRadius : maxRadius + tool.diameter
   const stepover = Math.max((operation.stepover ?? 0.5) * tool.diameter, 1e-3)
+  // #1096: the target's closed region features limit where this operation may
+  // cut. They are built once, in the Around sheet's own coordinates, so both
+  // pass directions and both blank shapes read the same area. The geometry is
+  // repeated one circumference each way along the across axis: the sheet is one
+  // circumference wide and centred on A0, so the same bar surface is reachable
+  // at `a`, `a - 360` and `a + 360`. A target with no valid region builds no
+  // mask and generates exactly the pre-region motion.
+  const region = buildRegionMask(targets.regionFeatures, {
+    axis: stock.axis === 'x' ? 'y' : 'x',
+    period: Math.PI * stock.thickness,
+  })
   const params: RotaryFinishParams = {
     stepover,
     stockToLeave: operation.stockToLeaveRadial,
@@ -128,26 +197,34 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // Missing reads as 'along' inside the generators, so a saved operation keeps
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
+    ...(region !== null ? { region } : {}),
   }
-  return { stock, surface, tool, params, modelIds: models.map((feature) => feature.id) }
+  return {
+    stock, surface, tool, params,
+    modelIds: models.map((feature) => feature.id),
+    regions: regionFilterOf(targets.regionFeatures),
+  }
 }
 
 /** The operation fields the preceding-rough advisory reads. */
 export type RotaryOrderOperation = Pick<Operation, 'id' | 'setupId' | 'kind' | 'enabled' | 'target'>
 
-/** One enabled rotary rough that precedes a finish, and the STL models it targets. */
+/** One enabled rotary rough that precedes a finish, and what it targets. */
 export interface RotaryRoughDependency {
   readonly setupId: string | null
   readonly modelIds: readonly string[]
+  /** Closed regions the rough's own target carries (#1096), split by mode. */
+  readonly regions: RotaryRegionFilter
 }
 
 /**
  * The preceding-rough advisory's inputs, for the toolpath cache (#1045 slice V).
  *
  * Every enabled `rotary_rough` earlier in `operations` than `operation`, when
- * it shares the finish's setup, with the STL model ids it targets. Order is
- * operation order. The finish's own models are not here: they are its target,
- * which the cache compares on the operation row itself.
+ * it shares the finish's setup, with the STL model ids it targets and the
+ * closed region ids its target carries (#1096). Order is operation order. The
+ * finish's own models are not here: they are its target, which the cache
+ * compares on the operation row itself.
  */
 export function rotaryPrecedingRoughs(project: Project, operation: Operation): RotaryRoughDependency[] {
   if (operation.kind !== 'rotary_finish') return []
@@ -161,44 +238,95 @@ export function rotaryPrecedingRoughs(project: Project, operation: Operation): R
     if ((candidate.setupId ?? null) !== setup) continue
     // Sorted: the order of a rough's own targets is not something the advisory
     // reads, so reordering them must not invalidate this finish's cache.
-    dependencies.push({ setupId: setup, modelIds: rotaryTargetModelIds(project, candidate).sort() })
+    dependencies.push({
+      setupId: setup,
+      modelIds: rotaryTargetModelIds(project, candidate).sort(),
+      regions: rotaryTargetRegions(project, candidate),
+    })
   }
   return dependencies
 }
 
 /**
- * True when any STL model this finish targets has no enabled rotary rough on
- * that same model earlier in the same setup's operation order (2026-10-22
- * decision).
+ * True when a rough's effective region covers everywhere a finish may cut
+ * (#1096).
  *
- * The rule is advisory only: it decides a warning, never motion. Order is the
- * project's own `operations` array, which is the order the program is posted
- * in. A rough in another setup, a disabled rough, a rough on another model and
- * a rough after the finish all leave the finish unprotected, so each of them
- * counts as no rough. The rule is per model: a rough on B does not protect A
- * when the finish cuts both. `modelIds` must already be the target's **STL
- * models**, so a region mask id shared with the operation target cannot stand
- * in for a model.
+ * A rough with **no region** cuts the whole bar, so it covers any finish. A
+ * finish with no region cuts the whole bar, so only a whole-bar rough covers
+ * it. Otherwise the two masks are compared as the predicates the generators
+ * read -- `buildRegionMask.containsPoint`, where the last region touching a
+ * point wins and the base is "included" when the first region is an exclude --
+ * not as sets of ids (#1096 re-review, P2). Comparing include/exclude sets
+ * wrongly called two counterexamples covered:
+ *
+ * - `exclude E` before `include R` on the finish cuts everything outside E,
+ *   including area outside R, which a rough on R alone never touches;
+ * - a rough with `include R + include S` fully covers a finish on R alone
+ *   (the earlier rule demanded equal include sets and warned).
+ *
+ * The comparison is over region membership, not geometry: two geometrically
+ * identical masks authored as different regions are still different regions,
+ * the approved simple rule. A membership that cuts in the finish but not the
+ * rough can always be reduced to at most two of its regions -- the last region
+ * whose geometry contains the point decides each mask -- so checking the empty,
+ * single- and paired-region memberships is exact, not an approximation.
+ */
+function regionMaskCuts(filter: RotaryRegionFilter, present: readonly string[]): boolean {
+  const { entries } = filter
+  // No region at all: the whole bar is cut.
+  if (entries.length === 0) return true
+  let included = entries[0].mode === 'exclude'
+  for (const entry of entries) {
+    if (present.includes(entry.id)) included = entry.mode === 'include'
+  }
+  return included
+}
+
+function roughCoversFinishRegion(
+  rough: RotaryRegionFilter,
+  finish: RotaryRegionFilter,
+): boolean {
+  // Every region either mask names, in first-appearance order. Ids outside
+  // both masks cannot change either predicate, so they need no membership.
+  const ids = [...new Set([...rough.entries, ...finish.entries].map((entry) => entry.id))]
+  const uncovered = (present: readonly string[]): boolean =>
+    regionMaskCuts(finish, present) && !regionMaskCuts(rough, present)
+  if (uncovered([])) return false
+  for (let i = 0; i < ids.length; i++) {
+    if (uncovered([ids[i]])) return false
+    for (let j = i + 1; j < ids.length; j++) {
+      if (uncovered([ids[i], ids[j]])) return false
+    }
+  }
+  return true
+}
+
+/**
+ * True when any STL model this finish targets has no preceding enabled rotary
+ * rough in the same setup that both targets that model **and** covers the
+ * finish's region (2026-10-22 decision, #1096).
+ *
+ * The rule is advisory only: it decides a warning, never motion. `roughs` is
+ * the ordered dependency the cache already captures -- every enabled
+ * `rotary_rough` before the finish in the same setup -- so the advisory and the
+ * cache can never disagree about what precedes the finish. The rule is per
+ * model: a rough on B does not protect A when the finish cuts both.
+ * `modelIds` must already be the target's **STL models**, and `regions` its
+ * closed regions, so a region mask id can never stand in for a model and a
+ * model id can never stand in for a region.
  */
 export function rotaryFinishWithoutRough(
-  operations: readonly RotaryOrderOperation[],
-  operation: RotaryOrderOperation,
+  roughs: readonly RotaryRoughDependency[],
   modelIds: readonly string[],
+  regions: RotaryRegionFilter = ROTARY_WHOLE_BAR,
 ): boolean {
-  if (operation.kind !== 'rotary_finish') return false
   const models = new Set(modelIds)
   if (models.size === 0) return false
-  const index = operations.findIndex((candidate) => candidate.id === operation.id)
-  if (index < 0) return false
-  const setup = operation.setupId ?? null
   const covered = new Set<string>()
-  for (let i = 0; i < index; i++) {
-    const candidate = operations[i]
-    if (!candidate.enabled || candidate.kind !== 'rotary_rough') continue
-    if ((candidate.setupId ?? null) !== setup) continue
-    if (candidate.target.source !== 'features') continue
-    for (const featureId of candidate.target.featureIds) {
-      if (models.has(featureId)) covered.add(featureId)
+  for (const rough of roughs) {
+    if (!roughCoversFinishRegion(rough.regions, regions)) continue
+    for (const modelId of rough.modelIds) {
+      if (models.has(modelId)) covered.add(modelId)
     }
   }
   return [...models].some((modelId) => !covered.has(modelId))
@@ -211,7 +339,7 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   })
   const built = rotaryContext(project, operation)
   if ('code' in built) return empty(built.code)
-  const { stock, surface, tool, params, modelIds } = built
+  const { stock, surface, tool, params, modelIds, regions } = built
   const result = operation.kind === 'rotary_rough'
     ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
     : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
@@ -220,7 +348,8 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   }))
   // Advisory only: the finish still emits exactly the model-following motion
   // above, and this warning changes nothing about it.
-  if (operation.kind === 'rotary_finish' && rotaryFinishWithoutRough(project.operations, operation, modelIds)) {
+  if (operation.kind === 'rotary_finish'
+    && rotaryFinishWithoutRough(rotaryPrecedingRoughs(project, operation), modelIds, regions)) {
     warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name } })
   }
   return { ...result, warnings }

@@ -131,7 +131,15 @@ function rotaryTargetHint(project: Project, operation: Operation): string | null
   if (target.source !== 'features' || target.featureIds.length === 0) return rotaryNoModelHint(operation.kind)
   const features = resolveFeatureInstances(project, target.featureIds)
   if (features.length !== target.featureIds.length) return camT('cam.hint.featuresNotFound')
-  return features.every((feature) => feature.kind === 'stl' && feature.operation === 'model')
+  const models = features.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+  // A closed Around region is a **filter** on a rotary target (#1096), exactly
+  // as on the other Around operations, so it belongs in the target beside the
+  // model rather than making the target wrong.
+  const regions = features.filter((feature) => isRegion(feature))
+  const onlyFilters = features.length === regions.length
+  if (models.length === 0) return onlyFilters ? rotaryNoModelHint(operation.kind) : camT('cam.rotary.modelOnly')
+  return regions.every((region) => region.authoringFace === 'around' && featureHasClosedGeometry(region))
+    && features.length === models.length + regions.length
     ? null : camT('cam.rotary.modelOnly')
 }
 
@@ -175,7 +183,15 @@ export function rotaryTargetToggle(project: Project, target: OperationTarget, fe
   } else {
     checked.add(featureId)
   }
-  return { source: 'features', featureIds: models.filter((id) => checked.has(id)) }
+  // A region filter riding on the target is not a model: ticking a model must
+  // not silently drop it (#1096). The region ids are the closed Around regions
+  // the current target carries, in project order.
+  const regionIds = target.source === 'features'
+    ? resolveFeatureInstances(project, target.featureIds)
+      .filter((feature) => isRegion(feature) && feature.authoringFace === 'around' && featureHasClosedGeometry(feature))
+      .map((feature) => feature.id)
+    : []
+  return { source: 'features', featureIds: [...models.filter((id) => checked.has(id)), ...regionIds] }
 }
 
 /** The per-kind hint for a rotary add-menu row when the project has no model. */
@@ -417,23 +433,53 @@ function getOperationAddHintWithMap(
  * their own copy of these rules, which drifted from it (issue #861). On top of
  * the hint, every selected id must still resolve: a target never carries an id
  * that names no feature.
+ *
+ * `requireSelection` is for the **update** route (an existing operation's "Use
+ * current selection"): the rotary rows intentionally target every model with
+ * nothing selected, which is right when adding an operation and a silent
+ * target reset when editing one. The panel asks for a selection there, so a
+ * stray click can never drop a region filter or a narrowed model set.
+ *
+ * `currentTarget` is the operation being updated. A selection that names only a
+ * region has no model in it, and the rotary default would then add every
+ * imported model back -- including one the user had unchecked (#1096 review,
+ * P2). With the current target in hand the model half is kept instead.
  */
 export function operationTargetFromSelection(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
+  options: { requireSelection?: boolean; currentTarget?: OperationTarget } = {},
 ): OperationTarget | null {
   if (isRotaryOperationKind(kind)) {
     // The rotary rows do not depend on the selection (issue #1015): a selected
     // model narrows the target, otherwise every imported model in the project
-    // is machined as one surface.
+    // is machined as one surface. A selected closed Around region is added as
+    // a filter (#1096), the same way a region joins the other Around
+    // operations' targets.
     if (getOperationAddHint(project, selection, kind) !== null) {
+      return null
+    }
+    if (options.requireSelection && selection.selectedFeatureIds.length === 0) {
       return null
     }
     const models = importedModelFeatureIds(project)
     const selected = new Set(selection.selectedFeatureIds)
     const chosen = models.filter((id) => selected.has(id))
-    return { source: 'features', featureIds: chosen.length > 0 ? chosen : models }
+    // #1096 review (P2): adding a region must keep the current model choice.
+    // Only a newly selected model replaces it; a region-only selection keeps
+    // the model ids the operation already targets (filtered to models that
+    // still exist), and only an operation with no usable model falls back to
+    // every model.
+    const currentModels = options.currentTarget?.source === 'features'
+      ? options.currentTarget.featureIds.filter((id) => models.includes(id))
+      : []
+    const regionIds = resolveFeatureInstances(project, selection.selectedFeatureIds)
+      .filter((feature) => isRegion(feature) && feature.authoringFace === 'around' && featureHasClosedGeometry(feature))
+      .map((feature) => feature.id)
+      .sort()
+    const modelIds = chosen.length > 0 ? chosen : currentModels.length > 0 ? currentModels : models
+    return { source: 'features', featureIds: [...modelIds, ...regionIds] }
   }
 
   if (selection.selectedFeatureIds.length === 0) {

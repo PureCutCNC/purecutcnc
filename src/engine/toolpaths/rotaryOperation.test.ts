@@ -17,13 +17,18 @@
 import assert from 'node:assert/strict'
 import { isDeepStrictEqual } from 'node:util'
 import { rotaryMultiModelFixture, rotaryOperationFixture } from '../../test/rotaryOperationFixture'
-import { isRoundStock, roundStockCentre, type Operation } from '../../types/project'
+import { isRoundStock, roundStockCentre, type Operation, type Project } from '../../types/project'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange, sampleRotaryModel } from './rotaryModel'
-import { rotaryFinishWithoutRough, rotaryTargetModelIds } from './rotaryOperation'
+import {
+  rotaryFinishWithoutRough,
+  rotaryPrecedingRoughs,
+  rotaryTargetModelIds,
+  rotaryTargetRegions,
+} from './rotaryOperation'
 
 for (const axis of ['x', 'y'] as const) {
   for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
@@ -175,9 +180,11 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   assert.deepEqual(zeroDepth.moves, alone.moves, 'the finish ignores the saved stepdown entirely')
 }
 
-// #1045 slice V: the advisory is per STL model. A finish cutting A and B is
-// unprotected while either model has no enabled rough before it in the setup,
-// and a Region id is not a model even when the finish's target also carries it.
+// #1045 slice V / #1096: the advisory is per STL model **and per region**. A
+// finish cutting A and B is unprotected while either model has no enabled
+// rough before it in the setup; a rough covers a finish's area only when the
+// rough has no region (the whole bar) or carries the finish's own region ids.
+// A Region id is never a model, and a model id is never a region.
 {
   const project = rotaryMultiModelFixture('x', 'rotary_finish')
   const finish = {
@@ -192,38 +199,176 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
     ...finish, id, name: id, kind: 'rotary_rough' as const, pass: 'rough' as const,
     target: { source: 'features' as const, featureIds },
   })
+  const regionFeature = project.features.find((feature) => feature.id === 'region')!
+  const otherRegionProject = {
+    ...project,
+    features: [...project.features, { ...regionFeature, id: 'region-2', name: 'Region 2' }],
+  }
+  const withOtherRegion = {
+    ...finish,
+    target: { source: 'features' as const, featureIds: ['model', 'second', 'region-2'] },
+  }
   const targets = rotaryTargetModelIds(project, finish)
   assert.deepEqual(targets, ['model', 'second'], 'only the two STL targets are models')
   assert.deepEqual(
     rotaryTargetModelIds(project, withRegion), ['model', 'second'],
     'a region id in the target is not a model',
   )
+  assert.deepEqual(
+    rotaryTargetRegions(project, finish),
+    { includeIds: [], excludeIds: [], entries: [] },
+    'a finish without a region filters nothing',
+  )
+  assert.deepEqual(
+    rotaryTargetRegions(project, withRegion),
+    { includeIds: ['region'], excludeIds: [], entries: [{ id: 'region', mode: 'include' }] },
+    'the region id and its include mode are the finish filter, in composition order',
+  )
+  // The rule the adapter and the cache share: build the dependency list the
+  // real helper consumes, then decide.
+  const decide = (
+    projectForDecide: Project,
+    operations: Operation[],
+    target: Operation,
+  ): boolean => rotaryFinishWithoutRough(
+    rotaryPrecedingRoughs({ ...projectForDecide, operations: [...operations, target] }, target),
+    rotaryTargetModelIds(projectForDecide, target),
+    rotaryTargetRegions(projectForDecide, target),
+  )
   assert.equal(
-    rotaryFinishWithoutRough([rough('b', ['second']), finish], finish, targets), true,
+    decide(project, [rough('b', ['second'])], finish), true,
     'a rough on B only leaves A unprotected',
   )
   assert.equal(
-    rotaryFinishWithoutRough([rough('ab', ['model', 'second']), finish], finish, targets), false,
+    decide(project, [rough('ab', ['model', 'second'])], finish), false,
     'one rough on both models protects both',
   )
   assert.equal(
-    rotaryFinishWithoutRough([rough('a', ['model']), rough('b', ['second']), finish], finish, targets), false,
+    decide(project, [rough('a', ['model']), rough('b', ['second'])], finish), false,
     'separate roughs on each model protect both',
   )
   assert.equal(
-    rotaryFinishWithoutRough([rough('region', ['region']), withRegion], withRegion, targets), true,
+    decide(project, [rough('region', ['region'])], withRegion), true,
     'a shared region id does not stand in for a model',
   )
   assert.equal(
-    rotaryFinishWithoutRough([rough('all', ['model', 'second', 'region']), withRegion], withRegion, targets), false,
-    'a rough on both models plus the region protects both',
+    decide(project, [rough('all', ['model', 'second', 'region'])], withRegion), false,
+    'a rough on both models plus the same region protects both',
   )
-  const warned = (operations: Operation[]) => computeOperationToolpath({
-    ...project, operations,
-  }, finish)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
-  assert.equal(warned([rough('b', ['second']), finish]).length, 1,
+  // #1096: the region half of the rule.
+  assert.equal(
+    decide(project, [rough('ab', ['model', 'second'])], withRegion), false,
+    'a rough with no region cuts the whole bar, so it covers a finish region too',
+  )
+  assert.equal(
+    decide(project, [rough('ab', ['model', 'second', 'region'])], finish), true,
+    'a rough with a region does not cover a finish with none: the whole bar is not prepared',
+  )
+  assert.equal(
+    decide(project, [rough('ab', ['model', 'second']), rough('region', ['region'])], withRegion), false,
+    'either a whole-bar rough or a same-region rough covers the finish',
+  )
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-other', ['model', 'second', 'region-2'])], withRegion), true,
+    'a different region is not the same region, even on the same models',
+  )
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-other', ['model', 'second', 'region-2'])], withOtherRegion), false,
+    'the same other region does cover that finish',
+  )
+  // #1096 review (P2): an exclude suppresses cutting in every layer, so it is
+  // part of the mask comparison too. A rough that excludes E does not prepare E
+  // for a finish that cuts it, even when both carry the same include region.
+  const excludeProject = {
+    ...project,
+    featureDefinitions: {
+      ...project.featureDefinitions,
+      exclude: {
+        ...project.featureDefinitions[regionFeature.definitionId],
+        id: 'exclude',
+        regionMaskMode: 'exclude' as const,
+      },
+    },
+    features: [...project.features, {
+      ...regionFeature, id: 'exclude', name: 'Exclude', definitionId: 'exclude',
+    }],
+  }
+  const finishWithExclude = {
+    ...finish,
+    target: { source: 'features' as const, featureIds: ['model', 'second', 'region', 'exclude'] },
+  }
+  assert.equal(
+    decide(excludeProject, [rough('ab-rxe', ['model', 'second', 'region', 'exclude'])], withRegion), true,
+    'a rough that adds an exclude the finish does not have leaves that area unroughed: warn',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-rxe', ['model', 'second', 'region', 'exclude'])], finishWithExclude), false,
+    'the same include set and no extra excludes covers the finish: stay quiet',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), false,
+    'a rough with the same include and fewer excludes covers a finish that excludes more',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-e', ['model', 'second', 'exclude'])], withRegion), true,
+    'an exclude-only rough is not the same include set as an include-region finish',
+  )
+  // #1096 re-review (P2): the mask order decides, so the same ids in the other
+  // order are not the same coverage. `exclude E` before `include R` leaves the
+  // finish cutting everything outside E, including area outside R that a rough
+  // on R alone never touched; `include R` before `exclude E` cuts only R.
+  const excludeFeature = excludeProject.features.find((feature) => feature.id === 'exclude')!
+  const excludeFirstProject = {
+    ...excludeProject,
+    features: [
+      ...excludeProject.features.filter((feature) => feature.id !== 'region' && feature.id !== 'exclude'),
+      excludeFeature,
+      regionFeature,
+    ],
+  }
+  assert.deepEqual(
+    rotaryTargetRegions(excludeFirstProject, finishWithExclude),
+    {
+      includeIds: ['region'],
+      excludeIds: ['exclude'],
+      entries: [{ id: 'exclude', mode: 'exclude' }, { id: 'region', mode: 'include' }],
+    },
+    'the filter keeps the project-feature order the mask is composed in',
+  )
+  assert.equal(
+    decide(excludeFirstProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), true,
+    'an exclude before the include lets the finish cut outside R: warn despite the same id sets',
+  )
+  assert.equal(
+    decide(excludeProject, [rough('ab-r', ['model', 'second', 'region'])], finishWithExclude), false,
+    'the same ids with the include first cut only R: stay quiet',
+  )
+  // #1096 re-review (P2): coverage is containment, not set equality. A rough on
+  // R + S covers a finish on R alone; the exact-set rule warned here.
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-rs', ['model', 'second', 'region', 'region-2'])], withRegion), false,
+    'a rough on R and S covers a finish on R: a superset of includes is covered',
+  )
+  assert.equal(
+    decide(otherRegionProject, [rough('ab-s', ['model', 'second', 'region-2'])], withRegion), true,
+    'a rough on S alone does not cover a finish on R',
+  )
+  const warned = (operations: Operation[], target: Operation = finish) => computeOperationToolpath({
+    ...project, operations: [...operations, target],
+  }, target)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
+  assert.equal(warned([rough('b', ['second'])]).length, 1,
     'the adapter warns when only one of two targeted models has a preceding rough')
-  assert.deepEqual(warned([rough('ab', ['model', 'second']), finish]), [],
+  assert.deepEqual(warned([rough('ab', ['model', 'second'])]), [],
     'the adapter stays quiet when both targeted models have one')
+  assert.deepEqual(warned([rough('ab', ['model', 'second'])], withRegion), [],
+    'the adapter stays quiet when a whole-bar rough precedes a region finish')
+  assert.equal(warned([rough('region', ['region'])], withRegion).length, 1,
+    'the adapter warns when the preceding rough covers only its own region')
+  // The adapter's own input path must read the exclude mode, not just the id.
+  const warnedWithExclude = computeOperationToolpath({
+    ...excludeProject, operations: [rough('ab-rxe', ['model', 'second', 'region', 'exclude']), withRegion],
+  }, withRegion)!.result.warnings.filter((warning) => warning.code === 'rotaryFinishWithoutRough')
+  assert.equal(warnedWithExclude.length, 1,
+    'the adapter warns when the rough excludes an area the finish still cuts')
 }
 console.log('rotaryOperation integration tests passed')

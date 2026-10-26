@@ -59,7 +59,7 @@
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { getProject, seedProject } from './helpers'
+import { getProject, seedProject, selectFeatures } from './helpers'
 import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
 import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import { IDENTITY_MATRIX, defaultTool, newProject, rectProfile, roundStock } from '../src/types/project'
@@ -94,7 +94,7 @@ function rotaryMachine(): MachineDefinition {
  * Top — the face an STL import lands on — and reachable from Around only as a
  * rotary target. No operation is added: both are created through the page.
  */
-function rotaryModelProject(): Project {
+function rotaryModelProject(options: { secondModel?: boolean } = {}): Project {
   const base = newProject('Rotary model', 'mm')
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
   base.meta.maxTravelZ = 25
@@ -121,6 +121,33 @@ function rotaryModelProject(): Project {
   base.featureDefinitions = { model: definition }
   base.features = [feature]
   base.featureTree = [{ type: 'feature', featureId: 'model' }]
+  if (options.secondModel) {
+    // A second imported model, so a rotary operation can target one and leave
+    // the other unchecked. Adding a region then proves the model choice is
+    // kept (#1096 re-review, P2).
+    const secondDefinition: FeatureDefinition = { ...definition, id: 'second' }
+    const secondFeature: FeatureInstance = {
+      ...feature, id: 'second', name: 'Second', definitionId: 'second',
+    }
+    base.featureDefinitions = { ...base.featureDefinitions, second: secondDefinition }
+    base.features = [...base.features, secondFeature]
+    base.featureTree = [...base.featureTree, { type: 'feature', featureId: 'second' }]
+  }
+  // A closed Around region, selectable on the sheet: the rotary operation's
+  // "Use current selection" adds it to the target as a mask, so the test can
+  // exercise the region addition rather than only the button's presence
+  // (#1096).
+  const regionDefinition: FeatureDefinition = {
+    id: 'region', kind: 'rect', profile: rectProfile(8, 5, 12, 2), dimensions: [], text: null,
+    stl: null, operation: 'region',
+  }
+  const region: FeatureInstance = {
+    id: 'region', name: 'Region', definitionId: 'region', transform: IDENTITY_MATRIX, textLayout: null,
+    constraints: [], z_top: 12, z_bottom: 0, authoringFace: 'around', folderId: null, visible: true, locked: false,
+  }
+  base.featureDefinitions = { ...base.featureDefinitions, region: regionDefinition }
+  base.features = [...base.features, region]
+  base.featureTree = [...base.featureTree, { type: 'feature', featureId: 'region' }]
   base.setups = [...base.setups, { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }]
   base.activeSetupId = 'around'
   // The app's own workholding for this bar, not an arbitrary 12 mm block: the
@@ -132,8 +159,11 @@ function rotaryModelProject(): Project {
 }
 
 /** The fixture's bar and model, with a rotary machine selected. */
-async function seedRotaryModelProject(page: Page): Promise<Project> {
-  const project = rotaryModelProject()
+async function seedRotaryModelProject(
+  page: Page,
+  options: { secondModel?: boolean } = {},
+): Promise<Project> {
+  const project = rotaryModelProject(options)
   project.meta.machineDefinitions = [...(project.meta.machineDefinitions ?? []), rotaryMachine()]
   project.meta.selectedMachineId = 'e2e-rotary'
   await seedProject(page, JSON.stringify(project))
@@ -253,9 +283,11 @@ test('the rotary operation shows the model it machines, checked and locked', asy
     .filter({ has: page.getByRole('button', { name: 'Rotary finish', exact: true }) })
     .getByRole('button', { name: 'Add', exact: true }).click()
 
-  // Its target field is the model checklist, not "Use current selection": the
-  // model is not selectable on the Around sheet, so the selection could never
-  // express it (issue #1015 slice K).
+  // Its target field is the model checklist: the model is not selectable on the
+  // Around sheet, so the selection could never express it alone (issue #1015
+  // slice K). Since #1096 the same "Use current selection" control every other
+  // operation has is there too, so a selected closed Around region joins the
+  // target as a filter; with nothing selected it only reports the hint.
   const properties = page.locator('.cam-operation-properties')
   await expect(properties).toBeVisible()
   const picker = properties.locator('[data-rotary-targets]')
@@ -268,7 +300,87 @@ test('the rotary operation shows the model it machines, checked and locked', asy
   await expect(box).toBeChecked()
   await expect(box).toBeDisabled()
   await expect(picker.locator('.properties-check span')).toHaveText('Model')
-  await expect(properties.getByRole('button', { name: 'Use current selection', exact: true })).toHaveCount(0)
+  const apply = properties.getByRole('button', { name: 'Use current selection', exact: true })
+  await expect(apply).toHaveCount(1)
+
+  // #1096: actually add the seeded Around region through the control. The
+  // region note renders only when the operation's target carries a region, so
+  // it is the observable that the click wrote the filter; the model box must
+  // still be ticked afterwards (adding a region does not reset the model
+  // choice). Selecting a feature leaves the operation selected, so the
+  // properties stay on screen -- clicking the operation row here would toggle
+  // it off and hide them before the click.
+  await expect(properties.locator('.cam-region-note')).toHaveCount(0)
+  await selectFeatures(page, ['region'])
+  await expect(properties).toBeVisible()
+  await apply.click()
+  await expect(properties.locator('.cam-region-note')).toBeVisible()
+  await expect(box).toBeChecked()
+  // The target summary names the model and the region filter.
+  await expect(properties.locator('.properties-field input[readonly]').first())
+    .toHaveValue(/Model/)
+  await expect(properties.locator('.properties-field input[readonly]').first())
+    .toHaveValue(/Region/)
+})
+
+test('adding a region keeps the rotary operation\'s model choice', async ({ app, ui }) => {
+  const { page } = app
+  test.setTimeout(60_000)
+  await seedRotaryModelProject(page, { secondModel: true })
+
+  // Add the finish: the Add route targets every imported model, so both boxes
+  // start ticked.
+  await ui.face.segment(page, 'Around').click()
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  await ui.setupCam.addMenu(page).locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Rotary finish', exact: true }) })
+    .getByRole('button', { name: 'Add', exact: true }).click()
+
+  const properties = page.locator('.cam-operation-properties')
+  await expect(properties).toBeVisible()
+  const picker = properties.locator('[data-rotary-targets]')
+  await expect(picker).toBeVisible()
+  const modelBox = picker.locator('[data-rotary-target-model="model"]')
+  const secondBox = picker.locator('[data-rotary-target-model="second"]')
+  await expect(modelBox).toBeChecked()
+  await expect(secondBox).toBeChecked()
+
+  // Target only "Model". The second model is the one a region-only selection
+  // must not bring back (#1096 re-review, P2); with one model left the last
+  // box is locked, as before.
+  await secondBox.uncheck()
+  await expect(secondBox).not.toBeChecked()
+  await expect(modelBox).toBeChecked()
+  await expect(modelBox).toBeDisabled()
+
+  // Selecting the region must not toggle the operation off. It stays selected,
+  // its properties stay on screen, and "Use current selection" adds the region
+  // while keeping the model choice.
+  await selectFeatures(page, ['region'])
+  await expect(properties).toBeVisible()
+  const apply = properties.getByRole('button', { name: 'Use current selection', exact: true })
+  await expect(apply).toHaveCount(1)
+  await apply.click()
+  await expect(properties.locator('.cam-region-note')).toBeVisible()
+  await expect(modelBox).toBeChecked()
+  await expect(secondBox).not.toBeChecked()
+
+  // The target itself: the region joined it, "Model" stayed, and the unchecked
+  // "Second" did not come back.
+  const project = await getProject(page) as unknown as Project
+  const operation = project.operations.find((candidate) => candidate.kind === 'rotary_finish')
+  expect(operation).toBeDefined()
+  expect(operation!.target.source).toBe('features')
+  if (operation!.target.source === 'features') {
+    expect(operation!.target.featureIds).toContain('model')
+    expect(operation!.target.featureIds).toContain('region')
+    expect(operation!.target.featureIds).not.toContain('second')
+  }
+  const summary = properties.locator('.properties-field input[readonly]').first()
+  await expect(summary).toHaveValue(/Model/)
+  await expect(summary).toHaveValue(/Region/)
+  await expect(summary).not.toHaveValue(/Second/)
 })
 
 test('the rotary operations machine the model inside the bar', async ({ app, ui }, testInfo) => {

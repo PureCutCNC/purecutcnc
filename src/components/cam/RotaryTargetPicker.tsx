@@ -21,9 +21,10 @@ import { rotaryTargetModels, rotaryTargetToggle } from './operationValidity'
 /**
  * The models a rotary operation machines, as a checklist (issue #1015 slice
  * K). A rotary target is always the imported model (or models) inside the bar,
- * so "use current selection" was the wrong control: the model is not
- * selectable on the Around sheet, and the selection could not express it.
- * Ticking a box writes the target through `rotaryTargetToggle`.
+ * and the model is not selectable on the Around sheet, so "use current
+ * selection" could not express it alone. Ticking a box writes the target
+ * through `rotaryTargetToggle`, which keeps any region filter the target
+ * carries (#1096); the selection control beside this list adds such a filter.
  *
  * The last ticked box is disabled, so the target is never empty — a rotary
  * operation always names what it machines. A target id naming no model any
