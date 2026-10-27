@@ -266,7 +266,13 @@ assert.deepEqual(
 
 // The store save/load path the machine-snapshot tests use.
 resetMachineLibraryForTests()
-initMachineLibrary(null)
+// Null storage is not durable (#1119); a fake in-memory store stands in for
+// localStorage so the library path is exercised as it is in the browser.
+const rotaryLibraryStorage = new Map<string, string>()
+initMachineLibrary({
+  getItem: (key: string) => rotaryLibraryStorage.get(key) ?? null,
+  setItem: (key: string, value: string) => { rotaryLibraryStorage.set(key, value) },
+})
 useProjectStore.setState({
   project: newProject('Rotary round trip', 'mm'),
   history: { past: [], future: [], transactionStart: null },

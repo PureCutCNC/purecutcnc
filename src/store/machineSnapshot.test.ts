@@ -29,6 +29,7 @@ import { bundledMachines, validateCustomMachine } from '../machine/registry'
 import {
   getMachineLibrarySnapshot,
   initMachineLibrary,
+  rescueMachinesToLibrary,
   resetMachineLibraryForTests,
   saveCustomMachine,
 } from '../machine/store'
@@ -78,9 +79,10 @@ function legacyLibraryFile(
   }))
 }
 
+/** A healthy in-memory library: null storage is deliberately not durable (#1119). */
 function freshLibrary(): void {
   resetMachineLibraryForTests()
-  initMachineLibrary(null)
+  initMachineLibrary(new FakeSnapshotStorage())
 }
 
 /** A storage that can be made to fail writes, like a full localStorage. */
@@ -96,23 +98,35 @@ class FakeSnapshotStorage {
   }
 }
 
-// ── a stored library compacts to the selected definition ───────────────────
+// ── decode compacts only when a durable rescue seam is supplied ───────────
 
 {
   freshLibrary()
   const custom = customMachine('shop-router', 'Shop Router')
   const file = legacyLibraryFile([...bundledMachines(), custom], 'mach3')
-  const decoded = decodeProjectFormat(file)
 
-  assert(decoded.project.meta.machineDefinitions.length === 1, 'only one definition survives decode')
-  assert(decoded.project.meta.selectedMachineId === 'mach3', 'the selection is preserved')
-  assert(decoded.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot is the selected one')
+  // Inspection passes no seam: nothing may be compacted, so the custom machine
+  // stays in the decoded project and is offered to the library as well.
+  const inspected = decodeProjectFormat(file)
+  assert(inspected.project.meta.machineDefinitions.length === 2, 'decode without a rescue keeps every user definition')
+  assert(inspected.project.meta.selectedMachineId === 'mach3', 'the selection is preserved')
+  assert(inspected.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot is the selected one')
+  assert(!inspected.machineMigration.compacted, 'decode without a rescue reports no compaction')
+  assert(
+    inspected.machineMigration.customDefinitions.map((definition) => definition.id).join() === 'shop-router',
+    'only the custom definition is offered to the library — bundled copies are not',
+  )
+  assert(inspected.machineMigration.unresolvedSelectionId === null, 'a resolvable selection reports no problem')
+
+  // With the real seam the same file compacts once the custom machine is stored.
+  const decoded = decodeProjectFormat(file, rescueMachinesToLibrary)
+  assert(decoded.project.meta.machineDefinitions.length === 1, 'a durable rescue compacts to the selected definition')
+  assert(decoded.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot stays selected')
   assert(decoded.machineMigration.compacted, 'the compaction is reported')
   assert(
-    decoded.machineMigration.customDefinitions.map((definition) => definition.id).join() === 'shop-router',
-    'only the custom definition is offered to the library — bundled copies are dropped',
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'the compacted machine reached My Machines',
   )
-  assert(decoded.machineMigration.unresolvedSelectionId === null, 'a resolvable selection reports no problem')
 }
 
 // ── the selected definition is preserved verbatim ─────────────────────────

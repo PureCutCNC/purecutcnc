@@ -183,7 +183,13 @@ function resetStore(): void {
 {
   resetStore()
   resetMachineLibraryForTests()
-  initMachineLibrary(null)
+  // Null storage is deliberately not durable (#1119), so a healthy in-memory
+  // store stands in for the browser's localStorage.
+  const stored = new Map<string, string>()
+  initMachineLibrary({
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => { stored.set(key, value) },
+  })
 
   const saved = saveCustomMachine(customMachine('shop-router', 'Shop Router'))
   assert(saved.ok !== undefined, 'the fixture machine saves into the library')
