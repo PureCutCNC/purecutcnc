@@ -47,7 +47,10 @@
  * - add `G90.1` to `HEADER_G_COMMANDS` → the absolute-arc-centre refusal fails
  *   (#1119);
  * - accept `M{toolNumber}` as a placeholder word → its refusal case fails
- *   (#1119).
+ *   (#1119);
+ * - remove the completed-placeholder boundary from `startsJoinedWord` → the
+ *   adjacent-placeholder acceptances (`S{rpm}F{feed}`, `T{toolNumber}S{rpm}`)
+ *   fail (#1119 A2).
  *
  * Run with: npx tsx src/engine/gcode/templateRestrictions.test.ts
  */
@@ -447,19 +450,46 @@ console.log('Testing the #1119 relaxations...')
   assertRefused('header: G91', withHeader(['G91']), 'program.header[0]', 'G91')
 
   // 3. A placeholder may end a word where the next word's letter begins, and
-  // may follow a completed word. It may not become a G/M number, absorb a
-  // following value, or be an unknown placeholder.
+  // may follow a completed word or another completed placeholder
+  // (`S{rpm}F{feed}`), because a filled placeholder is a value like a number.
+  // It may not become a G/M number, absorb a following value, or be an
+  // unknown placeholder.
   const withToolChange = (commands: string[]): unknown => ({
     ...structuredClone(base),
     toolChange: { ...base.toolChange, commands },
   })
+  const withProgram = (
+    field: 'header' | 'operationHeader' | 'footer',
+    lines: string[],
+  ): unknown => ({
+    ...structuredClone(base),
+    program: { ...base.program, [field]: lines },
+  })
   assertAccepted('tool change: T{toolNumber}M6', withToolChange(['T{toolNumber}M6']))
   assertAccepted('tool change: G43Z0.8000H{toolNumber}', withToolChange(['G43Z0.8000H{toolNumber}']))
+  assertRefusedNaming('tool change: T{toolNumber}5', withToolChange(['T{toolNumber}5']),
+    'toolChange.commands[0]', '{toolNumber}')
+
+  // #1119 A2 regression: adjacent placeholders are two words, so every class
+  // that accepts both words accepts the joined form, exactly as it accepts the
+  // spaced form. Removing the completed-placeholder boundary from
+  // `startsJoinedWord` must fail these acceptances.
+  for (const field of ['header', 'operationHeader', 'footer'] as const) {
+    assertAccepted(`${field}: S{rpm}F{feed}`, withProgram(field, ['S{rpm}F{feed}']))
+    assertRefusedNaming(`${field}: M{toolNumber}`, withProgram(field, ['M{toolNumber}']),
+      `program.${field}[0]`, '{toolNumber}')
+    assertRefusedNaming(`${field}: G{x}`, withProgram(field, ['G{x}']),
+      `program.${field}[0]`, '{x}')
+    assertRefusedNaming(`${field}: M3{toolNumber}`, withProgram(field, ['M3{toolNumber}']),
+      `program.${field}[0]`, '{toolNumber}')
+  }
+  assertAccepted('tool change: T{toolNumber}S{rpm}', withToolChange(['T{toolNumber}S{rpm}']))
+  assertAccepted('footer: T{toolNumber}S{rpm}', withProgram('footer', ['T{toolNumber}S{rpm}']))
   assertRefusedNaming('tool change: M{toolNumber}', withToolChange(['M{toolNumber}']),
     'toolChange.commands[0]', '{toolNumber}')
   assertRefusedNaming('tool change: G{x}', withToolChange(['G{x}']),
     'toolChange.commands[0]', '{x}')
-  assertRefusedNaming('tool change: T{toolNumber}5', withToolChange(['T{toolNumber}5']),
+  assertRefusedNaming('tool change: M3{toolNumber}', withToolChange(['M3{toolNumber}']),
     'toolChange.commands[0]', '{toolNumber}')
 }
 

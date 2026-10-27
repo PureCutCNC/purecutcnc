@@ -825,15 +825,28 @@ function endsWord(code: string, at: number): boolean {
 }
 
 /**
+ * True when `at` ends a completed placeholder (`{key}`). A placeholder is a
+ * value the emitter substitutes, so the word after it begins exactly as it
+ * does after a number (`S{rpm}F{feed}`), while `#T{…}` is still not a `T`
+ * word because the `#` is neither.
+ */
+function endsPlaceholder(code: string, at: number): boolean {
+  if (code[at] !== '}') return false
+  const open = code.lastIndexOf('{', at)
+  return open >= 0 && /^\{\w+\}$/.test(code.slice(open, at + 1))
+}
+
+/**
  * True when `at` starts a word in run-together G-code. A letter begins a new
  * word as soon as the previous word's value ends (`Z0.8000H1` is a Z word and
  * an H word), because a word is a letter plus its value and needs no
- * whitespace after the number. Line start, whitespace and block delete remain
+ * whitespace after the number. A completed placeholder is a value too, so
+ * `S{rpm}F{feed}` is two words. Line start, whitespace and block delete remain
  * boundaries, so `#T{…}` is still not a `T` word.
  */
 function startsJoinedWord(code: string, at: number): boolean {
   if (startsWord(code, at)) return true
-  return /[0-9.]/.test(code[at - 1] ?? '')
+  return /[0-9.]/.test(code[at - 1] ?? '') || endsPlaceholder(code, at - 1)
 }
 
 /**
