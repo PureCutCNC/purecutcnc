@@ -533,20 +533,25 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   await expect(passes).toBeVisible()
   await expect(passes.locator('.ui-select__label')).toHaveText('Along the bar')
 
-  // #1112 C2: the Passes field carries a reference picture, and the picture
-  // must swap with the direction rather than stay on the along drawing. The
-  // unit test owns which drawing is which; this proves the render site passes
-  // the stored value through as the variant.
+  // #1112 C2: the Passes field carries a reference picture that must swap with
+  // the direction rather than stay on the along drawing. The unit test owns
+  // which marker belongs to which direction; here the live DOM proves the
+  // render site passes the stored value through as the variant, so each
+  // direction carries its own arrow and not the other one.
   const passesPicture = passes.locator('svg.op-param-ref')
   await expect(passesPicture).toHaveCount(1)
   await expect(passesPicture).toBeVisible()
   await expect(passesPicture).toHaveAttribute('aria-label', 'Passes reference')
+  await expect(passesPicture.locator('[data-arrow="along-bar"]')).toHaveCount(1)
+  await expect(passesPicture.locator('[data-arrow="around-bar"]')).toHaveCount(0)
   const alongPicture = await passesPicture.innerHTML()
   expect(alongPicture.length).toBeGreaterThan(0)
 
   await passes.locator('.ui-select__trigger').click()
   await page.getByRole('option', { name: 'Around the bar', exact: true }).click()
   await expect(passes.locator('.ui-select__label')).toHaveText('Around the bar')
+  await expect(passesPicture.locator('[data-arrow="around-bar"]')).toHaveCount(1)
+  await expect(passesPicture.locator('[data-arrow="along-bar"]')).toHaveCount(0)
   const aroundPicture = await passesPicture.innerHTML()
   expect(aroundPicture).not.toBe(alongPicture)
 
