@@ -89,6 +89,7 @@ import {
   drawPreviewProfile,
   translateProfile,
 } from './previewPrimitives'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
 import {
   canvasToWorld,
   computeFitViewState,
@@ -1046,20 +1047,26 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
+      // The ring follows the same display outlines as the feature itself: on the
+      // Around sheet a canned thread is drawn as folded stripes, so the armed
+      // highlight must ring those rather than its stored placement frame, which
+      // would run off the sheet (issue #1112 L2).
       if (operationHighlightIds) {
-        traceProfilePath(ctx, feature.sketch.profile, vt)
-        ctx.save()
-        if (operationHighlightIds.has(feature.id)) {
-          ctx.lineWidth = 3
-          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
-          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
-          ctx.shadowBlur = 8
-          ctx.stroke()
-        } else if (feature.sketch.profile.closed) {
-          ctx.fillStyle = canvasPalette.veil
-          ctx.fill()
+        for (const profile of featureDisplayProfiles(feature, sheet)) {
+          traceProfilePath(ctx, profile, vt)
+          ctx.save()
+          if (operationHighlightIds.has(feature.id)) {
+            ctx.lineWidth = 3
+            ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+            ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
+            ctx.shadowBlur = 8
+            ctx.stroke()
+          } else if (profile.closed) {
+            ctx.fillStyle = canvasPalette.veil
+            ctx.fill()
+          }
+          ctx.restore()
         }
-        ctx.restore()
       }
 
       const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null

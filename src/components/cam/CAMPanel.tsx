@@ -37,7 +37,7 @@ import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary
 import { ToolLibraryDialog } from './ToolLibraryDialog'
 import { CAMPlanDialog } from './CAMPlanDialog'
 import { createCamPlan, type CamPlanDraft } from '../../engine/operations/camPlan'
-import { setupFace } from '../../engine/setupOrientation'
+import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
 import { OperationNoteField } from './OperationNoteField'
@@ -93,6 +93,7 @@ import {
   isTrochoidalOperation,
   operationFieldsForGroup,
   resolvedEntryStrategy,
+  stockRadialRefVariant,
   type OperationFieldId,
 } from './operationFields'
 
@@ -949,6 +950,9 @@ export function CAMPanel({
       return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
     const operation = selectedOperation
+    // The operation's own setup, not the workspace's face: a reference picture
+    // describes where this operation cuts.
+    const operationFace = setupFace(setupForOperation(project, operation) ?? currentSetup)
     const operationTool = selectedOperationTool
       ? normalizeToolForProject(selectedOperationTool, project)
       : null
@@ -1793,10 +1797,12 @@ export function CAMPanel({
             onCommit={(value) => updateOperation(operation.id, { stockToLeaveRadial: value })}
           />
           {/* On a rotary operation the cleared wall is the bar's circumference,
-              so the leave is drawn across a radial cross-section (#1112). */}
+              so the leave is drawn across a radial cross-section; any other
+              operation on Around keeps the pocket picture with its radial-wall
+              note (#1112 decisions 7.10, 8.16). */}
           <OperationParameterReference
             kind="stockRadial"
-            variant={isRotaryOperationKind(operation.kind) ? 'rotary' : undefined}
+            variant={stockRadialRefVariant(operation, operationFace)}
           />
         </label>
       ),
