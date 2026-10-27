@@ -15,91 +15,86 @@
  */
 
 /**
- * The Polygon and Square-to-round dialogs for the Around face (issue #1016
- * C2-U2). One component, a discriminated form: the two shapes take the same
- * start/length/tool spine and differ in the size fields that define the solid.
+ * The Turn and Polygon dialog (issue #1112 slice G).
  *
- * The fields are measured the way a turner measures them — from the **chuck
- * end** of the bar, along the bar, in project units — and mapped here into the
- * absolute ascending stock-space endpoints the frozen `addRotarySolid` contract
- * takes. That map is the one place a Y-axis sign can go wrong, so it is a pure
- * function with its own branch: for a bar along X the chuck end is `minX`, for a
- * bar along Y it is `maxY`, and offsets run away from it along the bar.
+ * One component creates and edits both canned models. Creation calls
+ * `addRotarySolid` once, which writes one generated model feature and no
+ * folder or operation; editing rebuilds that model's mesh through the same
+ * `updateFeature` path every other Properties edit takes. The dialog has no
+ * Tool field — rotary rough and finish are added to the model the ordinary way
+ * (decision 3).
  *
- * Nothing is persisted: the numbers live in this component and disappear with
- * it. Create calls `addRotarySolid` once, which writes an ordinary model plus
- * its rotary rough and finish operations in one history step; a refusal is shown
- * in the same place and creates nothing. Validation is local so Create can be
- * disabled with an explanation before the store is asked, while the store stays
- * the authority on every rule.
+ * Lengths are project units, and start/length are measured from the **chuck
+ * end**, the same as Thread/Flutes (decision 4). A Turn on a square blank is
+ * the old Square to round target; on a round bar it is the same cylinder inside
+ * the bar.
  *
- * A live informational note (not a refusal) reports where the generator will
- * actually start or stop cutting when the requested band runs into the chuck or
- * tailstock (`rotarySolidChuckNote.ts`). It reads the effective boundary from
- * the generator's own `rotaryAlongRange`, so Create stays enabled and the note
- * can never disagree with the toolpath.
- *
- * A polygon's default across-flats is 0.75 × the bar diameter and its inline
- * ceiling is the bar's own across-corners limit: `acrossFlats <= diameter ×
- * cos(π / sides)`. A square-to-round finished diameter defaults to the blank
- * side and cannot exceed it.
- *
- * Every default is the exact stock dimension, not a rounded display of it: the
- * fields are measured against the bar's own bounds, so a default that rounded
- * past them would open the form already refusing itself. Defaults keep the
- * shortest round-tripping decimal. The form is keyed on
- * `solidContextSignature`, so a change to the units, bar, origin, setup
- * or document unmounts it; `handleCreate` re-checks that signature so a click
- * cannot land between the store change and React's commit.
+ * The dialog is opened from one module store: the creation drawer's rotary
+ * group calls `openRotarySolidCreate`, and the canned-shape editor registry
+ * (the Properties "Edit turn…/Edit polygon…" button) calls
+ * `openRotarySolidEdit`. One host, mounted once by AppShell, renders it, so the
+ * drawer closing on hover cannot unmount an open dialog and the expanded
+ * Properties modal cannot mount a second one. The host closes a create dialog
+ * as soon as Around stops being the available, active face, or the bar, units
+ * or document behind it change.
  */
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useProjectStore } from '../../../store/projectStore'
-import type { RotarySolidInput, RotarySolidRefusal } from '../../../store/helpers/rotarySolids'
-import { getStockBounds, isRoundStock } from '../../../types/project'
-import { isBarStock, isSquareStock } from '../../../types/barStock'
-import { isToolCompatibleWithOperation } from '../../../toolPolicy'
+import type {
+  RotarySolidInput,
+  RotarySolidRefusal,
+} from '../../../store/helpers/rotarySolids'
+import { rotarySolidCannedData, rotarySolidInputProblem } from '../../../store/helpers/rotarySolids'
+import { getStockBounds } from '../../../types/project'
+import { isBarStock } from '../../../types/barStock'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
-import { convertLength, formatLength } from '../../../utils/units'
+import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
-import { Select } from '../../Select'
-import { rotarySolidChuckNotes } from './rotarySolidChuckNote'
+import { resolveFeatureInstance } from '../../../store/helpers/resolveFeatures'
+import { activeFace, aroundUnavailableReason } from '../../../store/helpers/activeFace'
+import { computeMeshBounds } from '../../../engine/importedMesh'
+import { generateCannedShapeMesh } from '../../../cannedShapes'
+import { MAX_POLYGON_SIDES, normalizePolygonCannedParams } from '../../../cannedShapes/generators/polygon'
+import { normalizeTurnCannedParams } from '../../../cannedShapes/generators/turn'
+import {
+  rotarySolidBarLength,
+  rotarySolidFrame,
+} from '../../../cannedShapes/generators/rotarySolidParams'
+import {
+  closeRotarySolidDialog,
+  dialogRequestSnapshot,
+  subscribeDialogRequest,
+  type RotarySolidKind,
+} from './rotarySolidDialogState'
 
-export type RotarySolidKind = 'polygon' | 'square-to-round'
+export type { RotarySolidKind } from './rotarySolidDialogState'
 
 /** UI bounds for the polygon side count, matching `buildRotaryPolygonPrism`. */
 const MIN_POLYGON_SIDES = 3
-const MAX_POLYGON_SIDES = 64
 
 /**
- * Numeric slack when the user types the bar's own length: a typed value that
- * round-trips through the field may sit a few ulps past the bound.
- */
-const RANGE_SLACK = 1e-6
-
-/**
- * Every refusal has human text. Field-level refusals reuse the message the
+ * Every refusal has human text. A field-level refusal reuses the message the
  * field itself shows, so one problem never reads two different ways.
  */
 const REFUSAL_KEYS: Record<RotarySolidRefusal, MessageKey> = {
   notRotaryProject: 'dialogs.rotarySolid.refusal.notRotaryProject',
   notAroundFace: 'dialogs.rotarySolid.refusal.notAroundFace',
   setupAxisMismatch: 'dialogs.rotarySolid.refusal.setupAxisMismatch',
-  needsRoundBar: 'dialogs.rotarySolid.refusal.needsRoundBar',
-  needsSquareBar: 'dialogs.rotarySolid.refusal.needsSquareBar',
+  notOnBar: 'dialogs.rotarySolid.refusal.notOnBar',
+  invalidStart: 'dialogs.rotarySolid.error.start',
+  invalidLength: 'dialogs.rotarySolid.error.length',
   invalidAlongRange: 'dialogs.rotarySolid.error.range',
   invalidSides: 'dialogs.rotarySolid.error.sides',
   invalidAcrossFlats: 'dialogs.rotarySolid.error.acrossFlats',
   invalidRotation: 'dialogs.rotarySolid.error.rotation',
   invalidDiameter: 'dialogs.rotarySolid.error.diameter',
-  diameterExceedsBlank: 'dialogs.rotarySolid.error.diameterExceedsBlank',
-  polygonExceedsBar: 'dialogs.rotarySolid.refusal.polygonExceedsBar',
-  toolNotFound: 'dialogs.rotarySolid.refusal.toolNotFound',
-  toolIncompatible: 'dialogs.rotarySolid.refusal.toolIncompatible',
-  invalidTool: 'dialogs.rotarySolid.refusal.invalidTool',
+  diameterExceedsStock: 'dialogs.rotarySolid.error.diameterExceedsStock',
+  polygonExceedsStock: 'dialogs.rotarySolid.error.acrossFlatsBound',
   geometryNotRepresentable: 'dialogs.rotarySolid.refusal.geometryNotRepresentable',
-  targetNotAllowed: 'dialogs.rotarySolid.refusal.targetNotAllowed',
+  creationFailed: 'dialogs.rotarySolid.refusal.creationFailed',
 }
 
 function parseNumber(value: string): number {
@@ -107,76 +102,139 @@ function parseNumber(value: string): number {
 }
 
 /**
- * A default field value that reads back as exactly the same number.
- *
- * Four-decimal rounding used to push a valid stock dimension past its own
- * physical bound — a 20.00006 side defaulted to 20.0001 and a 23.70006 length
- * to 23.7001, so the form opened refusing its own default. The shortest
- * round-tripping decimal cannot widen any bound; an exponent is a valid
- * floating-point value for the number input, so it round-trips too. Only
- * defaults are formatted here — a typed value is never rounded or clamped.
+ * A default field value that reads back as exactly the same number. Rounding to
+ * four decimals widened a valid stock dimension past its own physical bound (a
+ * 20.00006 side defaulted to 20.0001 and a 23.70006 length to 23.7001, so the
+ * form opened refusing its own default), so the default is the shortest
+ * round-tripping decimal.
  */
 function tidy(value: number): string {
   return Number.isFinite(value) ? String(value) : ''
 }
 
-/**
- * The absolute ascending stock-space endpoints for a start offset and length
- * measured from the bar's **chuck end**. For a bar along X the chuck end is
- * `minX`; for a bar along Y it is `maxY` (the same start end `resizeRoundStock`
- * and `resizeSquareStock` keep). This is the one place a Y sign mistake would
- * silently mirror the band, and the browser spec pins both axes' emitted bounds.
- */
-function alongEndpoints(
-  axis: 'x' | 'y',
-  bounds: { minX: number; maxX: number; minY: number; maxY: number },
-  start: number,
-  length: number,
-): { alongStart: number; alongEnd: number } {
-  return axis === 'x'
-    ? { alongStart: bounds.minX + start, alongEnd: bounds.minX + start + length }
-    : { alongStart: bounds.maxY - start - length, alongEnd: bounds.maxY - start }
+/** Everything one create request is measured against, as one string. */
+function solidContextKey(project: ReturnType<typeof useProjectStore.getState>['project'], projectKey: number): string {
+  const stock = project.stock
+  const bounds = getStockBounds(stock)
+  return [
+    `document:${projectKey}`,
+    `units:${project.meta.units}`,
+    `shape:${stock.shape ?? 'block'}`,
+    `axis:${isBarStock(stock) ? stock.axis : '-'}`,
+    `thickness:${stock.thickness}`,
+    `box:${bounds.minX},${bounds.maxX},${bounds.minY},${bounds.maxY}`,
+    `setup:${project.activeSetupId}`,
+  ].join('|')
 }
+
+// ---------------------------------------------------------------------------
+// The dialog host (creation drawer + Properties editor)
+// ---------------------------------------------------------------------------
+
+/** Rendered once by AppShell; opens the create or edit dialog when asked. */
+export function RotarySolidDialogHost() {
+  const request = useSyncExternalStore(
+    subscribeDialogRequest,
+    dialogRequestSnapshot,
+    dialogRequestSnapshot,
+  )
+  const project = useProjectStore((state) => state.project)
+  const projectKey = useProjectStore((state) => state.projectKey)
+  const face = activeFace(project)
+  const available = aroundUnavailableReason(project) === null
+  const context = solidContextKey(project, projectKey)
+  const lastContext = useRef(context)
+
+  useEffect(() => {
+    if (request && !request.featureId && (face !== 'around' || !available)) {
+      closeRotarySolidDialog()
+    }
+  }, [request, face, available])
+
+  // A create form belongs to the bar, units and document it was opened
+  // against; a change to any of them drops it instead of reopening with stale
+  // numbers. An edit form reads its values from the stored parameters, so it
+  // is not tied to the live bar.
+  useEffect(() => {
+    if (request && !request.featureId && lastContext.current !== context) {
+      closeRotarySolidDialog()
+    }
+    lastContext.current = context
+  }, [request, context])
+
+  if (!request || typeof document === 'undefined') return null
+  const key = `${request.kind}-${request.featureId ?? 'create'}`
+  return createPortal(
+    <RotarySolidDialog
+      key={key}
+      kind={request.kind}
+      featureId={request.featureId}
+      onClose={closeRotarySolidDialog}
+    />,
+    document.body,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Dialog
+// ---------------------------------------------------------------------------
 
 interface RotarySolidDialogProps {
   kind: RotarySolidKind
-  /**
-   * True while the live store still matches the physical context this form was
-   * opened for. Checked again on Create, because a click can land in the commit
-   * gap between a store change and the keyed remount that drops the form.
-   */
-  contextIsCurrent: () => boolean
+  featureId?: string
   onClose: () => void
 }
 
-export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySolidDialogProps) {
+export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialogProps) {
   useRestoreCanvasFocus()
   const { t } = useI18n()
   const dialogRef = useRef<HTMLDivElement>(null)
   const project = useProjectStore((state) => state.project)
   const addRotarySolid = useProjectStore((state) => state.addRotarySolid)
+  const updateFeature = useProjectStore((state) => state.updateFeature)
   const units = project.meta.units
   const unitLabel = units === 'inch' ? 'in' : 'mm'
-  const stock = project.stock
-  const bounds = getStockBounds(stock)
-  const axis = isBarStock(stock) ? stock.axis : 'x'
-  const barLength = axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
-  const roundDiameter = isRoundStock(stock) ? stock.thickness : 0
-  const blankSide = isSquareStock(stock) ? stock.thickness : 0
+  const editing = featureId !== undefined
+  const feature = editing ? resolveFeatureInstance(project, featureId) : null
+  const storedCanned = feature?.canned && feature.canned.kind === kind ? feature.canned : null
+  const storedTurn = kind === 'turn'
+    ? normalizeTurnCannedParams(storedCanned?.params ?? {})
+    : null
+  const storedPolygon = kind === 'polygon'
+    ? normalizePolygonCannedParams(storedCanned?.params ?? {})
+    : null
+  const stored = storedTurn ?? storedPolygon
+  const frame = stored?.frame ?? rotarySolidFrame(project)
+  const barLength = frame ? rotarySolidBarLength(frame) : 0
 
-  const [start, setStart] = useState('0')
-  const [length, setLength] = useState(tidy(barLength))
-  const [sides, setSides] = useState('6')
-  const [acrossFlats, setAcrossFlats] = useState(tidy(roundDiameter * 0.75))
-  const [rotation, setRotation] = useState('0')
-  const [finishedDiameter, setFinishedDiameter] = useState(tidy(blankSide))
-  const [toolRef, setToolRef] = useState('')
+  useEffect(() => {
+    if (editing && !stored) onClose()
+  }, [editing, stored, onClose])
+
+  const [start, setStart] = useState(() => (stored ? String(stored.start) : '0'))
+  const [length, setLength] = useState(() => (stored ? String(stored.length) : tidy(barLength)))
+  const [sides, setSides] = useState(() => (storedPolygon ? String(storedPolygon.sides) : '6'))
+  const [acrossFlats, setAcrossFlats] = useState(() => {
+    if (storedPolygon) return String(storedPolygon.acrossFlats)
+    return tidy((frame?.thickness ?? 0) * 0.75)
+  })
+  const [rotation, setRotation] = useState(() => (storedPolygon ? String(storedPolygon.rotation) : '0'))
+  const [diameter, setDiameter] = useState(() => {
+    if (storedTurn) return String(storedTurn.diameter)
+    return tidy(frame?.thickness ?? 0)
+  })
   const [refusal, setRefusal] = useState<string | null>(null)
+  // A close can outlive the click that opened the edit; the guard keeps a late
+  // continuation from writing after the user left.
+  const activeRef = useRef(true)
+
+  useEffect(() => () => {
+    activeRef.current = false
+  }, [])
 
   // The form owns the keyboard while it is open: focus starts on the first
-  // field the user fills, Tab/Shift+Tab wrap inside the frame, Escape closes
-  // (unless an open picker claims it), and unmounting returns focus to the
-  // canvas through `useRestoreCanvasFocus` — the C1 dialog's own contract.
+  // field the user fills, Tab/Shift+Tab wrap inside the frame and Escape
+  // closes; unmounting returns focus to the canvas.
   useEffect(() => {
     dialogRef.current?.querySelector<HTMLInputElement>('#rotary-solid-start')?.focus()
   }, [])
@@ -186,9 +244,6 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
       const node = dialogRef.current
       if (!node) return
       if (event.key === 'Escape') {
-        // A Select's own Escape closes the list first: one Escape never
-        // dismisses both the picker and the whole form.
-        if (node.querySelector('.ui-select--open')) return
         onClose()
         return
       }
@@ -214,18 +269,11 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
       }
     }
 
-    // Capture, like the tool library's trap: a Select closes itself on the
-    // trigger's own keydown, which would otherwise clear the open marker before
-    // a bubble-phase handler could tell that the picker still owned the key.
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onClose])
 
-  /**
-   * A store refusal describes the request as it was when Create was pressed. It
-   * is cleared by the first edit to any field, so a corrected form never shows
-   * a reason for numbers that are no longer on screen.
-   */
+  /** A store refusal describes the request as it was; the first edit clears it. */
   function changeField(setter: (next: string) => void): (event: ChangeEvent<HTMLInputElement>) => void {
     return (event) => {
       setter(event.target.value)
@@ -233,145 +281,88 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
     }
   }
 
-  // The solid is machined by a rotary operation, so the picker offers exactly
-  // the cutters that policy admits: flat and ball end mills in this project.
-  const compatibleTools = useMemo(
-    () => project.tools.filter((tool) => isToolCompatibleWithOperation(tool, 'rotary_rough')),
-    [project.tools],
-  )
-  const selectedToolId = compatibleTools.some((tool) => tool.id === toolRef)
-    ? toolRef
-    : compatibleTools[0]?.id ?? ''
+  function buildInput(): RotarySolidInput {
+    if (kind === 'turn') {
+      return {
+        kind: 'turn',
+        start: parseNumber(start),
+        length: parseNumber(length),
+        diameter: parseNumber(diameter),
+      }
+    }
+    return {
+      kind: 'polygon',
+      start: parseNumber(start),
+      length: parseNumber(length),
+      sides: parseNumber(sides),
+      acrossFlats: parseNumber(acrossFlats),
+      rotationDeg: parseNumber(rotation),
+    }
+  }
 
-  /** The bar's across-corners ceiling for this side count, or Infinity. */
-  const acrossFlatsCeiling = useMemo(() => {
+  /** The across-flats ceiling for this side count, or Infinity for a bad count. */
+  function acrossFlatsCeiling(): number {
+    if (!frame) return Number.POSITIVE_INFINITY
     const sidesValue = parseNumber(sides)
     if (!Number.isInteger(sidesValue) || sidesValue < MIN_POLYGON_SIDES || sidesValue > MAX_POLYGON_SIDES) {
       return Number.POSITIVE_INFINITY
     }
-    return roundDiameter * Math.cos(Math.PI / sidesValue)
-  }, [roundDiameter, sides])
-
-  function sharedProblem(): string | null {
-    if (!isBarStock(stock)) {
-      return t(kind === 'polygon'
-        ? 'dialogs.rotarySolid.refusal.needsRoundBar'
-        : 'dialogs.rotarySolid.refusal.needsSquareBar')
-    }
-    const startValue = parseNumber(start)
-    if (!Number.isFinite(startValue) || startValue < 0) return t('dialogs.rotarySolid.error.start')
-    const lengthValue = parseNumber(length)
-    if (!Number.isFinite(lengthValue) || lengthValue <= 0) return t('dialogs.rotarySolid.error.length')
-    if (startValue + lengthValue > barLength + RANGE_SLACK) {
-      return t('dialogs.rotarySolid.error.range', { length: formatLength(barLength, units) })
-    }
-    if (!selectedToolId) return t('dialogs.rotarySolid.error.noTool')
-    return null
+    return frame.thickness * Math.cos(Math.PI / sidesValue)
   }
 
-  function polygonProblem(): string | null {
-    const shared = sharedProblem()
-    if (shared !== null) return shared
-    const sidesValue = parseNumber(sides)
-    if (!Number.isInteger(sidesValue) || sidesValue < MIN_POLYGON_SIDES || sidesValue > MAX_POLYGON_SIDES) {
-      return t('dialogs.rotarySolid.error.sides', { min: MIN_POLYGON_SIDES, max: MAX_POLYGON_SIDES })
-    }
-    const acrossFlatsValue = parseNumber(acrossFlats)
-    if (!Number.isFinite(acrossFlatsValue) || acrossFlatsValue <= 0) {
-      return t('dialogs.rotarySolid.error.acrossFlats')
-    }
-    if (acrossFlatsValue > acrossFlatsCeiling + RANGE_SLACK) {
-      return t('dialogs.rotarySolid.error.acrossFlatsBound', {
-        max: formatLength(acrossFlatsCeiling, units),
-      })
-    }
-    if (!Number.isFinite(parseNumber(rotation))) {
-      return t('dialogs.rotarySolid.error.rotation')
-    }
-    return null
+  function refusalText(reason: RotarySolidRefusal): string {
+    const key = REFUSAL_KEYS[reason]
+    return t(key, {
+      min: MIN_POLYGON_SIDES,
+      max: MAX_POLYGON_SIDES,
+      length: formatLength(barLength, units),
+      maxSize: formatLength(kind === 'turn' ? (frame?.thickness ?? 0) : acrossFlatsCeiling(), units),
+      units: unitLabel,
+    })
   }
 
-  function squareProblem(): string | null {
-    const shared = sharedProblem()
-    if (shared !== null) return shared
-    const diameterValue = parseNumber(finishedDiameter)
-    if (!Number.isFinite(diameterValue) || diameterValue <= 0) {
-      return t('dialogs.rotarySolid.error.diameter')
-    }
-    if (diameterValue > blankSide + RANGE_SLACK) {
-      return t('dialogs.rotarySolid.error.diameterExceedsBlank', { side: formatLength(blankSide, units) })
-    }
-    return null
-  }
+  const problem = frame ? rotarySolidInputProblem(frame, buildInput()) : 'notOnBar'
+  const problemText = problem === null ? null : refusalText(problem)
 
-  const problem = kind === 'polygon' ? polygonProblem() : squareProblem()
-
-  // The note is informational, so it is computed from the same absolute band
-  // Create would post. The engine function decides where cutting really starts
-  // and ends; this form only supplies its fields, never a clearance formula.
-  const startValue = parseNumber(start)
-  const lengthValue = parseNumber(length)
-  const requestedBand = Number.isFinite(startValue) && startValue >= 0
-    && Number.isFinite(lengthValue) && lengthValue > 0
-    && startValue + lengthValue <= barLength + RANGE_SLACK
-    ? alongEndpoints(axis, bounds, startValue, lengthValue)
-    : null
-  const chuckNotes = requestedBand !== null && selectedToolId !== ''
-    ? rotarySolidChuckNotes(project, selectedToolId, requestedBand.alongStart, requestedBand.alongEnd)
-    : []
-
-  function buildInput(): RotarySolidInput {
-    const startValue = parseNumber(start)
-    const lengthValue = parseNumber(length)
-    const { alongStart, alongEnd } = alongEndpoints(axis, bounds, startValue, lengthValue)
-    if (kind === 'polygon') {
-      return {
-        kind: 'polygon',
-        sides: parseNumber(sides),
-        acrossFlats: parseNumber(acrossFlats),
-        rotationDeg: parseNumber(rotation),
-        alongStart,
-        alongEnd,
-        toolRef: selectedToolId,
+  function handleApply() {
+    if (problem !== null || !frame) return
+    if (editing && featureId) {
+      if (!stored) return
+      const input = buildInput()
+      const canned = rotarySolidCannedData(stored.frame, input, units)
+      if (!canned) {
+        setRefusal(t('dialogs.rotarySolid.refusal.creationFailed'))
+        return
       }
-    }
-    return {
-      kind: 'square-to-round',
-      diameter: parseNumber(finishedDiameter),
-      alongStart,
-      alongEnd,
-      toolRef: selectedToolId,
-    }
-  }
-
-  function handleCreate() {
-    if (problem !== null) return
-    // The key on the owning subtree drops this form when the physical context
-    // changes, but a click can still land in the commit gap. Re-check the
-    // signature against the live store so Create can never post numbers typed
-    // for a different bar, unit or document.
-    if (!contextIsCurrent()) {
-      onClose()
+      const mesh = generateCannedShapeMesh(canned)
+      if (!mesh) {
+        setRefusal(t('dialogs.rotarySolid.refusal.geometryNotRepresentable'))
+        return
+      }
+      const bounds = computeMeshBounds(mesh.positions)
+      // One parameter write, one history entry. The instance span is pinned to
+      // the regenerated mesh's own Z bounds, so a diameter change keeps the
+      // solid on the bar's centreline instead of anchoring its old bottom.
+      updateFeature(featureId, { canned, z_bottom: bounds.minZ, z_top: bounds.maxZ })
+      if (activeRef.current) onClose()
       return
     }
+
     const result = addRotarySolid(buildInput())
     if (result.ok) {
       onClose()
       return
     }
-    // The store is the authority; a typed refusal is mapped to real text here.
-    const key = REFUSAL_KEYS[result.reason]
-    setRefusal(t(key, {
-      min: MIN_POLYGON_SIDES,
-      max: MAX_POLYGON_SIDES,
-      side: formatLength(blankSide, units),
-      length: formatLength(barLength, units),
-    }))
+    setRefusal(refusalText(result.reason))
   }
 
-  const titleKey: MessageKey = kind === 'polygon'
-    ? 'dialogs.rotarySolid.polygon.title'
-    : 'dialogs.rotarySolid.squareToRound.title'
+  const titleKey: MessageKey = kind === 'turn'
+    ? (editing ? 'dialogs.rotarySolid.turn.editTitle' : 'dialogs.rotarySolid.turn.title')
+    : (editing ? 'dialogs.rotarySolid.polygon.editTitle' : 'dialogs.rotarySolid.polygon.title')
+
+  // A corrupt parameter set has no editable form; the effect above closes it.
+  if (editing && !stored) return null
+  if (!frame) return null
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -426,7 +417,23 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
               </div>
             </div>
 
-            {kind === 'polygon' ? (
+            {kind === 'turn' ? (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title" htmlFor="rotary-solid-diameter">
+                  {t('dialogs.rotarySolid.diameter', { units: unitLabel })}
+                </label>
+                <div className="properties-field">
+                  <input
+                    id="rotary-solid-diameter"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={diameter}
+                    onChange={changeField(setDiameter)}
+                  />
+                </div>
+              </div>
+            ) : (
               <>
                 <div className="dialog-section-group">
                   <label className="dialog-section-title" htmlFor="rotary-solid-sides">
@@ -476,68 +483,12 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
                   </div>
                 </div>
               </>
-            ) : (
-              <div className="dialog-section-group">
-                <label className="dialog-section-title" htmlFor="rotary-solid-diameter">
-                  {t('dialogs.rotarySolid.diameter', { units: unitLabel })}
-                </label>
-                <div className="properties-field">
-                  <input
-                    id="rotary-solid-diameter"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={finishedDiameter}
-                    onChange={changeField(setFinishedDiameter)}
-                  />
-                </div>
-              </div>
             )}
-
-            <div className="dialog-section-group rotary-dialog__tool">
-              <label className="dialog-section-title">
-                {t('dialogs.rotarySolid.tool')}
-              </label>
-              <div className="properties-field">
-                <Select
-                  value={selectedToolId}
-                  options={compatibleTools.map((tool) => ({
-                    value: tool.id,
-                    label: tool.name,
-                    // The physical size, converted out of the tool's own units so
-                    // a mixed-unit project never compares raw numbers.
-                    detail: `Ø${formatLength(convertLength(tool.diameter, tool.units, units), units)} ${unitLabel}`,
-                  }))}
-                  onChange={(value) => { setToolRef(value); setRefusal(null) }}
-                />
-              </div>
-            </div>
 
             <p className="rotary-dialog__note">{t('dialogs.rotarySolid.note')}</p>
 
-            {chuckNotes.map((note) => (
-              <p key={note.kind} className="rotary-dialog__chuck-note" role="status">
-                {note.kind === 'all'
-                  ? t('dialogs.rotarySolid.chuckNote.noneCut')
-                  : t(
-                    note.kind === 'start'
-                      ? 'dialogs.rotarySolid.chuckNote.start'
-                      : 'dialogs.rotarySolid.chuckNote.end',
-                    {
-                      support: t(note.support === 'chuck'
-                        ? 'featureTree.properties.clampType.chuck'
-                        : 'featureTree.properties.clampType.tailstock'),
-                      held: formatLength(note.held, units),
-                      start: formatLength(note.effective, units),
-                      end: formatLength(note.effective, units),
-                      units: unitLabel,
-                    },
-                  )}
-              </p>
-            ))}
-
-            {problem !== null ? (
-              <div className="cam-field-message rotary-dialog__error" role="alert">{problem}</div>
+            {problemText !== null ? (
+              <div className="cam-field-message rotary-dialog__error" role="alert">{problemText}</div>
             ) : null}
             {refusal !== null ? (
               <div className="cam-field-message rotary-dialog__error" role="alert">{refusal}</div>
@@ -553,9 +504,9 @@ export function RotarySolidDialog({ kind, contextIsCurrent, onClose }: RotarySol
             className="feat-btn feat-btn--primary rotary-dialog__create"
             type="button"
             disabled={problem !== null}
-            onClick={handleCreate}
+            onClick={handleApply}
           >
-            {t('dialogs.rotarySolid.create')}
+            {editing ? t('dialogs.common.apply') : t('dialogs.rotarySolid.create')}
           </button>
         </div>
       </div>

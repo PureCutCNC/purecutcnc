@@ -85,24 +85,21 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
     )
   }
 
-  // The drawer already stacks its shape rows; the rotary group is a third row
-  // behind the same separator the secondary shapes use, so the two commands
-  // do not read as more shapes.
+  // The drawer stacks its shape rows; the rotary group is one row behind a
+  // separator owned by `CreationActions`, so Thread and Flutes sit in the same
+  // group as Turn and Polygon (issue #1112 decision 4).
   return (
     <>
-      <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
-      <div className="toolbar-creation-picker__rotary" style={{ display: 'flex' }}>
-        {ROTARY_COMMANDS.map((entry) => (
-          <ToolbarActionButton
-            key={entry.kind}
-            icon={entry.icon}
-            label={t(entry.labelKey)}
-            command={entry.command}
-            tooltipSide={tooltipSide}
-            onClick={() => openRotaryPatternCreate(entry.kind)}
-          />
-        ))}
-      </div>
+      {ROTARY_COMMANDS.map((entry) => (
+        <ToolbarActionButton
+          key={entry.kind}
+          icon={entry.icon}
+          label={t(entry.labelKey)}
+          command={entry.command}
+          tooltipSide={tooltipSide}
+          onClick={() => openRotaryPatternCreate(entry.kind)}
+        />
+      ))}
     </>
   )
 }

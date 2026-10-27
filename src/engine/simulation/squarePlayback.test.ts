@@ -48,6 +48,7 @@ import { squareStock } from '../../types/barStock'
 import { defaultTool, newProject } from '../../types/project'
 import type { Operation, Project } from '../../types/project'
 import { planRotarySolid } from '../../store/helpers/rotarySolids'
+import { useProjectStore } from '../../store/projectStore'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import type { SelectionState } from '../../store/types'
 import { computeOperationToolpath } from '../toolpaths/generateOperation'
@@ -120,14 +121,20 @@ interface SquareJob {
 function squareToRoundJob(): SquareJob {
   const seeded = seededSquareProject()
   const plan = planRotarySolid(seeded, EMPTY_SELECTION, {
-    kind: 'square-to-round',
+    kind: 'turn',
+    start: 10,
+    length: 30,
     diameter: 20,
-    alongStart: 10,
-    alongEnd: 40,
-    toolRef: 't1',
   })
-  assert(plan.ok, 'fixture: the Square-to-round dialog must create the job')
-  const project = plan.project
+  assert(plan.ok, 'fixture: the Turn dialog must create the model')
+  if (!plan.ok) throw new Error('fixture: the Turn was refused')
+  // Creation adds no operation (issue #1112 G), so the fixture adds the two
+  // rotary operations through the store exactly as the user does from CAM.
+  useProjectStore.getState().loadProject(plan.project)
+  const target = { source: 'features' as const, featureIds: [plan.created.featureId] }
+  assert(useProjectStore.getState().addOperation('rotary_rough', 'rough', target), 'fixture: rough added')
+  assert(useProjectStore.getState().addOperation('rotary_finish', 'finish', target), 'fixture: finish added')
+  const project = useProjectStore.getState().project
   const around = project.setups.find((setup) => setup.kind === 'around')
   const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')
   const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')

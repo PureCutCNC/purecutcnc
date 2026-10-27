@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../Icon'
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace, aroundSketchAuthoringRefused } from '../../../store/helpers/activeFace'
+import { activeFace, aroundSketchAuthoringRefused, aroundUnavailableReason } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { useOutsideDismiss } from '../../../hooks/useOutsideDismiss'
@@ -46,6 +46,21 @@ const CREATION_TARGET_NOUN_KEYS: Record<CreationTarget, MessageKey> = {
   line: 'sketch.target.line',
   region: 'sketch.target.region',
   construction: 'sketch.target.construction',
+}
+
+/** The drawer's rotary group: Thread/Flutes and Turn/Polygon in one row. */
+function RotaryCreationGroup({ tooltipSide }: { tooltipSide: 'bottom' | 'right' }) {
+  const project = useProjectStore((state) => state.project)
+  if (activeFace(project) !== 'around' || aroundUnavailableReason(project) !== null) return null
+  return (
+    <>
+      <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
+      <div className="toolbar-creation-picker__rotary" style={{ display: 'flex' }}>
+        <RotaryPatternActions variant="drawer" tooltipSide={tooltipSide} />
+        <RotarySolidActions variant="drawer" tooltipSide={tooltipSide} />
+      </div>
+    </>
+  )
 }
 
 function CreationActions({
@@ -228,33 +243,34 @@ function CreationActions({
     <div className={`toolbar-creation-block toolbar-creation-block--${creationTarget}`}>
       {/*
         On a square blank the Around sheet is round-only (issue #1016 C2-U1):
-        drawing there is refused, so the target toggle and the shape picker are
-        hidden instead of offering tools that would do nothing. Only the solid
-        workflow (`RotarySolidActions`) is offered; the same rule is applied in
-        the tablet rail, so the two assemblies agree.
+        drawing there is refused, so the target toggle, the last-shape button
+        and the drawing rows are hidden instead of offering tools that would do
+        nothing. The creation drawer itself stays, holding only the rotary
+        group, so Turn and Polygon are still reachable there (issue #1112 G).
+        The same rule is applied in the tablet rail.
       */}
       {sketchAuthoringRefused ? null : (
-        <>
-          <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
-            {renderCreationTargetButton('feature', 'plus', t(CREATION_TARGET_LABEL_KEYS.feature))}
-            {renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))}
-            {renderCreationTargetButton('region', 'pocket', t(CREATION_TARGET_LABEL_KEYS.region))}
-            {renderCreationTargetButton('construction', 'construction', t(CREATION_TARGET_LABEL_KEYS.construction))}
-          </div>
-          <div
-            className="toolbar-group toolbar-group--drawing toolbar-creation-picker"
-            ref={pickerRef}
-            onPointerEnter={(event) => {
-              if (event.pointerType === 'mouse') {
-                scheduleDrawerOpen()
-              }
-            }}
-            onPointerLeave={(event) => {
-              if (event.pointerType === 'mouse') {
-                scheduleDrawerClose()
-              }
-            }}
-          >
+        <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
+          {renderCreationTargetButton('feature', 'plus', t(CREATION_TARGET_LABEL_KEYS.feature))}
+          {renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))}
+          {renderCreationTargetButton('region', 'pocket', t(CREATION_TARGET_LABEL_KEYS.region))}
+          {renderCreationTargetButton('construction', 'construction', t(CREATION_TARGET_LABEL_KEYS.construction))}
+        </div>
+      )}
+      <div
+        className="toolbar-group toolbar-group--drawing toolbar-creation-picker"
+        ref={pickerRef}
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'mouse') {
+            scheduleDrawerOpen()
+          }
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse') {
+            scheduleDrawerClose()
+          }
+        }}
+      >
             <ToolbarAction label={drawerOpen ? t('sketch.creation.closeDrawer') : t('sketch.creation.chooseTarget', { target: t(CREATION_TARGET_NOUN_KEYS[creationTarget]) })} tooltipSide={tooltipSide}>
               <button
                 type="button"
@@ -277,15 +293,17 @@ function CreationActions({
                 <Icon id="feature-drawer" />
               </button>
             </ToolbarAction>
-            <ToolbarActionButton
-              icon={lastShapeOption.icon}
-              label={pendingShape === lastShapeOption.value
-                ? t('sketch.creation.cancelTool', { shape: t(lastShapeOption.nounKey) })
-                : t('sketch.creation.addShape', { target: targetNoun, shape: t(lastShapeOption.nounKey) })}
-              active={pendingShape === lastShapeOption.value}
-              tooltipSide={tooltipSide}
-              onClick={() => runShapeTool(lastShapeOption.value)}
-            />
+            {sketchAuthoringRefused ? null : (
+              <ToolbarActionButton
+                icon={lastShapeOption.icon}
+                label={pendingShape === lastShapeOption.value
+                  ? t('sketch.creation.cancelTool', { shape: t(lastShapeOption.nounKey) })
+                  : t('sketch.creation.addShape', { target: targetNoun, shape: t(lastShapeOption.nounKey) })}
+                active={pendingShape === lastShapeOption.value}
+                tooltipSide={tooltipSide}
+                onClick={() => runShapeTool(lastShapeOption.value)}
+              />
+            )}
             {drawerOpen
               ? createPortal(
                   <div
@@ -311,23 +329,10 @@ function CreationActions({
                       }
                     }}
                   >
-                    <div style={{ display: 'flex' }}>
-                      {primaryOptions.map((option) => (
-                        <ToolbarActionButton
-                          key={option.value}
-                          icon={option.icon}
-                          label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
-                          active={lastShapeOption.value === option.value}
-                          tooltipSide="bottom"
-                          onClick={() => { selectShape(option.value) }}
-                        />
-                      ))}
-                    </div>
-                    {secondaryOptions.length > 0 && (
+                    {sketchAuthoringRefused ? null : (
                       <>
-                        <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
                         <div style={{ display: 'flex' }}>
-                          {secondaryOptions.map((option) => (
+                          {primaryOptions.map((option) => (
                             <ToolbarActionButton
                               key={option.value}
                               icon={option.icon}
@@ -338,25 +343,31 @@ function CreationActions({
                             />
                           ))}
                         </div>
+                        {secondaryOptions.length > 0 && (
+                          <>
+                            <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
+                            <div style={{ display: 'flex' }}>
+                              {secondaryOptions.map((option) => (
+                                <ToolbarActionButton
+                                  key={option.value}
+                                  icon={option.icon}
+                                  label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
+                                  active={lastShapeOption.value === option.value}
+                                  tooltipSide="bottom"
+                                  onClick={() => { selectShape(option.value) }}
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
-                    {/*
-                      The rotary group lives inside the creation drawer, not in
-                      a separate toolbar group (issue #1112 decision 4). Thread
-                      and Flutes self-guard on a round, active Around face; the
-                      solids follow the bar shape and stay where they are until
-                      slice G moves them into the same drawer group.
-                    */}
-                    <RotaryPatternActions variant="drawer" tooltipSide="bottom" />
+                    <RotaryCreationGroup tooltipSide="bottom" />
                   </div>,
                   document.body,
                 )
               : null}
-          </div>
-        </>
-      )}
-      {/* The one-shot solids appear only while the workspace is on Around. */}
-      <RotarySolidActions tooltipSide={tooltipSide} />
+      </div>
     </div>
   )
 }
