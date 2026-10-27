@@ -409,8 +409,9 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(ui.setupCam.section(page, 'around')).toContainText('No operations')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
-  // An Around setup gets no cross-face target picker.
-  await expect(ui.setupCam.addMenu(page).locator('.cam-cross-face-picker')).toHaveCount(0)
+  // An Around setup gets no cross-face target checklist, and the Add menu
+  // carries no per-operation Cuts list (that lives on the operation).
+  await expect(ui.setupCam.addMenu(page).locator('[data-operation-cuts]')).toHaveCount(0)
   const pocketRow = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })

@@ -51,6 +51,7 @@ import type { BarStock, Clamp, MachiningSetup, Project, SketchFeature, SketchPro
 import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   aroundClampBand,
+  aroundModelBandAt,
   aroundOrigin,
   aroundSheet,
   aroundSheetForOperation,
@@ -373,6 +374,52 @@ function modelFeature(id: string, profile: SketchProfile, overrides: Partial<Ske
     frame.modelBands.length === 0,
     `a model wholly outside the bar is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
   )
+}
+
+// ── A band is the model's click target (issue #1112 slice I) ──
+//
+// A model inside the bar has no drawable outline on the sheet, so its band is
+// what the pointer can hit: anywhere along the band, across the whole visible
+// circumference. Mutations checked one at a time:
+// - the along axis read from the across coordinate → the Y-bar assertion fails;
+// - the across bounds dropped → "outside the sheet's circumference is no hit"
+//   fails;
+// - the first band winning an overlap → "the topmost band wins" fails;
+// - a point between two bands claimed by one → "between the bands is no hit"
+//   fails.
+{
+  const project = projectWithFeatures(aroundProject(X_BAR), [modelFeature('bust', rectProfile(30, 40, 60, 5))])
+  const frame = aroundSheet(project)!
+  const across = frame.zero
+  assert(aroundModelBandAt(frame, { x: 50, y: across }) === 'bust', 'a point inside the band selects its model')
+  assert(aroundModelBandAt(frame, { x: 30, y: across }) === 'bust', 'the band starts at its along minimum')
+  assert(aroundModelBandAt(frame, { x: 90, y: across }) === 'bust', 'the band ends at its along maximum')
+  assert(aroundModelBandAt(frame, { x: 20, y: across }) === null, 'outside the band along the bar is no hit')
+  assert(aroundModelBandAt(frame, { x: 50, y: frame.sheetStart - 1 }) === null, 'outside the sheet across is no hit')
+  assert(
+    aroundModelBandAt(frame, { x: 50, y: frame.sheetStart + frame.circumference + 1 }) === null,
+    "outside the sheet's other edge is no hit",
+  )
+}
+
+{
+  // Along Y the band is read from Y, not X (Y_BAR's model bands y 6..10).
+  const project = projectWithFeatures(aroundProject(Y_BAR), [modelFeature('bust', rectProfile(4, 6, 3, 4))])
+  const frame = aroundSheet(project)!
+  assert(aroundModelBandAt(frame, { x: frame.zero, y: 8 }) === 'bust', 'a Y bar hits on the Y extent')
+  assert(aroundModelBandAt(frame, { x: 9, y: frame.zero }) === null, 'the X coordinate is not the along axis on a Y bar')
+}
+
+{
+  // Bands are drawn in project order, so an overlap picks the later one.
+  const project = projectWithFeatures(aroundProject(X_BAR), [
+    modelFeature('first', rectProfile(30, 40, 60, 5)),
+    modelFeature('second', rectProfile(50, 40, 60, 5)),
+  ])
+  const frame = aroundSheet(project)!
+  assert(aroundModelBandAt(frame, { x: 70, y: frame.zero }) === 'second', 'the topmost band wins an overlap')
+  assert(aroundModelBandAt(frame, { x: 35, y: frame.zero }) === 'first', 'outside the overlap the earlier band still wins')
+  assert(aroundModelBandAt(frame, { x: 120, y: frame.zero }) === null, 'between the bands is no hit')
 }
 
 // ── A square blank unrolls through the nominal reference cylinder ──

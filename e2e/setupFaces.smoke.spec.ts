@@ -477,9 +477,16 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   const moved = (await features(page))[1]
   expect(moved.authoringFace).toBe('top')
   expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.75])
-  // It is now a ghost on Bottom, and no longer selected.
-  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
-  await expect(ui.face.ghostRows(page)).toHaveCount(2)
+  // It is now Top content but stays selected on Bottom: a through cut is a
+  // valid target from either flat face, so moving its authoring face is not a
+  // ghost change (issue #1112 I). It stays a normal selectable row instead of
+  // joining the ghosts; only the full-height add (material, not a through cut)
+  // is a ghost there.
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id', moved.id)
+  await expect(ui.face.ghostRows(page)).toHaveCount(1)
+  const movedRow = page.locator(`.tree-row--feature[data-feature-id="${moved.id}"]`)
+  await expect(movedRow).toBeVisible()
+  await expect(movedRow).not.toHaveAttribute('data-ghost', 'true')
 })
 
 test('the face control is reachable and operable from the keyboard', async ({ app, ui }) => {

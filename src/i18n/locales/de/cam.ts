@@ -203,10 +203,12 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.pass': 'Durchgang',
   'cam.operation.maxCarveDepth': 'Max. Gravurtiefe',
   'cam.operation.carveDepth': 'Gravurtiefe',
-  'cam.operation.target': 'Ziel',
+  'cam.operation.cuts': 'Schnitte',
+  'cam.operation.cutsRemove': '{name} aus den Schnitten entfernen',
+  'cam.operation.cutsLastTarget': 'Eine Operation muss mindestens ein Ziel schneiden',
+  'cam.operation.cutsFilter': 'Filter',
+  'cam.operation.cutsFolder': '{name} ({count})',
   'cam.operation.targetSource': 'Zielquelle',
-  'cam.operation.rotaryTargets': 'Zu bearbeitende Modelle',
-  'cam.operation.rotaryTargetsHelp': 'Rotationsschruppen und Rotationsschlichten bearbeiten die hier markierten Modelle.',
   'cam.operation.useCurrentSelection': 'Aktuelle Auswahl verwenden',
   'cam.operation.targetUpdated': '✓ Ziel aktualisiert',
   'cam.operation.restMachining': 'Restbearbeitung',
@@ -320,8 +322,6 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // ── Operation target summary ──
   'cam.target.stock': 'Rohteil',
   'cam.target.noFeatures': 'Keine Features',
-  'cam.target.noMachiningTarget': 'Kein Bearbeitungsziel',
-  'cam.target.filters': '{machiningSummary}; Filter: {regionNames}',
 
   // ── Tool property labels ──
   'cam.tool.name': 'Name',
@@ -633,7 +633,6 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // Machining setup UI (#946)
   'cam.setup.crossFace': '⇄ SEITENÜBERGREIFEND',
   'cam.setup.crossFaceTitle': 'Von der anderen Seite erreicht',
-  'cam.setup.crossFaceSummary': 'Auch von {side} ({count})',
   'cam.setup.topOperations': 'Oberseiten-Operationen',
   'cam.setup.bottomOperations': 'Unterseiten-Operationen',
   'cam.setup.aroundOperations': 'Rundum-Operationen',

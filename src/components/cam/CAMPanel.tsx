@@ -23,8 +23,7 @@ import { camSetupSections, crossFaceTargets, operationOnActiveSetup } from './se
 import { CamSetupSectionView } from './CamSetupSectionView'
 import { SetupPropertiesDialog } from './SetupPropertiesDialog'
 import { SetupOperationControls } from './SetupOperationControls'
-import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
-import { RotaryTargetPicker } from './RotaryTargetPicker'
+import { OperationCuts } from './OperationCuts'
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -51,7 +50,6 @@ import type {
   OperationKind,
   OperationPass,
   PocketPattern,
-  OperationTarget,
   Project,
   RotaryPassDirection,
   Tool,
@@ -73,7 +71,6 @@ import { ScallopHeightField } from './ScallopHeightField'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBookletExport, type BookletStage } from './bookletExport'
 import { platform } from '../../platform'
-import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
 import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
 import { projectType } from '../../store/helpers/projectType'
@@ -83,7 +80,6 @@ import { Icon } from '../Icon'
 import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
-import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { camT, camTPlural } from './camI18n'
 import { exportDialectLabels } from '../export/exportDialectLabels'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -394,29 +390,6 @@ function drillTypeLabel(type: DrillType): string {
   }
 }
 
-function operationTargetSummary(project: Project, target: OperationTarget): string {
-  if (target.source === 'stock') {
-    return camT('cam.target.stock')
-  }
-
-  const features = resolveFeatureInstances(project, target.featureIds)
-  const names = features
-    .filter(isMachinable)
-    .map((feature) => feature.name)
-  const regionNames = features
-    .filter(isRegion)
-    .map((feature) => feature.name)
-
-  if (names.length === 0 && regionNames.length === 0) {
-    return camT('cam.target.noFeatures')
-  }
-
-  const machiningSummary = names.length > 0 ? names.join(', ') : camT('cam.target.noMachiningTarget')
-  return regionNames.length > 0
-    ? camT('cam.target.filters', { machiningSummary, regionNames: regionNames.join(', ') })
-    : machiningSummary
-}
-
 function pocketPatternLabel(pattern: PocketPattern): string {
   switch (pattern) {
     case 'offset':
@@ -480,7 +453,6 @@ export function CAMPanel({
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [showLibraryDialog, setShowLibraryDialog] = useState(false)
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
-  const [pickedTargetIds, setPickedTargetIds] = useState<string[] | null>(null)
   const [editingSetupId, setEditingSetupId] = useState<string | null>(null)
   const [showCamPlan, setShowCamPlan] = useState(false)
   const [camPlan, setCamPlan] = useState<CamPlanDraft | null>(null)
@@ -551,7 +523,6 @@ export function CAMPanel({
   const currentSetupFace = setupFace(currentSetup)
   const editingSetup = setupSections.sections.find((section) => section.setup.id === editingSetupId)?.setup
   const closeSetupProperties = useCallback(() => setEditingSetupId(null), [])
-  const addSelection = useMemo(() => pickedTargetIds === null ? selection : { ...selection, selectedFeatureIds: pickedTargetIds, selectedFeatureId: pickedTargetIds[0] ?? null }, [selection, pickedTargetIds])
 
   const selectedToolId =
     selectedToolIdState && project.tools.some((tool) => tool.id === selectedToolIdState)
@@ -645,7 +616,7 @@ export function CAMPanel({
             selectAllFeatureIds: [],
           }
         }
-        const hint = getOperationAddHint(project, addSelection, kind)
+        const hint = getOperationAddHint(project, selection, kind)
         return {
           kind,
           label: operationAddButtonLabel(kind),
@@ -676,19 +647,19 @@ export function CAMPanel({
         ...rotaryAddKindsForFace(project, currentSetupFace).map((kind) => button(kind)),
       ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
     },
-    [project, addSelection, machine, currentSetupFace]
+    [project, selection, machine, currentSetupFace]
   )
 
   const selectedNewOperationHint = selectedNewOperationKind
     ? operationOffer(machine, selectedNewOperationKind) === 'needs-plasma-project'
       ? camT('cam.addMenu.needsPlasmaProject')
-      : getOperationAddHint(project, addSelection, selectedNewOperationKind)
+      : getOperationAddHint(project, selection, selectedNewOperationKind)
     : null
 
   // #732: with nothing selected every kind is invalid for the same reason, so
   // the Add menu states that precondition once instead of drawing eleven
   // per-kind `cam.hint.empty.*` rows.
-  const emptySelectionHint = addSelection.selectedFeatureIds.length === 0
+  const emptySelectionHint = selection.selectedFeatureIds.length === 0
     ? camT('cam.addMenu.selectFirst')
     : null
 
@@ -790,7 +761,7 @@ export function CAMPanel({
   }
 
   async function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
-    const target = operationTargetFromSelection(project, addSelection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       setSelectedNewOperationKind(kind)
       return
@@ -832,7 +803,7 @@ export function CAMPanel({
   function handleChooseOperationForAdd(kind: OperationKind) {
     setSelectedNewOperationKind(kind)
 
-    const target = operationTargetFromSelection(project, addSelection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       return
     }
@@ -1156,10 +1127,7 @@ export function CAMPanel({
       target: () => (
         <>
           <SetupOperationControls key={operation.id} operation={operation} requestToolpath={requestToolpath} />
-          <label className="properties-field">
-            <span>{camT('cam.operation.target')}</span>
-            <input type="text" value={operationTargetSummary(project, operation.target)} readOnly />
-          </label>
+          <OperationCuts key={operation.id} project={project} operation={operation} />
           {selectedOperationTargetsRegion ? (
             <div className="cam-region-note">
               <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>
@@ -1170,21 +1138,13 @@ export function CAMPanel({
       ),
       targetSource: () => (
         <>
-          {isRotaryOperationKind(operation.kind) ? (
-            // A rotary operation machines the imported model inside the bar,
-            // which is not selectable on the Around sheet: pick it from the
-            // list instead of from the selection (issue #1015 slice K).
-            <RotaryTargetPicker
-              project={project}
-              target={operation.target}
-              onChange={(target) => updateOperation(operation.id, { target })}
-            />
-          ) : null}
           {/* #1096: the same target control every other operation has. For a
-              rotary operation it adds a selected closed Around region as the
-              mask that limits where the operation may cut; the model checklist
-              above still chooses the model. An update needs a real selection,
-              so a stray click cannot reset the target to every model. */}
+              rotary operation the selected model narrows the target and a
+              selected closed Around region joins it as the mask that limits
+              where the operation may cut; with nothing selected the operation
+              keeps its target. An update needs a real selection, so a stray
+              click cannot reset the target to every model. The Cuts list above
+              removes a model the user no longer wants (issue #1112 I). */}
           <div className="properties-field">
             <span>{camT('cam.operation.targetSource')}</span>
             <button
@@ -2287,7 +2247,6 @@ export function CAMPanel({
                       aria-haspopup="dialog"
                       onClick={() => {
                         setSelectedNewOperationKind(null)
-                        setPickedTargetIds(null)
                         setShowAddOperationMenu((value) => !value)
                       }}
                     >
@@ -2340,7 +2299,6 @@ export function CAMPanel({
                     {showAddOperationMenu ? (
                       <OperationAddMenu
                         setupName={setupSections.grouped ? currentSetup?.name : undefined}
-                        targetPicker={currentSetupFace === 'around' ? undefined : <CrossFaceTargetPicker project={project} face={currentSetupFace} selectedIds={addSelection.selectedFeatureIds} onChange={setPickedTargetIds} />}
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
                         selectedNewOperationHint={selectedNewOperationHint}

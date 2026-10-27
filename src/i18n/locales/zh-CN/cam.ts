@@ -207,10 +207,12 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.pass': '工序',
   'cam.operation.maxCarveDepth': '最大雕刻深度',
   'cam.operation.carveDepth': '雕刻深度',
-  'cam.operation.target': '目标',
+  'cam.operation.cuts': '切削',
+  'cam.operation.cutsRemove': '从切削中移除{name}',
+  'cam.operation.cutsLastTarget': '一个操作至少需要一个切削目标',
+  'cam.operation.cutsFilter': '过滤',
+  'cam.operation.cutsFolder': '{name}（{count}）',
   'cam.operation.targetSource': '目标来源',
-  'cam.operation.rotaryTargets': '要加工的模型',
-  'cam.operation.rotaryTargetsHelp': '旋转粗加工和旋转精加工会加工此处勾选的模型。',
   'cam.operation.useCurrentSelection': '使用当前选择',
   'cam.operation.targetUpdated': '✓ 目标已更新',
   'cam.operation.restMachining': '残料加工',
@@ -324,8 +326,6 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   // ── Operation target summary ──
   'cam.target.stock': '毛坯',
   'cam.target.noFeatures': '无特征',
-  'cam.target.noMachiningTarget': '无加工目标',
-  'cam.target.filters': '{machiningSummary}；过滤器：{regionNames}',
 
   // ── Tool property labels ──
   'cam.tool.name': '名称',
@@ -616,7 +616,6 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   // Machining setup UI (#946)
   'cam.setup.crossFace': '⇄ 跨面',
   'cam.setup.crossFaceTitle': '从另一面到达',
-  'cam.setup.crossFaceSummary': '也包括{side}的目标（{count}）',
   'cam.setup.topOperations': '顶面操作',
   'cam.setup.bottomOperations': '底面操作',
   'cam.setup.aroundOperations': '环绕操作',

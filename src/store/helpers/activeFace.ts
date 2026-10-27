@@ -55,7 +55,7 @@ import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
 import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
 
-type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions'>>
+type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions' | 'dimensions'>>
 
 /**
  * The setup the workspace is on. A project always has one — but it is not
@@ -145,13 +145,15 @@ type FaceFeature = {
   definitionId?: string
   kind?: string
   canned?: CannedShapeData | null
+  operation?: FeatureOperation
+  z_top?: DimensionRef
+  z_bottom?: DimensionRef
 }
 
 /**
  * True for a canned Turn/Polygon model (issue #1112 G). A canned model is not
  * tied to a face: it is one row the user can select and target from Top,
- * Bottom or Around, exactly as the plan requires. Ordinary imported models keep
- * the face behavior they had, so old rotary-solid folders load unchanged.
+ * Bottom or Around, exactly as the plan requires.
  */
 export function isCannedModelFeature(
   project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
@@ -162,15 +164,54 @@ export function isCannedModelFeature(
 }
 
 /**
+ * True for any 3D model row — an imported mesh or a canned Turn/Polygon. A
+ * model is not tied to a face (issue #1112 I): it is selectable everywhere and
+ * reachable as a target from every setup, so it is never a ghost.
+ */
+export function isModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  const definition = feature.definitionId ? project.featureDefinitions?.[feature.definitionId] : undefined
+  return (feature.kind ?? definition?.kind) === 'stl'
+}
+
+/**
+ * True for a subtract that goes through the whole stock, so the other flat
+ * face can target it too. The rule is `engine/setupTargets.ts`'s — the same one
+ * `judgeTargetFromFace` applies — asked without a stock or dimensions it
+ * answers false, because an unknown span never earns the exception.
+ */
+function isThroughFlatFeature(project: FaceProject, feature: FaceFeature): boolean {
+  if (!project.stock || !project.dimensions || feature.definitionId === undefined
+    || feature.z_top === undefined || feature.z_bottom === undefined) return false
+  return setupIsThroughFeature(
+    { stock: project.stock, dimensions: project.dimensions, featureDefinitions: project.featureDefinitions },
+    {
+      authoringFace: feature.authoringFace,
+      z_top: feature.z_top,
+      z_bottom: feature.z_bottom,
+      definitionId: feature.definitionId,
+    },
+  )
+}
+
+/**
  * The ghost rule, resolved once for a project: true for a feature authored on
- * the face the workspace is not on. A feature that names no face is on Top. A
- * canned model is never a ghost. Every "is this a ghost" question in the app is
- * this predicate.
+ * the face the workspace is not on that cannot be a target from it. A feature
+ * that names no face is on Top. Every "is this a ghost" question in the app is
+ * this predicate, and it is the same rule `judgeTargetFromFace` applies: a
+ * model is listed on every face, and a through-feature on both flat faces.
  */
 export function ghostPredicate(project: FaceProject): (feature: FaceFeature) => boolean {
   const face = activeFace(project)
-  return (feature) => !isCannedModelFeature(project, feature)
-    && (feature.authoringFace ?? 'top') !== face
+  return (feature) => {
+    const authoringFace = feature.authoringFace ?? 'top'
+    if (authoringFace === face) return false
+    if (isModelFeature(project, feature)) return false
+    if (face !== 'around' && authoringFace !== 'around' && isThroughFlatFeature(project, feature)) return false
+    return true
+  }
 }
 
 /** True for a feature authored on the face the workspace is not on. */
@@ -226,7 +267,7 @@ export function editableProjectFeatures(project: Project): readonly ResolvedSket
 }
 
 /** Ids of the project's ghost features, empty for a Top-only project. */
-export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'> & Partial<Pick<Project, 'featureDefinitions'>>): Set<string> {
+export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'> & Partial<Pick<Project, 'featureDefinitions' | 'stock' | 'dimensions'>>): Set<string> {
   const isGhost = ghostPredicate(project)
   const ids = new Set<string>()
   for (const feature of project.features) {

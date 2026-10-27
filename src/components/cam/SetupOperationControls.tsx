@@ -21,7 +21,6 @@ import { useProjectStore } from '../../store/projectStore'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { planOperationMove } from '../../engine/setupOperationMove'
 import { canMoveOperation, operationTargetReach, camSetupSections, visibleTargetReach } from './setupSections'
-import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
 import { SetupDialogShell } from './SetupDialogShell'
 import { useI18n } from '../../i18n/i18nContext'
 import { formatLength } from '../../utils/units'
@@ -31,7 +30,7 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   requestToolpath: (id: string, purpose: 'booklet', signal?: AbortSignal) => Promise<ToolpathResult | null>
 }) {
   const { t } = useI18n()
-  const { project, updateOperation, assignOperationToSetup } = useProjectStore()
+  const { project, assignOperationToSetup } = useProjectStore()
   const [moving, setMoving] = useState(false)
   const [destination, setDestination] = useState('')
   const [checking, setChecking] = useState(false)
@@ -67,7 +66,6 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   }
   return <div className="setup-operation-controls">
     <div className="properties-field"><span>{t('cam.setup.setup')}</span><div className="face-row__value"><span className={`face-chip face-chip--${face}`}>{setup.name}</span>{movable ? <button className="feat-btn" type="button" onClick={() => { setMoving(true); setConfirmSnapshot(project); setDestination(sections.find((section) => section.setup.id !== setup.id)?.setup.id ?? '') }}>{t('cam.setup.move')}</button> : null}</div></div>
-    {operation.target.source === 'features' && face !== 'around' ? <CrossFaceTargetPicker project={project} face={face} selectedIds={ids} kind={operation.kind} onChange={(featureIds) => updateOperation(operation.id, { target: { source: 'features', featureIds } })} /> : null}
     {shownReaches.length > 0 ? <div className="cam-setup-reach">
       <button className="feat-btn" type="button" disabled={checking} onClick={() => void checkReach()}>{t(checking ? 'cam.setup.checkingReach' : 'cam.setup.checkReach')}</button>
       {shownReaches.map((entry) => <div key={entry.featureId} className="cam-setup-reach__target">

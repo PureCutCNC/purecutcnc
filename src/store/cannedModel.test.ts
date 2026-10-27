@@ -405,7 +405,7 @@ test('save and load keep stl.scale, the instance transform and the scaled height
   )
 })
 
-test('a canned model is not a ghost on any face, while an ordinary model still is', () => {
+test('a model row is never a ghost, canned or imported', () => {
   const project = seed()
   const aroundSetup = {
     ...project.setups[0],
@@ -432,8 +432,13 @@ test('a canned model is not a ghost on any face, while an ordinary model still i
   }
   assertEqual(
     isGhostFeature(withPlain, { authoringFace: 'top', definitionId: plainDefinition.id }),
+    false,
+    'an imported model is not tied to a face either (issue #1112 I)',
+  )
+  assertEqual(
+    isGhostFeature(withPlain, { authoringFace: 'top', definitionId: 'not-a-model' }),
     true,
-    'an ordinary imported model keeps its old ghost rule, so old folders load unchanged',
+    'a non-model feature on the other face stays a ghost',
   )
 })
 

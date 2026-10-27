@@ -30,7 +30,8 @@
  * What this spec assumes about the page, for the manager to check against the
  * real DOM:
  * - the Around face is active from the seeded `activeSetupId`; the model is a
- *   ghost row there, but the two rotary rows do not depend on the selection
+ *   normal selectable row there now (issue #1112 I), and the two rotary rows do
+ *   not depend on the selection
  *   (issue #1015): with nothing selected they are offered directly with `Add`
  *   enabled, and Add targets every imported model in the project, so clicking
  *   `Add` with the model unselected targets the model;
@@ -48,10 +49,11 @@
  *   reports the live grid's progress, removed cells and minimum Z, which is how
  *   the square playback test proves progress 0 is the prior rough, not virgin
  *   stock (issue #1016 C2);
- * - the rotary operation's properties carry the model checklist instead of "Use
- *   current selection" (issue #1015 slice K): `[data-rotary-targets]` on the
- *   fieldset, one `input[type=checkbox]` per imported model, `checked` and
- *   `disabled` when it is the only one.
+ * - the rotary operation's properties carry the Cuts list (issue #1112 I):
+ *   `[data-operation-cuts]`, one `[data-cut-feature-id]` row per current
+ *   target, and a remove × that is disabled when removing the row would empty
+ *   the operation. A selected model narrows the target and a selected Around
+ *   region joins it as a filter through "Use current selection".
  *
  * Run in the `test:e2e:workflow-ui` lane.
  */
@@ -269,7 +271,7 @@ async function rotaryPassReadout(
   }, { id: operationId, direction: passDirection })
 }
 
-test('the rotary operation shows the model it machines, checked and locked', async ({ app, ui }) => {
+test('the rotary operation lists the model it machines in Cuts, last target kept', async ({ app, ui }) => {
   const { page } = app
   test.setTimeout(60_000)
   await seedRotaryModelProject(page)
@@ -283,53 +285,47 @@ test('the rotary operation shows the model it machines, checked and locked', asy
     .filter({ has: page.getByRole('button', { name: 'Rotary finish', exact: true }) })
     .getByRole('button', { name: 'Add', exact: true }).click()
 
-  // Its target field is the model checklist: the model is not selectable on the
-  // Around sheet, so the selection could never express it alone (issue #1015
-  // slice K). Since #1096 the same "Use current selection" control every other
-  // operation has is there too, so a selected closed Around region joins the
-  // target as a filter; with nothing selected it only reports the hint.
+  // The Cuts list shows the current target only -- the model Add chose -- and
+  // no candidate checkboxes: the model is a normal selectable row now, so
+  // selection is how it is picked (issue #1112 I). The one model is the
+  // operation's last target, so its remove × is refused.
   const properties = page.locator('.cam-operation-properties')
   await expect(properties).toBeVisible()
-  const picker = properties.locator('[data-rotary-targets]')
-  await expect(picker).toBeVisible()
-  await expect(picker.locator('legend')).toHaveText('Models to machine')
-  // One model in the fixture: its single box is ticked, and locked so the
-  // target can never be emptied.
-  const box = picker.locator('input[type="checkbox"]')
-  await expect(box).toHaveCount(1)
-  await expect(box).toBeChecked()
-  await expect(box).toBeDisabled()
-  await expect(picker.locator('.properties-check span')).toHaveText('Model')
+  const cuts = properties.locator('[data-operation-cuts]')
+  await expect(cuts).toBeVisible()
+  await expect(cuts.getByText('Cuts', { exact: true })).toBeVisible()
+  await expect(cuts.locator('[data-cut-feature-id]')).toHaveCount(1)
+  const modelRow = cuts.locator('[data-cut-feature-id="model"]')
+  await expect(modelRow).toContainText('Model')
+  const remove = modelRow.locator('.cam-cuts__remove')
+  await expect(remove).toBeDisabled()
+  await expect(remove).toHaveAttribute('title', 'An operation must cut at least one target')
   const apply = properties.getByRole('button', { name: 'Use current selection', exact: true })
   await expect(apply).toHaveCount(1)
 
-  // #1096: actually add the seeded Around region through the control. The
-  // region note renders only when the operation's target carries a region, so
-  // it is the observable that the click wrote the filter; the model box must
-  // still be ticked afterwards (adding a region does not reset the model
-  // choice). Selecting a feature leaves the operation selected, so the
-  // properties stay on screen -- clicking the operation row here would toggle
-  // it off and hide them before the click.
+  // #1096: add the seeded Around region through the control. The region note
+  // renders only when the operation's target carries a region, so it is the
+  // observable that the click wrote the filter; the model row must still be
+  // there (adding a region does not reset the model choice). Selecting a
+  // feature leaves the operation selected, so the properties stay on screen.
   await expect(properties.locator('.cam-region-note')).toHaveCount(0)
   await selectFeatures(page, ['region'])
   await expect(properties).toBeVisible()
   await apply.click()
   await expect(properties.locator('.cam-region-note')).toBeVisible()
-  await expect(box).toBeChecked()
-  // The target summary names the model and the region filter.
-  await expect(properties.locator('.properties-field input[readonly]').first())
-    .toHaveValue(/Model/)
-  await expect(properties.locator('.properties-field input[readonly]').first())
-    .toHaveValue(/Region/)
+  await expect(cuts.locator('[data-cut-feature-id="model"]')).toBeVisible()
+  const regionRow = cuts.locator('[data-cut-feature-id="region"]')
+  await expect(regionRow).toContainText('Region')
+  await expect(regionRow).toHaveAttribute('data-cut-filter', 'true')
 })
 
-test('adding a region keeps the rotary operation\'s model choice', async ({ app, ui }) => {
+test('removing a model from Cuts keeps the rotary operation\'s other model', async ({ app, ui }) => {
   const { page } = app
   test.setTimeout(60_000)
   await seedRotaryModelProject(page, { secondModel: true })
 
-  // Add the finish: the Add route targets every imported model, so both boxes
-  // start ticked.
+  // Add the finish: the Add route targets every imported model, so both are
+  // rows in Cuts.
   await ui.face.switchTo(page, 'Around')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
@@ -339,20 +335,20 @@ test('adding a region keeps the rotary operation\'s model choice', async ({ app,
 
   const properties = page.locator('.cam-operation-properties')
   await expect(properties).toBeVisible()
-  const picker = properties.locator('[data-rotary-targets]')
-  await expect(picker).toBeVisible()
-  const modelBox = picker.locator('[data-rotary-target-model="model"]')
-  const secondBox = picker.locator('[data-rotary-target-model="second"]')
-  await expect(modelBox).toBeChecked()
-  await expect(secondBox).toBeChecked()
+  const cuts = properties.locator('[data-operation-cuts]')
+  await expect(cuts).toBeVisible()
+  const modelRow = cuts.locator('[data-cut-feature-id="model"]')
+  const secondRow = cuts.locator('[data-cut-feature-id="second"]')
+  await expect(modelRow).toBeVisible()
+  await expect(secondRow).toBeVisible()
 
-  // Target only "Model". The second model is the one a region-only selection
-  // must not bring back (#1096 re-review, P2); with one model left the last
-  // box is locked, as before.
-  await secondBox.uncheck()
-  await expect(secondBox).not.toBeChecked()
-  await expect(modelBox).toBeChecked()
-  await expect(modelBox).toBeDisabled()
+  // Target only "Model": removing "Second" from Cuts is how a model is kept
+  // out now that the checklist is gone. With one model left its remove × is
+  // refused, exactly as the last checklist box was locked.
+  await secondRow.locator('.cam-cuts__remove').click()
+  await expect(secondRow).toHaveCount(0)
+  await expect(modelRow).toBeVisible()
+  await expect(modelRow.locator('.cam-cuts__remove')).toBeDisabled()
 
   // Selecting the region must not toggle the operation off. It stays selected,
   // its properties stay on screen, and "Use current selection" adds the region
@@ -363,10 +359,11 @@ test('adding a region keeps the rotary operation\'s model choice', async ({ app,
   await expect(apply).toHaveCount(1)
   await apply.click()
   await expect(properties.locator('.cam-region-note')).toBeVisible()
-  await expect(modelBox).toBeChecked()
-  await expect(secondBox).not.toBeChecked()
+  await expect(modelRow).toBeVisible()
+  await expect(secondRow).toHaveCount(0)
+  await expect(cuts.locator('[data-cut-feature-id="region"]')).toHaveAttribute('data-cut-filter', 'true')
 
-  // The target itself: the region joined it, "Model" stayed, and the unchecked
+  // The target itself: the region joined it, "Model" stayed, and the removed
   // "Second" did not come back.
   const project = await getProject(page) as unknown as Project
   const operation = project.operations.find((candidate) => candidate.kind === 'rotary_finish')
@@ -377,10 +374,6 @@ test('adding a region keeps the rotary operation\'s model choice', async ({ app,
     expect(operation!.target.featureIds).toContain('region')
     expect(operation!.target.featureIds).not.toContain('second')
   }
-  const summary = properties.locator('.properties-field input[readonly]').first()
-  await expect(summary).toHaveValue(/Model/)
-  await expect(summary).toHaveValue(/Region/)
-  await expect(summary).not.toHaveValue(/Second/)
 })
 
 test('the rotary operations machine the model inside the bar', async ({ app, ui }, testInfo) => {
@@ -389,8 +382,8 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   const project = await seedRotaryModelProject(page)
   expect((project.stock as RoundStock).shape).toBe('round')
 
-  // The Around setup is active from the seed; the model is a ghost row there,
-  // but the rotary rows no longer need it selected.
+  // The Around setup is active from the seed; the model is a normal row there
+  // (not a ghost, issue #1112 I), but the rotary rows do not need it selected.
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   // ── "Add to Around" offers both rotary operations ──
