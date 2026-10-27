@@ -1287,7 +1287,12 @@ test('square playback starts from the prior rough, follows the finish and resets
   // ── The selected finish opens as the shared heightfield, with removal ──
   await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
-  await expect(ui.simSetup.picker(page)).toBeVisible()
+  // Activating the Simulation panel builds the selected finish's heightfield
+  // synchronously in the same render, and the panel stays aria-hidden until
+  // that render commits, so getByRole cannot see the picker before then. On
+  // the 2-vCPU runner that first build outran the 10 s expect default (run
+  // 40481546489); the removed-cells poll below already allows it 60 s.
+  await expect(ui.simSetup.picker(page)).toBeVisible({ timeout: 60_000 })
   await ui.simSetup.picker(page).selectOption(around.id)
   const viewport = ui.simSetup.viewport(page)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
