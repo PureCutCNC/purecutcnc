@@ -286,7 +286,13 @@ test.describe('Around is authored by the project type and bar, never the machine
 
       // ── Changing the machine alone moves neither the face nor the work ──
       await selectMachine(page, ui, 'GRBL 1.1')
-      await expect(around).toHaveAttribute('aria-pressed', 'true')
+      // The control names Around. The menu is closed here, so the entry only
+      // exists once it is opened — and it is a radio, checked rather than
+      // aria-pressed (issue #1112's one compact control).
+      await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+      await ui.face.current(page).click()
+      await expect(ui.face.item(page, 'Around')).toHaveAttribute('aria-checked', 'true')
+      await page.keyboard.press('Escape')
       await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
       const after = await getProject(page) as unknown as SavedProject
       expect(after.features.map((entry) => entry.id)).toEqual([feature.id])
