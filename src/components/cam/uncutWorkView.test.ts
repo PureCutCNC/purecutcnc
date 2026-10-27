@@ -28,7 +28,9 @@
  *   assertion fails;
  * - dropping the note from the operation panel → the note assertion fails;
  * - suppressing the badge on a ghost operation row (`!ghost` in the CAMPanel
- *   badge condition) → the expanded Around section's ghost-row assertion fails.
+ *   badge condition) → the open Around section's ghost-row assertion fails;
+ * - dropping `openForWarning` from the setup card (a warning section collapses
+ *   again when the face changes) → the `aria-expanded` assertion fails.
  *
  * Run with: npx tsx src/components/cam/uncutWorkView.test.ts
  */
@@ -152,7 +154,8 @@ function rowHtml(html: string, featureId: string): string {
 {
   // Top is the face being worked on, so the Around setup's operation is a
   // ghost row. It is listed for reference, but "kept, not cut" has to stay
-  // visible on it: suppressing the badge on ghosts would hide the reason.
+  // visible on it: the section holding it opens by itself, and suppressing the
+  // badge on ghosts would hide the reason.
   const project = { ...SQUARE, operations: [operation], activeSetupId: SQUARE.setups[0].id }
   useProjectStore.setState({ project })
   const host = document.createElement('div')
@@ -171,12 +174,11 @@ function rowHtml(html: string, featureId: string): string {
     'Top is the face being worked on',
   )
   const aroundToggle = host.querySelector('[data-setup-face="around"] .cam-setup-group__toggle') as HTMLElement | null
-  assert(aroundToggle, 'the Around setup has a section header to expand')
-  assert(host.querySelectorAll('[data-ghost="true"]').length === 0, 'the collapsed Around section lists no row yet')
-  const { flushSync } = await import('react-dom')
-  flushSync(() => aroundToggle.click())
+  assert(aroundToggle, 'the Around setup has a section header')
+  assert(aroundToggle.getAttribute('aria-expanded') === 'true',
+    'the section holding kept, uncut work opens without an expand step')
   const ghost = host.querySelector('[data-ghost="true"]')
-  assert(ghost, 'expanding Around lists its operation as a ghost row')
+  assert(ghost, 'the open Around section lists its operation as a ghost row')
   assert(ghost.textContent?.includes(operation.name), 'the ghost row is the Around operation')
   const badge = ghost.querySelector('[data-uncut-work="true"]')
   assert(badge, 'the ghost row carries the uncut-work badge')
@@ -184,6 +186,11 @@ function rowHtml(html: string, featureId: string): string {
     badge.getAttribute('aria-label') === enMessages['cam.uncut.operationNeedsRoundBar'],
     'with the operation reason as its accessible name',
   )
+  // The header still collapses it on demand; the reason is one click away.
+  const { flushSync } = await import('react-dom')
+  flushSync(() => aroundToggle.click())
+  assert(host.querySelectorAll('[data-ghost="true"]').length === 0,
+    'the header still collapses the section the user closed')
   done()
 }
 

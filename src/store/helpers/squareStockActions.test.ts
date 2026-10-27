@@ -46,7 +46,6 @@ import {
 import {
   barCentre,
   barLength,
-  barMaxRadius,
   barPivotZ,
   isSquareStock,
   normalizeSquareStock,
@@ -63,6 +62,7 @@ import {
   toRoundStock,
   toSquareStock,
 } from './stockShape'
+import { chuckOutOfRange, syncRoundWorkholding } from './roundWorkholding'
 
 let passed = 0
 let failed = 0
@@ -317,31 +317,39 @@ test('to square adds exactly one chuck and moves the origin to the blank default
     'the default is the centreline origin')
 })
 
-test('round → square re-mints a too-small chuck and keeps exactly one', () => {
+test('round → square keeps a too-small chuck and reports the bar as out of range', () => {
   const roundProject = projectWithStockShape(newProject('bar', 'mm'), 'round')
   const bar = roundProject.stock
   assert.ok(isRoundStock(bar), 'the project holds a round bar')
   const chuck = roundProject.clamps[0]
   assert.equal(chuck.type, 'chuck', 'the round project gained a chuck')
-  // The round default (50 mm) already clears a 20 mm square's 28.284 mm corner
-  // envelope, so make a genuinely too-small support: 25 mm is below the envelope.
+  // The round default already clears a 20 mm square's 28.284 mm corner
+  // envelope, so make a support genuinely below it: 25 mm is outside the
+  // corner circle the square blank turns through.
   const small: Clamp = {
     ...chuck,
     h: 25,
     y: barCentre(bar) - 12.5,
     height: barPivotZ(bar) + 12.5,
   }
-  const next = projectWithStockShape({ ...roundProject, clamps: [small] }, 'square')
+  // #1112 M decision 9: changing the stock keeps the chosen chuck and only
+  // re-centres it. It is never silently resized, even when the new blank's
+  // corner envelope is outside its clamping range — that bar is reported
+  // (`chuckOutOfRange`, the tree row and the operation warning), not repaired
+  // by inventing different equipment.
+  const next = syncRoundWorkholding(projectWithStockShape({ ...roundProject, clamps: [small] }, 'square'))
   assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
-  assert.equal(next.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'still one chuck')
-  assert.notEqual(next.clamps[0], small, 'a chuck that no longer clears the corners is re-minted')
-  assert.equal(next.clamps[0].id, small.id, 'the same clamp id is kept')
-  closeTo(next.clamps[0].h, 4 * barMaxRadius(next.stock), 'the new diameter clears the corner envelope')
-  closeTo(next.clamps[0].height, next.stock.thickness / 2 + next.clamps[0].h / 2, 'raised to the true pivot')
+  assert.equal(next.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'exactly one chuck')
+  assert.equal(next.clamps[0], small, 'the chosen chuck itself is kept, not re-minted')
+  closeTo(next.clamps[0].h, 25, 'its body diameter is unchanged')
+  closeTo(next.clamps[0].y + next.clamps[0].h / 2, barCentre(next.stock), 're-centred on the blank')
+  closeTo(next.clamps[0].height, barPivotZ(next.stock) + 12.5, 'its height follows the new pivot')
+  assert.equal(chuckOutOfRange(next.clamps[0], next.stock, 'mm'), true,
+    'the square corner envelope is outside its clamping range, so the bar is reported')
 
   const back = projectWithStockShape(next, 'round')
   assert.equal(back.clamps.filter((clamp) => clamp.type === 'chuck').length, 1, 'returning to round adds no second chuck')
-  assert.equal(back.clamps[0], next.clamps[0], 'the square-sized chuck already clears the round bar, so it is kept as-is')
+  assert.equal(back.clamps[0], next.clamps[0], 'the kept chuck is untouched by the way back')
 })
 
 test('square → block removes every chuck and tailstock, keeps other clamps and follows the origin', () => {
