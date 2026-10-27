@@ -77,6 +77,7 @@ import {
 } from '../sketch/constraintSolver'
 import type { ProjectStore } from './types'
 import { normalizeProject } from './helpers/projectFormat'
+import { syncRotaryPatternSurfaceProject } from './helpers/rotarySurface'
 export { normalizeProject } from './helpers/projectFormat'
 export { toolpathGenerationDeferred } from './slices/nestingSlice'
 
@@ -114,10 +115,34 @@ function withAutoDirty(rawSet: SetFn): SetFn {
   }
 }
 
+/**
+ * Wrap the store's `set` so every project it writes re-measures the Thread and
+ * Flutes bands against the surface they lie on (#1112 H2). Deleting, moving,
+ * transforming, expanding, making unique, re-parenting or importing a Turn all
+ * change which surface a band sits on, so the sync belongs after every write
+ * rather than at each action. An unchanged project keeps its identity, so a
+ * write that does not touch a surface is not a new history state.
+ */
+function withRotarySurfaceSync(rawSet: SetFn): SetFn {
+  const sync = (patch: Partial<ProjectStore>): Partial<ProjectStore> => {
+    if (!patch.project) return patch
+    const project = syncRotaryPatternSurfaceProject(patch.project)
+    return project === patch.project ? patch : { ...patch, project }
+  }
+  return (update) => {
+    if (typeof update === 'function') {
+      rawSet((state) => sync(update(state)))
+    } else {
+      rawSet(sync(update))
+    }
+  }
+}
+
 export const useProjectStore = create<ProjectStore>((rawSet, get) => {
-  // Every project written through `set` has its setups reconciled (#944), and
-  // no write leaves a feature from the other face selected (#945).
-  const set = withAutoDirty(withSetupSync(withGhostSelectionGuard(rawSet)))
+  // Every project written through `set` has its setups reconciled (#944), no
+  // write leaves a feature from the other face selected (#945), and every
+  // Thread/Flutes band follows the Turn surface it sits on.
+  const set = withAutoDirty(withRotarySurfaceSync(withSetupSync(withGhostSelectionGuard(rawSet))))
   const applyProfileBreak = (
     featureId: string,
     resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,

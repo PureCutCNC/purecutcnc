@@ -209,8 +209,11 @@ export function buildRotaryRevolveMesh(
       return ring
     })
 
-    const edgeCount = contour.closed ? polygon.length : polygon.length - 1
-    for (let edge = 0; edge < edgeCount; edge += 1) {
+    // `contourPolygon` has already closed an open outline onto the axis, so the
+    // polygon is always a closed loop. Walking every edge includes the two
+    // caps an off-axis open profile needs; stopping one edge short left the
+    // start face open (24 boundary edges on a straight radius-5 profile).
+    for (let edge = 0; edge < polygon.length; edge += 1) {
       const next = (edge + 1) % polygon.length
       const start = polygon[edge]
       const end = polygon[next]

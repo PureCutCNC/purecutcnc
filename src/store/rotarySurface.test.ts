@@ -120,9 +120,16 @@ function addTurn(start: number, length: number, diameter: number, profile?: unkn
   return result.featureId
 }
 
-function addThread(start: number, length: number, depth = 1): void {
+function addThread(start: number, length: number, depth = 1): string {
   const result = store().addRotaryPattern({ kind: 'thread', start, length, pitch: 2, depth })
   assert.ok(result.ok, `thread created (${result.ok ? '' : result.reason})`)
+  return result.featureId
+}
+
+function threadZ(featureId: string): number {
+  const feature = resolveFeatureInstance(store().project, featureId)
+  assert.ok(feature, `thread ${featureId} resolves`)
+  return Number(feature.z_top)
 }
 
 // ── a thread wholly on one Turn ──────────────────────────────
@@ -212,6 +219,39 @@ assert.equal(
   'the row warns about a taper',
 )
 
+// ── a narrow groove is not sampled past ─────────────────────
+//
+// The floor is 0.2 long over a 40 long Turn: any fixed sampling grid lands on
+// the radius-5 land on either side and calls the surface one diameter.
+
+load()
+addTurn(20, 40, 20, {
+  sourceFeatureId: 'no-source',
+  contours: [{
+    closed: false,
+    points: [
+      { along: 20, radius: 5 },
+      { along: 30.1, radius: 5 },
+      { along: 30.1, radius: 3 },
+      { along: 30.3, radius: 3 },
+      { along: 30.3, radius: 5 },
+      { along: 60, radius: 5 },
+    ],
+  }],
+})
+addThread(20, 40)
+assert.deepEqual(
+  rotaryPatternSurface(store().project, { start: 20, length: 40 }).kind,
+  'twoDiameters',
+  'a narrow groove is classified from its segments, not from sample stations',
+)
+assert.equal(
+  rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)?.key,
+  'dialogs.rotary.surface.twoDiameters',
+  'the groove warns instead of silently taking radius 5',
+)
+assertNear(Number(threadFeature().z_top), BAR_DIAMETER, 'a grooved surface falls back to the bar')
+
 // ── over an imported model ──────────────────────────────────
 
 const modelDraft: SketchFeature = {
@@ -242,6 +282,124 @@ assertNear(Number(threadFeature().z_top), BAR_DIAMETER, 'an imported model measu
 const modelWarning = rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)
 assert.equal(modelWarning?.key, 'dialogs.rotary.surface.model', 'the row warns over a model')
 assert.deepEqual(modelWarning?.values, { model: 'Figure 1' }, 'the warning names the model')
+
+// ── every project mutation re-syncs ──────────────────────────
+//
+// A Turn delete, undo/redo, move, transform, make-unique, folder change,
+// expand or import is only the *trigger*: the Thread span itself is written by
+// the one post-write sync, so testing each path is what keeps a future action
+// from needing its own copy of the rule.
+
+// Delete, undo and redo of the delete.
+load()
+const deleteTurn = addTurn(20, 40, 10)
+const deleteThread = addThread(25, 20)
+assertNear(threadZ(deleteThread), BAR_RADIUS + 5, 'the thread starts on the Turn')
+store().deleteFeature(deleteTurn)
+assertNear(threadZ(deleteThread), BAR_DIAMETER, 'deleting the Turn returns the thread to the bar')
+store().undo()
+assertNear(threadZ(deleteThread), BAR_RADIUS + 5, 'undo restores both rows and the Turn span')
+store().redo()
+assertNear(threadZ(deleteThread), BAR_DIAMETER, 'redo moves the thread off the deleted Turn again')
+
+// Move: the Turn world span follows its instance transform, so the band under
+// the old place falls back to the bar and the band under the new place takes
+// the Turn diameter.
+load()
+const moveTurn = addTurn(20, 40, 10)
+const oldBand = addThread(25, 20)
+const newBand = addThread(65, 20)
+assertNear(threadZ(oldBand), BAR_RADIUS + 5, 'the first band is on the Turn')
+assertNear(threadZ(newBand), BAR_DIAMETER, 'the second band starts on the plain bar')
+store().startMoveFeature(moveTurn)
+store().setPendingMoveFrom({ x: 20, y: 0 })
+store().completePendingMove({ x: 60, y: 0 })
+assertNear(threadZ(oldBand), BAR_DIAMETER, 'moving the Turn away moves the old band to the bar')
+assertNear(threadZ(newBand), BAR_RADIUS + 5, 'the band at the transformed span takes the Turn diameter')
+
+// Transform (uniform resize of the Turn) scales the diameter the band reads.
+load()
+const resizeTurn = addTurn(20, 40, 10)
+const resizeThread = addThread(30, 20)
+store().startResizeFeature(resizeTurn)
+store().setPendingTransformReferenceStart({ x: 40, y: 50 })
+store().setPendingTransformReferenceEnd({ x: 60, y: 50 })
+store().completePendingTransform({ x: 64, y: 50 })
+assertNear(threadZ(resizeThread), BAR_RADIUS + 6, 'a 1.2x Turn supplies a 1.2x radius')
+assert.equal(
+  rotaryPatternSurface(store().project, { start: 30, length: 20 }).kind,
+  'turn',
+  'the resized Turn still resolves as one Turn',
+)
+
+// Make unique: the copy keeps its own placement and definition, so editing the
+// copy's diameter moves the band on it and leaves the original band alone.
+load()
+const originalTurn = addTurn(20, 40, 10)
+const originalThread = addThread(25, 20)
+const beforeCopy = new Set(store().project.features.map((feature) => feature.id))
+store().startCopyFeature(originalTurn, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 40, y: 0 })
+const copyTurn = store().project.features.find(
+  (feature) => !beforeCopy.has(feature.id)
+    && store().project.featureDefinitions[feature.definitionId]?.canned?.kind === 'turn',
+)
+assert.ok(copyTurn, 'the reference copy is a Turn')
+const copyThread = addThread(65, 20)
+assertNear(threadZ(copyThread), BAR_RADIUS + 5, 'the linked copy supplies the same diameter')
+store().makeUnique(copyTurn.id)
+const resizeFrame = rotarySolidFrame(store().project)
+assert.ok(resizeFrame)
+const copyCanned = rotarySolidCannedData(
+  resizeFrame,
+  { kind: 'turn', start: 20, length: 40, diameter: 8 },
+  store().project.meta.units,
+)
+assert.ok(copyCanned)
+store().updateFeature(copyTurn.id, { canned: copyCanned })
+assertNear(threadZ(copyThread), BAR_RADIUS + 4, 'the unique copy now supplies its own diameter')
+assertNear(threadZ(originalThread), BAR_RADIUS + 5, 'the original Turn and its band are untouched')
+
+// Folder delete only re-parents: the surface and the span stay put.
+const folderId = store().addFeatureFolder()
+store().assignFeaturesToFolder([originalTurn, originalThread], folderId)
+assertNear(threadZ(originalThread), BAR_RADIUS + 5, 'filing the Turn keeps its band')
+store().deleteFeatureFolder(folderId)
+assertNear(threadZ(originalThread), BAR_RADIUS + 5, 'deleting the folder keeps the Turn surface')
+
+// Expand is refused for a model Turn; it must not disturb either row.
+const beforeExpand = store().project.features.length
+store().expandCannedFeature(originalTurn)
+assert.equal(store().project.features.length, beforeExpand, 'a Turn model is not expandable')
+assertNear(threadZ(originalThread), BAR_RADIUS + 5, 'a refused Expand leaves the band alone')
+
+// Import: a stale stored span in the source is re-measured against the imported
+// Turn in the same write.
+load()
+const importTurn = addTurn(20, 40, 10)
+const importThread = addThread(25, 20)
+const importFolder = store().addFeatureFolder()
+store().assignFeaturesToFolder([importTurn, importThread], importFolder)
+const importSource = structuredClone(store().project)
+importSource.features = importSource.features.map((feature) => (
+  feature.id === importThread
+    ? { ...feature, z_top: BAR_DIAMETER, z_bottom: BAR_DIAMETER - 1 }
+    : feature
+))
+load()
+const importedIds = store().importCamjFolders({
+  fileName: 'turn-source.camj',
+  sourceProject: importSource,
+  selectedFolderIds: [importFolder],
+})
+assert.equal(importedIds.length, 2, 'the Turn and its band import')
+const importedThread = store().project.features.find(
+  (feature) => importedIds.includes(feature.id)
+    && store().project.featureDefinitions[feature.definitionId]?.canned?.kind === 'thread',
+)
+assert.ok(importedThread, 'the imported folder contains the thread')
+assertNear(Number(importedThread.z_top), BAR_RADIUS + 5, 'import re-syncs the stale thread span onto the Turn')
 
 // ── the sync helper leaves an unchanged span alone ─────────
 

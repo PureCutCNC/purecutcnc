@@ -176,6 +176,15 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   assert.equal(refresh.disabled, false, 'Refresh is available while the source exists')
   assert.equal(closed, false)
 
+  // The summary reads the live source name, not the name copied at pick time.
+  store().updateFeature('f-half-profile', { name: 'Renamed profile' })
+  await waitFor(
+    () => /From Renamed profile · Ø20 mm/.test(
+      document.querySelector('.rotary-dialog__profile-summary')?.textContent ?? '',
+    ),
+    'the summary follows a source rename',
+  )
+
   // Deleting the source keeps the copied profile and disables Refresh with the
   // reason, instead of silently doing nothing.
   store().deleteFeature('f-half-profile')
