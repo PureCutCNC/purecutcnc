@@ -219,6 +219,10 @@ export function createTextLayoutSlice(
             // under every instance's own transform. Moving the guide later
             // does not reflow the text.
             path: cloneProfile(guide.sketch.profile),
+            // Remember where the copy came from so Properties can offer a
+            // "Refresh" that copies an edited source again (issue #1112).
+            // The copy stays baked: deleting the source cannot break the run.
+            sourceFeatureId: featureId,
             // A newly picked guide defaults to its whole length, so the first
             // preview is usable without anyone touching the offsets.
             startOffset: pending.guideId === featureId ? layout.startOffset : 0,

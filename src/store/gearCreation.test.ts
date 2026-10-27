@@ -15,18 +15,42 @@
  */
 
 /**
- * Store tests for gear creation.
+ * Store tests for gear creation (issue #1112 slice E).
+ *
+ * A gear is one canned feature: its bore is a hole in the same feature, and the
+ * canned model's nesting rule gives it the opposite operation. These tests pin
+ * that, the instance placement, naming, expansion and the format round trip.
  *
  * Run with: npx tsx src/store/gearCreation.test.ts
  */
 
-import { IDENTITY_MATRIX, newProject, type Matrix2D, type Project, type SketchFeature } from '../types/project'
+import {
+  IDENTITY_MATRIX,
+  circleProfile,
+  newProject,
+  type Matrix2D,
+  type Project,
+  type SketchFeature,
+} from '../types/project'
 import { useProjectStore } from './projectStore'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import {
+  cannedShapeSummary,
+  resolveCannedShapeProfiles,
+  resolveCannedShapeShapes,
+} from '../cannedShapes'
+import { GEAR_CANNED_KIND, normalizeGearCannedParams } from '../cannedShapes/generators/gear'
+import { buildGearProfile } from '../sketch/gearProfile'
 import type { ProjectStore } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function assertEqual<T>(actual: T, expected: T, message: string): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${message}\n  Expected: ${JSON.stringify(expected)}\n  Actual: ${JSON.stringify(actual)}`)
+  }
 }
 
 function resetStore(project?: Project): void {
@@ -61,24 +85,14 @@ function createdFeature(id: string): SketchFeature {
   return feature
 }
 
-function assertIdentityTransform(feature: SketchFeature): void {
-  const withTransform = feature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
-  assert(withTransform.definitionId !== undefined, `${feature.name} should have a definition id`)
-  assert(withTransform.transform !== undefined, `${feature.name} should have a transform`)
-  assert(withTransform.transform.a === IDENTITY_MATRIX.a, 'transform.a should be identity')
-  assert(withTransform.transform.d === IDENTITY_MATRIX.d, 'transform.d should be identity')
-  const definition = useProjectStore.getState().project.featureDefinitions[withTransform.definitionId]
-  assert(definition !== undefined, `definition ${withTransform.definitionId} should exist`)
-}
-
-function placeGear(radius = 20): void {
+function placeGear(center = { x: 10, y: 12 }, radius = 20): void {
   const store = useProjectStore.getState()
   store.startAddGearPlacement()
-  useProjectStore.getState().setPendingAddAnchor({ x: 10, y: 12 })
-  useProjectStore.getState().setPendingGearRadiusAt({ x: 10 + radius, y: 12 })
+  useProjectStore.getState().setPendingAddAnchor(center)
+  useProjectStore.getState().setPendingGearRadiusAt({ x: center.x + radius, y: center.y })
 }
 
-function testGearWithoutBoreCreatesSingleFeature() {
+function testGearWithoutBoreIsOneCannedFeature(): void {
   resetStore()
   placeGear()
 
@@ -86,22 +100,40 @@ function testGearWithoutBoreCreatesSingleFeature() {
   const ids = useProjectStore.getState().completePendingGear()
   const state = useProjectStore.getState()
 
-  assert(ids.length === 1, `expected one created id, got ${ids.length}`)
-  assert(state.pendingAdd?.shape === 'gear' && state.pendingAdd.anchor === null, 'pending gear should re-arm after creation')
-  assert(state.project.features.length === 1, `expected one feature, got ${state.project.features.length}`)
-  assert(state.project.featureFolders.length === 0, 'gear without bore should not create a folder')
-  assert(state.history.past.length === beforeHistory + 1, 'gear creation should add one history entry')
+  assertEqual(ids.length, 1, 'one created id')
+  assert(state.pendingAdd?.shape === 'gear' && state.pendingAdd.anchor === null, 'pending gear re-arms after creation')
+  assertEqual(state.project.features.length, 1, 'one feature row')
+  assertEqual(state.project.featureFolders.length, 0, 'no group folder any more')
+  assertEqual(state.history.past.length, beforeHistory + 1, 'creation is one history entry')
 
   const gear = createdFeature(ids[0])
-  assert(gear.kind === 'composite', `gear kind should be composite, got ${gear.kind}`)
-  assert(gear.name.startsWith('Gear '), `gear name should start with Gear, got ${gear.name}`)
-  assert(gear.operation === 'add', `first machining gear should become add, got ${gear.operation}`)
-  assert(gear.sketch.profile.closed === true, 'gear profile should be closed')
-  assertIdentityTransform(gear)
+  assertEqual(gear.kind, 'composite', 'gear keeps the composite feature kind')
+  assertEqual(gear.name, 'Gear 1', 'gear name')
+  assertEqual(gear.operation, 'add', 'first machining gear is Add')
+  assert(gear.canned?.kind === GEAR_CANNED_KIND, 'the gear stores canned parameters')
+  const params = gear.canned ? normalizeGearCannedParams(gear.canned.params) : null
+  assert(params, 'stored parameters normalize')
+  assertEqual(params.teeth, 24, 'default tooth count')
+  assertEqual(params.outsideRadius, 20, 'stored outside radius')
+  assertEqual(params.boreDiameter, 0, 'no bore stored')
+
+  const transform = (gear as SketchFeature & { transform?: Matrix2D }).transform
+  assertEqual(transform, { a: 1, b: 0, c: 0, d: 1, e: 10, f: 12 }, 'the instance transform carries the pick')
+
+  const shapes = resolveCannedShapeShapes(gear)
+  assertEqual(shapes.length, 1, 'a gear without a bore has one outline')
+  assertEqual(shapes[0].operation, 'add', 'outer outline is Add')
+  assertEqual(shapes[0].profile, buildGearProfile({ ...params, center: { x: 10, y: 12 } }), 'the outline is the old command output')
+  assertEqual(resolveCannedShapeProfiles(gear).length, 1, 'the read path returns one profile')
+  assertEqual(
+    cannedShapeSummary(gear.canned)?.key,
+    'canned.gear.summary',
+    'Properties gets the gear summary',
+  )
   console.log('gear without bore: PASSED')
 }
 
-function testGearWithBoreCreatesGroupedFeatures() {
+function testAddGearHasSubtractBoreInTheSameFeature(): void {
   resetStore()
   placeGear()
   useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
@@ -110,70 +142,231 @@ function testGearWithBoreCreatesGroupedFeatures() {
   const ids = useProjectStore.getState().completePendingGear()
   const state = useProjectStore.getState()
 
-  assert(ids.length === 2, `expected two created ids, got ${ids.length}`)
-  assert(state.pendingAdd?.shape === 'gear' && state.pendingAdd.anchor === null, 'pending gear should re-arm after grouped creation')
-  assert(state.history.past.length === beforeHistory + 1, 'gear+bore should add one history entry')
+  assertEqual(ids.length, 1, 'gear and bore are one feature')
+  assertEqual(state.project.features.length, 1, 'one feature row')
+  assertEqual(state.project.featureFolders.length, 0, 'no group folder')
+  assertEqual(state.history.past.length, beforeHistory + 1, 'one history entry')
 
   const gear = createdFeature(ids[0])
-  const bore = createdFeature(ids[1])
-  assert(gear.folderId !== null, 'gear should be assigned to a group folder')
-  assert(gear.folderId === bore.folderId, 'gear and bore should share a folder')
-  assert(bore.kind === 'circle', `bore kind should be circle, got ${bore.kind}`)
-  assert(bore.operation === 'subtract', `bore operation should be subtract, got ${bore.operation}`)
-  assert(bore.z_top === gear.z_top && bore.z_bottom === gear.z_bottom, 'bore should share gear Z range')
+  const params = gear.canned ? normalizeGearCannedParams(gear.canned.params) : null
+  assert(params, 'stored parameters normalize')
+  assertEqual(params.boreDiameter, 6, 'bore diameter stored on the same feature')
 
-  const folder = state.project.featureFolders.find((candidate) => candidate.id === gear.folderId)
-  assert(folder !== undefined, 'group folder should exist')
-  assert(folder.grouped === true, 'gear folder should be grouped')
-  assert(folder.name === 'Gear 1', `folder name should use gear-scoped numbering, got ${folder.name}`)
-  assert(gear.name === 'Gear 1', `gear name should match folder number, got ${gear.name}`)
-  assert(bore.name === 'Gear Bore 1', `bore name should match folder number, got ${bore.name}`)
-  assert(state.selection.selectedNode?.type === 'folder' && state.selection.selectedNode.folderId === folder.id, 'selection should target the gear folder')
-  assert(state.selection.groupFolderId === folder.id, 'selection should carry groupFolderId')
-  assert(state.selection.selectedFeatureIds.includes(gear.id), 'gear should be selected')
-  assert(state.selection.selectedFeatureIds.includes(bore.id), 'bore should be selected')
-  assertIdentityTransform(gear)
-  assertIdentityTransform(bore)
-  console.log('gear with bore group: PASSED')
+  const shapes = resolveCannedShapeShapes(gear)
+  assertEqual(shapes.length, 2, 'gear and bore are two outlines')
+  assertEqual(shapes.map((shape) => shape.depth), [0, 1], 'bore nests inside the gear')
+  assertEqual(shapes.map((shape) => shape.operation), ['add', 'subtract'], 'Add gear => Subtract bore')
+  assertEqual(
+    shapes[1].profile,
+    circleProfile(10, 12, 3),
+    'the bore is the circle the old separate feature made',
+  )
+  console.log('add gear + subtract bore: PASSED')
 }
 
-function testRepeatedGearBoreGroupsUseSharedGearNumbers() {
+function testSubtractGearBoreIsAnAddIsland(): void {
+  resetStore()
+  // A base solid makes a gear drawn inside it a Subtract feature.
+  useProjectStore.getState().addRectFeature('Plate', 0, 0, 100, 100, 10)
+  placeGear({ x: 50, y: 50 }, 20)
+  useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
+
+  const ids = useProjectStore.getState().completePendingGear()
+  assertEqual(ids.length, 1, 'one feature')
+  const gear = createdFeature(ids[0])
+  assertEqual(gear.operation, 'subtract', 'a gear inside a solid is Subtract')
+
+  const shapes = resolveCannedShapeShapes(gear)
+  assertEqual(shapes.map((shape) => shape.operation), ['subtract', 'add'], 'Subtract gear => Add island bore')
+  console.log('subtract gear + add island: PASSED')
+}
+
+function testRepeatedGearsUseSequentialNames(): void {
   resetStore()
   placeGear()
-  useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
   useProjectStore.getState().completePendingGear()
+  placeGear()
+  const ids = useProjectStore.getState().completePendingGear()
+  const state = useProjectStore.getState()
 
+  assertEqual(state.project.features.length, 2, 'two gear features')
+  assertEqual(createdFeature(ids[0]).name, 'Gear 2', 'second gear is Gear 2')
+  console.log('repeated gear naming: PASSED')
+}
+
+function testExpandGivesTheOutlinesWithTheirOperations(): void {
+  resetStore()
   placeGear()
   useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
   const ids = useProjectStore.getState().completePendingGear()
-  const state = useProjectStore.getState()
-  const gear = createdFeature(ids[0])
-  const bore = createdFeature(ids[1])
-  const folder = state.project.featureFolders.find((candidate) => candidate.id === gear.folderId)
 
-  assert(folder !== undefined, 'second gear folder should exist')
-  assert(folder.name === 'Gear 2', `second folder should be Gear 2, got ${folder.name}`)
-  assert(gear.name === 'Gear 2', `second gear should be Gear 2, got ${gear.name}`)
-  assert(bore.name === 'Gear Bore 2', `second bore should be Gear Bore 2, got ${bore.name}`)
-  console.log('repeated gear with bore naming: PASSED')
+  useProjectStore.getState().expandCannedFeature(ids[0])
+  const state = useProjectStore.getState()
+  // The source row stays; two plain rows are added in one grouped folder.
+  assertEqual(state.project.features.length, 3, 'source plus two plain outlines')
+  const plain = state.project.features
+    .map((feature) => resolveFeatureInstance(state.project, feature.id))
+    .filter((feature) => feature && !feature.canned && feature.id !== ids[0])
+  assertEqual(plain.length, 2, 'two plain outlines')
+  assertEqual(plain.map((feature) => feature?.operation), ['add', 'subtract'], 'outer Add, bore Subtract')
+  assert(plain.every((feature) => feature?.kind === 'composite'), 'expanded rows are plain composites')
+  const folder = state.project.featureFolders.find((candidate) => candidate.grouped)
+  assert(folder, 'expansion creates a grouped folder')
+  assert(plain.every((feature) => feature?.folderId === folder?.id), 'both outlines share the group folder')
+  console.log('expand gear: PASSED')
 }
 
-function testInvalidBoreDoesNotCreateFeature() {
+function testInvalidBoreDoesNotCreateFeature(): void {
   resetStore()
-  placeGear(8)
+  placeGear({ x: 10, y: 12 }, 8)
   useProjectStore.getState().setPendingGearParams({ boreDiameter: 20 })
 
   const ids = useProjectStore.getState().completePendingGear()
   const state = useProjectStore.getState()
 
-  assert(ids.length === 0, `expected no created ids, got ${ids.length}`)
-  assert(state.pendingAdd?.shape === 'gear', 'pending gear should remain when validation fails')
-  assert(state.project.features.length === 0, 'invalid gear should not create features')
-  assert(state.history.past.length === 0, 'invalid gear should not add history')
+  assertEqual(ids.length, 0, 'no created ids')
+  assert(state.pendingAdd?.shape === 'gear', 'pending gear remains when validation fails')
+  assertEqual(state.project.features.length, 0, 'invalid gear creates nothing')
+  assertEqual(state.history.past.length, 0, 'invalid gear adds no history')
   console.log('invalid bore validation: PASSED')
 }
 
-testGearWithoutBoreCreatesSingleFeature()
-testGearWithBoreCreatesGroupedFeatures()
-testRepeatedGearBoreGroupsUseSharedGearNumbers()
+function testEditingTheParametersIsOneUndoStep(): void {
+  resetStore()
+  placeGear()
+  const ids = useProjectStore.getState().completePendingGear()
+  const gear = createdFeature(ids[0])
+  const params = gear.canned ? normalizeGearCannedParams(gear.canned.params) : null
+  assert(params, 'stored parameters normalize')
+  const before = resolveCannedShapeProfiles(gear)
+  const historyBefore = useProjectStore.getState().history.past.length
+
+  useProjectStore.getState().updateFeature(ids[0], {
+    canned: { kind: GEAR_CANNED_KIND, params: { ...params, teeth: 30 } },
+  })
+
+  assertEqual(useProjectStore.getState().history.past.length, historyBefore + 1, 'an edit is one undo step')
+  const edited = createdFeature(ids[0])
+  const editedParams = edited.canned ? normalizeGearCannedParams(edited.canned.params) : null
+  assertEqual(editedParams?.teeth, 30, 'the new tooth count is stored')
+  const after = resolveCannedShapeProfiles(edited)
+  assert(JSON.stringify(after) !== JSON.stringify(before), 'the outline regenerates from the new parameters')
+  console.log('gear edit: PASSED')
+}
+
+function testSavedGearRegeneratesTheSameGeometry(): void {
+  resetStore()
+  placeGear()
+  useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
+  const ids = useProjectStore.getState().completePendingGear()
+  const before = resolveCannedShapeProfiles(createdFeature(ids[0]))
+
+  const file = useProjectStore.getState().saveProject()
+  const saved = JSON.parse(file) as Project
+  assertEqual(
+    saved.featureDefinitions[useProjectStore.getState().project.features[0].definitionId].canned?.kind,
+    GEAR_CANNED_KIND,
+    'the saved file carries the canned kind',
+  )
+
+  useProjectStore.getState().openProjectFromText(file, null)
+  const after = resolveCannedShapeProfiles(createdFeature(ids[0]))
+  assertEqual(after, before, 'save, load, regenerate: same geometry')
+  console.log('gear round trip: PASSED')
+}
+
+function testOldPlainGearProjectStaysPlain(): void {
+  // An old project stored a composite gear and a separate subtract circle. It
+  // must keep that shape exactly: no canned data appears, and export is stable.
+  const base = newProject()
+  const plainProject = {
+    ...base,
+    featureDefinitions: {
+      ...base.featureDefinitions,
+      'def-old-gear': {
+        id: 'def-old-gear',
+        kind: 'composite' as const,
+        profile: buildGearProfile({
+          center: { x: 0, y: 0 },
+          outsideRadius: 20,
+          teeth: 16,
+          wholeDepth: 4,
+          flankProfile: 'involute' as const,
+          pressureAngleDeg: 20,
+          rootForm: 'rounded' as const,
+          rootFilletRadius: 0.5,
+          crestForm: 'flat' as const,
+          crestRadius: 0,
+          boreDiameter: 0,
+        }),
+        dimensions: [],
+        text: null,
+        stl: null,
+        operation: 'add' as const,
+      },
+      'def-old-bore': {
+        id: 'def-old-bore',
+        kind: 'circle' as const,
+        profile: circleProfile(0, 0, 3),
+        dimensions: [],
+        text: null,
+        stl: null,
+        operation: 'subtract' as const,
+      },
+    },
+    features: [
+      {
+        id: 'old-gear',
+        name: 'Gear 1',
+        definitionId: 'def-old-gear',
+        transform: { ...IDENTITY_MATRIX },
+        constraints: [],
+        folderId: null,
+        z_top: 5,
+        z_bottom: 0,
+        authoringFace: 'top' as const,
+        visible: true,
+        locked: false,
+      },
+      {
+        id: 'old-bore',
+        name: 'Gear Bore 1',
+        definitionId: 'def-old-bore',
+        transform: { ...IDENTITY_MATRIX },
+        constraints: [],
+        folderId: null,
+        z_top: 5,
+        z_bottom: 0,
+        authoringFace: 'top' as const,
+        visible: true,
+        locked: false,
+      },
+    ],
+  } as Project
+  resetStore(plainProject)
+
+  const gear = resolveFeatureInstance(plainProject, 'old-gear')
+  assert(gear, 'old gear resolves')
+  assertEqual(gear.canned, null, 'an old gear is not canned')
+  assertEqual(gear.operation, 'add', 'old gear operation is untouched')
+
+  const file = useProjectStore.getState().saveProject()
+  const saved = JSON.parse(file) as Project
+  assertEqual(saved.featureDefinitions['def-old-gear'].canned, undefined, 'no canned data is invented')
+  assertEqual(
+    saved.featureDefinitions['def-old-gear'].profile,
+    plainProject.featureDefinitions['def-old-gear'].profile,
+    'the old outline is saved unchanged',
+  )
+  console.log('old plain gear project: PASSED')
+}
+
+testGearWithoutBoreIsOneCannedFeature()
+testAddGearHasSubtractBoreInTheSameFeature()
+testSubtractGearBoreIsAnAddIsland()
+testRepeatedGearsUseSequentialNames()
+testExpandGivesTheOutlinesWithTheirOperations()
 testInvalidBoreDoesNotCreateFeature()
+testSavedGearRegeneratesTheSameGeometry()
+testEditingTheParametersIsOneUndoStep()
+testOldPlainGearProjectStaysPlain()

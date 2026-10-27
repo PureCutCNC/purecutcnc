@@ -22,9 +22,12 @@
  * its map from this list at module load, so a saved project's shapes are
  * available after a reload without any UI having opened.
  *
- * Slice A ships no real shape deliberately, so this list is empty.
+ * Slice A ships no real shape deliberately; slice E adds the gear.
  */
 
 import type { RegisteredCannedShapeGenerator } from '../types'
+import { gearCannedShape } from './gear'
 
-export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = []
+export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = [
+  gearCannedShape,
+]

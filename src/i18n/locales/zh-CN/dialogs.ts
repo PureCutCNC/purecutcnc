@@ -27,6 +27,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   // ── Common dialog strings ──
   'dialogs.common.close': '关闭',
   'dialogs.common.cancel': '取消',
+  'dialogs.common.apply': '应用',
   'dialogs.common.none': '无',
   'dialogs.common.millimeter': '毫米',
   'dialogs.common.inch': '英寸',
@@ -174,6 +175,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
 
   // ── Text Tool dialog ──
   'dialogs.textTool.title': '添加文字',
+  'dialogs.textTool.editTitle': '编辑文本',
   'dialogs.textTool.text': '文字',
   'dialogs.textTool.fontStyle': '字体样式',
   'dialogs.textTool.font': '字体',

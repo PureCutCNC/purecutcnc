@@ -21,6 +21,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   // ── Common dialog strings ──
   'dialogs.common.close': 'Schließen',
   'dialogs.common.cancel': 'Abbrechen',
+  'dialogs.common.apply': 'Übernehmen',
   'dialogs.common.none': 'Keine',
   'dialogs.common.millimeter': 'Millimeter',
   'dialogs.common.inch': 'Zoll',
@@ -168,6 +169,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
 
   // ── Text Tool dialog ──
   'dialogs.textTool.title': 'Text hinzufügen',
+  'dialogs.textTool.editTitle': 'Text bearbeiten',
   'dialogs.textTool.text': 'Text',
   'dialogs.textTool.fontStyle': 'Schriftstil',
   'dialogs.textTool.font': 'Schriftart',

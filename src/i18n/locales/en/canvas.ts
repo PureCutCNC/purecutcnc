@@ -320,6 +320,8 @@ export const canvasEn = {
 
   // ── Gear parameter panel ──
   'canvas.gear.summary': 'Outside radius {length}',
+  'canvas.gear.outsideRadius': 'Outside radius',
+  'canvas.gear.editTitle': 'Edit gear',
   'canvas.gear.toothCount': 'Tooth count',
   'canvas.gear.wholeDepth': 'Whole depth',
   'canvas.gear.flankProfile': 'Tooth flank profile',
@@ -337,6 +339,7 @@ export const canvasEn = {
   'canvas.gear.crest.flat': 'Flat crest',
   'canvas.gear.crest.rounded': 'Rounded crest',
   // Gear reference diagram aria-labels
+  'canvas.gear.ref.outsideRadius': 'Outside radius reference',
   'canvas.gear.ref.teeth': 'Tooth count reference',
   'canvas.gear.ref.wholeDepth': 'Whole depth reference',
   'canvas.gear.ref.flankProfile': 'Tooth flank profile reference',
