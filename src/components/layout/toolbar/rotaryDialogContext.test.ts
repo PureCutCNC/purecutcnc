@@ -186,7 +186,7 @@ await scenario('the context key changes with the bar shape, axis, diameter and b
   const key = rotaryDialogContextKey(project, 0)
   assert.notEqual(
     key,
-    rotaryDialogContextKey({ ...project, stock: { ...project.stock, shape: 'square' } }, 0),
+    rotaryDialogContextKey({ ...project, stock: { ...project.stock, shape: 'square', axis: 'x' } }, 0),
   )
   assert.notEqual(
     key,
