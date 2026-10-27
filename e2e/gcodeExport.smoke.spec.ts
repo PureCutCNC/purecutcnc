@@ -276,12 +276,12 @@ test('a machine that still breaks a template rule blocks export with zero writes
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
 
-  // Repair the project's embedded copy and apply it explicitly. The selected
-  // custom machine is also rescued into My Machines, so the library and the
-  // project each have a row with this name; the project row is last.
+  // Repair the project's embedded copy and apply it explicitly. A retained
+  // machine is not copied into My Machines, so the project's copy is the only
+  // row with this name.
   await openMachineManager(app.page, ui)
   await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
-  await ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)').last().click()
+  await ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)').click()
   await expect(ui.machineManager.diagnostics(app.page)).toContainText('G90.1')
   await ui.machineManager.editButton(app.page).click()
   const editor = ui.machineEditor.dialog(app.page)
@@ -297,8 +297,7 @@ test('a machine that still breaks a template rule blocks export with zero writes
   await expect(ui.machineEditor.diagnostics(app.page)).toHaveCount(0)
   await ui.machineEditor.saveButton(app.page).click()
   await expect(editor).toBeHidden()
-  // The library's rescued copy was not touched by the project repair.
-  await expect(ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)').first()).toContainText('Export blocked')
+  await expect(ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)')).toHaveCount(1)
   await ui.machineManager.doneButton(app.page).click()
 
   // The repaired machine exports: the same dialog now has no machine

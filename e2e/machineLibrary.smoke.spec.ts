@@ -171,20 +171,27 @@ test('a project machine missing from the library stays usable and can be saved b
     selectedMachineId: 'shop-router',
   })
 
-  // Legacy project libraries migrate their custom machines into My Machines,
-  // so this one is adopted on open rather than being lost.
+  // A selected machine is retained by the project, never copied into My
+  // Machines on open: it is project-only until the user saves it there.
   await openManager(app.page, ui)
-  await expect(ui.machineManager.groupLabel(app.page, 'My machines')).toBeVisible()
-  await expect(ui.machineManager.item(app.page, 'Shop Router')).toBeVisible()
+  await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
+  await ui.machineManager.item(app.page, 'Shop Router').first().click()
+  await expect(ui.machineManager.badge(app.page, 'Not in my machines')).toBeVisible()
 
-  // Removing it from the library must not touch the project.
+  // Saving it to My Machines is the explicit, user-requested copy.
+  await ui.machineManager.saveToMyMachinesButton(app.page).click()
+  await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeHidden()
+  await expect(ui.machineManager.item(app.page, 'Shop Router')).toHaveCount(1)
+
+  // Removing it from the library must not touch the project, and a later save
+  // must not rescue it back: the user's delete wins.
   await ui.machineManager.item(app.page, 'Shop Router').first().click()
   await ui.machineManager.removeButton(app.page).click()
   const afterRemoval = await embeddedMachine(app.page)
   expect(afterRemoval.definitions).toHaveLength(1)
   expect(afterRemoval.selectedMachineId).toBe('shop-router')
 
-  // It is now a project-only machine, still usable and re-savable.
+  // It is project-only again, still usable and re-savable.
   await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
   await ui.machineManager.item(app.page, 'Shop Router').first().click()
   await expect(ui.machineManager.badge(app.page, 'Not in my machines')).toBeVisible()

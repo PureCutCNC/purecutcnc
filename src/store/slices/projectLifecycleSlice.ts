@@ -327,8 +327,12 @@ export function createProjectLifecycleSlice(
       const normalized = decoded.project
       const machineDiagnostics = decoded.machineMigration.diagnostics
       const machineWarning = machineLoadWarning(machineDiagnostics)
-      const migratedMachineLibrary = decoded.machineMigration.compacted
-        || machineDiagnostics.some((diagnostic) => diagnostic.kind === 'machine-moved-to-library')
+      // Compaction can also drop unmodified bundled copies the build supplies,
+      // which is not a library move. Only a real move gets the library warning.
+      const machineMovedToLibrary = machineDiagnostics.some(
+        (diagnostic) => diagnostic.kind === 'machine-moved-to-library',
+      )
+      const migratedMachineLibrary = decoded.machineMigration.compacted || machineMovedToLibrary
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
       clearProjectMemoryCaches()
@@ -354,8 +358,8 @@ export function createProjectLifecycleSlice(
           versionWarning ?? (decoded.convertedLegacy
             ? `This legacy project was converted in memory to file format ${LATEST_PROJECT_VERSION}. The original file is unchanged until you save. Files saved in ${LATEST_PROJECT_VERSION} are not compatible with older PureCutCNC builds.`
             : null),
-          migratedMachineLibrary
-            ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it carried were added to My Machines. The original file is unchanged until you save.'
+          machineMovedToLibrary
+            ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it no longer stores were added to My Machines. The original file is unchanged until you save.'
             : null,
           decoded.retractHeightsReexpressed > 0
             ? `${decoded.retractHeightsReexpressed === 1 ? 'One drilling retract height was' : `${decoded.retractHeightsReexpressed} drilling retract heights were`} re-expressed relative to the material surface to match the current file format (issue #481). The original file is unchanged until you save.`

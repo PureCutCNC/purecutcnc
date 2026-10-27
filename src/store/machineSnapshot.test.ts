@@ -145,7 +145,7 @@ class FakeSnapshotStorage {
   )
 }
 
-// ── legacy custom machines migrate into My Machines ───────────────────────
+// ── legacy unselected machines migrate; the selected one stays project-only ─
 
 {
   freshLibrary()
@@ -159,17 +159,50 @@ class FakeSnapshotStorage {
   assert(state.project.meta.selectedMachineId === 'shop-router', 'the selected custom machine stays selected')
   assert(state.project.meta.machineDefinitions.length === 1, 'the project keeps a single embedded snapshot')
   assert(
-    getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).sort().join() === 'big-red,shop-router',
-    'both custom machines migrate into My Machines',
+    state.project.meta.machineDefinitions[0].id === 'shop-router',
+    'the selected machine is retained in the project, so it cannot be lost',
+  )
+  assert(
+    getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).join() === 'big-red',
+    'only the unselected custom machine compaction would drop migrates into My Machines',
+  )
+  assert(
+    !getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'the retained selected machine is not copied into My Machines just because it is absent there',
   )
   assert(state.dirty, 'a compacted project is marked dirty so the change is saved deliberately')
   assert(state.loadWarning !== null, 'the compaction is reported to the user')
 
-  // Re-opening the same file must not duplicate the library entries.
+  // Re-opening the same file must not duplicate the library entry.
   useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
   assert(
-    getMachineLibrarySnapshot().customMachines.length === 2,
+    getMachineLibrarySnapshot().customMachines.length === 1,
     're-opening the same project adds nothing to My Machines',
+  )
+}
+
+// ── compacting build-supplied copies is not a library move ─────────────────
+
+{
+  freshLibrary()
+  const selected = customMachine('project-only', 'Project Only')
+  const file = legacyLibraryFile([selected, ...bundledMachines()], selected.id)
+
+  useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
+  const state = useProjectStore.getState()
+
+  assert(
+    state.project.meta.machineDefinitions.length === 1
+      && state.project.meta.machineDefinitions[0].id === 'project-only',
+    'the retained selected machine is the only embedded definition',
+  )
+  assert(
+    getMachineLibrarySnapshot().customMachines.length === 0,
+    'compacting build-supplied copies does not copy the retained machine into My Machines',
+  )
+  assert(
+    state.loadWarning === null,
+    'no library-move warning is shown when nothing moved into My Machines',
   )
 }
 
@@ -230,8 +263,16 @@ class FakeSnapshotStorage {
     'a legacy inline custom definition wins over machineId',
   )
   assert(
-    decodedCustom.machineMigration.customDefinitions.length === 1,
-    'the legacy inline custom definition is offered to My Machines',
+    decodedCustom.project.meta.machineDefinitions[0]?.id === 'shop-router',
+    'the legacy inline custom definition is retained as the project snapshot',
+  )
+  assert(
+    decodedCustom.machineMigration.customDefinitions.length === 0,
+    'the retained inline definition is not offered to My Machines',
+  )
+  assert(
+    !getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'opening the legacy file does not copy its retained machine into My Machines',
   )
 
   const unknownId = JSON.parse(JSON.stringify({
