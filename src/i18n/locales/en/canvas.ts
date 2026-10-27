@@ -357,6 +357,15 @@ export const canvasEn = {
   'canvas.param.ref.ngonSides': 'Polygon side count reference',
   'canvas.param.ref.roundRectCorner': 'Rounded rectangle corner radius reference',
   'canvas.param.ref.chamferRectCorner': 'Chamfered rectangle corner reference',
+  'canvas.field.radiusX': 'Radius X',
+  'canvas.field.radiusY': 'Radius Y',
+  'canvas.field.size': 'Size',
+  'canvas.field.rotation': 'Rotation °',
+  'canvas.param.ref.ellipse': 'Ellipse radii reference',
+  'canvas.param.ref.slot': 'Slot length and width reference',
+  'canvas.cannedEdit.title': 'Edit {shape}',
+  'canvas.cannedEdit.save': 'Save',
+  'canvas.cannedEdit.invalid': 'Check the values — this shape cannot be built from them.',
 
   // ── Warnings ──
   'canvas.warning.selfIntersect': 'This profile self-intersects. 3D/CAM results may be invalid.',

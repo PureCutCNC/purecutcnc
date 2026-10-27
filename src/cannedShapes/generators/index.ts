@@ -22,12 +22,23 @@
  * its map from this list at module load, so a saved project's shapes are
  * available after a reload without any UI having opened.
  *
- * Slice A ships no real shape deliberately; slice E adds the gear.
+ * Slice A ships no real shape deliberately; slice D adds the five flat shapes
+ * and slice E the gear.
  */
 
 import type { RegisteredCannedShapeGenerator } from '../types'
+import { ellipseCannedShape } from './ellipse'
+import { slotCannedShape } from './slot'
+import { ngonCannedShape } from './ngon'
+import { roundRectCannedShape } from './roundRect'
+import { chamferRectCannedShape } from './chamferRect'
 import { gearCannedShape } from './gear'
 
 export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = [
+  ellipseCannedShape,
+  slotCannedShape,
+  ngonCannedShape,
+  roundRectCannedShape,
+  chamferRectCannedShape,
   gearCannedShape,
 ]

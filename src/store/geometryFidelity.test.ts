@@ -564,10 +564,29 @@ test('circle: enterSketchEdit → move radius anchor → applySketchEdit preserv
 
 console.log('\nEllipse — edit round-trip')
 
-test('ellipse: enterSketchEdit → move anchor → applySketchEdit preserves bezier segments', () => {
+test('plain ellipse: enterSketchEdit → move anchor → applySketchEdit preserves bezier segments', () => {
   resetStore()
   const store = useProjectStore.getState()
-  store.addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
+  // A plain ellipse is what an old project stores and what "Expand to
+  // features" writes; only the canned creation path is generated (#1112 D).
+  store.addFeature({
+    id: 'f-plain-ellipse',
+    name: 'Ellipse',
+    kind: 'ellipse',
+    folderId: null,
+    sketch: {
+      profile: ellipseProfile(50, 50, 30, 20),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 90,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  })
 
   const features = getFeatures()
   const f = features[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
@@ -1040,10 +1059,30 @@ test('circle: move via store preserves kind', () => {
   }, 'circle')
 })
 
-test('ellipse: move via store preserves kind', () => {
-  testMove('ellipse', () => {
-    useProjectStore.getState().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
-  }, 'ellipse')
+test('ellipse: move via store keeps the canned shape and its parameters', () => {
+  // The generated outline resolves as a composite whose parameters survive the
+  // move; the instance transform is what places it. Creation already put the
+  // centre at (50, 50), so the move adds to that (#1112 D).
+  resetStore()
+  const store = useProjectStore.getState()
+  store.addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
+  const f = getFeatures()[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const origDefId = f.definitionId!
+
+  store.selectFeature(f.id)
+  store.startMoveFeature(f.id)
+  store.setPendingMoveFrom({ x: 0, y: 0 })
+  store.completePendingMove({ x: 30, y: 20 })
+
+  const moved = getFeatures()[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  assert(moved.kind === 'composite', `[ellipse] kind should still be composite after move, got ${moved.kind}`)
+  const t = moved.transform ?? IDENTITY_MATRIX
+  assert(approx(t.e, 80, 1e-4), `[ellipse] transform.e should be 80, got ${t.e}`)
+  assert(approx(t.f, 70, 1e-4), `[ellipse] transform.f should be 70, got ${t.f}`)
+
+  const def = getProject().featureDefinitions[origDefId]
+  assert(def.canned?.kind === 'ellipse', 'the definition should stay canned after the move')
+  assert(def.canned?.params.rx === 30 && def.canned?.params.ry === 20, 'the move must not rewrite parameters')
 })
 
 test('polygon: move via store preserves kind', () => {
