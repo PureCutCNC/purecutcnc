@@ -94,18 +94,87 @@ async function seedAroundBar(page: Page): Promise<void> {
   await seedProject(page, JSON.stringify(project))
 }
 
-/** Polygon head, turned shank and one thread, through the real creation actions. */
-async function createAroundBolt(page: Page): Promise<{ polygonId: string; turnId: string; threadId: string }> {
-  return page.evaluate(async () => {
+/** Open the creation drawer on desktop; the tablet rail already shows the entries. */
+async function openCreationDrawer(page: Page): Promise<void> {
+  const drawerButton = page.locator('.toolbar-creation-picker__drawer-btn')
+  if (await drawerButton.count() === 0) return
+  const drawer = page.locator('.toolbar-creation-picker__drawer')
+  if ((await drawer.count()) === 0 || !(await drawer.isVisible())) {
+    await drawerButton.click()
+  }
+}
+
+/**
+ * Polygon head, turned shank and one thread through the drawer's rotary group,
+ * as a user creates them — not through store calls. The dialog writes one
+ * canned feature each; the ids are read back from the saved project afterwards.
+ */
+async function createAroundBolt(page: Page, ui: typeof import('./selectors')): Promise<{ polygonId: string; turnId: string; threadId: string }> {
+  await openCreationDrawer(page)
+  await ui.rotarySolid.polygonButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('10')
+  await ui.rotarySolid.field(page, 'length').fill('12')
+  await ui.rotarySolid.field(page, 'sides').fill('6')
+  await ui.rotarySolid.field(page, 'across-flats').fill('15')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('22')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('14')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openCreationDrawer(page)
+  await ui.rotary.threadButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeVisible()
+  await ui.rotary.field(page, 'start').fill('25')
+  await ui.rotary.field(page, 'length').fill('20')
+  await ui.rotary.field(page, 'pitch').fill('1.5')
+  await ui.rotary.field(page, 'starts').fill('1')
+  await ui.rotary.field(page, 'depth').fill('0.9')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  const project = await getProject(page) as unknown as Project
+  const cannedKind = (featureId: string) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    return feature ? project.featureDefinitions[feature.definitionId]?.canned?.kind : null
+  }
+  const polygon = project.features.find((feature) => cannedKind(feature.id) === 'polygon')
+  const turn = project.features.find((feature) => cannedKind(feature.id) === 'turn')
+  const thread = project.features.find((feature) => cannedKind(feature.id) === 'thread')
+  if (!polygon || !turn || !thread) throw new Error('e2e: the rotary dialogs did not create all three features')
+  return { polygonId: polygon.id, turnId: turn.id, threadId: thread.id }
+}
+
+interface GeneratedOperationReadout {
+  moveCount: number
+  errorCount: number
+  warnings: string[]
+}
+
+/** Compute one operation in the page: "up to date" is not proof of motion. */
+async function generatedOperation(page: Page, operationId: string): Promise<GeneratedOperationReadout> {
+  return page.evaluate(async (id) => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
-    const polygon = useProjectStore.getState().addRotarySolid({ kind: 'polygon', start: 10, length: 12, sides: 6, acrossFlats: 15 })
-    if (!polygon.ok) throw new Error(`e2e polygon: ${polygon.reason}`)
-    const turn = useProjectStore.getState().addRotarySolid({ kind: 'turn', start: 22, length: 30, diameter: 14 })
-    if (!turn.ok) throw new Error(`e2e turn: ${turn.reason}`)
-    const thread = useProjectStore.getState().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 1.5, starts: 1, depth: 0.9 })
-    if (!thread.ok) throw new Error(`e2e thread: ${thread.reason}`)
-    return { polygonId: polygon.featureId, turnId: turn.featureId, threadId: thread.featureId }
-  })
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const { warningSeverity } = await import('/src/engine/toolpaths/warningCodes.ts') as typeof import('../src/engine/toolpaths/warningCodes')
+    const project = useProjectStore.getState().project
+    const operation = project.operations.find((candidate) => candidate.id === id)
+    if (!operation) throw new Error(`e2e: the project has no operation ${id}`)
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) throw new Error(`e2e: ${id} did not generate`)
+    return {
+      moveCount: envelope.result.moves.length,
+      errorCount: envelope.result.warnings.filter((warning) => warningSeverity(warning.code) === 'error').length,
+      warnings: envelope.result.warnings.map((warning) => warning.code),
+    }
+  }, operationId)
 }
 
 test('CAM Plan on Bottom proposes its pocket and explains Top-covered through work (#1106)', async ({ app, ui }, testInfo) => {
@@ -149,20 +218,24 @@ test('CAM Plan on Bottom proposes its pocket and explains Top-covered through wo
  * CAM Plan on Around (#1112 slice J, decision 3).
  *
  * The acceptance bolt — Polygon head + turned shank + Thread — is created
- * through the drawer's own actions, then planned on Around. It asserts:
+ * through the drawer's rotary group dialogs (Turn/Polygon and Thread), then
+ * planned on Around. It asserts:
  * - the Plan button is enabled on Around and carries no "not available" reason;
  * - the dialog proposes two Rotary rough and two Rotary finish rows (one pair
  *   per model) plus one Engrave for the Thread, with the model names and the
  *   V-bit/ball-endmill choices;
  * - the Engrave's editable Carve depth is the pattern's 0.9 mm, not 1 mm;
  * - nothing is created before Create is pressed;
- * - applying creates exactly five Around operations, and one undo removes them.
+ * - applying creates exactly five Around operations;
+ * - every one of the five generates motion with no blocking warning;
+ * - one undo removes the five operations and keeps the three features.
  */
 test('CAM Plan on Around plans the bolt: rotary rough/finish and a V-bit engraving (#1112 J)', async ({ app, ui }, testInfo) => {
+  test.setTimeout(120_000)
   const { page } = app
   await seedAroundBar(page)
   await ui.face.switchTo(page, 'Around')
-  const ids = await createAroundBolt(page)
+  const ids = await createAroundBolt(page, ui)
 
   const planButton = ui.setupCam.planButton(page)
   await expect(planButton).toBeEnabled()
@@ -215,9 +288,22 @@ test('CAM Plan on Around plans the bolt: rotary rough/finish and a V-bit engravi
   }
   expect(after.tools.find((tool) => tool.id === engraveOperation.toolRef)?.type).toBe('v_bit')
 
+  // Generation: all five operations really produce motion, with no warning
+  // that blocks them. The gear settling is the app's own queue; the compute
+  // below is the same generator the preview and export run.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  for (const operation of after.operations) {
+    const generated = await generatedOperation(page, operation.id)
+    expect(generated.moveCount, `${operation.name} generated no motion`).toBeGreaterThan(0)
+    expect(generated.errorCount, `${operation.name} blocked: ${generated.warnings.join(', ')}`).toBe(0)
+  }
+
+  // The whole plan is one history step: one undo removes the five operations
+  // and leaves the three features the dialogs created.
   await page.keyboard.press(`${modKey}+z`)
   const undone = await getProject(page) as unknown as Project
   expect(undone.operations).toEqual([])
+  expect(undone.features).toHaveLength(3)
 })
 
 for (const machine of ['grbl','shopbot']) {

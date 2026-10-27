@@ -26,14 +26,14 @@ import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '..
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
 import { featuresOverlap } from '../../../store/helpers/clipping'
-import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
+import { cannedPatternCarveDepth, defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
 import { translate } from '../../../i18n/store'
 import { projectInSetupFrame } from '../../setupFrameProject'
 import { camPlanSetupProject, camPlanRegionsInStockFrame, throughFeaturesCoveredByTop } from './setupPlanning'
 import { setupFace, setupFrame } from '../../setupOrientation'
-import { operationFace, judgeTargetFromFace, withoutUnreachableSubtracts } from '../../setupTargets'
+import { operationFace, judgeTargetFromFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../../setupTargets'
 import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
@@ -141,6 +141,8 @@ function planToolById(tools: CamPlanTool[], id: string | null): CamPlanTool | nu
 
 interface PlanBuilder {
   project: Project
+  /** The project as stored, in stock coordinates: the setup gate reads this. */
+  stockProject: Project
   analysisProject: Project
   face: SetupFace
   tools: CamPlanTool[]
@@ -183,6 +185,31 @@ function restAnalysisOperation(operation: Operation): Operation {
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
   }
+}
+
+/**
+ * The reason generation would refuse this draft in the setup it is planned
+ * for, translated for the plan's blocking-error panel. Around sheet work can
+ * reach the bar's centreline, which generation refuses (`aroundCentreline`);
+ * the plan proposes that same work through the same rule, so the row is
+ * blocked here instead of being offered and then generating nothing.
+ */
+function setupBlockError(builder: PlanBuilder, operation: Operation): string | null {
+  if (builder.face !== 'around') return null
+  // A face entered but not yet saved carries a provisional setup that is not
+  // in the stored list. The gate resolves setups by id, so hand it the same
+  // synthesized setup the plan is running against.
+  const stored = builder.stockProject
+  const setupId = operation.setupId
+  const project = !setupId || stored.setups.some((entry) => entry.id === setupId)
+    ? stored
+    : { ...stored, setups: [...stored.setups, activeSetup(stored)] }
+  const block = setupGenerationBlock(project, operation)
+  if (!block || block.reason !== 'aroundCentreline') return null
+  return translate('warnings.aroundCentreline', {
+    operation: operation.name,
+    feature: block.features.map((feature) => feature.featureName).join(', '),
+  })
 }
 
 function addPlannedOperation(
@@ -244,6 +271,7 @@ function addPlannedOperation(
   applyRoughStockToLeave(builder.project, operation)
   if (selected) builder.reusedToolIds.add(selected.id)
 
+  const setupError = setupBlockError(builder, operation)
   const draft: CamPlanOperationDraft = {
     key,
     enabled: true,
@@ -262,11 +290,11 @@ function addPlannedOperation(
     requiredCutDepth: requiredDepth,
     coveredFeatureIds: featureIds,
     dependencies,
-    hardError: !selected
+    hardError: setupError ?? (!selected
       ? missingToolError
       : (!isOperationTargetValid(builder.project, kind, target)
         ? 'The proposed target is not valid for this operation.'
-        : null),
+        : null)),
     staleReason: null,
     userOverrides: [],
   }
@@ -466,14 +494,73 @@ interface RotaryModelCandidate {
   requiredCutDepth: number
 }
 
+/** Squared distance from a 2D point to a segment. */
+function pointSegmentDistanceSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSquared = dx * dx + dy * dy
+  const t = lengthSquared > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared)) : 0
+  const ex = px - (ax + t * dx)
+  const ey = py - (ay + t * dy)
+  return ex * ex + ey * ey
+}
+
+/**
+ * Squared distance from a 2D point to a filled triangle: zero when the point
+ * is inside it, otherwise the nearest edge. This is the reach the old
+ * vertex-only measure missed — a hex's flat lies inside its side triangles,
+ * nowhere near a vertex.
+ */
+function pointTriangleDistanceSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+): number {
+  const d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+  const d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx)
+  const d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx)
+  const hasNegative = d1 < 0 || d2 < 0 || d3 < 0
+  const hasPositive = d1 > 0 || d2 > 0 || d3 > 0
+  if (!(hasNegative && hasPositive)) return 0
+  return Math.min(
+    pointSegmentDistanceSquared(px, py, ax, ay, bx, by),
+    pointSegmentDistanceSquared(px, py, bx, by, cx, cy),
+    pointSegmentDistanceSquared(px, py, cx, cy, ax, ay),
+  )
+}
+
 /**
  * How deep a rotary pass reaches from the bar's surface for a model: the
- * bar's largest radius down to the model's closest **vertex** to the turning
- * axis. A full-diameter model needs no reach; a hexagonal head leaves the
- * corners to remove. This keeps CAM Plan's existing reach rule (and the tool
- * ceiling shared with every other auto pick) without applying the flat rule's
- * stock-thickness depth to a bar. The vertex measure is the planner's tool
- * filter only; the generators read the mesh itself.
+ * bar's largest radius down to the model's closest **surface** point to the
+ * turning axis. A full-diameter model needs no reach; a hexagonal head leaves
+ * the flats above the corners to remove.
+ *
+ * Vertices alone under-read that: a 15 mm across-flats hex on a Ø20 bar has
+ * its corners at 8.66 mm but its flats at 7.5 mm, so measuring the vertices
+ * reported a 1.34 mm reach for work that is really 2.5 mm deep. The measure
+ * is therefore over the indexed triangles, including their interiors.
+ *
+ * A triangle whose plane is perpendicular to the turning axis is an **end
+ * face**. The bar presents such a face to the cutter axially, not radially,
+ * and its points near the axis are shadowed by the side surface at the same
+ * angle — counting them would make every closed model demand the full bar
+ * radius. Side faces are the outer surface the cutter follows as the bar
+ * turns, so only those take part in the reach; the vertex fallback keeps a
+ * degenerate (flat) mesh answerable.
+ *
+ * This is the planner's tool filter only; the generators read the mesh itself.
  */
 function rotaryModelCandidate(
   project: Project,
@@ -486,25 +573,68 @@ function rotaryModelCandidate(
   if (!transformed) {
     return { candidate: null, reason: 'The imported mesh is unavailable, corrupt, or has no usable height.' }
   }
-  const { positions } = transformed
-  if (positions.length < 9 || positions.length % 3 !== 0) {
+  const { positions, index } = transformed
+  if (positions.length < 9 || positions.length % 3 !== 0 || index.length < 3 || index.length % 3 !== 0) {
     return { candidate: null, reason: 'The imported mesh has no usable triangles.' }
   }
 
   const axis = project.stock.axis
+  const acrossOffset = axis === 'x' ? 1 : 0
   const centre = barCentre(project.stock)
   const pivot = barPivotZ(project.stock)
-  let minRadius = Infinity
-  for (let index = 0; index < positions.length; index += 3) {
-    const x = positions[index]!
-    const y = positions[index + 1]!
-    const z = positions[index + 2]!
+  let minVertexRadiusSquared = Infinity
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const x = positions[offset]!
+    const y = positions[offset + 1]!
+    const z = positions[offset + 2]!
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
       return { candidate: null, reason: 'The transformed imported mesh contains invalid coordinates.' }
     }
     const across = axis === 'x' ? y : x
-    minRadius = Math.min(minRadius, Math.hypot(across - centre, z - pivot))
+    const radiusSquared = (across - centre) ** 2 + (z - pivot) ** 2
+    minVertexRadiusSquared = Math.min(minVertexRadiusSquared, radiusSquared)
   }
+
+  let minSurfaceRadiusSquared = Infinity
+  for (let offset = 0; offset < index.length; offset += 3) {
+    const a = index[offset]! * 3
+    const b = index[offset + 1]! * 3
+    const c = index[offset + 2]! * 3
+    if (a + 2 >= positions.length || b + 2 >= positions.length || c + 2 >= positions.length) {
+      return { candidate: null, reason: 'The transformed imported mesh has an invalid triangle index.' }
+    }
+    const ax = positions[a + acrossOffset]!
+    const ay = positions[a + 2]!
+    const bx = positions[b + acrossOffset]!
+    const by = positions[b + 2]!
+    const cx = positions[c + acrossOffset]!
+    const cy = positions[c + 2]!
+
+    // The plane's normal, to tell an axial end face from a side face. Only the
+    // axis component is needed; the other two are computed for its magnitude.
+    const abx = positions[b]! - positions[a]!
+    const aby = positions[b + 1]! - positions[a + 1]!
+    const abz = positions[b + 2]! - positions[a + 2]!
+    const acx = positions[c]! - positions[a]!
+    const acy = positions[c + 1]! - positions[a + 1]!
+    const acz = positions[c + 2]! - positions[a + 2]!
+    const nx = aby * acz - abz * acy
+    const ny = abz * acx - abx * acz
+    const nz = abx * acy - aby * acx
+    const normalLength = Math.sqrt(nx * nx + ny * ny + nz * nz)
+    const axialComponent = axis === 'x' ? nx : ny
+    if (!(normalLength > 0) || Math.abs(axialComponent) >= normalLength * (1 - 1e-6)) continue
+
+    minSurfaceRadiusSquared = Math.min(
+      minSurfaceRadiusSquared,
+      pointTriangleDistanceSquared(centre, pivot, ax, ay, bx, by, cx, cy),
+    )
+  }
+
+  const minRadiusSquared = Number.isFinite(minSurfaceRadiusSquared)
+    ? minSurfaceRadiusSquared
+    : minVertexRadiusSquared
+  const minRadius = Math.sqrt(minRadiusSquared)
   const surface = barMaxRadius(project.stock)
   if (!Number.isFinite(minRadius) || minRadius > surface + Z_EPSILON) {
     return { candidate: null, reason: 'The transformed imported mesh does not overlap the bar.' }
@@ -542,18 +672,36 @@ function addRotaryModelPair(builder: PlanBuilder, candidate: RotaryModelCandidat
   )
 }
 
-/** One Engrave for every canned Thread/Flutes; the store supplies the pattern depth. */
+/**
+ * One Engrave per distinct canned pattern depth. A Follow line has a single
+ * `carveDepth`, and the store's rule fills it from the deepest target; putting
+ * a 0.4 mm thread and a 1.2 mm flute in one Engrave would cut the thread
+ * 1.2 mm deep. Patterns that share a depth still group into one operation.
+ */
 function addAroundPatternOperation(builder: PlanBuilder, features: ResolvedSketchFeature[]): void {
-  addPlannedOperation(
-    builder,
-    'follow_line',
-    'rough',
-    features,
-    translate('cam.plan.aroundPatternLine'),
-    [],
-    undefined,
-    { preferredToolTypes: ['v_bit'] },
-  )
+  const groups = new Map<string, ResolvedSketchFeature[]>()
+  for (const feature of features) {
+    const depth = cannedPatternCarveDepth(builder.project, {
+      source: 'features',
+      featureIds: [feature.id],
+    })
+    // A pattern whose stored parameters are unreadable keeps the old 1 mm
+    // fallback, grouped by its span rather than by a depth it does not have.
+    const key = depth === null ? `span:${depthKey(builder.project, feature)}` : `depth:${depth.toFixed(7)}`
+    groups.set(key, [...(groups.get(key) ?? []), feature])
+  }
+  for (const group of groups.values()) {
+    addPlannedOperation(
+      builder,
+      'follow_line',
+      'rough',
+      group,
+      translate('cam.plan.aroundPatternLine'),
+      [],
+      undefined,
+      { preferredToolTypes: ['v_bit'] },
+    )
+  }
 }
 
 function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {
@@ -870,6 +1018,7 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
   }, face)
   const builder: PlanBuilder = {
     project,
+    stockProject,
     analysisProject,
     face,
     tools,
@@ -1010,7 +1159,7 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
       if (draft.dependencies.length === 0) draft.dependencies = [...internalKeys]
     }
 
-    // A canned Thread/Flutes is one Engrave, at the pattern's own depth.
+    // Canned Thread/Flutes are planned as Engraves at their own depth.
     addAroundPatternOperation(builder, features.filter((feature) => isCannedPatternFeature(project, feature)))
   }
 

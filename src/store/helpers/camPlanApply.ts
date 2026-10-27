@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { activeFace } from './activeFace'
+import { activeFace, activeSetup } from './activeFace'
 import type { CamPlanDraft, CamPlanOperationDraft } from '../../engine/operations/camPlan/types'
 import { camPlanProjectFingerprint } from '../../engine/operations/camPlan/createCamPlan'
 import { uniqueName } from '../../import'
@@ -24,7 +24,7 @@ import { nextUniqueGeneratedId } from './ids'
 import { normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
 import { uniqueFolderName } from './naming'
 import { isOperationTargetValid, toolMatchesTemplate } from './operationDefaults'
-import { targetAllowedInSetup } from '../../engine/setupTargets'
+import { setupGenerationBlock, targetAllowedInSetup } from '../../engine/setupTargets'
 
 export type CamPlanMaterializationResult =
   | { ok: true; project: Project; operationIds: string[] }
@@ -167,6 +167,18 @@ export function materializeCamPlan(project: Project, plan: CamPlanDraft): CamPla
       || !targetAllowedInSetup(next, operation.target, next.activeSetupId, operation.kind)
     ) {
       return { ok: false, reason: 'invalid', message: `${draft.operation.name} no longer has a valid target or tool.` }
+    }
+    // The same generation gate the plan itself applies (issue #1112 J2): an
+    // Around cut that reaches the bar's centreline must never be created, even
+    // if a plan draft somehow lost its blocking reason on the way here. A
+    // provisional setup is synthesized by the active-setup read, exactly as
+    // the plan's own gate does.
+    const setupId = operation.setupId
+    const gateProject = !setupId || next.setups.some((entry) => entry.id === setupId)
+      ? next
+      : { ...next, setups: [...next.setups, activeSetup(next)] }
+    if (setupGenerationBlock(gateProject, operation)?.reason === 'aroundCentreline') {
+      return { ok: false, reason: 'invalid', message: `${draft.operation.name} reaches the bar's centreline and cannot be created on the Around face.` }
     }
     next = { ...next, operations: [...next.operations, operation] }
     operationIds.push(operation.id)
