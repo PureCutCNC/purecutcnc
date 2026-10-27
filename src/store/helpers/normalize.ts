@@ -358,11 +358,12 @@ export interface MachineSnapshotNormalization {
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
   /**
-   * Non-bundled definitions the stored file carried, selected one first.
+   * Definitions compaction would drop from the project (the unselected ones).
    * Decode hands these to the application library so a legacy project's custom
-   * machines survive the compaction. A template-invalid definition is included
+   * machines survive the move. A template-invalid definition is included
    * unchanged — the library stores it and export refuses it until it is fixed
-   * (#1119). Empty when a `MachineRescuer` consumed them.
+   * (#1119). The selected/retained definition is never included: it stays in
+   * the project, and copying it into My Machines would undo an explicit delete.
    */
   customDefinitions: MachineDefinition[]
   /**
@@ -446,6 +447,11 @@ function asRescuedCustom(
  * machines. Colliding ids are re-keyed and the move is reported. An unmodified
  * bundled copy is not rescued because the build supplies it.
  *
+ * The selected definition is never rescued: it is retained in the project, so
+ * a rescue would not protect it from loss — it would only copy it back into My
+ * Machines after the user explicitly deleted it there. Rescue protects against
+ * silent loss; it never overrides an explicit user action.
+ *
  * A structurally unreadable entry, a selected id carried by two different
  * definitions, or a machine list that is not an array refuses the load
  * atomically: the caller never replaces the project with one that lost a
@@ -510,14 +516,10 @@ export function normalizeMachineDefinitions(
         throw machineStructureError(0, parsed.error.issues)
       }
       const customDefinition = parsed.data
-      // The inline definition is both the snapshot and a My Machines rescue:
-      // it is the only copy of that machine the file carries.
-      const rescued = asRescuedCustom(customDefinition, new Set([customDefinition.id]))
-      if (rescue) {
-        const outcome = rescue([rescued.definition])
-        return snapshotOf(customDefinition, [], 0, null, [...(outcome.diagnostics ?? [])])
-      }
-      return snapshotOf(customDefinition, [rescued.definition], 0, null, [])
+      // The inline definition becomes the project's snapshot, so it is not
+      // lost: it is retained rather than rescued into My Machines (a rescue
+      // here would re-add a machine the user deleted from the library).
+      return snapshotOf(customDefinition, [], 0, null, [])
     }
     const legacyId = legacyMeta.machineId ?? null
     const bundled = legacyId ? getBundledMachine(legacyId) ?? null : null
@@ -621,11 +623,12 @@ export function normalizeMachineDefinitions(
     keptUnselected.push(entry)
   }
 
+  // Only unselected definitions can be lost by compaction; the selected one
+  // stays in the project either way, so it is never rescued (#1119).
   const customDefinitions: MachineDefinition[] = []
   // Reports about the move itself. They are only true once the rescue is
   // durable, so they are held back until then (#1119).
   const libraryMoveDiagnostics: MachineLoadDiagnostic[] = []
-  if (selected && !isBundledMachineId(selected.id)) customDefinitions.push(selected)
   for (const { definition, index } of keptUnselected) {
     if (isBundledMachineId(definition.id)) {
       const bundled = getBundledMachine(definition.id)
