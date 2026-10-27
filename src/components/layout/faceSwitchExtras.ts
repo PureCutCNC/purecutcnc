@@ -28,20 +28,20 @@ export interface FaceSwitchExtrasInput {
   axis: FlipAxis
 }
 
-/** What the switch carries beyond its segments (issue #1102 slice E). */
+/** What the face control carries beyond its menu (issue #1112 slice B). */
 export interface FaceSwitchExtras {
   /**
-   * The axis of the short "Flipped about X/Y" chip to show after the segments
-   * and the Other side toggle, or null when there is no flip to report.
+   * The axis of the flip the control's own label names — "Bottom · flipped X"
+   * — or null when there is no flip to report.
    */
-  flipChip: FlipAxis | null
+  flipAxis: FlipAxis | null
 }
 
 /**
- * The switch's extras: a Bottom view is the only place the stock is turned,
+ * The control's extra: a Bottom view is the only place the stock is turned,
  * and only once both faces are in use — on a Top-only project there is no
- * flip to explain and no second face to reach.
+ * flip to name and no second face to reach.
  */
 export function faceSwitchExtras({ face, bothFaces, axis }: FaceSwitchExtrasInput): FaceSwitchExtras {
-  return { flipChip: face === 'bottom' && bothFaces ? axis : null }
+  return { flipAxis: face === 'bottom' && bothFaces ? axis : null }
 }

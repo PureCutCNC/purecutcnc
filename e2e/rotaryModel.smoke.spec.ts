@@ -276,7 +276,7 @@ test('the rotary operation shows the model it machines, checked and locked', asy
 
   // The Around setup is active from the seed; add the finish operation, which
   // Add selects (so its properties are already on screen).
-  await ui.face.segment(page, 'Around').click()
+  await ui.face.switchTo(page, 'Around')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   await ui.setupCam.addMenu(page).locator('.cam-operation-item')
@@ -330,7 +330,7 @@ test('adding a region keeps the rotary operation\'s model choice', async ({ app,
 
   // Add the finish: the Add route targets every imported model, so both boxes
   // start ticked.
-  await ui.face.segment(page, 'Around').click()
+  await ui.face.switchTo(page, 'Around')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   await ui.setupCam.addMenu(page).locator('.cam-operation-item')
@@ -391,7 +391,7 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
 
   // The Around setup is active from the seed; the model is a ghost row there,
   // but the rotary rows no longer need it selected.
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   // ── "Add to Around" offers both rotary operations ──
   const rotaryRow = (label: 'Rotary rough' | 'Rotary finish') =>
@@ -419,14 +419,14 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   }
 
   // On Top the two rows are not offered at all (the manager's rule 7).
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   await expect(ui.setupCam.addMenu(page).locator('.cam-operation-label').filter({ hasText: /^Rotary/ })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   // ── Both generated wrapped moves, read back from the store ──
-  await ui.face.segment(page, 'Around').click()
+  await ui.face.switchTo(page, 'Around')
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
   const after = await getProject(page) as unknown as Project
   const model = after.features.find((feature) => after.featureDefinitions[feature.definitionId]?.kind === 'stl')!
@@ -496,7 +496,7 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   test.setTimeout(180_000)
   const { page } = app
   await seedRotaryModelProject(page)
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
   await addRotaryOperation(page, ui, 'Rotary finish')
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
   await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0)
@@ -757,7 +757,7 @@ test('turning the bar square, and resizing the square, invalidates the preview c
   const { page } = app
   const project = await seedRotaryModelProject(page)
   expect((project.stock as RoundStock).shape).toBe('round')
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   await addRotaryOperation(page, ui, 'Rotary finish')
   await addRotaryOperation(page, ui, 'Rotary rough')
@@ -865,7 +865,7 @@ test('square to round generates inside the band and removes material', async ({ 
   test.setTimeout(180_000)
   const { page } = app
   await seedSquareBlankProject(page)
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   await ui.rotarySolid.squareToRoundButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
@@ -1176,7 +1176,7 @@ test('square playback starts from the prior rough, follows the finish and resets
   expect(blank.thickness).toBe(25)
   // The physical corner diameter the chuck has to clear, not the nominal side.
   expect(2 * barMaxRadius(blank)).toBeCloseTo(25 * Math.SQRT2, 6)
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   // The real square-to-round job: the app's own dialog creates the round target
   // and both rotary operations in one history step.
