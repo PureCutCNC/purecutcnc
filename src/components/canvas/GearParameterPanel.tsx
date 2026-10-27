@@ -14,25 +14,14 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   GEAR_MAX_TEETH,
   GEAR_MIN_TEETH,
-  defaultGearCreationParams,
-  normalizeGearCreationParams,
   validateGearProfileParams,
   type GearCreationParams,
 } from '../../sketch/gearProfile'
 import type { PendingAddTool } from '../../store/types'
-import { useProjectStore } from '../../store/projectStore'
-import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
-import { registerCannedShapeEditor } from '../../cannedShapes'
-import {
-  GEAR_CANNED_KIND,
-  normalizeGearCannedParams,
-  type GearCannedParams,
-} from '../../cannedShapes/generators/gear'
 import { formatLength } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
@@ -259,7 +248,7 @@ interface GearFieldsProps {
 }
 
 /** The full gear parameter set, shared by the creation panel and Edit gear. */
-function GearFields({ params, session, onParams, size, onSize, autoFocusTeeth }: GearFieldsProps) {
+export function GearFields({ params, session, onParams, size, onSize, autoFocusTeeth }: GearFieldsProps) {
   const { t } = useI18n()
   return (
     <>
@@ -473,146 +462,4 @@ export function GearParameterPanel({
       ) : null}
     </>
   )
-}
-
-// ── Edit gear ──────────────────────────────────────────────────────
-//
-// The Properties "Edit Gear…" button goes through the canned-shape editor
-// registry. The registry stores a callback rather than a component, so this
-// module keeps the request in a tiny module store and exports the host the
-// Properties panel renders. That keeps the gear UI here rather than spreading
-// an edit mode through the store (issue #1112 slice E).
-
-let gearEditRequest: string | null = null
-const gearEditListeners = new Set<() => void>()
-
-function emitGearEdit(): void {
-  for (const listener of gearEditListeners) listener()
-}
-
-function subscribeGearEdit(listener: () => void): () => void {
-  gearEditListeners.add(listener)
-  return () => { gearEditListeners.delete(listener) }
-}
-
-function gearEditSnapshot(): string | null {
-  return gearEditRequest
-}
-
-function requestGearEdit(featureId: string): void {
-  gearEditRequest = featureId
-  emitGearEdit()
-}
-
-function closeGearEdit(): void {
-  gearEditRequest = null
-  emitGearEdit()
-}
-
-registerCannedShapeEditor(GEAR_CANNED_KIND, requestGearEdit)
-
-function creationParamsOf(params: GearCannedParams): GearCreationParams {
-  return {
-    teeth: params.teeth,
-    wholeDepth: params.wholeDepth,
-    flankProfile: params.flankProfile,
-    pressureAngleDeg: params.pressureAngleDeg,
-    rootForm: params.rootForm,
-    rootFilletRadius: params.rootFilletRadius,
-    crestForm: params.crestForm,
-    crestRadius: params.crestRadius,
-    boreDiameter: params.boreDiameter,
-  }
-}
-
-function GearEditDialog({ featureId, onClose }: { featureId: string; onClose: () => void }) {
-  const { t } = useI18n()
-  const project = useProjectStore((state) => state.project)
-  const updateFeature = useProjectStore((state) => state.updateFeature)
-  const feature = useMemo(() => resolveFeatureInstance(project, featureId), [project, featureId])
-  const stored = feature?.canned?.kind === GEAR_CANNED_KIND
-    ? normalizeGearCannedParams(feature.canned.params)
-    : null
-
-  const [params, setParams] = useState<GearCreationParams>(
-    () => (stored ? creationParamsOf(stored) : defaultGearCreationParams(20)),
-  )
-  const [size, setSize] = useState(() => String(stored?.outsideRadius ?? 20))
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  const outsideRadius = Number(size)
-  const errors = validateGearProfileParams({
-    ...params,
-    center: { x: 0, y: 0 },
-    outsideRadius,
-  })
-  const normalized = normalizeGearCannedParams({
-    ...normalizeGearCreationParams(params),
-    outsideRadius,
-  })
-
-  if (!stored) return null
-
-  function apply(): void {
-    if (!normalized) return
-    // One parameter write, one history entry: `updateFeature` is the same path
-    // any other Properties edit takes (issue #1112).
-    updateFeature(featureId, {
-      canned: { kind: GEAR_CANNED_KIND, params: normalized },
-    })
-    onClose()
-  }
-
-  return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog dialog--import dialog--no-clip" onClick={(event) => event.stopPropagation()}>
-        <div className="dialog-header">
-          <h2 className="dialog-title">{t('canvas.gear.editTitle')}</h2>
-          <button className="dialog-close" onClick={onClose} aria-label={t('dialogs.common.close')} type="button">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div className="dialog-body dialog-body--import">
-          <div className="dialog-section">
-            <div className="canvas-workflow-panel__meta canvas-workflow-panel__gear-fields">
-              <GearFields
-                params={params}
-                session={`edit-${featureId}`}
-                onParams={(patch) => setParams((current) => normalizeGearCreationParams({ ...current, ...patch }))}
-                size={outsideRadius}
-                onSize={(value) => setSize(String(value))}
-              />
-            </div>
-            {errors.length > 0 ? (
-              <div className="sketch-banner-warning">{errors[0]}</div>
-            ) : null}
-          </div>
-        </div>
-        <div className="dialog-footer">
-          <button className="feat-btn" type="button" onClick={onClose}>
-            {t('dialogs.common.cancel')}
-          </button>
-          <button className="feat-btn" type="button" disabled={!normalized} onClick={apply}>
-            {t('dialogs.common.apply')}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** Rendered by Properties; opens the gear editor when the button asks for it. */
-export function GearEditorHost() {
-  const featureId = useSyncExternalStore(subscribeGearEdit, gearEditSnapshot, gearEditSnapshot)
-  if (!featureId) return null
-  return <GearEditDialog key={featureId} featureId={featureId} onClose={closeGearEdit} />
 }

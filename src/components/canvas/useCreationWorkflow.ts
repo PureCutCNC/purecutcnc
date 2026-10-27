@@ -136,7 +136,9 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     pageLevel: true,
   })
 
-  const placementPanelActive = !!pendingAdd && !creationPanelShape
+  // A canned-shape edit borrows `pendingAdd` as its open flag but has its own
+  // side panel, so it is neither a creation panel nor a placement prompt.
+  const placementPanelActive = !!pendingAdd && pendingAdd.shape !== 'canned-edit' && !creationPanelShape
   const placementWorkflowPanel = useCanvasWorkflowPanel({
     open: placementPanelActive,
     phaseKey: pendingAdd?.shape ?? 'place',

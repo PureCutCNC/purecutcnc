@@ -47,10 +47,9 @@ import {
 import type { ProjectStore } from '../types'
 import { buildShapeFeature } from './buildShapeFeature'
 import { createDefinitionForFeature } from './featureDefinitions'
-import { isSolid, sectionForOperation } from './featureRoles'
+import { isMachinable, sectionForOperation } from './featureRoles'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import { activeFace, aroundSketchAuthoringRefused } from './activeFace'
-import { barSeedsModel } from './projectType'
 
 const GEAR_NAME_PATTERN = /^Gear (\d+)$/
 const GEAR_BORE_NAME_PATTERN = /^Gear Bore (\d+)$/
@@ -144,13 +143,15 @@ export function createAddGearFeatureAction(
       return []
     }
 
-    // Mirror `addFeature`'s base-solid rule before minting the definition, so
-    // the definition's operation agrees with the row that ends up in the tree.
-    const needsBaseAdd = !barSeedsModel(state.project)
-    const isFirstSolid = needsBaseAdd
-      && isSolid(gearFeature)
-      && !resolvedProjectFeatures(state.project).some(isSolid)
-    const operation: FeatureOperation = isFirstSolid ? 'add' : gearFeature.operation
+    // Preserve the original creation rule exactly: the first *machining*
+    // feature is Add, not "the first solid on a block project". In particular
+    // a rotary bar needs no base add (`barSeedsModel`), but the old command
+    // still created its first gear as Add, which is what gives the first
+    // gear+bore the Add/Subtract pair it has always had (issue #1112 DE2
+    // review). `addFeature`'s base-solid rule then agrees with this operation.
+    const isFirstMachiningFeature = isMachinable(gearFeature)
+      && !resolvedProjectFeatures(state.project).some(isMachinable)
+    const operation: FeatureOperation = isFirstMachiningFeature ? 'add' : gearFeature.operation
     // A region/construction gear has no solid to bore; the old command created
     // the bore only for the features section, and that stays true.
     const boreDiameter = sectionForOperation(operation) === 'features' ? params.boreDiameter : 0

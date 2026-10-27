@@ -15,37 +15,54 @@
  */
 
 /**
- * Gear and Text edit wiring (issue #1112 slice E).
+ * Canned-shape edit wiring (issue #1112, DE2 review).
  *
- * The store tests prove the edits are correct; this pins the two UI seams that
- * make them reachable: the gear module registers a canned-shape editor (so the
- * generic Properties button is enabled and opens it), and Properties renders
- * that host plus the text dialog and summary instead of inline text fields.
+ * The store tests prove the edits are correct; this pins the UI seams: the
+ * canvas panel module registers an opener for every canned kind, Properties
+ * calls that opener for the generic "Edit <shape>…" button, and the canvas
+ * shell renders the side panel from the pending session. The old modal host
+ * (a second React root) must be gone.
  *
  * Run with: npx tsx src/components/canvas/gearEditorWiring.test.ts
  */
 
 import { readFileSync } from 'node:fs'
 import { getCannedShapeEditor } from '../../cannedShapes'
-import './GearParameterPanel'
+import './CannedShapeEditPanel'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
-const editor = getCannedShapeEditor('gear')
-assert(editor !== null, 'importing the gear panel registers its editor')
-// Calling it only opens the host; with no host mounted it must be a harmless
-// no-op rather than throwing.
-editor('f-test')
+for (const kind of ['gear', 'ellipse', 'slot', 'ngon', 'roundrect', 'chamferrect']) {
+  assert(getCannedShapeEditor(kind) !== null, `the canvas panel registers ${kind}`)
+}
+// Calling an opener with no matching row is a harmless no-op, not a throw.
+getCannedShapeEditor('gear')!('f-test')
 
 const properties = readFileSync(
   new URL('../feature-tree/PropertiesPanel.tsx', import.meta.url),
   'utf8',
 )
 assert(
-  properties.includes('<GearEditorHost />'),
-  'Properties renders the gear editor host',
+  properties.includes('cannedEditor(selectedFeature.id)'),
+  'Properties opens the canned editor through the registry',
+)
+assert(
+  !properties.includes('<GearEditorHost />'),
+  'Properties no longer mounts a modal host',
+)
+const sketchCanvas = readFileSync(
+  new URL('./SketchCanvas.tsx', import.meta.url),
+  'utf8',
+)
+assert(
+  sketchCanvas.includes('<CannedShapeEditPanel'),
+  'the canvas shell renders the edit side panel from the pending session',
+)
+assert(
+  sketchCanvas.includes("pendingAdd?.shape === 'canned-edit'"),
+  'the side panel opens only for the canned-edit pending session',
 )
 assert(
   properties.includes("t('featureTree.properties.text.summary'"),
