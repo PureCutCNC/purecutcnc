@@ -387,7 +387,11 @@ function random(seed: number): () => number {
   }
 }
 
-type TemplateVariant = 'none' | 'header' | 'operationHeader' | 'toolChange' | 'footer' | 'all'
+// Only a tool change or the footer may move Z in a definition the export guard
+// accepts (#1119): a program header cannot carry an axis word and an operation
+// header is inert. Those two valid seams still put a template Z move behind
+// the emitter's back, which is what this file proves the emitter repairs.
+type TemplateVariant = 'none' | 'toolChange' | 'footer' | 'all'
 
 interface Generated {
   label: string
@@ -419,12 +423,10 @@ function generate(rand: () => number, index: number): Generated {
   const unsafe = rand() < 0.28
   const templateRoll = rand()
   const template: TemplateVariant = templateRoll < 0.2 ? 'none'
-    : templateRoll < 0.38 ? 'header'
-      : templateRoll < 0.56 ? 'operationHeader'
-        : templateRoll < 0.74 ? 'toolChange'
-          : templateRoll < 0.86 ? 'footer'
-            : 'all'
-  const multiOperation = !unsafe && (template === 'operationHeader' || template === 'toolChange' || template === 'all' || rand() < 0.3)
+    : templateRoll < 0.6 ? 'toolChange'
+      : templateRoll < 0.8 ? 'footer'
+        : 'all'
+  const multiOperation = !unsafe && (template === 'toolChange' || template === 'all' || rand() < 0.3)
   const { project, operation, stock, tool } = fixture({ axis, units })
   const secondTool: Tool = { ...tool, id: 't2', name: 'Ball 2 second' }
   project.tools = [tool, secondTool]
@@ -440,8 +442,6 @@ function generate(rand: () => number, index: number): Generated {
   const lowTemplateZ = travelEmitted - convertLength(2, 'mm', units)
 
   const templates = {
-    header: template === 'header' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
-    operationHeader: template === 'operationHeader' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
     toolChange: template === 'toolChange' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
     footer: template === 'footer' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
   }
@@ -495,7 +495,7 @@ function generate(rand: () => number, index: number): Generated {
     // repair is exercised too: the cut starts at the angle the previous
     // operation ended on and changes it at travel height, which the planner
     // admits because the turn itself is at the travel height.
-    if (opIndex > 0 && (template === 'operationHeader' || template === 'toolChange' || template === 'all')) {
+    if (opIndex > 0 && (template === 'toolChange' || template === 'all')) {
       const angle = current.a + 17
       const along = current.x === centre ? nextAlong() : current.x
       if (rand() < 0.5) {
@@ -728,13 +728,14 @@ console.log('Testing the program keeps its last angle and its own retract...')
   assert.ok(!multi.gcode.split('\n').some((line) => line === 'G0 A0.000'), 'no closing unwind is owed after the tool change')
   assert.doesNotMatch(multi.gcode, /G53/, 'and no machine-coordinate closing retract is written')
 
-  // A spindle-stop template that lowers Z behind the emitter's back is written
-  // after the operation's retract. The emitter adds nothing after it: the
+  // A footer template that lowers Z behind the emitter's back is written after
+  // the operation's retract. The footer is the one template class the export
+  // guard still lets move an axis; the emitter adds nothing after it, so the
   // program ends exactly where the non-rotary one would (#1091).
   const base = machine('own', 'x')
   const dropping = {
     ...base,
-    feedSpeed: { ...base.feedSpeed, spindleOff: 'M5\nG0 Z-2' },
+    program: { ...base.program, footer: [...base.program.footer, 'G0 Z-2'] },
   }
   const droppingResult = post(round.project, dropping, [{
     operation: round.operation,
@@ -765,21 +766,25 @@ console.log('Testing the template Z-unknown rule...')
       { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 30) },
     ],
   }
-  const secondOp: Operation = { ...operation, id: 'op2', name: 'Operation 2' }
+  const secondTool: Tool = { ...project.tools[0], id: 't2', name: 'Ball 2 second' }
+  project.tools = [...project.tools, secondTool]
+  const secondOp: Operation = { ...operation, id: 'op2', name: 'Operation 2', toolRef: 't2' }
   const second: PostableOperation = {
     operation: secondOp,
-    tool: normalizedTool(project, secondOp),
+    tool: normalizeToolForProject(secondTool, project),
     // The first block of the second operation turns with no Z word: under the
-    // stale-Z bug it executes at the header's low Z.
+    // stale-Z bug it executes at the tool change's low Z.
     moves: [
       { kind: 'rapid', from: point(15, travelZ, 30), to: point(15, travelZ, 60) },
       { kind: 'cut', from: point(15, travelZ, 60), to: point(15, travelZ, 75) },
     ],
   }
+  // A tool-change template is the valid seam that still moves Z before the
+  // second operation's first block (#1119 guard: an operation header is inert).
   const definition = machineWithTemplates('own', 'x', {
-    operationHeader: [`G0 Z${(emittedTravel - 2).toFixed(6)}`],
+    toolChange: [`G0 Z${(emittedTravel - 2).toFixed(6)}`],
   })
-  const result = post(project, definition, [first, second])
+  const result = post(project, definition, [first, second], true)
   assert.deepEqual(result.warnings, [], 'the program is recoverable, so it is not refused')
   const audit = auditProgram(result.gcode, 'A', emittedTravel, emittedHalfStep(definition, 'mm'))
   assert.deepEqual(audit.violations, [], 'the template Z move is repaired before the next A word')

@@ -26,7 +26,7 @@ import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import { setupOnlyTemplate } from './newProjectTemplate'
 import { decodeProjectFormat } from '../../store/helpers/projectFormat'
-import { mergeCustomMachines } from '../../machine/store'
+import { rescueMachinesToLibrary } from '../../machine/store'
 import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
 import {
   blankTemplateProject,
@@ -136,8 +136,8 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const imperialTemplate = useMemo(() => newProject('Untitled', 'inch'), [])
   const [stockDraft, setStockDraft] = useState<BlockStockDraft>(() => stockDimensionsDraft(metricTemplate))
   const [barDraft, setBarDraft] = useState<BlankStockDraft>(() => defaultBlankStockDraft(metricTemplate.meta.units))
-  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project), [project])
-  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate) : null), [fileTemplate])
+  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project).project, [project])
+  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate).project : null), [fileTemplate])
 
   const isBlankTemplate = templateKind === 'blank_metric' || templateKind === 'blank_imperial'
   // The blank template's stock fields follow the type (issue #1046): rotary
@@ -283,8 +283,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         // file's other machines reach My Machines rather than disappearing
         // (#1119). The selected snapshot is kept, including a template-invalid
         // one; export refuses it later.
-        const decoded = decodeProjectFormat(parsed)
-        mergeCustomMachines(decoded.machineMigration.customDefinitions)
+        const decoded = decodeProjectFormat(parsed, rescueMachinesToLibrary)
         setFileTemplate(decoded.project)
         setFileLabel(file.name)
         setFileError(null)

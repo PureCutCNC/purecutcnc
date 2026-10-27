@@ -191,16 +191,47 @@ const deleteStorage = new FakeStorage()
 initMachineLibrary(deleteStorage)
 saveCustomMachine(custom('shop-router', 'Shop Router'))
 saveCustomMachine(custom('big-red', 'Big Red'))
-deleteCustomMachine('shop-router')
+const deleted = deleteCustomMachine('shop-router')
+assert(deleted.ok && deleted.removed, 'delete reports the removal')
 assert(
   getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).join() === 'big-red',
   'delete removes only the named machine',
 )
-deleteCustomMachine('does-not-exist')
-assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deleting an unknown id is a no-op')
+const missing = deleteCustomMachine('does-not-exist')
+assert(missing.ok && !missing.removed, 'deleting an unknown id is a successful no-op')
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deleting an unknown id changes nothing')
 resetMachineLibraryForTests()
 initMachineLibrary(deleteStorage)
 assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deletion is persisted')
+
+// A blocked library must not report a delete it did not perform (#1119).
+const blockedStorage = new FakeStorage()
+blockedStorage.setItem(CUSTOM_MACHINES_STORAGE_KEY, '{ not json')
+resetMachineLibraryForTests()
+initMachineLibrary(blockedStorage)
+assert(getMachineLibrarySnapshot().writeBlocked, 'the delete fixture library is write-blocked')
+const blockedDelete = deleteCustomMachine('big-red')
+assert(!blockedDelete.ok && !blockedDelete.removed, 'a write-blocked library refuses the delete')
+assert(blockedDelete.error !== undefined, 'the refusal carries a displayable reason')
+assert(getMachineLibrarySnapshot().customMachines.length === 0, 'the blocked delete left the library alone')
+
+// A storage write failure is also a refused delete, not a silent success.
+const seeded = new FakeStorage()
+seeded.setItem(CUSTOM_MACHINES_STORAGE_KEY, JSON.stringify({
+  schemaVersion: 1,
+  machines: [custom('shop-router', 'Shop Router')],
+}))
+const failing = {
+  getItem: (key: string): string | null => seeded.getItem(key),
+  setItem: (): void => { throw new Error('QuotaExceededError') },
+}
+resetMachineLibraryForTests()
+initMachineLibrary(failing)
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'the write-failing storage reads its one machine')
+const failedDelete = deleteCustomMachine('shop-router')
+assert(!failedDelete.ok && !failedDelete.removed, 'a failed storage write refuses the delete')
+assert(failedDelete.error !== undefined, 'the failed delete carries a reason')
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'the failed delete left the in-memory library alone')
 
 // --- legacy merge --------------------------------------------------------
 

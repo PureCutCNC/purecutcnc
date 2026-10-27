@@ -32,6 +32,7 @@ import {
   resetMachineLibraryForTests,
   saveCustomMachine,
 } from '../machine/store'
+import { CUSTOM_MACHINES_STORAGE_KEY } from '../machine/storage'
 import { LATEST_PROJECT_VERSION, defaultTool, newProject, type Operation, type Project } from '../types/project'
 import { decodeProjectFormat } from './helpers/projectFormat'
 import { MachineLoadError } from '../machine/diagnostics'
@@ -80,6 +81,19 @@ function legacyLibraryFile(
 function freshLibrary(): void {
   resetMachineLibraryForTests()
   initMachineLibrary(null)
+}
+
+/** A storage that can be made to fail writes, like a full localStorage. */
+class FakeSnapshotStorage {
+  private readonly map = new Map<string, string>()
+  failWrites = false
+  getItem(key: string): string | null {
+    return this.map.get(key) ?? null
+  }
+  setItem(key: string, value: string): void {
+    if (this.failWrites) throw new Error('QuotaExceededError')
+    this.map.set(key, value)
+  }
 }
 
 // ── a stored library compacts to the selected definition ───────────────────
@@ -569,11 +583,194 @@ function invalidMachine(id: string, name: string): MachineDefinition {
     meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
   })
 
-  assert(template.meta.machineDefinitions.length === 1, 'a template carries one machine snapshot')
-  assert(template.meta.selectedMachineId === 'template-selected', 'the template keeps its selected machine')
+  assert(template.project.meta.machineDefinitions.length === 1, 'a template carries one machine snapshot')
+  assert(template.project.meta.selectedMachineId === 'template-selected', 'the template keeps its selected machine')
   assert(
     getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'template-other'),
     'template extraction moves the other machine to My Machines instead of dropping it',
+  )
+}
+
+
+// ── malformed machine envelopes are refused, not read as legacy ─────────────
+
+{
+  // The real pre-3.0 shape has no `machineDefinitions` key at all. Every other
+  // non-array value is corruption and must not load as "this project has no
+  // machines", which would clear the selection without a word.
+  const malformed: Array<[string, unknown]> = [
+    ['object', { id: 'not-a-list' }],
+    ['string', 'not-a-list'],
+    ['null', null],
+    ['boolean', false],
+  ]
+  for (const [label, value] of malformed) {
+    freshLibrary()
+    const base = newProject(`Malformed ${label}`, 'mm')
+    const file = JSON.parse(JSON.stringify({
+      ...base,
+      meta: { ...base.meta, machineDefinitions: value, selectedMachineId: null },
+    })) as unknown
+    let thrown: unknown
+    try {
+      decodeProjectFormat(file)
+    } catch (error) {
+      thrown = error
+    }
+    assert(thrown instanceof MachineLoadError, `a non-array machine list (${label}) refuses the load`)
+    const diagnostic = (thrown as MachineLoadError).diagnostics[0]
+    assert(diagnostic.index === 0, `the malformed list diagnostic is indexed (${label})`)
+    assert(diagnostic.kind === 'machine-structural-error', `the malformed list diagnostic is structural (${label})`)
+
+    const before = useProjectStore.getState().project
+    assertThrows(
+      () => useProjectStore.getState().openProjectFromText(JSON.stringify(file), null),
+      `opening a malformed machine list (${label}) throws before replacing state`,
+    )
+    assert(useProjectStore.getState().project === before, `the current project survives a malformed ${label} load`)
+  }
+}
+
+// ── compaction happens only after a durable rescue ─────────────────────────
+
+{
+  // Write-blocked library: the saved file, the loaded project, an undone
+  // snapshot and a template all keep the unselected machine.
+  const blocked = new FakeSnapshotStorage()
+  blocked.setItem(CUSTOM_MACHINES_STORAGE_KEY, '{ not json')
+  resetMachineLibraryForTests()
+  initMachineLibrary(blocked)
+  assert(getMachineLibrarySnapshot().writeBlocked, 'the test storage is write-blocked')
+
+  const selected = customMachine('blocked-selected', 'Blocked Selected')
+  const other = customMachine('blocked-other', 'Blocked Other')
+  const base = newProject('Blocked rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  }
+  useProjectStore.setState({
+    project: twoMachines,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'a blocked rescue does not compact the saved project')
+  assert(
+    saved.meta.machineDefinitions.some((definition) => definition.id === 'blocked-other'),
+    'the unselected machine is in the saved file',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'saving reports why the machine stayed in the project',
+  )
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a blocked rescue does not compact a directly loaded project',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'a direct load reports the kept machine',
+  )
+
+  useProjectStore.setState({
+    project: base,
+    history: { past: [twoMachines], future: [], transactionStart: null },
+    machineLoadDiagnostics: [],
+  } as unknown as Partial<ProjectStore>)
+  useProjectStore.getState().undo()
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a history restore does not compact before a durable rescue',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'a history restore surfaces the kept machine',
+  )
+
+  const template = setupOnlyTemplate(twoMachines)
+  assert(
+    template.project.meta.machineDefinitions.length === 2,
+    'template extraction does not compact before a durable rescue',
+  )
+  assert(
+    template.diagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'template extraction reports the kept machine',
+  )
+}
+
+{
+  // A name the library rejects (61 characters) is a rescue failure even with a
+  // healthy storage: the machine stays in the project and the reason is shown.
+  freshLibrary()
+  const selected = customMachine('long-selected', 'Long Selected')
+  const longName: MachineDefinition = {
+    ...structuredClone(bundledMachines()[0]),
+    id: 'long-name',
+    name: 'x'.repeat(61),
+    builtin: false,
+  }
+  const base = newProject('Long name rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, longName], selectedMachineId: selected.id },
+  }
+  useProjectStore.setState({
+    project: twoMachines,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'a library-rejected machine is not compacted away on save')
+  assert(
+    saved.meta.machineDefinitions.some((definition) => definition.name.length === 61),
+    'the rejected machine is still in the saved file',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'saving reports the rejected rescue',
+  )
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a library-rejected machine is not compacted away on load',
+  )
+}
+
+{
+  // A storage write failure must not look like a successful rescue. The first
+  // save keeps the machine; after storage recovers, reloading that file moves
+  // it to My Machines instead of losing it.
+  const storage = new FakeSnapshotStorage()
+  storage.failWrites = true
+  resetMachineLibraryForTests()
+  initMachineLibrary(storage)
+  const selected = customMachine('write-selected', 'Write Selected')
+  const other = customMachine('write-other', 'Write Other')
+  const base = newProject('Write failure rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  }
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a failed storage write does not compact the loaded project',
+  )
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'the machine is still in the saved file after a failed write')
+
+  storage.failWrites = false
+  resetMachineLibraryForTests()
+  initMachineLibrary(storage)
+  useProjectStore.getState().loadProject(saved)
+  assert(
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'write-other'),
+    'reloading the saved project rescues the machine once storage works again',
   )
 }
 

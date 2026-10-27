@@ -46,6 +46,10 @@ export type MachineLoadDiagnosticKind =
   | 'machine-library-unreadable'
   /** A library write was refused because the stored envelope is preserved unchanged. */
   | 'machine-library-blocked'
+  /** A library write failed at the storage layer (quota, disabled storage). */
+  | 'machine-library-write-failed'
+  /** An unselected machine stayed in the project because its rescue did not become durable. */
+  | 'machine-kept-in-project'
 
 export interface MachineLoadDiagnostic {
   severity: 'info' | 'warning' | 'error'

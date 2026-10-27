@@ -189,7 +189,13 @@ export function MachineDefinitionManagerDialog({
 
   const handleRemove = useCallback(() => {
     if (!previewDef || previewDef.builtin || isProjectCopy) return
-    deleteCustomMachine(previewDef.id)
+    const removed = deleteCustomMachine(previewDef.id)
+    if (!removed.ok) {
+      // Do not close the entry as if it were gone when the library refused the
+      // write (#1119); the dialog shows the reason instead.
+      setError(removed.error ?? null)
+      return
+    }
     setPreviewId(null)
   }, [previewDef, isProjectCopy])
 
