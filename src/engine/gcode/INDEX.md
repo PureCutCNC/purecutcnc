@@ -58,7 +58,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   templates are scanned with the *dialect's* comment syntax, never the
   definition's own field; a numeric placeholder may only be the value of a
   fixed word letter it is safe under (`T`/`H` tool number, `S` RPM, `F` feed,
-  `P` material number), never a G/M number and never joined to a word; and a
+  `P` material number), never a G/M number and never joined to a following
+  value — since #1119 it may end a word where the next word starts
+  (`T{toolNumber}M6`) and may follow a completed word
+  (`G43Z0.8000H{toolNumber}`); and a
   single-command field is judged whole, so a newline or semicolon cannot split
   it into separately-valid commands. `templateInjectionSweep.test.ts` runs every
   field against every injection pattern.
@@ -115,9 +118,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   and a test enumerates the schema's string paths so a new field without a class
   fails before it can reach an emitter. The schema refuses a definition that
   breaks its class: a *program header* may only set up modals (`G90`, `G17`,
-  `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, units, work-coordinate select, a
-  bare program number, a fully scanned parameter assignment, comments,
-  non-moving M codes) with no motion or axis word; the *tool change*, the
+  `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, `G91.1`, a bare `G0`/`G00` with
+  no axis word, units, work-coordinate select, a bare program number, a fully
+  scanned parameter assignment, comments, non-moving M codes) with no other
+  motion or axis word; the *tool change*, the
   *footer* and the program-end command may do anything; and every template that
   runs inside the program (spindle, coolant, pause, operation header,
   inverse-time, units, canned cycle, plasma torch, material/THC) is inert — no
@@ -127,9 +131,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   only in the header, the tool change and the footer. A *single-word command*
   field (rapid/linear/arc words, feed/RPM prefixes, units, the peck word, the
   machine-coordinate retract, the plasma probe/set-zero) is matched whole
-  against its own pattern, so `rpmCommand: "G91\nS"` is refused; every other
-  placeholder that carries operator text (`{programName}`, `{operationName}`,
-  `{operationDescription}`, `{toolName}`) may appear only inside a comment, and
+  against its own pattern, so `rpmCommand: "G91\nS"` is refused; a *numeric
+  placeholder* may end a word where the next word's letter begins
+  (`T{toolNumber}M6`) and may follow a completed word
+  (`G43Z0.8000H{toolNumber}`), but it may not become a G/M number
+  (`M{toolNumber}`) or absorb a following value (`T{toolNumber}5`, #1119); every
+  other placeholder that carries operator text (`{programName}`,
+  `{operationName}`, `{operationDescription}`, `{toolName}`) may appear only
+  inside a comment, and
   the emitter strips the dialect's closing marker, `;` and newlines from that
   text. The purpose templates keep exactly their own word (`G93`/`G94`,
   `G20`/`G21`, the torch's `M3`/`M4`/`M5` with an optional `S` and `$` selector,
@@ -351,7 +360,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (every restricted template field refuses a motion/axis/mode/macro word with a
   message naming field and word; the header's own class; tool change and footer
   accept anything; every bundled definition validates; machine import reports
-  the refusal), `templateByteIdentity.test.ts` (a tool-change-free program per
+  the refusal; the #1119 relaxations with each still-refused counterpart),
+  `issue1109MachineMigration.test.ts` (the untouched #1109 snapshot
+  `issue-1109-tab-ramp-original.camj` loads with `avid-mach4-inch-shop`
+  selected and posts its saved `G00`/`G91.1` header and joined
+  `T{toolNumber}M6` / `G43Z0.8000H{toolNumber}` tool change),
+  `templateByteIdentity.test.ts` (a tool-change-free program per
   bundled definition is byte-identical to `origin/integration/0.6.0`),
   `templateReviewFixes.test.ts` (the seven Codex review findings: every schema
   string field is classified, command fields refuse injected words, an

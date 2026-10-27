@@ -35,8 +35,8 @@
  * - a numeric placeholder was expanded to `1` before judging the line, so
  *   `M{toolNumber}` validated as `M1` and could emit `M6`. A placeholder is
  *   now judged where it stands: a fixed word letter it may follow, never a G
- *   or M number, never joined to another word, and never at an unknown
- *   position.
+ *   or M number, never joined to a following value, and never at an unknown
+ *   position. Slice K below relaxes the word-adjacency half of this rule.
  * - single-command fields were split into lines before matching, so
  *   `feedCommand: "F\nF"` passed one line at a time. A command field is now
  *   one line and one command, judged whole.
@@ -44,9 +44,10 @@
  * Three classes, decided by Frank on 2026-10-21:
  *
  * - **Program header** — written before any motion, so modal setup is allowed:
- *   `G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, the units words,
- *   work-coordinate select, a bare program number, a parameter assignment,
- *   comments, and M codes that do not move. No motion word and no axis word.
+ *   `G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, `G91.1`, a bare
+ *   `G0`/`G00` with no axis word, the units words, work-coordinate select, a
+ *   bare program number, a parameter assignment, comments, and M codes that do
+ *   not move. No other motion word and no axis word.
  * - **Tool change and end of program (footer)** — anything is allowed: motion,
  *   `G53`, `G28`/`G30`, `M6`, O-word calls, macros. The emitter follows a tool
  *   change with one full restart block of its own, and nothing follows the
@@ -87,6 +88,22 @@
  *   and 2 (spotting);
  * - the material feed expression's `F` is case-insensitive like every G-code
  *   letter; the HAL pin name itself stays exact.
+ *
+ * Slice K (#1119, 2026-10-26) relaxes the three cases Frank approved as
+ * legitimate G-code, so a 0.5.x machine such as the #1109 reporter's loads and
+ * exports unchanged:
+ *
+ * - a program header may spell a bare `G0`/`G00` with no axis word: it sets the
+ *   motion mode and moves nothing. An axis word on the same line is still
+ *   refused;
+ * - a program header may spell `G91.1`, arc centres relative to the start,
+ *   which is how the emitter writes I/J (`arcFitting.ts`). `G90.1` (absolute
+ *   arc centres) and `G91` (incremental distance) stay refused;
+ * - a numeric placeholder may end a word and be immediately followed by the
+ *   next word, and may itself follow a completed word: `T{toolNumber}M6` and
+ *   `G43Z0.8000H{toolNumber}` are accepted. A placeholder that would become
+ *   part of a G or M number (`M{toolNumber}`, `G{x}`) or be joined to a
+ *   following value (`T{toolNumber}5`) stays refused.
  *
  * The documentation for each form is cited beside the constant that enforces
  * it.
@@ -302,10 +319,20 @@ interface TemplateField {
  * compensation cancel, work-coordinate select, path control, cycle cancel,
  * offset reset and constant-surface-speed cancel. `G43`/`G44` apply an offset
  * and `G91` changes the distance mode, so neither is here.
+ *
+ * Two #1119 forms are safe before the first move and are allowed:
+ *
+ * - a bare `G0`/`G00` with no axis word: it selects the rapid motion mode and
+ *   moves nothing, and the word loop still refuses an axis word on the same
+ *   line (`G0 Z-2`);
+ * - `G91.1`, arc centres relative to the start, which is exactly how the
+ *   emitter writes I/J (`arcFitting.ts`: `i = center.x - segStart.x`). `G90.1`
+ *   would make every emitted arc use absolute centres and `G91` would change
+ *   where every following move lands, so neither is here.
  */
 const HEADER_G_COMMANDS: ReadonlySet<string> = new Set([
-  'G4', 'G17', 'G20', 'G21', 'G40', 'G49', 'G54', 'G55', 'G56', 'G57', 'G58',
-  'G59', 'G61', 'G64', 'G80', 'G90', 'G92.1', 'G94', 'G97',
+  'G0', 'G4', 'G17', 'G20', 'G21', 'G40', 'G49', 'G54', 'G55', 'G56', 'G57',
+  'G58', 'G59', 'G61', 'G64', 'G80', 'G90', 'G91.1', 'G92.1', 'G94', 'G97',
 ])
 
 /**
@@ -798,16 +825,40 @@ function endsWord(code: string, at: number): boolean {
 }
 
 /**
+ * True when `at` starts a word in run-together G-code. A letter begins a new
+ * word as soon as the previous word's value ends (`Z0.8000H1` is a Z word and
+ * an H word), because a word is a letter plus its value and needs no
+ * whitespace after the number. Line start, whitespace and block delete remain
+ * boundaries, so `#T{…}` is still not a `T` word.
+ */
+function startsJoinedWord(code: string, at: number): boolean {
+  if (startsWord(code, at)) return true
+  return /[0-9.]/.test(code[at - 1] ?? '')
+}
+
+/**
+ * True when `at` ends a word in run-together G-code: the next word's letter
+ * starts a new word (`T1M6` ends the T word at the M), while a digit, sign or
+ * dot continues the same value (`T15`) and is not a word end.
+ */
+function endsJoinedWord(code: string, at: number): boolean {
+  return endsWord(code, at) || /[A-Za-z]/.test(code[at] ?? '')
+}
+
+/**
  * A placeholder in *code* that the emitter cannot safely fill.
  *
  * - Operator text may close a comment or start a new line, so it may only be
  *   written inside one.
  * - A numeric placeholder may only be the value of a fixed word letter
  *   (`T{toolNumber}`, `H{toolNumber}` in a tool change, `S{rpm}`, `F{feed}`,
- *   `P{materialNumber}`). It may never be the number of a `G` or
- *   `M` word, never be joined to another word, and any position not in that
- *   list is forbidden. `M{toolNumber}` therefore cannot validate as `M1` and
- *   emit `M6` (Codex review of #1057 slice H, finding 2).
+ *   `P{materialNumber}`). It may end a word where the next word begins
+ *   (`T{toolNumber}M6`) and may itself follow a completed word
+ *   (`G43Z0.8000H{toolNumber}`), but it may never be the number of a `G` or
+ *   `M` word, may never be joined to a following value (`T{toolNumber}5`), and
+ *   any other position is forbidden. `M{toolNumber}` therefore cannot validate
+ *   as `M1` and emit `M6` (Codex review of #1057 slice H, finding 2; #1119
+ *   relaxed only the word-adjacency half).
  * - `{unitsCommand}`/`{wcsCommand}` expand to whole commands, so they must
  *   occupy a whole word too.
  * - An unknown placeholder is refused.
@@ -842,10 +893,12 @@ function placeholderRefusal(
       letters.length === 0
       || letter === undefined
       || !letters.includes(letter)
-      // The fixed letter must itself start a word, so `#T{…}` and `M8T{…}`
-      // are not a `T` word at all.
-      || !startsWord(code, at - 1)
-      || !endsWord(code, at + whole.length)
+      // The fixed letter must itself start a word: `#T{…}` is not a `T` word,
+      // while a letter after a completed word's value does start one
+      // (`G43Z0.8000H{…}`). The placeholder's value ends where the next
+      // word's letter begins (`T{…}M6`), never in the middle of a number.
+      || !startsJoinedWord(code, at - 1)
+      || !endsJoinedWord(code, at + whole.length)
     ) {
       return { word: whole, kind: 'misplaced-placeholder' }
     }
@@ -1008,7 +1061,7 @@ function describeRule(rule: TemplateRule): { label: string, hint: string } {
     case 'header':
       return {
         label: 'program header',
-        hint: 'before the first move only modal setup, comments, parameter assignments and non-moving M codes are allowed; there is no motion or axis word here',
+        hint: 'before the first move only modal setup (including a bare G0/G00 with no axis word, and G91.1), comments, parameter assignments and non-moving M codes are allowed; there is no other motion or axis word here',
       }
     case 'inert':
       return {
@@ -1205,7 +1258,7 @@ function refusalMessage(
     const list = letters.length === 1
       ? letters[0]
       : `${letters.slice(0, -1).join(', ')} or ${letters[letters.length - 1]}`
-    return `${field}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to another word.`
+    return `${field}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to a following value.`
   }
   const { label, hint } = describeRule(rule)
   return `${field}: the word "${word}" is not allowed in the ${label}; ${hint}.`

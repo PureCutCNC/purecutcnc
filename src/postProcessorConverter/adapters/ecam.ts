@@ -288,7 +288,7 @@ export const ecamAdapter: SourceAdapter = {
           status: 'unsupported',
           sourceField: 'Post/Template_InitNewProgram',
           targetField: 'program.header',
-          message: `Dropped ${droppedMoves.length} startup line(s) that move the machine: ${JSON.stringify(droppedMoves)}. Since #1057 a program header may only set up modals (no motion or axis word), and a startup move has no template slot. Home the machine before running a program from this definition, or add the move at the controller.`,
+          message: `Dropped ${droppedMoves.length} startup line(s) that move the machine: ${JSON.stringify(droppedMoves)}. A program header may only set up modals (a bare G0/G00 with no axis word, #1119), and a startup move has no template slot. Home the machine before running a program from this definition, or add the move at the controller.`,
           blocksStrict: false,
         })
       }
