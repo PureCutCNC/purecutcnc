@@ -271,35 +271,43 @@ type Ui = typeof import('./selectors')
 
 interface RotarySnapshot {
   folderCount: number
-  folderName: string | null
   featureCount: number
   operationCount: number
-  operationId: string | null
-  operationKind: string | null
-  operationPass: string | null
-  operationToolRef: string | null
-  targetFeatureIds: string[]
+  toolCount: number
   historyPast: number
+  featureId: string | null
+  cannedKind: string | null
+  /** The stored dialog numbers, without the internal frame snapshot. */
+  params: Record<string, number | string> | null
+  profileCount: number
 }
 
 async function rotarySnapshot(page: Page): Promise<RotarySnapshot> {
   return page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { resolveFeatureInstance } = await import('/src/store/helpers/resolveFeatures.ts') as typeof import('../src/store/helpers/resolveFeatures')
+    const { resolveCannedShapeProfiles } = await import('/src/cannedShapes/index.ts') as typeof import('../src/cannedShapes')
     const state = useProjectStore.getState()
     const project = state.project
-    const operation = project.operations[0]
-    const target = operation?.target
+    const feature = project.features.at(-1)
+    const definition = feature ? project.featureDefinitions[feature.definitionId] : undefined
+    const resolved = feature ? resolveFeatureInstance(project, feature.id) : null
+    const canned = definition?.canned ?? null
+    const params = canned
+      ? Object.fromEntries(
+          Object.entries(canned.params).filter(([key]) => key !== 'frame'),
+        ) as Record<string, number | string>
+      : null
     return {
       folderCount: project.featureFolders.length,
-      folderName: project.featureFolders[0]?.name ?? null,
       featureCount: project.features.length,
       operationCount: project.operations.length,
-      operationId: operation?.id ?? null,
-      operationKind: operation?.kind ?? null,
-      operationPass: operation?.pass ?? null,
-      operationToolRef: operation?.toolRef ?? null,
-      targetFeatureIds: target?.source === 'features' ? target.featureIds : [],
+      toolCount: project.tools.length,
       historyPast: state.history.past.length,
+      featureId: feature?.id ?? null,
+      cannedKind: canned?.kind ?? null,
+      params,
+      profileCount: resolved ? resolveCannedShapeProfiles(resolved).length : 0,
     }
   })
 }
@@ -311,7 +319,7 @@ interface RotaryLineGeometry {
   lead: number | null
   /** Across travel of each line, in project units. Signed: the physical hand. */
   acrossPerLine: number[]
-  /** The across coordinate each line starts at, from the ordinary profile.start. */
+  /** The across coordinate each line starts at, from the generated profile.start. */
   acrossStart: number[]
   /** Along coordinate (the bar's project axis) of each line's first point. */
   alongStart: number[]
@@ -320,20 +328,23 @@ interface RotaryLineGeometry {
 }
 
 /**
- * Read the created ordinary line features back from the project and derive
- * their sheet geometry. This is a real geometry check: the field text is not
- * evidence that the store was called with the right pitch.
+ * Read the canned feature back from the project and derive its generated sheet
+ * geometry. This is a real geometry check: the field text is not evidence that
+ * the store was called with the right pitch or hand.
  */
 async function rotaryLineGeometry(page: Page): Promise<RotaryLineGeometry> {
   return page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     const { rotaryPatternFrame } = await import('/src/store/helpers/rotaryPatterns.ts') as typeof import('../src/store/helpers/rotaryPatterns')
+    const { resolveFeatureInstance } = await import('/src/store/helpers/resolveFeatures.ts') as typeof import('../src/store/helpers/resolveFeatures')
+    const { resolveCannedShapeProfiles } = await import('/src/cannedShapes/index.ts') as typeof import('../src/cannedShapes')
     const project = useProjectStore.getState().project
     const frame = rotaryPatternFrame(project)
     if (!frame) throw new Error('e2e: the project has no rotary frame')
-    const profiles = project.features
-      .map((feature) => project.featureDefinitions[feature.definitionId]?.profile)
-      .filter((profile): profile is NonNullable<typeof profile> => profile !== undefined)
+    const feature = project.features.at(-1)
+    const resolved = feature ? resolveFeatureInstance(project, feature.id) : null
+    if (!resolved) throw new Error('e2e: the project has no canned feature')
+    const profiles = resolveCannedShapeProfiles(resolved)
     const alongOf = (point: { x: number; y: number }): number => (frame.axis === 'x' ? point.x : point.y)
     const ends = profiles.map((profile) => {
       const segment = profile.segments[0]
@@ -362,6 +373,24 @@ async function rotaryLineGeometry(page: Page): Promise<RotaryLineGeometry> {
       alongEnd: ends.map((point) => alongOf(point)),
     }
   })
+}
+
+/**
+ * Add a Follow line operation to the canned feature through the same store
+ * action the CAM panel uses. Creation adds no operation of its own (decision
+ * 3), so the toolpath / 3D / Simulation checks add one explicitly.
+ */
+async function addFollowLineOperation(page: Page, featureId: string): Promise<string> {
+  return page.evaluate(async (id) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const operationId = useProjectStore.getState().addOperation(
+      'follow_line',
+      'rough',
+      { source: 'features', featureIds: [id] },
+    )
+    if (!operationId) throw new Error('e2e: the Follow line operation was not created')
+    return operationId
+  }, featureId)
 }
 
 interface GeneratedReadout {
@@ -471,6 +500,28 @@ function rotaryEntry(page: Page, ui: Ui, kind: 'thread' | 'flutes') {
   return kind === 'thread' ? ui.rotary.threadButton(page) : ui.rotary.flutesButton(page)
 }
 
+/**
+ * Open the creation drawer on desktop. The tablet rail already shows the
+ * rotary entries in its Around section, so there is no `.toolbar-creation-
+ * picker__drawer-btn` there and this is a no-op.
+ */
+async function openCreationDrawer(page: Page): Promise<void> {
+  const drawerButton = page.locator('.toolbar-creation-picker__drawer-btn')
+  if (await drawerButton.count() === 0) return
+  const drawer = page.locator('.toolbar-creation-picker__drawer')
+  if ((await drawer.count()) === 0 || !(await drawer.isVisible())) {
+    await drawerButton.click()
+  }
+}
+
+/** Open a Thread/Flutes dialog from the drawer group or the tablet rail. */
+async function openRotaryEntry(page: Page, ui: Ui, kind: 'thread' | 'flutes'): Promise<void> {
+  const button = rotaryEntry(page, ui, kind)
+  if (!(await button.isVisible())) await openCreationDrawer(page)
+  await expect(button).toBeVisible()
+  await button.click()
+}
+
 test('Thread and Flutes are offered only on an available, active Around face', async ({ app, ui }) => {
   const { page } = app
   // A milling block has no Around face at all.
@@ -482,6 +533,7 @@ test('Thread and Flutes are offered only on an available, active Around face', a
   await expect(ui.rotary.threadButton(page)).toHaveCount(0)
 
   await switchToAround(page)
+  await openCreationDrawer(page)
   await expect(ui.rotary.threadButton(page)).toBeVisible()
   await expect(ui.rotary.flutesButton(page)).toBeVisible()
 
@@ -490,13 +542,15 @@ test('Thread and Flutes are offered only on an available, active Around face', a
   await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
 })
 
-test('a mm thread creates its folder, lines and Engrave in a single undo step', async ({ app, ui }) => {
+test('a mm thread creates one canned feature in a single undo step, with no operation', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
+  // A V-bit for the Follow line operation the test adds afterwards.
+  await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   await expect(ui.rotary.note(page)).toContainText('not precision thread tooling')
   // Defaults: one start, and a depth of 0.61 × the 1.5 mm default pitch.
@@ -511,14 +565,23 @@ test('a mm thread creates its folder, lines and Engrave in a single undo step', 
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
   const snapshot = await rotarySnapshot(page)
-  expect(snapshot.folderName).toContain('Thread')
-  expect(snapshot.featureCount).toBe(baseline.featureCount + 2)
-  expect(snapshot.operationKind).toBe('follow_line')
-  expect(snapshot.operationPass).toBe('rough')
-  expect(snapshot.targetFeatureIds).toHaveLength(2)
-  // The folder, both lines and the operation are one history transition.
+  expect(snapshot.cannedKind).toBe('thread')
+  expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
+  expect(snapshot.folderCount).toBe(baseline.folderCount)
+  expect(snapshot.operationCount).toBe(baseline.operationCount)
+  expect(snapshot.toolCount).toBe(baseline.toolCount)
+  expect(snapshot.profileCount).toBe(2)
+  expect(snapshot.params).toMatchObject({
+    start: 2,
+    length: 30,
+    pitch: 2,
+    starts: 2,
+    depth: 1.2,
+    hand: 'right',
+  })
+  // The one feature is one history transition; no folder or operation joins it.
   expect(snapshot.historyPast).toBe(baseline.historyPast + 1)
-  expect(snapshot.operationId).not.toBeNull()
+  expect(snapshot.featureId).not.toBeNull()
 
   // A two-start thread has a lead of two pitches, and its starts sit half a
   // circumference apart across the sheet. The across *start* is what separates
@@ -530,16 +593,24 @@ test('a mm thread creates its folder, lines and Engrave in a single undo step', 
   expect(Math.abs((offsets[1] - offsets[0]) - geometry.circumference / 2)).toBeLessThan(1e-6)
   expect(geometry.acrossPerLine.every((across) => Math.abs(across) > 1e-6)).toBe(true)
 
-  // Let the generation gear settle before reading the generated moves back.
+  // A Follow line operation on the canned feature really moves, wrapped onto
+  // the bar. Creation itself added none; this is the ordinary CAM path.
+  const operationId = await addFollowLineOperation(page, snapshot.featureId!)
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-
-  // The generated Engrave really moves, wrapped onto the bar.
-  const generated = await generatedOperation(page, snapshot.operationId!)
+  const generated = await generatedOperation(page, operationId)
   expect(generated.moveCount).toBeGreaterThan(0)
   expect(generated.errorCount).toBe(0)
   expect(generated.allHaveAngle).toBe(true)
 
-  // One undo removes the folder, both lines and the operation; redo restores them.
+  // The feature and the operation are separate history steps: undo once
+  // removes the operation, undo again removes the feature; redo restores both.
+  await undo(page)
+  expect(await rotarySnapshot(page)).toMatchObject({
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount + 1,
+    operationCount: baseline.operationCount,
+    historyPast: baseline.historyPast + 1,
+  })
   await undo(page)
   expect(await rotarySnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
@@ -548,12 +619,55 @@ test('a mm thread creates its folder, lines and Engrave in a single undo step', 
     historyPast: baseline.historyPast,
   })
   await redo(page)
+  await redo(page)
   expect(await rotarySnapshot(page)).toMatchObject({
-    folderCount: baseline.folderCount + 1,
-    featureCount: baseline.featureCount + 2,
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount + 1,
     operationCount: baseline.operationCount + 1,
-    historyPast: baseline.historyPast + 1,
+    historyPast: baseline.historyPast + 2,
   })
+})
+
+test('Edit thread… reopens the dialog with its parameters and applies new ones', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+
+  await openRotaryEntry(page, ui, 'thread')
+  await ui.rotary.field(page, 'start').fill('5')
+  await ui.rotary.field(page, 'length').fill('20')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  const before = await rotarySnapshot(page)
+  expect(before.params).toMatchObject({ start: 5, length: 20, pitch: 2, depth: 1 })
+  const dialog = ui.rotary.dialog(page)
+
+  // The selected canned feature shows the generic Properties Edit button; it
+  // reopens the same typed dialog with the stored numbers.
+  await page.getByRole('button', { name: /^Edit thread/ }).click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.dialog-title')).toContainText('Edit thread')
+  await expect(ui.rotary.field(page, 'start')).toHaveValue('5')
+  await expect(ui.rotary.field(page, 'length')).toHaveValue('20')
+  await expect(ui.rotary.field(page, 'pitch')).toHaveValue('2')
+  await expect(ui.rotary.field(page, 'depth')).toHaveValue('1')
+
+  await ui.rotary.field(page, 'length').fill('40')
+  await ui.rotary.createButton(page).click()
+  await expect(dialog).toBeHidden()
+
+  const after = await rotarySnapshot(page)
+  expect(after.featureId).toBe(before.featureId)
+  expect(after.featureCount).toBe(before.featureCount)
+  expect(after.operationCount).toBe(before.operationCount)
+  expect(after.params).toMatchObject({ start: 5, length: 40, pitch: 2, depth: 1 })
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  const geometry = await rotaryLineGeometry(page)
+  expect(geometry.lineCount).toBe(1)
+  expect(geometry.alongEnd[0] - geometry.alongStart[0]).toBeCloseTo(40, 6)
 })
 
 test('an inch thread dialog converts 20 TPI to a 0.05 inch pitch', async ({ app, ui }) => {
@@ -561,7 +675,7 @@ test('an inch thread dialog converts 20 TPI to a 0.05 inch pitch', async ({ app,
   await prepareInchRoundBarWithRotary(page)
   await switchToAround(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   // The inch field is threads per inch, not a pitch.
   await expect(ui.rotary.dialog(page).getByLabel('Threads per inch')).toBeVisible()
@@ -577,54 +691,57 @@ test('an inch thread dialog converts 20 TPI to a 0.05 inch pitch', async ({ app,
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
-  // 20 TPI is a physical pitch of 0.05 in, read back from the created line.
+  // 20 TPI is a physical pitch of 0.05 in, stored and read back from the canned
+  // feature's generated line.
+  const snapshot = await rotarySnapshot(page)
+  expect(snapshot.cannedKind).toBe('thread')
+  expect(snapshot.params).toMatchObject({ pitch: 0.05 })
   const geometry = await rotaryLineGeometry(page)
   expect(geometry.lineCount).toBe(1)
   expect(geometry.lead ?? 0).toBeCloseTo(0.05, 8)
 })
 
-test('flutes follow count, twist and the chosen tool', async ({ app, ui }) => {
+test('flutes follow count and twist, and the dialog has no Tool field', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
   await seedFluteTools(page)
   await switchToAround(page)
+  const baseline = await rotarySnapshot(page)
 
-  // Straight flutes: three of them, no twist, cut with the ball tool.
-  await ui.rotary.flutesButton(page).click()
+  // Straight flutes: three of them, no twist.
+  await openRotaryEntry(page, ui, 'flutes')
   await expect(ui.rotary.dialog(page)).toBeVisible()
+  await expect(ui.rotary.dialog(page).getByText('Tool', { exact: true })).toHaveCount(0)
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'count').fill('3')
   await ui.rotary.field(page, 'twist').fill('0')
   await ui.rotary.field(page, 'depth').fill('1')
-  await ui.rotary.toolTrigger(page).click()
-  await ui.rotary.toolOption(page, 'Ball 3').click()
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
   let snapshot = await rotarySnapshot(page)
-  expect(snapshot.folderName).toContain('Flutes')
-  expect(snapshot.featureCount).toBe(3)
-  expect(snapshot.operationKind).toBe('follow_line')
-  expect(snapshot.operationToolRef).toBe('t-ball')
+  expect(snapshot.cannedKind).toBe('flutes')
+  expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
+  expect(snapshot.operationCount).toBe(baseline.operationCount)
+  expect(snapshot.profileCount).toBe(3)
+  expect(snapshot.params).toMatchObject({ count: 3, twist: 0 })
   let geometry = await rotaryLineGeometry(page)
   expect(geometry.lineCount).toBe(3)
   expect(geometry.acrossPerLine.every((across) => Math.abs(across) < 1e-6)).toBe(true)
 
-  // A twisted flute with the V-bit: two turns of twist, and the chosen tool.
+  // A twisted flute: two turns of twist, stored signed.
   await undo(page)
-  await ui.rotary.flutesButton(page).click()
+  await openRotaryEntry(page, ui, 'flutes')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'count').fill('2')
   await ui.rotary.field(page, 'twist').fill('2')
   await ui.rotary.field(page, 'depth').fill('1')
-  await ui.rotary.toolTrigger(page).click()
-  await ui.rotary.toolOption(page, 'V-bit 60').click()
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
   snapshot = await rotarySnapshot(page)
-  expect(snapshot.featureCount).toBe(2)
-  expect(snapshot.operationToolRef).toBe('t-v')
+  expect(snapshot.profileCount).toBe(2)
+  expect(snapshot.params).toMatchObject({ count: 2, twist: 2 })
   geometry = await rotaryLineGeometry(page)
   expect(geometry.lineCount).toBe(2)
   geometry.acrossPerLine.forEach((across) => {
@@ -635,10 +752,11 @@ test('flutes follow count, twist and the chosen tool', async ({ app, ui }) => {
 test('the thread dialog defaults to Right, and Left reverses the same helix', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
+  await seedFluteTools(page)
   await switchToAround(page)
 
   // Right is the default, and it is what the store is asked for.
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
   await ui.rotary.field(page, 'start').fill('2')
@@ -648,21 +766,23 @@ test('the thread dialog defaults to Right, and Left reverses the same helix', as
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
+  const rightSnapshot = await rotarySnapshot(page)
+  expect(rightSnapshot.params).toMatchObject({ hand: 'right' })
   const right = await rotaryLineGeometry(page)
   expect(right.lineCount).toBe(1)
   expect(right.lead ?? 0).toBeCloseTo(2, 6)
   expect(right.alongEnd[0] - right.alongStart[0]).toBeCloseTo(30, 6)
   expect(right.acrossPerLine[0]).toBeGreaterThan(0)
 
+  const rightOperationId = await addFollowLineOperation(page, rightSnapshot.featureId!)
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-  const rightGenerated = await generatedOperation(page, (await rotarySnapshot(page)).operationId!)
+  const rightGenerated = await generatedOperation(page, rightOperationId)
   expect(rightGenerated.moveCount).toBeGreaterThan(0)
   expect(rightGenerated.errorCount).toBe(0)
 
   // Left is the same line mirrored along the bar: same lead and endpoints,
   // opposite across sign, pitch untouched.
-  await undo(page)
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await ui.rotary.field(page, 'start').fill('2')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'pitch').fill('2')
@@ -673,6 +793,8 @@ test('the thread dialog defaults to Right, and Left reverses the same helix', as
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
 
+  const leftSnapshot = await rotarySnapshot(page)
+  expect(leftSnapshot.params).toMatchObject({ hand: 'left' })
   const left = await rotaryLineGeometry(page)
   expect(left.lineCount).toBe(1)
   expect(left.lead ?? 0).toBeCloseTo(2, 6)
@@ -681,8 +803,9 @@ test('the thread dialog defaults to Right, and Left reverses the same helix', as
   expect(left.acrossPerLine[0]).toBeLessThan(0)
   expect(Math.abs(left.acrossPerLine[0])).toBeCloseTo(Math.abs(right.acrossPerLine[0]), 6)
 
+  const leftOperationId = await addFollowLineOperation(page, leftSnapshot.featureId!)
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-  const leftGenerated = await generatedOperation(page, (await rotarySnapshot(page)).operationId!)
+  const leftGenerated = await generatedOperation(page, leftOperationId)
   expect(leftGenerated.moveCount).toBeGreaterThan(0)
   expect(leftGenerated.errorCount).toBe(0)
 })
@@ -692,7 +815,7 @@ test('an inch Left thread keeps the 20 TPI pitch and reverses the helix', async 
   await prepareInchRoundBarWithRotary(page)
   await switchToAround(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
   await ui.rotary.directionTrigger(page).click()
   await ui.rotary.directionOption(page, 'Left-hand').click()
@@ -704,6 +827,7 @@ test('an inch Left thread keeps the 20 TPI pitch and reverses the helix', async 
 
   // The field is still threads per inch: 20 TPI is a 0.05 in physical pitch,
   // and the Left hand only flips the sheet slope.
+  expect((await rotarySnapshot(page)).params).toMatchObject({ hand: 'left', pitch: 0.05 })
   const geometry = await rotaryLineGeometry(page)
   expect(geometry.lineCount).toBe(1)
   expect(geometry.lead ?? 0).toBeCloseTo(0.05, 8)
@@ -715,7 +839,7 @@ test('a Left thread reverses the helix on a bar along Y as well', async ({ app, 
   await prepareMmRoundBarAxis(page, 'y')
   await switchToAround(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'pitch').fill('2')
   await ui.rotary.field(page, 'depth').fill('1.2')
@@ -726,7 +850,7 @@ test('a Left thread reverses the helix on a bar along Y as well', async ({ app, 
   expect(right.lead ?? 0).toBeCloseTo(2, 6)
 
   await undo(page)
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'pitch').fill('2')
   await ui.rotary.field(page, 'depth').fill('1.2')
@@ -749,31 +873,27 @@ test('flute twist is a magnitude, and Left flips the hand', async ({ app, ui }) 
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
 
-  // Right-hand (default): two positive turns of twist, cut with the ball tool.
-  await ui.rotary.flutesButton(page).click()
+  // Right-hand (default): two positive turns of twist.
+  await openRotaryEntry(page, ui, 'flutes')
   await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'count').fill('2')
   await ui.rotary.field(page, 'twist').fill('2')
   await ui.rotary.field(page, 'depth').fill('1')
-  await ui.rotary.toolTrigger(page).click()
-  await ui.rotary.toolOption(page, 'Ball 3').click()
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
   const right = await rotaryLineGeometry(page)
   expect(right.lineCount).toBe(2)
   expect(right.acrossPerLine.every((across) => across > 0)).toBe(true)
-  expect((await rotarySnapshot(page)).operationToolRef).toBe('t-ball')
+  expect((await rotarySnapshot(page)).params).toMatchObject({ twist: 2 })
 
-  // Left-hand: the same positive magnitude, signed negative, V-bit tool.
+  // Left-hand: the same positive magnitude, signed negative.
   await undo(page)
-  await ui.rotary.flutesButton(page).click()
+  await openRotaryEntry(page, ui, 'flutes')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'count').fill('2')
   await ui.rotary.field(page, 'twist').fill('2')
   await ui.rotary.field(page, 'depth').fill('1')
-  await ui.rotary.toolTrigger(page).click()
-  await ui.rotary.toolOption(page, 'V-bit 60').click()
   await ui.rotary.directionTrigger(page).click()
   await ui.rotary.directionOption(page, 'Left-hand').click()
   // The field keeps the magnitude the user typed; the hand signs the store call.
@@ -786,9 +906,9 @@ test('flute twist is a magnitude, and Left flips the hand', async ({ app, ui }) 
   left.acrossPerLine.forEach((across, index) => {
     expect(Math.abs(across)).toBeCloseTo(Math.abs(right.acrossPerLine[index]), 6)
   })
-  expect((await rotarySnapshot(page)).operationToolRef).toBe('t-v')
+  expect((await rotarySnapshot(page)).params).toMatchObject({ twist: -2 })
 
-  // One undo removes the whole pattern; redo restores it.
+  // One undo removes the canned feature; redo restores it.
   await undo(page)
   expect(await rotarySnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
@@ -798,21 +918,19 @@ test('flute twist is a magnitude, and Left flips the hand', async ({ app, ui }) 
   })
   await redo(page)
   expect(await rotarySnapshot(page)).toMatchObject({
-    folderCount: baseline.folderCount + 1,
-    featureCount: baseline.featureCount + 2,
-    operationCount: baseline.operationCount + 1,
+    folderCount: baseline.folderCount,
+    featureCount: baseline.featureCount + 1,
+    operationCount: baseline.operationCount,
     historyPast: baseline.historyPast + 1,
   })
 
   // Zero twist is straight in either hand: Left with 0 has no across travel.
   await undo(page)
-  await ui.rotary.flutesButton(page).click()
+  await openRotaryEntry(page, ui, 'flutes')
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'count').fill('2')
   await ui.rotary.field(page, 'twist').fill('0')
   await ui.rotary.field(page, 'depth').fill('1')
-  await ui.rotary.toolTrigger(page).click()
-  await ui.rotary.toolOption(page, 'Ball 3').click()
   await ui.rotary.directionTrigger(page).click()
   await ui.rotary.directionOption(page, 'Left-hand').click()
   await ui.rotary.createButton(page).click()
@@ -829,7 +947,7 @@ test('a negative flute twist is refused without creating anything', async ({ app
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
 
-  await ui.rotary.flutesButton(page).click()
+  await openRotaryEntry(page, ui, 'flutes')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   await ui.rotary.field(page, 'length').fill('30')
   await ui.rotary.field(page, 'twist').fill('-1')
@@ -854,7 +972,7 @@ test('a centreline depth is refused, and Cancel or Escape creates nothing', asyn
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   await ui.rotary.field(page, 'length').fill('10')
   await ui.rotary.field(page, 'depth').fill(String(bar.diameter / 2))
@@ -876,7 +994,7 @@ test('a centreline depth is refused, and Cancel or Escape creates nothing', asyn
     historyPast: baseline.historyPast,
   })
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await ui.rotary.cancelButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
   expect((await rotarySnapshot(page)).historyPast).toBe(baseline.historyPast)
@@ -888,7 +1006,7 @@ test('leaving Around while a dialog is open applies nothing', async ({ app, ui }
   await switchToAround(page)
   const baseline = await rotarySnapshot(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await expect(ui.rotary.dialog(page)).toBeVisible()
   await ui.rotary.field(page, 'length').fill('10')
 
@@ -905,106 +1023,22 @@ test('leaving Around while a dialog is open applies nothing', async ({ app, ui }
   })
 })
 
-/** The face the store says the workspace is on, read from the live project. */
-async function workspaceFace(page: Page): Promise<string> {
-  return page.evaluate(async () => {
-    const storeUrl = '/src/store/projectStore.ts'
-    const { useProjectStore } = await import(storeUrl) as typeof import('../src/store/projectStore')
-    const faceUrl = '/src/store/helpers/activeFace.ts'
-    const { activeFace } = await import(faceUrl) as typeof import('../src/store/helpers/activeFace')
-    return activeFace(useProjectStore.getState().project)
-  })
-}
-
-/**
- * The parked create's own catalog await, reached from outside the unmounted
- * dialog. `loadBundledToolLibrary` memoizes one promise per page, and the
- * Create click registered its continuation on that promise first; a reaction
- * registered on it later runs later, so by the time this resolves the parked
- * `handleCreate` has already resumed — and already written, if the unmount
- * guard is missing. That is what makes the assertion below about the guard
- * rather than about the clock: the store is read after the create, not racing
- * it. This drives the real loader; nothing is stubbed.
- */
-async function awaitCatalogContinuation(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const url = '/src/toolLibrary.ts'
-    const { loadBundledToolLibrary } = await import(url) as typeof import('../src/toolLibrary')
-    await loadBundledToolLibrary()
-  })
-}
-
-test('a thread catalog load held across leaving and returning to Around creates nothing', async ({ app, ui }) => {
-  const { page } = app
-  await prepareMmRoundBarWithRotary(page)
-  // A V-bit in the project, so a create that wrongly gets through cannot fail
-  // for want of a tool: whether the abandoned request writes is the only
-  // question left. The dialog still awaits the catalog for a thread regardless.
-  await seedFluteTools(page)
-  await switchToAround(page)
-  const baseline = await rotarySnapshot(page)
-  expect(await workspaceFace(page)).toBe('around')
-
-  // Hold the bundled tool-library fetch open so Create is genuinely in flight.
-  let releaseLibrary: () => void = () => {}
-  const libraryGate = new Promise<void>((resolve) => { releaseLibrary = resolve })
-  await page.route('**/tool-library.json', async (route) => {
-    await libraryGate
-    await route.continue()
-  })
-
-  await ui.rotary.threadButton(page).click()
-  await expect(ui.rotary.dialog(page)).toBeVisible()
-  await ui.rotary.field(page, 'length').fill('10')
-  const request = page.waitForRequest('**/tool-library.json')
-  await ui.rotary.createButton(page).click()
-  await request
-
-  // Leaving Around unmounts the dialog and parks its create on the held fetch.
-  await switchToTop(page)
-  await expect(ui.rotary.dialog(page)).toHaveCount(0)
-
-  // Return to Around *before* the catalog is released. The face is valid again
-  // and the store would accept the create if the parked request simply resumed,
-  // so only the dialog's own unmount guard can stop it. A fresh, closed dialog
-  // mounts; the stale one is not resurrected.
-  await switchToAround(page)
-  await expect(ui.rotary.threadButton(page)).toBeVisible()
-  await expect(ui.rotary.dialog(page)).toHaveCount(0)
-  expect(await workspaceFace(page)).toBe('around')
-
-  // Only now release the catalog, and wait for the held response to be
-  // delivered and the parked create to resume against it.
-  const response = page.waitForResponse('**/tool-library.json')
-  releaseLibrary()
-  await response
-  await awaitCatalogContinuation(page)
-  await page.unrouteAll({ behavior: 'wait' })
-  // Belt and braces for any continuation that ran past the memoized promise.
-  await page.waitForTimeout(250)
-
-  // The abandoned create wrote nothing, and the fresh dialog stayed closed.
-  await expect(ui.rotary.dialog(page)).toHaveCount(0)
-  expect(await rotarySnapshot(page)).toMatchObject({
-    folderCount: baseline.folderCount,
-    featureCount: baseline.featureCount,
-    operationCount: baseline.operationCount,
-    historyPast: baseline.historyPast,
-  })
-})
-
 test('the created thread wraps in the 3D overlay and removes simulation material', async ({ app, ui }) => {
   test.setTimeout(120_000)
   const { page } = app
   const bar = await prepareMmRoundBarWithRotary(page)
+  await seedFluteTools(page)
   await switchToAround(page)
 
-  await ui.rotary.threadButton(page).click()
+  await openRotaryEntry(page, ui, 'thread')
   await ui.rotary.field(page, 'length').fill('20')
   await ui.rotary.field(page, 'pitch').fill('2')
   await ui.rotary.field(page, 'depth').fill('1.5')
   await ui.rotary.createButton(page).click()
   await expect(ui.rotary.dialog(page)).toBeHidden()
+  // Creation adds no operation; add the ordinary Follow line the user would.
+  const featureId = (await rotarySnapshot(page)).featureId!
+  await addFollowLineOperation(page, featureId)
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
   // The 3D overlay publishes the wrapped segments, and they pass under the bar.
@@ -1018,7 +1052,7 @@ test('the created thread wraps in the 3D overlay and removes simulation material
   expect(Number(await overlay.getAttribute('data-toolpath-min-z'))).toBeLessThan(bar.diameter / 2)
 
   // Simulation: the Engrave cuts into the bar, so material is removed.
-  await ui.operations.rowByName(page, 'Thread Engrave').click()
+  await ui.operations.rowByName(page, 'Engrave').click()
   await ui.viewMenu.tabSimulation(page).click()
   const viewport = ui.simSetup.viewport(page)
   await expect(viewport).toBeVisible()
@@ -1224,6 +1258,7 @@ test('the Around solids follow the bar shape, one entry at a time', async ({ app
   // C1 sheet authoring stays.
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
   await expect(ui.rotarySolid.squareToRoundButton(page)).toHaveCount(0)
+  await openCreationDrawer(page)
   await expect(ui.rotary.threadButton(page)).toBeVisible()
   await expect(page.locator('.toolbar-creation-picker')).toHaveCount(1)
 
@@ -1246,6 +1281,7 @@ test('the Around solids follow the bar shape, one entry at a time', async ({ app
   })
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
   await expect(page.locator('.toolbar-creation-picker')).toHaveCount(1)
+  await openCreationDrawer(page)
   await expect(ui.rotary.threadButton(page)).toBeVisible()
 })
 
@@ -2353,11 +2389,10 @@ test.describe('tablet Thread and Flutes', () => {
   test('both dialogs keep every action and picker complete inside the dialog', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
-    await seedFluteTools(page)
     await switchToAround(page)
 
     for (const kind of ['thread', 'flutes'] as const) {
-      await rotaryEntry(page, ui, kind).click()
+      await openRotaryEntry(page, ui, kind)
       const dialog = ui.rotary.dialog(page)
       await expect(dialog).toBeVisible()
 
@@ -2368,8 +2403,9 @@ test.describe('tablet Thread and Flutes', () => {
       const fresh = await expectChromeComplete(page, dialog, controls, `${kind} fresh`)
       await expectDialogStacked(dialog, kind)
 
-      // A field or picker may scroll the body; the frame, header and footer may
-      // not move, and the open list must sit inside the dialog unaided.
+      // A picker may scroll the body; the frame, header and footer may not
+      // move, and the open list must sit inside the dialog unaided. The Tool
+      // picker is gone (decision 3), so Direction is the only picker left.
       await expectPickerComplete(
         page,
         dialog,
@@ -2378,16 +2414,6 @@ test.describe('tablet Thread and Flutes', () => {
         'Left-hand',
         `${kind} Direction`,
       )
-      if (kind === 'flutes') {
-        await expectPickerComplete(
-          page,
-          dialog,
-          ui.rotary.toolTrigger(page),
-          ui.rotary.toolOption(page, 'Ball 3'),
-          'Ball 3',
-          `${kind} Tool`,
-        )
-      }
       const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
       expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
 
@@ -2403,11 +2429,10 @@ test.describe('tablet Thread and Flutes', () => {
   test('a Left flute created from the tablet dialog reverses the hand and undoes in one step', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
-    await seedFluteTools(page)
     await switchToAround(page)
     const baseline = await rotarySnapshot(page)
 
-    await ui.rotary.flutesButton(page).click()
+    await openRotaryEntry(page, ui, 'flutes')
     const dialog = ui.rotary.dialog(page)
     await expect(dialog).toBeVisible()
     await ui.rotary.field(page, 'length').fill('30')
@@ -2415,7 +2440,6 @@ test.describe('tablet Thread and Flutes', () => {
     await ui.rotary.field(page, 'twist').fill('2')
     await ui.rotary.field(page, 'depth').fill('1')
 
-    await expectPickerComplete(page, dialog, ui.rotary.toolTrigger(page), ui.rotary.toolOption(page, 'Ball 3'), 'Ball 3', 'Flutes Tool')
     await expectPickerComplete(
       page,
       dialog,
@@ -2436,7 +2460,7 @@ test.describe('tablet Thread and Flutes', () => {
     const geometry = await rotaryLineGeometry(page)
     expect(geometry.lineCount).toBe(2)
     expect(geometry.acrossPerLine.every((across) => across < 0)).toBe(true)
-    expect((await rotarySnapshot(page)).operationToolRef).toBe('t-ball')
+    expect((await rotarySnapshot(page)).params).toMatchObject({ twist: -2 })
 
     await undo(page)
     expect(await rotarySnapshot(page)).toMatchObject({
@@ -2449,18 +2473,17 @@ test.describe('tablet Thread and Flutes', () => {
 })
 
 test.describe('tablet Thread and Flutes on a short viewport', () => {
-  // At this height the form is taller than the body, so the body must scroll
-  // while the header and the footer actions stay put.
-  test.use({ viewport: { width: 1180, height: 600 }, hasTouch: true })
+  // The Tool field is gone, so the form is shorter than C1's; this height is
+  // still below it, so the body must scroll while the header and footer stay.
+  test.use({ viewport: { width: 1180, height: 480 }, hasTouch: true })
 
   test('both dialogs keep their actions and pickers reachable while the body scrolls', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
-    await seedFluteTools(page)
     await switchToAround(page)
 
     for (const kind of ['thread', 'flutes'] as const) {
-      await rotaryEntry(page, ui, kind).click()
+      await openRotaryEntry(page, ui, kind)
       const dialog = ui.rotary.dialog(page)
       await expect(dialog).toBeVisible()
 
@@ -2484,16 +2507,6 @@ test.describe('tablet Thread and Flutes on a short viewport', () => {
         'Left-hand',
         `${kind} Direction`,
       )
-      if (kind === 'flutes') {
-        await expectPickerComplete(
-          page,
-          dialog,
-          ui.rotary.toolTrigger(page),
-          ui.rotary.toolOption(page, 'Ball 3'),
-          'Ball 3',
-          `${kind} Tool`,
-        )
-      }
       const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
       expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
 

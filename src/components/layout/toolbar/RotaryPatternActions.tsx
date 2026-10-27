@@ -15,22 +15,24 @@
  */
 
 /**
- * The Thread and Flutes entries beside the drawing tools (issue #1016 C1
- * slice B). They exist only while the workspace is on an available, active
- * Around face — a flat, milling or plasma view never offers them — and each
- * opens its dialog. `variant` picks the desktop toolbar or the tablet rail
- * button so both assemblies share one command.
+ * The Thread and Flutes entries (issues #1016 C1, #1112 slice F).
+ *
+ * They are not a separate toolbar group any more: the creation drawer's rotary
+ * group holds them next to the drawing shapes, and the tablet rail keeps a
+ * rail variant. Each entry only opens the dialog; the one dialog host lives in
+ * AppShell, so the drawer closing cannot unmount an open form.
+ *
+ * The entries exist only while the workspace is on an available, active Around
+ * face — a flat, milling or plasma view never offers them.
  */
 
-import { useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useProjectStore } from '../../../store/projectStore'
 import { activeFace, aroundSketchAuthoringAvailable } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Icon } from '../../Icon'
 import { ToolbarActionButton } from './primitives'
-import { RotaryPatternDialog, type RotaryPatternKind } from './RotaryPatternDialog'
+import { openRotaryPatternCreate, type RotaryPatternKind } from './rotaryPatternDialogState'
 
 interface RotaryCommand {
   kind: RotaryPatternKind
@@ -45,91 +47,64 @@ const ROTARY_COMMANDS: readonly RotaryCommand[] = [
 ]
 
 interface RotaryPatternActionsProps {
-  variant?: 'toolbar' | 'rail'
+  variant?: 'drawer' | 'rail'
   tooltipSide?: 'bottom' | 'right'
 }
 
-/**
- * The entries and the dialog they open. It is mounted only while the workspace
- * is on Around, so leaving Around unmounts this whole subtree: the dialog
- * closes, its request state dies with it, and an in-flight Create is stopped by
- * the dialog's own unmount guard. Coming back mounts a fresh, closed one, so a
- * stale request can never be resurrected.
- */
-function RotaryAroundActions({
-  variant,
-  tooltipSide,
-}: {
-  variant: 'toolbar' | 'rail'
-  tooltipSide: 'bottom' | 'right'
-}) {
+function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: RotaryPatternActionsProps) {
   const { t } = useI18n()
-  const [openKind, setOpenKind] = useState<RotaryPatternKind | null>(null)
-
-  const buttons = ROTARY_COMMANDS.map((entry) => {
-    const label = t(entry.labelKey)
-    const active = openKind === entry.kind
-    if (variant === 'rail') {
-      return (
-        <div className="tool-rail__action" key={entry.kind}>
-          <button
-            className={`tool-rail__btn ${active ? 'tool-rail__btn--active' : ''}`}
-            type="button"
-            data-command={entry.command}
-            aria-label={label}
-            aria-haspopup="dialog"
-            onClick={() => setOpenKind(entry.kind)}
-          >
-            <Icon id={entry.icon} />
-          </button>
-          <span className="tool-rail__tooltip" role="tooltip">{label}</span>
-        </div>
-      )
-    }
-    return (
-      <ToolbarActionButton
-        key={entry.kind}
-        icon={entry.icon}
-        label={label}
-        command={entry.command}
-        active={active}
-        tooltipSide={tooltipSide}
-        onClick={() => setOpenKind(entry.kind)}
-      />
-    )
-  })
-
-  const dialog = openKind !== null && typeof document !== 'undefined'
-    ? createPortal(
-        <RotaryPatternDialog kind={openKind} onClose={() => setOpenKind(null)} />,
-        document.body,
-      )
-    : null
-
-  if (variant === 'rail') {
-    return <>{buttons}{dialog}</>
-  }
-
-  return (
-    <div className="toolbar-group toolbar-group--rotary">
-      {buttons}
-      {dialog}
-    </div>
-  )
-}
-
-function RotaryPatternActions({ variant = 'toolbar', tooltipSide = 'bottom' }: RotaryPatternActionsProps) {
   const face = useProjectStore((state) => activeFace(state.project))
   const project = useProjectStore((state) => state.project)
-  // Rendering the dialog subtree only on Around lets ordinary unmounting clear
-  // the pending request, so returning to Around never reopens the old dialog.
-  if (face !== 'around') return null
   // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2): the
   // unrolled sheet's raw coordinates describe a round bar, so on a square blank
-  // the entries are absent rather than offered and refused. The solid
-  // conveniences (`RotarySolidActions`) are the square blank's workflow.
-  if (!aroundSketchAuthoringAvailable(project)) return null
-  return <RotaryAroundActions variant={variant} tooltipSide={tooltipSide} />
+  // the entries are absent rather than offered and refused.
+  if (face !== 'around' || !aroundSketchAuthoringAvailable(project)) return null
+
+  if (variant === 'rail') {
+    return (
+      <>
+        {ROTARY_COMMANDS.map((entry) => {
+          const label = t(entry.labelKey)
+          return (
+            <div className="tool-rail__action" key={entry.kind}>
+              <button
+                className="tool-rail__btn"
+                type="button"
+                data-command={entry.command}
+                aria-label={label}
+                aria-haspopup="dialog"
+                onClick={() => openRotaryPatternCreate(entry.kind)}
+              >
+                <Icon id={entry.icon} />
+              </button>
+              <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+            </div>
+          )
+        })}
+      </>
+    )
+  }
+
+  // The drawer already stacks its shape rows; the rotary group is a third row
+  // behind the same separator the secondary shapes use, so the two commands
+  // do not read as more shapes.
+  return (
+    <>
+      <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
+      <div className="toolbar-creation-picker__rotary" style={{ display: 'flex' }}>
+        {ROTARY_COMMANDS.map((entry) => (
+          <ToolbarActionButton
+            key={entry.kind}
+            icon={entry.icon}
+            label={t(entry.labelKey)}
+            command={entry.command}
+            tooltipSide={tooltipSide}
+            onClick={() => openRotaryPatternCreate(entry.kind)}
+          />
+        ))}
+      </div>
+    </>
+  )
 }
 
 export { RotaryPatternActions }
