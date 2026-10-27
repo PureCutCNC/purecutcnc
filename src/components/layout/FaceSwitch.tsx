@@ -75,18 +75,10 @@ export function FaceSwitch() {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuFocusPlaced = useRef(false)
   const menuId = useId()
 
   useOutsideDismiss({ open, refs: [hostRef, menuRef], onDismiss: () => setOpen(false) })
-
-  // The menu is portalled to the end of the document, so opening it puts focus
-  // on the face in view: Tab from the control would otherwise walk straight
-  // past the menu into the rest of the shell (issue #1112).
-  useEffect(() => {
-    if (!open) return
-    const checked = menuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"][aria-checked="true"]')
-    checked?.focus({ preventScroll: true })
-  }, [open])
 
   // Escape closes the menu and gives the control its focus back, the same way
   // choosing an entry does. It is caught in the capture phase and swallowed:
@@ -113,6 +105,27 @@ export function FaceSwitch() {
     const top = Math.min(anchor.bottom + 6, window.innerHeight - floating.height - margin)
     return { top, left }
   })
+
+  // The menu is portalled to the end of the document, so opening it puts focus
+  // on the face in view: Tab from the control would otherwise walk straight
+  // past the menu into the rest of the shell (issue #1112).
+  //
+  // The first open has no measured position yet, and the menu is still
+  // `visibility: hidden` until the layout effect above lands: `focus()` on a
+  // hidden element is silently ignored, which left keyboard focus on the
+  // control instead of the menu (issue #1112 slice B e2e). Wait for the
+  // position, then move focus once — a later scroll re-position must not pull
+  // focus back from an entry the user has already tabbed to.
+  useEffect(() => {
+    if (!open) {
+      menuFocusPlaced.current = false
+      return
+    }
+    if (coords === null || menuFocusPlaced.current) return
+    menuFocusPlaced.current = true
+    const checked = menuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"][aria-checked="true"]')
+    checked?.focus({ preventScroll: true })
+  }, [open, coords])
 
   if (!showsFaceSwitch(machine, bothFaces)) return null
 

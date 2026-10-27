@@ -111,9 +111,12 @@
 
 /* The menu is portalled to the body (see `FaceSwitch`): the tablet face row
  * clips its own overflow, so the placement comes from `usePortalPosition` and
- * this file only styles it. */
+ * this file only styles it. It is a popover over the whole workspace, so it has
+ * to sit above the page-level workflow panels (`--page` is `z-index: 1200`):
+ * at the old 120 a Feature Distribution panel drawn over the canvas covered the
+ * open menu and swallowed its taps. Below a dialog (2000). */
 .face-switch__menu {
-  z-index: 120;
+  z-index: 1300;
   width: 232px;
   padding: 6px;
   border: 1px solid var(--line);

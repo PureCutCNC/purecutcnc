@@ -140,9 +140,13 @@ test('a face section heading switches face, and an empty face says so', async ({
   // The heading is the second home of the same action: clicking Top switches.
   await ui.face.heading(page, 'top').click()
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
-  await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'active')
-  // Nothing was drawn on Bottom, so its section goes again.
+  // Nothing was drawn on Bottom, so leaving it abandons its provisional face:
+  // the project is single-face again and the tree shows no face sections at
+  // all, exactly as after the first switch back to Top above. The heading did
+  // switch the face; the Top row below is editable rather than a ghost.
+  await expect(ui.face.layer(page, 'top')).toHaveCount(0)
   await expect(ui.face.layer(page, 'bottom')).toHaveCount(0)
+  await expect(ui.face.ghostRows(page)).toHaveCount(0)
 
   // Once Bottom carries something, both headings stay and each switches.
   await ui.face.switchTo(page, 'Bottom')
