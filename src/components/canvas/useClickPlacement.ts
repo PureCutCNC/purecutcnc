@@ -41,6 +41,8 @@ import { aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
+import { useNoticeStore } from '../../store/noticeStore'
 import {
   canvasToWorld,
   computeSketchViewTransform,
@@ -707,6 +709,14 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
                 point: hit.point,
                 t: hit.t,
               }
+              // A generated shape's stored profile is only its placement
+              // frame, so it cannot be a reference edge. Say why instead of
+              // treating the click as empty space (#1112 A2).
+              const refFeature = resolveFeatureInstance(project, ref.featureId)
+              if (isCannedFeature(refFeature)) {
+                useNoticeStore.getState().showNotice('sketch.canned.trimRefused')
+                return
+              }
               if (pending.tool === 'trim') {
                 trimFeatureSegment(pending.subject, ref)
               } else {
@@ -998,6 +1008,15 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
 
     if (featureHit.kind === 'direct') {
+      // A canned shape cannot enter a join/cut workflow: the store refuses the
+      // selection, so say why instead of leaving the click inert (#1112 A2).
+      if (pendingShapeAction) {
+        const hitFeature = resolvedFeatures.find((feature) => feature.id === featureHit.featureId)
+        if (hitFeature && isCannedFeature(hitFeature)) {
+          useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+          return
+        }
+      }
       selectFeature(featureHit.featureId, additive)
     } else if (featureHit.kind === 'ambiguous') {
       const featuresById = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))

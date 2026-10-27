@@ -35,6 +35,29 @@ export interface CannedShapeSummary {
 }
 
 /**
+ * A triangle mesh in the definition's local space, as returned by a canned
+ * model's mesh generator. The store serializes it into `Project.modelAssets`,
+ * so every imported-model consumer (CSG, surface toolpaths, preview, export)
+ * reads it without knowing the model is generated (issue #1112 slices D–G).
+ */
+export interface CannedShapeMesh {
+  /** `[x, y, z, x, y, z, …]`. */
+  positions: Float32Array
+  /** Triangle indices into `positions`. */
+  indices: Uint32Array
+}
+
+/**
+ * What a canned kind can do beyond being drawn. `expandable` is false for a
+ * model: its mesh is the output, and "Expand to features" would discard the
+ * parameters that regenerate it. Absent means every capability is available,
+ * so existing generators need no change.
+ */
+export interface CannedShapeCapabilities {
+  expandable: boolean
+}
+
+/**
  * The extension point slices D–G code against. Registering a generator is the
  * only change a new canned shape needs in the model:
  *
@@ -46,6 +69,14 @@ export interface CannedShapeSummary {
  *   the opposite, and so on); open outlines always keep the feature's
  *   operation. It must be deterministic — a saved file regenerates the same
  *   geometry after a reload.
+ * - `generateMesh` is the model half of the contract. A kind that returns a
+ *   mesh is a *model*: the store rebuilds `Project.modelAssets` from the
+ *   current parameters on every change and on load, and the definition's
+ *   `stl` points at that asset, which is exactly how an imported model is
+ *   consumed. Leave it off for a sketch kind.
+ * - `capabilities.expandable` defaults to true. A model sets it false so
+ *   "Expand to features" is never offered: expansion would freeze the mesh and
+ *   lose the parameters that regenerate it.
  * - `normalizeParams` validates untrusted stored parameters. Return `null` to
  *   refuse generation; the stored data is not dropped either way.
  * - `summary` describes the parameters for Properties.
@@ -56,6 +87,10 @@ export interface CannedShapeGenerator<P extends CannedShapeParams = CannedShapeP
   /** i18n key naming the shape, e.g. `'canned.gear.name'`. */
   labelKey: string
   generate(params: P): CannedShapeOutline[]
+  /** Model kinds: build the mesh from the current parameters. */
+  generateMesh?(params: P): CannedShapeMesh | null
+  /** What the kind supports. Omit when every capability is available. */
+  capabilities?: CannedShapeCapabilities
   /** Validate stored parameters. Omit when the shape has no schema to check. */
   normalizeParams?(raw: CannedShapeParams): P | null
   /**

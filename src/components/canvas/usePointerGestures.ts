@@ -35,6 +35,8 @@ import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { isCannedFeature } from '../../cannedShapes'
+import { useNoticeStore } from '../../store/noticeStore'
 import { aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
@@ -1199,7 +1201,16 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
     const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
-    if (hitId) enterSketchEdit(hitId)
+    if (!hitId) return
+    // A generated shape has no editable sketch. Select it and say why, since a
+    // double-click has no disabled button to hover (#1112 A2).
+    const hitFeature = editableProjectFeatures(project).find((feature) => feature.id === hitId)
+    if (hitFeature && isCannedFeature(hitFeature)) {
+      selectFeatures([hitId])
+      useNoticeStore.getState().showNotice('sketch.canned.editSketchRefused')
+      return
+    }
+    enterSketchEdit(hitId)
   }
 
   const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {

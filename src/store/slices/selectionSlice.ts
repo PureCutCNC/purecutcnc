@@ -260,7 +260,11 @@ export function createSelectionSlice(
         const selectedFeature = id ? featureById(s.project, id) : null
 
         if (joinMode) {
-          if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          if (selectedFeature && (
+            !selectedFeature.sketch.profile.closed
+            || selectedFeature.locked
+            || isCannedFeature(selectedFeature)
+          )) {
             return {}
           }
 
@@ -308,7 +312,7 @@ export function createSelectionSlice(
             return {}
           }
 
-          if (selectedFeature && selectedFeature.locked) {
+          if (selectedFeature && (selectedFeature.locked || isCannedFeature(selectedFeature))) {
             return {}
           }
           // Open features as targets are only allowed when at least one

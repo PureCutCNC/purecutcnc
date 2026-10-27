@@ -252,6 +252,7 @@ export const featureTreeEn = {
   'featureTree.properties.canned.expand': 'Expand to features',
   'featureTree.properties.canned.note': 'The sketch is generated from this shape’s parameters. Expand to features to edit it, cut, join, trim or offset it.',
   'featureTree.properties.canned.noteBadge': 'Generated',
+  'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
   'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
   'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
   'featureTree.properties.makeUnique': 'Make unique',

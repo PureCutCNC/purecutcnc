@@ -16,6 +16,7 @@
 
 import type { RegisteredCannedShapeGenerator } from './types'
 import { BUILT_IN_CANNED_SHAPES } from './generators'
+import { clearCannedShapeCache } from './cache'
 
 /**
  * Canned-shape generator registry (issue #1112).
@@ -34,6 +35,9 @@ const editors = new Map<string, (featureId: string) => void>()
 /** Register (or replace) the generator for one shape kind. */
 export function registerCannedShapeGenerator(generator: RegisteredCannedShapeGenerator): void {
   generators.set(generator.kind, generator)
+  // A replacement generator may draw different outlines for the same
+  // parameters, so its kind's cached output is stale by definition.
+  clearCannedShapeCache(generator.kind)
 }
 
 /** The generator for `kind`, or `null` when no build part has registered it. */

@@ -34,6 +34,7 @@ import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 import { FaceBanner } from './FaceBanner'
 import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
+import { CommandNoticeToast } from './CommandNoticeToast'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
@@ -914,6 +915,8 @@ export function AppShell({
           <span className="statusbar-shell-mode" title={t('appShell.status.shellMode')}>{shellMode}</span>
         )}
       </footer>
+
+      <CommandNoticeToast />
 
       {/* ── Expanded panel modal ── */}
       {expandedPanel && (

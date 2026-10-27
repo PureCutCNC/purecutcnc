@@ -33,6 +33,8 @@ import type {
 import type { FeatureDistributionMode } from '../sketch/featureDistribution'
 import type { TextLayoutKind } from '../sketch/textPlacement'
 import { featureHasClosedGeometry } from '../text'
+import { isCannedFeature } from '../cannedShapes'
+import { useNoticeStore } from '../store/noticeStore'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 
 export interface CommandDescriptor {
@@ -58,6 +60,8 @@ export interface SketchCommandPredicates {
   hasLockedSelectedFeatures: boolean
   hasClosedSelectedFeatures: boolean
   hasOffsetEligibleSelectedFeatures: boolean
+  /** True when any selected row is a generated (canned) shape or model. */
+  hasCannedSelectedFeatures: boolean
   alignableFeatureIds: string[]
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
@@ -123,8 +127,9 @@ export function deriveSketchCommandPredicates({
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
   const hasClosedSelectedFeatures =
     selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
+  const hasCannedSelectedFeatures = selectedFeatures.some(isCannedFeature)
   const hasOffsetEligibleSelectedFeatures =
-    hasClosedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
+    hasClosedSelectedFeatures && !hasCannedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
   const alignableFeatureIds = selectedFeatures
     .filter((feature) => !feature.locked)
     .map((feature) => feature.id)
@@ -150,6 +155,7 @@ export function deriveSketchCommandPredicates({
     hasLockedSelectedFeatures,
     hasClosedSelectedFeatures,
     hasOffsetEligibleSelectedFeatures,
+    hasCannedSelectedFeatures,
     alignableFeatureIds,
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
@@ -204,12 +210,15 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
       },
     },
     boolean: {
+      // A generated shape refuses join/cut/offset until it is expanded to
+      // features, so the button is disabled with the reason rather than
+      // opening a workflow that would silently do nothing (#1112 A2).
       join: {
-        enabled: true,
+        enabled: !predicates.hasCannedSelectedFeatures,
         active: input.pendingShapeAction?.kind === 'join',
       },
       cut: {
-        enabled: true,
+        enabled: !predicates.hasCannedSelectedFeatures,
         active: input.pendingShapeAction?.kind === 'cut',
       },
       offset: {
@@ -262,7 +271,9 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
       },
     },
     constraint: {
-      enabled: predicates.hasSelectedFeatures && !predicates.hasLockedSelectedFeatures,
+      enabled: predicates.hasSelectedFeatures
+        && !predicates.hasLockedSelectedFeatures
+        && !predicates.hasCannedSelectedFeatures,
       active: input.pendingConstraint !== null,
     },
     dimension: {
@@ -398,6 +409,10 @@ export function useSketchCommands(): SketchCommandState & {
     if (!state.predicates.selectedConstraintFeatureId) {
       return
     }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+      return
+    }
     if (state.predicates.featureSketchEditActive) {
       store.setSketchEditTool(null)
     }
@@ -407,6 +422,10 @@ export function useSketchCommands(): SketchCommandState & {
   function toggleShapeAction(kind: 'join' | 'cut') {
     if (store.pendingShapeAction?.kind === kind) {
       store.cancelPendingShapeAction()
+      return
+    }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     if (kind === 'join') {
@@ -419,6 +438,10 @@ export function useSketchCommands(): SketchCommandState & {
   function toggleOffset() {
     if (store.pendingOffset) {
       store.cancelPendingOffset()
+      return
+    }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     store.startOffsetSelectedFeatures()

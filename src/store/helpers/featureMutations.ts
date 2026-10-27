@@ -18,6 +18,7 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   FeatureOperation,
+  PersistedImportedMesh,
   Project,
   SketchFeature,
   SketchProfile,
@@ -32,6 +33,7 @@ import { transformProfile } from '../../geometry/profile'
 import { refitTextFrameProfile } from '../../text'
 import { cloneCannedShapeData } from '../../types/project'
 import { cannedShapeFrame } from '../../cannedShapes'
+import { rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
@@ -136,7 +138,11 @@ export function applyFeaturePatch(
   project: Project,
   ids: ReadonlySet<string>,
   patch: Partial<SketchFeature>,
-): { features: FeatureInstance[]; featureDefinitions: Record<string, FeatureDefinition> } {
+): {
+  features: FeatureInstance[]
+  featureDefinitions: Record<string, FeatureDefinition>
+  modelAssets: Record<string, PersistedImportedMesh>
+} {
   let featureDefinitions = { ...project.featureDefinitions }
   const changedDefinitionIds = new Set<string>()
 
@@ -190,7 +196,20 @@ export function applyFeaturePatch(
     ))
   }
 
-  return { features, featureDefinitions }
+  // A canned model's mesh is derived from its parameters, so a parameter edit
+  // rebuilds the asset in the same write. Doing it here — rather than at each
+  // caller — keeps `updateFeature` and every future edit path consistent.
+  let modelAssets = project.modelAssets ?? {}
+  if (patch.canned !== undefined) {
+    const rebuilt = rebuildCannedShapeModelDefinitions(
+      { ...project, featureDefinitions },
+      changedDefinitionIds,
+    )
+    featureDefinitions = rebuilt.featureDefinitions
+    modelAssets = rebuilt.modelAssets
+  }
+
+  return { features, featureDefinitions, modelAssets }
 }
 
 export function applyTranslatedFeatureOffsets(

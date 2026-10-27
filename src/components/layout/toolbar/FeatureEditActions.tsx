@@ -21,6 +21,7 @@ function FeatureEditActions({
   enabled,
   hasLockedSelection,
   hasClosedSelection,
+  hasCannedSelection,
   pendingMoveMode,
   pendingTransformMode,
   pendingOffset,
@@ -38,6 +39,8 @@ function FeatureEditActions({
   enabled: boolean
   hasLockedSelection: boolean
   hasClosedSelection: boolean
+  /** A generated shape is selected, so offset and constraints refuse. */
+  hasCannedSelection: boolean
   pendingMoveMode: 'move' | 'copy' | null
   pendingTransformMode: 'resize' | 'rotate' | 'mirror' | null
   pendingOffset: boolean
@@ -53,6 +56,7 @@ function FeatureEditActions({
   constraintActive: boolean
 }) {
   const { t } = useI18n()
+  const cannedReason = hasCannedSelection ? t('sketch.canned.actionRefused') : undefined
 
   if (!enabled) return null
 
@@ -108,7 +112,8 @@ function FeatureEditActions({
           icon="offset"
           label={pendingOffset ? t('sketch.boolean.cancelOffset') : t('sketch.boolean.offset')}
           active={pendingOffset}
-          disabled={hasLockedSelection || !hasClosedSelection}
+          disabled={hasLockedSelection || !hasClosedSelection || hasCannedSelection}
+          disabledReason={hasCannedSelection ? cannedReason : undefined}
           tooltipSide={tooltipSide}
           onClick={onOffset}
         />
@@ -116,7 +121,8 @@ function FeatureEditActions({
           icon="constraint"
           label={constraintActive ? t('sketch.constraint.cancel') : t('sketch.constraint.add')}
           active={constraintActive}
-          disabled={hasLockedSelection}
+          disabled={hasLockedSelection || hasCannedSelection}
+          disabledReason={hasCannedSelection ? cannedReason : undefined}
           tooltipSide={tooltipSide}
           onClick={onConstraint}
         />

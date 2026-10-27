@@ -67,7 +67,8 @@ import { createDefinitionForFeature, createFeatureInstance, gcOrphanedDefinition
 import { resolveFeatureInstance, resolveFeatureInstances, resolvedFeatureMap, resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { expandTextFeature } from '../helpers/textExpansion'
 import { expandCannedFeature } from '../helpers/cannedExpansion'
-import { isCannedFeature } from '../../cannedShapes'
+import { cannedShapeIsExpandable, isCannedFeature } from '../../cannedShapes'
+import { rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -604,7 +605,7 @@ export function createFeatureSlice(
         const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation
           ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace, operation: 'add' })
           : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace })
-        const nextModelAssets = { ...s.project.modelAssets }
+        let nextModelAssets = { ...s.project.modelAssets }
         const safeFeature: SketchFeature = {
           ...safeFeatureBase,
           stl: normalizeImportedModelStorage(safeFeatureBase.id, safeFeatureBase.stl, nextModelAssets),
@@ -628,6 +629,16 @@ export function createFeatureSlice(
             nextDefinitions = { ...nextDefinitions, [clonedDefinition.id]: clonedDefinition }
           }
         }
+        // A canned model is a definition until its mesh exists, so the same
+        // write that mints/uses the definition builds the mesh imported-model
+        // consumers read (#1112 A2). A sketch kind is a no-op.
+        const rebuiltCannedModel = rebuildCannedShapeModelDefinitions(
+          { ...s.project, modelAssets: nextModelAssets, featureDefinitions: nextDefinitions },
+          new Set([definitionId]),
+        )
+        nextDefinitions = rebuiltCannedModel.featureDefinitions
+        nextModelAssets = rebuiltCannedModel.modelAssets
+
         const safeInstance = createFeatureInstance(
           safeFeature,
           definitionId,
@@ -699,6 +710,7 @@ export function createFeatureSlice(
           ...s.project,
           features: updated.features,
           featureDefinitions: updated.featureDefinitions,
+          modelAssets: updated.modelAssets,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncFeatureTreeProject(nextProject)
@@ -730,6 +742,7 @@ export function createFeatureSlice(
           ...s.project,
           features: updated.features,
           featureDefinitions: updated.featureDefinitions,
+          modelAssets: updated.modelAssets,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncFeatureTreeProject(nextProject)
@@ -1331,6 +1344,12 @@ export function createFeatureSlice(
       const cannedFeature = resolveFeatureInstance(state.project, cannedFeatureId)
 
       if (!cannedFeature || !cannedFeature.canned) {
+        return
+      }
+
+      // A model kind is not expandable: expansion would freeze the mesh and
+      // discard the parameters that regenerate it (#1112 A2).
+      if (!cannedShapeIsExpandable(cannedFeature.canned)) {
         return
       }
 

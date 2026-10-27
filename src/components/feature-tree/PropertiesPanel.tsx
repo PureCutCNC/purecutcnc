@@ -43,6 +43,7 @@ import { canChooseSubtract, isMachinable, sectionForOperation } from '../../stor
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getFeatureGeometryProfiles, getTextFontOptions } from '../../text'
 import {
+  cannedShapeIsExpandable,
   cannedShapeLabelKey,
   cannedShapeSummary,
   getCannedShapeEditor,
@@ -1496,6 +1497,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const cannedEditor = isCannedShape && selectedFeature.canned
     ? getCannedShapeEditor(selectedFeature.canned.kind)
     : null
+  const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
   const cannedShapesOpen = isCannedShape
     ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
     : !selectedFeature.sketch.profile.closed
@@ -1668,21 +1670,23 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   >
                     {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
                   </button>
-                  <button
-                    className="feat-btn"
-                    type="button"
-                    onClick={() => {
-                      expandCannedFeature(selectedFeature.id)
-                      closeExpanded()
-                    }}
-                  >
-                    {t('featureTree.properties.canned.expand')}
-                  </button>
+                  {cannedExpandable ? (
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      onClick={() => {
+                        expandCannedFeature(selectedFeature.id)
+                        closeExpanded()
+                      }}
+                    >
+                      {t('featureTree.properties.canned.expand')}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               <div className="properties-region-note">
                 <span className="properties-region-note__badge">{t('featureTree.properties.canned.noteBadge')}</span>
-                <span>{t('featureTree.properties.canned.note')}</span>
+                <span>{t(cannedExpandable ? 'featureTree.properties.canned.note' : 'featureTree.properties.canned.modelNote')}</span>
               </div>
             </>
           ) : null}

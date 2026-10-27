@@ -253,6 +253,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.expand': '展开为特征',
   'featureTree.properties.canned.note': '草图由此形状的参数生成。展开为特征后可编辑、剪切、合并、修剪或偏移。',
   'featureTree.properties.canned.noteBadge': '已生成',
+  'featureTree.properties.canned.modelNote': '该模型由参数生成。修改参数会重建网格；无法展开为普通特征。',
   'featureTree.properties.canned.sketchDisabled': '展开为特征后才能编辑草图',
   'featureTree.properties.canned.unknown': '来自较新版本的形状参数',
   'featureTree.properties.makeUnique': '设为唯一',

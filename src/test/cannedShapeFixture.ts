@@ -54,16 +54,23 @@ function isTestPlateParams(value: CannedShapeParams): value is TestPlateParams {
     && value.holeRadius < Math.min(value.width, value.height) / 2
 }
 
+/** Counts how many times `testPlate.generate` runs, for the cache test. */
+export let testPlateGenerateCalls = 0
+
+export function resetTestPlateGenerateCalls(): void {
+  testPlateGenerateCalls = 0
+}
+
 const testPlate = defineCannedShape<TestPlateParams>({
   kind: TEST_PLATE_KIND,
   labelKey: 'canned.test.plate.name',
-  generate: (params) => [
-    { profile: rectProfile(0, 0, params.width, params.height), name: 'Plate' },
-    {
-      profile: circleProfile(params.width / 2, params.height / 2, params.holeRadius),
-      name: 'Plate hole',
-    },
-  ],
+  generate: (params) => {
+    testPlateGenerateCalls += 1
+    return [
+      { profile: rectProfile(0, 0, params.width, params.height), name: 'Plate' },
+      { profile: circleProfile(params.width / 2, params.height / 2, params.holeRadius), name: 'Plate hole' },
+    ]
+  },
   normalizeParams: (raw) => (isTestPlateParams(raw) ? raw : null),
   convertParams: (params, convertLength) => ({
     ...params,
@@ -118,10 +125,67 @@ const testOpenLine = defineCannedShape<TestOpenLineParams>({
   }),
 })
 
-/** Register the two test-only generators for the calling test file. */
+/** A box model: the test-only proof of the mesh-generation contract. */
+export const TEST_MODEL_KIND = 'test-model'
+
+export type TestModelParams = CannedShapeParams & {
+  width: number
+  depth: number
+  height: number
+}
+
+function isTestModelParams(value: CannedShapeParams): value is TestModelParams {
+  return typeof value.width === 'number' && value.width > 0
+    && typeof value.depth === 'number' && value.depth > 0
+    && typeof value.height === 'number' && value.height > 0
+}
+
+/** Eight corners, twelve triangles, origin on the top face like a turn. */
+function boxMesh(width: number, depth: number, height: number): { positions: Float32Array; indices: Uint32Array } {
+  const hx = width / 2
+  const hy = depth / 2
+  const positions = new Float32Array([
+    -hx, -hy, 0, hx, -hy, 0, hx, hy, 0, -hx, hy, 0,
+    -hx, -hy, -height, hx, -hy, -height, hx, hy, -height, -hx, hy, -height,
+  ])
+  const indices = new Uint32Array([
+    0, 1, 2, 0, 2, 3,
+    4, 6, 5, 4, 7, 6,
+    0, 5, 1, 0, 4, 5,
+    1, 6, 2, 1, 5, 6,
+    2, 7, 3, 2, 6, 7,
+    3, 4, 0, 3, 7, 4,
+  ])
+  return { positions, indices }
+}
+
+const testModel = defineCannedShape<TestModelParams>({
+  kind: TEST_MODEL_KIND,
+  labelKey: 'canned.test.model.name',
+  // A model is not expandable: its mesh is the output.
+  capabilities: { expandable: false },
+  generate: (params) => [
+    { profile: rectProfile(-params.width / 2, -params.depth / 2, params.width, params.depth), name: 'Footprint' },
+  ],
+  generateMesh: (params) => boxMesh(params.width, params.depth, params.height),
+  normalizeParams: (raw) => (isTestModelParams(raw) ? raw : null),
+  convertParams: (params, convertLength) => ({
+    ...params,
+    width: convertLength(params.width),
+    depth: convertLength(params.depth),
+    height: convertLength(params.height),
+  }),
+  summary: (params) => ({
+    key: 'canned.test.model.summary',
+    values: { width: params.width, depth: params.depth, height: params.height },
+  }),
+})
+
+/** Register the test-only generators for the calling test file. */
 export function registerTestCannedShapes(): void {
   registerCannedShapeGenerator(testPlate)
   registerCannedShapeGenerator(testOpenLine)
+  registerCannedShapeGenerator(testModel)
 }
 
 /** A closed plate with a hole, in definition-local space. */
@@ -129,6 +193,14 @@ export function testPlateCanned(width = 100, height = 60, holeRadius = 12): Cann
   return {
     kind: TEST_PLATE_KIND,
     params: { width, height, holeRadius },
+  }
+}
+
+/** A box model, in definition-local space. */
+export function testModelCanned(width = 40, depth = 30, height = 10): CannedShapeData {
+  return {
+    kind: TEST_MODEL_KIND,
+    params: { width, depth, height },
   }
 }
 

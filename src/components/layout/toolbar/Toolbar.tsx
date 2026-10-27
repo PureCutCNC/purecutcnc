@@ -110,6 +110,7 @@ export function Toolbar({
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}
+          hasCannedSelection={toolbar.sketchCommands.predicates.hasCannedSelectedFeatures}
           onJoin={toolbar.sketchCommands.boolean.join.onActivate}
           onCut={toolbar.sketchCommands.boolean.cut.onActivate}
         />
@@ -117,6 +118,7 @@ export function Toolbar({
           enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
           hasLockedSelection={toolbar.sketchCommands.predicates.hasLockedSelectedFeatures}
           hasClosedSelection={toolbar.sketchCommands.predicates.hasOffsetEligibleSelectedFeatures}
+          hasCannedSelection={toolbar.sketchCommands.predicates.hasCannedSelectedFeatures}
           pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
           pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
           pendingOffset={toolbar.sketchCommands.boolean.offset.active}

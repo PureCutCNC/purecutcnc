@@ -49,6 +49,7 @@ import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
+import { rebuildCannedShapeModels } from '../../cannedShapes/model'
 import {
   dedupeProjectIds,
   normalizeClamp,
@@ -812,6 +813,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   }
   syncIdCounter(edgeEntry.project)
   // A round bar's chuck and tailstock are centred and their height derived
-  // (#392 slice C). The stock and clamps are canonical by now.
-  return syncRoundWorkholding(edgeEntry.project)
+  // (#392 slice C). The stock and clamps are canonical by now. Canned models
+  // regenerate their mesh from the saved parameters here, so a file opened in
+  // another build cannot disagree with itself about the geometry (#1112 A2).
+  const rebuiltCannedModels = rebuildCannedShapeModels(edgeEntry.project)
+  return syncRoundWorkholding(pruneUnusedModelAssets(rebuiltCannedModels))
 }

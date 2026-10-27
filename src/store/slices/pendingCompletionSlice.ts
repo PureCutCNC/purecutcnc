@@ -59,6 +59,7 @@ import {
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
 import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { isCannedFeature } from '../../cannedShapes'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
@@ -701,6 +702,14 @@ export function createPendingCompletionSlice(
         return []
       }
 
+      // The interactive path must refuse exactly as `offsetSelectedFeatures`
+      // does: a pending request can outlive a selection change, and an offset
+      // would freeze a canned shape's generated outlines. Leave the pending
+      // request untouched, like the Around-authoring refusal below (#1112 A2).
+      if (resolveFeatureInstances(state.project, state.pendingOffset.entityIds).some(isCannedFeature)) {
+        return []
+      }
+
       const offsetResult = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
       const createdFeatures = offsetResult.features
       // A stale request started on a round bar may complete after the blank
@@ -769,6 +778,13 @@ export function createPendingCompletionSlice(
           return []
         }
 
+        // A pending Join can outlive a selection change, so the completion
+        // refuses a canned member even when the start did not see one. No
+        // state is written before this point (#1112 A2).
+        if (resolveFeatureInstances(state.project, pendingShapeAction.entityIds).some(isCannedFeature)) {
+          return []
+        }
+
         // Refuse before `selectFeatures` or clearing the pending request: a
         // Join whose anchor is Around-authored would insert new Around rows on
         // a square blank (issue #1016 C2-U1F), and the atomic contract leaves
@@ -784,6 +800,15 @@ export function createPendingCompletionSlice(
       }
 
       if (pendingShapeAction.cutterIds.length === 0 || pendingShapeAction.targetIds.length === 0) {
+        return []
+      }
+
+      // The same stale-request rule as Join: a canned cutter or target refuses
+      // the completion before any cut, selection or pending write (#1112 A2).
+      if (resolveFeatureInstances(
+        state.project,
+        [...pendingShapeAction.cutterIds, ...pendingShapeAction.targetIds],
+      ).some(isCannedFeature)) {
         return []
       }
 
