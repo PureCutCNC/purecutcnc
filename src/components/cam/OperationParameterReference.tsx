@@ -520,12 +520,12 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
-    case 'stockRadial':
+    case 'stockRadial': {
       // Same field, same name: on a rotary operation the wall to clear away is
       // the bar's circumference, so the leave is measured across a radial
       // cross-section instead of between pocket walls (#1112 decision 7.10).
       // On Around those walls are radial rather than the pocket's upright ones,
-      // and the picture says so (decision 8.16).
+      // and the pocket's picture says so (decision 8.16).
       if (variant === 'rotary') {
         return (
           <OpParamRefFrame label={label} note={camT('cam.paramRef.stockRadialNote')}>
@@ -536,14 +536,21 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      // A pocket wrapped onto the Around sheet keeps its wall picture, but the
+      // sheet cannot show the walls turning toward the axis, so the limit note
+      // rides with it (decision 8.16). A Top or Bottom pocket gets neither.
       return (
-        <OpParamRefFrame label={label}>
+        <OpParamRefFrame
+          label={label}
+          note={variant === 'around' ? camT('cam.paramRef.stockRadialNote') : undefined}
+        >
           <path className="gear-reference__guide" d="M8 7h42v20H8z" />
           <path className="gear-reference__outline" d="M14 12h24v10H14z" />
           <path className="gear-reference__accent" d="M39 17h10" />
           <path className="gear-reference__accent-fill" d="M38 17l3-2.2v4.4zM50 17l-3-2.2v4.4z" />
         </OpParamRefFrame>
       )
+    }
 
     case 'passes': {
       // Rotary rough/finish runs one of two ways (#1045). Along: the pass runs

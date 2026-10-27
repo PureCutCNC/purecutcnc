@@ -20,10 +20,14 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { aroundSelectionFixture } from './aroundSelection.testSupport'
 import { aroundSheet } from './aroundSheet'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { canvasColors } from './canvasPalette'
+import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
+import { canvasColors, canvasRgba } from './canvasPalette'
 import { hexToRgba } from './previewPrimitives'
 import { drawAroundModelBands } from './scenePrimitives'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
+import { traceProfilePath } from './profilePrimitives'
+import { cannedShapeFrame } from '../../cannedShapes'
+import { rotaryPatternCannedData, rotaryPatternFrame } from '../../store/helpers/rotaryPatterns'
 
 // Execute the live band's drawing and the SketchCanvas feature pass, with only
 // unrelated layers stubbed. This catches lost state at the call site as well
@@ -42,24 +46,36 @@ for (const axis of ['x', 'y'] as const) {
   const features = resolvedProjectFeatures(f.project)
   const flatDraws: string[] = []
   const strokes: { stroke: string; fill: string; width: number }[] = []
+  // Paths are captured separately: the armed-operation ring is the only code in
+  // this pass that strokes a beginPath outline (the model bands use strokeRect).
+  const paths: { points: { x: number; y: number }[]; stroke: string; width: number }[] = []
+  let pathPoints: { x: number; y: number }[] = []
   const ctx = {
     canvas: { width: 800, height: 600 }, strokeStyle: '', fillStyle: '', lineWidth: 0,
     save() {}, restore() {}, setLineDash() {}, fillRect() {}, fillText() {},
     measureText: () => ({ width: 10 }),
+    beginPath() { pathPoints = [] },
+    closePath() {},
+    moveTo(x: number, y: number) { pathPoints.push({ x, y }) },
+    lineTo(x: number, y: number) { pathPoints.push({ x, y }) },
+    stroke(this: { strokeStyle: unknown; lineWidth: number }) {
+      paths.push({ points: [...pathPoints], stroke: String(this.strokeStyle), width: this.lineWidth })
+    },
     strokeRect(this: CanvasRenderingContext2D) { strokes.push({ stroke: String(this.strokeStyle), fill: String(this.fillStyle), width: this.lineWidth }) },
   } as unknown as CanvasRenderingContext2D
   const dependencies = {
     ctx, sheet, features, project: f.project, selection: f.selection,
     vt: { scale: 1, offsetX: 0, offsetY: 100 },
     t: (key: string, values?: { name?: string }) => values?.name ?? key,
-    drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null,
+    drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null as Set<string> | null,
     drawOtherFace: () => new Set(), useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
     drawOriginMarker() {}, activeOriginInStock() {}, canvasPalette: canvasColors(),
     drawFeature: (_ctx: unknown, feature: { id: string }) => flatDraws.push(feature.id),
     drawLineFeatureBatch() {}, stlImageCacheRef: { current: new Map() },
+    featureDisplayProfiles, traceProfilePath, canvasRgba,
   }
   const draw = new Function(...Object.keys(dependencies), script) as (...args: unknown[]) => void
-  const run = () => { strokes.length = 0; flatDraws.length = 0; draw(...Object.values(dependencies)); return [...strokes] }
+  const run = () => { strokes.length = 0; flatDraws.length = 0; paths.length = 0; draw(...Object.values(dependencies)); return [...strokes] }
   const idle = run()
   assert.equal(idle.length, 2, `${axis}: both model bands drawn`)
   assert.deepEqual(flatDraws, [], `${axis}: Around draws no model flat silhouettes`)
@@ -76,6 +92,60 @@ for (const axis of ['x', 'y'] as const) {
   // Selection alone must highlight, and flat views retain their model drawings.
   f.selection.hoveredFeatureId = null
   assert.deepEqual(run()[0], selected[0])
+  // A multi-turn canned thread armed from the CAM Add menu must ring the folded
+  // stripes the sheet draws, not its stored placement frame, which would run
+  // past the seam (issue #1112 L2).
+  {
+    const frame = rotaryPatternFrame(f.project)
+    assert(frame, `${axis}: the thread fixture has a rotary frame`)
+    const canned = rotaryPatternCannedData(frame, {
+      kind: 'thread', start: 0, length: 200, pitch: 10, starts: 1, depth: 1, hand: 'right',
+    })
+    assert(canned, `${axis}: the thread fixture builds`)
+    const stored = cannedShapeFrame(canned)
+    assert(stored, `${axis}: the thread has a stored placement frame`)
+    const base = features[0]!
+    const thread: ResolvedSketchFeature = {
+      ...base,
+      id: 'thread',
+      name: 'Thread',
+      kind: 'composite',
+      stl: null,
+      text: null,
+      canned,
+      operation: 'line',
+      sketch: { ...base.sketch, profile: stored },
+    }
+    dependencies.features = [...features, thread]
+    dependencies.operationHighlightIds = new Set(['thread'])
+    run()
+    const expected = featureDisplayProfiles(thread, sheet).length
+    assert(expected > 1, `${axis}: the 20-turn thread folds into stripes (${expected})`)
+    assert.equal(paths.length, expected, `${axis}: the armed ring draws one path per folded stripe`)
+    const acrossCanvas = (point: { x: number; y: number }) => (sheet.axis === 'x'
+      ? point.y - dependencies.vt.offsetY
+      : point.x - dependencies.vt.offsetX)
+    for (const path of paths) {
+      assert.equal(path.width, 3, `${axis}: the armed ring keeps its width`)
+      for (const point of path.points) {
+        const across = acrossCanvas(point)
+        assert(
+          across >= sheet.sheetStart - 1e-6 && across <= sheet.sheetStart + sheet.circumference + 1e-6,
+          `${axis}: every armed stripe stays inside the sheet (${across})`,
+        )
+      }
+    }
+    // The stored frame is what the old code stroked; prove it really would run
+    // off the sheet, so the containment check above bites.
+    const storedAcross = [stored.start, ...stored.segments.map((segment) => segment.to)]
+      .map((point) => (sheet.axis === 'x' ? point.y : point.x))
+    assert(
+      storedAcross.some((across) => across < sheet.sheetStart || across > sheet.sheetStart + sheet.circumference),
+      `${axis}: the stored placement frame runs past the sheet`,
+    )
+    dependencies.features = features
+    dependencies.operationHighlightIds = null
+  }
   dependencies.sheet = null as unknown as typeof sheet
   run()
   assert.deepEqual(flatDraws, ['first', 'second'], 'Top still draws model silhouettes')

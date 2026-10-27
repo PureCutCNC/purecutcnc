@@ -96,7 +96,7 @@ function testVariantKindsRenderEveryOption(): void {
     // #1112 decision 7: the rotary Passes field shows the two directions, and
     // the radial stock uses a rotary cross-section instead of the pocket wall.
     ['passes', ['along', 'around']],
-    ['stockRadial', ['rotary']],
+    ['stockRadial', ['rotary', 'around']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {
@@ -166,16 +166,21 @@ function testRotaryPicturesDiffer(): void {
 
   const wall = renderKind('stockRadial')
   const rotary = renderKind('stockRadial', 'rotary')
+  const aroundPocket = renderKind('stockRadial', 'around')
   assert(wall !== rotary, 'rotary stock-to-leave must not reuse the pocket-wall picture')
   // The pocket-wall diagram is the rectangle in the default branch; the rotary
   // one is the bar cross-section circle. Naming both makes the swap explicit.
   assert(wall.includes('M8 7h42v20H8z'), 'the default stockRadial picture stays the pocket wall')
   assert(rotary.includes('m-12 0a12 11'), 'the rotary stockRadial picture is a radial cross-section')
-  // #1112 decision 8.16: the rotary picture says the walls are radial, and the
-  // flat pocket picture must not carry that note.
+  // #1112 decision 8.16: the rotary picture says the walls are radial, and an
+  // Around pocket keeps the pocket picture but carries the same note. A Top or
+  // Bottom pocket gets neither.
   assert(rotary.includes('op-param-ref-note'), 'the rotary stockRadial picture carries its limit note')
   assert(rotary.includes('Walls are radial'), 'the rotary note reads "Walls are radial"')
-  assert(!wall.includes('op-param-ref-note'), 'the pocket-wall picture does not carry the rotary note')
+  assert(wall.includes('M8 7h42v20H8z') && !wall.includes('op-param-ref-note'), 'the pocket-wall picture does not carry the rotary note')
+  assert(aroundPocket.includes('M8 7h42v20H8z'), 'an Around pocket keeps the pocket-wall picture')
+  assert(aroundPocket.includes('op-param-ref-note'), 'an Around pocket carries its radial-wall note')
+  assert(aroundPocket.includes('Walls are radial'), 'the Around note reads "Walls are radial"')
 }
 
 testNoDuplicateKinds()
