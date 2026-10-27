@@ -132,11 +132,11 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   const fixture = rotaryOperationFixture('x', 'rotary_finish')
   const finish = fixture.operations[0]
   const rough = { ...finish, id: 'rough', name: 'rough', kind: 'rotary_rough' as const, pass: 'rough' as const }
-  const warning = (result: { warnings: Array<{ code: string; params?: Record<string, string | number> }> }) =>
+  const warning = (result: { warnings: Array<{ code: string; params?: Record<string, string | number | readonly string[]> }> }) =>
     result.warnings.filter((entry) => entry.code === 'rotaryFinishWithoutRough')
   const alone = computeOperationToolpath(fixture, finish)!.result
   assert.deepEqual(alone.warnings, [{
-    code: 'rotaryFinishWithoutRough', params: { operation: 'Rotary finish', model: 'Model' },
+    code: 'rotaryFinishWithoutRough', params: { operation: 'Rotary finish', model: ['Model'] },
   }], 'a bare along finish is warned that it cuts to full depth in one pass, naming the uncovered model')
   assert.ok(alone.moves.length > 0, 'and it still follows the model and cuts')
   const withRough = computeOperationToolpath({ ...fixture, operations: [rough, finish] }, finish)!.result
@@ -360,7 +360,7 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
   assert.equal(warned([rough('b', ['second'])]).length, 1,
     'the adapter warns when only one of two targeted models has a preceding rough')
   assert.deepEqual(warned([rough('b', ['second'])])[0].params,
-    { operation: finish.name, model: 'Model' },
+    { operation: finish.name, model: ['Model'] },
     'the advisory names the one uncovered model, not "this model"')
   assert.deepEqual(rotaryUncoveredModelIds(
     rotaryPrecedingRoughs({ ...project, operations: [rough('b', ['second']), finish] }, finish),
@@ -373,7 +373,7 @@ assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transf
     rotaryTargetRegions(project, finish),
   ), ['model', 'second'], 'and lists every uncovered model, in target order')
   assert.deepEqual(warned([])[0].params,
-    { operation: finish.name, model: 'Model, Second' },
+    { operation: finish.name, model: ['Model', 'Second'] },
     'the advisory names every uncovered model when there is no rough at all')
   assert.deepEqual(warned([rough('ab', ['model', 'second'])]), [],
     'the adapter stays quiet when both targeted models have one')
