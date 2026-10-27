@@ -55,6 +55,7 @@
 import assert from 'node:assert/strict'
 import { BUNDLED_DEFINITIONS } from './definitions'
 import { validateMachineDefinition } from './types'
+import { machineTemplateDiagnostics } from './templateRules'
 import type { MachineDefinition } from './types'
 import { validateCustomMachine } from '../../machine/registry'
 
@@ -474,7 +475,7 @@ for (const definition of BUNDLED_DEFINITIONS) {
 
 // ── 4. Machine import shows the refusal ──────────────────────
 
-console.log('Testing machine import reports the template refusal...')
+console.log('Testing machine import keeps a template-invalid machine and reports it...')
 {
   const base = bundled('grbl')
   const custom = {
@@ -484,10 +485,17 @@ console.log('Testing machine import reports the template refusal...')
     builtin: false,
     program: { ...base.program, operationHeader: ['G0 X0 Y0'] },
   }
+  // #1119: the library reader is structural. A machine that still breaks a
+  // template rule is a real machine the user can repair, so it is kept — the
+  // diagnostics, not the import, are what refuse it at export.
   const imported = validateCustomMachine(custom)
-  assert.equal(imported.ok, undefined, 'the import is refused')
-  assert.ok(imported.error?.includes('program.operationHeader'), `the import names the field: ${imported.error}`)
-  assert.ok(imported.error?.includes('"G0"'), `the import names the word: ${imported.error}`)
+  assert.ok(imported.ok !== undefined, 'the structurally valid import is kept')
+  const diagnostics = machineTemplateDiagnostics(imported.ok)
+  assert.ok(
+    diagnostics.some((entry) => entry.field === 'program.operationHeader[0]' && entry.word === 'G0' && entry.line === 1),
+    `the retained machine names the field and word: ${JSON.stringify(diagnostics)}`,
+  )
+  assertRefused('the strict schema still refuses it', custom, 'program.operationHeader[0]', 'G0')
 }
 
 console.log('gcode template restriction tests passed')

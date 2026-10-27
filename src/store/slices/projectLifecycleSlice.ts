@@ -32,8 +32,9 @@ import {
 } from '../helpers/normalize'
 import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
-import { decodeProjectFormat } from '../helpers/projectFormat'
+import { decodeProjectFormat, type ProjectMigrationInfo } from '../helpers/projectFormat'
 import { mergeCustomMachines } from '../../machine/store'
+import { machineLoadWarning } from '../../machine/diagnostics'
 
 /** Combine the independent load warnings into one message, or null if silent. */
 function joinWarnings(...warnings: (string | null)[]): string | null {
@@ -43,7 +44,7 @@ function joinWarnings(...warnings: (string | null)[]): string | null {
 
 export interface ProjectLifecycleSliceDependencies {
   rawSet: Parameters<StateCreator<ProjectStore>>[0]
-  normalizeProject: (project: Project) => Project
+  normalizeProject: (project: Project, migrationInfo?: ProjectMigrationInfo) => Project
 }
 
 export type ProjectLifecycleSlice = Pick<
@@ -63,6 +64,15 @@ export type ProjectLifecycleSlice = Pick<
   | 'markModelExported'
 >
 
+function freshMigrationInfo(): ProjectMigrationInfo {
+  return {
+    retractHeightsReexpressed: 0,
+    edgeEntryStrategiesReset: 0,
+    machineDiagnostics: [],
+    rescuedMachineDefinitions: [],
+  }
+}
+
 export function createProjectLifecycleSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -76,9 +86,12 @@ export function createProjectLifecycleSlice(
     createNewProject: (template, name) =>
       set((state) => {
         clearProjectMemoryCaches()
-        const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
+        const info = freshMigrationInfo()
+        const nextProject = normalizeProject(instantiateProjectTemplate(template, name), info)
+        mergeCustomMachines(info.rescuedMachineDefinitions)
         return {
           project: nextProject,
+          machineLoadDiagnostics: info.machineDiagnostics,
           dirty: false,
           filePath: null,
           // A remembered export path belongs to the project it was exported
@@ -230,7 +243,9 @@ export function createProjectLifecycleSlice(
     loadProject: (p) =>
       set((state) => {
         clearProjectMemoryCaches()
-        const normalizedProject = normalizeProject(p)
+        const info = freshMigrationInfo()
+        const normalizedProject = normalizeProject(p, info)
+        mergeCustomMachines(info.rescuedMachineDefinitions)
         const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
         const gridDefaults = defaultGrid(normalizedProject.meta.units)
         const nextProject = {
@@ -250,6 +265,7 @@ export function createProjectLifecycleSlice(
         clearProjectMemoryCaches()
         return {
           project: nextProject,
+          machineLoadDiagnostics: info.machineDiagnostics,
           // Loading a document starts its export identity over, even though
           // the path it was loaded from is unrelated to any G-code file.
           lastExportPath: null,
@@ -271,8 +287,13 @@ export function createProjectLifecycleSlice(
 
     saveProject: () => {
       // Nest records are session state and stay out of the file (#889).
-      const { nests: _nests, ...p } = normalizeProject(pruneUnusedModelAssets(get().project))
+      const info = freshMigrationInfo()
+      const { nests: _nests, ...p } = normalizeProject(pruneUnusedModelAssets(get().project), info)
       void _nests
+      // Save normalization has the same rescue seam as a load: a machine the
+      // in-memory project still carries is added to My Machines rather than
+      // dropped from the saved file (#1119).
+      mergeCustomMachines(info.rescuedMachineDefinitions)
       const updated = {
         ...p,
         version: LATEST_PROJECT_VERSION,
@@ -297,11 +318,10 @@ export function createProjectLifecycleSlice(
       // A legacy file carried a whole machine library; the project keeps only
       // its selected snapshot, so rescue the user's custom definitions into
       // the application library before the rest of the file is dropped.
-      mergeCustomMachines(decoded.machineMigration.customDefinitions)
-      const machineWarning = decoded.machineMigration.unresolvedSelectionId
-        ? `This project selected a machine ("${decoded.machineMigration.unresolvedSelectionId}") that is missing or invalid, so no machine is selected. Choose one in Project Properties before exporting G-code.`
-        : null
-      const migratedMachineLibrary = decoded.machineMigration.compacted
+      const mergedMachines = mergeCustomMachines(decoded.machineMigration.customDefinitions)
+      const machineDiagnostics = [...decoded.machineMigration.diagnostics, ...mergedMachines.diagnostics]
+      const machineWarning = machineLoadWarning(machineDiagnostics)
+      const migratedMachineLibrary = decoded.machineMigration.compacted || mergedMachines.added.length > 0
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
       clearProjectMemoryCaches()
@@ -318,6 +338,7 @@ export function createProjectLifecycleSlice(
           origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
         },
         filePath: path,
+        machineLoadDiagnostics: machineDiagnostics,
         // The opened document has no G-code destination yet; a previous
         // project's export path must never authorize an overwrite (#1081).
         lastExportPath: null,
@@ -353,7 +374,7 @@ export function createProjectLifecycleSlice(
       }))
     },
 
-    clearLoadWarning: () => set({ loadWarning: null }),
+    clearLoadWarning: () => set({ loadWarning: null, machineLoadDiagnostics: [] }),
 
     markSaved: (path) =>
       deps.rawSet({ filePath: path, dirty: false }),

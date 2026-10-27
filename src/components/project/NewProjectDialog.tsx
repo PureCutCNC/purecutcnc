@@ -24,7 +24,9 @@ import { getStockBounds, newProject } from '../../types/project'
 import type { Project, ProjectType } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
+import { setupOnlyTemplate } from './newProjectTemplate'
+import { decodeProjectFormat } from '../../store/helpers/projectFormat'
+import { mergeCustomMachines } from '../../machine/store'
 import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
 import {
   blankTemplateProject,
@@ -71,31 +73,6 @@ function templateLabel(
       return fileTemplate
         ? td('dialogs.newProject.templateLabel.fileSetup', { name: fileTemplate.meta.name })
         : td('dialogs.newProject.templateLabel.fileSetupFallback')
-  }
-}
-
-function setupOnlyTemplate(template: Project): Project {
-  const cloned = structuredClone(template)
-  // A template carries only the machine snapshot it selected — never a
-  // library. The picker always reads the current application library, so a
-  // template can't decide which bundled machines exist.
-  const machines = normalizeMachineDefinitions(cloned)
-  return {
-    ...cloned,
-    meta: {
-      ...cloned.meta,
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
-    },
-    dimensions: {},
-    features: [],
-    featureFolders: [],
-    featureTree: [],
-    global_constraints: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
   }
 }
 
@@ -300,15 +277,26 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     const reader = new FileReader()
     reader.onload = (readerEvent) => {
       try {
-        const parsed = JSON.parse(readerEvent.target?.result as string) as Project
-        setFileTemplate(parsed)
+        const parsed = JSON.parse(readerEvent.target?.result as string) as unknown
+        // Decode now so a structurally unreadable machine refuses the template
+        // visibly instead of throwing while the dialog renders, and so the
+        // file's other machines reach My Machines rather than disappearing
+        // (#1119). The selected snapshot is kept, including a template-invalid
+        // one; export refuses it later.
+        const decoded = decodeProjectFormat(parsed)
+        mergeCustomMachines(decoded.machineMigration.customDefinitions)
+        setFileTemplate(decoded.project)
         setFileLabel(file.name)
         setFileError(null)
         setTemplateKind('file')
-      } catch {
+      } catch (error) {
         setFileTemplate(null)
         setFileLabel(file.name)
-        setFileError(td('dialogs.newProject.templateFileParseError'))
+        setFileError(
+          error instanceof SyntaxError
+            ? td('dialogs.newProject.templateFileParseError')
+            : (error instanceof Error ? error.message : td('dialogs.newProject.templateFileParseError')),
+        )
       }
     }
     reader.readAsText(file)

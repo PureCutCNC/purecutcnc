@@ -226,6 +226,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.error.generationInterrupted': 'Die Generierung für „{operation}" wurde abgebrochen oder ersetzt. Ändern Sie die Auswahl oder eine Option und exportieren Sie erneut.',
   'dialogs.export.error.missingTool': 'Der Operation „{operation}" ist kein Werkzeug zugewiesen.',
   'dialogs.export.error.stale': 'Die Exportvorschau ist veraltet. Öffnen Sie den Dialog erneut und versuchen Sie es noch einmal.',
+  'dialogs.export.error.machineInvalid': 'Die für dieses Projekt gewählte Maschine verletzt weiterhin eine Template-Regel ({detail}). Korrigieren Sie die Maschine vor dem Export.',
   'dialogs.export.warning.noOperations': 'Keine Operationen ausgewählt. Wählen Sie mindestens eine Operation zum Exportieren.',
   'dialogs.export.warning.noMachine': 'Keine Maschine ausgewählt. Wählen Sie vor dem Export eine in den Projekteinstellungen.',
   'dialogs.export.export': '{ext} exportieren',

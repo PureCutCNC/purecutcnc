@@ -201,6 +201,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.error.generationInterrupted': 'La génération de « {operation} » a été annulée ou remplacée. Modifiez la sélection ou une option, puis exportez à nouveau.',
   'dialogs.export.error.missingTool': 'Aucun outil n’est affecté à l’opération « {operation} ».',
   'dialogs.export.error.stale': 'L’aperçu d’exportation n’est plus à jour. Rouvrez la boîte de dialogue et réessayez.',
+  'dialogs.export.error.machineInvalid': 'La machine sélectionnée pour ce projet enfreint encore une règle de modèle ({detail}). Corrigez la machine avant d’exporter.',
   'dialogs.export.warning.noOperations': 'Aucune opération sélectionnée. Cochez au moins une opération à exporter.',
   'dialogs.export.warning.noMachine': 'Aucune machine sélectionnée. Choisissez-en une dans les paramètres du projet avant l’exportation.',
   'dialogs.export.export': 'Exporter {ext}',

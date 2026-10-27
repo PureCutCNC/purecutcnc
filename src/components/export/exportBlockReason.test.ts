@@ -67,6 +67,26 @@ const stale = exportBlockReasonMessage({ kind: 'stale' }, nameOf)
 assert(stale?.key === 'dialogs.export.error.stale', 'stale has a message')
 assert(stale?.params === undefined, 'stale names no operation')
 
+// A machine whose templates still break a rule names the offending lines, not
+// just that something is wrong (#1119).
+const machineInvalid = exportBlockReasonMessage({
+  kind: 'machine-invalid',
+  diagnostics: [{
+    path: ['program', 'header', 3],
+    field: 'program.header[3]',
+    line: 4,
+    text: 'G90.1',
+    word: 'G90.1',
+    rule: 'program header',
+    message: 'program.header[3]: line 4: the word "G90.1" is not allowed in the program header.',
+  }],
+}, nameOf)
+assert(machineInvalid?.key === 'dialogs.export.error.machineInvalid', 'an invalid machine has a message')
+assert(
+  machineInvalid?.params?.detail === 'program.header[3]: line 4: G90.1',
+  'the message carries the field, line and word',
+)
+
 // Reported by the dialog from live state, without waiting for the debounce.
 const liveStateReasons: readonly ExportBlockReason[] = [{ kind: 'no-machine' }, { kind: 'no-operations' }]
 for (const reason of liveStateReasons) {

@@ -27,7 +27,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { ProjectStore } from '../types'
-import { validateMachineDefinition } from '../../engine/gcode/types'
+import { readMachineDefinitionStructure } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { Project } from '../../types/project'
 import { cloneProject } from '../helpers/normalize'
@@ -35,12 +35,16 @@ import { cloneProject } from '../helpers/normalize'
 export type MachineDefsSlice = Pick<ProjectStore, 'setProjectMachine'>
 
 /**
- * The snapshot a definition becomes in a project: validated and copied by
- * value, so a later library edit cannot reach back into the project and the
- * embedded copy stays authoritative for export.
+ * The snapshot a definition becomes in a project: read structurally and
+ * copied by value, so a later library edit cannot reach back into the project
+ * and the embedded copy stays authoritative for export.
+ *
+ * Structural rather than strict (#1119): selecting a machine whose templates
+ * still break a rule must not throw or silently clear the selection. The
+ * machine is embedded unchanged; the export guard reads its diagnostics.
  */
 export function machineSnapshot(definition: MachineDefinition | null): MachineDefinition | null {
-  return definition ? validateMachineDefinition(structuredClone(definition)) : null
+  return definition ? readMachineDefinitionStructure(structuredClone(definition)) : null
 }
 
 /**
