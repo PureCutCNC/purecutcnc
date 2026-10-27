@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { ChuckRangeWarning } from './ChuckProperties'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import type { CannedShapeData, FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
@@ -1010,6 +1011,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               <TreeRow
                 key={clamp.id}
                 label={clamp.name}
+                chips={<ChuckRangeWarning clamp={clamp} stock={project.stock} units={project.meta.units} compact />}
                 kind="clamp"
                 depth={1}
                 isSelected={selection.selectedClampIds.includes(clamp.id)}
