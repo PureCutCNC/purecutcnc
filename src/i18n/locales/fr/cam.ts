@@ -372,10 +372,23 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.addMenu.unavailable': 'Non disponible pour cette sélection ({count})',
   'cam.addMenu.selectFirst': 'Sélectionnez une géométrie dans l’arborescence ou l’esquisse, puis choisissez une opération',
   'cam.addMenu.needsPlasmaProject': 'Nécessite un projet plasma. Le type est choisi à la création du projet.',
+  'cam.addMenu.needsRoundBar': 'Nécessite une barre ronde',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Découpes non plasma, exclues de l’export pour ce type de projet\u00A0: {count}',
   'cam.operations.leftOutRouter': 'Découpes plasma, exclues de l’export pour ce type de projet\u00A0: {count}',
+
+  // ── Kept work that can no longer be cut (#1112 K) ──
+  'cam.uncut.aroundNotRotary': 'Conservé, mais impossible à usiner : ce projet n’usine pas la face Around.',
+  'cam.uncut.aroundNeedsBar': 'Conservé, mais impossible à usiner : la face Around nécessite une barre.',
+  'cam.uncut.aroundNeedsRoundBar': 'Conservé, mais impossible à usiner : un brut carré ne peut pas usiner le travail de tôle sur Around. Remettez une barre ronde comme matière.',
+  'cam.uncut.operationNeedsRoundBar': 'Conservé, mais impossible à usiner : un brut carré n’accepte qu’une ébauche ou une finition rotative contre un modèle.',
+  'cam.uncut.operationWorkholding': 'Conservé, mais impossible à usiner : le mandrin ou les brides gênent cette opération. Dégagez-les ou utilisez un mandrin plus grand.',
+  'cam.uncut.operationNeedsRotaryProject': 'Conservé, mais impossible à usiner : ce projet n’usine pas la face Around.',
+  'cam.uncut.operationNeedsAroundSetup': 'Conservé, mais impossible à usiner : une opération rotative nécessite une configuration Around.',
+  'cam.uncut.operationNeedsBarAxis': 'Conservé, mais impossible à usiner : la configuration Around nécessite une barre selon le même axe.',
+  'cam.uncut.operationTargetsOtherFace': 'Conservé, mais impossible à usiner : ses entités sont sur l’autre face et cette configuration ne les atteint pas.',
+  'cam.uncut.operationReachesCentreline': 'Conservé, mais impossible à usiner : {feature} atteint la ligne centrale de la barre, et une coupe Around doit s’arrêter avant.',
   'cam.hint.empty.drilling': 'Sélectionnez d’abord une ou plusieurs entités circulaires',
   'cam.hint.empty.followLine': 'Sélectionnez d’abord une ou plusieurs entités ouvertes ou fermées ; les régions fermées sont des filtres facultatifs',
   'cam.hint.empty.surfaceClean': 'Sélectionnez d’abord une ou plusieurs entités ajout/modèle ; les régions fermées sont des filtres facultatifs',

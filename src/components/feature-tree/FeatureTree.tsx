@@ -29,6 +29,8 @@ import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isGhostFeatu
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
+import { featureUncutWarning } from '../cam/uncutWork'
+import { UncutWorkBadge } from '../common/UncutWorkBadge'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -377,6 +379,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     const throughChip = through
       ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
       : null
+    // Kept work that the current stock can no longer cut (issue #1112 K). The
+    // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
+    // every action it had — nothing is hidden or removed.
+    const uncutWarning = featureUncutWarning(project, feature) ?? undefined
     if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
       // row menu. It cannot be selected, dragged or edited from here. A model
@@ -392,6 +398,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={depth}
           ghost
           title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
+          warning={uncutWarning}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -441,6 +448,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isFirstFeature={feature.id === firstSolidFeature?.id && !barIsMaterial}
         subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
+        warning={uncutWarning}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -1050,6 +1058,8 @@ interface TreeRowProps {
   isFirstFeature?: boolean
   subtractDisabled?: boolean
   linkedCount?: number
+  /** Kept work the current stock cannot cut; the row shows a warning marker. */
+  warning?: string
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -1098,6 +1108,7 @@ function TreeRow({
   isFirstFeature = false,
   subtractDisabled = false,
   linkedCount,
+  warning,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -1310,6 +1321,7 @@ function TreeRow({
             <Icon id="link" className="tree-icon--link" />
           </span>
         ) : null}
+        {kind === 'feature' && warning ? <UncutWorkBadge text={warning} /> : null}
         {chips}
       </div>
       <div className="tree-row-actions">

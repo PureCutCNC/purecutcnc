@@ -509,3 +509,60 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     )
   })
 })
+
+test('kept Around sheet work warns on its tree row and operation after the bar turns square (#1112 K)', async ({ app, ui }) => {
+  const { page } = app
+  await seedProject(page, JSON.stringify(aroundProject()))
+  await ui.face.switchTo(page, 'Around')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+
+  // Draw the sheet cut and add its pocket through the real menu.
+  await drawRect(page, ...fixtureRect('mm'))
+  const drawn = await getProject(page) as unknown as SavedProject
+  const featureId = drawn.features[0].id
+  expect(drawn.features[0].authoringFace).toBe('around')
+  await selectFeatures(page, [featureId])
+  await ui.operations.openPanelButton(page).click()
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  await ui.setupCam.addMenu(page)
+    .locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+    .getByRole('button', { name: 'Rough', exact: true })
+    .click()
+  const pocketOp = ui.operations.rowByName(page, 'Pocket Rough')
+  await expect(pocketOp).toBeVisible()
+
+  // While the stock is a round bar both still cut: nothing is flagged.
+  await expect(featureRow(page, featureId).locator('[data-uncut-work]')).toHaveCount(0)
+  await expect(pocketOp.locator('[data-uncut-work]')).toHaveCount(0)
+
+  // Turn the bar into a square blank: the wrapped sheet work is kept, and both
+  // the feature row and the operation say why they can no longer cut. Neither
+  // is dropped or hidden.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().setStockShape('square')
+  })
+  const featureWarning = featureRow(page, featureId).locator('[data-uncut-work]')
+  await expect(featureWarning).toBeVisible()
+  await expect(featureWarning).toHaveAttribute(
+    'title',
+    /^Kept, but it cannot be cut: a square blank cannot machine around sheet work/,
+  )
+  const operationWarning = pocketOp.locator('[data-uncut-work]')
+  await expect(operationWarning).toBeVisible()
+  await expect(operationWarning).toHaveAttribute(
+    'title',
+    /^Kept, but it cannot be cut: a square blank only machines a rotary rough or finish/,
+  )
+
+  // The selected operation's panel repeats the reason in a sentence.
+  if (!(await pocketOp.evaluate((element) => element.classList.contains('tree-row--selected')))) {
+    await pocketOp.click()
+  }
+  await expect(pocketOp).toHaveClass(/tree-row--selected/)
+  await expect(page.locator('.cam-operation-properties [data-uncut-work]')).toContainText(
+    'Kept, but it cannot be cut: a square blank only machines a rotary rough or finish against a model.',
+  )
+})

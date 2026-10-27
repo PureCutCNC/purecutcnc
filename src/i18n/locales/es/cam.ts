@@ -372,10 +372,23 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.addMenu.unavailable': 'No disponible para esta selección ({count})',
   'cam.addMenu.selectFirst': 'Seleccione geometría en el croquis o en el árbol y luego elija una operación.',
   'cam.addMenu.needsPlasmaProject': 'Necesita un proyecto de plasma. El tipo se elige al crear el proyecto.',
+  'cam.addMenu.needsRoundBar': 'Necesita una barra redonda',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Cortes que no son de plasma, excluidos de la exportación para este tipo de proyecto: {count}',
   'cam.operations.leftOutRouter': 'Cortes de plasma, excluidos de la exportación para este tipo de proyecto: {count}',
+
+  // ── Kept work that can no longer be cut (#1112 K) ──
+  'cam.uncut.aroundNotRotary': 'Conservado, pero no se puede mecanizar: este proyecto no mecaniza la cara Around.',
+  'cam.uncut.aroundNeedsBar': 'Conservado, pero no se puede mecanizar: la cara Around necesita una barra.',
+  'cam.uncut.aroundNeedsRoundBar': 'Conservado, pero no se puede mecanizar: un bloque cuadrado no puede mecanizar trabajo de chapa en Around. Vuelve a poner una barra redonda como material.',
+  'cam.uncut.operationNeedsRoundBar': 'Conservado, pero no se puede mecanizar: un bloque cuadrado solo admite desbaste o acabado rotativo contra un modelo.',
+  'cam.uncut.operationWorkholding': 'Conservado, pero no se puede mecanizar: el plato o las abrazaderas estorban esta operación. Apártalos o usa un plato más grande.',
+  'cam.uncut.operationNeedsRotaryProject': 'Conservado, pero no se puede mecanizar: este proyecto no mecaniza la cara Around.',
+  'cam.uncut.operationNeedsAroundSetup': 'Conservado, pero no se puede mecanizar: una operación rotativa necesita una configuración Around.',
+  'cam.uncut.operationNeedsBarAxis': 'Conservado, pero no se puede mecanizar: la configuración Around necesita una barra en el mismo eje.',
+  'cam.uncut.operationTargetsOtherFace': 'Conservado, pero no se puede mecanizar: sus elementos están en la otra cara y esta configuración no los alcanza.',
+  'cam.uncut.operationReachesCentreline': 'Conservado, pero no se puede mecanizar: {feature} alcanza la línea central de la barra y un corte Around debe detenerse antes.',
   'cam.hint.empty.drilling': 'Seleccione primero uno o más elementos de círculo',
   'cam.hint.empty.followLine': 'Seleccione primero uno o más elementos abiertos o cerrados; las regiones cerradas son filtros opcionales',
   'cam.hint.empty.surfaceClean': 'Seleccione primero uno o más elementos de adición/modelo; las regiones cerradas son filtros opcionales.',

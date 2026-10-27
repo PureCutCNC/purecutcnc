@@ -409,10 +409,23 @@ export const camEn = {
   'cam.addMenu.unavailable': 'Not available for this selection ({count})',
   'cam.addMenu.selectFirst': 'Select geometry in the sketch or feature tree, then choose an operation',
   'cam.addMenu.needsPlasmaProject': 'Needs a plasma project. The type is chosen when the project is created.',
+  'cam.addMenu.needsRoundBar': 'Needs a round bar',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Not plasma cuts, left out of the export for this project type: {count}',
   'cam.operations.leftOutRouter': 'Plasma cuts, left out of the export for this project type: {count}',
+
+  // ── Kept work that can no longer be cut (#1112 K) ──
+  'cam.uncut.aroundNotRotary': 'Kept, but it cannot be cut: this project does not machine the around face.',
+  'cam.uncut.aroundNeedsBar': 'Kept, but it cannot be cut: the around face needs bar stock.',
+  'cam.uncut.aroundNeedsRoundBar': 'Kept, but it cannot be cut: a square blank cannot machine around sheet work. Switch the stock back to a round bar to cut it.',
+  'cam.uncut.operationNeedsRoundBar': 'Kept, but it cannot be cut: a square blank only machines a rotary rough or finish against a model.',
+  'cam.uncut.operationWorkholding': 'Kept, but it cannot be cut: the chuck or clamps are in the way of this operation. Move them clear or use a larger chuck.',
+  'cam.uncut.operationNeedsRotaryProject': 'Kept, but it cannot be cut: this project does not machine the around face.',
+  'cam.uncut.operationNeedsAroundSetup': 'Kept, but it cannot be cut: a rotary operation needs an around setup.',
+  'cam.uncut.operationNeedsBarAxis': 'Kept, but it cannot be cut: its around setup needs a bar lying along the same axis.',
+  'cam.uncut.operationTargetsOtherFace': 'Kept, but it cannot be cut: its features are on the other face and this setup cannot reach them.',
+  'cam.uncut.operationReachesCentreline': 'Kept, but it cannot be cut: {feature} reaches the bar centreline, and an around cut must stop short of it.',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Select one or more circle features first',
