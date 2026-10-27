@@ -71,7 +71,7 @@ export const warningsEn = {
   'warnings.operationStepoverRatioRange': 'Operation stepover ratio must be between 0 and 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: the stepdown is below 0.01 mm; increase it',
   'warnings.rotaryWorkBudgetExceeded': '{operation}: this would generate too many moves; increase the stepdown or stepover',
-  'warnings.rotaryFinishWithoutRough': '{operation}: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
+  'warnings.rotaryFinishWithoutRough': '{operation}: no earlier rough for {model} comes before this finish in the setup; it will cut to full depth in one pass.',
   // v-carve medial
   'warnings.vcarveMedialWrongKind': 'Only V-carve medial operations can be resolved by the medial-axis generator',
   'warnings.vcarveMedialNeedsVBit': 'V-carve medial requires a V-bit tool',

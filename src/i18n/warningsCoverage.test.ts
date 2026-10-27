@@ -145,11 +145,12 @@ assert(
   'the work-budget message names the operation and the remedy',
 )
 // The 2026-10-22 finish advisory names the operation and states the consequence
-// without claiming a refusal.
+// without claiming a refusal; since #1112 decision 7.11 it names the uncovered
+// model instead of saying "this model".
 assert(
-  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish' })
-    === 'Rotary finish: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
-  'the finish-without-rough advisory names the operation and the consequence',
+  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish', model: 'Turn 2' })
+    === 'Rotary finish: no earlier rough for Turn 2 comes before this finish in the setup; it will cut to full depth in one pass.',
+  'the finish-without-rough advisory names the operation, the uncovered model and the consequence',
 )
 
 // The debug passthrough renders its text verbatim in both locales.
