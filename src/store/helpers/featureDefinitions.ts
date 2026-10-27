@@ -37,7 +37,8 @@ import type {
   SketchProfile,
 } from '../../types/project'
 import { IDENTITY_MATRIX } from '../../types/project'
-import { cloneTextFeatureData, cloneTextLayout } from '../../types/project'
+import { cloneCannedShapeData, cloneTextFeatureData, cloneTextLayout } from '../../types/project'
+import { cannedShapeFrame } from '../../cannedShapes'
 import { nextUniqueGeneratedId } from './ids'
 
 // ============================================================================
@@ -194,12 +195,18 @@ export function createDefinitionForFeatureWithId(
   feature: SketchFeature,
   definitionId: string,
 ): { definitionId: string; definition: FeatureDefinition } {
+  const canned = cloneCannedShapeData(feature.canned)
   const definition: FeatureDefinition = {
     id: definitionId,
     kind: feature.kind,
-    profile: cloneProfile(feature.sketch.profile),
+    // A canned shape's stored profile is its placement frame. Derive it from
+    // the parameters so the draft's own (possibly stale) frame cannot win.
+    profile: (canned ? cannedShapeFrame(canned) : null) ?? cloneProfile(feature.sketch.profile),
     dimensions: cloneDimensions(feature.sketch.dimensions),
     text: cloneTextFeatureData(feature.text),
+    // Only canned definitions carry the field, so a plain definition's saved
+    // shape is byte-for-byte what it was before this feature existed.
+    ...(canned ? { canned } : {}),
     stl: feature.stl ? { ...feature.stl } : null,
     operation: feature.operation,
     regionMaskMode: definitionRegionMaskMode(feature.operation, feature.regionMaskMode),
@@ -301,6 +308,9 @@ function cloneDefinition(
     profile: cloneProfile(definition.profile),
     dimensions: definition.dimensions.map((d) => ({ ...d })),
     text: cloneTextFeatureData(definition.text),
+    ...(definition.canned !== undefined
+      ? { canned: cloneCannedShapeData(definition.canned) }
+      : {}),
     stl: definition.stl ? { ...definition.stl } : null,
   }
 }
