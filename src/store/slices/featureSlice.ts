@@ -66,6 +66,8 @@ import {
 import { createDefinitionForFeature, createFeatureInstance, gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import { resolveFeatureInstance, resolveFeatureInstances, resolvedFeatureMap, resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { expandTextFeature } from '../helpers/textExpansion'
+import { expandCannedFeature } from '../helpers/cannedExpansion'
+import { isCannedFeature } from '../../cannedShapes'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -112,6 +114,7 @@ export type FeatureSlice = Pick<
   | 'cutSelectedFeatures'
   | 'offsetSelectedFeatures'
   | 'expandTextFeature'
+  | 'expandCannedFeature'
 >
 
 /**
@@ -143,11 +146,74 @@ function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature
   return feature as ReferencedSketchFeature
 }
 
+interface GeneratedFeatureExpansion {
+  folders: FeatureFolder[]
+  features: FeatureInstance[]
+  definitions: Record<string, FeatureDefinition>
+}
+
+/**
+ * Insert a generated expansion (Text's glyph rows or a canned shape's outline
+ * rows) directly after its source row. Both expansion kinds keep the source row
+ * and add one grouped folder each, so the two actions share this state write.
+ */
+function insertGeneratedExpansion(
+  state: ProjectStore,
+  sourceFeatureId: string,
+  result: GeneratedFeatureExpansion,
+): Partial<ProjectStore> {
+  const nextFeatureFolders = [...state.project.featureFolders, ...result.folders]
+  const nextFeatureDefinitions = {
+    ...state.project.featureDefinitions,
+    ...result.definitions,
+  }
+
+  const sourceTreeIndex = state.project.featureTree.findIndex(
+    (entry) => entry.type === 'feature' && entry.featureId === sourceFeatureId,
+  )
+  const newTreeEntries: FeatureTreeEntry[] = result.folders.map((folder) => ({
+    type: 'folder' as const,
+    folderId: folder.id,
+  }))
+  const nextFeatureTree = sourceTreeIndex >= 0
+    ? [
+        ...state.project.featureTree.slice(0, sourceTreeIndex + 1),
+        ...newTreeEntries,
+        ...state.project.featureTree.slice(sourceTreeIndex + 1),
+      ]
+    : [...state.project.featureTree, ...newTreeEntries]
+
+  const nextProject = syncFeatureTreeProject({
+    ...state.project,
+    featureFolders: nextFeatureFolders,
+    featureDefinitions: nextFeatureDefinitions,
+    features: [...state.project.features, ...result.features],
+    featureTree: nextFeatureTree,
+    meta: { ...state.project.meta, modified: new Date().toISOString() },
+  })
+
+  return {
+    project: nextProject,
+    selection: {
+      ...state.selection,
+      selectedFeatureId: null,
+      selectedFeatureIds: [],
+      selectedNode: null,
+      mode: 'feature',
+      activeControl: null,
+    },
+    history: {
+      past: [...state.history.past, cloneProject(state.project)].slice(-100),
+      future: [],
+      transactionStart: null,
+    },
+  }
+}
+
 export function createFeatureSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
 ): FeatureSlice {
-
   return {
     // ── Feature folders ──────────────────────────────────────
 
@@ -762,7 +828,13 @@ export function createFeatureSlice(
 
     mergeSelectedFeatures: (keepOriginals = false) => {
       const state = get()
-      const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+      const allSelected = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+      // A union would freeze generated outlines into a plain shape and lose the
+      // parameters. Expand to features first (issue #1112).
+      if (allSelected.some(isCannedFeature)) {
+        return []
+      }
+      const selectedFeatures = allSelected
         .filter((feature) => feature.sketch.profile.closed)
 
       if (selectedFeatures.length < 2) {
@@ -856,6 +928,12 @@ export function createFeatureSlice(
       const state = get()
       const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
 
+      // Cutting a canned shape would replace its generated outlines with a
+      // frozen boolean result. Expand to features first (issue #1112).
+      if (selectedFeatures.some(isCannedFeature)) {
+        return []
+      }
+
       if (selectedFeatures.length < 2) {
         return []
       }
@@ -934,6 +1012,11 @@ export function createFeatureSlice(
 
     offsetSelectedFeatures: (distance) => {
       const state = get()
+      // An offset would freeze generated outlines into a plain shape.
+      // Expand to features first (issue #1112).
+      if (resolveFeatureInstances(state.project, state.selection.selectedFeatureIds).some(isCannedFeature)) {
+        return []
+      }
       const offsetResult = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
       const createdFeatures = offsetResult.features
       // An offset preserves its base feature's authoring face and is inserted
@@ -1240,69 +1323,30 @@ export function createFeatureSlice(
         return
       }
 
-      set((s) => {
-        // Add new folders
-        const nextFeatureFolders = [...s.project.featureFolders, ...folders]
+      set((s) => insertGeneratedExpansion(s, textFeatureId, { folders, features, definitions }))
+    },
 
-        // Add feature definitions to the project
-        const nextFeatureDefinitions = {
-          ...s.project.featureDefinitions,
-          ...definitions,
-        }
+    expandCannedFeature: (cannedFeatureId) => {
+      const state = get()
+      const cannedFeature = resolveFeatureInstance(state.project, cannedFeatureId)
 
-        // Find the position of the original text feature in the feature tree
-        const textFeatureTreeIndex = s.project.featureTree.findIndex(
-          (entry) => entry.type === 'feature' && entry.featureId === textFeatureId,
-        )
+      if (!cannedFeature || !cannedFeature.canned) {
+        return
+      }
 
-        // Build new feature tree entries: insert folder entries right after the original text feature
-        const newTreeEntries: FeatureTreeEntry[] = folders.map((folder) => ({
-          type: 'folder' as const,
-          folderId: folder.id,
-        }))
+      const { folders, features, definitions } = expandCannedFeature(state.project, cannedFeature)
 
-        let nextFeatureTree: FeatureTreeEntry[]
-        if (textFeatureTreeIndex >= 0) {
-          // Always keep the original text feature; insert new folders after it
-          nextFeatureTree = [
-            ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
-            ...newTreeEntries,
-            ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
-          ]
-        } else {
-          // Feature not in tree (shouldn't happen), just append
-          nextFeatureTree = [...s.project.featureTree, ...newTreeEntries]
-        }
+      if (features.length === 0) {
+        return
+      }
 
-        // Add new features
-        const nextFeatures = [...s.project.features, ...features]
+      // Same atomic face check as Text: the plain outlines copy the canned
+      // feature's face and are inserted directly, bypassing `addFeature`.
+      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+        return
+      }
 
-        const nextProject = syncFeatureTreeProject({
-          ...s.project,
-          featureFolders: nextFeatureFolders,
-          featureDefinitions: nextFeatureDefinitions,
-          features: nextFeatures,
-          featureTree: nextFeatureTree,
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
-        })
-
-        return {
-          project: nextProject,
-          selection: {
-            ...s.selection,
-            selectedFeatureId: null,
-            selectedFeatureIds: [],
-            selectedNode: null,
-            mode: 'feature',
-            activeControl: null,
-          },
-          history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
-            future: [],
-            transactionStart: null,
-          },
-        }
-      })
+      set((s) => insertGeneratedExpansion(s, cannedFeatureId, { folders, features, definitions }))
     },
   }
 }

@@ -30,6 +30,8 @@ import {
 } from '../../sketch/constraintSolver'
 import { transformProfile } from '../../geometry/profile'
 import { refitTextFrameProfile } from '../../text'
+import { cloneCannedShapeData } from '../../types/project'
+import { cannedShapeFrame } from '../../cannedShapes'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
@@ -80,12 +82,17 @@ function updateDefinitionFromFeaturePatch(
 ): FeatureDefinition {
   const operation = patch.operation ?? definition.operation
   const text = patch.text !== undefined ? patch.text : definition.text
+  const canned = patch.canned !== undefined ? patch.canned : definition.canned
+  const cannedFrame = patch.canned !== undefined && patch.canned
+    ? cannedShapeFrame(patch.canned)
+    : null
   return {
     ...definition,
     kind: patch.kind ?? definition.kind,
-    profile: patch.sketch?.profile ?? refitTextFrame(definition, text, operation),
+    profile: patch.sketch?.profile ?? cannedFrame ?? refitTextFrame(definition, text, operation),
     dimensions: patch.sketch?.dimensions ?? definition.dimensions,
     text,
+    ...(canned !== undefined ? { canned: cloneCannedShapeData(canned) } : {}),
     stl: patch.stl !== undefined ? patch.stl : definition.stl,
     operation,
     regionMaskMode: operation === 'region'
