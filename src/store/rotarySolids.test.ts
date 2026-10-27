@@ -34,8 +34,11 @@
  *   created from a tool, → the parameter/tool assertions fail;
  * - the creator split across two `set` calls → the one-undo assertion fails;
  * - the refusal path calling `set` first → the no-change assertions fail;
- * - the edit writing `canned` without pinning the regenerated Z bounds → the
- *   linked-copy and cylinder-centreline assertions fail;
+ * - the edit pinning the regenerated mesh's raw Z bounds instead of preserving
+ *   each instance's own placement → the moved, linked-copy and scaled
+ *   assertions fail;
+ * - the parameter edit anchoring the new height to the old bottom instead of
+ *   the instance centre → the cylinder-centreline assertions fail;
  * - the old-folder fixture routed through the new creator → its folder and
  *   operations disappear and the equivalence comparison has nothing to read.
  */
@@ -55,7 +58,6 @@ import type { MachineDefinition } from '../engine/gcode/types'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { rotarySolidCannedData, type RotarySolidInput, type RotarySolidRefusal } from './helpers/rotarySolids'
-import { computeMeshBounds } from '../engine/importedMesh'
 import { generateCannedShapeMesh } from '../cannedShapes'
 import { rotarySolidBarLength, rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { useProjectStore } from './projectStore'
@@ -373,6 +375,7 @@ function testEditRebuildsAndCopiesFollow(): void {
   assert.ok(created.ok)
   if (!created.ok) return
   const model = onlyModel()
+  const centre = (Number(model.z_bottom) + Number(model.z_top)) / 2
   const linked: FeatureInstance = {
     ...model,
     id: 'linked',
@@ -380,6 +383,7 @@ function testEditRebuildsAndCopiesFollow(): void {
     z_bottom: Number(model.z_bottom) - 27.5,
     z_top: Number(model.z_top) - 27.5,
   }
+  const linkedCentre = (Number(linked.z_bottom) + Number(linked.z_top)) / 2
   store().loadProject({ ...store().project, features: [...store().project.features, linked] })
 
   const project = store().project
@@ -391,20 +395,63 @@ function testEditRebuildsAndCopiesFollow(): void {
   assert.ok(canned)
   const mesh = generateCannedShapeMesh(canned)
   assert.ok(mesh)
-  const bounds = computeMeshBounds(mesh.positions)
-  store().updateFeature(model.id, { canned, z_bottom: bounds.minZ, z_top: bounds.maxZ })
+  store().updateFeature(model.id, { canned })
 
   const edited = store().project
   const editedModel = edited.features.find((feature) => feature.id === model.id)
   const editedLink = edited.features.find((feature) => feature.id === 'linked')
   assert.ok(editedModel && editedLink)
   assert.equal(edited.featureDefinitions[editedModel.definitionId].canned?.kind, 'polygon')
-  near(Number(editedModel.z_bottom), bounds.minZ, 'the edited row sits on the new mesh bottom')
-  near(Number(editedModel.z_top), bounds.maxZ, 'the edited row reaches the new mesh top')
-  near(Number(editedLink.z_bottom), -15, 'the linked copy keeps its own bottom')
-  near(Number(editedLink.z_top), -15 + (bounds.maxZ - bounds.minZ), 'the linked copy follows the new height')
+  // The edited row keeps its own centre and takes the new across-flats height.
+  near(Number(editedModel.z_bottom), centre - 5, 'the edited row keeps its centre')
+  near(Number(editedModel.z_top), centre + 5, 'the edited row reaches the new top')
+  // A linked copy shares the definition but not its placement, so it keeps its
+  // own centre too and is not left behind on the old bottom.
+  near(Number(editedLink.z_bottom), linkedCentre - 5, 'the linked copy keeps its own centre')
+  near(Number(editedLink.z_top), linkedCentre + 5, 'the linked copy follows the new height')
   const assetMesh = modelAsset(editedModel)
   assert.equal(assetMesh.positions.length, mesh.positions.length, 'the shared mesh was rebuilt')
+}
+
+function testScaledMovedEditKeepsPlacementAndRoundTrips(): void {
+  loadRotary(roundProject())
+  const created = store().addRotarySolid({ kind: 'turn', start: 0, length: 40, diameter: 20 })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const model = onlyModel()
+  const definition = store().project.featureDefinitions[model.definitionId]
+  assert.ok(definition.stl)
+
+  // A scaled model (the user's post-import scale) moved down: its centre is 10
+  // and its scaled height is the diameter × 2.
+  store().updateFeature(model.id, { stl: { ...definition.stl, scale: 2 } })
+  store().updateFeature(model.id, { z_bottom: -10, z_top: 30 })
+
+  const project = store().project
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const canned = rotarySolidCannedData(frame, { kind: 'turn', start: 0, length: 40, diameter: 10 }, project.meta.units)
+  assert.ok(canned)
+  store().updateFeature(model.id, { canned })
+
+  const edited = store().project.features.find((feature) => feature.id === model.id)
+  assert.ok(edited)
+  // New diameter 10 at scale 2 is a 20-high span around the moved centre 10.
+  near(Number(edited.z_bottom), 0, 'the scaled, moved row keeps its centre', 5e-3)
+  near(Number(edited.z_top), 20, 'the scaled, moved row takes the scaled height', 5e-3)
+  const editedDefinition = store().project.featureDefinitions[edited.definitionId]
+  assert.equal(editedDefinition.stl?.scale, 2, 'the user scale survives the parameter edit')
+
+  // Save → load must rebuild the same mesh without moving the row.
+  const saved = store().saveProject()
+  store().openProjectFromText(saved, null)
+  const after = store().project.features.find((feature) => feature.id === model.id)
+  assert.ok(after)
+  near(Number(after.z_bottom), 0, 'save/load keeps the placed bottom', 5e-3)
+  near(Number(after.z_top), 20, 'save/load keeps the scaled height', 5e-3)
+  const afterDefinition = store().project.featureDefinitions[after.definitionId]
+  assert.equal(afterDefinition.stl?.scale, 2, 'save/load keeps the user scale')
+  assert.equal((afterDefinition.canned?.params as { diameter: number }).diameter, 10, 'save/load keeps the new parameters')
 }
 
 // ── generator parameter sets and the old command ─────────────
@@ -522,6 +569,7 @@ testTurnCreation()
 testYAxisMapping()
 testRefusals()
 testEditRebuildsAndCopiesFollow()
+testScaledMovedEditKeepsPlacementAndRoundTrips()
 testMeshEquivalenceAcrossParameterSets()
 testToolpathAndGcodeEquivalence()
 testOldFolderLoadsUnchanged()

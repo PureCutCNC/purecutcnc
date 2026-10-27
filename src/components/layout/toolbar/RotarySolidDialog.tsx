@@ -55,7 +55,6 @@ import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { resolveFeatureInstance } from '../../../store/helpers/resolveFeatures'
 import { activeFace, aroundUnavailableReason } from '../../../store/helpers/activeFace'
-import { computeMeshBounds } from '../../../engine/importedMesh'
 import { generateCannedShapeMesh } from '../../../cannedShapes'
 import { MAX_POLYGON_SIDES, normalizePolygonCannedParams } from '../../../cannedShapes/generators/polygon'
 import { normalizeTurnCannedParams } from '../../../cannedShapes/generators/turn'
@@ -339,11 +338,12 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
         setRefusal(t('dialogs.rotarySolid.refusal.geometryNotRepresentable'))
         return
       }
-      const bounds = computeMeshBounds(mesh.positions)
-      // One parameter write, one history entry. The instance span is pinned to
-      // the regenerated mesh's own Z bounds, so a diameter change keeps the
-      // solid on the bar's centreline instead of anchoring its old bottom.
-      updateFeature(featureId, { canned, z_bottom: bounds.minZ, z_top: bounds.maxZ })
+      // One parameter write, one history entry. The store rebuilds the mesh
+      // and re-fits every instance's span from its own placement — the edited
+      // row and every linked copy keep their own Z centre and scale, so a
+      // diameter change cannot reset the edited instance or misalign a copy.
+      // Pinning the mesh's raw Z bounds here would do exactly that.
+      updateFeature(featureId, { canned })
       if (activeRef.current) onClose()
       return
     }

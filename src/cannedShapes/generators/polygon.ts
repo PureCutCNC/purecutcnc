@@ -126,6 +126,8 @@ export const polygonCannedShape = defineCannedShape<PolygonCannedParams>({
     }
   },
   capabilities: { expandable: false },
+  // A rotary solid stays centred on the bar's pivot when its size changes.
+  modelZAnchor: 'center',
   normalizeParams: normalizePolygonCannedParams,
   convertParams: (params, convertLength): PolygonCannedParams => ({
     ...params,

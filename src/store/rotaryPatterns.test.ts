@@ -42,6 +42,8 @@
  *   fail;
  * - an operation or tool added by creation → the operation/tool counts fail;
  * - stored parameters dropped → the round-trip geometry differs;
+ * - a Follow line taking today's 1 mm default instead of the feature's depth →
+ *   the move/G-code parity and the operation-depth assertions fail;
  * - `twist` sign or `hand` ignored → the geometry and toolpath comparisons
  *   fail;
  * - Expand emitting one piece per feature instead of per outline → the
@@ -270,6 +272,23 @@ function addEngrave(project: Project, ids: string[]): { project: Project; operat
   const operationId = store().addOperation('follow_line', 'rough', followLineTarget(ids))
   assert.ok(operationId, 'the Follow line operation is created')
   return { project: store().project, operationId }
+}
+
+/**
+ * The old command's operation, exactly as it created it: a Follow line whose
+ * `carveDepth` (and `maxCarveDepth`) came from the requested depth, not from
+ * today's default. Only the name is left at the store default so the posted
+ * program's comment lines match the new operation; the name is presentation,
+ * the depth is what cuts.
+ */
+function addOldEngrave(
+  project: Project,
+  ids: string[],
+  depth: number,
+): { project: Project; operationId: string } {
+  const run = addEngrave(project, ids)
+  store().updateOperation(run.operationId, { carveDepth: depth, maxCarveDepth: depth })
+  return { project: store().project, operationId: run.operationId }
 }
 
 /** Pin the program date so a midnight boundary cannot flake an export compare. */
@@ -532,10 +551,14 @@ test('a Follow line on the canned feature cuts the old folder operation, moves a
     const spec = testCase.spec
     const cutterTool = cutter(spec.units, toolId, toolType)
 
-    // Old shape: folder + one line per start/flute + an Engrave on all of them.
+    // Old shape: folder + one line per start/flute + an Engrave on all of them,
+    // with the depth the old dialog wrote onto the operation.
     const oldProject = oldPatternProject(spec, testCase.input, toolId)
     const oldIds = oldProject.features.map((feature) => feature.id)
-    const oldRun = addEngrave(oldProject, oldIds)
+    const oldRun = addOldEngrave(oldProject, oldIds, testCase.input.depth)
+    const oldOperation = oldRun.project.operations.find((operation) => operation.id === oldRun.operationId)
+    assert.ok(oldOperation, `${testCase.label}: the old operation exists`)
+    assert.equal(oldOperation.carveDepth, testCase.input.depth, `${testCase.label}: the old depth is explicit`)
     const oldResult = movesAndGcode(oldRun.project, oldRun.operationId)
 
     // New shape: one canned feature + an Engrave on the feature.
@@ -549,6 +572,13 @@ test('a Follow line on the canned feature cuts the old folder operation, moves a
     assert.ok(created.ok, `${testCase.label}: canned feature created`)
     if (!created.ok) continue
     const newRun = addEngrave(store().project, [created.featureId])
+    const newOperation = newRun.project.operations.find((operation) => operation.id === newRun.operationId)
+    assert.ok(newOperation, `${testCase.label}: the new operation exists`)
+    assert.equal(
+      newOperation.carveDepth,
+      testCase.input.depth,
+      `${testCase.label}: the Follow line depth comes from the feature`,
+    )
     const newResult = movesAndGcode(newRun.project, newRun.operationId)
 
     assert.deepEqual(newResult.moves, oldResult.moves, `${testCase.label}: identical toolpath moves`)
@@ -565,7 +595,7 @@ test('an old folder of lines plus its Engrave stays folder + lines + operation',
     'v1',
   )
   const oldIds = oldProject.features.map((feature) => feature.id)
-  const run = addEngrave(oldProject, oldIds)
+  const run = addOldEngrave(oldProject, oldIds, 1.2)
   const profiles = run.project.features.map(
     (feature) => run.project.featureDefinitions[feature.definitionId].profile,
   )
@@ -583,6 +613,7 @@ test('an old folder of lines plus its Engrave stays folder + lines + operation',
   )
   const operation = after.operations[0]
   assert.equal(operation.kind, 'follow_line', 'the operation kind is unchanged')
+  assert.equal(operation.carveDepth, 1.2, 'the old Engrave keeps its explicit depth')
   assert.deepEqual(
     operation.target.source === 'features' ? operation.target.featureIds : [],
     oldIds,
