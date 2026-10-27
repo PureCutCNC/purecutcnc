@@ -406,10 +406,23 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.addMenu.unavailable': 'Für diese Auswahl nicht verfügbar ({count})',
   'cam.addMenu.selectFirst': 'Geometrie im Baum oder in der Skizze auswählen, dann eine Operation wählen',
   'cam.addMenu.needsPlasmaProject': 'Erfordert ein Plasma-Projekt. Der Typ wird beim Anlegen des Projekts gewählt.',
+  'cam.addMenu.needsRoundBar': 'Benötigt eine Rundstange',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Keine Plasmaschnitte, für diesen Projekttyp vom Export ausgelassen: {count}',
   'cam.operations.leftOutRouter': 'Plasmaschnitte, für diesen Projekttyp vom Export ausgelassen: {count}',
+
+  // ── Kept work that can no longer be cut (#1112 K) ──
+  'cam.uncut.aroundNotRotary': 'Behalten, aber nicht bearbeitbar: Dieses Projekt bearbeitet die Around-Seite nicht.',
+  'cam.uncut.aroundNeedsBar': 'Behalten, aber nicht bearbeitbar: Die Around-Seite benötigt Stangenmaterial.',
+  'cam.uncut.aroundNeedsRoundBar': 'Behalten, aber nicht bearbeitbar: Ein Vierkant-Rohling kann keine Around-Flächenbearbeitung ausführen. Stelle das Material wieder auf eine Rundstange um.',
+  'cam.uncut.operationNeedsRoundBar': 'Behalten, aber nicht bearbeitbar: Ein Vierkant-Rohling erlaubt nur Rotary-Schruppen oder -Schlichten gegen ein Modell.',
+  'cam.uncut.operationWorkholding': 'Behalten, aber nicht bearbeitbar: Spannfutter oder Klemmen stehen dieser Operation im Weg. Verschiebe sie oder verwende ein größeres Futter.',
+  'cam.uncut.operationNeedsRotaryProject': 'Behalten, aber nicht bearbeitbar: Dieses Projekt bearbeitet die Around-Seite nicht.',
+  'cam.uncut.operationNeedsAroundSetup': 'Behalten, aber nicht bearbeitbar: Eine Rotary-Operation benötigt eine Around-Einrichtung.',
+  'cam.uncut.operationNeedsBarAxis': 'Behalten, aber nicht bearbeitbar: Die Around-Einrichtung benötigt eine Stange entlang derselben Achse.',
+  'cam.uncut.operationTargetsOtherFace': 'Behalten, aber nicht bearbeitbar: Seine Features liegen auf der anderen Seite und diese Einrichtung erreicht sie nicht.',
+  'cam.uncut.operationReachesCentreline': 'Behalten, aber nicht bearbeitbar: {feature} erreicht die Mittellinie der Stange, und ein Around-Schnitt muss davor enden.',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Zuerst ein oder mehrere Kreis-Features auswählen',

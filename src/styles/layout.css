@@ -4554,6 +4554,23 @@
   height: 12px;
 }
 
+/* Kept work the current stock cannot cut (#1112 K): a warning glyph after the
+   row name, with the reason in its tooltip. Status only, never an action. */
+.tree-uncut-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  color: var(--warning-text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: default;
+}
+
+.cam-operation-tree .tree-row.cam-operation-row--uncut .tree-label {
+  color: var(--warning-text);
+}
+
 /* ── Operation popup menu in feature tree ─────────────────── */
 
 .tree-operation-wrapper {

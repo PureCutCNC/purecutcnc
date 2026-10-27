@@ -410,10 +410,23 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.addMenu.unavailable': '不适用于当前选择（{count}）',
   'cam.addMenu.selectFirst': '请在特征树或草图中选择几何图形，然后选择一项操作',
   'cam.addMenu.needsPlasmaProject': '需要等离子项目。项目类型在创建项目时选择。',
+  'cam.addMenu.needsRoundBar': '需要圆棒料',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': '非等离子切割，因项目类型而未包含在导出中：{count}',
   'cam.operations.leftOutRouter': '等离子切割，因项目类型而未包含在导出中：{count}',
+
+  // ── Kept work that can no longer be cut (#1112 K) ──
+  'cam.uncut.aroundNotRotary': '已保留，但无法加工：此项目不加工 Around 面。',
+  'cam.uncut.aroundNeedsBar': '已保留，但无法加工：Around 面需要棒料。',
+  'cam.uncut.aroundNeedsRoundBar': '已保留，但无法加工：方坯无法加工 Around 上的板材轮廓。请将毛坯改回圆棒料。',
+  'cam.uncut.operationNeedsRoundBar': '已保留，但无法加工：方坯仅支持针对模型的旋转粗加工或精加工。',
+  'cam.uncut.operationWorkholding': '已保留，但无法加工：卡盘或夹具挡住了此操作。请移开它们或换用更大的卡盘。',
+  'cam.uncut.operationNeedsRotaryProject': '已保留，但无法加工：此项目不加工 Around 面。',
+  'cam.uncut.operationNeedsAroundSetup': '已保留，但无法加工：旋转操作需要 Around 设置。',
+  'cam.uncut.operationNeedsBarAxis': '已保留，但无法加工：Around 设置需要沿同一轴线的棒料。',
+  'cam.uncut.operationTargetsOtherFace': '已保留，但无法加工：其特征位于另一面，此设置无法触及。',
+  'cam.uncut.operationReachesCentreline': '已保留，但无法加工：{feature} 到达棒料中心线，Around 切削必须在其之前停止。',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': '请先选择一个或多个圆形特征',
