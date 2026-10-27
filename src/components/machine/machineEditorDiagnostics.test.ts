@@ -59,7 +59,7 @@ function formWith(header: string): MachineFormData {
   assert(first.line === 2, `the line is one-based: ${first.line}`)
   assert(first.text === 'G90.1', `the offending text is shown: ${first.text}`)
   assert(first.word === 'G90.1', `the offending word is shown: ${first.word}`)
-  assert(first.rule === 'program header', `the rule is named: ${first.rule}`)
+  assert(first.ruleCode === 'header', `the rule is named: ${first.ruleCode}`)
 
   // Repairing the raw edit removes the diagnostic.
   const repaired: MachineDefinition = structuredClone(definition)

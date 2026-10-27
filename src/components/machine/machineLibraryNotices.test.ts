@@ -52,9 +52,13 @@ const unreadable: MachineLoadDiagnostic = {
   )
   assert(
     notices[1].severity === 'error'
-      && 'message' in notices[1]
-      && notices[1].message === unreadable.message,
-    'the diagnostic supplies the reason in its own words',
+      && notices[1].messageKey === 'dialogs.machineDiagnostics.load.libraryUnreadable'
+      && notices[1].params === undefined,
+    'the diagnostic supplies a catalog key for the reason, not an English sentence',
+  )
+  assert(
+    !('message' in notices[1]),
+    'the manager never receives the machine layer\'s English sentence',
   )
 }
 
@@ -64,6 +68,10 @@ const unreadable: MachineLoadDiagnostic = {
   const repeat = { ...unreadable, kind: 'machine-library-write-failed' as const }
   const notices = machineLibraryNotices({ writeBlocked: false, diagnostics: [repeat, repeat, repeat] })
   assert(notices.length === 1, 'the same failed write is shown once')
+  assert(
+    notices[0].messageKey === 'dialogs.machineDiagnostics.load.libraryWriteFailed',
+    'a failed write has its own translated reason',
+  )
 }
 
 // --- info diagnostics stay out of the banner ----------------------------

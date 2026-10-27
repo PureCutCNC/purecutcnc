@@ -110,6 +110,54 @@
  */
 
 /**
+ * Stable identifiers for the rules the UI names (#1119). The engine returns
+ * one of these with every diagnostic; the language packs own the wording, so a
+ * French user never sees the English rule label. The array is the union and
+ * the coverage tests iterate it, so adding a rule without a translation fails
+ * the build instead of leaking English.
+ */
+export const MACHINE_TEMPLATE_RULE_CODES = [
+  'comment-syntax',
+  'header',
+  'inert.operation-header',
+  'inert.spindle-on',
+  'inert.spindle-off',
+  'inert.pause',
+  'inert.coolant',
+  'units',
+  'inverse-time-on',
+  'inverse-time-off',
+  'torch',
+  'material',
+  'material-feed',
+  'canned-cycle',
+  'canned-retract',
+  'canned-cancel',
+  'anything',
+  'tool-change',
+  'command.rapid',
+  'command.linear',
+  'command.arc-cw',
+  'command.arc-ccw',
+  'command.feed',
+  'command.rpm',
+  'command.peck',
+  'command.machine-rapid',
+  'command.probe',
+  'command.set-zero',
+] as const
+
+export type MachineTemplateRuleCode = (typeof MACHINE_TEMPLATE_RULE_CODES)[number]
+
+/** The inert templates, named by the field they guard. */
+export type InertTemplateLabel =
+  | 'operation header'
+  | 'spindle-on'
+  | 'spindle-off'
+  | 'pause'
+  | 'coolant'
+
+/**
  * The rule a template field is held to.
  *
  * `anything` covers the end of the program, and `tool-change` the tool-change
@@ -122,7 +170,7 @@ export type TemplateRule =
   | { kind: 'anything' }
   | { kind: 'tool-change' }
   | { kind: 'header' }
-  | { kind: 'inert', label: string }
+  | { kind: 'inert', label: InertTemplateLabel }
   | { kind: 'units' }
   | { kind: 'inverse-time-on' }
   | { kind: 'inverse-time-off' }
@@ -140,7 +188,7 @@ export type TemplateRule =
    * (Codex review of #1057 slice F, finding 1: `rpmCommand: "G91\nS"` wrote a
    * motion word after the restart).
    */
-  | { kind: 'command', label: string, pattern: RegExp, hint: string }
+  | { kind: 'command', command: CommandField, label: string, pattern: RegExp, hint: string }
 
 /** The single-word command fields, by the shape they must have. */
 type CommandField =
@@ -326,9 +374,12 @@ export interface MachineTemplateDiagnostic {
   text: string
   /** The word, placeholder or marker the rule refused. */
   word: string
-  /** The rule's human name (`program header`, `units template`, …). */
-  rule: string
-  /** One sentence naming the field, line, offending text and rule. */
+  /**
+   * Stable rule identifier (`header`, `inert.spindle-on`, `command.rapid`, …).
+   * The UI translates it; nothing user-visible is stored as English here.
+   */
+  ruleCode: MachineTemplateRuleCode
+  /** One sentence naming the field, line, offending text and rule (engine diagnostics only). */
   message: string
 }
 
@@ -1095,55 +1146,84 @@ function checkTemplateLine(
   return null
 }
 
+/** The diagnostic code and source label for an inert template. */
+const INERT_RULE_CODES: Record<InertTemplateLabel, MachineTemplateRuleCode> = {
+  'operation header': 'inert.operation-header',
+  'spindle-on': 'inert.spindle-on',
+  'spindle-off': 'inert.spindle-off',
+  'pause': 'inert.pause',
+  'coolant': 'inert.coolant',
+}
+
+/** The diagnostic code for a single-command field. */
+const COMMAND_RULE_CODES: Record<CommandField, MachineTemplateRuleCode> = {
+  rapid: 'command.rapid',
+  linear: 'command.linear',
+  'arc-cw': 'command.arc-cw',
+  'arc-ccw': 'command.arc-ccw',
+  feed: 'command.feed',
+  rpm: 'command.rpm',
+  peck: 'command.peck',
+  'machine-rapid': 'command.machine-rapid',
+  probe: 'command.probe',
+  'set-zero': 'command.set-zero',
+}
+
 /** How a rule is named in a refusal, and the one-sentence reason. */
-function describeRule(rule: TemplateRule): { label: string, hint: string } {
+function describeRule(rule: TemplateRule): { code: MachineTemplateRuleCode, label: string, hint: string } {
   switch (rule.kind) {
     case 'header':
       return {
+        code: 'header',
         label: 'program header',
         hint: 'before the first move only modal setup (including a bare G0/G00 with no axis word, and G91.1), comments, parameter assignments and non-moving M codes are allowed; there is no other motion or axis word here',
       }
     case 'inert':
       return {
+        code: INERT_RULE_CODES[rule.label],
         label: `${rule.label} template`,
         hint: 'a template that runs inside the program may contain only comments, parameter words and commands that neither move an axis nor change a mode',
       }
     case 'units':
-      return { label: 'units template', hint: 'a units template may contain only its G20 or G21 word' }
+      return { code: 'units', label: 'units template', hint: 'a units template may contain only its G20 or G21 word' }
     case 'inverse-time-on':
-      return { label: 'inverse-time on template', hint: 'the inverse-time on template may contain only G93' }
+      return { code: 'inverse-time-on', label: 'inverse-time on template', hint: 'the inverse-time on template may contain only G93' }
     case 'inverse-time-off':
-      return { label: 'inverse-time off template', hint: 'the inverse-time off template may contain only G94' }
+      return { code: 'inverse-time-off', label: 'inverse-time off template', hint: 'the inverse-time off template may contain only G94' }
     case 'torch':
       return {
+        code: 'torch',
         label: 'plasma torch template',
         hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and a $ selector ($0 torch, $1 scribe, $2 spotting; $-1 stops all tools on M5)',
       }
     case 'material':
       return {
+        code: 'material',
         label: 'material/THC template',
         hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands and the P/L/Q/E words those commands define (Q may be decimal on M66/M67)',
       }
     case 'material-feed':
       return {
+        code: 'material-feed',
         label: 'material feed template',
         hint: `a material feed template may contain only ${MATERIAL_FEED_EXPRESSION}, optionally followed by a comment`,
       }
     case 'canned-cycle':
       return {
+        code: 'canned-cycle',
         label: 'canned-cycle template',
         hint: 'a canned-cycle template may contain only a cycle command (G73, G81-G89)',
       }
     case 'canned-retract':
-      return { label: 'canned-cycle retract template', hint: 'a canned-cycle retract template may contain only G98 or G99' }
+      return { code: 'canned-retract', label: 'canned-cycle retract template', hint: 'a canned-cycle retract template may contain only G98 or G99' }
     case 'canned-cancel':
-      return { label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
+      return { code: 'canned-cancel', label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
     case 'anything':
-      return { label: 'template', hint: 'this template may contain anything' }
+      return { code: 'anything', label: 'template', hint: 'this template may contain anything' }
     case 'tool-change':
-      return { label: 'tool-change template', hint: 'this template may contain anything' }
+      return { code: 'tool-change', label: 'tool-change template', hint: 'this template may contain anything' }
     case 'command':
-      return { label: rule.label, hint: rule.hint }
+      return { code: COMMAND_RULE_CODES[rule.command], label: rule.label, hint: rule.hint }
   }
 }
 
@@ -1192,6 +1272,7 @@ function fieldRule(
       const command = COMMAND_CORES[fieldClass.command]
       return {
         kind: 'command',
+        command: fieldClass.command,
         label: command.label,
         pattern: commandPattern(fieldClass.command, syntax),
         hint: command.hint,
@@ -1390,13 +1471,13 @@ export function machineTemplateDiagnostics(
       line: 1,
       text,
       word: text,
-      rule: 'comment syntax',
+      ruleCode: 'comment-syntax',
       message: comment.message,
     })
   }
   for (const field of templateFields(definition)) {
     const fieldLabel = fieldName(field.path)
-    const rule = describeRule(field.rule).label
+    const rule = describeRule(field.rule)
     const lines = field.text.split(/\r?\n/)
     // A command field is one line and one command: the whole field is judged
     // once, never split into lines that each match on their own. When it does
@@ -1418,7 +1499,7 @@ export function machineTemplateDiagnostics(
               line: field.lineOffset + index + 1,
               text: rawLine,
               word: lineRefusal.word,
-              rule,
+              ruleCode: rule.code,
               message: refusalMessage(field.path, field.rule, lineRefusal, field.lineOffset + index + 1),
             })
           })
@@ -1430,7 +1511,7 @@ export function machineTemplateDiagnostics(
           line: field.lineOffset + 1,
           text: field.text,
           word: refusal.word,
-          rule,
+          ruleCode: rule.code,
           message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + 1),
         })
       }
@@ -1445,7 +1526,7 @@ export function machineTemplateDiagnostics(
         line: field.lineOffset + index + 1,
         text: rawLine,
         word: refusal.word,
-        rule,
+        ruleCode: rule.code,
         message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + index + 1),
       })
     })

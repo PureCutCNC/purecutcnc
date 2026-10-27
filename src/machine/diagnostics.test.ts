@@ -22,7 +22,8 @@
  * consolidated is named at open time, so `info` reports belong in it.
  */
 
-import { machineLoadWarning, type MachineLoadDiagnostic } from './diagnostics'
+import { machineLoadWarning } from '../i18n/machineDiagnosticText'
+import type { MachineLoadDiagnostic } from './diagnostics'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -33,6 +34,15 @@ const retained: MachineLoadDiagnostic = {
   kind: 'machine-retained-invalid',
   machineId: 'avid-mach4',
   machineName: 'Avid Mach4',
+  templateDiagnostics: [{
+    path: ['program', 'header', 1],
+    field: 'program.header[1]',
+    line: 2,
+    text: 'G90.1',
+    word: 'G90.1',
+    ruleCode: 'header',
+    message: 'program.header[1]: line 2: the word "G90.1" is not allowed in the program header.',
+  }],
   message: 'The machine "Avid Mach4" was kept and stays selected, but its templates break a machine-template rule. G-code export is blocked until it is corrected.',
 }
 
@@ -54,7 +64,7 @@ const warning = machineLoadWarning([retained, moved, consolidated])
 assert(warning !== null, 'the warning exists')
 assert(warning!.includes('Avid Mach4'), 'the retained-invalid machine is named')
 assert(warning!.includes('export is blocked'), 'the warning says export needs a fix')
-assert(warning!.includes('moved to My Machines'), 'a rescue move is named')
+assert(warning!.includes('machine library'), 'a rescue move is named')
 assert(warning!.includes('duplicate was merged'), 'a consolidation is named')
 assert(
   warning!.split('\n\n').length === 3,
