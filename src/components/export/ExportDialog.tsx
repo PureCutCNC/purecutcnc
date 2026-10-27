@@ -22,6 +22,7 @@ import {
   formatProgramNumber,
   getActiveMachineDefinition,
   getExportedMotionEligibility,
+  machineExportDiagnostics,
   projectExportsPerSetup,
 } from '../../engine/gcode'
 import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
@@ -43,6 +44,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import { toolpathWarningText } from '../../i18n/warningText'
 import { warningSeverity } from '../../engine/toolpaths/warningCodes'
 import { exportBlockReasonMessage } from './exportBlockReason'
+import { MachineDiagnosticList } from '../machine/MachineDiagnosticList'
 
 interface ExportDialogProps {
   onClose: () => void
@@ -76,6 +78,13 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
   const dialectLabels = exportDialectLabels(activeDefinition)
+  // The same list the manager and the editor show (#1119). The preparation is
+  // blocked before generation, so this is the explanation, not a warning after
+  // a failed save.
+  const machineDiagnostics = useMemo(
+    () => (activeDefinition ? machineExportDiagnostics(activeDefinition) : []),
+    [activeDefinition],
+  )
 
   const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
 
@@ -400,6 +409,13 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           </div>
 
           <div className="dialog-preview-container">
+            {machineDiagnostics.length > 0 ? (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">{td('dialogs.export.machineDiagnostics')}</label>
+                <p className="machine-manager-hint">{td('dialogs.export.machineDiagnosticsHint')}</p>
+                <MachineDiagnosticList diagnostics={machineDiagnostics} />
+              </div>
+            ) : null}
             {previewMessages.errors.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">{td('dialogs.export.errors')}</label>

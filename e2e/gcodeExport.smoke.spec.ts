@@ -23,12 +23,40 @@
  * Export button, the disabled state when nothing is checked, and a program
  * that changes tool with M6 off — reported as an error that blocks the export,
  * where a program whose operations share one tool is not.
+ *
+ * #1119 adds the machine-template guard: the #1109 fixture's header with
+ * `G90.1` is reported line by line, blocks the save with no file written, and
+ * exports once the embedded copy is repaired.
  */
 
+import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
-import { getProject } from './helpers'
+import { getProject, seedProject } from './helpers'
+import { openMachineManager } from './machineLibrary.helpers'
 import type { Page } from '@playwright/test'
+
+const ISSUE_1109_FIXTURE = new URL('../src/engine/test-fixtures/issue-1109-tab-ramp-original.camj', import.meta.url)
+
+/**
+ * The untouched #1109 snapshot with one change (#1119): its allowed `G91.1`
+ * header line becomes the refused `G90.1`. The machine itself is the
+ * reporter's Avid Mach4 post, unchanged.
+ */
+function issue1109WithAbsoluteArcCentres(): string {
+  const project = JSON.parse(readFileSync(ISSUE_1109_FIXTURE, 'utf8')) as {
+    meta: {
+      selectedMachineId: string
+      machineDefinitions: Array<{ id: string; program: { header: string[] } }>
+    }
+  }
+  const machine = project.meta.machineDefinitions.find(
+    (entry) => entry.id === project.meta.selectedMachineId,
+  )
+  if (!machine) throw new Error('#1109 fixture has no selected machine')
+  machine.program.header[machine.program.header.length - 1] = 'G90.1'
+  return JSON.stringify(project)
+}
 
 /**
  * Replace the platform's save entry point with a probe. Every export must call
@@ -215,6 +243,75 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(preview).toContainText(/^M3,-?[\d.]+,-?[\d.]+,-?[\d.]+$/m)
     await expect(preview).not.toContainText(/^(G0|G1|G21|G20|M30)\b/m)
   })
+})
+
+
+test('a machine that still breaks a template rule blocks export with zero writes until repaired', async ({ app, ui }) => {
+  // The reporter's 0.5.x Avid post with G90.1 in its header: structurally
+  // valid, refused by the #1057 program-header rule (#1119).
+  let alertMessage = ''
+  app.page.on('dialog', async (dialog) => {
+    alertMessage = dialog.message()
+    await dialog.accept()
+  })
+  await seedProject(app.page, issue1109WithAbsoluteArcCentres())
+  await expect.poll(() => alertMessage).toContain('export is blocked')
+  expect(alertMessage).toContain('Avid Mach4')
+
+  await installExportSaveProbe(app.page, 'success')
+  await ui.operations.headerExportButton(app.page).click()
+  const dialog = ui.exportDialog.root(app.page)
+  await expect(dialog).toBeVisible()
+
+  // The dialog shows the same line-level diagnostics the manager does.
+  const diagnostics = ui.exportDialog.machineDiagnostics(app.page)
+  await expect(diagnostics).toContainText('program.header')
+  await expect(diagnostics).toContainText('G90.1')
+  await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+
+  // Nothing is written while the machine is blocked: the probe was never
+  // called and the preparation never reached a program.
+  expect(await exportSaveCalls(app.page)).toHaveLength(0)
+  await expect(ui.exportPreview.body(app.page)).not.toContainText('G90.1')
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toBeHidden()
+
+  // Repair the project's embedded copy and apply it explicitly. The selected
+  // custom machine is also rescued into My Machines, so the library and the
+  // project each have a row with this name; the project row is last.
+  await openMachineManager(app.page, ui)
+  await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
+  await ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)').last().click()
+  await expect(ui.machineManager.diagnostics(app.page)).toContainText('G90.1')
+  await ui.machineManager.editButton(app.page).click()
+  const editor = ui.machineEditor.dialog(app.page)
+  await expect(editor).toBeVisible()
+  await expect(ui.machineEditor.diagnostics(app.page)).toContainText('G90.1')
+  const header = ui.machineEditor.field(app.page, 'Header')
+  // Restore the relative-arc-centre word the fixture originally had.
+  const repairedHeader = (await header.inputValue())
+    .split('\n')
+    .map((line) => (line.trim() === 'G90.1' ? 'G91.1' : line))
+    .join('\n')
+  await header.fill(repairedHeader)
+  await expect(ui.machineEditor.diagnostics(app.page)).toHaveCount(0)
+  await ui.machineEditor.saveButton(app.page).click()
+  await expect(editor).toBeHidden()
+  // The library's rescued copy was not touched by the project repair.
+  await expect(ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)').first()).toContainText('Export blocked')
+  await ui.machineManager.doneButton(app.page).click()
+
+  // The repaired machine exports: the same dialog now has no machine
+  // diagnostics and the save is attempted exactly once with real G-code.
+  await ui.operations.headerExportButton(app.page).click()
+  await expect(dialog).toBeVisible()
+  await expect(ui.exportDialog.machineDiagnostics(app.page)).toHaveCount(0)
+  await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  await ui.exportDialog.exportButton(app.page).click()
+  await expect(dialog).toBeHidden()
+  const calls = await exportSaveCalls(app.page)
+  expect(calls).toHaveLength(1)
+  expect(String(calls[0][1])).toContain('M30')
 })
 
 

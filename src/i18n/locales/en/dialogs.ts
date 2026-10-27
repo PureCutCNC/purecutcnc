@@ -222,6 +222,8 @@ export const dialogsEn = {
   'dialogs.export.emitCoolant': 'Emit coolant commands',
   'dialogs.export.errors': 'Errors',
   'dialogs.export.warnings': 'Warnings',
+  'dialogs.export.machineDiagnostics': 'Machine template problems',
+  'dialogs.export.machineDiagnosticsHint': 'The machine cannot export until every line below is corrected.',
   'dialogs.export.preview': 'Preview (first 30 lines)',
   'dialogs.export.previewPlaceholder': 'Select a machine in project settings to generate G-code preview.',
   'dialogs.export.previewTruncated': '...',
@@ -407,6 +409,8 @@ export const dialogsEn = {
   'dialogs.machineEditor.variablesReference': 'Variables reference',
   'dialogs.machineEditor.save': 'Save',
   'dialogs.machineEditor.invalidJson': 'Invalid JSON syntax',
+  'dialogs.machineEditor.diagnosticsTitle': 'Machine template problems',
+  'dialogs.machineEditor.diagnosticsHint': 'Correct every line below before this machine can export. Line numbers count from the start of each template.',
   'dialogs.machineEditor.opensbpNote': 'This machine exports ShopBot part files. PureCutCNC writes the whole program, so there are no G-code commands or templates to edit here. Axis mapping, number format and arc support are in the raw JSON section.',
   'dialogs.machineEditor.rotary': 'Rotary axis',
   'dialogs.machineEditor.rotaryNone': 'None',
@@ -418,6 +422,11 @@ export const dialogsEn = {
   'dialogs.machineEditor.rotaryXMotor': 'The X motor',
   'dialogs.machineEditor.rotaryWord': 'Program word: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Reverse direction',
+
+  // ── Machine template diagnostics (#1119) ──
+  'dialogs.machineDiagnostics.line': 'line {line}',
+  'dialogs.machineDiagnostics.rule': 'rule: {rule}',
+  'dialogs.machineDiagnostics.word': 'offending word: {word}',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': 'Manage machines',
@@ -435,6 +444,12 @@ export const dialogsEn = {
   'dialogs.machineManager.importMachine': 'Import machine',
   'dialogs.machineManager.exportMachine': 'Export machine',
   'dialogs.machineManager.removeMachine': 'Remove machine',
+  'dialogs.machineManager.exportBlocked': 'Export blocked',
+  'dialogs.machineManager.diagnosticsTitle': 'Machine template problems',
+  'dialogs.machineManager.diagnosticsHint': 'This machine cannot export until every line below is corrected.',
+  'dialogs.machineManager.libraryWriteBlocked': 'The stored machine library could not be read, so it is preserved unchanged. Changes to my machines cannot be saved until this is resolved.',
+  'dialogs.machineManager.projectCopyBadge': 'Project copy',
+  'dialogs.machineManager.projectCopyInLibraryHint': 'This is the copy saved in this project. Editing and saving it repairs the project’s copy; your library entry is left unchanged.',
   'dialogs.machineManager.done': 'Done',
   'dialogs.machineManager.emptyCustom': 'No custom machines yet. Duplicate a built-in machine or import one.',
   'dialogs.machineManager.emptyDetail': 'Select a machine from the list or import one.',

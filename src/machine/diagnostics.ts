@@ -81,10 +81,16 @@ export class MachineLoadError extends Error {
   }
 }
 
-/** Join diagnostics into the existing one-string load-warning surface. */
+/**
+ * Join diagnostics into the existing one-string load-warning surface.
+ *
+ * Every report is included, including the `info` ones: a rescued machine
+ * ("moved to My Machines"), a re-keyed id and a consolidated duplicate are
+ * exactly what a one-time load alert is for (#1119) — the library banner in
+ * the manager cannot say what happened at open time. Transport errors
+ * (`MachineLoadError`) are shown by the caller that refused the load.
+ */
 export function machineLoadWarning(diagnostics: readonly MachineLoadDiagnostic[]): string | null {
-  const messages = diagnostics
-    .filter((diagnostic) => diagnostic.severity !== 'info')
-    .map((diagnostic) => diagnostic.message)
+  const messages = diagnostics.map((diagnostic) => diagnostic.message)
   return messages.length > 0 ? messages.join('\n\n') : null
 }

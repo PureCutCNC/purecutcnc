@@ -224,6 +224,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.emitCoolant': '输出冷却液指令',
   'dialogs.export.errors': '错误',
   'dialogs.export.warnings': '警告',
+  'dialogs.export.machineDiagnostics': '机床模板问题',
+  'dialogs.export.machineDiagnosticsHint': '必须先修正下面每一行，才能导出此机床。',
   'dialogs.export.preview': '预览（前 30 行）',
   'dialogs.export.previewPlaceholder': '在项目设置中选择机床以生成 G 代码预览。',
   'dialogs.export.previewTruncated': '...',
@@ -409,6 +411,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.variablesReference': '变量参考',
   'dialogs.machineEditor.save': '保存',
   'dialogs.machineEditor.invalidJson': '无效的 JSON 语法',
+  'dialogs.machineEditor.diagnosticsTitle': '机床模板问题',
+  'dialogs.machineEditor.diagnosticsHint': '必须先修正下面每一行，才能导出此机床。行号从每个模板的开头算起。',
   'dialogs.machineEditor.opensbpNote': '此机床导出 ShopBot 零件文件。整个程序由 PureCutCNC 生成，因此这里没有可编辑的 G 代码指令或模板。轴映射、数字格式和圆弧支持位于“高级”中。',
   'dialogs.machineEditor.rotary': '旋转轴',
   'dialogs.machineEditor.rotaryNone': '无',
@@ -420,6 +424,11 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'X 电机',
   'dialogs.machineEditor.rotaryWord': '程序字：{word}',
   'dialogs.machineEditor.rotaryReverse': '反转方向',
+
+  // ── Machine template diagnostics (#1119) ──
+  'dialogs.machineDiagnostics.line': '第 {line} 行',
+  'dialogs.machineDiagnostics.rule': '规则：{rule}',
+  'dialogs.machineDiagnostics.word': '违规词：{word}',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': '管理机床',
@@ -437,6 +446,12 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.importMachine': '导入机床',
   'dialogs.machineManager.exportMachine': '导出机床',
   'dialogs.machineManager.removeMachine': '移除机床',
+  'dialogs.machineManager.exportBlocked': '导出已阻止',
+  'dialogs.machineManager.diagnosticsTitle': '机床模板问题',
+  'dialogs.machineManager.diagnosticsHint': '必须先修正下面每一行，才能导出此机床。',
+  'dialogs.machineManager.libraryWriteBlocked': '无法读取已保存的机床库，因此保持原样不变。在问题解决之前，无法保存对“我的机床”的更改。',
+  'dialogs.machineManager.projectCopyBadge': '项目副本',
+  'dialogs.machineManager.projectCopyInLibraryHint': '这是保存在本项目中的副本。编辑并保存它会修复项目副本；机床库中的条目保持不变。',
   'dialogs.machineManager.done': '完成',
   'dialogs.machineManager.emptyCustom': '尚无自定义机床。请复制一个内置机床或导入一个。',
   'dialogs.machineManager.emptyDetail': '从列表中选择一个机床或导入一个。',
