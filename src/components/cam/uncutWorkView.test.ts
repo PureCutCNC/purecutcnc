@@ -26,7 +26,9 @@
  *   assertion fails;
  * - rendering the badge on every row → the round-bar project's absence
  *   assertion fails;
- * - dropping the note from the operation panel → the note assertion fails.
+ * - dropping the note from the operation panel → the note assertion fails;
+ * - suppressing the badge on a ghost operation row (`!ghost` in the CAMPanel
+ *   badge condition) → the expanded Around section's ghost-row assertion fails.
  *
  * Run with: npx tsx src/components/cam/uncutWorkView.test.ts
  */
@@ -56,6 +58,7 @@ if (typeof globals.navigator === 'undefined') globals.navigator = { language: 'e
 Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
 ;(globalThis as unknown as { React?: typeof React }).React = React
 
+const { CAMPanel } = await import('./CAMPanel')
 const { FeatureTree } = await import('../feature-tree/FeatureTree')
 const { UncutWorkNote } = await import('../common/UncutWorkNote')
 const { I18nProvider } = await import('../../i18n/I18nProvider')
@@ -141,6 +144,46 @@ function rowHtml(html: string, featureId: string): string {
   assert(note, 'the operation note renders the warning')
   assert(note.textContent === enMessages['cam.uncut.operationNeedsRoundBar'], 'and it is the user-facing sentence')
   assert(note.getAttribute('role') === 'note', 'it is announced as a note, not an action')
+  done()
+}
+
+// ── A ghost operation still shows why it cannot cut (slice K re-check) ──
+
+{
+  // Top is the face being worked on, so the Around setup's operation is a
+  // ghost row. It is listed for reference, but "kept, not cut" has to stay
+  // visible on it: suppressing the badge on ghosts would hide the reason.
+  const project = { ...SQUARE, operations: [operation], activeSetupId: SQUARE.setups[0].id }
+  useProjectStore.setState({ project })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const done = await renderTo(host, createElement(I18nProvider, null, createElement(CAMPanel, {
+    mode: 'operations',
+    selectedOperationId: null,
+    onSelectedOperationIdChange: () => {},
+    onExport: () => {},
+    onExportOperation: () => {},
+    requestToolpath: async () => null,
+    documentKey: 0,
+  })))
+  assert(
+    host.querySelector('[data-setup-face="top"]')?.getAttribute('data-active') === 'true',
+    'Top is the face being worked on',
+  )
+  const aroundToggle = host.querySelector('[data-setup-face="around"] .cam-setup-group__toggle') as HTMLElement | null
+  assert(aroundToggle, 'the Around setup has a section header to expand')
+  assert(host.querySelectorAll('[data-ghost="true"]').length === 0, 'the collapsed Around section lists no row yet')
+  const { flushSync } = await import('react-dom')
+  flushSync(() => aroundToggle.click())
+  const ghost = host.querySelector('[data-ghost="true"]')
+  assert(ghost, 'expanding Around lists its operation as a ghost row')
+  assert(ghost.textContent?.includes(operation.name), 'the ghost row is the Around operation')
+  const badge = ghost.querySelector('[data-uncut-work="true"]')
+  assert(badge, 'the ghost row carries the uncut-work badge')
+  assert(
+    badge.getAttribute('aria-label') === enMessages['cam.uncut.operationNeedsRoundBar'],
+    'with the operation reason as its accessible name',
+  )
   done()
 }
 

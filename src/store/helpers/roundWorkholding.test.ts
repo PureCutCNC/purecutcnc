@@ -45,6 +45,8 @@ import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../projectStore'
 import { normalizeProject } from './projectFormat'
 import {
+  STANDARD_CHUCKS,
+  chuckSizePatch,
   defaultRoundWorkholding,
   isRoundWorkholding,
   roundWorkholdingDiameter,
@@ -212,6 +214,51 @@ test('an axis Y bar starts at maxY and sits across X', () => {
   assert.equal(tailstock.y, 0 - 40, 'the tailstock sits past the far end (minY)')
   assert.equal(tailstock.y + tailstock.h, 0, 'touching it')
   assert.equal(tailstock.x + tailstock.w / 2, 10, 'centred across X')
+})
+
+// ── Picking a standard size ───────────────────────────────────
+
+console.log('\nPicking a standard chuck size')
+
+test('picking each preset uses its published body length and still grips the bar end', () => {
+  for (const axis of ['x', 'y'] as const) {
+    const bar = roundStock(20, 100, axis, { x: 0, y: 0 })
+    const start = defaultRoundWorkholding('chuck', bar, 'mm')
+    for (const size of STANDARD_CHUCKS) {
+      const picked: Clamp = {
+        id: 'cl-chuck',
+        name: 'Chuck',
+        visible: true,
+        ...start,
+        ...chuckSizePatch(size.id, bar, 'mm'),
+      }
+      const diameter = convertLength(size.diameterIn, 'inch', 'mm')
+      const body = convertLength(size.bodyIn, 'inch', 'mm')
+      const along = alongOf(picked, bar)
+      assert.equal(along.diameter, diameter, `${axis}/${size.id}: the published body diameter`)
+      assert.equal(along.size, body + 15, `${axis}/${size.id}: the published body plus the 15 mm grip`)
+      assert.ok(Math.abs(along.low + body) < 1e-9, `${axis}/${size.id}: the body reaches past the start end`)
+      assert.ok(Math.abs(along.low + along.size - 15) < 1e-9, `${axis}/${size.id}: the grip still reaches 15 into the bar`)
+      assert.equal(picked.height, barPivotZ(bar) + diameter / 2, `${axis}/${size.id}: the height follows it`)
+      assert.equal(
+        axis === 'x' ? picked.y + picked.h / 2 : picked.x + picked.w / 2,
+        barCentre(bar),
+        `${axis}/${size.id}: centred across the bar`,
+      )
+    }
+  }
+})
+
+test('picking 12 inch replaces the default 3 inch body instead of keeping its length', () => {
+  const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
+  const before = defaultRoundWorkholding('chuck', bar, 'mm')
+  const after = { ...before, ...chuckSizePatch('bison-3204-12', bar, 'mm') }
+  const body = convertLength(3.7, 'inch', 'mm')
+  assert.equal(after.w, body + 15, 'the real 12 inch body replaces the old 3 inch one')
+  assert.equal(after.h, convertLength(12.4, 'inch', 'mm'), 'and the diameter is the 12 inch one')
+  assert.equal(after.x, -body, 'it is re-placed against the bar end')
+  assert.ok(Math.abs(after.x + after.w - 15) < 1e-9, 'gripping the same 15 mm')
+  assert.notEqual(after.w, before.w, 'the old axial length really was different')
 })
 
 // ── syncRoundWorkholding ──────────────────────────────────────

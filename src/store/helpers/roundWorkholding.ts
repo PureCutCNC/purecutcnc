@@ -85,13 +85,51 @@ export function chuckOutOfRange(clamp: Clamp, stock: Stock, units: ProjectMeta['
   return diameter < range.min || diameter > range.max
 }
 
-/** User explicitly picks equipment; old w/h retain their body-envelope meaning. */
-export function chuckSizePatch(sizeId: string, stock: BarStock, units: ProjectMeta['units']): Partial<Clamp> {
+/** The axial grip into the bar: 15 mm, at most a quarter of its length. */
+function chuckGrip(stock: BarStock, units: ProjectMeta['units']): number {
+  return Math.min(convertLength(15, 'mm', units), barLength(stock) / 4)
+}
+
+/**
+ * Where a chuck body of `body` length and `diameter` sits: past the bar's start
+ * end by its body, gripping `grip` into the bar, centred across the bar and as
+ * tall as the pivot plus its own radius. This is the envelope the defaults, a
+ * size pick and therefore Around, 3D and collision all share.
+ */
+function chuckPlacement(
+  stock: BarStock,
+  units: ProjectMeta['units'],
+  diameter: number,
+  body: number,
+): Pick<Clamp, 'x' | 'y' | 'w' | 'h' | 'height'> {
+  const bounds = getStockBounds(stock)
+  const centre = barCentre(stock)
+  const grip = chuckGrip(stock, units)
+  const along = body + grip
+  return {
+    ...(stock.axis === 'x'
+      ? { x: bounds.minX - body, y: centre - diameter / 2, w: along, h: diameter }
+      : { y: bounds.maxY - grip, x: centre - diameter / 2, h: along, w: diameter }),
+    height: barPivotZ(stock) + diameter / 2,
+  }
+}
+
+/** The fields a standard-size pick replaces: the published body envelope and its chuck data. */
+export type ChuckSizePatch = Pick<Clamp, 'x' | 'y' | 'w' | 'h' | 'height' | 'chuck'>
+
+/**
+ * The user explicitly picks equipment. The size sets not only the diameter but
+ * its published axial body length, and re-places the chuck against the bar end
+ * so the whole envelope is real — the old length was the old chuck's. Existing
+ * chucks keep their dimensions until a size is picked (format rule).
+ */
+export function chuckSizePatch(sizeId: string, stock: BarStock, units: ProjectMeta['units']): ChuckSizePatch {
   const size = STANDARD_CHUCKS.find((entry) => entry.id === sizeId)
   if (!size) throw new RangeError('Unknown standard chuck size')
   const diameter = convertLength(size.diameterIn, 'inch', units)
+  const body = convertLength(size.bodyIn, 'inch', units)
   return {
-    ...(stock.axis === 'x' ? { h: diameter } : { w: diameter }),
+    ...chuckPlacement(stock, units, diameter, body),
     chuck: {
       size: size.id,
       clampingRangeMm: { min: convertLength(size.minIn, 'inch', 'mm'), max: convertLength(size.maxIn, 'inch', 'mm') },
@@ -124,31 +162,21 @@ export function defaultRoundWorkholding(
   units: ProjectMeta['units'],
 ): Pick<Clamp, 'type' | 'x' | 'y' | 'w' | 'h' | 'height' | 'chuck'> {
   const size = type === 'chuck' ? smallestFittingChuck(stock, units) : null
-  const ownDiameter = size ? convertLength(size.diameterIn, 'inch', units) : isSquareStock(stock)
+  // A chuck and a size pick share one envelope: the published body past the
+  // start end plus its grip inside it.
+  if (size) return { ...chuckSizePatch(size.id, stock, units), type }
+
+  const ownDiameter = isSquareStock(stock)
     ? Math.max(4 * barMaxRadius(stock), convertLength(50, 'mm', units))
     : Math.max(2 * roundStockDiameter(stock), convertLength(50, 'mm', units))
-  const body = size ? convertLength(size.bodyIn, 'inch', units) : convertLength(40, 'mm', units)
+  // A tailstock stops at the far end face and adds only the body.
+  const body = convertLength(40, 'mm', units)
   const bounds = getStockBounds(stock)
   const centre = barCentre(stock)
   const height = barPivotZ(stock) + ownDiameter / 2
-  const grip = Math.min(convertLength(15, 'mm', units), barLength(stock) / 4)
-
-  // Along the axis: a chuck covers `grip` inside the start end plus the body
-  // past it; a tailstock stops at the far end face and adds only the body.
-  let alongFrom: number
-  let alongSize: number
-  if (stock.axis === 'x') {
-    alongFrom = type === 'chuck' ? bounds.minX - body : bounds.maxX
-    alongSize = type === 'chuck' ? body + grip : body
-  } else {
-    alongFrom = type === 'chuck' ? bounds.maxY - grip : bounds.minY - body
-    alongSize = type === 'chuck' ? body + grip : body
-  }
-
-  const chuckFields = size ? { chuck: chuckSizePatch(size.id, stock, units).chuck } : {}
   return stock.axis === 'x'
-    ? { ...chuckFields, type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
-    : { ...chuckFields, type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
+    ? { type, x: bounds.maxX, y: centre - ownDiameter / 2, w: body, h: ownDiameter, height }
+    : { type, x: centre - ownDiameter / 2, y: bounds.minY - body, w: ownDiameter, h: body, height }
 }
 
 /**
