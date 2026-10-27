@@ -316,6 +316,7 @@ export function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], in
     id: clamp.id || `cl${index + 1}`,
     name: clamp.name || `Clamp ${index + 1}`,
     type: clamp.type ?? 'step_clamp',
+    ...(clamp.chuck !== undefined ? { chuck: structuredClone(clamp.chuck) } : {}),
     x: clamp.x ?? 0,
     y: clamp.y ?? 0,
     w: Math.max(clamp.w ?? defaultSize, convertLength(0.1, 'mm', units)),

@@ -1017,10 +1017,19 @@ export function isTrochoidalPocket(operation: Operation): boolean {
 
 export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw' | 'chuck' | 'tailstock'
 
+/** Optional 3.3 chuck data. Missing means legacy equipment; never inferred on load. */
+export interface ChuckData {
+  size?: string
+  /** Physical equipment capacity in millimetres, independent of project units. */
+  clampingRangeMm?: { min: number; max: number }
+  jawCount?: 3 | 4 | 6
+}
+
 export interface Clamp {
   id: string
   name: string
   type: ClampType
+  chuck?: ChuckData
   x: number
   y: number
   w: number

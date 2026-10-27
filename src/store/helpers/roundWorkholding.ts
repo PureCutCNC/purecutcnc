@@ -48,6 +48,58 @@ import {
 } from '../../types/barStock'
 import { convertLength } from '../../utils/units'
 
+/**
+ * BISON 3204 hard solid jaws, d1 (external gripping with the first jaw step).
+ * Body A and body length B: https://www.bison-america.com/pdf/Chapter_1/1_9.pdf p9.
+ * d1 capacities: https://www.bison-america.com/pdf/Chapter_1/Specs_1_1.pdf p142.
+ * Values below are the published INCH dimensions, converted without rounding.
+ * These are starter equipment presets, not a claim that other jaw sets share
+ * this capacity. In particular we do not merge the distinct d2/d3 jaw steps.
+ */
+export const STANDARD_CHUCKS = [
+  { id: 'bison-3204-3', label: 'BISON 3204 · 3"', diameterIn: 3.15, bodyIn: 1.73, minIn: 0.08, maxIn: 1.06 },
+  { id: 'bison-3204-4', label: 'BISON 3204 · 4"', diameterIn: 3.94, bodyIn: 1.97, minIn: 0.12, maxIn: 1.3 },
+  { id: 'bison-3204-5', label: 'BISON 3204 · 5"', diameterIn: 4.92, bodyIn: 2.2, minIn: 0.12, maxIn: 1.97 },
+  { id: 'bison-3204-6', label: 'BISON 3204 · 6"', diameterIn: 6.3, bodyIn: 2.54, minIn: 0.12, maxIn: 2.52 },
+  { id: 'bison-3204-8', label: 'BISON 3204 · 8"', diameterIn: 7.87, bodyIn: 2.95, minIn: 0.16, maxIn: 3.54 },
+  { id: 'bison-3204-10', label: 'BISON 3204 · 10"', diameterIn: 9.84, bodyIn: 3.35, minIn: 0.2, maxIn: 4.6 },
+  { id: 'bison-3204-12', label: 'BISON 3204 · 12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2 },
+] as const
+
+/** Square capacity is across flats for four jaws, the corner circle otherwise. */
+export function chuckGripDiameter(stock: BarStock, jaws: 3 | 4 | 6): number {
+  return isSquareStock(stock) && jaws === 4 ? stock.thickness : 2 * barMaxRadius(stock)
+}
+
+export function smallestFittingChuck(stock: BarStock, units: ProjectMeta['units']) {
+  const diameterIn = convertLength(chuckGripDiameter(stock, 3), units, 'inch')
+  // Outside every listed range: use the nearest end preset and warn.
+  return STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
+    ?? (diameterIn < STANDARD_CHUCKS[0].minIn ? STANDARD_CHUCKS[0] : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1])
+}
+
+export function chuckOutOfRange(clamp: Clamp, stock: Stock, units: ProjectMeta['units']): boolean {
+  if (clamp.type !== 'chuck' || !isBarStock(stock) || !clamp.chuck?.clampingRangeMm) return false
+  const diameter = convertLength(chuckGripDiameter(stock, clamp.chuck.jawCount ?? 3), units, 'mm')
+  const range = clamp.chuck.clampingRangeMm
+  return diameter < range.min || diameter > range.max
+}
+
+/** User explicitly picks equipment; old w/h retain their body-envelope meaning. */
+export function chuckSizePatch(sizeId: string, stock: BarStock, units: ProjectMeta['units']): Partial<Clamp> {
+  const size = STANDARD_CHUCKS.find((entry) => entry.id === sizeId)
+  if (!size) throw new RangeError('Unknown standard chuck size')
+  const diameter = convertLength(size.diameterIn, 'inch', units)
+  return {
+    ...(stock.axis === 'x' ? { h: diameter } : { w: diameter }),
+    chuck: {
+      size: size.id,
+      clampingRangeMm: { min: convertLength(size.minIn, 'inch', 'mm'), max: convertLength(size.maxIn, 'inch', 'mm') },
+      jawCount: 3,
+    },
+  }
+}
+
 /** The two round workholding types: a chuck or a tailstock. */
 export type RoundWorkholding = Clamp & { type: 'chuck' | 'tailstock' }
 
@@ -62,25 +114,20 @@ export function roundWorkholdingDiameter(clamp: Clamp, stock: BarStock): number 
 }
 
 /**
- * A chuck or tailstock at its default place and size on this bar. The default
- * body is 40 mm and the diameter the larger of twice the bar's and 50 mm — for
- * a square blank, twice the *corner* envelope diameter, so the clamp clears the
- * corners the blank reaches. A chuck grips the bar's start end — 15 mm inside
- * it, never more than a quarter of its length — and reaches the body past the
- * end; a tailstock touches the far end face and reaches the body beyond it.
- * Either way the height is the pivot (`side`/`diameter` over two) plus the
- * clamp's own radius, so it is centred on the centreline at the true pivot, not
- * at the corner radius. A round bar's numbers are unchanged.
+ * New chucks take the smallest fitting BISON preset; tailstocks retain their
+ * existing stock-derived default. The grip is 15 mm, at most a quarter of the
+ * bar length. Existing fixtures never pass through this creation helper on load.
  */
 export function defaultRoundWorkholding(
   type: 'chuck' | 'tailstock',
   stock: BarStock,
   units: ProjectMeta['units'],
-): Pick<Clamp, 'type' | 'x' | 'y' | 'w' | 'h' | 'height'> {
-  const ownDiameter = isSquareStock(stock)
+): Pick<Clamp, 'type' | 'x' | 'y' | 'w' | 'h' | 'height' | 'chuck'> {
+  const size = type === 'chuck' ? smallestFittingChuck(stock, units) : null
+  const ownDiameter = size ? convertLength(size.diameterIn, 'inch', units) : isSquareStock(stock)
     ? Math.max(4 * barMaxRadius(stock), convertLength(50, 'mm', units))
     : Math.max(2 * roundStockDiameter(stock), convertLength(50, 'mm', units))
-  const body = convertLength(40, 'mm', units)
+  const body = size ? convertLength(size.bodyIn, 'inch', units) : convertLength(40, 'mm', units)
   const bounds = getStockBounds(stock)
   const centre = barCentre(stock)
   const height = barPivotZ(stock) + ownDiameter / 2
@@ -98,9 +145,10 @@ export function defaultRoundWorkholding(
     alongSize = type === 'chuck' ? body + grip : body
   }
 
+  const chuckFields = size ? { chuck: chuckSizePatch(size.id, stock, units).chuck } : {}
   return stock.axis === 'x'
-    ? { type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
-    : { type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
+    ? { ...chuckFields, type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
+    : { ...chuckFields, type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
 }
 
 /**

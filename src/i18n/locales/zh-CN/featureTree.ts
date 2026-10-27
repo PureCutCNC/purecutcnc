@@ -437,6 +437,14 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   // ── Properties: clamp type (#392) ──
   'featureTree.properties.clampType': '类型',
   'featureTree.properties.clampType.clamp': '夹具',
+  'featureTree.properties.chuckSize': '卡盘尺寸',
+  'featureTree.properties.chuckExisting': '现有尺寸',
+  'featureTree.properties.chuckMin': '最小夹持直径',
+  'featureTree.properties.chuckMax': '最大夹持直径',
+  'featureTree.properties.chuckJaws': '卡爪数',
+  'featureTree.properties.chuckUnknownRange': '夹持范围未知。请输入范围或选择尺寸。',
+  'featureTree.properties.chuckSquareRange': '方料：4爪按对边尺寸检查；3爪或6爪按外接圆检查。',
+  'featureTree.properties.chuckOutOfRange': '毛坯超出卡盘的夹持范围。',
   'featureTree.properties.clampType.chuck': '卡盘',
   'featureTree.properties.clampType.tailstock': '尾座',
 
