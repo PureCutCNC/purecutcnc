@@ -25,6 +25,7 @@
 import type { StateCreator } from 'zustand'
 import { getProfileBounds, type Point, type Project, type TextLayout } from '../../types/project'
 import { cloneProfile } from '../../geometry/profile'
+import { resolveCannedShapeProfiles } from '../../cannedShapes'
 import { profilePathLength } from '../../sketch/featureDistribution'
 import {
   createDefaultTextLayout,
@@ -203,9 +204,25 @@ export function createTextLayoutSlice(
       if (layout?.kind !== 'path') return {}
 
       const guide = resolveFeatureInstance(s.project, featureId)
-      if (!guide || guide.kind === 'stl' || guide.sketch.profile.segments.length === 0) return {}
-      const guideLength = profilePathLength(guide.sketch.profile)
+      if (!guide || guide.kind === 'stl') return {}
+      // A canned shape's stored profile is only its placement frame, so the
+      // guide must be its generated outline. Taking the frame would wrap the
+      // run around a rectangle no matter whether the shape is an ellipse, a
+      // slot or a gear (issue #1112 DE2 review).
+      const profile = guide.canned
+        ? resolveCannedShapeProfiles(guide)[0]
+        : guide.sketch.profile
+      if (!profile || profile.segments.length === 0) return {}
+      const guideLength = profilePathLength(profile)
       if (guideLength <= 0) return {}
+
+      // Re-picking the same guide — including a Properties Refresh, which
+      // reopens the panel with `guideId: null` but keeps the source id — must
+      // not throw away the custom span. Clamp it to the source's new length
+      // instead (issue #1112 DE2 review).
+      const sameSource = pending.guideId === featureId || layout.sourceFeatureId === featureId
+      const startOffset = sameSource ? Math.max(0, Math.min(layout.startOffset, guideLength)) : 0
+      const endOffset = sameSource ? Math.max(0, Math.min(layout.endOffset, guideLength)) : guideLength
 
       return {
         pendingTextLayout: {
@@ -218,15 +235,16 @@ export function createTextLayoutSlice(
             // world-space reference to another feature and still resolve
             // under every instance's own transform. Moving the guide later
             // does not reflow the text.
-            path: cloneProfile(guide.sketch.profile),
+            path: cloneProfile(profile),
             // Remember where the copy came from so Properties can offer a
             // "Refresh" that copies an edited source again (issue #1112).
             // The copy stays baked: deleting the source cannot break the run.
             sourceFeatureId: featureId,
             // A newly picked guide defaults to its whole length, so the first
-            // preview is usable without anyone touching the offsets.
-            startOffset: pending.guideId === featureId ? layout.startOffset : 0,
-            endOffset: pending.guideId === featureId ? layout.endOffset : guideLength,
+            // preview is usable without anyone touching the offsets, and a
+            // re-pick keeps the span it already had.
+            startOffset,
+            endOffset,
           },
         },
       }

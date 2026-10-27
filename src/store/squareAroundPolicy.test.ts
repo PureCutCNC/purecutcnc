@@ -624,13 +624,13 @@ for (const spec of [SPECS[0], SPECS[3]]) {
   assert.equal(store().project.features.length, 2, `${label}: undo removes the gear`)
 
   pastBefore = store().history.past.length
-  const groupedIds = store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(2), 2)
-  assert.equal(groupedIds.length, 2, `${label}: a round-bar gear with a bore is created as a group`)
-  const grouped = store().project.features.find((candidate) => candidate.id === groupedIds[0])
-  assert.ok(grouped && grouped.folderId !== null, `${label}: the grouped gear lands in a folder`)
-  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the grouped gear is one undo step`)
+  const boreGearIds = store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(2), 2)
+  assert.equal(boreGearIds.length, 1, `${label}: a gear and its bore are one canned feature`)
+  const boreGear = store().project.features.find((candidate) => candidate.id === boreGearIds[0])
+  assert.ok(boreGear && boreGear.folderId === null, `${label}: the canned gear is a plain row`)
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the gear + bore is one undo step`)
   store().undo()
-  assert.equal(store().project.features.length, 2, `${label}: undo removes the grouped gear`)
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the gear + bore`)
 }
 
 // Square Top: ordinary Top authoring stays available on the square blank.
@@ -655,7 +655,7 @@ assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo
 
 pastBefore = store().history.past.length
 const topGearIds = store().addGearFeature('Gear', { x: 60, y: 20 }, 8, gearParams(2), 2)
-assert.equal(topGearIds.length, 2, 'a Top gear with a bore succeeds on the square blank')
+assert.equal(topGearIds.length, 1, 'a Top gear with a bore succeeds on the square blank as one canned feature')
 assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo step')
 
 // ── 6. The remaining copy creation boundaries (U1G) ────────────

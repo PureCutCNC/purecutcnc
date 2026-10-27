@@ -43,7 +43,6 @@ import { canChooseSubtract, isMachinable, sectionForOperation } from '../../stor
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { getFeatureGeometryProfiles } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
-import { GearEditorHost } from '../canvas/GearParameterPanel'
 import { textPathRefreshState } from '../../store/helpers/textPathSource'
 import {
   cannedShapeIsExpandable,
@@ -1546,7 +1545,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
 
   return (
     <div className="properties-panel">
-      <GearEditorHost />
       <div className="properties-group">
         <DisclosureSection
           title={hasLinkedInstances ? t(linkedInstanceCount === 1 ? 'featureTree.properties.shapeShared.one' : 'featureTree.properties.shapeShared.other', { count: linkedInstanceCount }) : t('featureTree.properties.shape')}

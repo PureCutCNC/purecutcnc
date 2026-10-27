@@ -28,6 +28,7 @@ import {
   IDENTITY_MATRIX,
   circleProfile,
   newProject,
+  roundStock,
   type Matrix2D,
   type Project,
   type SketchFeature,
@@ -361,9 +362,38 @@ function testOldPlainGearProjectStaysPlain(): void {
   console.log('old plain gear project: PASSED')
 }
 
+/**
+ * The base command always made the first gear Add, including on a rotary bar,
+ * where `barSeedsModel` means the bar is already the material. That Add/Subtract
+ * pair is observable in the tree and in CAM, so the canned rewrite must not
+ * hand it the bar's Subtract default (issue #1112 DE2 review).
+ */
+function testFirstGearOnARotaryBarStaysAddWithSubtractBore(): void {
+  const base = newProject('Rotary gear', 'mm')
+  resetStore({
+    ...base,
+    stock: roundStock(40, 200, 'x', { x: 10, y: 30 }),
+    meta: { ...base.meta, projectType: 'rotary' },
+  })
+  placeGear({ x: 20, y: 30 }, 20)
+  useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
+
+  const ids = useProjectStore.getState().completePendingGear()
+  assertEqual(ids.length, 1, 'one feature')
+  const gear = createdFeature(ids[0])
+  assertEqual(gear.operation, 'add', 'the first gear on a rotary bar is Add, as before')
+  assertEqual(
+    resolveCannedShapeShapes(gear).map((shape) => shape.operation),
+    ['add', 'subtract'],
+    'so its bore is Subtract, not an Add island',
+  )
+  console.log('first rotary gear + bore stays Add/Subtract: PASSED')
+}
+
 testGearWithoutBoreIsOneCannedFeature()
 testAddGearHasSubtractBoreInTheSameFeature()
 testSubtractGearBoreIsAnAddIsland()
+testFirstGearOnARotaryBarStaysAddWithSubtractBore()
 testRepeatedGearsUseSequentialNames()
 testExpandGivesTheOutlinesWithTheirOperations()
 testInvalidBoreDoesNotCreateFeature()

@@ -148,6 +148,12 @@ export type PendingAddTool =
     }
   | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
+  /**
+   * A canned shape's parameters are being edited in the canvas side panel, the
+   * same panel creation uses. The row exists already; Apply is one
+   * `updateFeature` write. Transient, never persisted.
+   */
+  | { shape: 'canned-edit'; featureId: string; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
@@ -605,6 +611,8 @@ export interface ProjectStore {
   startAddGearPlacement: () => void
   startAddRoundRectPlacement: () => void
   startAddChamferRectPlacement: () => void
+  /** Reopen a canned shape's parameters in the canvas creation side panel. */
+  beginCannedShapeEdit: (featureId: string) => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void

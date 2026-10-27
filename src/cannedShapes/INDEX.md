@@ -17,7 +17,7 @@ string and generates glyphs.
 - `generators/kinds.ts` — the five registry keys, shared by the generators and the creation actions so a stored `kind` cannot drift between the two.
 - `generators/editorRequest.ts` — what an "Edit <shape>…" panel needs from a generator (label, numeric fields, its own `normalizeParams`), with no React import.
 - `generators/editorForm.ts` — the pure form half: stored parameters → field text, field text → a parameter set the generator's `normalizeParams` then validates.
-- The canvas dialog itself lives with the creation panels in `src/components/canvas/CreationParameterReferences.tsx`, which registers it for the five kinds through `registerCannedShapeEditor`; it is mounted in its own root because the Properties panel (a different tree) is the trigger.
+- The canvas side panel lives in `src/components/canvas/CannedShapeEditPanel.tsx`: it registers an opener for the five kinds (and the gear) through `registerCannedShapeEditor`, and the Properties trigger arms the same `canned-edit` pending session creation uses. There is no modal and no second React root; Apply is one `updateFeature` write.
 - `generators/shapes.test.ts` — generator-level properties: local outline equality, parameter refusal, unit conversion of length fields only, and determinism.
 - `cannedShapes.test.ts` — model tests; runs the test-only generators from `src/test/cannedShapeFixture.ts` so the model is exercised independently of the shipped gear.
 - `cannedShapeCache.test.ts` — three resolutions call a generator once, a parameter change misses, registration invalidates, and key order does not defeat the key.
