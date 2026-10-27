@@ -126,9 +126,18 @@ function testCutDirectionArrowOrientation(): void {
   assert(!arrowPointsRight(renderKind('cutDirection', 'conventional')), 'conventional arrow must point left')
 }
 
-// The two rotary pictures must actually differ: a variant that falls through
-// to the same branch would pass the geometry checks above while showing the
-// wrong direction, or leave the pocket-wall picture on a rotary operation.
+// The `data-arrow` marker names each rotary picture's signature arrow. Reading
+// the marked path's geometry (not just its presence) is what makes a swap of
+// the two pictures fail: the along arrow must be a straight run down the bar,
+// the around arrow an arc, and neither picture may carry the other's marker.
+function markedArrow(html: string, marker: string): string {
+  const path = html.split('<path ').find((part) => part.includes(`data-arrow="${marker}"`))
+  assert(path, `no data-arrow="${marker}" arrow in the picture`)
+  const d = /\bd="([^"]+)"/.exec(path)
+  assert(d, `data-arrow="${marker}" arrow has no path data`)
+  return d[1]
+}
+
 function testRotaryPicturesDiffer(): void {
   const along = renderKind('passes', 'along')
   const around = renderKind('passes', 'around')
@@ -138,6 +147,22 @@ function testRotaryPicturesDiffer(): void {
       && around.includes(`aria-label="${operationParamRefLabel('passes')}"`),
     'both passes variants keep the same accessible label',
   )
+
+  // Along the bar is one straight horizontal pass at the bar's centre line;
+  // around the bar is the same motion drawn as an arc, so swapping the two
+  // pictures (or their marked paths) fails here instead of merely differing.
+  const alongArrow = markedArrow(along, 'along-bar')
+  assert(
+    /^M[\d.]+ 17h\d+$/.test(alongArrow),
+    `the along picture needs the longitudinal arrow along the bar, got "${alongArrow}"`,
+  )
+  const aroundArrow = markedArrow(around, 'around-bar')
+  assert(
+    /[cCsS]/.test(aroundArrow),
+    `the around picture needs the rotational (curved) arrow, got "${aroundArrow}"`,
+  )
+  assert(!along.includes('data-arrow="around-bar"'), 'the along picture must not contain the around arrow')
+  assert(!around.includes('data-arrow="along-bar"'), 'the around picture must not contain the along arrow')
 
   const wall = renderKind('stockRadial')
   const rotary = renderKind('stockRadial', 'rotary')

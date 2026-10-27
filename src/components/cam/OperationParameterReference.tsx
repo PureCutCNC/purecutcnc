@@ -537,6 +537,9 @@ export function OperationParameterReference({
       // turns under the cutter at one position, then the cutter steps along
       // (#1112 decision 7.9). The bar is the side view every rotary picture
       // uses; the two variants share it so the difference reads as the motion.
+      // `data-arrow` names the signature arrow of each picture so a test can
+      // assert the along picture is longitudinal and the around one rotational
+      // instead of merely accepting two different drawings.
       const bar = <path className="gear-reference__outline" d="M6 9h46v16H6z" />
       const centre = <path className="gear-reference__guide" d="M6 17h46" />
       if (variant === 'around') {
@@ -545,7 +548,11 @@ export function OperationParameterReference({
             {bar}
             {centre}
             <path className="gear-reference__guide" d="M31 10.5v13M43 10.5v13" />
-            <path className="gear-reference__accent" d="M18 11.5c3.7 0 6.5 2.5 6.5 5.5s-2.8 5.5-6.5 5.5" />
+            <path
+              className="gear-reference__accent"
+              data-arrow="around-bar"
+              d="M18 11.5c3.7 0 6.5 2.5 6.5 5.5s-2.8 5.5-6.5 5.5"
+            />
             <path className="gear-reference__accent-fill" d="M16 22.5l3-2.3v4.6z" />
             <path className="gear-reference__accent" d="M27 27.5h11" />
             <path className="gear-reference__accent-fill" d="M40 27.5l-3.4-2.3v4.6z" />
@@ -557,7 +564,7 @@ export function OperationParameterReference({
           {bar}
           {centre}
           <path className="gear-reference__guide" d="M10 12.5h36M10 21.5h36" />
-          <path className="gear-reference__accent" d="M12 17h24" />
+          <path className="gear-reference__accent" data-arrow="along-bar" d="M12 17h24" />
           <path className="gear-reference__accent-fill" d="M38 17l-3.4-2.3v4.6z" />
           <path className="gear-reference__accent" d="M47 12.5v9" />
           <path className="gear-reference__accent-fill" d="M47 10.5l-2.2 3h4.4zM47 23.5l-2.2-3h4.4z" />
