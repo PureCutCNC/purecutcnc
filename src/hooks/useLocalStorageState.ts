@@ -91,23 +91,29 @@ export function readFromStorage<T>(
 /**
  * React-free core: write a value for `key` to a storage-like object, SSR-safe
  * and best-effort. A missing storage (server render) is a no-op, and a throwing
- * `setItem` (quota exceeded, storage disabled) is swallowed — persistence is
- * never allowed to break the in-session state, matching every call site's
- * existing try/catch (or unconditional, never-throwing) write.
+ * `setItem` (quota exceeded, storage disabled) never propagates — persistence
+ * must not break in-session state.
+ *
+ * Returns `true` when the value reached storage (or there was no storage to
+ * reach), `false` when the write threw. The machine library reads the result
+ * because "the in-memory list changed" is not the same as "the change survived
+ * a reload"; a caller that compacts data away needs the difference (#1119).
  */
 export function writeToStorage<T>(
   storage: Pick<Storage, 'setItem'> | null,
   key: string,
   value: T,
   codec: Pick<StorageCodec<T>, 'serialize'>,
-): void {
+): boolean {
   if (!storage) {
-    return
+    return true
   }
   try {
     storage.setItem(key, codec.serialize(value))
+    return true
   } catch {
     // Best-effort: ignore quota/availability errors; in-memory state still holds.
+    return false
   }
 }
 

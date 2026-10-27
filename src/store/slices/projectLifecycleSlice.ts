@@ -33,7 +33,7 @@ import {
 import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 import { decodeProjectFormat, type ProjectMigrationInfo } from '../helpers/projectFormat'
-import { mergeCustomMachines } from '../../machine/store'
+import { rescueMachinesToLibrary } from '../../machine/store'
 import { machineLoadWarning } from '../../machine/diagnostics'
 
 /** Combine the independent load warnings into one message, or null if silent. */
@@ -70,6 +70,8 @@ function freshMigrationInfo(): ProjectMigrationInfo {
     edgeEntryStrategiesReset: 0,
     machineDiagnostics: [],
     rescuedMachineDefinitions: [],
+    // Compaction may proceed only once the library write is durable (#1119).
+    rescueMachineDefinitions: rescueMachinesToLibrary,
   }
 }
 
@@ -88,7 +90,6 @@ export function createProjectLifecycleSlice(
         clearProjectMemoryCaches()
         const info = freshMigrationInfo()
         const nextProject = normalizeProject(instantiateProjectTemplate(template, name), info)
-        mergeCustomMachines(info.rescuedMachineDefinitions)
         return {
           project: nextProject,
           machineLoadDiagnostics: info.machineDiagnostics,
@@ -245,7 +246,6 @@ export function createProjectLifecycleSlice(
         clearProjectMemoryCaches()
         const info = freshMigrationInfo()
         const normalizedProject = normalizeProject(p, info)
-        mergeCustomMachines(info.rescuedMachineDefinitions)
         const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
         const gridDefaults = defaultGrid(normalizedProject.meta.units)
         const nextProject = {
@@ -292,8 +292,15 @@ export function createProjectLifecycleSlice(
       void _nests
       // Save normalization has the same rescue seam as a load: a machine the
       // in-memory project still carries is added to My Machines rather than
-      // dropped from the saved file (#1119).
-      mergeCustomMachines(info.rescuedMachineDefinitions)
+      // dropped from the saved file. If the library cannot store it, the
+      // machine stays in the serialized project and the reason is surfaced
+      // (#1119) — the returned JSON is never the place data is lost.
+      const keptDiagnostics = info.machineDiagnostics.filter(
+        (diagnostic) => diagnostic.kind === 'machine-kept-in-project',
+      )
+      if (keptDiagnostics.length > 0) {
+        deps.rawSet({ machineLoadDiagnostics: info.machineDiagnostics })
+      }
       const updated = {
         ...p,
         version: LATEST_PROJECT_VERSION,
@@ -313,15 +320,15 @@ export function createProjectLifecycleSlice(
       const versionWarning = isProjectVersionNewerThanSupported(rawVersion)
         ? `This project was created with a newer version of PureCutCNC (file format ${rawVersion}; this build supports up to ${LATEST_PROJECT_VERSION}). It will still open, but newer features may be missing or display incorrectly.`
         : null
-      const decoded = decodeProjectFormat(parsed)
+      // Decode owns the rescue seam: a legacy file's extra machines are stored
+      // in My Machines before the project is compacted, and stay in the project
+      // when that store cannot be made durable (#1119).
+      const decoded = decodeProjectFormat(parsed, rescueMachinesToLibrary)
       const normalized = decoded.project
-      // A legacy file carried a whole machine library; the project keeps only
-      // its selected snapshot, so rescue the user's custom definitions into
-      // the application library before the rest of the file is dropped.
-      const mergedMachines = mergeCustomMachines(decoded.machineMigration.customDefinitions)
-      const machineDiagnostics = [...decoded.machineMigration.diagnostics, ...mergedMachines.diagnostics]
+      const machineDiagnostics = decoded.machineMigration.diagnostics
       const machineWarning = machineLoadWarning(machineDiagnostics)
-      const migratedMachineLibrary = decoded.machineMigration.compacted || mergedMachines.added.length > 0
+      const migratedMachineLibrary = decoded.machineMigration.compacted
+        || machineDiagnostics.some((diagnostic) => diagnostic.kind === 'machine-moved-to-library')
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
       clearProjectMemoryCaches()

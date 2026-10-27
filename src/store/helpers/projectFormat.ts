@@ -60,6 +60,8 @@ import {
   normalizeTab,
   normalizeTool,
   syncFeatureTreeProject,
+  type MachineRescuer,
+  type MachineSnapshotNormalization,
 } from './normalize'
 import { createFeatureInstance } from './featureDefinitions'
 import { invertMatrix, multiplyMatrix } from './instanceTransforms'
@@ -132,6 +134,14 @@ export interface ProjectMigrationInfo {
    */
   machineDiagnostics: MachineLoadDiagnostic[]
   rescuedMachineDefinitions: MachineDefinition[]
+  /**
+   * The durable library seam. When present, `normalizeProject` hands the
+   * unselected machines to it and compacts them away only if it reports them
+   * durably stored (#1119).
+   */
+  rescueMachineDefinitions?: MachineRescuer
+  /** The machine normalization the project actually used, for `decodeProjectFormat`. */
+  machineNormalization?: MachineSnapshotNormalization
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -550,8 +560,17 @@ function migrateDormantEdgeEntryStrategy(
   return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
 }
 
-/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
-export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
+/**
+ * Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project.
+ *
+ * `rescue` is the optional durable-library seam: open/load pass it so an
+ * unselected machine is compacted away only once it is safely in My Machines.
+ * Inspection omits it and reads what the source carried instead (#1119).
+ */
+export function decodeProjectFormat(
+  input: unknown,
+  rescue?: MachineRescuer,
+): DecodedProjectFormat {
   assertProjectEnvelope(input)
   const sourceVersion = typeof input.version === 'string' ? input.version : null
   const convertedLegacy = sourceVersion === null
@@ -564,16 +583,19 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   if (!convertedLegacy && hasLegacyRows) {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
-  const machines = normalizeMachineDefinitions(input as unknown as Project)
   const migrationInfo: ProjectMigrationInfo = {
     retractHeightsReexpressed: 0,
     edgeEntryStrategiesReset: 0,
     machineDiagnostics: [],
     rescuedMachineDefinitions: [],
+    rescueMachineDefinitions: rescue,
   }
+  // Nest records are session state, never read from a file (#889).
+  const project = normalizeProject({ ...input, nests: undefined }, migrationInfo)
+  const machines = migrationInfo.machineNormalization
+    ?? normalizeMachineDefinitions(input as unknown as Project)
   return {
-    // Nest records are session state, never read from a file (#889).
-    project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
+    project,
     sourceVersion,
     convertedLegacy,
     retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,
@@ -738,10 +760,14 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   const nests = normalizeNests(input.nests, features)
   if (nests.length > 0) authoritativeProject.nests = nests
   else delete authoritativeProject.nests
-  const machines = normalizeMachineDefinitions(authoritativeProject)
+  const machines = normalizeMachineDefinitions(
+    authoritativeProject,
+    migrationInfo?.rescueMachineDefinitions,
+  )
   if (migrationInfo) {
     migrationInfo.machineDiagnostics = machines.diagnostics
     migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
+    migrationInfo.machineNormalization = machines
   }
   const meta: ProjectMeta = {
     ...authoritativeProject.meta,

@@ -30,7 +30,10 @@ is always an explicit user action. See
   still cannot block app start.
 - `store.ts` — framework-agnostic library state: snapshot + subscribe/notify,
   custom-machine save/delete, the legacy-project merge used by decode, and the
-  read diagnostics / write-blocked flag the machine manager shows (#1119).
+  read diagnostics / write-blocked flag the machine manager shows (#1119). The
+  merge reports whether the written list is durable and a delete/blocked write
+  returns a displayable reason, so a project never compacts a machine the
+  library did not actually store.
 - `bootstrap.ts` — loads My Machines before React renders (project decode reads
   the library synchronously during a file open).
 - `useMachineLibrary.ts` — React binding (`useSyncExternalStore`) for the

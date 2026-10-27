@@ -21,39 +21,52 @@
  * A template carries only the machine snapshot it selected — never a library.
  * The picker always reads the current application library, so a template
  * cannot decide which bundled machines exist. Any other machine the template
- * still carries is rescued into My Machines before the extra copies are
+ * still carries is rescued into My Machines **before** the extra copies are
  * compacted away, and a template-invalid selected machine is retained exactly
  * as stored; export refuses it until it is repaired.
+ *
+ * When the library cannot store an unselected machine, it stays in the template
+ * and the reason is returned with it (#1119). The dialog's project creation
+ * runs the same seam again and surfaces the diagnostic in the store.
  */
 
-import { mergeCustomMachines } from '../../machine/store'
+import { rescueMachinesToLibrary } from '../../machine/store'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
 import type { Project } from '../../types/project'
 
-export function setupOnlyTemplate(template: Project): Project {
+export interface SetupOnlyTemplateResult {
+  project: Project
+  diagnostics: MachineLoadDiagnostic[]
+}
+
+export function setupOnlyTemplate(template: Project): SetupOnlyTemplateResult {
   const cloned = structuredClone(template)
-  const machines = normalizeMachineDefinitions(cloned)
-  // The selected snapshot stays in the template, so only the *other* rescued
-  // machines need a home. Merging the selected one would add a machine to My
-  // Machines merely by opening this dialog.
-  mergeCustomMachines(machines.customDefinitions.filter(
-    (definition) => definition.id !== machines.selectedMachineId,
+  const selectedId = cloned.meta.selectedMachineId
+  const machines = normalizeMachineDefinitions(cloned, (definitions) => (
+    // The selected snapshot stays in the template, so only the *other* rescued
+    // machines need a home. Merging the selected one would add a machine to My
+    // Machines merely by opening this dialog.
+    rescueMachinesToLibrary(definitions.filter((definition) => definition.id !== selectedId))
   ))
   return {
-    ...cloned,
-    meta: {
-      ...cloned.meta,
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
+    project: {
+      ...cloned,
+      meta: {
+        ...cloned.meta,
+        machineDefinitions: machines.machineDefinitions,
+        selectedMachineId: machines.selectedMachineId,
+      },
+      dimensions: {},
+      features: [],
+      featureFolders: [],
+      featureTree: [],
+      global_constraints: [],
+      operations: [],
+      tabs: [],
+      clamps: [],
+      ai_history: [],
     },
-    dimensions: {},
-    features: [],
-    featureFolders: [],
-    featureTree: [],
-    global_constraints: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
+    diagnostics: machines.diagnostics,
   }
 }
