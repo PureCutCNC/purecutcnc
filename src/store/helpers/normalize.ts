@@ -676,7 +676,31 @@ export function normalizeMachineDefinitions(
   ]
   const unresolvedSelectionId = selectedMachineId && !selected ? selectedMachineId : null
 
-  if (rescue && customDefinitions.length > 0) {
+  // No durable-library seam: compacting is forbidden. Undo, sketch-cancel and
+  // pure inspection normalize an in-memory project with nowhere to rescue an
+  // unselected machine, so the only safe result keeps every definition the
+  // source carried (#1119).
+  if (!rescue) {
+    // The re-key/consolidation reports are facts about reading the file; the
+    // "moved to My Machines" reports are only true after a durable rescue, so
+    // they stay out until a caller supplies the seam.
+    diagnostics.push(...libraryMoveDiagnostics.filter(
+      (diagnostic) => diagnostic.kind !== 'machine-moved-to-library',
+    ))
+    const selectedDiagnostic = selected ? retainedInvalidDiagnostic(selected) : null
+    if (selectedDiagnostic) diagnostics.push(selectedDiagnostic)
+    return {
+      machineDefinitions: retainedDefinitions,
+      selectedMachineId: selected?.id ?? null,
+      customDefinitions,
+      retainedDefinitions,
+      compacted: false,
+      unresolvedSelectionId,
+      diagnostics,
+    }
+  }
+
+  if (customDefinitions.length > 0) {
     const outcome = rescue(customDefinitions)
     if (outcome.diagnostics && outcome.diagnostics.length > 0) {
       diagnostics.push(...outcome.diagnostics)
@@ -686,6 +710,8 @@ export function normalizeMachineDefinitions(
       // would lose it on the next reload. The held-back "moved" reports are
       // dropped (it did not move) and the reason the list stayed is added.
       const keptDiagnostics = diagnostics.filter((diagnostic) => diagnostic.kind !== 'machine-moved-to-library')
+      const selectedDiagnostic = selected ? retainedInvalidDiagnostic(selected) : null
+      if (selectedDiagnostic) keptDiagnostics.push(selectedDiagnostic)
       keptDiagnostics.push({
         severity: 'error',
         kind: 'machine-kept-in-project',
@@ -715,7 +741,7 @@ export function normalizeMachineDefinitions(
   diagnostics.push(...libraryMoveDiagnostics)
   return snapshotOf(
     selected,
-    customDefinitions,
+    [],
     rawDefinitions.length,
     unresolvedSelectionId,
     diagnostics,

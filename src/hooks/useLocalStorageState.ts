@@ -94,10 +94,12 @@ export function readFromStorage<T>(
  * `setItem` (quota exceeded, storage disabled) never propagates — persistence
  * must not break in-session state.
  *
- * Returns `true` when the value reached storage (or there was no storage to
- * reach), `false` when the write threw. The machine library reads the result
- * because "the in-memory list changed" is not the same as "the change survived
- * a reload"; a caller that compacts data away needs the difference (#1119).
+ * Returns `true` only when the value actually reached storage. Missing storage
+ * and a throwing write both return `false`: "nothing was written" is what a
+ * caller that compacts data away needs to know, and treating a server render or
+ * a disabled browser store as durable loses the compacted data on reload
+ * (#1119). Callers that only persist in-session convenience state ignore the
+ * result.
  */
 export function writeToStorage<T>(
   storage: Pick<Storage, 'setItem'> | null,
@@ -106,7 +108,7 @@ export function writeToStorage<T>(
   codec: Pick<StorageCodec<T>, 'serialize'>,
 ): boolean {
   if (!storage) {
-    return true
+    return false
   }
   try {
     storage.setItem(key, codec.serialize(value))

@@ -49,6 +49,7 @@ import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
+import { projectWithMachineDefinitions } from './machineDefinitions'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
 import {
   dedupeProjectIds,
@@ -764,8 +765,21 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     authoritativeProject,
     migrationInfo?.rescueMachineDefinitions,
   )
+  // Every write of the project's machine list goes through this gate: it keeps
+  // any definition the normalization would drop when the rescue seam is absent
+  // or could not make itself durable (#1119).
+  const machineWrite = projectWithMachineDefinitions(
+    authoritativeProject,
+    {
+      machineDefinitions: machines.machineDefinitions,
+      selectedMachineId: machines.selectedMachineId,
+    },
+    { rescue: migrationInfo?.rescueMachineDefinitions },
+  )
+  const normalizedMachineDefinitions = machineWrite.project.meta.machineDefinitions
+  const normalizedSelectedMachineId = machineWrite.project.meta.selectedMachineId
   if (migrationInfo) {
-    migrationInfo.machineDiagnostics = machines.diagnostics
+    migrationInfo.machineDiagnostics = [...machines.diagnostics, ...machineWrite.diagnostics]
     migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
     migrationInfo.machineNormalization = machines
   }
@@ -776,8 +790,8 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     // selection cannot leave a plasma type behind (issue #1028).
     projectType: input.meta.projectType ?? inferProjectTypeFrom(
       {
-        machineDefinitions: machines.machineDefinitions,
-        selectedMachineId: machines.selectedMachineId,
+        machineDefinitions: normalizedMachineDefinitions,
+        selectedMachineId: normalizedSelectedMachineId,
       },
       authoritativeProject.stock,
     ),
@@ -788,8 +802,8 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     operationClearanceZ: authoritativeProject.meta.operationClearanceZ ?? defaultOperationClearanceZ(authoritativeProject.meta.units),
     clampClearanceXY: authoritativeProject.meta.clampClearanceXY ?? defaultClampClearanceXY(authoritativeProject.meta.units),
     clampClearanceZ: authoritativeProject.meta.clampClearanceZ ?? defaultClampClearanceZ(authoritativeProject.meta.units),
-    machineDefinitions: machines.machineDefinitions,
-    selectedMachineId: machines.selectedMachineId,
+    machineDefinitions: normalizedMachineDefinitions,
+    selectedMachineId: normalizedSelectedMachineId,
   }
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
