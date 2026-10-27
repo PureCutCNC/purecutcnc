@@ -349,6 +349,15 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.param.ref.ngonSides': 'Referenz für Polygon-Seitenzahl',
   'canvas.param.ref.roundRectCorner': 'Referenz für Eckenradius (abgerundetes Rechteck)',
   'canvas.param.ref.chamferRectCorner': 'Referenz für Ecke (angefastes Rechteck)',
+  'canvas.field.radiusX': 'Radius X',
+  'canvas.field.radiusY': 'Radius Y',
+  'canvas.field.size': 'Größe',
+  'canvas.field.rotation': 'Drehung °',
+  'canvas.param.ref.ellipse': 'Referenz für Ellipsenradien',
+  'canvas.param.ref.slot': 'Referenz für Nutlänge und -breite',
+  'canvas.cannedEdit.title': '{shape} bearbeiten',
+  'canvas.cannedEdit.save': 'Speichern',
+  'canvas.cannedEdit.invalid': 'Werte prüfen — aus ihnen lässt sich diese Form nicht erzeugen.',
 
   // ── Warnings ──
   'canvas.warning.selfIntersect': 'Dieses Profil schneidet sich selbst. 3D-/CAM-Ergebnisse können ungültig sein.',

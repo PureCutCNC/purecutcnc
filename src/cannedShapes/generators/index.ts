@@ -21,10 +21,19 @@
  * append it to this list. Nothing else in the model changes. The registry seeds
  * its map from this list at module load, so a saved project's shapes are
  * available after a reload without any UI having opened.
- *
- * Slice A ships no real shape deliberately, so this list is empty.
  */
 
 import type { RegisteredCannedShapeGenerator } from '../types'
+import { ellipseCannedShape } from './ellipse'
+import { slotCannedShape } from './slot'
+import { ngonCannedShape } from './ngon'
+import { roundRectCannedShape } from './roundRect'
+import { chamferRectCannedShape } from './chamferRect'
 
-export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = []
+export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = [
+  ellipseCannedShape,
+  slotCannedShape,
+  ngonCannedShape,
+  roundRectCannedShape,
+  chamferRectCannedShape,
+]
