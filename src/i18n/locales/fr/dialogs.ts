@@ -487,6 +487,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotarySolid.rotation': 'Rotation (°)',
   'dialogs.rotarySolid.diameter': 'Diamètre ({units})',
   'dialogs.rotarySolid.note': 'Crée un modèle généré. Ajoutez-lui des opérations d’ébauche et de finition rotatives depuis la FAO.',
+  'dialogs.rotarySolid.polygonNote': 'Les méplats sont approchés, la vue autour montre la surface de la barre déroulée.',
   'dialogs.rotarySolid.create': 'Créer',
   'dialogs.rotarySolid.error.start': 'Saisissez une distance de début depuis le mandrin.',
   'dialogs.rotarySolid.error.length': 'Saisissez une longueur supérieure à zéro.',

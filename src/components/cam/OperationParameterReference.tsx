@@ -15,6 +15,7 @@
  */
 
 import type { ReactNode } from 'react'
+import { camT } from './camI18n'
 import { type OperationParamRefKind, operationParamRefLabel } from './operationParamRefData'
 
 // All diagrams are drawn on a shared 58×34 stage and normalized to fill roughly
@@ -22,11 +23,13 @@ import { type OperationParamRefKind, operationParamRefLabel } from './operationP
 function OpParamRefFrame({
   children,
   label,
+  note,
 }: {
   children: ReactNode
   label: string
+  note?: string
 }) {
-  return (
+  const diagram = (
     <svg
       className="op-param-ref"
       viewBox="0 0 58 34"
@@ -36,6 +39,15 @@ function OpParamRefFrame({
     >
       {children}
     </svg>
+  )
+  // A note names a limit the picture cannot draw (issue #1112 decision 8.16).
+  // It rides with the picture in the same grid cell, so it moves with it.
+  if (!note) return diagram
+  return (
+    <span className="op-param-ref-block">
+      {diagram}
+      <span className="op-param-ref-note">{note}</span>
+    </span>
   )
 }
 
@@ -512,9 +524,11 @@ export function OperationParameterReference({
       // Same field, same name: on a rotary operation the wall to clear away is
       // the bar's circumference, so the leave is measured across a radial
       // cross-section instead of between pocket walls (#1112 decision 7.10).
+      // On Around those walls are radial rather than the pocket's upright ones,
+      // and the picture says so (decision 8.16).
       if (variant === 'rotary') {
         return (
-          <OpParamRefFrame label={label}>
+          <OpParamRefFrame label={label} note={camT('cam.paramRef.stockRadialNote')}>
             <path className="gear-reference__guide" d="M29 17m-12 0a12 11 0 1 0 24 0a12 11 0 1 0-24 0" />
             <path className="gear-reference__outline" d="M29 17m-7 0a7 6 0 1 0 14 0a7 6 0 1 0-14 0" />
             <path className="gear-reference__accent" d="M29 10.9v-4.5" />

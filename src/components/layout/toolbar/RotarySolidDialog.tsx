@@ -473,6 +473,11 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
             )}
 
             <p className="rotary-dialog__note">{t('dialogs.rotarySolid.note')}</p>
+            {kind === 'polygon' ? (
+              <p className="rotary-dialog__note rotary-dialog__limit-note">
+                {t('dialogs.rotarySolid.polygonNote')}
+              </p>
+            ) : null}
 
             {problemText !== null ? (
               <div className="cam-field-message rotary-dialog__error" role="alert">{problemText}</div>

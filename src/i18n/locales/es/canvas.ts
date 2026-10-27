@@ -496,5 +496,5 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.face.through': 'PASANTE',
   'canvas.face.topOriginLanding': 'El origen de la cara superior queda aquí tras el volteo',
   'canvas.face.aroundTurnsBar': 'La barra gira en el rotativo. Esta vista es su superficie desplegada: a lo largo de la barra y alrededor de ella.',
-  'canvas.around.modelBand': '{name} — dentro de la barra, mecanizado por Desbaste rotativo y Acabado rotativo',
+  'canvas.around.modelBand': '{name}',
 }

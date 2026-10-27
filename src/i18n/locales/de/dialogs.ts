@@ -534,6 +534,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotarySolid.rotation': 'Drehung (°)',
   'dialogs.rotarySolid.diameter': 'Durchmesser ({units})',
   'dialogs.rotarySolid.note': 'Erzeugt ein generiertes Modell. Fügen Sie ihm in CAM Schrupp- und Schlichtoperationen für die Drehachse hinzu.',
+  'dialogs.rotarySolid.polygonNote': 'Ebene Flächen sind angenähert: Die Rundum-Ansicht zeigt die abgewickelte Stangenoberfläche.',
   'dialogs.rotarySolid.create': 'Erstellen',
   'dialogs.rotarySolid.error.start': 'Geben Sie einen Startabstand vom Futterende ein.',
   'dialogs.rotarySolid.error.length': 'Geben Sie eine Länge größer als null ein.',

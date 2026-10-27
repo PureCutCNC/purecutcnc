@@ -2504,6 +2504,30 @@
   margin-left: auto;
 }
 
+/* A reference picture that carries a note (e.g. "Walls are radial" on the
+   Around face) keeps the note in the same cell as the diagram, so the two move
+   together (#1112 decision 8.16). A span, not a div: `.properties-field`'s
+   grid-placement rule only re-columns non-span children. */
+.op-param-ref-block {
+  grid-column: 3;
+  justify-self: end;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 50px;
+}
+
+.op-param-ref-note {
+  color: var(--text-dim);
+  font-size: 8px;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 /* Action messages (e.g. "✓ Target updated") are plain <span> children, so the
    reserved third column would otherwise pull them into the 30px icon rail.
    Force them onto their own full-width row instead. */
@@ -2622,7 +2646,8 @@
     grid-template-columns: 1fr;
   }
 
-  .op-param-ref {
+  .op-param-ref,
+  .op-param-ref-block {
     display: none;
   }
 }

@@ -129,7 +129,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     // feature. Coincident outlines cannot show the picker here, so fall back
     // to the topmost candidate. Around hit-tests models by their bands only
     // (issue #1112 I2), never by a flat footprint that is not drawn there.
-    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl'), vt)
+    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl'), vt, sheet)
     // A model inside the bar is drawn as a band on the sheet, so right-clicking
     // the band opens the model's own menu, as clicking the model's row does
     // (issue #1112 I).

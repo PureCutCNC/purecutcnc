@@ -507,6 +507,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.paramRef.finishWalls': 'Referenz für Wände schlichten',
   'cam.paramRef.finishFloor': 'Referenz für Boden schlichten',
   'cam.paramRef.stockRadial': 'Referenz für radiales Aufmaß',
+  'cam.paramRef.stockRadialNote': 'Wandflächen sind radial',
   'cam.paramRef.stockAxial': 'Referenz für axiales Aufmaß',
   'cam.paramRef.passes': 'Referenz für Durchgänge',
   'cam.paramRef.adaptiveSpacing': 'Referenz für adaptiven Abstand',

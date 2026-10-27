@@ -53,6 +53,7 @@ import {
   aroundClampBand,
   aroundModelBandAt,
   aroundOrigin,
+  aroundSeamLabels,
   aroundSheet,
   aroundSheetForOperation,
   aroundSheetStock,
@@ -177,6 +178,37 @@ function aroundProject(stock: BarStock, clamps: Clamp[] = [], activeSetupId?: st
   near(lines[3].across, frame.zero + 2 * c, 'k = 2 is two circumferences on')
   const beyond = aroundTurnLines(frame, frame.zero + 0.2 * c, frame.zero + 2.8 * c)
   assert(beyond.length === 2 && beyond.every((line) => !line.solid), 'turns beyond the zero line are drawn, none solid')
+}
+
+// ── Seam labels (issue #1112 slice L) ────────────────────────
+//
+// Both sheet edges are the same seam — the bottom of the bar, a = ±180° — so
+// one edge reads −180° and the other +180°. Mutations checked one at a time:
+// - the labels swapped → the edge/text assertions fail;
+// - the anchor taken from the across midpoint instead of the sheet edge → the
+//   anchor assertions fail;
+// - X and Y swapped → the Y-bar assertions fail;
+// - the labels dropped → the length assertions fail.
+
+{
+  const sheet = aroundSheet(aroundProject(X_BAR))!
+  const labels = aroundSeamLabels(sheet)
+  assert(labels.length === 2, `a sheet has two seam labels (${labels.length})`)
+  assert(labels[0].edge === 'first' && labels[0].text === '−180°', `the first edge reads −180°: ${labels[0].text}`)
+  assert(labels[1].edge === 'second' && labels[1].text === '+180°', `the far edge reads +180°: ${labels[1].text}`)
+  near(labels[0].anchor.y, sheet.sheetStart, 'the first label sits on the sheet start edge')
+  near(labels[1].anchor.y, sheet.sheetStart + sheet.circumference, 'the far label sits on the sheet end edge')
+  near(labels[0].anchor.x, sheet.along.min, 'an X bar anchors the labels at the along start')
+  near(labels[1].anchor.x, sheet.along.min, 'both labels share the along anchor')
+}
+
+{
+  const sheet = aroundSheet(aroundProject(Y_BAR))!
+  const labels = aroundSeamLabels(sheet)
+  near(labels[0].anchor.x, sheet.sheetStart, 'a Y bar puts the first label on the start edge (X)')
+  near(labels[1].anchor.x, sheet.sheetStart + sheet.circumference, 'a Y bar puts the far label on the end edge (X)')
+  near(labels[0].anchor.y, sheet.along.min, 'a Y bar anchors the labels at the along start (Y)')
+  near(labels[1].anchor.y, sheet.along.min, 'both Y labels share the along anchor')
 }
 
 // ── Clamp bands ──────────────────────────────────────────────
@@ -374,6 +406,22 @@ function modelFeature(id: string, profile: SketchProfile, overrides: Partial<Ske
     frame.modelBands.length === 0,
     `a model wholly outside the bar is no band: ${frame.modelBands.map((entry) => entry.featureId).join(',')}`,
   )
+}
+
+// ── A band is named after its model (issue #1112 slice L) ────
+//
+// Decision 8.14: a band shows the model's name and no instruction sentence.
+// A canned Turn/Polygon is a model too, so it is banded and named like an
+// imported one.
+{
+  const project = projectWithFeatures(aroundProject(X_BAR), [
+    modelFeature('hex head', rectProfile(30, 40, 60, 5), {
+      canned: { kind: 'polygon', params: {} },
+    }),
+  ])
+  const frame = aroundSheet(project)!
+  assert(frame.modelBands.length === 1, `a canned model is one band (${frame.modelBands.length})`)
+  assert(frame.modelBands[0].name === 'hex head', `the band is named after the model: ${frame.modelBands[0].name}`)
 }
 
 // ── A band is the model's click target (issue #1112 slice I) ──

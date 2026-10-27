@@ -388,6 +388,9 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
 
     const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    // The Around sheet folds a canned shape's drawing, so the hit tests below
+    // must fold the same way (issue #1112 L).
+    const sheet = aroundSheet(project)
     const pendingConstraint = pendingConstraintRef.current
     const constraintRefPickingClick = !!pendingConstraint && !!pendingConstraint.anchor && !pendingConstraint.reference
     const resolvedSnap = snap.resolveCurrentSketchSnap(world, vt, {
@@ -401,7 +404,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     if (pendingFeatureDistribution?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
       if (guideHit.kind === 'direct') {
         setFeatureDistributionGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -416,7 +419,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     // guide hit — text cannot follow its own outline.
     const pendingTextLayout = pendingTextLayoutRef.current
     if (pendingTextLayout?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
       if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
         setTextLayoutGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -586,7 +589,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         return
       }
       const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
-      const targetFeatureId = findHitFeatureId(lockedPickedPoint, editableProjectFeatures(project), vt)
+      const targetFeatureId = findHitFeatureId(lockedPickedPoint, editableProjectFeatures(project), vt, sheet)
       const targetId =
         targetFeatureId && targetFeatureId !== pendingConstraint.featureId
           ? targetFeatureId
@@ -988,7 +991,6 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
 
     // Clamp bands and tabs are reference, not selection targets, on the sheet
     // (issue #395): a click there falls through to features and empty space.
-    const sheet = aroundSheet(project)
     const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode
@@ -1007,7 +1009,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     // footprint: leaving the footprint in this hit test lets it steal a click
     // from a band that covers the same point (issue #1112 I2).
     const resolvedFeatures = editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl')
-    const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
+    const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt, sheet)
     // A model's band is on the sheet itself, so it is checked only when no
     // outline at the point claims the click first (issue #1112 I).
     const bandModelId = sheet ? aroundModelBandAt(sheet, world) : null

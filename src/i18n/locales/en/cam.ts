@@ -510,6 +510,7 @@ export const camEn = {
   'cam.paramRef.finishWalls': 'Finish walls reference',
   'cam.paramRef.finishFloor': 'Finish floor reference',
   'cam.paramRef.stockRadial': 'Stock radial reference',
+  'cam.paramRef.stockRadialNote': 'Walls are radial',
   'cam.paramRef.stockAxial': 'Stock axial reference',
   'cam.paramRef.passes': 'Passes reference',
   'cam.paramRef.adaptiveSpacing': 'Adaptive spacing reference',

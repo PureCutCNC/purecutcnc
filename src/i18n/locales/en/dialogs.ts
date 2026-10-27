@@ -538,6 +538,7 @@ export const dialogsEn = {
   'dialogs.rotarySolid.rotation': 'Rotation (°)',
   'dialogs.rotarySolid.diameter': 'Diameter ({units})',
   'dialogs.rotarySolid.note': 'Creates one generated model. Add rotary rough and finish operations to it from CAM.',
+  'dialogs.rotarySolid.polygonNote': 'Flats are approximated on the around view.',
   'dialogs.rotarySolid.create': 'Create',
   'dialogs.rotarySolid.error.start': 'Enter a start distance from the chuck end.',
   'dialogs.rotarySolid.error.length': 'Enter a length greater than zero.',

@@ -29,7 +29,9 @@ import {
   visiblePackedSegmentOffsets,
   type DisplaySegment,
 } from './toolpathDisplay'
-import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
+import { getFeatureGeometryBounds } from '../../text'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
+import type { AroundWrapWindow } from './aroundDisplayWrap'
 import {
   getProfileBounds,
   splineProfile,
@@ -61,6 +63,7 @@ export function drawLineFeatureBatch(
   ctx: CanvasRenderingContext2D,
   features: SketchFeature[],
   vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
 ): void {
   if (features.length === 0) return
   const batchSize = 128
@@ -71,7 +74,7 @@ export function drawLineFeatureBatch(
     ctx.beginPath()
     const end = Math.min(start + batchSize, features.length)
     for (let index = start; index < end; index += 1) {
-      for (const profile of getFeatureGeometryProfiles(features[index])) {
+      for (const profile of featureDisplayProfiles(features[index], sheet)) {
         appendProfilePath(ctx, profile, vt)
       }
     }
@@ -152,6 +155,7 @@ export function drawFeature(
   editing: boolean,
   groupSelected: boolean,
   stockThickness?: number,
+  sheet?: AroundWrapWindow | null,
 ): void {
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
@@ -215,7 +219,7 @@ export function drawFeature(
     fill = `rgba(${base.r}, ${g}, ${b}, 0.44)`
   }
 
-  const profiles = getFeatureGeometryProfiles(feature)
+  const profiles = featureDisplayProfiles(feature, sheet)
   for (const profile of profiles) {
     traceProfilePath(ctx, profile, vt)
     if (profile.closed && featureUsesSketchFill(feature.operation)) {
