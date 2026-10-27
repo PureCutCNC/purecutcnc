@@ -30,9 +30,10 @@
  *    anything, because the emitter restarts after the first and nothing follows
  *    the others;
  * 3. every bundled definition still validates unchanged;
- * 4. the program header accepts exactly its class (modal setup, units, work
- *    coordinate, program number, parameter assignment, comments, non-moving M
- *    codes) and the purpose templates accept exactly their own words.
+ * 4. the program header accepts exactly its class (modal setup including a
+ *    bare `G0`/`G00` and `G91.1`, units, work coordinate, program number,
+ *    parameter assignment, comments, non-moving M codes) and the purpose
+ *    templates accept exactly their own words.
  *
  * Mutations that must fail these tests (restore the file from a `cp` backup):
  * - accept a motion word in an inert template (drop the `INERT_G_COMMANDS`
@@ -40,7 +41,13 @@
  *   suite fails;
  * - treat the header as `anything` → the header motion and `G91` refusals pass;
  * - drop the O-word/expression refusal → `o<x> call` in the inverse-time
- *   template passes.
+ *   template passes;
+ * - remove `G0` from `HEADER_G_COMMANDS` again → the bare `G0`/`G00` cases
+ *   fail (#1119);
+ * - add `G90.1` to `HEADER_G_COMMANDS` → the absolute-arc-centre refusal fails
+ *   (#1119);
+ * - accept `M{toolNumber}` as a placeholder word → its refusal case fails
+ *   (#1119).
  *
  * Run with: npx tsx src/engine/gcode/templateRestrictions.test.ts
  */
@@ -96,6 +103,32 @@ function assertRefused(
   assert.ok(issue.message.includes(`"${word}"`), `${label}: the message names the offending word (${word}): ${issue.message}`)
 }
 
+/**
+ * Assert a field/placeholder refusal whose message names the placeholder. The
+ * placeholder mistakes say where it may go rather than "not allowed", so this
+ * is the variant the #1119 placeholder cases use.
+ */
+function assertRefusedNaming(
+  label: string,
+  definition: unknown,
+  field: string,
+  word: string,
+): void {
+  const issues = refusalIssues(definition, label)
+  const issue = issues.find((entry) => entry.message.startsWith(`${field}:`))
+  assert.ok(issue, `${label}: a refusal names the template field (${field}): ${JSON.stringify(issues)}`)
+  assert.ok(issue.message.includes(`"${word}"`), `${label}: the message names the offending placeholder (${word}): ${issue.message}`)
+}
+
+/** Assert a definition is accepted, naming the case in the failure. */
+function assertAccepted(label: string, definition: unknown): void {
+  try {
+    validateMachineDefinition(definition)
+  } catch (error) {
+    assert.fail(`${label}: the definition was refused: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 // ── 1. Every restricted template field refuses a motion word ──
 
 console.log('Testing the restricted template fields refuse a motion word...')
@@ -113,10 +146,10 @@ interface FieldCase {
 
 const fieldCases: FieldCase[] = [
   {
-    label: 'program header motion',
+    label: 'program header axis word after a bare rapid',
     field: 'program.header[0]',
     text: 'G0 Z-2',
-    word: 'G0',
+    word: 'Z-2',
     machine: 'grbl',
     apply: (definition) => ({ ...definition, program: { ...definition.program, header: ['G0 Z-2'] } }),
   },
@@ -206,10 +239,10 @@ const fieldCases: FieldCase[] = [
     }),
   },
   {
-    label: 'work-coordinate select motion',
+    label: 'work-coordinate select axis word',
     field: 'workCoordinates.selectCommand',
     text: 'G54',
-    word: 'G0',
+    word: 'Z-2',
     machine: 'grbl',
     apply: (definition) => ({
       ...definition,
@@ -383,6 +416,51 @@ console.log('Testing the tool-change and end-of-program templates accept anythin
   assert.equal(qtplasmac.plasma.materialFeedCommand, 'F#<_hal[plasmac.cut-feed-rate]>',
     'the controller-owned feed expression is accepted')
   assert.ok(qtplasmac.program.header.includes('#<holes> = 1'), 'the parameter assignment header line is accepted')
+}
+
+// ── 2b. The #1119 relaxations, and each still-refused counterpart ──
+
+console.log('Testing the #1119 relaxations...')
+
+{
+  const base = bundled('grbl')
+  const withHeader = (lines: string[]): unknown => ({
+    ...structuredClone(base),
+    program: { ...base.program, header: lines },
+  })
+
+  // 1. A bare rapid selects the motion mode and moves nothing. An axis word on
+  // the same line still parks the machine, so it stays refused.
+  assertAccepted('header: a bare G0', withHeader(['G0']))
+  assertAccepted(
+    'header: a bare G00 in the classic safe-start line',
+    withHeader(['G00 G94 G21 G17 G90 G40 G49 G80']),
+  )
+  assertRefused('header: G0 with an axis word', withHeader(['G0 Z-2']), 'program.header[0]', 'Z-2')
+  assertRefused('header: G00 with axis words', withHeader(['G00 X0 Y0']), 'program.header[0]', 'X0')
+
+  // 2. Relative arc centres are how the emitter writes I/J. Absolute centres
+  // would make every emitted arc wrong, and G91 changes where every following
+  // move lands, so both stay refused.
+  assertAccepted('header: G91.1', withHeader(['G91.1']))
+  assertRefused('header: G90.1', withHeader(['G90.1']), 'program.header[0]', 'G90.1')
+  assertRefused('header: G91', withHeader(['G91']), 'program.header[0]', 'G91')
+
+  // 3. A placeholder may end a word where the next word's letter begins, and
+  // may follow a completed word. It may not become a G/M number, absorb a
+  // following value, or be an unknown placeholder.
+  const withToolChange = (commands: string[]): unknown => ({
+    ...structuredClone(base),
+    toolChange: { ...base.toolChange, commands },
+  })
+  assertAccepted('tool change: T{toolNumber}M6', withToolChange(['T{toolNumber}M6']))
+  assertAccepted('tool change: G43Z0.8000H{toolNumber}', withToolChange(['G43Z0.8000H{toolNumber}']))
+  assertRefusedNaming('tool change: M{toolNumber}', withToolChange(['M{toolNumber}']),
+    'toolChange.commands[0]', '{toolNumber}')
+  assertRefusedNaming('tool change: G{x}', withToolChange(['G{x}']),
+    'toolChange.commands[0]', '{x}')
+  assertRefusedNaming('tool change: T{toolNumber}5', withToolChange(['T{toolNumber}5']),
+    'toolChange.commands[0]', '{toolNumber}')
 }
 
 // ── 3. Every bundled definition validates unchanged ───────────
