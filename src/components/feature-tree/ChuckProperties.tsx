@@ -38,12 +38,14 @@ export function ChuckProperties({ clamp, stock, units, onChange }: Props) {
   return <>
     <label className="properties-field">
       <span>{t('featureTree.properties.chuckSize')}</span>
-      <Select value={knownSize ? data?.size ?? '' : ''}
-        options={[
-          ...(!knownSize ? [{ value: '', label: `${t('featureTree.properties.chuckExisting')} · Ø${formatLength(roundWorkholdingDiameter(clamp, stock), units)}${data?.size ? ` (${data.size})` : ''}` }] : []),
-          ...STANDARD_CHUCKS.map((size) => ({ value: size.id, label: size.label })),
-        ]}
-        onChange={(id) => { if (id) onChange(chuckSizePatch(id, stock, units)) }} />
+      <div data-testid="chuck-size">
+        <Select value={knownSize ? data?.size ?? '' : ''}
+          options={[
+            ...(!knownSize ? [{ value: '', label: `${t('featureTree.properties.chuckExisting')} · Ø${formatLength(roundWorkholdingDiameter(clamp, stock), units)}${data?.size ? ` (${data.size})` : ''}` }] : []),
+            ...STANDARD_CHUCKS.map((size) => ({ value: size.id, label: size.label })),
+          ]}
+          onChange={(id) => { if (id) onChange(chuckSizePatch(id, stock, units)) }} />
+      </div>
     </label>
     {range ? (['min', 'max'] as const).map((limit) => <label className="properties-field" key={limit}>
       <span>{t(limit === 'min' ? 'featureTree.properties.chuckMin' : 'featureTree.properties.chuckMax')}</span>

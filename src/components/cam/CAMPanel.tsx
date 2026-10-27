@@ -1070,8 +1070,10 @@ export function CAMPanel({
       ),
       target: () => (
         <>
-          <SetupOperationControls key={operation.id} operation={operation} requestToolpath={requestToolpath} />
-          <OperationCuts key={operation.id} project={project} operation={operation} />
+          {/* Two siblings in one fragment need distinct keys, or React reports
+              a duplicated child for every selected operation. */}
+          <SetupOperationControls key={`${operation.id}:controls`} operation={operation} requestToolpath={requestToolpath} />
+          <OperationCuts key={`${operation.id}:cuts`} project={project} operation={operation} />
           {selectedOperationTargetsRegion ? (
             <div className="cam-region-note">
               <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>

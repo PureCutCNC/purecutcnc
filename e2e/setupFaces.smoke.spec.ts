@@ -459,6 +459,16 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await zBottom.fill('0')
   await zBottom.press('Enter')
   await expect(ui.face.stockSpan(page)).toHaveText('0.75 → 0 in')
+  // Make it a through cut before moving it. A full-height Add is material, not
+  // a through cut, so it is a ghost on the other face; a through subtract is a
+  // valid target from either flat face (issue #1112 I).
+  const pocketRow = featureRow(page, pocket.id)
+  await pocketRow.locator('.tree-action-btn--operation').click()
+  await page.locator('.tree-operation-menu').getByRole('button', { name: 'Subtract', exact: true }).click()
+  const cutProject = await getProject(page) as unknown as {
+    featureDefinitions: Record<string, { operation: string }>
+  }
+  expect(cutProject.featureDefinitions[pocket.definitionId].operation).toBe('subtract')
   await change.click()
   const dialog = ui.face.changeFaceDialog(page)
   await expect(dialog).toBeVisible()
