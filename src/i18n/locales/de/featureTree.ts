@@ -56,6 +56,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ Erstes 2.5D-Feature muss ',
   'featureTree.tree.warning.firstFeatureSuffix': ' sein. Das 3D-Modell wird erst erstellt, wenn dies behoben ist.',
+  'featureTree.treeRow.warning.noEffect': 'Keine Wirkung auf die endgültige Form: spätere Features überdecken sie.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Ordner ausklappen',

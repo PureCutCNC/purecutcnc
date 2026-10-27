@@ -61,6 +61,7 @@ export const featureTreeEn = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ First 2.5D feature must be ',
   'featureTree.tree.warning.firstFeatureSuffix': '. The 3D model will not build until this is fixed.',
+  'featureTree.treeRow.warning.noEffect': 'No effect on the final shape: later features cover it.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Expand folder',
