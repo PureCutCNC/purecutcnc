@@ -524,7 +524,6 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   const featureId = drawn.features[0].id
   expect(drawn.features[0].authoringFace).toBe('around')
   await selectFeatures(page, [featureId])
-  await ui.operations.openPanelButton(page).click()
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   await ui.setupCam.addMenu(page)

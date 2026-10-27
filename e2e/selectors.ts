@@ -521,6 +521,13 @@ export const properties = {
 
   /** The Diameter number input for a chuck or tailstock. */
   clampDiameter: (page: Page) => page.getByTestId('clamp-diameter').locator('input'),
+
+  /** The standard-size select for a chuck (#1112 M); its label is the diameter. */
+  chuckSize: (page: Page) => page.getByTestId('chuck-size'),
+
+  /** An option in the open chuck-size select. */
+  chuckSizeOption: (page: Page, label: string) =>
+    properties.chuckSize(page).getByRole('option', { name: label, exact: true }),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────

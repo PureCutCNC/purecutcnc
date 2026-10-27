@@ -3562,7 +3562,7 @@
 }
 
 .rotary-dialog__surface-warning {
-  color: var(--warning-text, #d9a441);
+  color: var(--warning-text);
 }
 
 .rotary-dialog__error {
