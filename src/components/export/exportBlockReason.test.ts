@@ -77,7 +77,7 @@ const machineInvalid = exportBlockReasonMessage({
     line: 4,
     text: 'G90.1',
     word: 'G90.1',
-    rule: 'program header',
+    ruleCode: 'header',
     message: 'program.header[3]: line 4: the word "G90.1" is not allowed in the program header.',
   }],
 }, nameOf)

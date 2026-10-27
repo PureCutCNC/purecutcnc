@@ -27,6 +27,7 @@
 import type { MachineTemplateDiagnostic } from '../../engine/gcode/templateRules'
 import { useI18n } from '../../i18n/i18nContext'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { MACHINE_TEMPLATE_RULE_KEY } from './machineDiagnosticRuleKeys'
 
 export interface MachineDiagnosticListProps {
   diagnostics: readonly MachineTemplateDiagnostic[]
@@ -51,12 +52,12 @@ export function MachineDiagnosticList({ diagnostics }: MachineDiagnosticListProp
           data-field={diagnostic.field}
           data-line={diagnostic.line}
           data-word={diagnostic.word}
-          data-rule={diagnostic.rule}
+          data-rule={diagnostic.ruleCode}
         >
           <div className="machine-diagnostic-location">
             <code className="machine-diagnostic-field">{diagnostic.field}</code>
             <span>{td('dialogs.machineDiagnostics.line', { line: diagnostic.line })}</span>
-            <span className="machine-diagnostic-rule">{td('dialogs.machineDiagnostics.rule', { rule: diagnostic.rule })}</span>
+            <span className="machine-diagnostic-rule">{td('dialogs.machineDiagnostics.rule', { rule: td(MACHINE_TEMPLATE_RULE_KEY[diagnostic.ruleCode]) })}</span>
           </div>
           <pre className="machine-diagnostic-text">{diagnostic.text}</pre>
           <div className="machine-diagnostic-word">

@@ -22,9 +22,9 @@
  * what it did: a template-invalid definition is retained and reported, an
  * unselected definition rescued into My Machines is reported, a colliding id
  * that had to be re-keyed is reported, and a file whose machine list cannot be
- * understood is refused atomically with an indexed diagnostic. The messages are
- * data for the UI (slice C) — the load-warning string is built from them rather
- * than duplicating the wording.
+ * understood is refused atomically with an indexed diagnostic. The `kind` and
+ * structured fields are the data; the wording lives in the language packs and
+ * `src/i18n/machineDiagnosticText.ts` turns a report into localized text.
  */
 
 import type { MachineTemplateDiagnostic } from '../engine/gcode/templateRules'
@@ -54,7 +54,7 @@ export type MachineLoadDiagnosticKind =
 export interface MachineLoadDiagnostic {
   severity: 'info' | 'warning' | 'error'
   kind: MachineLoadDiagnosticKind
-  /** One sentence, already suitable for the load-warning surface. */
+  /** Canonical English sentence for logs and error transport; the UI localizes from `kind`. */
   message: string
   /** Position in the file's or library's machine list, when the diagnostic is about one entry. */
   index?: number
@@ -79,18 +79,4 @@ export class MachineLoadError extends Error {
     this.name = 'MachineLoadError'
     this.diagnostics = diagnostics
   }
-}
-
-/**
- * Join diagnostics into the existing one-string load-warning surface.
- *
- * Every report is included, including the `info` ones: a rescued machine
- * ("moved to My Machines"), a re-keyed id and a consolidated duplicate are
- * exactly what a one-time load alert is for (#1119) — the library banner in
- * the manager cannot say what happened at open time. Transport errors
- * (`MachineLoadError`) are shown by the caller that refused the load.
- */
-export function machineLoadWarning(diagnostics: readonly MachineLoadDiagnostic[]): string | null {
-  const messages = diagnostics.map((diagnostic) => diagnostic.message)
-  return messages.length > 0 ? messages.join('\n\n') : null
 }

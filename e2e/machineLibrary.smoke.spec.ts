@@ -202,76 +202,85 @@ test('a project machine missing from the library stays usable and can be saved b
   await expect(ui.properties.machineStatus(app.page)).not.toContainText('Not in my machines')
 })
 
-test('a template-invalid project copy is repaired in place without touching the library', async ({ app, ui }) => {
-  // The project embeds a GRBL copy whose header breaks the program-header rule
-  // (#1119). The library has a valid GRBL entry with the same id, so the
-  // project's own row is the only thing that can be repaired.
-  const base = e2eMachineDefinition({ id: 'grbl', name: 'GRBL 1.1', builtin: true })
-  const invalid = {
-    ...base,
-    program: { ...(base.program as Record<string, unknown>), header: ['G90', 'G90.1'] },
-  }
+for (const layout of [
+  { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+  { name: 'landscape tablet', viewport: { width: 1180, height: 820 }, hasTouch: true },
+]) {
+  test.describe(`machine diagnostics and repair on ${layout.name}`, () => {
+    test.use({ viewport: layout.viewport, hasTouch: layout.hasTouch })
 
-  let alertMessage = ''
-  app.page.on('dialog', async (dialog) => {
-    alertMessage = dialog.message()
-    await dialog.accept()
+    test('a template-invalid project copy is repaired in place without touching the library', async ({ app, ui }) => {
+      // The project embeds a GRBL copy whose header breaks the program-header rule
+      // (#1119). The library has a valid GRBL entry with the same id, so the
+      // project's own row is the only thing that can be repaired.
+      const base = e2eMachineDefinition({ id: 'grbl', name: 'GRBL 1.1', builtin: true })
+      const invalid = {
+        ...base,
+        program: { ...(base.program as Record<string, unknown>), header: ['G90', 'G90.1'] },
+      }
+
+      let alertMessage = ''
+      app.page.on('dialog', async (dialog) => {
+        alertMessage = dialog.message()
+        await dialog.accept()
+      })
+      await seedMachineProject(app.page, {
+        machineDefinitions: [invalid],
+        selectedMachineId: 'grbl',
+      })
+      await expect.poll(() => alertMessage).toContain('export is blocked')
+      expect(alertMessage).toContain('GRBL 1.1')
+
+      // The update notice points at the library copy; keep the project's copy.
+      const notice = ui.machineUpdateNotice.root(app.page)
+      await expect(notice).toBeVisible()
+      await ui.machineUpdateNotice.keepButton(app.page).click()
+
+      await openManager(app.page, ui)
+      await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
+      // Both rows share the name; the project copy is the second row.
+      await ui.machineManager.item(app.page, 'GRBL 1.1').last().click()
+      await expect(ui.machineManager.badge(app.page, 'Project copy')).toBeVisible()
+
+      const diagnostics = ui.machineManager.diagnostics(app.page)
+      await expect(diagnostics).toContainText('program.header')
+      await expect(diagnostics).toContainText('G90.1')
+      await expect(diagnostics).toContainText('program header')
+
+      // Editing the project copy is allowed even though the library has the id.
+      await ui.machineManager.editButton(app.page).click()
+      const editor = ui.machineEditor.dialog(app.page)
+      await expect(editor).toBeVisible()
+      await expect(ui.machineEditor.diagnostics(app.page)).toContainText('G90.1')
+      await ui.machineEditor.field(app.page, 'Header').fill('G90')
+      await expect(ui.machineEditor.diagnostics(app.page)).toHaveCount(0)
+      await ui.machineEditor.saveButton(app.page).click()
+      await expect(editor).toBeHidden()
+
+      // The project's snapshot is the repaired one; the library entry was never
+      // written (it is the bundled definition and stays byte-identical).
+      const repaired = await embeddedMachine(app.page)
+      expect(repaired.definitions[0].program).toMatchObject({ header: ['G90'] })
+      const removedNotice = await readStorage(app.page, CUSTOM_MACHINES_KEY)
+      expect(removedNotice ?? '').not.toContain('G90.1')
+      await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeHidden()
+      await ui.machineManager.doneButton(app.page).click()
+    })
+
+    test('a machine library that cannot be read is shown with its reason', async ({ app, ui }) => {
+      await seedMachineProject(app.page)
+      await app.page.evaluate((key) => window.localStorage.setItem(key, '{ not json'), CUSTOM_MACHINES_KEY)
+      await app.page.reload()
+      await app.page.waitForSelector('canvas', { timeout: 15000 })
+
+      await openManager(app.page, ui)
+      const notices = ui.machineManager.libraryNotices(app.page)
+      await expect(notices).toContainText('could not be read')
+      await expect(notices).toContainText('preserved unchanged')
+      await ui.machineManager.doneButton(app.page).click()
+    })
   })
-  await seedMachineProject(app.page, {
-    machineDefinitions: [invalid],
-    selectedMachineId: 'grbl',
-  })
-  await expect.poll(() => alertMessage).toContain('export is blocked')
-  expect(alertMessage).toContain('GRBL 1.1')
-
-  // The update notice points at the library copy; keep the project's copy.
-  const notice = ui.machineUpdateNotice.root(app.page)
-  await expect(notice).toBeVisible()
-  await ui.machineUpdateNotice.keepButton(app.page).click()
-
-  await openManager(app.page, ui)
-  await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
-  // Both rows share the name; the project copy is the second row.
-  await ui.machineManager.item(app.page, 'GRBL 1.1').last().click()
-  await expect(ui.machineManager.badge(app.page, 'Project copy')).toBeVisible()
-
-  const diagnostics = ui.machineManager.diagnostics(app.page)
-  await expect(diagnostics).toContainText('program.header')
-  await expect(diagnostics).toContainText('G90.1')
-  await expect(diagnostics).toContainText('program header')
-
-  // Editing the project copy is allowed even though the library has the id.
-  await ui.machineManager.editButton(app.page).click()
-  const editor = ui.machineEditor.dialog(app.page)
-  await expect(editor).toBeVisible()
-  await expect(ui.machineEditor.diagnostics(app.page)).toContainText('G90.1')
-  await ui.machineEditor.field(app.page, 'Header').fill('G90')
-  await expect(ui.machineEditor.diagnostics(app.page)).toHaveCount(0)
-  await ui.machineEditor.saveButton(app.page).click()
-  await expect(editor).toBeHidden()
-
-  // The project's snapshot is the repaired one; the library entry was never
-  // written (it is the bundled definition and stays byte-identical).
-  const repaired = await embeddedMachine(app.page)
-  expect(repaired.definitions[0].program).toMatchObject({ header: ['G90'] })
-  const removedNotice = await readStorage(app.page, CUSTOM_MACHINES_KEY)
-  expect(removedNotice ?? '').not.toContain('G90.1')
-  await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeHidden()
-  await ui.machineManager.doneButton(app.page).click()
-})
-
-test('a machine library that cannot be read is shown with its reason', async ({ app, ui }) => {
-  await seedMachineProject(app.page)
-  await app.page.evaluate((key) => window.localStorage.setItem(key, '{ not json'), CUSTOM_MACHINES_KEY)
-  await app.page.reload()
-  await app.page.waitForSelector('canvas', { timeout: 15000 })
-
-  await openManager(app.page, ui)
-  const notices = ui.machineManager.libraryNotices(app.page)
-  await expect(notices).toContainText('could not be read')
-  await expect(notices).toContainText('preserved unchanged')
-  await ui.machineManager.doneButton(app.page).click()
-})
+}
 
 for (const tablet of [false, true]) {
   test.describe(tablet ? 'plasma machine on landscape tablet' : 'plasma machine on desktop', () => {

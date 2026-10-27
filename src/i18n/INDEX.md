@@ -43,6 +43,10 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   warnings (`{ code, params }` → localized text; injects the clamp move-kind
   word). Catalog module `locales/*/warnings.ts`; coverage locked by
   `warningsCoverage.test.ts`.
+- `machineDiagnosticText.ts` — the same mapper for machine-load diagnostics
+  (`MachineLoadDiagnostic` → catalog key/params, then localized text). Used by
+  the machine manager banner and the one-time load alert, so neither renders
+  the machine layer's English data sentence (#1119).
 - `bootstrap.ts` — resolves the locale before React renders (no
   wrong-language flash; covers the phone-blocker screen).
 - `i18nContext.ts` / `I18nProvider.tsx` — React context (`useI18n()` →

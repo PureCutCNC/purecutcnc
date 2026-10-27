@@ -39,6 +39,7 @@ import {
   type MachineManagerRow,
 } from './machineManagerRows'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -92,7 +93,7 @@ export function MachineDefinitionManagerDialog({
   const { library, customMachines, diagnostics: libraryDiagnostics, writeBlocked } = useMachineLibrary()
   const { t, languageTag } = useI18n()
 
-  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+  function td(key: MessageKey, params?: MessageParams): string {
     return t(key, params)
   }
 
@@ -309,7 +310,7 @@ export function MachineDefinitionManagerDialog({
           {libraryNotices.length > 0 ? (
             <div className="machine-manager-library-notices" role="status">
               {libraryNotices.map((notice, index) => {
-                const text = 'messageKey' in notice ? td(notice.messageKey) : notice.message
+                const text = td(notice.messageKey, notice.params)
                 return (
                   <div
                     key={`${text}:${index}`}

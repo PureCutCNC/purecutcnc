@@ -34,7 +34,7 @@ import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 import { decodeProjectFormat, type ProjectMigrationInfo } from '../helpers/projectFormat'
 import { rescueMachinesToLibrary } from '../../machine/store'
-import { machineLoadWarning } from '../../machine/diagnostics'
+import { machineLoadWarning } from '../../i18n/machineDiagnosticText'
 
 /** Combine the independent load warnings into one message, or null if silent. */
 function joinWarnings(...warnings: (string | null)[]): string | null {

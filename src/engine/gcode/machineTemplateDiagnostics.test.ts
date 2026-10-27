@@ -105,7 +105,7 @@ console.log('Testing diagnostics name every offending line, field, word and rule
   assert.equal(header.length, 1, 'the first operation-header line is refused')
   assert.equal(header[0].line, 1, 'its line number is one-based')
   assert.equal(header[0].word, 'G0', 'it names the offending word')
-  assert.equal(header[0].rule, 'operation header template', 'it names the broken rule')
+  assert.equal(header[0].ruleCode, 'inert.operation-header', 'it names the broken rule')
   assert.equal(header[0].text, 'G0 X0 Y0', 'it keeps the offending text')
 
   const embedded = diagnostics.find((entry) => entry.field === 'program.operationHeader[1]')
@@ -178,7 +178,7 @@ assert.deepEqual(
   'every offending line is named with its field, one-based line and word',
 )
 assert.ok(
-  diagnostics.every((entry) => entry.rule === 'program header'),
+  diagnostics.every((entry) => entry.ruleCode === 'header'),
   'each diagnostic names the broken rule',
 )
 

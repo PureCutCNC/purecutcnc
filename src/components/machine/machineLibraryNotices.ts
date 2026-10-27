@@ -22,23 +22,24 @@
  * Save or Remove appeared to work. These notices give the state and its reason
  * a place on screen, and deduplicate the reports the store appends on every
  * failed attempt.
+ *
+ * Every notice is a catalog key and its parameters, never a sentence built by
+ * the machine layer: the manager translates it in the active language. The key
+ * comes from `machineDiagnosticMessage`, the same mapper the open-time load
+ * alert uses.
  */
 
-import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
+import { machineDiagnosticMessage } from '../../i18n/machineDiagnosticText'
+import type { MessageParams } from '../../i18n/catalog'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { MachineLibrarySnapshot } from '../../machine/store'
 
-export type MachineLibraryNotice =
-  | {
-    severity: 'error'
-    /** A known state, translated by the dialog. */
-    messageKey: 'dialogs.machineManager.libraryWriteBlocked'
-  }
-  | {
-    severity: 'warning' | 'error'
-    /** The diagnostic's own sentence (it already names the reason). */
-    message: string
-    kind: MachineLoadDiagnostic['kind']
-  }
+export interface MachineLibraryNotice {
+  severity: 'error' | 'warning'
+  /** Catalog key resolved by the dialog in the active language. */
+  messageKey: MessageKey
+  params?: MessageParams
+}
 
 export function machineLibraryNotices(
   snapshot: Pick<MachineLibrarySnapshot, 'writeBlocked' | 'diagnostics'>,
@@ -48,12 +49,19 @@ export function machineLibraryNotices(
     notices.push({ severity: 'error', messageKey: 'dialogs.machineManager.libraryWriteBlocked' })
   }
   // A repeated failed write appends the same report each time; one line is
-  // enough, and the reason is in the sentence.
+  // enough. Deduplicate on the rendered message, not the English data sentence.
   const seen = new Set<string>()
   for (const diagnostic of snapshot.diagnostics) {
-    if (diagnostic.severity === 'info' || seen.has(diagnostic.message)) continue
-    seen.add(diagnostic.message)
-    notices.push({ severity: diagnostic.severity, message: diagnostic.message, kind: diagnostic.kind })
+    if (diagnostic.severity === 'info') continue
+    const message = machineDiagnosticMessage(diagnostic)
+    const key = `${message.key}:${JSON.stringify(message.params ?? {})}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    notices.push({
+      severity: diagnostic.severity,
+      messageKey: message.key,
+      params: message.params,
+    })
   }
   return notices
 }
