@@ -580,6 +580,18 @@ export function CAMPanel({
     [project, selection, machine, currentSetupFace]
   )
 
+  // Kept work that can no longer be cut (issue #1112 K). The generation guard
+  // and its feature map are expensive, so answer once per project change and
+  // look up by id — never per row, per render, ghost rows included.
+  const uncutWarnings = useMemo(() => {
+    const warnings = new Map<string, string>()
+    for (const operation of project.operations) {
+      const warning = operationUncutWarning(project, operation)
+      if (warning) warnings.set(operation.id, warning)
+    }
+    return warnings
+  }, [project])
+
   const selectedNewOperationHint = selectedNewOperationKind
     ? operationAddHint(project, selection, machine, currentSetupFace, selectedNewOperationKind)
     : null
@@ -1902,7 +1914,7 @@ export function CAMPanel({
     }
 
     const rotaryHint = rotaryOperationHint(project, operation)
-    const uncutWarning = operationUncutWarning(project, operation)
+    const uncutWarning = uncutWarnings.get(operation.id) ?? null
     const hasWarnings = Boolean(toolpathWarnings && toolpathWarnings.length > 0)
     const showBookletMessage = bookletExportMessage?.operationId === operation.id
 
@@ -2271,7 +2283,7 @@ export function CAMPanel({
                         // face in the feature tree: listed, with its eye, never
                         // selected, reordered or edited from here.
                         const ghost = !operationOnActiveSetup(project, operation)
-                        const uncutWarning = operationUncutWarning(project, operation)
+                        const uncutWarning = uncutWarnings.get(operation.id)
                         const ghostTitle = ghost
                           ? camT(section.face === 'bottom'
                             ? 'cam.treeRow.ghostBottom'
@@ -2287,7 +2299,7 @@ export function CAMPanel({
                             !ghost && operation.id === selectedOperationId ? 'tree-row--selected' : '',
                             !ghost && dragOperationId === operation.id ? 'tree-row--dragging' : '',
                             !ghost && warningOperationIds?.has(operation.id) ? 'cam-operation-row--warning' : '',
-                            !ghost && uncutWarning ? 'cam-operation-row--uncut' : '',
+                            uncutWarning ? 'cam-operation-row--uncut' : '',
                           ].join(' ')}
                           data-ghost={ghost ? 'true' : undefined}
                           title={ghostTitle}
@@ -2364,7 +2376,7 @@ export function CAMPanel({
                           <span className="tree-label cam-operation-label">
                             <span className="cam-operation-name">{operation.name}</span>
                             {crossFaceTargets(project, operation).length > 0 ? <span className="face-chip face-chip--thru">{camT('cam.setup.crossFace')}</span> : null}
-                            {!ghost && uncutWarning ? <UncutWorkBadge text={uncutWarning} /> : null}
+                            {uncutWarning ? <UncutWorkBadge text={uncutWarning} /> : null}
                           </span>
                           <span className="tree-row-actions">
                             {generatingOperationIds?.has(operation.id) ? (

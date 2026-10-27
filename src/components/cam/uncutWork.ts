@@ -32,6 +32,12 @@
  *   its targets are no longer reachable from its face, an Around feature
  *   reaches the centreline, or a square blank cannot run it. A deliberately
  *   disabled operation is not warned about — it is off on purpose.
+ *
+ * A feature row also carries the warning an operation got *for that feature*:
+ * when the operation reaches the bar centreline through it, the feature's own
+ * row says so too. That verdict is read once from `operationUncutWork` (one
+ * source of truth) and mapped back to the feature ids it names, so a feature
+ * rule and an operation rule can never disagree.
  */
 
 import { isRotaryOperationKind, type Operation, type Project } from '../../types/project'
@@ -43,7 +49,7 @@ import { operationFace, setupGenerationBlock } from '../../engine/setupTargets'
 import { camT } from './camI18n'
 
 /** A feature shape this module reads; a resolved feature satisfies it. */
-type UncutFeature = Pick<ResolvedSketchFeature, 'authoringFace' | 'operation' | 'kind'>
+type UncutFeature = Pick<ResolvedSketchFeature, 'id' | 'authoringFace' | 'operation' | 'kind'>
 
 export type UncutWorkReason =
   | 'aroundNeedsRotaryProject'
@@ -61,6 +67,8 @@ export interface UncutWork {
   reason: UncutWorkReason
   /** Feature names for a reason that names them (the centreline one). */
   features?: string
+  /** The features `features` names, so a feature row can claim the same warning. */
+  featureIds?: string[]
 }
 
 /** A model is turned on a square blank, so it is never leftover sheet work. */
@@ -68,8 +76,12 @@ function isModel(feature: UncutFeature): boolean {
   return feature.kind === 'stl' && feature.operation === 'model'
 }
 
-/** Why this feature is kept but cannot be cut, or null while it still can. */
-export function featureUncutWork(project: Project, feature: UncutFeature): UncutWork | null {
+/**
+ * Why the feature itself is kept but cannot be cut, or null while it still
+ * can. This is the stock/face half of the rule; the operation half is read
+ * from `operationUncutWork` by {@link featureUncutWork}.
+ */
+function featureOwnWork(project: Project, feature: UncutFeature): UncutWork | null {
   // Only the Around face loses work when the stock changes; Top and Bottom
   // keep their own geometry on either bar shape.
   if ((feature.authoringFace ?? 'top') !== 'around') return null
@@ -80,6 +92,46 @@ export function featureUncutWork(project: Project, feature: UncutFeature): Uncut
   if (!isBarStock(project.stock)) return { reason: 'aroundNeedsBar' }
   if (isSquareStock(project.stock)) return { reason: 'aroundNeedsRoundBar' }
   return null
+}
+
+/**
+ * The feature rows the operations' own warnings name, keyed by feature id.
+ * The operation is the source of truth: this only maps its verdict back to
+ * the feature it names, so a centreline violation always shows on both rows.
+ */
+function featureOperationWork(project: Project): Map<string, UncutWork> {
+  const work = new Map<string, UncutWork>()
+  for (const operation of project.operations) {
+    const warning = operationUncutWork(project, operation)
+    if (warning?.reason !== 'operationReachesCentreline') continue
+    for (const featureId of warning.featureIds ?? []) {
+      if (!work.has(featureId)) work.set(featureId, warning)
+    }
+  }
+  return work
+}
+
+/** Why this feature is kept but cannot be cut, or null while it still can. */
+export function featureUncutWork(project: Project, feature: UncutFeature): UncutWork | null {
+  return featureOwnWork(project, feature) ?? featureOperationWork(project).get(feature.id) ?? null
+}
+
+/**
+ * Every feature row's warning for a project, derived once for the tree. The
+ * per-feature `featureUncutWarning` is right for one row; this is the same
+ * answer without re-running the operation rule for each of them.
+ */
+export function featureUncutWarnings(
+  project: Project,
+  features: readonly UncutFeature[],
+): Map<string, string> {
+  const fromOperations = featureOperationWork(project)
+  const warnings = new Map<string, string>()
+  for (const feature of features) {
+    const work = featureOwnWork(project, feature) ?? fromOperations.get(feature.id)
+    if (work) warnings.set(feature.id, uncutWorkText(work))
+  }
+  return warnings
 }
 
 /** Why this operation is kept but cannot be cut, or null while it still can. */
@@ -100,6 +152,7 @@ export function operationUncutWork(project: Project, operation: Operation): Uncu
       return {
         reason: 'operationReachesCentreline',
         features: block.features.map((feature) => feature.featureName).join(', '),
+        featureIds: block.features.map((feature) => feature.featureId),
       }
     case 'crossFaceNotThrough':
       return { reason: 'operationTargetsOtherFace' }

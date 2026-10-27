@@ -19,25 +19,30 @@
  * slice K, decision 5).
  *
  * On Around the menu shows only what Around can do: the 3D surface strategies
- * are not listed, and the rotary rough/finish rows lead. On a square blank the
- * round-only wrapped rows stay listed, disabled with "Needs a round bar" — a
- * changeable reason, so they are never hidden.
+ * and the flat plasma cut are not listed, and the rotary rough/finish rows
+ * lead. On a square blank the round-only wrapped rows stay listed in place,
+ * disabled with "Needs a round bar" — a changeable reason, so they are never
+ * hidden behind the selection's disclosure.
  *
  * Mutations checked one at a time against these assertions:
- * - leaving the surface kinds in the Around menu → the exclusion assertion
- *   fails;
+ * - leaving the surface kinds or the plasma cut in the Around menu → the
+ *   exclusion assertions fail;
  * - offering the rotary rows on Top (or after the flat kinds on Around) → the
  *   order assertion fails;
  * - dropping the square-blank rule → the round-only rows come back with no
- *   hint (or a selection reason), and the `needsRoundBar` assertion fails —
- *   this is the required "a round-only entry enabled on a square blank" check;
+ *   hint (or a selection reason), and the `needsRoundBar` / `blockedInPlace`
+ *   assertions fail — this is the required "a round-only entry enabled on a
+ *   square blank" check;
  * - hiding the round-only rows on a square blank instead of disabling them →
- *   the row-exists assertion fails.
+ *   the row-exists assertion fails;
+ * - scanning "Select all" for a project-type refusal → the Top plasma row's
+ *   empty-ids assertion fails (the original menu returned [] there).
  *
  * Run with: npx tsx src/components/cam/operationAddEntries.test.ts
  */
 
 import { operationAddEntries, operationAddHint, operationAddKinds } from './operationAddEntries'
+import { selectAllCompatibleFeatureIds } from './operationValidity'
 import { camT } from './camI18n'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import { squareStock } from '../../types/barStock'
@@ -86,9 +91,11 @@ assert(
   aroundKinds[0] === 'rotary_rough' && aroundKinds[1] === 'rotary_finish',
   `the rotary rows lead the Around menu, got ${aroundKinds.slice(0, 3).join(',')}`,
 )
-for (const kind of ['pocket', 'follow_line', 'drilling', 'plasma_profile'] as const) {
+for (const kind of ['pocket', 'follow_line', 'drilling'] as const) {
   assert(aroundKinds.includes(kind), `Around still offers ${kind}`)
 }
+// A plasma cut goes through a flat plate; it does not belong on the sheet.
+assert(!aroundKinds.includes('plasma_profile'), 'Around does not offer the flat plasma cut')
 
 // On a flat face the surface strategies are back and the rotary rows are gone.
 const topKinds = operationAddKinds(ROUND, 'top')
@@ -99,6 +106,40 @@ assert(
 assert(
   !topKinds.includes('rotary_rough') && !topKinds.includes('rotary_finish'),
   'the rotary rows stay out of the flat-face menu (issue #1015)',
+)
+
+// ── A project-type refusal offers no "Select all" ──────────────────────
+// The extraction once handed the plasma row a target set; the original menu
+// returned [] for it, and a selection cannot make a plasma cut belong to a
+// router project. The scan *would* find a target here, so a non-empty result
+// is the mutation.
+const topSheet = {
+  ...ROUND.features.find((feature) => feature.id === 'sketch')!,
+  id: 'top-sheet',
+  name: 'Top sheet',
+  authoringFace: 'top' as const,
+  z_top: 6,
+  z_bottom: 4,
+}
+const TOP_PROJECT: Project = {
+  ...ROUND,
+  activeSetupId: ROUND.setups[0].id,
+  features: [...ROUND.features, topSheet],
+}
+assert(
+  selectAllCompatibleFeatureIds(TOP_PROJECT, 'plasma_profile').length > 0,
+  'the fixture has plasma-compatible targets for the scan to find',
+)
+const topPlasma = operationAddEntries(TOP_PROJECT, noSelection(), 'router', 'top')
+  .find((entry) => entry.kind === 'plasma_profile')
+assert(topPlasma, 'the flat menu still lists the plasma cut')
+assert(
+  topPlasma.hint === camT('cam.addMenu.needsPlasmaProject'),
+  'the plasma row keeps its project-type reason',
+)
+assert(
+  topPlasma.selectAllFeatureIds.length === 0,
+  'a project-type refusal never offers "Select all"',
 )
 
 // ── A square blank disables the round-only rows, with the reason ──────
@@ -113,6 +154,9 @@ for (const kind of ['pocket', 'v_carve', 'v_carve_medial', 'edge_route_inside', 
     entry.hint === camT('cam.addMenu.needsRoundBar'),
     `${kind} says "Needs a round bar" on a square blank, got "${entry.hint ?? 'no hint'}"`,
   )
+  // The menu renders these in place rather than in the selection disclosure
+  // (issue #1112 K review): the reason is the stock, not the selection.
+  assert(entry.blockedInPlace, `${kind} is shown disabled in place, not behind a disclosure`)
 }
 // The rotary turning rows are the square blank's own work: they keep their
 // model hint (or none), never the stock-shape refusal.
@@ -123,6 +167,7 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
     entry.hint !== camT('cam.addMenu.needsRoundBar'),
     `${kind} is not refused for the stock shape`,
   )
+  assert(!entry.blockedInPlace, `${kind} is not part of the stock-blocked rows`)
 }
 // A selection does not move the reason: the stock blocks the kind whatever is
 // selected, and the reason must stay the one the user can act on.
@@ -131,10 +176,11 @@ assert(
     === camT('cam.addMenu.needsRoundBar'),
   'the square-blank reason wins over a selection-based hint',
 )
-// The project-type reason still comes first, as it does on every face.
+// The flat plasma cut is not offered on Around at all, square or round: it
+// belongs to the flat faces (decision 5).
 assert(
-  squareByKind.get('plasma_profile')?.hint === camT('cam.addMenu.needsPlasmaProject'),
-  'a plasma cut keeps its project-type reason on a square blank',
+  !squareByKind.has('plasma_profile'),
+  'a plasma cut is not listed on the Around face',
 )
 // Nothing extra is hidden: every round-bar Around row is present on the blank.
 assert(
