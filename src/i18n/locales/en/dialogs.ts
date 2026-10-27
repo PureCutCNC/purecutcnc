@@ -230,6 +230,7 @@ export const dialogsEn = {
   'dialogs.export.error.generationInterrupted': 'Generation for "{operation}" was cancelled or superseded. Change the selection or an option, then export again.',
   'dialogs.export.error.missingTool': 'Operation "{operation}" has no tool assigned.',
   'dialogs.export.error.stale': 'The export preview is out of date. Reopen the dialog and try again.',
+  'dialogs.export.error.machineInvalid': 'The machine selected for this project still breaks a machine-template rule ({detail}). Correct the machine before exporting.',
   'dialogs.export.warning.noOperations': 'No operations selected. Check at least one operation to export.',
   'dialogs.export.warning.noMachine': 'No machine selected. Select one in project settings before exporting.',
   'dialogs.export.export': 'Export {ext}',

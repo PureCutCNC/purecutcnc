@@ -41,6 +41,8 @@ import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
+import type { MachineLoadDiagnostic } from '../machine/diagnostics'
+import type { MachineDefinition } from '../engine/gcode/types'
 import { findSetupWithTurn, syncProjectSetups } from '../store/helpers/setups'
 
 export interface CamjInspection {
@@ -56,6 +58,15 @@ export interface CamjInspection {
   /** True when source stock is derived from a feature (importable). */
   stockIsFeatureBased: boolean
   warnings: string[]
+  /**
+   * Machine diagnostics from decoding the source (#1119): a retained
+   * template-invalid machine, machines the file carried beyond its selected
+   * snapshot, duplicate consolidations and re-keyed ids. The import dialog
+   * shows these instead of the decode discarding them.
+   */
+  machineDiagnostics: MachineLoadDiagnostic[]
+  /** Custom definitions the source carried, for My Machines if the caller offers them. */
+  machineCustomDefinitions: MachineDefinition[]
 }
 
 export interface MergeCamjFoldersInput {
@@ -100,7 +111,8 @@ export function inspectCamjString(text: string): CamjInspection {
     throw new Error('Failed to parse .camj file: missing meta.')
   }
 
-  const { project, convertedLegacy, sourceVersion } = decodeProjectFormat(parsed)
+  const decoded = decodeProjectFormat(parsed)
+  const { project, convertedLegacy, sourceVersion } = decoded
   const sourceUnits: Units = project.meta.units === 'inch' ? 'inch' : 'mm'
 
   const featureCountByFolder = new Map<string, number>()
@@ -132,9 +144,14 @@ export function inspectCamjString(text: string): CamjInspection {
     folderFeatureCount,
     sourceUnits,
     stockIsFeatureBased,
-    warnings: convertedLegacy
-      ? [`Converted legacy file format ${sourceVersion ?? '1.0'} to 3.0 for import.`]
-      : [],
+    warnings: [
+      ...(convertedLegacy
+        ? [`Converted legacy file format ${sourceVersion ?? '1.0'} to 3.0 for import.`]
+        : []),
+      ...decoded.machineMigration.diagnostics.map((diagnostic) => diagnostic.message),
+    ],
+    machineDiagnostics: decoded.machineMigration.diagnostics,
+    machineCustomDefinitions: decoded.machineMigration.customDefinitions,
   }
 }
 

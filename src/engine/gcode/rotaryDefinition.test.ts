@@ -285,7 +285,7 @@ assert.equal(saveResult.error, undefined, 'the library accepts a machine with a 
 assert.deepEqual(getMachineLibrarySnapshot().customMachines[0].rotary, ROTARY_BORROWED_REVERSED, 'My Machines keeps the block')
 
 const stored = sanitizeStoredCustomMachines({ schemaVersion: CUSTOM_MACHINES_SCHEMA_VERSION, machines: [machine] })
-assert.deepEqual(stored[0]?.rotary, ROTARY_BORROWED_REVERSED, 'persisted custom machines keep the block')
+assert.deepEqual(stored.machines[0]?.rotary, ROTARY_BORROWED_REVERSED, 'persisted custom machines keep the block')
 
 const imported = parseMachineImport(serializeMachineExport(machine), [])
 assert.equal(imported.error, undefined, 'an exported machine imports back')

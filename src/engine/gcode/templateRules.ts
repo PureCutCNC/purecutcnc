@@ -307,10 +307,37 @@ export interface TemplateRuleViolation {
   message: string
 }
 
+/**
+ * One template line that breaks its class rule (#1119).
+ *
+ * The schema reports these as issues; the machine editor, the export dialog
+ * and the load warning read them directly so the user can see *which* line of
+ * *which* field breaks *which* rule. A definition that still breaks a rule is
+ * kept — never rewritten and never dropped — and export refuses it.
+ */
+export interface MachineTemplateDiagnostic {
+  /** Schema path of the field carrying the text, e.g. `['program','header',3]`. */
+  path: Array<string | number>
+  /** The path as a person reads it: `program.header[3]`. */
+  field: string
+  /** One-based line within the field's text. */
+  line: number
+  /** The offending line exactly as stored. */
+  text: string
+  /** The word, placeholder or marker the rule refused. */
+  word: string
+  /** The rule's human name (`program header`, `units template`, …). */
+  rule: string
+  /** One sentence naming the field, line, offending text and rule. */
+  message: string
+}
+
 interface TemplateField {
   path: Array<string | number>
   text: string
   rule: TemplateRule
+  /** Rendered lines that precede this field's text in the same template array. */
+  lineOffset: number
 }
 
 /**
@@ -1199,11 +1226,17 @@ function templateFields(definition: TemplateRuleDefinition): TemplateField[] {
     if (value === null || value === undefined) continue
     if (spec.array) {
       if (!Array.isArray(value)) continue
+      // An array template is written one element per line, so a diagnostic's
+      // line is the program line: the index of the element plus any embedded
+      // newlines before it (#1119, "header lines 3-4").
+      let lineOffset = 0
       value.forEach((text, index) => {
-        if (typeof text === 'string') fields.push({ path: [...spec.path, index], text, rule })
+        if (typeof text !== 'string') return
+        fields.push({ path: [...spec.path, index], text, rule, lineOffset })
+        lineOffset += text.split(/\r?\n/).length
       })
     } else if (typeof value === 'string') {
-      fields.push({ path: [...spec.path], text: value, rule })
+      fields.push({ path: [...spec.path], text: value, rule, lineOffset: 0 })
     }
   }
   return fields
@@ -1248,33 +1281,39 @@ function visibleWord(word: string): string {
     .replace(/\t/g, '\\t')
 }
 
-/** The refusal as a person reads it, naming the field and saying why. */
+/**
+ * The refusal as a person reads it, naming the field, the one-based line and
+ * the rule (#1119). `line` is omitted only by the comment-marker check, which
+ * has no lines.
+ */
 function refusalMessage(
   path: Array<string | number>,
   rule: TemplateRule,
   refusal: LineRefusal,
+  line?: number,
 ): string {
   const field = fieldName(path)
+  const where = line === undefined ? field : `${field}: line ${line}`
   const word = visibleWord(refusal.word)
   if (refusal.kind === 'user-placeholder') {
-    return `${field}: the placeholder "${word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
+    return `${where}: the placeholder "${word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
   }
   if (refusal.kind === 'unknown-placeholder') {
-    return `${field}: the placeholder "${word}" is not one the emitter fills in; remove it or use a supported placeholder.`
+    return `${where}: the placeholder "${word}" is not one the emitter fills in; remove it or use a supported placeholder.`
   }
   if (refusal.kind === 'misplaced-placeholder') {
     const key = refusal.word.replace(/^\{/, '').replace(/\}$/, '')
     const letters = placeholderWordLetters(key, rule)
     if (letters.length === 0) {
-      return `${field}: the placeholder "${word}" may only be used inside a comment; outside one there is no fixed word letter that can safely carry its value.`
+      return `${where}: the placeholder "${word}" may only be used inside a comment; outside one there is no fixed word letter that can safely carry its value.`
     }
     const list = letters.length === 1
       ? letters[0]
       : `${letters.slice(0, -1).join(', ')} or ${letters[letters.length - 1]}`
-    return `${field}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to a following value.`
+    return `${where}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to a following value.`
   }
   const { label, hint } = describeRule(rule)
-  return `${field}: the word "${word}" is not allowed in the ${label}; ${hint}.`
+  return `${where}: the word "${word}" is not allowed in the ${label}; ${hint}.`
 }
 
 /** The allowlisted comment forms, spelled for a refusal message. */
@@ -1321,43 +1360,106 @@ function commentSyntaxViolation(
 }
 
 /**
- * Every template in the definition that breaks its class rule, one violation
- * per field (the first offending line wins), plus a comment marker that is not
- * one of the dialect's exact forms. The schema turns each into an issue on the
- * field's path, so the editor and machine import can say which template and
- * which word are wrong.
+ * Every diagnostic a definition's templates raise (#1119): the template path,
+ * the one-based line, the offending text and word, and the rule that was
+ * broken. Every offending line is reported, including lines after an embedded
+ * newline; a single-line command field is judged whole, exactly as the schema
+ * judges it.
+ *
+ * This is a pure function on a definition and its source of truth is the same
+ * walk the schema uses, so export eligibility cannot drift from what the
+ * machine editor shows. A definition that still breaks a rule is retained by
+ * the loader; this list is what refuses its export until it is fixed.
  */
-export function templateRuleViolations(definition: TemplateRuleDefinition): TemplateRuleViolation[] {
+export function machineTemplateDiagnostics(
+  definition: TemplateRuleDefinition,
+): MachineTemplateDiagnostic[] {
   const dialect = commentDialectOf(definition.outputDialect)
   const syntax = COMMENT_SYNTAX[dialect]
   const unitsCommand = definition.units.mmCommand ?? definition.units.inchCommand ?? ''
   const wcsCommand = definition.workCoordinates.selectCommand ?? ''
-  const violations: TemplateRuleViolation[] = []
+  const diagnostics: MachineTemplateDiagnostic[] = []
   const comment = commentSyntaxViolation(definition, dialect, syntax)
-  if (comment !== null) violations.push(comment)
+  if (comment !== null) {
+    const text = comment.path[1] === 'commentSuffix'
+      ? definition.program.commentSuffix
+      : definition.program.commentPrefix
+    diagnostics.push({
+      path: comment.path,
+      field: fieldName(comment.path),
+      line: 1,
+      text,
+      word: text,
+      rule: 'comment syntax',
+      message: comment.message,
+    })
+  }
   for (const field of templateFields(definition)) {
+    const fieldLabel = fieldName(field.path)
+    const rule = describeRule(field.rule).label
+    const lines = field.text.split(/\r?\n/)
     // A command field is one line and one command: the whole field is judged
-    // once, never split into lines that each match on their own.
+    // once, never split into lines that each match on their own. When it does
+    // carry an embedded newline every line that breaks the pattern is named
+    // with its own line number, and a field whose lines each match but which is
+    // still several lines is refused as a whole.
     if (field.rule.kind === 'command') {
       const refusal = checkCommandText(field.text, field.rule)
       if (refusal !== null) {
-        violations.push({
+        if (lines.length > 1) {
+          let reported = 0
+          lines.forEach((rawLine, index) => {
+            const lineRefusal = checkCommandText(rawLine, field.rule)
+            if (lineRefusal === null) return
+            reported += 1
+            diagnostics.push({
+              path: field.path,
+              field: fieldLabel,
+              line: field.lineOffset + index + 1,
+              text: rawLine,
+              word: lineRefusal.word,
+              rule,
+              message: refusalMessage(field.path, field.rule, lineRefusal, field.lineOffset + index + 1),
+            })
+          })
+          if (reported > 0) continue
+        }
+        diagnostics.push({
           path: field.path,
-          message: refusalMessage(field.path, field.rule, refusal),
+          field: fieldLabel,
+          line: field.lineOffset + 1,
+          text: field.text,
+          word: refusal.word,
+          rule,
+          message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + 1),
         })
       }
       continue
     }
-    for (const rawLine of field.text.split(/\r?\n/)) {
+    lines.forEach((rawLine, index) => {
       const refusal = checkTemplateLine(rawLine, field.rule, syntax, unitsCommand, wcsCommand)
-      if (refusal !== null) {
-        violations.push({
-          path: field.path,
-          message: refusalMessage(field.path, field.rule, refusal),
-        })
-        break
-      }
-    }
+      if (refusal === null) return
+      diagnostics.push({
+        path: field.path,
+        field: fieldLabel,
+        line: field.lineOffset + index + 1,
+        text: rawLine,
+        word: refusal.word,
+        rule,
+        message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + index + 1),
+      })
+    })
   }
-  return violations
+  return diagnostics
+}
+
+/**
+ * Every template in the definition that breaks its class rule, one violation
+ * per offending line, plus a comment marker that is not one of the dialect's
+ * exact forms. The schema turns each into an issue on the field's path, so the
+ * editor and machine import can say which template, which line and which word
+ * are wrong.
+ */
+export function templateRuleViolations(definition: TemplateRuleDefinition): TemplateRuleViolation[] {
+  return machineTemplateDiagnostics(definition).map(({ path, message }) => ({ path, message }))
 }

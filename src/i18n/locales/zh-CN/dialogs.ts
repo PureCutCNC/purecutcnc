@@ -232,6 +232,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.error.generationInterrupted': '“{operation}”的生成已取消或被取代。请更改选择或某个选项，然后重新导出。',
   'dialogs.export.error.missingTool': '加工操作“{operation}”未指定刀具。',
   'dialogs.export.error.stale': '导出预览已过期。请重新打开对话框并重试。',
+  'dialogs.export.error.machineInvalid': '为此项目选择的机床仍违反机床模板规则（{detail}）。请在导出前修正该机床。',
   'dialogs.export.warning.noOperations': '未选择加工操作。请至少勾选一个要导出的操作。',
   'dialogs.export.warning.noMachine': '未选择机床。请在导出前在项目设置中选择一个。',
   'dialogs.export.export': '导出 {ext}',

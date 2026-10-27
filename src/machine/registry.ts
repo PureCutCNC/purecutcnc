@@ -28,7 +28,8 @@
  */
 
 import { BUNDLED_DEFINITIONS } from '../engine/gcode/definitions'
-import { MachineDefinitionSchema, type MachineDefinition } from '../engine/gcode/types'
+import { MachineDefinitionStructureSchema, readMachineDefinitionStructure, type MachineDefinition } from '../engine/gcode/types'
+import type { MachineLoadDiagnostic } from './diagnostics'
 
 export const MACHINE_NAME_MAX_LENGTH = 60
 
@@ -59,12 +60,19 @@ export type MachineValidationResult =
  * `builtin` flag is always forced to `false` — ownership is decided here, not
  * by the incoming payload — and bundled IDs are rejected so a stored record
  * can never shadow a definition the build owns.
+ *
+ * This is the **structural** reader (#1119): capability checks and defaults,
+ * no template rules. A machine that still breaks a #1057 template rule is a
+ * real machine the user can keep and repair, so it is stored and offered in the
+ * library with diagnostics; export is refused until it is fixed. The strict
+ * `validateMachineDefinition` remains the schema for definitions the
+ * application writes itself (the editor's save form still checks it first).
  */
 export function validateCustomMachine(input: unknown): MachineValidationResult {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { error: 'Machine definition must be a JSON object.' }
   }
-  const parsed = MachineDefinitionSchema.safeParse({ ...(input as Record<string, unknown>), builtin: false })
+  const parsed = MachineDefinitionStructureSchema.safeParse({ ...(input as Record<string, unknown>), builtin: false })
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
     const path = issue?.path.join('.')
@@ -100,11 +108,13 @@ function functionalFields(definition: MachineDefinition): Omit<MachineDefinition
 
 /**
  * Stable comparison key for a definition, ignoring storage metadata. Input is
- * re-validated so schema defaults are filled in and two definitions that
- * differ only in omitted-vs-defaulted fields compare equal.
+ * re-validated through the structural reader so schema defaults are filled in
+ * and two definitions that differ only in omitted-vs-defaulted fields compare
+ * equal — including a template-invalid definition that the strict schema would
+ * refuse (#1119).
  */
 export function machineFingerprint(definition: MachineDefinition): string {
-  const parsed = MachineDefinitionSchema.safeParse(definition)
+  const parsed = MachineDefinitionStructureSchema.safeParse(definition)
   return JSON.stringify(functionalFields(parsed.success ? parsed.data : definition))
 }
 
@@ -174,7 +184,7 @@ export function duplicateMachineAsCustom(
 ): MachineDefinition {
   const name = duplicateMachineName(source.name, existing.map((definition) => definition.name))
   const id = allocateMachineId(name, new Set(existing.map((definition) => definition.id)))
-  return MachineDefinitionSchema.parse({ ...structuredClone(source), id, name, builtin: false })
+  return readMachineDefinitionStructure({ ...structuredClone(source), id, name, builtin: false })
 }
 
 /**
@@ -289,22 +299,56 @@ export function withCollisionSafeId(
 
 /**
  * Fold candidate definitions (legacy project libraries) into an existing
- * custom list: semantically identical entries are skipped, and an entry whose
- * ID collides with a different definition is re-keyed instead of overwriting.
+ * custom list: semantically identical entries are skipped and reported, and an
+ * entry whose ID collides with a different definition is re-keyed instead of
+ * overwriting (#1119). A candidate that cannot be read structurally is
+ * reported, never silently dropped.
  */
 export function mergeCustomMachineList(
   existing: readonly MachineDefinition[],
   candidates: readonly MachineDefinition[],
-): { machines: MachineDefinition[], added: MachineDefinition[] } {
+): { machines: MachineDefinition[], added: MachineDefinition[], diagnostics: MachineLoadDiagnostic[] } {
   const machines = [...existing]
   const added: MachineDefinition[] = []
-  for (const candidate of candidates) {
+  const diagnostics: MachineLoadDiagnostic[] = []
+  for (const [index, candidate] of candidates.entries()) {
     const validated = validateCustomMachine(candidate)
-    if (validated.error !== undefined) continue
-    if (machines.some((entry) => machinesFunctionallyEqual(entry, validated.ok))) continue
+    if (validated.error !== undefined) {
+      diagnostics.push({
+        severity: 'error',
+        kind: 'machine-structural-error',
+        index,
+        machineId: typeof candidate?.id === 'string' ? candidate.id : undefined,
+        machineName: typeof candidate?.name === 'string' ? candidate.name : undefined,
+        message: `A machine from this project could not be added to My Machines: ${validated.error}`,
+      })
+      continue
+    }
+    if (machines.some((entry) => machinesFunctionallyEqual(entry, validated.ok))) {
+      diagnostics.push({
+        severity: 'info',
+        kind: 'machine-consolidated',
+        index,
+        machineId: validated.ok.id,
+        machineName: validated.ok.name,
+        message: `Machine "${validated.ok.name}" is already in My Machines and was not added again.`,
+      })
+      continue
+    }
     const stored = withCollisionSafeId(validated.ok, machines)
+    if (stored.id !== validated.ok.id) {
+      diagnostics.push({
+        severity: 'warning',
+        kind: 'machine-rekeyed',
+        index,
+        machineId: validated.ok.id,
+        machineName: stored.name,
+        nextId: stored.id,
+        message: `Machine "${stored.name}" was kept as "${stored.id}" because "${validated.ok.id}" is already taken.`,
+      })
+    }
     machines.push(stored)
     added.push(stored)
   }
-  return { machines, added }
+  return { machines, added, diagnostics }
 }

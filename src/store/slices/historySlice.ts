@@ -19,10 +19,12 @@ import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { keepWorkspaceFace } from '../helpers/provisionalSetup'
+import type { ProjectMigrationInfo } from '../helpers/projectFormat'
+import { mergeCustomMachines } from '../../machine/store'
 import { sanitizeSelection } from './selectionSlice'
 
 export interface HistorySliceDependencies {
-  normalizeProject: (project: Project) => Project
+  normalizeProject: (project: Project, migrationInfo?: ProjectMigrationInfo) => Project
 }
 
 export type HistorySlice = Pick<
@@ -47,11 +49,23 @@ export function createHistorySlice(
   // #944): a snapshot is restored onto the face the user is looking at. When
   // the snapshot has no setup for that face — the undone edit was the one
   // that made it — the face stays in view provisionally (issue #945).
-  const restoreSnapshot = (snapshot: Project, current: Project): Project =>
-    keepWorkspaceFace(
-      normalizeProject({ ...cloneProject(snapshot), activeSetupId: current.activeSetupId }),
-      current,
+  const restoreSnapshot = (snapshot: Project, current: Project): Project => {
+    // A history snapshot is already compact, but running the same rescue seam
+    // as a load means a machine it somehow still carries reaches My Machines
+    // instead of being dropped when the snapshot is normalized (#1119).
+    const info: ProjectMigrationInfo = {
+      retractHeightsReexpressed: 0,
+      edgeEntryStrategiesReset: 0,
+      machineDiagnostics: [],
+      rescuedMachineDefinitions: [],
+    }
+    const restored = normalizeProject(
+      { ...cloneProject(snapshot), activeSetupId: current.activeSetupId },
+      info,
     )
+    mergeCustomMachines(info.rescuedMachineDefinitions)
+    return keepWorkspaceFace(restored, current)
+  }
 
   return {
     undo: () =>

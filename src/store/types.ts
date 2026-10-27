@@ -18,6 +18,7 @@ import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
 import type { ApplyCamPlanResult, CamPlanDraft } from '../engine/operations/camPlan/types'
 import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
+import type { MachineLoadDiagnostic } from '../machine/diagnostics'
 import type { SnapMode } from '../sketch/snapping'
 import type {
   BackdropImage,
@@ -343,6 +344,14 @@ export interface ProjectStore {
   projectLoading: boolean
   /** Set when a loaded file's schema version is newer than this build supports; surfaced once to the user. */
   loadWarning: string | null
+  /**
+   * Structured machine diagnostics from the most recent load (#1119):
+   * a machine kept because its templates still break a rule, machines moved
+   * to My Machines, duplicate consolidations and re-keyed ids. The load
+   * warning carries the same information as one string; this list is what the
+   * machine manager and the export dialog show line by line.
+   */
+  machineLoadDiagnostics: MachineLoadDiagnostic[]
   /** Clear the pending {@link loadWarning} after it has been shown. */
   clearLoadWarning: () => void
   /** Incremented each time a new project is created or loaded. Used by viewports to reset their view state. */

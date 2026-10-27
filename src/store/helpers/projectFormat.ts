@@ -47,6 +47,7 @@ import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/proje
 import { cloneTextFeatureData } from '../../types/project'
 import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
 import {
@@ -101,6 +102,8 @@ export interface DecodedMachineMigration {
   compacted: boolean
   /** A machine ID the file selected but could not resolve; the selection was cleared. */
   unresolvedSelectionId: string | null
+  /** Structured rescue/retention reports for the load-warning surface (#1119). */
+  diagnostics: MachineLoadDiagnostic[]
 }
 
 export interface DecodedProjectFormat {
@@ -121,6 +124,14 @@ export interface DecodedProjectFormat {
 export interface ProjectMigrationInfo {
   retractHeightsReexpressed: number
   edgeEntryStrategiesReset: number
+  /**
+   * What machine reading rescued or retained (#1119). A caller that has an
+   * application-library seam (`loadProject`, save, template extraction) merges
+   * `rescuedMachineDefinitions` and shows `machineDiagnostics`; leaving them
+   * unused is how the old code lost a project's other machines silently.
+   */
+  machineDiagnostics: MachineLoadDiagnostic[]
+  rescuedMachineDefinitions: MachineDefinition[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -554,7 +565,12 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
   const machines = normalizeMachineDefinitions(input as unknown as Project)
-  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0, edgeEntryStrategiesReset: 0 }
+  const migrationInfo: ProjectMigrationInfo = {
+    retractHeightsReexpressed: 0,
+    edgeEntryStrategiesReset: 0,
+    machineDiagnostics: [],
+    rescuedMachineDefinitions: [],
+  }
   return {
     // Nest records are session state, never read from a file (#889).
     project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
@@ -566,6 +582,7 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
       customDefinitions: machines.customDefinitions,
       compacted: machines.compacted,
       unresolvedSelectionId: machines.unresolvedSelectionId,
+      diagnostics: machines.diagnostics,
     },
   }
 }
@@ -722,6 +739,10 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   if (nests.length > 0) authoritativeProject.nests = nests
   else delete authoritativeProject.nests
   const machines = normalizeMachineDefinitions(authoritativeProject)
+  if (migrationInfo) {
+    migrationInfo.machineDiagnostics = machines.diagnostics
+    migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
+  }
   const meta: ProjectMeta = {
     ...authoritativeProject.meta,
     // A stored type is kept exactly; a file without one gets what today's

@@ -28,6 +28,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { machineExportDiagnostics } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import {
   createExportToken,
@@ -146,6 +147,11 @@ export function useExportPreparation({
     // the only G-code save path, so the re-check belongs here as much as the
     // token re-check above (issue #755).
     if (exportHasError(preparation.programs)) return null
+    // The machine can change without replacing the preparation (a machine
+    // edit keeps the same id), so the save path re-reads the same pure list the
+    // export dialog and postprocessor use (#1119). An invalid definition has
+    // no program to hand over.
+    if (!definition || machineExportDiagnostics(definition).length > 0) return null
     // The bytes are copied out here and never read again from state: once the
     // platform dialog is open the preview may be replaced underneath it, and
     // the files must be the programs the user approved.

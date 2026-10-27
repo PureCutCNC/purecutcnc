@@ -31,9 +31,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 ## Files
 
 - `index.ts` — public API.
-- `types.ts` — `MachineDefinition` and its zod schema (whose `superRefine` also
-  runs `templateRuleViolations`, so a template that breaks its class is refused
-  at the boundary; see `templateRules.ts`), covering `motion.arcInterpolation`,
+- `machineTemplateDiagnostics.test.ts` — #1119: the structural reader is
+  byte-identical to the strict one for valid definitions, every offending line
+  is diagnosed, the still-invalid #1109 variant is kept and selected, and
+  export produces no program with tool changes/coolant off or on.
+- `types.ts` — `MachineDefinition` and its two zod readers (#1119): the strict
+  `MachineDefinitionSchema` (structure plus `templateRuleViolations`, used for
+  anything the app writes) and `MachineDefinitionStructureSchema` (capability
+  checks and defaults only, used to load persisted project snapshots and the
+  custom-machine library so a template-invalid machine is kept rather than
+  dropped). `machineExportDiagnostics` is the pure export-eligibility list.
+  Covers `motion.arcInterpolation`,
   `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
   for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
   `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
@@ -48,7 +56,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `templateRules.ts` — the template classes and their allowlists (#1057 slice
   F): which field is a *program header*, *tool change*, *footer* or an *inert*
   in-program template, what each may contain, and the refusal message naming the
-  field and the offending word. `types.ts` runs it in the schema's
+  field and the offending word. `machineTemplateDiagnostics` (#1119) is the
+  same walk as structured data: template path, one-based program line (embedded
+  newlines included, every offending line reported), offending text and word,
+  and the broken rule. It is a pure function on a definition, used by the
+  schema, the export guard and (slice C) the editor and load warning. `types.ts` runs it in the schema's
   `superRefine`, so machine import, the editor and project snapshots all refuse
   a definition that breaks a class. It expands the emitter's `{placeholder}`
   syntax before judging a line, so `{unitsCommand}` is judged by the command it
