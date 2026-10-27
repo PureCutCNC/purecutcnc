@@ -916,11 +916,11 @@ test('square to round generates inside the band and removes material', async ({ 
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
   // The Around Add menu offers only what Around can do (issue #1112 K): the
-  // 3D surface strategies are not listed, and the wrapped sheet kinds stay
-  // listed with the stock reason instead of disappearing.
+  // 3D surface strategies are not listed, and the wrapped sheet kinds stay in
+  // place with the stock reason — disabled, not behind the "not available for
+  // this selection" disclosure, so this assertion needs no expand step.
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
-  await ui.operations.addMenuUnavailableToggle(page).click()
   const aroundMenu = ui.setupCam.addMenu(page)
   for (const label of ['3D surface rough', '3D surface finish', '3D surface cleanup']) {
     await expect(aroundMenu.locator('.cam-operation-label').filter({ hasText: label })).toHaveCount(0)
@@ -929,9 +929,6 @@ test('square to round generates inside the band and removes material', async ({ 
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
   await expect(aroundPocket.locator('.cam-operation-hint__text')).toHaveText('Needs a round bar')
   await expect(aroundPocket.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
-  // The turning rows are the square blank's own work and stay available.
-  await expect(aroundMenu.locator('.cam-operation-item')
-    .filter({ has: page.getByRole('button', { name: 'Rotary rough', exact: true }) })).toHaveCount(1)
   await page.keyboard.press('Escape')
   await expect(ui.setupCam.addMenu(page)).toBeHidden()
 

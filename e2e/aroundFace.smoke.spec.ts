@@ -466,7 +466,7 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
 test.describe('Around on a tablet with no rotary machine (#1034)', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
-  test('the around switch is usable by focus, the menus name the project type, and undo is one step', async ({ app, ui }) => {
+  test('the around switch is usable by focus, the Around menu is wrapped work only, and undo is one step', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
 
@@ -494,19 +494,21 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     await page.keyboard.press('ControlOrMeta+z')
     expect((await getProject(page) as unknown as SavedProject).features).toHaveLength(0)
 
-    // The corrected Add menu: the plasma row names the project type, not a machine.
+    // The corrected Add menu: Around shows only what Around can do, so the
+    // flat plasma cut is not offered there at all (issue #1112 K, decision 5).
+    // It stays on the flat faces, blocked by the project type (#960/#1034).
     await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
     const redrawn = await getProject(page) as unknown as SavedProject
     await selectFeatures(page, [redrawn.features[0].id])
     await ui.operations.openPanelButton(page).click()
     await ui.setupCam.add(page).click()
     await expect(ui.setupCam.addMenu(page)).toBeVisible()
-    await ui.operations.addMenuUnavailableToggle(page).click()
-    const plasmaRow = ui.operations.addMenuUnavailableRows(page).filter({ hasText: 'Plasma through-cut' })
-    await expect(plasmaRow).toHaveCount(1)
-    await expect(plasmaRow.locator('.cam-operation-hint__text')).toHaveText(
-      'Needs a plasma project. The type is chosen when the project is created.',
-    )
+    const aroundMenu = ui.setupCam.addMenu(page)
+    await expect(aroundMenu.locator('.cam-operation-item').filter({ hasText: 'Plasma through-cut' })).toHaveCount(0)
+    // The wrapped rows Around can do are still there.
+    await expect(
+      aroundMenu.locator('.cam-operation-item').filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) }),
+    ).toHaveCount(1)
   })
 })
 
@@ -557,6 +559,19 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
     /^Kept, but it cannot be cut: a square blank only machines a rotary rough or finish/,
   )
 
+  // The stock-blocked rows are in the menu itself, disabled with the reason:
+  // "Needs a round bar" must not live behind an expand step (review of K).
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  const squarePocketRow = ui.setupCam.addMenu(page)
+    .locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+  await expect(squarePocketRow).toBeVisible()
+  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Needs a round bar')
+  await expect(squarePocketRow.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(ui.setupCam.addMenu(page)).toBeHidden()
+
   // The selected operation's panel repeats the reason in a sentence.
   if (!(await pocketOp.evaluate((element) => element.classList.contains('tree-row--selected')))) {
     await pocketOp.click()
@@ -565,4 +580,11 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   await expect(page.locator('.cam-operation-properties [data-uncut-work]')).toContainText(
     'Kept, but it cannot be cut: a square blank only machines a rotary rough or finish against a model.',
   )
+
+  // A ghost operation keeps its warning: switching to Top hides the row's
+  // editing, not the reason it cannot cut (review of K).
+  await ui.face.switchTo(page, 'Top')
+  const ghostPocket = ui.operations.rowByName(page, 'Pocket Rough')
+  await expect(ghostPocket).toHaveAttribute('data-ghost', 'true')
+  await expect(ghostPocket.locator('[data-uncut-work]')).toBeVisible()
 })

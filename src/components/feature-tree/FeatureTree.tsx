@@ -29,7 +29,7 @@ import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isGhostFeatu
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
-import { featureUncutWarning } from '../cam/uncutWork'
+import { featureUncutWarnings } from '../cam/uncutWork'
 import { UncutWorkBadge } from '../common/UncutWorkBadge'
 
 interface FeatureTreeProps {
@@ -87,6 +87,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     hoverFeature,
   } = useProjectStore()
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
+  // Kept work the current stock (or an operation that reaches the centreline)
+  // cannot cut, derived once per project rather than per row (issue #1112 K).
+  const uncutWarnings = useMemo(() => featureUncutWarnings(project, features), [project, features])
   const { t } = useI18n()
   // Face layers, ghost rows and face chips exist only once the project uses
   // both faces; a Top-only project renders the tree it always did (#945).
@@ -382,7 +385,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     // Kept work that the current stock can no longer cut (issue #1112 K). The
     // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
     // every action it had — nothing is hidden or removed.
-    const uncutWarning = featureUncutWarning(project, feature) ?? undefined
+    const uncutWarning = uncutWarnings.get(feature.id)
     if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
       // row menu. It cannot be selected, dragged or edited from here. A model

@@ -28,13 +28,16 @@
  * - dropping the operation mapping → the operation reason is null and the
  *   panel would show nothing;
  * - warning about a deliberately disabled operation → its null assertion
- *   fails.
+ *   fails;
+ * - dropping the feature's operation-derived warning → the centreline
+ *   feature-row assertion fails (the required mutation).
  *
  * Run with: npx tsx src/components/cam/uncutWork.test.ts
  */
 
 import {
   featureUncutWarning,
+  featureUncutWarnings,
   featureUncutWork,
   operationUncutWarning,
   operationUncutWork,
@@ -128,6 +131,38 @@ assert(
   operationUncutWork(ROUND, topPocket)?.reason === 'operationTargetsOtherFace',
   'a Top operation targeting Around sheet work says the face cannot reach it',
 )
+
+// An Around feature that reaches the bar's centreline warns on its own row
+// through the operation that targets it. The operation's verdict is the one
+// source: the feature row must not need a second copy of the rule.
+const centrelinePocket = pocketOn(ROUND, 'sketch', AROUND_SETUP)
+const CENTRELINE: Project = {
+  ...ROUND,
+  features: ROUND.features.map((feature) => (
+    feature.id === 'sketch' ? { ...feature, z_bottom: 0 } : feature
+  )),
+  operations: [...ROUND.operations, centrelinePocket],
+}
+const deepSheet = featureNamed(CENTRELINE, 'sketch')
+assert(
+  operationUncutWork(CENTRELINE, centrelinePocket)?.reason === 'operationReachesCentreline',
+  'a pocket through the centreline warns on its operation',
+)
+assert(
+  featureUncutWork(CENTRELINE, deepSheet)?.reason === 'operationReachesCentreline',
+  'the feature it names carries the same warning on its row',
+)
+assert(
+  featureUncutWarning(CENTRELINE, deepSheet)
+    === operationUncutWarning(CENTRELINE, centrelinePocket),
+  'the feature row repeats the operation\'s wording, from the same rule',
+)
+const centrelineWarnings = featureUncutWarnings(CENTRELINE, resolvedProjectFeatures(CENTRELINE))
+assert(
+  centrelineWarnings.get('sketch') === operationUncutWarning(CENTRELINE, centrelinePocket),
+  'the tree\'s one-pass map carries the same centreline warning',
+)
+assert(!centrelineWarnings.has('model'), 'the model row is not dragged into it')
 
 // An operation switched off on purpose is not "left over".
 assert(

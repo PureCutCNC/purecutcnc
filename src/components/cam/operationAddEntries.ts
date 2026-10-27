@@ -22,14 +22,20 @@
  * - **Around offers only what Around can do.** The three 3D surface strategies
  *   machine an imported model from a flat face and have no Around form, so
  *   they are not listed there at all (decision 5: hide what does not belong to
- *   where you are). The rotary rough/finish rows lead the Around menu.
+ *   where you are). The flat plasma cut is left out for the same reason: it
+ *   cuts a flat plate, not a wrapped face. The rotary rough/finish rows lead
+ *   the Around menu.
  * - **Round-only rows stay listed on a square blank, disabled with the
  *   reason.** On a square blank only a rotary rough/finish against a model may
  *   cut the Around face, so every wrapped 2D kind is offered with "Needs a
  *   round bar" instead of disappearing (decision 5: disable what belongs there
  *   but is blocked by something the user can change — here, the stock shape).
+ *   `blockedInPlace` marks those rows so the menu renders them in place rather
+ *   than behind the collapsed "not available for this selection" disclosure:
+ *   the disclosure is for the selection, and the stock reason must be seen.
  * - The other family's kinds are left out entirely, as before (`machineMode`),
- *   and a plasma cut is offered as blocked with the project-type reason.
+ *   and a plasma cut on a flat face is offered as blocked with the
+ *   project-type reason.
  */
 
 import { isRotaryOperationKind, type OperationKind, type Project, type SetupFace } from '../../types/project'
@@ -45,6 +51,12 @@ export interface OperationAddEntry {
   hint?: string
   /** Features "Select all" would select; empty when the affordance is unavailable. */
   selectAllFeatureIds: string[]
+  /**
+   * The kind belongs on this face but the stock shape blocks it, so the row
+   * stays visible (disabled, with its reason) instead of joining the
+   * selection's collapsed disclosure.
+   */
+  blockedInPlace: boolean
 }
 
 /**
@@ -55,6 +67,13 @@ const SURFACE_KINDS: ReadonlySet<OperationKind> = new Set<OperationKind>([
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',
+])
+
+/** Kinds that do not belong on the Around face at all (decision 5). */
+const AROUND_HIDDEN_KINDS: ReadonlySet<OperationKind> = new Set<OperationKind>([
+  ...SURFACE_KINDS,
+  // A plasma cut goes through a flat plate; wrapping it has no meaning.
+  'plasma_profile',
 ])
 
 /** Every kind the panel can author, in catalogue order (the 2D kinds first). */
@@ -109,19 +128,45 @@ export function operationAddButtonLabel(kind: OperationKind): string {
 
 /** The kinds the menu lists on `face`, before the machine filter and validity. */
 export function operationAddKinds(project: Project, face: SetupFace): OperationKind[] {
-  const flat = ADD_MENU_KINDS.filter((kind) => face !== 'around' || !SURFACE_KINDS.has(kind))
+  const flat = ADD_MENU_KINDS.filter((kind) => face !== 'around' || !AROUND_HIDDEN_KINDS.has(kind))
   const rotary = rotaryAddKindsForFace(project, face)
   // The model lives in the bar: on Around the rotary rows lead, because that
   // is the work the face exists for (issue #1015).
   return face === 'around' ? [...rotary, ...flat] : [...flat, ...rotary]
 }
 
+interface OperationAddBlock {
+  hint: string | null
+  /** True when the hint is about the selection, so "Select all" could clear it. */
+  selectionBlocked: boolean
+  /** See {@link OperationAddEntry.blockedInPlace}. */
+  blockedInPlace: boolean
+}
+
 /**
- * The blocking reason for one kind, or null when the current selection can
- * take it. The project type is stated first, then a stock shape the user can
- * change, and only then the selection: on a square blank's Around face a
- * round-only row says "Needs a round bar" whatever is selected.
+ * The blocking reason for one kind, and where the reason comes from. The
+ * project type is stated first, then a stock shape the user can change, and
+ * only then the selection: on a square blank's Around face a round-only row
+ * says "Needs a round bar" whatever is selected.
  */
+function operationAddBlock(
+  project: Project,
+  selection: SelectionState,
+  machine: MachineMode,
+  face: SetupFace,
+  kind: OperationKind,
+): OperationAddBlock {
+  if (operationOffer(machine, kind) === 'needs-plasma-project') {
+    return { hint: camT('cam.addMenu.needsPlasmaProject'), selectionBlocked: false, blockedInPlace: false }
+  }
+  if (face === 'around' && isSquareStock(project.stock) && !isRotaryOperationKind(kind)) {
+    return { hint: camT('cam.addMenu.needsRoundBar'), selectionBlocked: false, blockedInPlace: true }
+  }
+  const hint = getOperationAddHint(project, selection, kind)
+  return { hint, selectionBlocked: hint !== null, blockedInPlace: false }
+}
+
+/** The blocking reason for one kind, or null when the current selection can take it. */
 export function operationAddHint(
   project: Project,
   selection: SelectionState,
@@ -129,13 +174,7 @@ export function operationAddHint(
   face: SetupFace,
   kind: OperationKind,
 ): string | null {
-  if (operationOffer(machine, kind) === 'needs-plasma-project') {
-    return camT('cam.addMenu.needsPlasmaProject')
-  }
-  if (face === 'around' && isSquareStock(project.stock) && !isRotaryOperationKind(kind)) {
-    return camT('cam.addMenu.needsRoundBar')
-  }
-  return getOperationAddHint(project, selection, kind)
+  return operationAddBlock(project, selection, machine, face, kind).hint
 }
 
 /** The menu's rows: every offered kind with its label, hint and "Select all" set. */
@@ -148,14 +187,17 @@ export function operationAddEntries(
   return operationAddKinds(project, face)
     .filter((kind) => operationOffer(machine, kind) !== 'hidden')
     .map((kind) => {
-      const hint = operationAddHint(project, selection, machine, face, kind)
+      const block = operationAddBlock(project, selection, machine, face, kind)
       return {
         kind,
         label: operationAddButtonLabel(kind),
-        hint: hint ?? undefined,
-        // "Select all" is only offered while the hint is showing, so skip the
-        // compatibility scan when the current selection is already valid.
-        selectAllFeatureIds: hint ? selectAllCompatibleFeatureIds(project, kind) : [],
+        hint: block.hint ?? undefined,
+        blockedInPlace: block.blockedInPlace,
+        // "Select all" is the recovery path out of a *selection* failure, so
+        // scan only then. A project-type refusal on a flat face returned no
+        // ids before this module was extracted, and still must (issue #1112 K
+        // review); a stock refusal cannot be fixed by selecting anything.
+        selectAllFeatureIds: block.selectionBlocked ? selectAllCompatibleFeatureIds(project, kind) : [],
       }
     })
 }
