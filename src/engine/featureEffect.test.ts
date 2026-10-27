@@ -33,6 +33,8 @@
  * - reporting any overlap as full cover: the partial-cover test fails
  * - dropping the Z-span containment check: the shallower test fails
  * - never invalidating a cache entry on an edit: the edit test fails
+ * - running coverage at the default Clipper scale: the inch-strip test fails
+ *   (the surviving strip rounds away and the Add is wrongly reported covered)
  *
  * Run with: npx tsx src/engine/featureEffect.test.ts
  */
@@ -92,6 +94,35 @@ function warningsOf(analyzer: FeatureEffectAnalyzer, features: FeatureEffectFeat
     feature('pocket', 'subtract', [rect(-1, -1, 12, 12, 'subtract')]),
   ]
   assertEqual(warningsOf(analyzer, features).join(','), 'island', 'fully covered feature warns')
+}
+
+// A strip that survives quantization is never rounded away into a warning.
+// The same geometry in inch and millimetre units must agree.
+{
+  // 10 in Add, 9.99996 in Subtract: a 0.00004 in strip survives on the right.
+  const analyzer = new FeatureEffectAnalyzer()
+  const inch = [
+    feature('island', 'add', [rect(0, 0, 10, 10, 'add')]),
+    feature('pocket', 'subtract', [rect(0, 0, 9.99996, 10, 'subtract')]),
+  ]
+  assertEqual(warningsOf(analyzer, inch).join(','), '', 'a surviving inch strip does not warn')
+
+  // The same geometry in millimetres: 254 vs 253.998984.
+  const mmAnalyzer = new FeatureEffectAnalyzer()
+  const mm = [
+    feature('island', 'add', [rect(0, 0, 254, 254, 'add')]),
+    feature('pocket', 'subtract', [rect(0, 0, 253.998984, 254, 'subtract')]),
+  ]
+  assertEqual(warningsOf(mmAnalyzer, mm).join(','), '', 'a surviving mm strip does not warn')
+
+  // A just-covered case must still warn: the cover removes the whole outline,
+  // so there is no surviving region to protect.
+  const exactAnalyzer = new FeatureEffectAnalyzer()
+  const exact = [
+    feature('island', 'add', [rect(0, 0, 10, 10, 'add')]),
+    feature('pocket', 'subtract', [rect(0, 0, 10, 10, 'subtract')]),
+  ]
+  assertEqual(warningsOf(exactAnalyzer, exact).join(','), 'island', 'an exact cover still warns')
 }
 
 // Covering only part of the outline leaves material standing.

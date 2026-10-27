@@ -21,13 +21,19 @@
  *
  * The worker is mocked and the debounce timer is driven by hand, so these
  * assertions are about the protocol, not about timing: one request after a
- * burst, and an answer for an older edit never reaches the tree.
+ * burst, an answer for an older edit never reaches the tree, every result
+ * carries the input snapshot it was computed from, and a worker failure
+ * clears the current snapshot instead of leaving its old warning visible.
  *
  * Run with: npx tsx src/app/featureEffect/client.test.ts
  */
 
 import type { FeatureEffectFeature } from '../../engine/featureEffect'
-import { FeatureEffectClient, type FeatureEffectWorkerLike } from './client'
+import {
+  FeatureEffectClient,
+  type FeatureEffectSnapshot,
+  type FeatureEffectWorkerLike,
+} from './client'
 import type { FeatureEffectRequest, FeatureEffectResponse } from './protocol'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -58,11 +64,18 @@ class FakeWorker implements FeatureEffectWorkerLike {
 }
 
 const NO_FEATURES: FeatureEffectFeature[] = []
+const SNAPSHOT_A: FeatureEffectSnapshot = {}
+const SNAPSHOT_B: FeatureEffectSnapshot = {}
+
+interface RecordedResult {
+  warnings: string[]
+  snapshot: FeatureEffectSnapshot
+}
 
 interface Harness {
   worker: FakeWorker
   client: FeatureEffectClient
-  results: string[][]
+  results: RecordedResult[]
   errors: string[]
   runTimer: () => void
   pending: () => boolean
@@ -70,11 +83,11 @@ interface Harness {
 
 function harness(): Harness {
   const worker = new FakeWorker()
-  const results: string[][] = []
+  const results: RecordedResult[] = []
   const errors: string[] = []
   let timer: (() => void) | null = null
   const client = new FeatureEffectClient({
-    onResult: (warnings) => results.push([...warnings]),
+    onResult: (warnings, snapshot) => results.push({ warnings: [...warnings], snapshot }),
     onError: (message) => errors.push(message),
     createWorker: () => worker,
     schedule: (callback) => {
@@ -102,8 +115,8 @@ function harness(): Harness {
 // A burst of edits becomes one analysis, carrying the latest request id.
 {
   const test = harness()
-  test.client.request(() => NO_FEATURES)
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
+  test.client.request(SNAPSHOT_B, () => NO_FEATURES)
   assertEqual(test.worker.messages.length, 0, 'nothing is sent before the debounce fires')
   test.runTimer()
   assertEqual(test.worker.messages.length, 1, 'the burst produced one request')
@@ -113,12 +126,12 @@ function harness(): Harness {
 // An answer for an edit that has since been superseded is dropped.
 {
   const test = harness()
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
   test.runTimer()
   assertEqual(test.worker.messages[0].requestId, 1, 'the first request was sent')
 
   // A newer edit arrives while the first analysis is still in flight.
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_B, () => NO_FEATURES)
   assert(test.pending(), 'the newer edit is waiting on its debounce')
   test.worker.receive({ type: 'result', requestId: 1, warnings: ['stale'] })
   assertEqual(test.results.length, 0, 'the stale result did not reach the tree')
@@ -126,26 +139,65 @@ function harness(): Harness {
   test.runTimer()
   test.worker.receive({ type: 'result', requestId: 2, warnings: ['fresh'] })
   assertEqual(test.results.length, 1, 'the current result reached the tree')
-  assertEqual(test.results[0].join(','), 'fresh', 'the current result is the newer one')
+  assertEqual(test.results[0].warnings.join(','), 'fresh', 'the current result is the newer one')
+  assert(test.results[0].snapshot === SNAPSHOT_B, 'the result carries the snapshot it was computed from')
+}
+
+// The result is tagged with its own snapshot even after a newer request is
+// queued but not yet sent.
+{
+  const test = harness()
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
+  test.runTimer()
+  test.worker.receive({ type: 'result', requestId: 1, warnings: ['covered'] })
+  assertEqual(test.results.length, 1, 'the first result reached the tree')
+  assert(test.results[0].snapshot === SNAPSHOT_A, 'the result keeps snapshot A')
+
+  test.client.request(SNAPSHOT_B, () => NO_FEATURES)
+  test.runTimer()
+  test.worker.receive({ type: 'result', requestId: 2, warnings: [] })
+  assertEqual(test.results.length, 2, 'the newer result reached the tree')
+  assert(test.results[1].snapshot === SNAPSHOT_B, 'the newer result carries snapshot B')
 }
 
 // A stale error is equally not the current answer.
 {
   const test = harness()
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
   test.runTimer()
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_B, () => NO_FEATURES)
   test.worker.receive({ type: 'error', requestId: 1, message: 'stale failure' })
   assertEqual(test.errors.length, 0, 'a stale error is dropped')
   test.runTimer()
   test.worker.receive({ type: 'error', requestId: 2, message: 'current failure' })
   assertEqual(test.errors.length, 1, 'the current error reaches the caller')
+  assertEqual(test.results.length, 1, 'the current error also clears the snapshot')
+  assertEqual(test.results[0].warnings.length, 0, 'the cleared snapshot shows no warnings')
+  assert(test.results[0].snapshot === SNAPSHOT_B, 'the clear belongs to the current snapshot')
+}
+
+// A dead worker clears the warning instead of leaving it on screen forever.
+{
+  const test = harness()
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
+  test.runTimer()
+  test.worker.receive({ type: 'result', requestId: 1, warnings: ['covered'] })
+  assertEqual(test.results.length, 1, 'the covered warning is shown')
+  assertEqual(test.results[0].warnings.join(','), 'covered', 'the warning reached the tree')
+
+  test.worker.onerror?.({} as Event)
+
+  assertEqual(test.results.length, 2, 'the failure publishes a cleared result')
+  assertEqual(test.results[1].warnings.length, 0, 'the old warning is cleared')
+  assert(test.results[1].snapshot === SNAPSHOT_A, 'the clear belongs to the current snapshot')
+  assertEqual(test.errors.length, 1, 'the failure is still reported')
+  assert(test.worker.terminated, 'the dead worker is terminated')
 }
 
 // Disposing cancels the pending request and terminates the worker.
 {
   const test = harness()
-  test.client.request(() => NO_FEATURES)
+  test.client.request(SNAPSHOT_A, () => NO_FEATURES)
   test.client.dispose()
   assert(!test.pending(), 'dispose cancels the debounce')
   test.runTimer()

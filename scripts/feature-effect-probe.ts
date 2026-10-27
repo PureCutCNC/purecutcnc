@@ -19,23 +19,37 @@
  *
  * This is the measured check decision 12 requires before the warning ships. It
  * loads the largest shipped sample project (by feature count, under
- * `public/examples`) and a generated stress project, then times:
+ * `public/examples`) and three generated stress projects, then times:
  *
- *   1. a cold full analysis (the first pass over the whole tree), and
- *   2. a single-feature edit recheck through the same analyzer cache, printing
- *      how many earlier rows it re-evaluated.
+ *   1. a cold full analysis (the first pass over the whole tree),
+ *   2. a single-feature depth edit recheck, and
+ *   3. a single-feature geometry edit recheck,
  *
- * The stress project is 300 overlapping flat features, alternating Add /
- * Subtract with the same outline and span. That is the deliberately bad case
- * for the box pre-filter: every row overlaps every later row. The first later
- * opposite row already covers it, so the coverage work stays bounded while the
- * 45k span/box comparisons still run.
+ * through the same analyzer cache, printing how many earlier rows each edit
+ * re-evaluated.
+ *
+ * The stress projects cover the three shapes of coverage work:
+ *
+ *   - identical outlines (300 features, 300 contours): every row overlaps
+ *     every later row, but the first opposite outline already empties the
+ *     difference, so this measures the box pre-filter, not the coverage walk;
+ *   - fragmenting offsets (120 features, 120 contours): every Add is the same
+ *     200 x 160 block and every Subtract is an 18 x 22 piece at a varied
+ *     offset, with the right/top margins never reached. No union of later rows
+ *     can empty an Add, so coverage walks every later outline and the
+ *     remaining geometry fragments into a growing set of pieces;
+ *   - text-like many-contour features (16 features, 16 contours each, 256
+ *     contours): each row is a word of 8 glyph rectangles, each with its own
+ *     hole, at varied offsets. It exercises many inner contours and partial
+ *     overlap the way resolved Text geometry does.
  *
  * Run this alone: the reference laptop is shared and the timings mean nothing
- * under another build or test pool.
+ * under another build or test pool. To time only the shipped sample (and leave
+ * the stress cases to the manager), pass `--sample-only`.
  *
  * Usage:
  *   npx tsx scripts/feature-effect-probe.ts
+ *   npx tsx scripts/feature-effect-probe.ts --sample-only
  *
  * Compare the printed medians against the limit stated in the PR. This script
  * asserts nothing about the numbers — it reports them so the limit is measured,
@@ -48,12 +62,19 @@ import { performance } from 'node:perf_hooks'
 import { decodeProjectFormat } from '../src/store/helpers/projectFormat'
 import { resolvedProjectFeatures } from '../src/store/helpers/resolveFeatures'
 import { buildEffectFeatures } from '../src/app/featureEffect/effectInput'
-import { FeatureEffectAnalyzer, type FeatureEffectFeature } from '../src/engine/featureEffect'
-import { rectProfile } from '../src/types/project'
+import {
+  FeatureEffectAnalyzer,
+  type FeatureEffectFeature,
+  type FeatureEffectShape,
+} from '../src/engine/featureEffect'
+import { rectProfile, type Point, type Segment, type SketchProfile } from '../src/types/project'
 
 const EXAMPLE_DIR = 'public/examples'
 const ROUNDS = 3
-const STRESS_FEATURE_COUNT = 300
+const IDENTICAL_FEATURE_COUNT = 300
+const FRAGMENT_FEATURE_COUNT = 120
+const TEXT_FEATURE_COUNT = 16
+const TEXT_GLYPHS_PER_FEATURE = 8
 
 interface Measurement<T> {
   value: T
@@ -110,26 +131,81 @@ function loadSample(input: SampleChoice): FeatureEffectFeature[] {
   return buildEffectFeatures(project, resolved)
 }
 
-function editLast(features: readonly FeatureEffectFeature[]): FeatureEffectFeature[] {
+function translatePoint(point: Point, dx: number, dy: number): Point {
+  return { x: point.x + dx, y: point.y + dy }
+}
+
+function translateSegment(segment: Segment, dx: number, dy: number): Segment {
+  switch (segment.type) {
+    case 'line':
+      return { ...segment, to: translatePoint(segment.to, dx, dy) }
+    case 'arc':
+      return {
+        ...segment,
+        to: translatePoint(segment.to, dx, dy),
+        center: translatePoint(segment.center, dx, dy),
+      }
+    case 'bezier':
+      return {
+        ...segment,
+        to: translatePoint(segment.to, dx, dy),
+        control1: translatePoint(segment.control1, dx, dy),
+        control2: translatePoint(segment.control2, dx, dy),
+      }
+    case 'circle':
+      return {
+        ...segment,
+        to: translatePoint(segment.to, dx, dy),
+        center: translatePoint(segment.center, dx, dy),
+      }
+  }
+}
+
+function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
+  return {
+    start: translatePoint(profile.start, dx, dy),
+    segments: profile.segments.map((segment) => translateSegment(segment, dx, dy)),
+    closed: profile.closed,
+  }
+}
+
+function editLastDepth(features: readonly FeatureEffectFeature[]): FeatureEffectFeature[] {
   if (features.length === 0) return []
   return features.map((feature, index) => index === features.length - 1
     ? { ...feature, zTop: feature.zTop + 1, zBottom: feature.zBottom - 1 }
     : feature)
 }
 
+/** Moves the last row's outlines, so the cache sees a geometry edit, not a span. */
+function editLastGeometry(features: readonly FeatureEffectFeature[]): FeatureEffectFeature[] {
+  if (features.length === 0) return []
+  return features.map((feature, index) => index === features.length - 1
+    ? {
+        ...feature,
+        shapes: feature.shapes.map((shape) => ({
+          ...shape,
+          profile: translateProfile(shape.profile, 0.5, 0.25),
+        })),
+      }
+    : feature)
+}
+
+function contourCount(features: readonly FeatureEffectFeature[]): number {
+  return features.reduce((total, feature) => total + feature.shapes.length, 0)
+}
+
 /**
- * 300 overlapping flat rectangles, alternating Add and Subtract with the same
- * outline and span. Every row overlaps every later row; the next opposite row
- * covers it exactly, so the full pass exercises the box pre-filter over the
- * whole square (45k comparisons) without asking Clipper to walk a long union.
+ * Flat features with the same outline and span. Every row overlaps every later
+ * row, but the next opposite outline covers it exactly, so the coverage loop
+ * ends at the first shape and only the box pre-filter is exercised.
  */
-function stressFeatures(): FeatureEffectFeature[] {
+function stressIdenticalFeatures(): FeatureEffectFeature[] {
   const profile = rectProfile(0, 0, 100, 80)
   const features: FeatureEffectFeature[] = []
-  for (let index = 0; index < STRESS_FEATURE_COUNT; index += 1) {
+  for (let index = 0; index < IDENTICAL_FEATURE_COUNT; index += 1) {
     const operation = index % 2 === 0 ? 'add' : 'subtract'
     features.push({
-      id: `stress-${index}`,
+      id: `identical-${index}`,
       operation,
       face: 'top',
       zTop: 10,
@@ -141,35 +217,115 @@ function stressFeatures(): FeatureEffectFeature[] {
   return features
 }
 
+/**
+ * Partially overlapping, varied offsets. Every Add is the same 200 x 160 block;
+ * every Subtract is an 18 x 22 piece on an 8 x 6 grid that stops 35 units short
+ * of the right edge and 13 short of the top edge. No union of later rows can
+ * therefore empty an Add, so coverage walks every later outline and the
+ * remaining material fragments into a growing set of pieces.
+ */
+function stressFragmentFeatures(): FeatureEffectFeature[] {
+  const features: FeatureEffectFeature[] = []
+  for (let index = 0; index < FRAGMENT_FEATURE_COUNT; index += 1) {
+    const operation = index % 2 === 0 ? 'add' : 'subtract'
+    const profile = operation === 'add'
+      ? rectProfile(0, 0, 200, 160)
+      : rectProfile(((index * 5) % 8) * 21, ((index * 7) % 6) * 25, 18, 22)
+    features.push({
+      id: `fragment-${index}`,
+      operation,
+      face: 'top',
+      zTop: 10,
+      zBottom: 0,
+      visible: true,
+      shapes: [{ profile, operation }],
+    })
+  }
+  return features
+}
+
+/**
+ * Text-like rows: a word of glyph rectangles, each with its own hole. The
+ * analysis prepares every contour but uses only the matching-operation outers
+ * as cover, exactly as it does for resolved Text geometry.
+ */
+function stressTextFeatures(): FeatureEffectFeature[] {
+  const features: FeatureEffectFeature[] = []
+  for (let index = 0; index < TEXT_FEATURE_COUNT; index += 1) {
+    const operation: FeatureEffectFeature['operation'] = index % 2 === 0 ? 'add' : 'subtract'
+    const holeOperation: FeatureEffectFeature['operation'] = operation === 'add' ? 'subtract' : 'add'
+    const offsetX = (index % 4) * 6
+    const offsetY = (index % 3) * 4
+    const shapes: FeatureEffectShape[] = []
+    for (let glyph = 0; glyph < TEXT_GLYPHS_PER_FEATURE; glyph += 1) {
+      const x = offsetX + glyph * 18
+      const y = offsetY
+      shapes.push({ profile: rectProfile(x, y, 14, 20), operation })
+      shapes.push({ profile: rectProfile(x + 4, y + 6, 6, 8), operation: holeOperation })
+    }
+    features.push({
+      id: `text-${index}`,
+      operation,
+      face: 'top',
+      zTop: 10,
+      zBottom: 0,
+      visible: true,
+      shapes,
+    })
+  }
+  return features
+}
+
 interface RunTimes {
   full: number[]
-  edit: number[]
-  rechecked: number[]
+  depthEdit: number[]
+  geometryEdit: number[]
+  recheckedDepth: number[]
+  recheckedGeometry: number[]
 }
 
 function timeRuns(features: readonly FeatureEffectFeature[]): RunTimes {
   const full: number[] = []
-  const edit: number[] = []
-  const rechecked: number[] = []
+  const depthEdit: number[] = []
+  const geometryEdit: number[] = []
+  const recheckedDepth: number[] = []
+  const recheckedGeometry: number[] = []
   for (let round = 0; round < ROUNDS; round += 1) {
     const analyzer = new FeatureEffectAnalyzer()
     full.push(measure(() => analyzer.analyze(features)).ms)
-    const edited = editLast(features)
-    let evaluated = 0
-    edit.push(measure(() => analyzer.analyze(edited, { onEvaluate: () => { evaluated += 1 } })).ms)
-    rechecked.push(evaluated)
+
+    const depthEdited = editLastDepth(features)
+    let evaluatedDepth = 0
+    depthEdit.push(measure(() => analyzer.analyze(depthEdited, {
+      onEvaluate: () => { evaluatedDepth += 1 },
+    })).ms)
+    recheckedDepth.push(evaluatedDepth)
+
+    const geometryEdited = editLastGeometry(depthEdited)
+    let evaluatedGeometry = 0
+    geometryEdit.push(measure(() => analyzer.analyze(geometryEdited, {
+      onEvaluate: () => { evaluatedGeometry += 1 },
+    })).ms)
+    recheckedGeometry.push(evaluatedGeometry)
   }
-  return { full, edit, rechecked }
+  return { full, depthEdit, geometryEdit, recheckedDepth, recheckedGeometry }
 }
 
 function report(label: string, details: string, times: RunTimes): void {
   console.log(`\n${label}`)
   console.log(`  ${details}`)
   console.log(`  cold full analysis: ${formatMs(median(times.full))} (median of ${ROUNDS})`)
-  const editMedian = median(times.edit)
-  const recheckedMedian = median(times.rechecked)
-  console.log(`  single-feature edit recheck: ${formatMs(editMedian)} (median of ${ROUNDS}; ${recheckedMedian} rows re-evaluated)`)
+  console.log(
+    `  single-feature depth edit recheck: ${formatMs(median(times.depthEdit))} (median of ${ROUNDS}; `
+    + `${median(times.recheckedDepth)} rows re-evaluated)`,
+  )
+  console.log(
+    `  single-feature geometry edit recheck: ${formatMs(median(times.geometryEdit))} (median of ${ROUNDS}; `
+    + `${median(times.recheckedGeometry)} rows re-evaluated)`,
+  )
 }
+
+const sampleOnly = process.argv.slice(2).includes('--sample-only')
 
 console.log('Feature-effect probe (issue #1112 N) — run alone, not beside a build or test pool\n')
 
@@ -181,11 +337,33 @@ report(
   timeRuns(sampleInput),
 )
 
-const stress = stressFeatures()
-report(
-  `Stress: ${STRESS_FEATURE_COUNT} generated overlapping flat features`,
-  'same 100 x 80 outline and 0..10 span, alternating Add/Subtract',
-  timeRuns(stress),
-)
+if (sampleOnly) {
+  console.log('\n--sample-only: stress cases skipped.')
+} else {
+  const identical = stressIdenticalFeatures()
+  report(
+    `Identical-outline stress: ${identical.length} generated flat features`,
+    `one contour each (${contourCount(identical)} contours); same 100 x 80 outline and 0..10 span, `
+    + 'alternating Add/Subtract',
+    timeRuns(identical),
+  )
+
+  const fragment = stressFragmentFeatures()
+  report(
+    `Fragmenting-offset stress: ${fragment.length} generated flat features`,
+    `one contour each (${contourCount(fragment)} contours); Adds share a 200 x 160 block, `
+    + 'Subtract offsets leave the right/top margins uncovered, so coverage walks every later outline',
+    timeRuns(fragment),
+  )
+
+  const text = stressTextFeatures()
+  const textOuter = TEXT_FEATURE_COUNT * TEXT_GLYPHS_PER_FEATURE
+  report(
+    `Text-like stress: ${text.length} generated flat features`,
+    `${TEXT_GLYPHS_PER_FEATURE} glyphs each: ${textOuter} outer + ${textOuter} hole contours `
+    + `= ${contourCount(text)} contours; varied word offsets partially overlap`,
+    timeRuns(text),
+  )
+}
 
 console.log('\nReport these medians in the PR next to the limit, on the same machine and load.')

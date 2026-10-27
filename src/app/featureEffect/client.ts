@@ -23,9 +23,14 @@
  *   `debounceMs` after the last edit, so a drag or a burst of property changes
  *   produces one analysis instead of one per keystroke.
  * - **A stale answer never lands.** Every request gets a monotonically
- *   increasing id; a result or error whose id is not the latest is dropped.
- *   The previous warnings stay visible until the newer answer arrives, so the
- *   tree does not flicker on every edit.
+ *   increasing id and carries the input snapshot it was produced from; a
+ *   result or error whose id is not the latest is dropped, and the snapshot is
+ *   handed to the caller so it can hide a verdict computed from an earlier
+ *   edit instead of showing it while the newer analysis runs.
+ * - **A failure publishes no warning.** A worker that dies or throws leaves
+ *   the snapshot's answer unknown, not the previous edit's; the client clears
+ *   the current snapshot before reporting the error, so an old ⚠ cannot stay
+ *   on screen forever.
  *
  * Cancellation is `terminate()`: the analysis is synchronous in the worker and
  * would never see a cancel message in time. Disposing is the only teardown.
@@ -52,8 +57,17 @@ export function createDefaultFeatureEffectWorker(): FeatureEffectWorkerLike | nu
   ) as unknown as FeatureEffectWorkerLike
 }
 
+/**
+ * Opaque identity of the input a result was computed from. The feature tree
+ * keeps one per `project`/`features` pair and displays a result only while its
+ * snapshot is still the current one.
+ */
+export type FeatureEffectSnapshot = object
+
+const NO_WARNINGS: ReadonlySet<string> = new Set<string>()
+
 export interface FeatureEffectClientOptions {
-  onResult: (warnings: ReadonlySet<string>) => void
+  onResult: (warnings: ReadonlySet<string>, snapshot: FeatureEffectSnapshot) => void
   onError?: (message: string) => void
   /** Quiet period after the last edit before the tree is sent. */
   debounceMs?: number
@@ -69,6 +83,7 @@ export class FeatureEffectClient {
   private readonly options: FeatureEffectClientOptions
   private worker: FeatureEffectWorkerLike | null = null
   private latestRequestId = 0
+  private latestSnapshot: FeatureEffectSnapshot | null = null
   private timer: unknown = null
   private disposed = false
 
@@ -81,9 +96,13 @@ export class FeatureEffectClient {
    * debounce fires, so the expensive part of resolving Text and canned
    * outlines is paid once, after the edit settles.
    */
-  request(produce: () => readonly FeatureEffectFeature[]): void {
+  request(
+    snapshot: FeatureEffectSnapshot,
+    produce: () => readonly FeatureEffectFeature[],
+  ): void {
     if (this.disposed) return
     this.latestRequestId += 1
+    this.latestSnapshot = snapshot
     const requestId = this.latestRequestId
     this.cancelTimer()
     const schedule = this.options.schedule
@@ -147,14 +166,18 @@ export class FeatureEffectClient {
     // an edit the user has already superseded is not the current tree.
     if (message.requestId !== this.latestRequestId) return
     if (message.type === 'result') {
-      this.options.onResult(new Set(message.warnings))
+      this.options.onResult(new Set(message.warnings), this.latestSnapshot ?? {})
     } else {
-      this.options.onError?.(message.message)
+      this.fail(message.message)
     }
   }
 
   private fail(message: string): void {
     if (this.disposed) return
+    // The snapshot's answer is now unknown: publish an empty set for it before
+    // reporting the failure, so a warning from a previous edit is not left on
+    // screen for a worker that can no longer correct it.
+    if (this.latestSnapshot) this.options.onResult(NO_WARNINGS, this.latestSnapshot)
     this.options.onError?.(message)
   }
 }

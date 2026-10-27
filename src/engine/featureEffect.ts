@@ -100,7 +100,10 @@ export type FeatureEffectWarnings = ReadonlySet<string>
 type Domain = 'flat' | 'around'
 
 interface PreparedShape {
+  /** Fast pass at the engine's normal Clipper scale. */
   path: ClipperPath
+  /** Confirmation pass at the finer coverage scale. */
+  finePath: ClipperPath
   bounds: Bounds2D
 }
 
@@ -124,6 +127,25 @@ interface CacheEntry {
 
 /** Z spans come from the same model; this only absorbs arithmetic noise. */
 const Z_EPSILON = 1e-9
+
+/**
+ * The confirmation scale for coverage, used only after the normal scale has
+ * already reported an outline fully covered.
+ *
+ * The normal 10,000 counts per *project* unit is far coarser in absolute terms
+ * for an inch project than for a millimetre one: a 0.00004 in strip is 0.4
+ * counts and rounds away, so a 10 in Add and a 9.99996 in Subtract look equal
+ * and the surviving strip would be reported erased (the same geometry in mm,
+ * 254 vs 253.998984, is 10.16 counts and survives). Rechecking at 1,000× the
+ * scale keeps that strip (400 counts) and every strip wider than 5e-8 project
+ * units. Exact coverage is still an exact subtraction at either scale.
+ *
+ * The recheck is deliberately not used for every pair: at this scale Clipper's
+ * range test switches large coordinates to its slower full-range arithmetic,
+ * so a non-empty fast-pass remainder — the common "not covered" answer — is
+ * taken as conclusive and never pays the fine-scale cost.
+ */
+const COVERAGE_CLIPPER_SCALE = DEFAULT_CLIPPER_SCALE * 1000
 
 function domainOf(face: SetupFace): Domain {
   return face === 'around' ? 'around' : 'flat'
@@ -213,26 +235,29 @@ function normalizeWinding(points: Point[], wantClockwise: boolean): Point[] {
   return reversed
 }
 
-function toClipper(points: Point[]): ClipperPath {
+function toClipper(points: Point[], scale: number): ClipperPath {
   return ensureClosedPath(points).map((point) => ({
-    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
-    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+    X: Math.round(point.x * scale),
+    Y: Math.round(point.y * scale),
   }))
 }
 
-/** One closed profile as a normalized Clipper path, or null when degenerate. */
-function pathOf(profile: SketchProfile): ClipperPath | null {
+/** One closed profile as normalized Clipper paths, or null when degenerate. */
+function pathsOf(profile: SketchProfile): { path: ClipperPath; finePath: ClipperPath } | null {
   if (!profile.closed) return null
   const points = sampleProfilePoints(profile, CURVE_SAMPLES, ARC_STEP_RADIANS)
   if (points.length < 3) return null
-  const path = toClipper(normalizeWinding(points, false))
-  return path.length >= 3 ? path : null
+  const normalized = normalizeWinding(points, false)
+  const path = toClipper(normalized, DEFAULT_CLIPPER_SCALE)
+  if (path.length < 3) return null
+  const finePath = toClipper(normalized, COVERAGE_CLIPPER_SCALE)
+  return finePath.length >= 3 ? { path, finePath } : null
 }
 
 function prepareShape(profile: SketchProfile): PreparedShape | null {
-  const path = pathOf(profile)
-  if (!path) return null
-  return { path, bounds: boundsOfPath(path) }
+  const paths = pathsOf(profile)
+  if (!paths) return null
+  return { ...paths, bounds: boundsOfPath(paths.path) }
 }
 
 function executeClip(subject: ClipperPath[], clip: ClipperPath[], clipType: number): ClipperPath[] {
@@ -303,16 +328,34 @@ function prepareEntry(feature: FeatureEffectFeature, index: number, signature: s
   }
 }
 
+/** True when the cover shapes remove the subject path at one Clipper scale. */
+function pathsCover(
+  subject: ClipperPath,
+  cover: readonly PreparedShape[],
+  useFinePath: boolean,
+): boolean {
+  let remaining = [subject]
+  for (const shape of cover) {
+    remaining = executeClip(
+      remaining,
+      [useFinePath ? shape.finePath : shape.path],
+      ClipperLib.ClipType.ctDifference,
+    )
+    if (remaining.length === 0) return true
+  }
+  return false
+}
+
 /** True when later `cover` shapes remove all of one outer outline. */
 function outlineCovered(outline: PreparedShape, cover: readonly PreparedShape[]): boolean {
   const relevant = cover.filter((shape) => boundsOverlap(outline.bounds, shape.bounds))
   if (relevant.length === 0) return false
-  let remaining = [outline.path]
-  for (const shape of relevant) {
-    remaining = executeClip(remaining, [shape.path], ClipperLib.ClipType.ctDifference)
-    if (remaining.length === 0) return true
-  }
-  return false
+  // The fast pass is conclusive when material survives: a non-empty remainder
+  // is real geometry, and the outline is not covered.
+  if (!pathsCover(outline.path, relevant, false)) return false
+  // Empty at the normal scale may be a rounding artefact (see the scale
+  // comment), so confirm at the scale that cannot round a real strip away.
+  return pathsCover(outline.finePath, relevant, true)
 }
 
 /**
