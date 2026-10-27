@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import type { FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
+import type { CannedShapeData, FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -25,7 +25,7 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, aroundUnavailableReason, isCannedModelFeature, isFaceEditInProgress, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isGhostFeature, isModelFeature, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
@@ -377,9 +377,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     const throughChip = through
       ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
       : null
-    if (!isCannedModelFeature(project, feature) && feature.authoringFace !== workspaceFace) {
+    if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
-      // row menu. It cannot be selected, dragged or edited from here.
+      // row menu. It cannot be selected, dragged or edited from here. A model
+      // is never a ghost; a through-feature is not one on either flat face.
       const openGhostMenu = onFeatureContextMenu
         ? (x: number, y: number) => onFeatureContextMenu(feature.id, x, y)
         : undefined
@@ -474,6 +475,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     )
   }
 
+  // Which face layer a feature row belongs to. A model is not tied to a face
+  // (issue #1112 I), so it is listed once, in the layer being worked on; any
+  // other feature belongs to the face it was drawn on. Listing a model under
+  // its authoring face *and* the current one would duplicate one row.
+  function inFaceLayer(feature: { authoringFace?: SetupFace; definitionId?: string; kind?: string; canned?: CannedShapeData | null }, face: SetupFace): boolean {
+    return isModelFeature(project, feature) ? face === workspaceFace : feature.authoringFace === face
+  }
+
   /**
    * The machining features and folders under "Features". `face` null lists
    * them all (a Top-only project); a face lists only that face's, under its
@@ -485,8 +494,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return rootEntries.map((entry, rootIdx) => {
               if (entry.type === 'feature') {
                 const entryFeature = features.find((item) => item.id === entry.featureId)
-                if (face !== null && (!entryFeature || (entryFeature.authoringFace !== face
-                  && !(isCannedModelFeature(project, entryFeature) && face === workspaceFace)))) return null
+                if (face !== null && (!entryFeature || !inFaceLayer(entryFeature, face))) return null
                 return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
               }
 
@@ -500,8 +508,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               // belongs to the layer being worked on.
               const folderFeatures = face === null
                 ? allFolderFeatures
-                : allFolderFeatures.filter((feature) => feature.authoringFace === face
-                  || (isCannedModelFeature(project, feature) && face === workspaceFace))
+                : allFolderFeatures.filter((feature) => inFaceLayer(feature, face))
               if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
                 return null
               }
@@ -682,8 +689,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
             )}
             {bothFaces
               ? faceLayers.map((face) => {
-                  const count = machiningFeatures.filter((feature) => feature.authoringFace === face
-                    || (isCannedModelFeature(project, feature) && face === workspaceFace)).length
+                  const count = machiningFeatures.filter((feature) => inFaceLayer(feature, face)).length
                   const active = face === workspaceFace
                   const entries = renderMachiningEntries(face)
                   // A face with nothing on it says so, once it is the face

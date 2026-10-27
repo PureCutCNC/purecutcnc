@@ -212,10 +212,12 @@ export const camEn = {
   'cam.operation.pass': 'Pass',
   'cam.operation.maxCarveDepth': 'Max carve depth',
   'cam.operation.carveDepth': 'Carve depth',
-  'cam.operation.target': 'Target',
+  'cam.operation.cuts': 'Cuts',
+  'cam.operation.cutsRemove': 'Remove {name} from the cuts',
+  'cam.operation.cutsLastTarget': 'An operation must cut at least one target',
+  'cam.operation.cutsFilter': 'filter',
+  'cam.operation.cutsFolder': '{name} ({count})',
   'cam.operation.targetSource': 'Target source',
-  'cam.operation.rotaryTargets': 'Models to machine',
-  'cam.operation.rotaryTargetsHelp': 'Rotary rough and Rotary finish machine the models ticked here.',
   'cam.operation.useCurrentSelection': 'Use current selection',
   'cam.operation.targetUpdated': '✓ Target updated',
   'cam.operation.restMachining': 'Rest machining',
@@ -329,8 +331,6 @@ export const camEn = {
   // ── Operation target summary ──
   'cam.target.stock': 'Stock',
   'cam.target.noFeatures': 'No features',
-  'cam.target.noMachiningTarget': 'No machining target',
-  'cam.target.filters': '{machiningSummary}; filters: {regionNames}',
 
   // ── Tool property labels ──
   'cam.tool.name': 'Name',
@@ -642,7 +642,6 @@ export const camEn = {
   // Machining setup UI (#946)
   'cam.setup.crossFace': '⇄ CROSS-FACE',
   'cam.setup.crossFaceTitle': 'Reached from the other face',
-  'cam.setup.crossFaceSummary': 'Also from the {side} side ({count})',
   'cam.setup.topOperations': 'Top operations',
   'cam.setup.bottomOperations': 'Bottom operations',
   'cam.setup.aroundOperations': 'Around operations',

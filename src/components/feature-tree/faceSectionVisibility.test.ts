@@ -165,4 +165,96 @@ async function renderTree(project: Project): Promise<string> {
   assert(html.includes('data-face-state="ghost"'), 'that section is the ghost heading of the other face')
 }
 
+// ── A model is listed once, in the layer being worked on (issue #1112 I) ──
+
+/**
+ * An imported model is not tied to a face: it is a normal, selectable row on
+ * every face, and it appears once — in the current face's layer — rather than
+ * under its authoring face and the current one. Mutations checked one at a
+ * time: listing it only under its authoring face → the Around/Bottom counts
+ * fail; listing it under both → the count of 2 fails.
+ */
+function projectWithModel(face: 'top' | 'around' | 'bottom'): Project {
+  const project = projectOn(face)
+  const definition: FeatureDefinition = {
+    id: 'def-model',
+    kind: 'stl',
+    profile: rectProfile(1, 1, 3, 2),
+    dimensions: [],
+    stl: null,
+    operation: 'model',
+    canned: { kind: 'polygon', params: {} },
+  }
+  const instance: FeatureInstance = {
+    id: 'model',
+    name: 'Model',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    z_top: 5,
+    z_bottom: 0,
+    authoringFace: 'top',
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  return {
+    ...project,
+    featureDefinitions: { ...project.featureDefinitions, [definition.id]: definition },
+    features: [instance],
+    featureTree: [{ type: 'feature', featureId: instance.id }],
+  }
+}
+
+for (const face of ['top', 'bottom', 'around'] as const) {
+  const html = await renderTree(projectWithModel(face))
+  const rows = html.match(/data-feature-id="model"/g) ?? []
+  assert(rows.length === 1, `on ${face}: the model row is listed once (${rows.length})`)
+  const layer = face === 'around' ? 'around' : face
+  assert(html.includes(`data-face-layer="${layer}"`), `on ${face}: its layer is the current one`)
+}
+
+// A through subtract is a normal, selectable row on the inactive flat face:
+// it is not a ghost, because it can be a target from there too. A blind cut on
+// the same face keeps its ghost row.
+{
+  const project = projectOn('top')
+  const thickness = project.stock.thickness
+  const definition: FeatureDefinition = {
+    id: 'def-through',
+    kind: 'rect',
+    profile: rectProfile(1, 1, 3, 2),
+    dimensions: [],
+    operation: 'subtract',
+  }
+  const through: FeatureInstance = {
+    id: 'through',
+    name: 'Through',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    z_top: thickness,
+    z_bottom: 0,
+    authoringFace: 'top',
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  const blind: FeatureInstance = { ...through, id: 'blind', name: 'Blind', z_bottom: thickness / 2 }
+  const html = await renderTree({
+    ...project,
+    features: [through, blind],
+    featureTree: [{ type: 'feature', featureId: 'through' }, { type: 'feature', featureId: 'blind' }],
+    featureDefinitions: { [definition.id]: definition },
+    activeSetupId: provisionalSetupId('bottom'),
+  })
+  const rowTag = (markup: string, id: string): string => {
+    const at = markup.indexOf(`data-feature-id="${id}"`)
+    return markup.slice(markup.lastIndexOf('<div', at), markup.indexOf('>', at))
+  }
+  assert(html.includes('data-feature-id="through"'), 'the through feature is listed on Bottom')
+  assert(!rowTag(html, 'through').includes('data-ghost="true"'), 'and it is not a ghost row')
+  assert(rowTag(html, 'blind').includes('data-ghost="true"'), 'the blind cut on the other face is a ghost row')
+}
+
 console.log('face section visibility tests passed')

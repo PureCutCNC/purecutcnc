@@ -25,7 +25,7 @@ import type {
 } from '../../store/types'
 import type { Project } from '../../types/project'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
-import { aroundSheet } from './aroundSheet'
+import { aroundModelBandAt, aroundSheet } from './aroundSheet'
 import {
   findHitClampId,
   findHitTabId,
@@ -129,8 +129,15 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     // feature. Coincident outlines cannot show the picker here, so fall back
     // to the topmost candidate.
     const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
-    if (featureHit.kind === 'none') return
-    const hitId = featureHit.kind === 'direct' ? featureHit.featureId : featureHit.candidateIds[0]
+    // A model inside the bar is drawn as a band on the sheet, so right-clicking
+    // the band opens the model's own menu, as clicking the model's row does
+    // (issue #1112 I).
+    const hitId = featureHit.kind === 'direct'
+      ? featureHit.featureId
+      : featureHit.kind === 'ambiguous'
+        ? featureHit.candidateIds[0]
+        : sheet ? aroundModelBandAt(sheet, world) : null
+    if (hitId === null) return
 
     if (!selection.selectedFeatureIds.includes(hitId)) {
       selectFeature(hitId)

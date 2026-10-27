@@ -178,6 +178,28 @@ export function aroundModelBands(
 }
 
 /**
+ * The model whose band holds `point`, or null (issue #1112 slice I). A model
+ * lives inside the bar, so its band — not its profile — is what the Around
+ * sheet can be clicked: anywhere along the model's extent, across the sheet's
+ * whole circumference. Bands are drawn in project order, so an overlap picks
+ * the topmost one, exactly as a click on overlapping outlines picks the last
+ * drawn.
+ */
+export function aroundModelBandAt(
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'modelBands'>,
+  point: Point,
+): string | null {
+  const along = sheet.axis === 'x' ? point.x : point.y
+  const across = sheet.axis === 'x' ? point.y : point.x
+  if (across < sheet.sheetStart || across > sheet.sheetStart + sheet.circumference) return null
+  let hit: string | null = null
+  for (const band of sheet.modelBands) {
+    if (along >= band.along.min && along <= band.along.max) hit = band.featureId
+  }
+  return hit
+}
+
+/**
  * The sheet a view between two world corners shows, with the turn lines for
  * that across range (issue #395). The canvas uses this rather than
  * `aroundSheet`: the range is the viewport, so every full turn on screen is a

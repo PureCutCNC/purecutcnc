@@ -37,7 +37,7 @@ import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
-import { aroundSheet } from './aroundSheet'
+import { aroundModelBandAt, aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
@@ -1005,6 +1005,9 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
 
     const resolvedFeatures = editableProjectFeatures(project)
     const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
+    // A model's band is on the sheet itself, so it is checked only when no
+    // outline at the point claims the click first (issue #1112 I).
+    const bandModelId = sheet ? aroundModelBandAt(sheet, world) : null
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
 
     if (featureHit.kind === 'direct') {
@@ -1028,6 +1031,12 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         }
       }
       openOverlapFeaturePicker(hitCandidates, additive)
+    } else if (bandModelId !== null) {
+      // A model inside the bar is drawn as a band on the sheet, so the band is
+      // its click target (issue #1112 I): anywhere along the model's extent
+      // selects the model the band names. A feature outline at the same point
+      // still wins above, because it is the more precise thing drawn there.
+      selectFeature(bandModelId, additive)
     } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
       selectBackdrop()
     } else if (!additive) {

@@ -290,7 +290,9 @@ const isProvisionalSetupActive = (candidate: Project): boolean => provisionalSet
   store().addRectFeature('Base', 0, 0, 100, 80, thickness)
   const topId = lastFeature().id
   switchWorkspaceFace('bottom')
-  store().addRectFeature('Recess', 20, 20, 40, 30, thickness)
+  // Blind, so it stays a ghost on Top: a through cut is now a real target on
+  // both flat faces (issue #1112 I) and would survive the face switch.
+  store().addRectFeature('Recess', 20, 20, 40, 30, thickness / 2)
   const bottomId = lastFeature().id
   const placed = () => resolveFeatureInstance(project(), bottomId)!.sketch.profile.start
 
@@ -387,7 +389,9 @@ const isProvisionalSetupActive = (candidate: Project): boolean => provisionalSet
   store().addRectFeature('Base', 0, 0, 100, 80, thickness)
   const topId = lastFeature().id
   switchWorkspaceFace('bottom')
-  store().addRectFeature('Recess', 20, 20, 40, 30, thickness)
+  // Blind, so it stays a ghost on Top: a through cut is now a real target on
+  // both flat faces (issue #1112 I) and would survive the face switch.
+  store().addRectFeature('Recess', 20, 20, 40, 30, thickness / 2)
   const bottomId = lastFeature().id
 
   assert(store().selection.selectedFeatureIds.join() === bottomId, 'a new feature is selected on its own face')
@@ -414,6 +418,29 @@ const isProvisionalSetupActive = (candidate: Project): boolean => provisionalSet
   assert(after.authoringFace === 'bottom', 'the feature moved to Bottom')
   assert(after.z_top === before.z_top && after.z_bottom === before.z_bottom, 'its stock span is untouched')
   assert(store().selection.selectedFeatureIds.length === 0, 'a feature moved to the other face is no longer selected')
+}
+
+// ── A through cut is selectable from either flat face ─────────
+
+{
+  resetStore()
+  const thickness = project().stock.thickness
+  store().addRectFeature('Base', 0, 0, 100, 80, thickness)
+  switchWorkspaceFace('bottom')
+  store().addRectFeature('Through', 20, 20, 40, 30, thickness)
+  const throughId = lastFeature().id
+  assert(
+    project().featureDefinitions[project().features.find((feature) => feature.id === throughId)!.definitionId].operation === 'subtract',
+    'fixture: the recess is a cut',
+  )
+  assert(!isGhostFeature(project(), project().features.find((feature) => feature.id === throughId)!), 'a through cut is not a ghost on its own face')
+  store().selectFeature(throughId)
+  switchWorkspaceFace('top')
+  assert(
+    store().selection.selectedFeatureIds.includes(throughId),
+    'a through cut reaches both faces, so the face switch keeps it selected',
+  )
+  assert(!isGhostFeature(project(), project().features.find((feature) => feature.id === throughId)!), 'and it is not a ghost on Top either')
 }
 
 // ── A linked copy is one shape on both faces ──────────────────

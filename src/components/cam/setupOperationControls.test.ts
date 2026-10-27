@@ -16,8 +16,7 @@
 
 /**
  * What an operation's "What it cuts" group shows (issue #1102): the reach cards
- * only where two faces meet, no "Move…" on a rotary pass, and the folded
- * other-face list's summary naming its picks.
+ * only where two faces meet and no "Move…" on a rotary pass.
  *
  * The reach rule is per entry, not per operation: one operation can target a
  * single-sided pocket (no card — nothing has two sides) and a through-feature
@@ -27,7 +26,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { canMoveOperation, crossFaceSummaryLine, visibleTargetReach } from './setupSections'
+import { canMoveOperation, visibleTargetReach } from './setupSections'
 import type { TargetReach } from './setupSections'
 import type { TargetFaceStatus, TargetFaceVerdict } from '../../engine/setupTargets'
 import type { OperationKind } from '../../types/project'
@@ -96,16 +95,5 @@ for (const kind of movableKinds) {
 // A rotary pass only ever lives on Around, so there is nowhere to move it.
 assert.equal(canMoveOperation('rotary_rough'), false, 'rotary rough cannot be moved')
 assert.equal(canMoveOperation('rotary_finish'), false, 'rotary finish cannot be moved')
-
-// The folded list's summary shows the picks while it is closed, each with ⇄.
-const candidates = [{ id: 'a', name: 'Circle 6' }, { id: 'b', name: 'Pin 2' }, { id: 'c', name: 'Slot 1' }]
-const base = 'Also from the top side (3)'
-assert.equal(crossFaceSummaryLine(base, candidates, []), base, 'nothing ticked: the summary alone')
-assert.equal(
-  crossFaceSummaryLine(base, candidates, ['b', 'a']),
-  `${base}: Circle 6 ⇄ Pin 2 ⇄`,
-  'ticked targets are named in candidate order, each followed by ⇄',
-)
-assert.equal(crossFaceSummaryLine(base, candidates, ['nope']), base, 'a selection outside the list adds nothing')
 
 console.log('setup operation controls tests passed')

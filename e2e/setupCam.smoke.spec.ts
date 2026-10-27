@@ -228,7 +228,11 @@ for (const machine of ['grbl','shopbot']) {
     await ui.face.switchTo(page, 'Bottom')
     await expect(ui.setupCam.planButton(page)).toBeEnabled()
     await expect(ui.setupCam.planButton(page)).not.toHaveAttribute('title',/top face only/)
+    // Select both targets before Add: a through feature is an ordinary
+    // selectable row on Bottom now, so plain selection expresses the cross-face
+    // target the checklist used to add (issue #1112 I).
     await rowByName(page,'Bottom pocket').click()
+    await rowByName(page,'Through hole').click({ modifiers:['Shift'] })
     await ui.setupCam.add(page).click()
     await ui.setupCam.addMenu(page).getByText('Pocket',{ exact:true }).first().click()
     // Pass controls operate on the Bottom sketch selection.
@@ -245,11 +249,11 @@ for (const machine of ['grbl','shopbot']) {
       const box = await control.boundingBox()
       expect(box!.x+box!.width).toBeLessThanOrEqual(panel!.x+panel!.width+1)
     }
-    // Other-face targets start folded away (issue #1102).
-    await ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary').click()
-    const checkbox = ui.setupCam.properties(page).getByRole('checkbox',{ name:/Through hole/ })
-    await checkbox.check()
-    await expect(ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary')).toContainText('Through hole ⇄')
+    // The Cuts list names both targets, and the through one is marked
+    // cross-face on the setup card (issue #1112 I).
+    const cuts = ui.setupCam.properties(page).locator('[data-operation-cuts]')
+    await expect(cuts).toContainText('Bottom pocket')
+    await expect(cuts).toContainText('Through hole')
     await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
@@ -274,18 +278,22 @@ for (const machine of ['grbl','shopbot']) {
   })
 }
 
-test('provisional Bottom cross-face Add does not select a ghost', async ({ app, ui }) => {
+test('provisional Bottom Add reaches a through feature as a normal row', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
   await ui.face.switchTo(page, 'Bottom')
   await expect(ui.setupCam.section(page,'bottom')).toContainText('No operations')
+  // A through cut belongs to both flat faces: its row is selectable on Bottom,
+  // never a ghost, and selecting it is how the cross-face target is expressed
+  // now that the other-face checklist is gone (issue #1112 I).
+  await rowByName(page,'Through hole').click()
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id','through')
+  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
-  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   const project = await getProject(page) as unknown as Project
+  expect(project.operations.at(-1)?.target).toEqual({ source:'features',featureIds:['through'] })
   const bottom = project.setups.find(setup => setup.orientation.angleDeg === 180)!
   expect(project.operations.at(-1)?.setupId).toBe(bottom.id)
   expect(bottom.id).not.toBe('provisional-bottom')
@@ -298,9 +306,8 @@ test('Move lists removed targets and setup deletion lists its operations', async
   // only real setups from there: give Bottom its setup first by adding an
   // operation to it, then pick Top pass on Top.
   await ui.face.switchTo(page, 'Bottom')
+  await rowByName(page,'Through hole').click()
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
   await ui.face.switchTo(page, 'Top')
@@ -330,7 +337,7 @@ test('Move lists removed targets and setup deletion lists its operations', async
   await expect(ui.operations.rowByName(page,'Top pass')).toHaveCount(0)
 })
 
-test('Bottom Add explicitly targets an imported model without selecting its ghost', async ({ app, ui }) => {
+test('Bottom Add targets an imported model as a normal selectable row', async ({ app, ui }) => {
   const { page } = app
   const imported = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj',import.meta.url),'utf8')) as Project
   imported.operations = []
@@ -338,9 +345,12 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   const loaded = await getProject(page) as unknown as Project
   const model = loaded.features.find((feature) => loaded.featureDefinitions[feature.definitionId].kind === 'stl')!
   await ui.face.switchTo(page, 'Bottom')
+  // An imported model is not tied to a face: its row is selectable on Bottom,
+  // never a ghost, and selection is the only target route now (issue #1112 I).
+  await rowByName(page,model.name).click()
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id',model.id)
+  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker label').filter({ hasText:model.name }).locator('input').check()
   const row = ui.setupCam.addMenu(page).locator('.cam-operation-item').filter({ has:page.getByRole('button',{ name:'3D surface rough',exact:true }) })
   await row.getByRole('button',{ name:'Add',exact:true }).click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
@@ -348,7 +358,6 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   expect(after.operations[0].kind).toBe('rough_surface')
   expect(after.operations[0].target).toEqual({ source:'features',featureIds:[model.id] })
   expect(after.operations[0].setupId).toBe(after.setups.find((setup) => setup.orientation.angleDeg === 180)!.id)
-  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
 })
 
 test.describe('landscape touch tablet', () => {

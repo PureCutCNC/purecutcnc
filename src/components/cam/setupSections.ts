@@ -229,22 +229,6 @@ export function visibleTargetReach(face: SetupFace, reaches: readonly TargetReac
 }
 
 /**
- * The folded cross-face list's `<summary>` line (issue #1102): what the list
- * holds, then every ticked target's name followed by ⇄, so the picks stay
- * visible while the list is closed.
- */
-export function crossFaceSummaryLine(
-  summary: string,
-  candidates: readonly { id: string; name: string }[],
-  selectedIds: readonly string[],
-): string {
-  const picked = candidates
-    .filter((feature) => selectedIds.includes(feature.id))
-    .map((feature) => `${feature.name} ⇄`)
-  return picked.length > 0 ? `${summary}: ${picked.join(' ')}` : summary
-}
-
-/**
  * Whether an operation may be moved to another setup (issue #1102). A rotary
  * pass only ever lives on the Around setup, so there is nowhere to move it.
  */
