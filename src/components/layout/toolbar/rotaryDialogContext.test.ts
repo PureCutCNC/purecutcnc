@@ -56,7 +56,7 @@ const { I18nProvider } = await import('../../../i18n/I18nProvider')
 const { RotarySolidDialogHost } = await import('./RotarySolidDialog')
 const { RotaryPatternDialogHost } = await import('./RotaryPatternDialog')
 const { openRotarySolidCreate, openRotarySolidEdit, closeRotarySolidDialog } = await import('./rotarySolidDialogState')
-const { openRotaryPatternCreate, closeRotaryPatternDialog } = await import('./rotaryPatternDialogState')
+const { openRotaryPatternCreate, openRotaryPatternEdit, closeRotaryPatternDialog } = await import('./rotaryPatternDialogState')
 const { rotaryDialogContextKey } = await import('./rotaryDialogContext')
 const { createRoot } = await import('react-dom/client')
 const { defaultTool, defaultTopSetup, newProject, roundStock } = await import('../../../types/project')
@@ -97,6 +97,14 @@ async function waitFor(predicate: () => boolean, message: string, timeoutMs = 20
     if (Date.now() - started > timeoutMs) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
+}
+
+/** Drive one controlled dialog input the way a user typing does. */
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  assert.ok(setter, 'the DOM exposes the native value setter')
+  setter!.call(input, value)
+  input.dispatchEvent(new window.Event('input', { bubbles: true }))
 }
 
 function solidDialog(): Element | null {
@@ -424,6 +432,58 @@ await scenario('a Thread/Flutes create form drops when the document is replaced'
     await waitFor(() => patternDialog() !== null, 'the flutes dialog opens')
     store().loadProject(rotaryProject())
     await waitFor(() => patternDialog() === null, 'the document load closes the dialog')
+  } finally {
+    unmount(mounted)
+  }
+})
+
+await scenario('a Thread/Flutes Edit form drops when the context changes, and opens off-Around', async () => {
+  const project = loadAroundProject()
+  const created = store().addRotaryPattern({ kind: 'thread', start: 20, length: 60, pitch: 2, depth: 1 })
+  assert.ok(created.ok, 'the thread is created')
+  if (!created.ok) return
+  // Properties offers Edit on any face: opening it on Top must not close it.
+  assert.equal(switchWorkspaceFace('top'), true, 'the workspace goes to Top')
+  const mounted = mountHosts()
+  try {
+    openRotaryPatternEdit('thread', created.featureId)
+    await waitFor(() => patternDialog() !== null, 'the Thread Edit dialog opens on Top')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.notEqual(patternDialog(), null, 'the Thread Edit dialog survives opening off-Around')
+    const origin = store().project.origin
+    store().setOrigin({ ...origin, y: origin.y + 5 })
+    await waitFor(() => patternDialog() === null, 'the origin change closes the Thread Edit dialog')
+    // The stored feature is untouched by the dropped form.
+    assert.equal(store().project.features.length, project.features.length + 1)
+  } finally {
+    unmount(mounted)
+  }
+})
+
+await scenario('a mounted rotary form ignores an unrelated store update and an in-dialog parameter edit', async () => {
+  loadAroundProject()
+  const mounted = mountHosts()
+  try {
+    openRotaryPatternCreate('thread')
+    await waitFor(() => patternDialog() !== null, 'the thread dialog opens')
+
+    // A store update that is not part of the physical context must not close a
+    // half-filled form.
+    store().setProjectName('Renamed while typing')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.notEqual(patternDialog(), null, 'an unrelated project-name change keeps the dialog open')
+
+    // Typing a parameter is dialog-local state, not a context change either.
+    const start = document.querySelector('#rotary-start') as HTMLInputElement | null
+    assert.ok(start, 'the thread dialog shows its start field')
+    if (start) setInputValue(start, '12')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.notEqual(patternDialog(), null, 'editing a parameter inside the dialog keeps it open')
+    assert.equal(
+      (document.querySelector('#rotary-start') as HTMLInputElement | null)?.value,
+      '12',
+      'the dialog holds the edited parameter',
+    )
   } finally {
     unmount(mounted)
   }
