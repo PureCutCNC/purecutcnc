@@ -20,6 +20,7 @@ import type { dialogsEn } from '../en/dialogs'
 export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.common.close': 'Cerrar',
   'dialogs.common.cancel': 'Cancelar',
+  'dialogs.common.apply': 'Aplicar',
   'dialogs.common.none': 'Ninguno',
   'dialogs.common.millimeter': 'Milímetro',
   'dialogs.common.inch': 'Pulgada',
@@ -149,6 +150,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.mode.addSolid': 'Sumar (sólido)',
   'dialogs.importGeometry.mode.subtractSolid': 'Restar (sólido)',
   'dialogs.textTool.title': 'Agregar texto',
+  'dialogs.textTool.editTitle': 'Editar texto',
   'dialogs.textTool.text': 'Texto',
   'dialogs.textTool.fontStyle': 'Estilo de fuente',
   'dialogs.textTool.font': 'Fuente',

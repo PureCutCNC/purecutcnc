@@ -315,6 +315,8 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
 
   // ── Gear parameter panel ──
   'canvas.gear.summary': 'Außenradius {length}',
+  'canvas.gear.outsideRadius': 'Außenradius',
+  'canvas.gear.editTitle': 'Zahnrad bearbeiten',
   'canvas.gear.toothCount': 'Zähnezahl',
   'canvas.gear.wholeDepth': 'Zahntiefe',
   'canvas.gear.flankProfile': 'Zahnflankenprofil',
@@ -332,6 +334,7 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.gear.crest.flat': 'Flacher Zahnkopf',
   'canvas.gear.crest.rounded': 'Abgerundeter Zahnkopf',
   // Gear reference diagram aria-labels
+  'canvas.gear.ref.outsideRadius': 'Außenradius-Referenz',
   'canvas.gear.ref.teeth': 'Zähnezahl-Referenz',
   'canvas.gear.ref.wholeDepth': 'Zahntiefe-Referenz',
   'canvas.gear.ref.flankProfile': 'Zahnflankenprofil-Referenz',

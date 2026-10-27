@@ -25,6 +25,7 @@ export const dialogsEn = {
   // ── Common dialog strings ──
   'dialogs.common.close': 'Close',
   'dialogs.common.cancel': 'Cancel',
+  'dialogs.common.apply': 'Apply',
   'dialogs.common.none': 'None',
   'dialogs.common.millimeter': 'Millimeter',
   'dialogs.common.inch': 'Inch',
@@ -172,6 +173,7 @@ export const dialogsEn = {
 
   // ── Text Tool dialog ──
   'dialogs.textTool.title': 'Add text',
+  'dialogs.textTool.editTitle': 'Edit text',
   'dialogs.textTool.text': 'Text',
   'dialogs.textTool.fontStyle': 'Font style',
   'dialogs.textTool.font': 'Font',

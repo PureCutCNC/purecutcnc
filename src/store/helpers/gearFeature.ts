@@ -14,36 +14,43 @@
  * limitations under the License.
  */
 
-import {
-  circleProfile,
-  type FeatureFolder,
-  type FeatureTreeEntry,
-  type Point,
-  type Project,
-  type SketchFeature,
-} from '../../types/project'
+/**
+ * Gear creation as one canned feature (issue #1112 slice E).
+ *
+ * Before this, a gear was a plain composite outline plus, when a bore was set,
+ * a separate circle feature in a grouped folder. The gear is now a single
+ * canned feature whose generator draws the outline and the bore; the canned
+ * model derives each outline's Add/Subtract from nesting depth, so an Add gear
+ * has a Subtract bore and a Subtract gear has an Add island (decision 2).
+ *
+ * The outline is still `buildGearProfile`, so the operation on a gear cuts the
+ * same thing the old command's operation cut.
+ */
+
 import type { StateCreator } from 'zustand'
+import type {
+  FeatureOperation,
+  Point,
+  Project,
+  SketchFeature,
+} from '../../types/project'
 import {
   buildGearProfile,
   validateGearProfileParams,
-  type GearCreationParams,
 } from '../../sketch/gearProfile'
 import { uniqueName } from '../../import'
+import { cannedShapeFrame } from '../../cannedShapes'
+import {
+  GEAR_CANNED_KIND,
+  normalizeGearCannedParams,
+} from '../../cannedShapes/generators/gear'
 import type { ProjectStore } from '../types'
 import { buildShapeFeature } from './buildShapeFeature'
-import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
-import { isMachinable, sectionForOperation } from './featureRoles'
-import { nextUniqueGeneratedId } from './ids'
-import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
+import { createDefinitionForFeature } from './featureDefinitions'
+import { isSolid, sectionForOperation } from './featureRoles'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import { activeFace, aroundSketchAuthoringRefused } from './activeFace'
-
-interface GroupedGearInsertResult {
-  createdIds: string[]
-  project: Project
-  selection: ProjectStore['selection']
-  history: ProjectStore['history']
-}
+import { barSeedsModel } from './projectType'
 
 const GEAR_NAME_PATTERN = /^Gear (\d+)$/
 const GEAR_BORE_NAME_PATTERN = /^Gear Bore (\d+)$/
@@ -57,7 +64,11 @@ function gearNumberFromName(name: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null
 }
 
-function nextGearNumber(project: Project, section: FeatureFolder['section']): number {
+/**
+ * The next unused gear number. Old projects hold gear+bore groups, so folder
+ * and bore names still reserve their number; a new canned gear skips it.
+ */
+function nextGearNumber(project: Project, section: ReturnType<typeof sectionForOperation>): number {
   const used = new Set<number>()
   for (const folder of project.featureFolders) {
     if ((folder.section ?? 'features') !== section) {
@@ -85,155 +96,28 @@ function nextGearNumber(project: Project, section: FeatureFolder['section']): nu
   return candidate
 }
 
-function insertRootTreeEntryAfterSelection(
+/**
+ * The referenced draft `addFeature` accepts: a pre-minted definition carried as
+ * `_clonedDefinition` plus an instance transform. This is the same shape
+ * clipboard paste uses, so insertion, the base-solid rule, folder placement and
+ * the single undo step all stay in one place.
+ */
+function referencedCannedDraft(
   project: Project,
-  selectedNode: ProjectStore['selection']['selectedNode'],
-  entry: FeatureTreeEntry,
-): FeatureTreeEntry[] {
-  let insertAfterIndex = -1
-
-  if (selectedNode?.type === 'folder') {
-    insertAfterIndex = project.featureTree.findIndex(
-      (candidate) => candidate.type === 'folder' && candidate.folderId === selectedNode.folderId,
-    )
-  } else if (selectedNode?.type === 'feature') {
-    const selectedFeature = project.features.find((feature) => feature.id === selectedNode.featureId)
-    if (selectedFeature?.folderId) {
-      insertAfterIndex = project.featureTree.findIndex(
-        (candidate) => candidate.type === 'folder' && candidate.folderId === selectedFeature.folderId,
-      )
-    } else {
-      insertAfterIndex = project.featureTree.findIndex(
-        (candidate) => candidate.type === 'feature' && candidate.featureId === selectedNode.featureId,
-      )
-    }
-  }
-
-  if (insertAfterIndex < 0) {
-    return [...project.featureTree, entry]
-  }
-
-  return [
-    ...project.featureTree.slice(0, insertAfterIndex + 1),
-    entry,
-    ...project.featureTree.slice(insertAfterIndex + 1),
-  ]
-}
-
-export function createGroupedGearFeatureInsert(
-  state: ProjectStore,
-  name: string,
+  draft: SketchFeature,
   center: Point,
-  outsideRadius: number,
-  params: GearCreationParams,
-  depth: number,
-): GroupedGearInsertResult {
-  const rawGearFeature = buildShapeFeature(
-    state.project,
-    state.creationTarget,
-    'composite',
-    buildGearProfile({ ...params, center, outsideRadius }),
-    name,
-    depth,
-  )
-  const isFirstMachiningFeature = isMachinable(rawGearFeature)
-    && !resolvedProjectFeatures(state.project).some(isMachinable)
-  const section = sectionForOperation(isFirstMachiningFeature ? 'add' : rawGearFeature.operation)
-  const gearNumber = nextGearNumber(state.project, section)
-  const gearName = uniqueName(`Gear ${gearNumber}`, state.project.features.map((feature) => feature.name))
-  const safeGearBase = normalizeFeatureZRange({
-    ...rawGearFeature,
-    name: gearName,
-    operation: isFirstMachiningFeature ? 'add' : rawGearFeature.operation,
-  })
-  const groupFolderId = nextUniqueGeneratedId(state.project, 'fd')
-  const groupFolder: FeatureFolder = {
-    id: groupFolderId,
-    name: uniqueName(`Gear ${gearNumber}`, state.project.featureFolders.map((folder) => folder.name)),
-    collapsed: false,
-    section,
-    grouped: true,
-  }
-
-  const safeGear: SketchFeature = {
-    ...safeGearBase,
-    folderId: groupFolderId,
-  }
-  const boreFeatureBase = normalizeFeatureZRange({
-    id: nextUniqueGeneratedId(state.project, 'f'),
-    name: uniqueName(`Gear Bore ${gearNumber}`, [
-      ...state.project.features.map((feature) => feature.name),
-      safeGear.name,
-    ]),
-    kind: 'circle',
-    folderId: groupFolderId,
-    sketch: {
-      profile: circleProfile(center.x, center.y, params.boreDiameter / 2),
-      origin: { x: 0, y: 0 },
-      orientationAngle: 90,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'subtract',
-    z_top: safeGear.z_top,
-    z_bottom: safeGear.z_bottom,
-    visible: true,
-    locked: false,
-  })
-  const safeBore: SketchFeature = {
-    ...boreFeatureBase,
-    folderId: groupFolderId,
-  }
-
-  const gearMinted = createDefinitionForFeature(state.project, safeGear)
-  const gearInstance = createFeatureInstance(safeGear, gearMinted.definitionId)
-
-  const boreMinted = createDefinitionForFeature(
-    state.project,
-    safeBore,
-  )
-  const boreInstance = createFeatureInstance(safeBore, boreMinted.definitionId)
-
-  const createdIds = [safeGear.id, safeBore.id]
-  const project = syncFeatureTreeProject({
-    ...state.project,
-    featureFolders: [...state.project.featureFolders, groupFolder],
-    features: [...state.project.features, gearInstance, boreInstance],
-    featureTree: insertRootTreeEntryAfterSelection(
-      state.project,
-      state.selection.selectedNode,
-      { type: 'folder', folderId: groupFolderId },
-    ),
-    featureDefinitions: {
-      ...state.project.featureDefinitions,
-      [gearMinted.definitionId]: gearMinted.definition,
-      [boreMinted.definitionId]: boreMinted.definition,
-    },
-    meta: { ...state.project.meta, modified: new Date().toISOString() },
-  })
-
+): SketchFeature {
+  const { definitionId, definition } = createDefinitionForFeature(project, draft)
   return {
-    createdIds,
-    project,
-    selection: {
-      ...state.selection,
-      selectedFeatureId: safeGear.id,
-      selectedFeatureIds: createdIds,
-      selectedNode: { type: 'folder', folderId: groupFolderId },
-      mode: 'feature',
-      activeControl: null,
-      groupFolderId,
-    },
-    history: {
-      past: [...state.history.past, cloneProject(state.project)].slice(-100),
-      future: [],
-      transactionStart: null,
-    },
-  }
+    ...draft,
+    definitionId,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: center.x, f: center.y },
+    _clonedDefinition: definition,
+  } as unknown as SketchFeature
 }
 
 export function createAddGearFeatureAction(
-  set: Parameters<StateCreator<ProjectStore>>[0],
+  _set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
 ): ProjectStore['addGearFeature'] {
   return (name, center, outsideRadius, params, depth) => {
@@ -253,36 +137,56 @@ export function createAddGearFeatureAction(
       depth,
     )
     // A gear is drawn on the workspace's active face, so a square blank's
-    // round-only Around sheet must refuse it here — before either branch and
-    // before any project, selection or history mutation (issue #1016 C2-U1F).
-    // `addFeature` enforces the same rule for a direct draft, but the grouped
-    // gear+bore path below writes the project itself and would bypass it.
+    // round-only Around sheet must refuse it before any project, selection or
+    // history mutation (issue #1016 C2-U1F).
     const gearFace = gearFeature.authoringFace ?? activeFace(state.project)
     if (aroundSketchAuthoringRefused(state.project, gearFace)) {
       return []
     }
-    const shouldCreateBore = params.boreDiameter > 0 && sectionForOperation(gearFeature.operation) === 'features'
 
-    if (!shouldCreateBore) {
-      const existingIds = new Set(state.project.features.map((feature) => feature.id))
-      state.addFeature(gearFeature)
-      // `addFeature` refuses or is a no-op in some cases; report only the ids
-      // it actually created rather than a fabricated success.
-      return get().project.features
-        .filter((feature) => !existingIds.has(feature.id))
-        .map((feature) => feature.id)
+    // Mirror `addFeature`'s base-solid rule before minting the definition, so
+    // the definition's operation agrees with the row that ends up in the tree.
+    const needsBaseAdd = !barSeedsModel(state.project)
+    const isFirstSolid = needsBaseAdd
+      && isSolid(gearFeature)
+      && !resolvedProjectFeatures(state.project).some(isSolid)
+    const operation: FeatureOperation = isFirstSolid ? 'add' : gearFeature.operation
+    // A region/construction gear has no solid to bore; the old command created
+    // the bore only for the features section, and that stays true.
+    const boreDiameter = sectionForOperation(operation) === 'features' ? params.boreDiameter : 0
+
+    const gearNumber = nextGearNumber(state.project, sectionForOperation(operation))
+    const gearName = uniqueName(
+      `Gear ${gearNumber}`,
+      state.project.features.map((feature) => feature.name),
+    )
+    const canned = normalizeGearCannedParams({
+      ...params,
+      boreDiameter,
+      outsideRadius,
+    })
+    const frame = canned ? cannedShapeFrame({ kind: GEAR_CANNED_KIND, params: canned }) : null
+    if (!canned || !frame) {
+      return []
     }
 
-    let createdIds: string[] = []
-    set((s) => {
-      const result = createGroupedGearFeatureInsert(s, name, center, outsideRadius, params, depth)
-      createdIds = result.createdIds
-      return {
-        project: result.project,
-        selection: result.selection,
-        history: result.history,
-      }
-    })
-    return createdIds
+    const draft: SketchFeature = {
+      ...gearFeature,
+      name: gearName,
+      operation,
+      canned: { kind: GEAR_CANNED_KIND, params: canned },
+      sketch: {
+        ...gearFeature.sketch,
+        profile: frame,
+      },
+    }
+
+    const existingIds = new Set(state.project.features.map((feature) => feature.id))
+    state.addFeature(referencedCannedDraft(state.project, draft, center))
+    // `addFeature` refuses or is a no-op in some cases; report only the ids it
+    // actually created rather than a fabricated success.
+    return get().project.features
+      .filter((feature) => !existingIds.has(feature.id))
+      .map((feature) => feature.id)
   }
 }

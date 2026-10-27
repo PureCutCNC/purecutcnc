@@ -85,11 +85,13 @@ function assertSameProfile(actual: SketchProfile, expected: SketchProfile, label
 const params = (value: Record<string, number>): CannedShapeParams => value
 
 test('the built-in list registers every flat shape once', () => {
-  assertEqual(
-    BUILT_IN_CANNED_SHAPES.map((generator) => generator.kind).sort(),
-    ['chamferrect', 'ellipse', 'ngon', 'roundrect', 'slot'],
-    'built-in kinds',
-  )
+  // Other slices append their own generators (slice E adds the gear), so assert
+  // on the flat shapes rather than on the whole list.
+  const kinds = BUILT_IN_CANNED_SHAPES.map((generator) => generator.kind)
+  for (const kind of ['chamferrect', 'ellipse', 'ngon', 'roundrect', 'slot']) {
+    assertEqual(kinds.filter((registered) => registered === kind).length, 1, `${kind} registered once`)
+  }
+  assertEqual(new Set(kinds).size, kinds.length, 'no kind registered twice')
 })
 
 test('ellipse generates the four-Bézier ellipse and refuses non-positive radii', () => {
