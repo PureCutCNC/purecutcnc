@@ -128,7 +128,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     // outline wins, an interior click takes the topmost (hover-highlighted)
     // feature. Coincident outlines cannot show the picker here, so fall back
     // to the topmost candidate.
-    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
+    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl'), vt)
     // A model inside the bar is drawn as a band on the sheet, so right-clicking
     // the band opens the model's own menu, as clicking the model's row does
     // (issue #1112 I).

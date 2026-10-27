@@ -1003,7 +1003,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    const resolvedFeatures = editableProjectFeatures(project)
+    const resolvedFeatures = editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl')
     const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
     // A model's band is on the sheet itself, so it is checked only when no
     // outline at the point claims the click first (issue #1112 I).

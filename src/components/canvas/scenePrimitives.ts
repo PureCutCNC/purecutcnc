@@ -539,6 +539,7 @@ export function drawAroundModelBands(
   sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'modelBands'>,
   vt: ViewTransform,
   label: (name: string) => string,
+  selection: { selectedFeatureIds: readonly string[]; hoveredFeatureId: string | null },
 ): void {
   if (sheet.modelBands.length === 0) return
   const palette = canvasColors()
@@ -557,9 +558,13 @@ export function drawAroundModelBands(
     const y = Math.min(from.cy, to.cy)
     const width = Math.abs(to.cx - from.cx)
     const height = Math.abs(to.cy - from.cy)
-    ctx.fillStyle = hexToRgba(palette.featureModelFill, 0.14)
-    ctx.strokeStyle = hexToRgba(palette.featureModelStroke, 0.6)
-    ctx.lineWidth = 1.4
+    const selected = selection.selectedFeatureIds.includes(band.featureId)
+    const hovered = selection.hoveredFeatureId === band.featureId
+    ctx.fillStyle = selected ? hexToRgba(palette.active, 0.45)
+      : hovered ? hexToRgba(palette.draft, 0.35) : hexToRgba(palette.featureModelFill, 0.14)
+    ctx.strokeStyle = selected ? palette.active
+      : hovered ? palette.draft : hexToRgba(palette.featureModelStroke, 0.6)
+    ctx.lineWidth = selected ? 2.5 : hovered ? 1.8 : 1.4
     ctx.setLineDash([6, 4])
     ctx.fillRect(x, y, width, height)
     ctx.strokeRect(x, y, width, height)
