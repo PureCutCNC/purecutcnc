@@ -463,7 +463,6 @@ function testCamPlanFollowsTheActiveSetup(): void {
     draft.operation.target.source === 'features' ? draft.operation.target.featureIds : []
   )))
 
-  const TURNED = /Top setup only/
   /** The plan with only its creatable proposals enabled (a 4 mm cutter does not fit every proposal). */
   const creatable = (plan: ReturnType<typeof createCamPlan>) => ({
     ...plan,
@@ -475,7 +474,6 @@ function testCamPlanFollowsTheActiveSetup(): void {
   const topTargets = targeted(onTop)
   assert(topTargets.has('tray') && topTargets.has('pinA') && topTargets.has('slot'), `Top plans its own features and through-features: ${[...topTargets].join(', ')}`)
   assert(!topTargets.has('recess'), 'Top does not plan a blind Bottom feature')
-  assert(onTop.operations.every((draft) => !TURNED.test(draft.hardError ?? '')), 'no Top proposal is refused for its setup')
   assert(onTop.operations.some((draft) => draft.hardError === null), 'fixture: some Top proposal can be created')
   const applied = materializeCamPlan(project, creatable(onTop))
   assert(applied.ok, 'and the Top plan applies')
@@ -487,7 +485,6 @@ function testCamPlanFollowsTheActiveSetup(): void {
   const onBottom = createCamPlan(bottomActive, [])
   const bottomTargets = targeted(onBottom)
   assert(bottomTargets.has('recess') && !bottomTargets.has('tray'), `Bottom plans its own features, not a blind Top one: ${[...bottomTargets].join(', ')}`)
-  assert(onBottom.operations.every((draft) => !TURNED.test(draft.hardError ?? '')), 'Bottom is supported')
   const bottomApplied = materializeCamPlan(bottomActive, creatable(onBottom))
   assert(bottomApplied.ok && bottomApplied.operationIds.length > 0, 'Bottom recommendations apply')
   assert(bottomApplied.project.operations.filter((op) => bottomApplied.operationIds.includes(op.id)).every((op) => op.setupId === BOTTOM_SETUP_ID), 'Bottom recommendations join Bottom')

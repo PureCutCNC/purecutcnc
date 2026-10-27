@@ -715,22 +715,29 @@ test('reapplying the same target does not reset a manual depth', () => {
   assert.equal(operation.maxCarveDepth, 0.9, 'so the manual depth survives')
 })
 
-test('CAM Plan never creates a Follow line, so it has no depth path to bypass', () => {
+test('CAM Plan proposes the Follow line at the canned depth (#1112 J)', () => {
   loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
   const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
   assert.ok(created.ok, 'thread created')
   if (!created.ok) return
 
-  // A canned pattern is a `line` feature, and the planner reports line
-  // engraving as out of scope instead of proposing an operation. If CAM Plan
-  // ever starts proposing Follow line, this assertion fails: the planner must
-  // then route its target through withCannedPatternTargetDepth in the store.
+  // Decision 3: Thread/Flutes are planned as a Follow line with a V-bit. The
+  // depth comes from the same store rule every manual target path uses, so the
+  // applied operation cuts what the old command cut.
   const plan = createCamPlan(store().project, [])
-  assert.equal(
-    plan.operations.some((draft) => draft.operation.kind === 'follow_line'),
-    false,
-    'CAM Plan does not propose Follow line',
-  )
+  const drafts = plan.operations.filter((draft) => draft.operation.kind === 'follow_line')
+  assert.equal(drafts.length, 1, 'the pattern is one Engrave')
+  const draft = drafts[0]!
+  assert.deepEqual(draft.operation.target, followLineTarget([created.featureId]), 'targets the canned pattern')
+  assert.equal(draft.operation.toolRef, 'v1', 'uses the V-bit')
+  assert.equal(draft.operation.carveDepth, 1.2, 'the plan depth is the pattern depth')
+  assert.equal(draft.operation.maxCarveDepth, 1.2, 'and its maximum')
+
+  const applied = store().applyCamPlan(plan)
+  assert(applied.ok, 'the plan applies')
+  const operation = store().project.operations.find((entry) => entry.id === applied.operationIds[0])
+  assert.equal(operation?.kind, 'follow_line', 'the created operation is the Engrave')
+  assert.equal(operation?.carveDepth, 1.2, 'and keeps the pattern depth')
 })
 
 // ── round trip, edit and expand ──────────────────────────────

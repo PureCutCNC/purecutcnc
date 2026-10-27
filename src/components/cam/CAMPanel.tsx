@@ -2298,11 +2298,9 @@ export function CAMPanel({
                         ref={camPlanButtonRef}
                         className="cam-header-action cam-header-action--plan"
                         type="button"
-                        // Bottom plans in its setup frame; rotary planning remains unsupported.
-                        disabled={project.features.length === 0 || currentSetupFace === 'around'}
-                        title={currentSetupFace === 'around'
-                          ? camT('cam.plan.unavailableAround')
-                          : undefined}
+                        // Every face plans in its own cutting frame now: Top,
+                        // Bottom (setup turn) and Around (bar/rotary, #1112).
+                        disabled={project.features.length === 0}
                         onClick={() => void handleOpenCamPlan()}
                       >
                         {camT('cam.plan.launch')}

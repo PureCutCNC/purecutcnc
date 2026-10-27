@@ -161,15 +161,4 @@ for (const axis of ['x', 'y'] as const) for (const units of ['mm', 'inch'] as co
   assert(!createCamPlan({ ...project, activeSetupId: project.setups[0]!.id }, []).operations.some(draft => draft.operation.kind === 'surface_clean'))
 }
 
-{
-  const project = fixture()
-  project.setups = project.setups.map(setup => setup.id === BOTTOM_SETUP_ID
-    ? { ...setup, kind: 'around', orientation: { axis: 'x', angleDeg: 0 } } : setup)
-  project.features = project.features.map(feature => ({ ...feature, authoringFace: 'around' }))
-  const plan = createCamPlan(project, [])
-  assert(plan.operations.length > 0)
-  assert(plan.operations.every(draft => draft.hardError !== null), 'Around remains blocked')
-  assert(plan.operations.some(draft => draft.hardError?.includes('Top setup only')), 'Around retains TURNED_SETUP_ERROR')
-}
-
 console.log('Bottom CAM Plan tests passed')
