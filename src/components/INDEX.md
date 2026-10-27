@@ -61,3 +61,6 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `cam/rotaryOperations.test.ts` — Rotary rough/finish authoring contract: Around model-only targets, defaults, support cache/units/file persistence and exact field policy (#1015 slice D).
 
 - `canvas/aroundSelection.testSupport.ts` supplies the overlapping X/Y model fixtures for `useClickPlacement.test.ts`, `useCanvasContextMenu.test.ts`, and `aroundCanvasDraw.test.ts`; these exercise Around band picking and the live canvas hover/selection draw pass without flat model silhouettes (#1112 I2).
+
+- `feature-tree/ChuckProperties.tsx` — chuck size presets, editable range, jaws and capacity warning (#1112 M); the old body is retained until a size is picked. `ChuckProperties.test.tsx` checks rendered fields and warnings.
+- `canvas/aroundChuck.ts` — display-only chuck footprint and label, limited to one sheet height; snap/CAM bands are unchanged. `aroundChuck.test.ts` checks axial dimensions and clipping on both axes.

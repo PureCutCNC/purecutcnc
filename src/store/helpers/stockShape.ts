@@ -248,14 +248,10 @@ export function newChuck(project: Project, stock: BarStock): Clamp {
  * slice C, square blank #1016 C2-S2). Choosing a bar moves the origin to the
  * bar's default and guarantees exactly one chuck; choosing a block moves the
  * origin the same way and removes every chuck and tailstock, which cannot exist
- * on a block. Switching between the two bar shapes re-mints only a chuck or
- * tailstock that does **not clear** the new bar (#1016 C2 F3b): the same
- * `requiredWorkholdingDiameter` threshold the square safety guard refuses on —
- * the blank's corner envelope, or the round bar's diameter — with the same
- * export tolerance. A support that already clears is kept exactly as it is,
- * with its own diameter, so a 30 mm chuck that holds a 20 mm square's 28.284 mm
- * envelope is not enlarged; ordinary clamps are never touched. Any other clamp
- * is kept on either shape. The same shape returns the same project object.
+ * on a block. Chucks always keep their selected equipment when the bar changes
+ * (#1112 M); normal store sync only recentres them. A tailstock below the new
+ * bar's envelope retains its historical re-minting rule. Ordinary clamps are
+ * untouched. The same shape returns the same project object.
  */
 export function projectWithStockShape(project: Project, shape: 'block' | 'round' | 'square'): Project {
   if (shape === 'round' || shape === 'square') {
@@ -268,7 +264,7 @@ export function projectWithStockShape(project: Project, shape: 'block' | 'round'
     const previous = isBarStock(project.stock) ? project.stock : null
     const clamps = previous && previous.shape !== stock.shape
       ? project.clamps.map((clamp) => {
-        if (!isRoundWorkholding(clamp)) return clamp
+        if (!isRoundWorkholding(clamp) || clamp.type === 'chuck') return clamp
         const existingDiameter = roundWorkholdingDiameter(clamp, previous)
         // Exactly the guard's rule (`squareRotarySafetyRefusal`): a diameter
         // within the export tolerance of the required clearance is clear.

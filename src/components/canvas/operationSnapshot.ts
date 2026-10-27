@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { drawAroundChuck } from './aroundChuck'
 import { getFeatureGeometryProfiles } from '../../text'
 import { getProfileBounds, rectProfile } from '../../types/project'
 import type { Clamp, Operation, Project, SketchProfile, Stock } from '../../types/project'
@@ -307,6 +308,7 @@ export function drawOperationSnapshot(
 
   for (const clamp of clampsOf(project, sheet)) {
     if (clamp.visible) {
+      if (sheet && drawAroundChuck(ctx, clamp, sheet, vt, false, false)) continue
       drawClampFootprint(ctx, clamp, vt, false, false)
     }
   }

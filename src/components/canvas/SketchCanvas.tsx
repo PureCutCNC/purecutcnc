@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { drawAroundChuck } from './aroundChuck'
 import { PlasmaStartPointPicker } from './PlasmaStartPointPicker'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SketchToolpathControls } from './SketchToolpathControls'
@@ -1240,6 +1241,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (const clamp of sheet ? sheet.clampBands : project.clamps) {
       if (!clamp.visible) continue
       const selected = selection.selectedClampIds.includes(clamp.id)
+      if (sheet && drawAroundChuck(ctx, clamp, sheet, vt, selected, collidingClampIdSet.has(clamp.id))) continue
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (!sheet && selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)

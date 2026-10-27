@@ -15,6 +15,7 @@
  */
 
 import * as THREE from 'three'
+import { buildChuckGeometry } from './chuckGeometry'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
 import { barCentre, barPivotZ, isBarStock } from '../types/barStock'
@@ -694,7 +695,7 @@ function isRoundWorkholdingClamp(clamp: Clamp): boolean {
 
 export function buildClampMesh(clamp: Clamp, selected = false, colliding = false, units: Units, threePalette?: ThreeThemePalette, stock?: Stock): THREE.Mesh {
   const geometry: THREE.BufferGeometry = stock && isBarStock(stock) && isRoundWorkholdingClamp(clamp)
-    ? roundWorkholdingGeometry(clamp, stock)
+    ? (clamp.type === 'chuck' && clamp.chuck ? buildChuckGeometry(clamp, stock) : roundWorkholdingGeometry(clamp, stock))
     : new THREE.ExtrudeGeometry(profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)), {
         depth: Math.max(clamp.height, minRenderHeight(units)),
         bevelEnabled: false,
