@@ -3276,6 +3276,49 @@
   background: transparent;
 }
 
+/* A refusal is read, not hovered: touch has no native title (#1112 A3). */
+.feature-context-menu__item--reason:disabled {
+  opacity: 1;
+}
+
+.feature-context-menu__item--reason:disabled .feature-context-menu__item-label,
+.feature-context-menu__item--reason:disabled .feature-context-menu__item-text > span:first-child {
+  opacity: 0.65;
+}
+
+.feature-context-menu__item--reason {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  height: auto;
+  min-height: 26px;
+  padding: 4px 8px;
+}
+
+.feature-context-menu__item--reason.feature-context-menu__item--submenu {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.feature-context-menu__item-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.feature-context-menu__item-reason {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: normal;
+}
+
 .feature-context-menu__item--danger:hover {
   border: 1px solid color-mix(in srgb, var(--danger-text) 75%, transparent);
   background: color-mix(in srgb, var(--danger-text) 12%, transparent);

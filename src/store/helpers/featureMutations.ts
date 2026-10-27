@@ -33,7 +33,7 @@ import { transformProfile } from '../../geometry/profile'
 import { refitTextFrameProfile } from '../../text'
 import { cloneCannedShapeData } from '../../types/project'
 import { cannedShapeFrame } from '../../cannedShapes'
-import { rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
+import { applyCannedShapeModelSpans, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
@@ -199,6 +199,9 @@ export function applyFeaturePatch(
   // A canned model's mesh is derived from its parameters, so a parameter edit
   // rebuilds the asset in the same write. Doing it here — rather than at each
   // caller — keeps `updateFeature` and every future edit path consistent.
+  // Regenerated dimensions reach every consumer through the instance Z span:
+  // the edit's own row and every linked copy get the new mesh height above
+  // their own bottom (issue #1112 A3).
   let modelAssets = project.modelAssets ?? {}
   if (patch.canned !== undefined) {
     const rebuilt = rebuildCannedShapeModelDefinitions(
@@ -207,6 +210,7 @@ export function applyFeaturePatch(
     )
     featureDefinitions = rebuilt.featureDefinitions
     modelAssets = rebuilt.modelAssets
+    features = applyCannedShapeModelSpans(project, features, rebuilt.models)
   }
 
   return { features, featureDefinitions, modelAssets }

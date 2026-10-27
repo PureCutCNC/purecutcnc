@@ -20,6 +20,9 @@
  * leaving the control visible made it silently do nothing; it is now left out,
  * exactly as it already is for an Around feature.
  *
+ * A disabled context-menu item's reason is also asserted as visible text on
+ * both desktop and tablet (issue #1112 A3): touch has no native `title`.
+ *
  * Two controls carry it, and both are rendered here:
  *  - `AuthoringFaceRow`, the feature-properties row ("Change…");
  *  - the ghost-feature context menu, whose entry is shown only for a flat face.
@@ -48,9 +51,11 @@ import { FeatureContextMenu } from './FeatureContextMenu'
 import { I18nProvider } from '../../i18n/I18nProvider'
 import { enMessages } from '../../i18n/locales/en'
 import { useProjectStore } from '../../store/projectStore'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { newProject, rectProfile, roundStock } from '../../types/project'
-import type { MachiningSetup, Project, SetupFace, SketchFeature } from '../../types/project'
+import type { FeatureDefinition, FeatureInstance, MachiningSetup, Project, SetupFace, SketchFeature } from '../../types/project'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
+import { registerTestCannedShapes, testPlateCanned } from '../../test/cannedShapeFixture'
 
 // A DOM for the client render, in place before React DOM is first imported.
 const { window, document } = parseHTML('<!doctype html><html><body></body></html>')
@@ -166,7 +171,10 @@ async function renderRow(project: Project, face: SetupFace): Promise<string> {
   return render(createElement(I18nProvider, null, createElement(AuthoringFaceRow, { face, featureIds: ['f1'] })))
 }
 
-function menuProps(menuFeature: SketchFeature): Parameters<typeof FeatureContextMenu>[0] {
+function menuProps(
+  menuFeature: SketchFeature,
+  overrides: { tabletShell?: boolean } = {},
+): Parameters<typeof FeatureContextMenu>[0] {
   return {
     menuRef: { current: null },
     position: { left: 0, top: 0 },
@@ -188,7 +196,7 @@ function menuProps(menuFeature: SketchFeature): Parameters<typeof FeatureContext
     menuSelectionInGroupedFolder: false,
     menuSelectionSectionsMixed: false,
     menuSelectionIsGroup: false,
-    tabletShell: false,
+    tabletShell: overrides.tabletShell ?? false,
     primaryId: menuFeature.id,
     ids: [menuFeature.id],
     actions,
@@ -203,13 +211,13 @@ function menuProps(menuFeature: SketchFeature): Parameters<typeof FeatureContext
   }
 }
 
-async function renderMenu(project: Project, menuFeature: SketchFeature): Promise<string> {
+async function renderMenu(
+  project: Project,
+  menuFeature: SketchFeature,
+  overrides: { tabletShell?: boolean } = {},
+): Promise<string> {
   useProjectStore.setState({ project })
-  return render(createElement(I18nProvider, null, createElement(FeatureContextMenu, menuProps(menuFeature))))
-}
-
-function occurrences(haystack: string, needle: string): number {
-  return haystack.split(needle).length - 1
+  return render(createElement(I18nProvider, null, createElement(FeatureContextMenu, menuProps(menuFeature, overrides))))
 }
 
 // ── The feature-properties row ────────────────────────────────
@@ -235,13 +243,15 @@ async function testAuthoringFaceRowOnAnAroundFeature(): Promise<void> {
 
 // ── The ghost-feature context menu ────────────────────────────
 
-const MENU_ITEM = 'class="feature-context-menu__item"'
+function menuItemCount(html: string): number {
+  return (html.match(/class="feature-context-menu__item(?=[" ])/g) ?? []).length
+}
 
 async function testGhostMenuOnTop(): Promise<void> {
   // A Bottom feature seen from Top is a ghost; changing its face is offered.
   const html = await renderMenu(projectOn('top'), feature('f1', 'bottom'))
   assert(html.includes(enMessages['featureTree.face.switchToBottomToEdit']), 'the ghost menu offers the switch')
-  assert(occurrences(html, MENU_ITEM) === 2, `on Top the ghost menu carries the Change entry (${occurrences(html, MENU_ITEM)} items)`)
+  assert(menuItemCount(html) === 2, `on Top the ghost menu carries the Change entry (${menuItemCount(html)} items)`)
   assert(html.includes(enMessages['featureTree.face.changeAuthoringFace']), 'on Top the Change entry carries its label')
 }
 
@@ -249,8 +259,78 @@ async function testGhostMenuOnAround(): Promise<void> {
   // A Top feature seen from Around is a ghost; changing its face is refused there.
   const html = await renderMenu(projectOn('around'), feature('f1', 'top'))
   assert(html.includes(enMessages['featureTree.face.switchToTopToEdit']), 'the ghost menu still offers the switch')
-  assert(occurrences(html, MENU_ITEM) === 1, `on Around the ghost menu has no Change entry (${occurrences(html, MENU_ITEM)} items)`)
+  assert(menuItemCount(html) === 1, `on Around the ghost menu has no Change entry (${menuItemCount(html)} items)`)
   assert(!html.includes(enMessages['featureTree.face.changeAuthoringFace']), 'on Around no Change label is drawn')
+}
+
+// ── Refusals are visible text, not hover-only ──────────────────
+
+function cannedProject(): { project: Project; menuFeature: SketchFeature } {
+  registerTestCannedShapes()
+  const definition: FeatureDefinition = {
+    id: 'def-canned',
+    kind: 'composite',
+    profile: rectProfile(0, 0, 100, 60),
+    dimensions: [],
+    text: null,
+    canned: testPlateCanned(100, 60, 12),
+    stl: null,
+    operation: 'add',
+  }
+  const instance: FeatureInstance = {
+    id: 'canned',
+    name: 'Plate',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    folderId: null,
+    z_top: 5,
+    z_bottom: 0,
+    authoringFace: 'top',
+    visible: true,
+    locked: false,
+  }
+  const project: Project = {
+    ...newProject(),
+    featureDefinitions: { [definition.id]: definition },
+    features: [instance],
+  }
+  const menuFeature = resolveFeatureInstance(project, instance.id)
+  assert(menuFeature, 'the canned feature resolves')
+  return { project, menuFeature }
+}
+
+async function testCannedRefusalIsVisibleOnDesktopAndTablet(): Promise<void> {
+  const { project, menuFeature } = cannedProject()
+  const refusal = enMessages['sketch.canned.actionRefused']
+  const cases: Array<[string, string]> = [
+    [enMessages['featureTree.contextMenu.editSketch'], enMessages['sketch.canned.editSketchRefused']],
+    [enMessages['featureTree.contextMenu.addConstraint'], refusal],
+    [enMessages['featureTree.contextMenu.offset'], refusal],
+    [enMessages['featureTree.contextMenu.join'], refusal],
+    [enMessages['featureTree.contextMenu.cut'], refusal],
+  ]
+
+  for (const tabletShell of [false, true]) {
+    const html = await renderMenu(project, menuFeature, { tabletShell })
+    const parsed = parseHTML(`<!doctype html><html><body>${html}</body></html>`)
+    const buttons = Array.from(parsed.document.querySelectorAll('button'))
+    const shell = tabletShell ? 'tablet' : 'desktop'
+    for (const [label, reason] of cases) {
+      const button = buttons.find((candidate) => (candidate.textContent ?? '').startsWith(label))
+      assert(button, `${shell}: the ${label} item is rendered`)
+      assert(button.hasAttribute('disabled'), `${shell}: ${label} is disabled for a canned shape`)
+      assert(
+        (button.textContent ?? '').includes(reason),
+        `${shell}: ${label} shows its reason as visible text, not only a title`,
+      )
+      assert(button.getAttribute('title') === reason, `${shell}: ${label} keeps the desktop title`)
+    }
+    assert(
+      html.includes('feature-context-menu__item-reason'),
+      `${shell}: the reason line uses the shared menu-item presentation`,
+    )
+  }
 }
 
 async function main(): Promise<void> {
@@ -259,6 +339,7 @@ async function main(): Promise<void> {
   await testAuthoringFaceRowOnAnAroundFeature()
   await testGhostMenuOnTop()
   await testGhostMenuOnAround()
+  await testCannedRefusalIsVisibleOnDesktopAndTablet()
   console.log('authoringFaceRow tests passed')
 }
 

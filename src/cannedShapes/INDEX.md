@@ -10,7 +10,7 @@ string and generates glyphs.
 - `registry.ts` — generator and editor maps. Built-ins seed from `generators/`; tests register test-only shapes with `registerCannedShapeGenerator`. `registerCannedShapeEditor` is the hook later slices use to open their dialog from the Properties "Edit <shape>…" button.
 - `index.ts` — the read path: `isCannedFeature`, `resolveCannedShapeShapes` (nesting depth → Add/Subtract, placement transform, mirror winding), `resolveCannedShapeProfiles`, `cannedShapeFrame`, `cannedShapeSummary`, `cannedShapeLabelKey`, `cannedShapeCapabilities`/`cannedShapeIsExpandable`, and `generateCannedShapeMesh`.
 - `cache.ts` — generated-outline cache keyed on kind + canonical normalized parameters; a parameter change is a miss, registering a replacement generator clears that kind. Hit testing, hover and redraw share one generation.
-- `model.ts` — the mesh half of the contract: builds a model kind's mesh into `Project.modelAssets` and points `definition.stl.meshAssetId` at it, so CSG, surface toolpaths, preview and export consume it like an imported model. `rebuildCannedShapeModels` runs on load and unit conversion; `applyFeaturePatch` runs `rebuildCannedShapeModelDefinitions` for a parameter edit.
+- `model.ts` — the mesh half of the contract: builds a model kind's mesh into `Project.modelAssets` and points `definition.stl.meshAssetId` at it, so CSG, surface toolpaths, preview and export consume it like an imported model. A rebuild keeps the user's `stl.scale`/orientation, and `applyCannedShapeModelSpans` writes the regenerated height into every linked instance's Z span above its own bottom — the one value all consumers read. `rebuildCannedShapeModels` runs on load and unit conversion; `applyFeaturePatch` runs `rebuildCannedShapeModelDefinitions` and the span pass for a parameter edit.
 - `generators/index.ts` — the built-in list. Slices D–G export a generator from their own module and append it here; nothing else in the model changes. A generator module imports `defineCannedShape` from `../types`, never from this package's index (that would cycle through the registry).
 - `cannedShapes.test.ts` — model tests; runs the test-only generators from `src/test/cannedShapeFixture.ts` because slice A ships no real shape.
 - `cannedShapeCache.test.ts` — three resolutions call a generator once, a parameter change misses, registration invalidates, and key order does not defeat the key.
@@ -18,7 +18,7 @@ string and generates glyphs.
 ## Rules
 
 - Parameters are JSON-only (`CannedShapeParams`), so save → load → regenerate is exact.
-- A kind with `generateMesh` is a model: its mesh is derived from the parameters, rebuilt on change/load/unit conversion, and non-expandable by default capability.
+- A kind with `generateMesh` is a model: its mesh is derived from the parameters, rebuilt on change/load/unit conversion, and non-expandable by default capability. A rebuild preserves `stl.scale` and the definition's orientation, and the regenerated mesh height reaches every consumer through the instance Z span (`z_top = z_bottom + meshHeight × scale`), including linked copies.
 - A generator that stores lengths supplies `convertParams`; `convertProjectUnits` routes the definitions through it, so a unit switch converts the parameters with the frame.
 - The stored `definition.profile` is a placement frame derived from the parameters, never the geometry; hit testing and rendering read the generated outlines instead.
 - `capabilities.expandable` defaults to true. A model sets it false and Properties hides "Expand to features".

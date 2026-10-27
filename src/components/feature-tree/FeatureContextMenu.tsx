@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { Fragment, type RefObject } from 'react'
+import { Fragment, type ReactNode, type RefObject } from 'react'
 import type { QuickOperation } from '../cam/operationValidity'
 import type { RemoveFromOperationCandidate } from '../cam/operationTargetLists'
 import { camT } from '../cam/camI18n'
@@ -26,6 +26,29 @@ import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { isCannedFeature } from '../../cannedShapes'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+
+/**
+ * A disabled menu item's reason is visible text, not only a native `title`:
+ * touch has no hover, and a refusal nobody can read is indistinguishable from
+ * a broken control. The `title` stays for the desktop pointer.
+ */
+function menuItemClass(reason?: string, extra?: string): string {
+  return [
+    'feature-context-menu__item',
+    extra ?? '',
+    reason ? 'feature-context-menu__item--reason' : '',
+  ].filter(Boolean).join(' ')
+}
+
+function MenuItemText({ reason, children }: { reason?: string; children: ReactNode }) {
+  if (!reason) return <>{children}</>
+  return (
+    <>
+      <span className="feature-context-menu__item-label">{children}</span>
+      <span className="feature-context-menu__item-reason">{reason}</span>
+    </>
+  )
+}
 
 interface FeatureContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -119,6 +142,36 @@ export function FeatureContextMenu({
   const menuHasCannedSelection = resolveFeatureInstances(project, [...ids]).some(isCannedFeature)
   const menuFeatureIsCanned = isCannedFeature(menuFeature)
   const cannedRefusal = t('sketch.canned.actionRefused')
+  const addToOperationReason = menuAddToOperationCandidates.length === 0
+    ? t('featureTree.contextMenu.addToOperationEmptyTooltip') : undefined
+  const removeFromOperationReason = menuRemoveFromOperationCandidates.length === 0
+    ? t('featureTree.contextMenu.removeFromOperationEmptyTooltip') : undefined
+  const editSketchReason = menuFeatureIsCanned ? t('sketch.canned.editSketchRefused') : undefined
+  const constraintReason = menuFeatureIsCanned
+    ? cannedRefusal
+    : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
+  const moveReason = menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
+  const offsetReason = menuHasCannedSelection
+    ? cannedRefusal
+    : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
+  const addToFolderReason = menuSelectionSectionsMixed
+    ? t('featureTree.contextMenu.addToFolderMixedTooltip') : undefined
+  const groupReason = !menuHasMultipleSelection
+    ? t('featureTree.contextMenu.groupDisabledTooltip')
+    : menuSelectionSectionsMixed
+      ? t('featureTree.contextMenu.sectionsMixedTooltip')
+      : undefined
+  const joinReason = menuHasCannedSelection
+    ? cannedRefusal
+    : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined
+  const cutReason = menuHasCannedSelection ? cannedRefusal : undefined
+  const useAsStockReason = !menuCanUseAsStock
+    ? t('featureTree.contextMenu.useAsStockDisabledTooltip') : undefined
+  const changeFaceReason = menuHasLockedSelection
+    ? t('featureTree.contextMenu.lockedTooltip')
+    : faceBusy
+      ? t('featureTree.face.changeBusy')
+      : selectionCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -134,6 +187,12 @@ export function FeatureContextMenu({
   const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
   if (menuFeature && menuFeatureFace !== workspaceFace) {
     const ghostCanChangeFace = canChangeAuthoringFace(project, menuFeature)
+    const switchFaceReason = faceBusy ? t('appShell.face.busy') : undefined
+    const changeGhostFaceReason = menuFeature.locked
+      ? t('featureTree.contextMenu.lockedTooltip')
+      : faceBusy
+        ? t('featureTree.face.changeBusy')
+        : ghostCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
     return (
       <div
         ref={menuRef}
@@ -142,13 +201,15 @@ export function FeatureContextMenu({
         onContextMenu={(event) => event.preventDefault()}
       >
         <button
-          className="feature-context-menu__item"
+          className={menuItemClass(switchFaceReason)}
           type="button"
           onClick={() => actions.switchFaceToEdit(menuFeature.id)}
           disabled={faceBusy}
-          title={faceBusy ? t('appShell.face.busy') : undefined}
+          title={switchFaceReason}
         >
-          {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : menuFeatureFace === 'around' ? 'featureTree.face.switchToAroundToEdit' : 'featureTree.face.switchToTopToEdit')}
+          <MenuItemText reason={switchFaceReason}>
+            {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : menuFeatureFace === 'around' ? 'featureTree.face.switchToAroundToEdit' : 'featureTree.face.switchToTopToEdit')}
+          </MenuItemText>
         </button>
         {/* From Around the change is refused (`requestAuthoringFaceChange`), so
             the entry is left out rather than dead (issue #1015 slice K). */}
@@ -156,19 +217,15 @@ export function FeatureContextMenu({
           <>
             <div className="feature-context-menu__separator" />
             <button
-              className="feature-context-menu__item"
+              className={menuItemClass(changeGhostFaceReason)}
               type="button"
               onClick={() => actions.changeAuthoringFace([menuFeature.id])}
               disabled={menuFeature.locked || faceBusy || !ghostCanChangeFace}
-              title={
-                menuFeature.locked
-                  ? t('featureTree.contextMenu.lockedTooltip')
-                  : faceBusy
-                    ? t('featureTree.face.changeBusy')
-                    : ghostCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
-              }
+              title={changeGhostFaceReason}
             >
-              {t('featureTree.face.changeAuthoringFace')}
+              <MenuItemText reason={changeGhostFaceReason}>
+                {t('featureTree.face.changeAuthoringFace')}
+              </MenuItemText>
             </button>
           </>
         )}
@@ -275,12 +332,12 @@ export function FeatureContextMenu({
             onMouseLeave={tabletShell ? undefined : onCloseAddToOperationSubmenu}
           >
             <button
-              className="feature-context-menu__item feature-context-menu__item--submenu"
+              className={menuItemClass(addToOperationReason, 'feature-context-menu__item--submenu')}
               type="button"
               aria-haspopup="menu"
               aria-expanded={addToOperationSubmenu !== null}
               disabled={menuAddToOperationCandidates.length === 0}
-              title={menuAddToOperationCandidates.length === 0 ? t('featureTree.contextMenu.addToOperationEmptyTooltip') : undefined}
+              title={addToOperationReason}
               onClick={(event) => {
                 if (menuAddToOperationCandidates.length === 0) {
                   return
@@ -292,7 +349,12 @@ export function FeatureContextMenu({
                 }
               }}
             >
-              <span>{t('featureTree.contextMenu.addToOperation')}</span>
+              <span className="feature-context-menu__item-text">
+                <span>{t('featureTree.contextMenu.addToOperation')}</span>
+                {addToOperationReason
+                  ? <span className="feature-context-menu__item-reason">{addToOperationReason}</span>
+                  : null}
+              </span>
               <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
             </button>
             {addToOperationSubmenu && menuAddToOperationCandidates.length > 0 ? (
@@ -320,12 +382,12 @@ export function FeatureContextMenu({
             onMouseLeave={tabletShell ? undefined : onCloseRemoveFromOperationSubmenu}
           >
             <button
-              className="feature-context-menu__item feature-context-menu__item--submenu"
+              className={menuItemClass(removeFromOperationReason, 'feature-context-menu__item--submenu')}
               type="button"
               aria-haspopup="menu"
               aria-expanded={removeFromOperationSubmenu !== null}
               disabled={menuRemoveFromOperationCandidates.length === 0}
-              title={menuRemoveFromOperationCandidates.length === 0 ? t('featureTree.contextMenu.removeFromOperationEmptyTooltip') : undefined}
+              title={removeFromOperationReason}
               onClick={(event) => {
                 if (menuRemoveFromOperationCandidates.length === 0) {
                   return
@@ -337,7 +399,12 @@ export function FeatureContextMenu({
                 }
               }}
             >
-              <span>{t('featureTree.contextMenu.removeFromOperation')}</span>
+              <span className="feature-context-menu__item-text">
+                <span>{t('featureTree.contextMenu.removeFromOperation')}</span>
+                {removeFromOperationReason
+                  ? <span className="feature-context-menu__item-reason">{removeFromOperationReason}</span>
+                  : null}
+              </span>
               <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
             </button>
             {removeFromOperationSubmenu && menuRemoveFromOperationCandidates.length > 0 ? (
@@ -346,52 +413,58 @@ export function FeatureContextMenu({
                 style={{ top: removeFromOperationSubmenu.top, left: removeFromOperationSubmenu.left }}
                 onContextMenu={(event) => event.preventDefault()}
               >
-                {menuRemoveFromOperationCandidates.map(({ operation, canRemove }) => (
-                  <button
-                    key={operation.id}
-                    className="feature-context-menu__item"
-                    type="button"
-                    disabled={!canRemove}
-                    title={!canRemove ? t('featureTree.contextMenu.removeWouldInvalidateTooltip') : undefined}
-                    onClick={() => actions.removeFromOperation([...ids], operation.id)}
-                  >
-                    {operation.name}
-                  </button>
-                ))}
+                {menuRemoveFromOperationCandidates.map(({ operation, canRemove }) => {
+                  const reason = canRemove
+                    ? undefined : t('featureTree.contextMenu.removeWouldInvalidateTooltip')
+                  return (
+                    <button
+                      key={operation.id}
+                      className={menuItemClass(reason)}
+                      type="button"
+                      disabled={!canRemove}
+                      title={reason}
+                      onClick={() => actions.removeFromOperation([...ids], operation.id)}
+                    >
+                      <MenuItemText reason={reason}>{operation.name}</MenuItemText>
+                    </button>
+                  )
+                })}
               </div>
             ) : null}
           </div>
           <div className="feature-context-menu__separator" />
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(editSketchReason)}
             type="button"
             onClick={() => actions.editSketch(menuFeature.id)}
             disabled={menuFeatureIsCanned}
-            title={menuFeatureIsCanned ? t('sketch.canned.editSketchRefused') : undefined}
+            title={editSketchReason}
           >
-            {t('featureTree.contextMenu.editSketch')}
+            <MenuItemText reason={editSketchReason}>{t('featureTree.contextMenu.editSketch')}</MenuItemText>
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(constraintReason)}
             type="button"
             onClick={() => actions.constraint(menuFeature.id)}
             disabled={menuHasMultipleSelection || menuHasLockedSelection || menuFeatureIsCanned}
-            title={menuFeatureIsCanned ? cannedRefusal : undefined}
+            title={constraintReason}
           >
-            {t('featureTree.contextMenu.addConstraint')}
+            <MenuItemText reason={constraintReason}>{t('featureTree.contextMenu.addConstraint')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button className="feature-context-menu__item" type="button" onClick={() => actions.copyFeature(menuFeature.id)}>
             {menuSelectionIsGroup ? t('featureTree.contextMenu.copyGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.copySelected') : t('featureTree.contextMenu.copy')}
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(moveReason)}
             type="button"
             onClick={() => actions.moveFeature(menuFeature.id)}
             disabled={menuHasLockedSelection}
-            title={menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined}
+            title={moveReason}
           >
-            {menuSelectionIsGroup ? t('featureTree.contextMenu.moveGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.moveSelected') : t('featureTree.contextMenu.move')}
+            <MenuItemText reason={moveReason}>
+              {menuSelectionIsGroup ? t('featureTree.contextMenu.moveGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.moveSelected') : t('featureTree.contextMenu.move')}
+            </MenuItemText>
           </button>
           <button
             className="feature-context-menu__item"
@@ -419,13 +492,13 @@ export function FeatureContextMenu({
           </button>
           <div className="feature-context-menu__separator" />
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(offsetReason)}
             type="button"
             onClick={() => actions.offsetFeatures()}
             disabled={menuHasLockedSelection || menuHasCannedSelection}
-            title={menuHasCannedSelection ? cannedRefusal : undefined}
+            title={offsetReason}
           >
-            {t('featureTree.contextMenu.offset')}
+            <MenuItemText reason={offsetReason}>{t('featureTree.contextMenu.offset')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           {!menuSelectionInGroupedFolder ? (
@@ -436,12 +509,12 @@ export function FeatureContextMenu({
                 onMouseLeave={tabletShell || menuSelectionSectionsMixed ? undefined : onCloseAddToFolderSubmenu}
               >
                 <button
-                  className="feature-context-menu__item feature-context-menu__item--submenu"
+                  className={menuItemClass(addToFolderReason, 'feature-context-menu__item--submenu')}
                   type="button"
                   aria-haspopup="menu"
                   aria-expanded={addToFolderSubmenu !== null}
                   disabled={menuSelectionSectionsMixed}
-                  title={menuSelectionSectionsMixed ? t('featureTree.contextMenu.addToFolderMixedTooltip') : undefined}
+                  title={addToFolderReason}
                   onClick={(event) => {
                     if (menuSelectionSectionsMixed) {
                       return
@@ -453,7 +526,12 @@ export function FeatureContextMenu({
                     }
                   }}
                 >
-                  <span>{t('featureTree.contextMenu.addToFolder')}</span>
+                  <span className="feature-context-menu__item-text">
+                    <span>{t('featureTree.contextMenu.addToFolder')}</span>
+                    {addToFolderReason
+                      ? <span className="feature-context-menu__item-reason">{addToFolderReason}</span>
+                      : null}
+                  </span>
                   <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
                 </button>
                 {addToFolderSubmenu ? (
@@ -487,68 +565,54 @@ export function FeatureContextMenu({
             </>
           ) : null}
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(groupReason)}
             type="button"
             onClick={() => actions.groupFeatures()}
             disabled={!menuHasMultipleSelection || menuSelectionSectionsMixed}
-            title={
-              !menuHasMultipleSelection
-                ? t('featureTree.contextMenu.groupDisabledTooltip')
-                : menuSelectionSectionsMixed
-                  ? t('featureTree.contextMenu.sectionsMixedTooltip')
-                  : undefined
-            }
+            title={groupReason}
           >
-            {t('featureTree.contextMenu.group')}
+            <MenuItemText reason={groupReason}>{t('featureTree.contextMenu.group')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(joinReason)}
             type="button"
             onClick={() => actions.joinFeatures()}
             disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection}
-            title={menuHasCannedSelection
-              ? cannedRefusal
-              : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined}
+            title={joinReason}
           >
-            {t('featureTree.contextMenu.join')}
+            <MenuItemText reason={joinReason}>{t('featureTree.contextMenu.join')}</MenuItemText>
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(cutReason)}
             type="button"
             onClick={() => actions.cutFeatures()}
             disabled={menuHasLockedSelection || menuHasCannedSelection}
-            title={menuHasCannedSelection ? cannedRefusal : undefined}
+            title={cutReason}
           >
-            {t('featureTree.contextMenu.cut')}
+            <MenuItemText reason={cutReason}>{t('featureTree.contextMenu.cut')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(useAsStockReason)}
             type="button"
             onClick={() => actions.useAsStock(primaryId)}
             disabled={!menuCanUseAsStock}
-            title={!menuCanUseAsStock ? t('featureTree.contextMenu.useAsStockDisabledTooltip') : undefined}
+            title={useAsStockReason}
           >
-            {t('featureTree.contextMenu.useAsStock')}
+            <MenuItemText reason={useAsStockReason}>{t('featureTree.contextMenu.useAsStock')}</MenuItemText>
           </button>
           {bothFaces && !selectionOnAround ? (
             <>
               <div className="feature-context-menu__separator" />
               <button
-                className="feature-context-menu__item"
+                className={menuItemClass(changeFaceReason)}
                 type="button"
                 onClick={() => actions.changeAuthoringFace([...ids])}
                 disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace}
-                title={
-                  menuHasLockedSelection
-                    ? t('featureTree.contextMenu.lockedTooltip')
-                    : faceBusy
-                      ? t('featureTree.face.changeBusy')
-                      : selectionCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
-                }
+                title={changeFaceReason}
               >
-                {t('featureTree.face.changeAuthoringFace')}
+                <MenuItemText reason={changeFaceReason}>{t('featureTree.face.changeAuthoringFace')}</MenuItemText>
               </button>
             </>
           ) : null}
