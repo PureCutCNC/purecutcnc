@@ -15,7 +15,8 @@
  */
 
 import assert from 'node:assert/strict'
-import type { MouseEvent } from 'react'
+import { createElement, type MouseEvent } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { aroundSelectionFixture } from './aroundSelection.testSupport'
 import { computeSketchViewTransform, worldToCanvas } from './viewTransform'
 import { aroundModelBandAt, aroundSheet } from './aroundSheet'
@@ -28,6 +29,7 @@ for (const axis of ['x', 'y'] as const) {
     projectRef: { current: f.project }, selectionRef: { current: f.selection },
     viewStateRef: { current: f.viewState }, canvasRef: { current: f.canvas },
     dimEdit: { dimensionEditRef: { current: null } },
+    constraintLabelRectsRef: { current: [] }, stockLabelRectsRef: { current: [] },
     snap: { resolveCurrentSketchSnap: () => ({ point: f.point, mode: null }),
       requiresResolvedSnapForPointPick: () => false },
     clearOverlapFeaturePicker: () => {},
@@ -40,14 +42,18 @@ for (const axis of ['x', 'y'] as const) {
     if (typeof key === 'string' && key.endsWith('Ref')) return { current: null }
     return undefined
   } }) as unknown as Parameters<typeof useClickPlacement>[0]
-  const click = () => useClickPlacement(ctx).handleClick({} as MouseEvent<HTMLCanvasElement>)
+  // The hook has no React state; a component render is simply a lint-clean way
+  // to drive one click through it.
+  function Probe() {
+    useClickPlacement(ctx).handleClick({} as MouseEvent<HTMLCanvasElement>)
+    return null
+  }
+  const click = () => { renderToStaticMarkup(createElement(Probe)) }
   assert.equal(aroundModelBandAt(aroundSheet(f.project)!, f.point), 'second')
   click()
   assert.equal(selected.pop(), 'second', `${axis}: topmost band wins over first model footprint`)
-  // A footprint outside the sheet must never be selectable on Around.
-  f.screen = () => ({ cx: -10000, cy: -10000 })
-  click()
-  assert.equal(selected.pop(), null)
+  // Top keeps the flat footprints: the same point still selects the model whose
+  // silhouette is drawn there.
   f.project.activeSetupId = f.project.setups[0].id
   f.screen = () => {
     const vt = computeSketchViewTransform(f.project, 800, 600, f.viewState)

@@ -526,8 +526,9 @@ const MODEL_BAND_LABEL_PAD = 5
  * The imported models machined inside the bar, as bands on the Around sheet
  * (issue #1015 slice K). The model's geometry lives inside the bar, so it can
  * neither be drawn nor selected there; a band at its extent along the bar, one
- * circumference across, is what tells the user where it is. The band is
- * reference only — never hit-tested, snapped to, or given a context menu.
+ * circumference across, is what tells the user where it is. The band is the
+ * model's click target on the sheet (issue #1112 I) and highlights like any
+ * other hovered or selected target.
  *
  * `label` names a model for the note drawn at the top-left of the part of the
  * band that is on screen. The note is left out when it does not fit that
