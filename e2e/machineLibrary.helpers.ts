@@ -15,6 +15,7 @@
  */
 
 import type { Page } from '@playwright/test'
+import { expect } from './fixtures'
 import { seedProject } from './helpers'
 
 /**
@@ -169,4 +170,16 @@ export async function embeddedMachine(page: Page): Promise<{
       selectedMachineId: (meta.selectedMachineId as string | null) ?? null,
     }
   })
+}
+
+/** Open Project → Manage machines, from either the drawer or the tablet panel. */
+export async function openMachineManager(
+  page: Page,
+  ui: typeof import('./selectors'),
+): Promise<void> {
+  const drawerButton = ui.tree.openProjectPanelButton(page)
+  if (await drawerButton.isVisible()) await drawerButton.click()
+  await ui.tree.projectRow(page).click()
+  await ui.properties.manageMachines(page).click()
+  await expect(ui.machineManager.dialog(page)).toBeVisible()
 }

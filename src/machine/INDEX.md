@@ -22,7 +22,9 @@ is always an explicit user action. See
   A template-invalid machine is accepted and kept; export refuses it (#1119).
 - `diagnostics.ts` — structured `MachineLoadDiagnostic` reports for rescue,
   consolidation, re-keying, retained-invalid machines and unreadable library
-  envelopes, plus the `MachineLoadError` a lossy project load throws (#1119).
+  envelopes, plus the `MachineLoadError` a lossy project load throws and
+  `machineLoadWarning` (every report, including rescue/consolidation info, so
+  the one-time load alert names what moved — #1119).
 - `storage.ts` — versioned local-storage codec for My Machines. A
   template-invalid record is kept, a duplicate or bundled-ID record is re-keyed
   rather than dropped, and an unreadable envelope is reported and marks the

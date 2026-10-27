@@ -218,6 +218,8 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.emitCoolant': 'Kühlmittelbefehle ausgeben',
   'dialogs.export.errors': 'Fehler',
   'dialogs.export.warnings': 'Warnungen',
+  'dialogs.export.machineDiagnostics': 'Probleme mit dem Maschinen-Template',
+  'dialogs.export.machineDiagnosticsHint': 'Die Maschine kann nicht exportiert werden, bis jede Zeile unten korrigiert ist.',
   'dialogs.export.preview': 'Vorschau (erste 30 Zeilen)',
   'dialogs.export.previewPlaceholder': 'Wählen Sie in den Projekteinstellungen eine Maschine, um eine G-Code-Vorschau zu erzeugen.',
   'dialogs.export.previewTruncated': '…',
@@ -403,6 +405,8 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.variablesReference': 'Variablen-Referenz',
   'dialogs.machineEditor.save': 'Speichern',
   'dialogs.machineEditor.invalidJson': 'Ungültige JSON-Syntax',
+  'dialogs.machineEditor.diagnosticsTitle': 'Probleme mit dem Maschinen-Template',
+  'dialogs.machineEditor.diagnosticsHint': 'Korrigieren Sie jede Zeile unten, bevor diese Maschine exportiert werden kann. Die Zeilennummern zählen ab dem Anfang jedes Templates.',
   'dialogs.machineEditor.opensbpNote': 'Diese Maschine exportiert ShopBot-Teiledateien. PureCutCNC schreibt das gesamte Programm, daher gibt es hier keine G-Code-Befehle oder Vorlagen zu bearbeiten. Achszuordnung, Zahlenformat und Bogenunterstützung finden Sie unter „Erweitert“.',
   'dialogs.machineEditor.rotary': 'Drehachse',
   'dialogs.machineEditor.rotaryNone': 'Keine',
@@ -414,6 +418,11 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'Der X-Motor',
   'dialogs.machineEditor.rotaryWord': 'Programmwort: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Richtung umkehren',
+
+  // ── Machine template diagnostics (#1119) ──
+  'dialogs.machineDiagnostics.line': 'Zeile {line}',
+  'dialogs.machineDiagnostics.rule': 'Regel: {rule}',
+  'dialogs.machineDiagnostics.word': 'betroffenes Wort: {word}',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': 'Maschinen verwalten',
@@ -431,6 +440,12 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.importMachine': 'Maschine importieren',
   'dialogs.machineManager.exportMachine': 'Maschine exportieren',
   'dialogs.machineManager.removeMachine': 'Maschine entfernen',
+  'dialogs.machineManager.exportBlocked': 'Export gesperrt',
+  'dialogs.machineManager.diagnosticsTitle': 'Probleme mit dem Maschinen-Template',
+  'dialogs.machineManager.diagnosticsHint': 'Diese Maschine kann nicht exportiert werden, bis jede Zeile unten korrigiert ist.',
+  'dialogs.machineManager.libraryWriteBlocked': 'Die gespeicherte Maschinenbibliothek konnte nicht gelesen werden und bleibt unverändert. Änderungen an „Meine Maschinen“ können erst gespeichert werden, wenn das Problem behoben ist.',
+  'dialogs.machineManager.projectCopyBadge': 'Projektkopie',
+  'dialogs.machineManager.projectCopyInLibraryHint': 'Dies ist die in diesem Projekt gespeicherte Kopie. Bearbeiten und Speichern repariert die Projektkopie; Ihr Bibliothekseintrag bleibt unverändert.',
   'dialogs.machineManager.done': 'Fertig',
   'dialogs.machineManager.emptyCustom': 'Noch keine eigenen Maschinen. Duplizieren Sie eine integrierte Maschine oder importieren Sie eine.',
   'dialogs.machineManager.emptyDetail': 'Wählen Sie eine Maschine aus der Liste oder importieren Sie eine.',

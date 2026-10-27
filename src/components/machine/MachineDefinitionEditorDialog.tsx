@@ -25,6 +25,8 @@ import {
   validateDef,
 } from './machineDefinitionForm'
 import type { MachineFormData } from './machineDefinitionForm'
+import { machineEditorDiagnostics } from './machineEditorDiagnostics'
+import { MachineDiagnosticList } from './MachineDiagnosticList'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -92,6 +94,14 @@ export function MachineDefinitionEditorDialog({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
   }, [advancedJson, definition, form, languageTag])
+
+  // Persistent template-rule diagnostics for the content being edited, not the
+  // strict schema's first message (#1119). They update as each line is fixed
+  // and disappear exactly when the definition becomes saveable.
+  const templateDiagnostics = useMemo(
+    () => machineEditorDiagnostics(definition, form, advancedJson),
+    [advancedJson, definition, form],
+  )
 
   function handleFormChange(patch: Partial<MachineFormData>) {
     const next = { ...form, ...patch }
@@ -213,6 +223,13 @@ function renderVar(name: string, desc: string, context?: string) {
 
         <div className="dialog-body">
           <div className="dialog-section">
+            {templateDiagnostics.length > 0 ? (
+              <div className="dialog-section-group machine-editor-diagnostics">
+                <span className="dialog-section-title">{td('dialogs.machineEditor.diagnosticsTitle')}</span>
+                <p className="machine-editor-note">{td('dialogs.machineEditor.diagnosticsHint')}</p>
+                <MachineDiagnosticList diagnostics={templateDiagnostics} />
+              </div>
+            ) : null}
             <div className="dialog-section-group">
               <span className="dialog-section-title">{td('dialogs.machineEditor.general')}</span>
               <label className="machine-editor-field">
