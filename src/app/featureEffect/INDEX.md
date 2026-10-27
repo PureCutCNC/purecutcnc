@@ -21,10 +21,17 @@ and which answer may reach the tree.
   life so the per-feature cache survives edits; answers each request with its
   request id.
 - `client.ts` — `FeatureEffectClient`: debounces the tree after edits settle,
-  owns the worker lazily, and drops any result or error whose request id is not
-  the latest, so a stale answer can never overwrite a newer edit.
+  owns the worker lazily, drops any result or error whose request id is not the
+  latest, tags every result with the input snapshot it was computed from, and
+  publishes an empty result for the current snapshot when the worker fails.
 - `client.test.ts` — the ordering rules with a mocked worker and hand-driven
-  debounce timer: a burst becomes one request; a stale result/error is dropped.
+  debounce timer: a burst becomes one request; a stale result/error is dropped;
+  a result carries its snapshot; a worker failure clears the current warnings.
 - `useFeatureEffectWarnings.ts` — the React binding the feature tree calls; owns
-  the client for the tree's lifetime and returns the latest warning id set.
+  the client for the tree's lifetime and returns only a warning id set computed
+  from the current input snapshot, so moving a covering feature away hides the
+  old ⚠ while the newer analysis runs.
+- `useFeatureEffectWarnings.test.ts` — a real `linkedom` render with a fake
+  worker: a result for an earlier input is hidden immediately, and a worker
+  failure clears the warning.
 - `INDEX.md` — this file.
