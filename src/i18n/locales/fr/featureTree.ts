@@ -198,6 +198,7 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.expand': 'Développer en entités',
   'featureTree.properties.canned.note': 'L’esquisse est générée à partir des paramètres de cette forme. Développez-la en entités pour la modifier, la découper, la fusionner, la rogner ou la décaler.',
   'featureTree.properties.canned.noteBadge': 'Généré',
+  'featureTree.properties.canned.modelNote': 'Ce modèle est généré à partir de ses paramètres. Les modifier reconstruit son maillage ; il ne peut pas être développé en éléments simples.',
   'featureTree.properties.canned.sketchDisabled': 'Développer en entités avant de modifier l’esquisse',
   'featureTree.properties.canned.unknown': 'Paramètres de forme d’une version plus récente',
   'featureTree.properties.makeUnique': 'Rendre unique',

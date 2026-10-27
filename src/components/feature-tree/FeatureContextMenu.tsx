@@ -24,6 +24,8 @@ import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { isCannedFeature } from '../../cannedShapes'
+import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 interface FeatureContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -111,6 +113,12 @@ export function FeatureContextMenu({
   const selectionCanChangeFace = project.features.some(
     (feature) => ids.includes(feature.id) && canChangeAuthoringFace(project, feature),
   )
+  // A generated shape owns its geometry through parameters, so join/cut/
+  // offset/constraints refuse a selection that contains one, and the menu
+  // entries stay (disabled) so the reason can be read (#1112 A2).
+  const menuHasCannedSelection = resolveFeatureInstances(project, [...ids]).some(isCannedFeature)
+  const menuFeatureIsCanned = isCannedFeature(menuFeature)
+  const cannedRefusal = t('sketch.canned.actionRefused')
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -358,6 +366,8 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.editSketch(menuFeature.id)}
+            disabled={menuFeatureIsCanned}
+            title={menuFeatureIsCanned ? t('sketch.canned.editSketchRefused') : undefined}
           >
             {t('featureTree.contextMenu.editSketch')}
           </button>
@@ -365,7 +375,8 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.constraint(menuFeature.id)}
-            disabled={menuHasMultipleSelection || menuHasLockedSelection}
+            disabled={menuHasMultipleSelection || menuHasLockedSelection || menuFeatureIsCanned}
+            title={menuFeatureIsCanned ? cannedRefusal : undefined}
           >
             {t('featureTree.contextMenu.addConstraint')}
           </button>
@@ -411,7 +422,8 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.offsetFeatures()}
-            disabled={menuHasLockedSelection}
+            disabled={menuHasLockedSelection || menuHasCannedSelection}
+            title={menuHasCannedSelection ? cannedRefusal : undefined}
           >
             {t('featureTree.contextMenu.offset')}
           </button>
@@ -494,8 +506,10 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.joinFeatures()}
-            disabled={!menuHasMultipleSelection || menuHasLockedSelection}
-            title={!menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined}
+            disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection}
+            title={menuHasCannedSelection
+              ? cannedRefusal
+              : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined}
           >
             {t('featureTree.contextMenu.join')}
           </button>
@@ -503,7 +517,8 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.cutFeatures()}
-            disabled={menuHasLockedSelection}
+            disabled={menuHasLockedSelection || menuHasCannedSelection}
+            title={menuHasCannedSelection ? cannedRefusal : undefined}
           >
             {t('featureTree.contextMenu.cut')}
           </button>

@@ -21,6 +21,9 @@ import { useProjectStore } from '../store/projectStore'
 import type { ProjectStore } from '../store/types'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import { commonSectionOfIds } from '../store/helpers/featureRoles'
+import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
+import { isCannedFeature } from '../cannedShapes'
+import { useNoticeStore } from '../store/noticeStore'
 import { loadBundledToolLibrary } from '../toolLibrary'
 
 type CenterTab = 'sketch' | 'preview3d' | 'simulation'
@@ -168,12 +171,24 @@ export function createFeatureTreeActions({
       closeTreeContextMenu()
     },
     editSketch: (featureId: string) => {
+      // A generated shape's parameters own its geometry, so the entry states
+      // the way out instead of silently doing nothing (#1112 A2).
+      if (isCannedFeature(resolveFeatureInstance(project, featureId))) {
+        useNoticeStore.getState().showNotice('sketch.canned.editSketchRefused')
+        closeTreeContextMenu()
+        return
+      }
       selectFeature(featureId)
       enterSketchEdit(featureId)
       setCenterTab('sketch')
       closeTreeContextMenu()
     },
     constraint: (featureId: string) => {
+      if (isCannedFeature(resolveFeatureInstance(project, featureId))) {
+        useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+        closeTreeContextMenu()
+        return
+      }
       selectFeature(featureId)
       enterSketchEdit(featureId)
       beginConstraint(featureId)

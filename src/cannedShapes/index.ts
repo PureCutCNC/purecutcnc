@@ -43,10 +43,23 @@ import {
 } from '../types/project'
 import { transformProfile } from '../geometry/profile'
 import { getCannedShapeGenerator } from './registry'
-import type { CannedShapeOutline, CannedShapeSummary } from './types'
+import { cachedCannedShapeOutlines } from './cache'
+import type {
+  CannedShapeCapabilities,
+  CannedShapeMesh,
+  CannedShapeOutline,
+  CannedShapeSummary,
+} from './types'
 
-export type { CannedShapeGenerator, CannedShapeOutline, CannedShapeSummary } from './types'
+export type {
+  CannedShapeCapabilities,
+  CannedShapeGenerator,
+  CannedShapeMesh,
+  CannedShapeOutline,
+  CannedShapeSummary,
+} from './types'
 export { defineCannedShape } from './types'
+export { clearCannedShapeCache } from './cache'
 export {
   getCannedShapeEditor,
   getCannedShapeGenerator,
@@ -161,7 +174,7 @@ export function resolveCannedShapeShapes(feature: CannedFeatureLike): ResolvedCa
   const params = normalizedParams(generator, canned.params)
   if (!generator || !params) return []
 
-  const outlines = generator.generate(params)
+  const outlines = cachedCannedShapeOutlines(generator, params)
   if (outlines.length === 0) return []
 
   const depths = nestingDepths(outlines)
@@ -197,6 +210,34 @@ export function cannedShapeLabelKey(canned: CannedShapeData | null | undefined):
   return getCannedShapeGenerator(canned.kind)?.labelKey ?? null
 }
 
+/** What a kind can do beyond being drawn. Unknown kinds keep the defaults. */
+export function cannedShapeCapabilities(
+  canned: CannedShapeData | null | undefined,
+): CannedShapeCapabilities {
+  if (!canned) return { expandable: true }
+  const capabilities = getCannedShapeGenerator(canned.kind)?.capabilities
+  return { expandable: capabilities?.expandable ?? true }
+}
+
+/** True when Properties may offer "Expand to features" for this kind. */
+export function cannedShapeIsExpandable(canned: CannedShapeData | null | undefined): boolean {
+  return cannedShapeCapabilities(canned).expandable
+}
+
+/**
+ * Build a canned model's mesh from its current parameters. `null` for a sketch
+ * kind, an unregistered kind, a parameter set the generator refuses, or a
+ * generator that declines to build one.
+ */
+export function generateCannedShapeMesh(canned: CannedShapeData | null | undefined): CannedShapeMesh | null {
+  if (!canned) return null
+  const generator = getCannedShapeGenerator(canned.kind)
+  if (!generator?.generateMesh) return null
+  const params = normalizedParams(generator, canned.params)
+  if (!params) return null
+  return generator.generateMesh(params)
+}
+
 /**
  * Convert stored parameters when the project's units change. A generator that
  * stores lengths must supply `convertParams`; without it the parameters are
@@ -225,7 +266,7 @@ export function cannedShapeFrame(canned: CannedShapeData | null | undefined): Sk
   const generator = getCannedShapeGenerator(canned.kind)
   const params = normalizedParams(generator, canned.params)
   if (!generator || !params) return null
-  const outlines = generator.generate(params)
+  const outlines = cachedCannedShapeOutlines(generator, params)
   if (outlines.length === 0) return null
 
   let bounds = getProfileBounds(outlines[0].profile)

@@ -37,6 +37,7 @@ import type { ProjectStore } from './types'
 import { instantiateProjectTemplate } from './helpers/normalize'
 import { selectionQualifiesForImmediateJoin } from './helpers/shapeActionEligibility'
 import { registerTestCannedShapes, testPlateCanned } from '../test/cannedShapeFixture'
+import { nextPlacementSession } from './helpers/ids'
 
 registerTestCannedShapes()
 
@@ -188,6 +189,102 @@ test('Trim is refused with a reason', () => {
   assert(hints.length > 0, 'a reason is returned')
   assert(hints.some((hint) => hint.includes('expand to features first')), `reason names the way out: ${hints[0]}`)
   assertEqual(useProjectStore.getState().project, before, 'project untouched')
+})
+
+test('interactive Offset refuses a canned selection', () => {
+  seed()
+  select(['plain', 'canned'])
+  useProjectStore.getState().startOffsetSelectedFeatures()
+  assertEqual(useProjectStore.getState().pendingOffset, null, 'no offset workflow opens')
+})
+
+test('interactive Cut refuses a canned selection', () => {
+  seed()
+  select(['plain', 'canned'])
+  useProjectStore.getState().startCutSelectedFeatures()
+  assertEqual(useProjectStore.getState().pendingShapeAction, null, 'no cut workflow opens')
+})
+
+test('interactive Join refuses a canned selection', () => {
+  seed()
+  select(['plain', 'canned'])
+  useProjectStore.getState().startJoinSelectedFeatures()
+  assertEqual(useProjectStore.getState().pendingShapeAction, null, 'no join workflow opens')
+})
+
+test('a canned shape cannot be picked as a cut cutter', () => {
+  seed()
+  select([])
+  useProjectStore.getState().startCutSelectedFeatures()
+  const pending = useProjectStore.getState().pendingShapeAction
+  assert(pending?.kind === 'cut' && pending.phase === 'cutters', 'the cut workflow opens on cutter selection')
+
+  useProjectStore.getState().selectFeature('canned', true)
+  const after = useProjectStore.getState().pendingShapeAction
+  assert(after?.kind === 'cut', 'the cut workflow is still open')
+  assertEqual(after.cutterIds, [], 'the canned shape is not added as a cutter')
+  assertEqual(useProjectStore.getState().selection.selectedFeatureIds, [], 'selection is unchanged')
+})
+
+test('a canned shape cannot be picked into a join group', () => {
+  seed()
+  useProjectStore.setState({
+    pendingShapeAction: {
+      kind: 'join',
+      entityIds: [],
+      keepOriginals: false,
+      session: nextPlacementSession(),
+    },
+  })
+  useProjectStore.getState().selectFeature('canned', true)
+  const pending = useProjectStore.getState().pendingShapeAction
+  assert(pending?.kind === 'join', 'the join workflow is still open')
+  assertEqual(pending.entityIds, [], 'the canned shape is not added to the group')
+})
+
+test('a stale Offset completion cannot freeze a canned shape', () => {
+  seed()
+  const before = useProjectStore.getState().project
+  const pending = { entityIds: ['canned'], session: nextPlacementSession() }
+  useProjectStore.setState({ pendingOffset: pending })
+  const created = useProjectStore.getState().completePendingOffset(2)
+  assertEqual(created, [], 'no derived rows')
+  assertEqual(useProjectStore.getState().project, before, 'project untouched')
+  assertEqual(useProjectStore.getState().pendingOffset, pending, 'the pending request is left for the user')
+})
+
+test('a stale Cut completion cannot cut with a canned cutter', () => {
+  seed()
+  const before = useProjectStore.getState().project
+  const pending = {
+    kind: 'cut' as const,
+    cutterIds: ['canned'],
+    targetIds: ['plain'],
+    phase: 'targets' as const,
+    keepOriginals: false,
+    session: nextPlacementSession(),
+  }
+  useProjectStore.setState({ pendingShapeAction: pending })
+  const created = useProjectStore.getState().completePendingShapeAction()
+  assertEqual(created, [], 'no derived rows')
+  assertEqual(useProjectStore.getState().project, before, 'project untouched')
+  assertEqual(useProjectStore.getState().pendingShapeAction, pending, 'the pending request is left for the user')
+})
+
+test('a stale Join completion cannot union a canned shape', () => {
+  seed()
+  const before = useProjectStore.getState().project
+  const pending = {
+    kind: 'join' as const,
+    entityIds: ['plain', 'canned'],
+    keepOriginals: false,
+    session: nextPlacementSession(),
+  }
+  useProjectStore.setState({ pendingShapeAction: pending })
+  const created = useProjectStore.getState().completePendingShapeAction()
+  assertEqual(created, [], 'no derived rows')
+  assertEqual(useProjectStore.getState().project, before, 'project untouched')
+  assertEqual(useProjectStore.getState().pendingShapeAction, pending, 'the pending request is left for the user')
 })
 
 test('the immediate-join shortcut does not run on a canned shape', () => {
