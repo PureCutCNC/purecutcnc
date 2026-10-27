@@ -34,6 +34,9 @@
  * 5. **Edit and Expand** work through the ordinary feature paths: a parameter
  *    change regenerates the lines and the Z span, and Expand gives the plain
  *    lines back.
+ * 6. **Every target path reaches the same depth rule** (FG3): Add, Use current
+ *    selection and Add to operation all read the canned depth, the deepest
+ *    wins when patterns differ, and a mixed target keeps its own depth.
  *
  * Mutations checked one at a time:
  * - start measured from the minimum end on Y → the Y equivalence and chuck-end
@@ -44,6 +47,8 @@
  * - stored parameters dropped → the round-trip geometry differs;
  * - a Follow line taking today's 1 mm default instead of the feature's depth →
  *   the move/G-code parity and the operation-depth assertions fail;
+ * - `updateOperation` applying a target change without the depth rule → the
+ *   retarget and Add-to-operation assertions fail;
  * - `twist` sign or `hand` ignored → the geometry and toolpath comparisons
  *   fail;
  * - Expand emitting one piece per feature instead of per outline → the
@@ -77,6 +82,7 @@ import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
 import { normalizeToolForProject, resolveDimensionRef } from '../engine/toolpaths/geometry'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
+import { createCamPlan } from '../engine/operations/camPlan'
 import { buildRotaryPatternLines, rotaryPatternFrame, rotarySheetPoint } from '../engine/rotaryPatterns'
 import type { RotaryPatternFrame } from '../engine/rotaryPatterns'
 import { switchWorkspaceFace } from './workspaceFace'
@@ -294,6 +300,35 @@ function addOldEngrave(
 /** Pin the program date so a midnight boundary cannot flake an export compare. */
 function pinDate(gcode: string): string {
   return gcode.replace(/\b\d{4}-\d{2}-\d{2}\b/g, 'YYYY-MM-DD')
+}
+
+/** Add one plain open Line on the Around face, for the mixed-target test. */
+function addPlainLineFeature(): string {
+  const thickness = store().project.stock.thickness
+  store().addFeature({
+    id: 'plain-line',
+    name: 'Plain Line',
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: {
+        start: { x: 0, y: 0 },
+        segments: [{ type: 'line', to: { x: 10, y: 0 } }],
+        closed: false,
+      },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'line',
+    z_top: thickness,
+    z_bottom: thickness - 1,
+    authoringFace: 'around',
+    visible: true,
+    locked: false,
+  })
+  return 'plain-line'
 }
 
 /** Compute a toolpath and post it through the real postprocessor. */
@@ -584,6 +619,118 @@ test('a Follow line on the canned feature cuts the old folder operation, moves a
     assert.deepEqual(newResult.moves, oldResult.moves, `${testCase.label}: identical toolpath moves`)
     assert.equal(newResult.gcode, oldResult.gcode, `${testCase.label}: identical posted G-code (date pinned)`)
   }
+})
+
+// ── the Follow line depth rule on every target path (FG3) ────
+//
+// Decision 3 (#1112): a Follow line whose every target is a canned Thread or
+// Flutes cuts at the pattern's stored depth, and the deepest one when they
+// differ. The rule lives in the store, so a target set through Add, Use
+// current selection or Add to operation reaches the same code. The mutation
+// that must fail: `updateOperation` applying the target without the rule.
+
+test('select-then-Add puts the canned Thread depth on a new Follow line', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the Follow line exists')
+  assert.equal(operation.carveDepth, 1.2, 'the new operation cuts the pattern depth')
+  assert.equal(operation.maxCarveDepth, 1.2, 'and stores it as its maximum')
+})
+
+test('Use current selection retargets an existing 1 mm Follow line to the Thread depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const plainLineId = addPlainLineFeature()
+  // The CAMPanel handler calls exactly this: updateOperation(id, { target }).
+  const run = addEngrave(store().project, [plainLineId])
+  const before = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(before, 'the Follow line exists')
+  assert.equal(before.carveDepth, 1, 'a plain Line keeps the default depth')
+
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  store().updateOperation(run.operationId, { target: followLineTarget([created.featureId]) })
+
+  const after = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(after, 'the operation still exists')
+  assert.equal(after.carveDepth, 1.2, 'retargeting reads the Thread depth')
+  assert.equal(after.maxCarveDepth, 1.2, 'and its maximum')
+})
+
+test('right-click Add to operation re-reads the deepest canned depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const shallow = store().addRotaryPattern({ kind: 'thread', start: 25, length: 30, pitch: 2, depth: 0.5 })
+  assert.ok(shallow.ok, 'the shallow thread is created')
+  if (!shallow.ok) return
+  const run = addEngrave(store().project, [shallow.featureId])
+  const deep = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(deep.ok, 'the deep thread is created')
+  if (!deep.ok) return
+
+  // The context menu merges the row into the existing target, then calls
+  // updateOperation with the combined set (useFeatureTreeActions).
+  store().updateOperation(run.operationId, {
+    target: followLineTarget([shallow.featureId, deep.featureId]),
+  })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 1.2, 'the deepest pattern names the one cutting depth')
+  assert.equal(operation.maxCarveDepth, 1.2, 'and its maximum')
+})
+
+test('a target set with a plain Line keeps the operation depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  store().updateOperation(run.operationId, { carveDepth: 1, maxCarveDepth: 1 })
+  const plainLineId = addPlainLineFeature()
+
+  store().updateOperation(run.operationId, {
+    target: followLineTarget([created.featureId, plainLineId]),
+  })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 1, 'a mixed target has no pattern depth to name')
+  assert.equal(operation.maxCarveDepth, 1, 'so both stored depths stay as they were')
+})
+
+test('reapplying the same target does not reset a manual depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  store().updateOperation(run.operationId, { carveDepth: 0.9, maxCarveDepth: 0.9 })
+
+  store().updateOperation(run.operationId, { target: followLineTarget([created.featureId]) })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 0.9, 'an unchanged target is not a target change')
+  assert.equal(operation.maxCarveDepth, 0.9, 'so the manual depth survives')
+})
+
+test('CAM Plan never creates a Follow line, so it has no depth path to bypass', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+
+  // A canned pattern is a `line` feature, and the planner reports line
+  // engraving as out of scope instead of proposing an operation. If CAM Plan
+  // ever starts proposing Follow line, this assertion fails: the planner must
+  // then route its target through withCannedPatternTargetDepth in the store.
+  const plan = createCamPlan(store().project, [])
+  assert.equal(
+    plan.operations.some((draft) => draft.operation.kind === 'follow_line'),
+    false,
+    'CAM Plan does not propose Follow line',
+  )
 })
 
 // ── round trip, edit and expand ──────────────────────────────
