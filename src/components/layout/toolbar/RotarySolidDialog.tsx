@@ -34,9 +34,10 @@
  * (the Properties "Edit turn…/Edit polygon…" button) calls
  * `openRotarySolidEdit`. One host, mounted once by AppShell, renders it, so the
  * drawer closing on hover cannot unmount an open dialog and the expanded
- * Properties modal cannot mount a second one. The host closes a create dialog
- * as soon as Around stops being the available, active face, or the bar, units
- * or document behind it change.
+ * Properties modal cannot mount a second one. A create dialog closes as soon as
+ * Around stops being the available, active face. Any dialog, create or Edit,
+ * closes when the bar, units, document or face behind it change — one context
+ * key shared with Thread/Flutes (`rotaryDialogContext.ts`).
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
@@ -47,8 +48,6 @@ import type {
   RotarySolidRefusal,
 } from '../../../store/helpers/rotarySolids'
 import { rotarySolidCannedData, rotarySolidInputProblem } from '../../../store/helpers/rotarySolids'
-import { getStockBounds } from '../../../types/project'
-import { isBarStock } from '../../../types/barStock'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -68,6 +67,7 @@ import {
   subscribeDialogRequest,
   type RotarySolidKind,
 } from './rotarySolidDialogState'
+import { rotaryDialogContextKey } from './rotaryDialogContext'
 
 export type { RotarySolidKind } from './rotarySolidDialogState'
 
@@ -111,21 +111,6 @@ function tidy(value: number): string {
   return Number.isFinite(value) ? String(value) : ''
 }
 
-/** Everything one create request is measured against, as one string. */
-function solidContextKey(project: ReturnType<typeof useProjectStore.getState>['project'], projectKey: number): string {
-  const stock = project.stock
-  const bounds = getStockBounds(stock)
-  return [
-    `document:${projectKey}`,
-    `units:${project.meta.units}`,
-    `shape:${stock.shape ?? 'block'}`,
-    `axis:${isBarStock(stock) ? stock.axis : '-'}`,
-    `thickness:${stock.thickness}`,
-    `box:${bounds.minX},${bounds.maxX},${bounds.minY},${bounds.maxY}`,
-    `setup:${project.activeSetupId}`,
-  ].join('|')
-}
-
 // ---------------------------------------------------------------------------
 // The dialog host (creation drawer + Properties editor)
 // ---------------------------------------------------------------------------
@@ -141,7 +126,7 @@ export function RotarySolidDialogHost() {
   const projectKey = useProjectStore((state) => state.projectKey)
   const face = activeFace(project)
   const available = aroundUnavailableReason(project) === null
-  const context = solidContextKey(project, projectKey)
+  const context = rotaryDialogContextKey(project, projectKey)
   const lastContext = useRef(context)
 
   useEffect(() => {
@@ -150,12 +135,14 @@ export function RotarySolidDialogHost() {
     }
   }, [request, face, available])
 
-  // A create form belongs to the bar, units and document it was opened
-  // against; a change to any of them drops it instead of reopening with stale
-  // numbers. An edit form reads its values from the stored parameters, so it
-  // is not tied to the live bar.
+  // A form is opened against one physical context: the bar, the units, the
+  // machine origin and the document. A change to any of them drops it, for
+  // creation and for Edit, instead of leaving numbers measured against a bar
+  // that is no longer there. Filling a create dialog is a face workflow, so it
+  // closes when Around stops being the available, active face; an Edit form is
+  // reached from Properties on any face, so it is only tied to the context key.
   useEffect(() => {
-    if (request && !request.featureId && lastContext.current !== context) {
+    if (request && lastContext.current !== context) {
       closeRotarySolidDialog()
     }
     lastContext.current = context
