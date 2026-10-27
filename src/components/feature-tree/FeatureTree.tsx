@@ -475,6 +475,18 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   }
 
   /**
+   * Whether a feature row belongs in `face`'s layer. A canned model is not
+   * bound to the face it was authored on: it belongs to the face being worked
+   * on, and to that face only. Testing the authoring face as well would list
+   * one model twice — once under Top, once under Around (issue #1112).
+   */
+  function belongsToFace(feature: (typeof features)[number], face: SetupFace): boolean {
+    return isCannedModelFeature(project, feature)
+      ? face === workspaceFace
+      : feature.authoringFace === face
+  }
+
+  /**
    * The machining features and folders under "Features". `face` null lists
    * them all (a Top-only project); a face lists only that face's, under its
    * layer row. Rows keep the section's own depth either way: the layer row is
@@ -485,8 +497,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return rootEntries.map((entry, rootIdx) => {
               if (entry.type === 'feature') {
                 const entryFeature = features.find((item) => item.id === entry.featureId)
-                if (face !== null && (!entryFeature || (entryFeature.authoringFace !== face
-                  && !(isCannedModelFeature(project, entryFeature) && face === workspaceFace)))) return null
+                if (face !== null && (!entryFeature || !belongsToFace(entryFeature, face))) return null
                 return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
               }
 
@@ -500,8 +511,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               // belongs to the layer being worked on.
               const folderFeatures = face === null
                 ? allFolderFeatures
-                : allFolderFeatures.filter((feature) => feature.authoringFace === face
-                  || (isCannedModelFeature(project, feature) && face === workspaceFace))
+                : allFolderFeatures.filter((feature) => belongsToFace(feature, face))
               if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
                 return null
               }
@@ -682,8 +692,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
             )}
             {bothFaces
               ? faceLayers.map((face) => {
-                  const count = machiningFeatures.filter((feature) => feature.authoringFace === face
-                    || (isCannedModelFeature(project, feature) && face === workspaceFace)).length
+                  const count = machiningFeatures.filter((feature) => belongsToFace(feature, face)).length
                   const active = face === workspaceFace
                   const entries = renderMachiningEntries(face)
                   // A face with nothing on it says so, once it is the face

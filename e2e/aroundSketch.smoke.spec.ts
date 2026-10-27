@@ -521,6 +521,29 @@ async function openRotaryEntry(page: Page, ui: Ui, kind: 'thread' | 'flutes'): P
   await button.click()
 }
 
+/**
+ * Expand the Properties "Shape" section. It starts collapsed on a fresh page,
+ * and a feature's summary and its generic "Edit <shape>…" button live inside
+ * it — in the docked panel and in the expanded dialog alike.
+ */
+async function openPropertiesShape(page: Page): Promise<void> {
+  const header = page.locator('.panel-properties').getByRole('button', { name: 'Shape', exact: true })
+  if ((await header.getAttribute('aria-expanded')) !== 'true') {
+    await header.click()
+  }
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
+}
+
+/**
+ * Open a Turn/Polygon dialog from the creation drawer. The drawer is dismissed
+ * by any pointerdown outside it, so an entry clicked after interacting with a
+ * dialog (or after Cancel) needs the drawer opened again.
+ */
+async function openRotarySolidEntry(page: Page, ui: Ui, kind: 'turn' | 'polygon'): Promise<void> {
+  await openCreationDrawer(page)
+  await (kind === 'turn' ? ui.rotarySolid.turnButton(page) : ui.rotarySolid.polygonButton(page)).click()
+}
+
 test('Thread and Flutes are offered only on an available, active Around face', async ({ app, ui }) => {
   const { page } = app
   // A milling block has no Around face at all.
@@ -646,6 +669,7 @@ test('Edit thread… reopens the dialog with its parameters and applies new ones
 
   // The selected canned feature shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.
+  await openPropertiesShape(page)
   await page.getByRole('button', { name: /^Edit thread/ }).click()
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('.dialog-title')).toContainText('Edit thread')
@@ -1592,6 +1616,7 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   const dialog = ui.rotarySolid.dialog(page)
 
   // Properties shows the model's parameters on its summary line.
+  await openPropertiesShape(page)
   const summary = page.getByTestId('canned-shape-summary')
   await expect(summary).toContainText('Polygon')
   await expect(summary).toContainText('start 10')
@@ -1647,7 +1672,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // Leaving Around unmounts the entry and the dialog; coming back must not
   // resurrect a form whose numbers were typed on the same bar but a different
   // face of the workflow.
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'length').fill('9')
   await switchToTop(page)
@@ -1665,7 +1690,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // The old numbers were millimetres; after the conversion the same text would
   // be inches, so the form must open again with the converted default instead.
   await openCreationDrawer(page)
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('7')
   await convertUnits(page, 'inch')
   const afterUnits = await solidSnapshot(page)
@@ -1679,7 +1704,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   expect(afterUnits.folderCount).toBe(baseline.folderCount)
   const inchBar = await liveBar(page)
   expect(inchBar.units).toBe('inch')
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(inchBar.length))
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('7')
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(inchBar.thickness * 0.75))
@@ -1690,7 +1715,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // A load increments the store's document session even when the new file has
   // the same bar, so the request belongs to the replaced project, not this one.
   const replaced = await getProject(page)
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('2')
   await seedProject(page, JSON.stringify({
     ...replaced,
@@ -1709,14 +1734,14 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await switchToAround(page)
   await openCreationDrawer(page)
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(inchBar.length))
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('2')
   await ui.rotarySolid.cancelButton(page).click()
 
   // ── bar axis and diameter ──
   await convertUnits(page, 'mm')
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('5')
   await editRoundBar(page, { axis: 'y' })
   const afterAxis = await solidSnapshot(page)
@@ -1727,7 +1752,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     operationCount: afterAxis.operationCount,
     historyPast: afterAxis.historyPast,
   })
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   const reaimed = await liveBar(page)
   expect(reaimed.axis).toBe('y')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(reaimed.length))
@@ -1735,7 +1760,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await ui.rotarySolid.cancelButton(page).click()
   await editRoundBar(page, { axis: 'x' })
 
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('5')
   await editRoundBar(page, { diameter: 30 })
   const afterDiameter = await solidSnapshot(page)
@@ -1746,7 +1771,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     operationCount: afterDiameter.operationCount,
     historyPast: afterDiameter.historyPast,
   })
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   const resizedBar = await liveBar(page)
   expect(resizedBar.thickness).toBeCloseTo(30, 6)
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(resizedBar.thickness * 0.75))
@@ -1756,7 +1781,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // ── bar length and machine origin ──
   // The endpoints are mapped from the bar's live box and the record carries
   // the machine origin, so either one changing invalidates the request too.
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('4')
   await editRoundBar(page, { length: 100 })
   const afterLength = await solidSnapshot(page)
@@ -1767,14 +1792,14 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     operationCount: afterLength.operationCount,
     historyPast: afterLength.historyPast,
   })
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   const shortened = await liveBar(page)
   expect(shortened.length).toBeCloseTo(100, 6)
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(shortened.length))
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('4')
   await ui.rotarySolid.cancelButton(page).click()
 
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await ui.rotarySolid.field(page, 'length').fill('4')
   await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
@@ -1789,7 +1814,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     operationCount: afterOrigin.operationCount,
     historyPast: afterOrigin.historyPast,
   })
-  await ui.rotarySolid.polygonButton(page).click()
+  await openRotarySolidEntry(page, ui, 'polygon')
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('4')
   await ui.rotarySolid.cancelButton(page).click()
 
@@ -1798,7 +1823,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await switchToAround(page)
   const squareBaseline = await solidSnapshot(page)
   await openCreationDrawer(page)
-  await ui.rotarySolid.turnButton(page).click()
+  await openRotarySolidEntry(page, ui, 'turn')
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'length').fill('5')
   await editSquareSide(page, 30)
@@ -1811,7 +1836,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     historyPast: afterSide.historyPast,
   })
   expect(afterSide.folderCount).toBe(squareBaseline.folderCount)
-  await ui.rotarySolid.turnButton(page).click()
+  await openRotarySolidEntry(page, ui, 'turn')
   await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('30')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('120')
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('5')
@@ -2456,7 +2481,10 @@ test.describe('tablet Thread and Flutes', () => {
 test.describe('tablet Thread and Flutes on a short viewport', () => {
   // The Tool field is gone, so the form is shorter than C1's; this height is
   // still below it, so the body must scroll while the header and footer stay.
-  test.use({ viewport: { width: 1180, height: 480 }, hasTouch: true })
+  // It must also stay at 500 px or more: a touch viewport whose short side is
+  // under 500 is a phone as far as `isPhoneSizedTouchDevice` is concerned, and
+  // the app boots its "not supported on phones" screen with no canvas at all.
+  test.use({ viewport: { width: 1180, height: 520 }, hasTouch: true })
 
   test('both dialogs keep their actions and pickers reachable while the body scrolls', async ({ app, ui }) => {
     const { page } = app
