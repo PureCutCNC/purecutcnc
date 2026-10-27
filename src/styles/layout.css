@@ -4579,9 +4579,11 @@
   height: 12px;
 }
 
-/* Kept work the current stock cannot cut (#1112 K): a warning glyph after the
-   row name, with the reason in its tooltip. Status only, never an action. */
-.tree-uncut-badge {
+/* Warning glyphs after a row name, with the reason in the tooltip. Status
+   only, never an action: kept work the current stock cannot cut (#1112 K), and
+   a feature later features completely erase (#1112 N). */
+.tree-uncut-badge,
+.tree-no-effect-badge {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;

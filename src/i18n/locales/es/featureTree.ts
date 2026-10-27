@@ -49,6 +49,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.tree.empty.folder': 'Carpeta vacía.',
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ El primer elemento 2.5D debe ser',
   'featureTree.tree.warning.firstFeatureSuffix': '. El modelo 3D no se construirá hasta que esto se solucione.',
+  'featureTree.treeRow.warning.noEffect': 'Sin efecto en la forma final: los elementos posteriores la cubren.',
   'featureTree.treeRow.folder.expand': 'Expandir carpeta',
   'featureTree.treeRow.folder.collapse': 'Contraer carpeta',
   'featureTree.treeRow.grip.dragToReorder': 'Arrastrar para reordenar',

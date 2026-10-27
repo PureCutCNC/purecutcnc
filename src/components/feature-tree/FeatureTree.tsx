@@ -32,6 +32,8 @@ import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
 import { featureUncutWarnings } from '../cam/uncutWork'
 import { UncutWorkBadge } from '../common/UncutWorkBadge'
+import { NoEffectBadge } from '../common/NoEffectBadge'
+import { useFeatureEffectWarnings } from '../../app/featureEffect/useFeatureEffectWarnings'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -91,6 +93,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // Kept work the current stock (or an operation that reaches the centreline)
   // cannot cut, derived once per project rather than per row (issue #1112 K).
   const uncutWarnings = useMemo(() => featureUncutWarnings(project, features), [project, features])
+  // Features erased by later opposite features (issue #1112 N). Analysed off
+  // the main thread after edits settle; this is the latest snapshot, never a
+  // stale answer for an earlier edit.
+  const noEffectWarnings = useFeatureEffectWarnings(project, features)
   const { t } = useI18n()
   // Face layers, ghost rows and face chips exist only once the project uses
   // both faces; a Top-only project renders the tree it always did (#945).
@@ -387,6 +393,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
     // every action it had — nothing is hidden or removed.
     const uncutWarning = uncutWarnings.get(feature.id)
+    // Later features erase this row's contribution to the final shape
+    // (issue #1112 N). Status only: every action on the row stays as it was.
+    const noEffectWarning = noEffectWarnings.has(feature.id)
+      ? t('featureTree.treeRow.warning.noEffect')
+      : undefined
     if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
       // row menu. It cannot be selected, dragged or edited from here. A model
@@ -403,6 +414,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           ghost
           title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
           warning={uncutWarning}
+          effectWarning={noEffectWarning}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -453,6 +465,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
         warning={uncutWarning}
+        effectWarning={noEffectWarning}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -1065,6 +1078,8 @@ interface TreeRowProps {
   linkedCount?: number
   /** Kept work the current stock cannot cut; the row shows a warning marker. */
   warning?: string
+  /** Later features erase this row's contribution; the row shows a warning marker. */
+  effectWarning?: string
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -1114,6 +1129,7 @@ function TreeRow({
   subtractDisabled = false,
   linkedCount,
   warning,
+  effectWarning,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -1327,6 +1343,7 @@ function TreeRow({
           </span>
         ) : null}
         {kind === 'feature' && warning ? <UncutWorkBadge text={warning} /> : null}
+        {kind === 'feature' && effectWarning ? <NoEffectBadge text={effectWarning} /> : null}
         {chips}
       </div>
       <div className="tree-row-actions">

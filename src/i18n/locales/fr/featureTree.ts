@@ -49,6 +49,7 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.tree.empty.folder': 'Dossier vide.',
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ La première entité 2,5D doit être ',
   'featureTree.tree.warning.firstFeatureSuffix': '. Le modèle 3D ne sera pas construit avant correction.',
+  'featureTree.treeRow.warning.noEffect': 'Aucun effet sur la forme finale : les entités suivantes la recouvrent.',
   'featureTree.treeRow.folder.expand': 'Développer le dossier',
   'featureTree.treeRow.folder.collapse': 'Réduire le dossier',
   'featureTree.treeRow.grip.dragToReorder': 'Glisser pour réorganiser',
