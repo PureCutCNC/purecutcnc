@@ -2061,7 +2061,7 @@ export function profileHasSelfIntersection(profile: SketchProfile): boolean {
   return false
 }
 
-export function getStockBounds(stock: Stock): Bounds2D {
+export function getStockBounds(stock: Pick<Stock, 'profile'>): Bounds2D {
   return getProfileBounds(stock.profile)
 }
 

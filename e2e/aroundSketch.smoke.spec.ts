@@ -42,7 +42,6 @@ import {
 import { getProfileBounds, defaultTool, newProject, roundStock } from '../src/types/project'
 import type { Project, RoundStock, SketchProfile } from '../src/types/project'
 import { squareStock } from '../src/types/barStock'
-import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 
 /** The bundled GRBL controller with a fourth axis bolted on. */
 const ROTARY_MACHINE = {
@@ -1062,13 +1061,14 @@ test('the created thread wraps in the 3D overlay and removes simulation material
   ).toBeGreaterThan(0)
 })
 
-// ── C2-U2: Polygon / hex and Square to round on Around (issue #1016) ──
+// ── Turn and Polygon canned models on Around (issue #1112 G) ─────────
 //
-// The two one-shot solids. Each is driven through its own real entry and the
-// created ordinary model is read back with its persisted mesh bounds, so the
-// chuck-end start/length → absolute stock-space map is asserted physically
-// rather than from the field text. Generation is driven through the same store
-// path the preview uses: a gear that says "up to date" is not proof of motion.
+// The two entries live in the creation drawer's rotary group. Each is driven
+// through its own real entry and the created model is read back with its
+// persisted mesh bounds, so the chuck-end start/length → absolute stock-space
+// map is asserted physically rather than from the field text. Creation adds
+// one model and no folder or operation; the Properties Edit button reopens the
+// same dialog and a parameter change rebuilds the mesh.
 
 interface SolidMeshBounds {
   minX: number
@@ -1084,6 +1084,7 @@ interface SolidSnapshot {
   folderName: string | null
   featureCount: number
   operationCount: number
+  toolCount: number
   historyPast: number
   operationIds: string[]
   operationKinds: string[]
@@ -1111,6 +1112,7 @@ async function solidSnapshot(page: Page): Promise<SolidSnapshot> {
       folderName: project.featureFolders[0]?.name ?? null,
       featureCount: project.features.length,
       operationCount: project.operations.length,
+      toolCount: project.tools.length,
       historyPast: state.history.past.length,
       operationIds: project.operations.map((operation) => operation.id),
       operationKinds: project.operations.map((operation) => operation.kind),
@@ -1140,13 +1142,6 @@ async function seedTools(page: Page, tools: unknown[]): Promise<void> {
   await seedProject(page, JSON.stringify({ ...project, tools }))
 }
 
-async function operationToolRefs(page: Page): Promise<Array<string | null>> {
-  return page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
-    return useProjectStore.getState().project.operations.map((operation) => operation.toolRef)
-  })
-}
-
 /**
  * A square blank of side 25 mm and length 120 mm along X with a rotary machine
  * and one flat end mill, the real starting box of a square-to-round job.
@@ -1159,25 +1154,6 @@ async function prepareMmSquareBlankWithRotary(page: Page): Promise<{ side: numbe
     ...project,
     stock: blank,
     tools: [{ ...defaultTool('mm', 1), id: 't-flat', name: 'Flat 6', type: 'flat_endmill', diameter: 6 }],
-    meta: { ...meta, units: 'mm', projectType: 'rotary', machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
-  }))
-  return { side: blank.thickness, length: 120 }
-}
-
-/**
- * The same blank with the app's default 15 mm-grip chuck and a Ø12 cutter, so
- * the generator's kept-clear region starts at 21 mm (#1016 C2 F4).
- */
-async function prepareMmSquareBlankWithChuck(page: Page): Promise<{ side: number; length: number }> {
-  const project = await getProject(page)
-  const meta = project.meta as Record<string, unknown>
-  const blank = squareStock(25, 120, 'x')
-  const chuck = defaultRoundWorkholding('chuck', blank, 'mm')
-  await seedProject(page, JSON.stringify({
-    ...project,
-    stock: blank,
-    clamps: [{ ...chuck, id: 'chuck', name: 'Chuck', visible: true }],
-    tools: [{ ...defaultTool('mm', 1), id: 't-flat', name: 'Flat 12', type: 'flat_endmill', diameter: 12 }],
     meta: { ...meta, units: 'mm', projectType: 'rotary', machineDefinitions: [ROTARY_MACHINE], selectedMachineId: 'grbl' },
   }))
   return { side: blank.thickness, length: 120 }
@@ -1249,50 +1225,42 @@ async function activeFaceOf(page: Page): Promise<string> {
   })
 }
 
-test('the Around solids follow the bar shape, one entry at a time', async ({ app, ui }) => {
+test('the Around rotary group offers Turn and Polygon on round and square bars', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
   await switchToAround(page)
-
-  // A round bar: Polygon is offered, Square to round is not, and the round-only
-  // C1 sheet authoring stays.
-  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
-  await expect(ui.rotarySolid.squareToRoundButton(page)).toHaveCount(0)
   await openCreationDrawer(page)
-  await expect(ui.rotary.threadButton(page)).toBeVisible()
-  await expect(page.locator('.toolbar-creation-picker')).toHaveCount(1)
 
-  // Turn the bar square: the polygon entry gives way to Square to round, and
-  // the round-only authoring is absent rather than offered and refused.
+  // Both entries live in the creation drawer's rotary group, beside Thread and
+  // Flutes, on a round bar.
+  await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
+  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(page.locator('.toolbar-group--rotary')).toHaveCount(0)
+
+  // On a square blank the sheet authoring is gone, but Turn and Polygon stay:
+  // both work on a square blank (decision 13).
   await page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('/src/store/projectStore')
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().setStockShape('square')
   })
-  await expect(ui.rotarySolid.squareToRoundButton(page)).toBeVisible()
-  await expect(ui.rotarySolid.polygonButton(page)).toHaveCount(0)
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
-  await expect(page.locator('.toolbar-creation-picker')).toHaveCount(0)
-
-  // Back to round: the 2D authoring and the round-only entries return.
-  await page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('/src/store/projectStore')
-    useProjectStore.getState().setStockShape('round')
-  })
-  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
   await expect(page.locator('.toolbar-creation-picker')).toHaveCount(1)
   await openCreationDrawer(page)
-  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
+  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
+  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
 })
 
-test('a hex polygon creates an ordinary model, rough and finish in one undo step', async ({ app, ui }) => {
+test('a hex polygon creates one canned model, with no folder or operation', async ({ app, ui }) => {
   test.setTimeout(90_000)
   const { page } = app
   const bar = await prepareMmRoundBarWithRotary(page)
-  await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   // Defaults: six sides, across flats at 0.75 × the bar diameter, rotation 0.
@@ -1309,18 +1277,16 @@ test('a hex polygon creates an ordinary model, rough and finish in one undo step
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
 
   const snapshot = await solidSnapshot(page)
-  expect(snapshot.folderName).toContain('Hex')
+  expect(snapshot.folderCount).toBe(baseline.folderCount)
   expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
-  expect(snapshot.operationCount).toBe(baseline.operationCount + 2)
-  expect(snapshot.operationKinds).toEqual(['rotary_rough', 'rotary_finish'])
-  // The folder, the model and both operations are one history transition.
+  expect(snapshot.operationCount).toBe(baseline.operationCount)
+  expect(snapshot.toolCount).toBe(baseline.toolCount)
+  // The model and its mesh are one history transition.
   expect(snapshot.historyPast).toBe(baseline.historyPast + 1)
   // Two rings of six sides: the sides the user typed reached the store.
   expect(snapshot.modelVertexCounts).toEqual([12])
   expect(snapshot.modelAuthoringFaces).toEqual(['top'])
-  // Both operations target the one generated model.
-  const modelId = snapshot.modelFeatureIds[0]
-  expect(snapshot.targetFeatureIds).toEqual([[modelId], [modelId]])
+  expect(snapshot.modelFeatureIds).toHaveLength(1)
 
   // The solid is 20 long from the chuck end (minX on an X bar) and 15 across
   // flats, centred on the bar's own centreline.
@@ -1330,15 +1296,7 @@ test('a hex polygon creates an ordinary model, rough and finish in one undo step
   expect(bounds.maxZ - bounds.minZ).toBeCloseTo(15, 3)
   expect(bounds.minZ).toBeCloseTo(bar.diameter / 2 - 15 / 2, 3)
 
-  // A real generated path, not just a gear that says "up to date".
-  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
-  for (const operationId of snapshot.operationIds) {
-    const generated = await generatedOperation(page, operationId)
-    expect(generated.moveCount).toBeGreaterThan(0)
-    expect(generated.errorCount).toBe(0)
-  }
-
-  // One undo removes the whole creation; redo restores it.
+  // One undo removes the model; redo restores it.
   await undo(page)
   expect(await solidSnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
@@ -1349,17 +1307,52 @@ test('a hex polygon creates an ordinary model, rough and finish in one undo step
   await redo(page)
   const restored = await solidSnapshot(page)
   expect(restored.featureCount).toBe(baseline.featureCount + 1)
-  expect(restored.operationCount).toBe(baseline.operationCount + 2)
+  expect(restored.operationCount).toBe(baseline.operationCount)
   expect(restored.historyPast).toBe(baseline.historyPast + 1)
+})
+
+test('a canned model is selectable on every face', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+  await openCreationDrawer(page)
+  await ui.rotarySolid.polygonButton(page).click()
+  await ui.rotarySolid.field(page, 'start').fill('0')
+  await ui.rotarySolid.field(page, 'length').fill('20')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+  const modelId = (await solidSnapshot(page)).modelFeatureIds[0]!
+
+  const selectedId = async (): Promise<string | null> => page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    return useProjectStore.getState().selection.selectedFeatureId
+  })
+  const row = page.locator(`[data-feature-id="${modelId}"]`)
+
+  // Authored on Top for the persisted-model loader, but not a ghost anywhere:
+  // the row is in the current face layer and can be selected there.
+  await expect(row).toBeVisible()
+  await row.click()
+  expect(await selectedId()).toBe(modelId)
+
+  await switchToTop(page)
+  await expect(row).toBeVisible()
+  await row.click()
+  expect(await selectedId()).toBe(modelId)
+
+  await switchToAround(page)
+  await expect(row).toBeVisible()
+  await row.click()
+  expect(await selectedId()).toBe(modelId)
 })
 
 test('polygon sides, across flats and rotation change the emitted solid', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
-  await seedFluteTools(page)
   await switchToAround(page)
 
   // An octagon, 10 across flats, rotated 22.5° so a corner stands up.
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'start').fill('0')
   await ui.rotarySolid.field(page, 'length').fill('40')
@@ -1378,6 +1371,7 @@ test('polygon sides, across flats and rotation change the emitted solid', async 
 
   await undo(page)
   // The same octagon with a flat up: the up extent is the across-flats size.
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'start').fill('0')
   await ui.rotarySolid.field(page, 'length').fill('40')
@@ -1394,9 +1388,9 @@ test('polygon sides, across flats and rotation change the emitted solid', async 
 test('the polygon band is measured from the chuck end on a bar along Y', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarAxis(page, 'y')
-  await seedFluteTools(page)
   await switchToAround(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'start').fill('10')
   await ui.rotarySolid.field(page, 'length').fill('20')
@@ -1416,11 +1410,9 @@ test('the polygon band is measured from the chuck end on a bar along Y', async (
 test('an inch project measures the polygon in inches', async ({ app, ui }) => {
   const { page } = app
   await prepareInchRoundBarWithRotary(page)
-  await seedTools(page, [
-    { ...defaultTool('inch', 1), id: 't-inch-flat', name: 'Flat 0.25', type: 'flat_endmill', diameter: 0.25 },
-  ])
   await switchToAround(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   // Default across flats is 0.75 × the 0.5 in bar diameter.
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue('0.375')
@@ -1438,61 +1430,39 @@ test('an inch project measures the polygon in inches', async ({ app, ui }) => {
   expect(bounds.maxZ - bounds.minZ).toBeCloseTo(0.3, 4)
 })
 
-test('the tool picker offers only flat and ball end mills, at their physical size', async ({ app, ui }) => {
+test('the dialog has no Tool field and creation needs no tool', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
-  // An inch-authored ball cutter in an mm project: its detail must show the
-  // real 6.35 mm, never the raw 0.25.
-  await seedTools(page, [
-    { ...defaultTool('inch', 1), id: 't-inch-ball', name: 'Inch Ball', type: 'ball_endmill', diameter: 0.25 },
-    { ...defaultTool('mm', 2), id: 't-v', name: 'V-bit 60', type: 'v_bit', vBitAngle: 60, diameter: 6 },
-  ])
-  await switchToAround(page)
-
-  await ui.rotarySolid.polygonButton(page).click()
-  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await ui.rotarySolid.toolTrigger(page).click()
-  // Only the ball end mill is offered; the V-bit is not a rotary cutter.
-  await expect(ui.rotarySolid.dialog(page).getByRole('option')).toHaveCount(1)
-  await expect(ui.rotarySolid.toolOption(page, 'Inch Ball')).toBeVisible()
-  await expect(ui.rotarySolid.tool(page).locator('.ui-select__option-detail')).toHaveText('Ø6.35 mm')
-  await ui.rotarySolid.toolOption(page, 'Inch Ball').click()
-  await ui.rotarySolid.createButton(page).click()
-  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
-
-  expect(await operationToolRefs(page)).toEqual(['t-inch-ball', 't-inch-ball'])
-})
-
-test('with no flat or ball end mill the dialog explains and creates nothing', async ({ app, ui }) => {
-  const { page } = app
-  await prepareMmRoundBarWithRotary(page)
+  // Only a V-bit exists: the old flow refused, the canned model does not care.
   await seedTools(page, [
     { ...defaultTool('mm', 2), id: 't-v', name: 'V-bit 60', type: 'v_bit', vBitAngle: 60, diameter: 6 },
   ])
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await expect(ui.rotarySolid.error(page)).toContainText('no flat or ball end mill')
-  await expect(ui.rotarySolid.createButton(page)).toBeDisabled()
-  await ui.rotarySolid.cancelButton(page).click()
+  await expect(ui.rotarySolid.dialog(page).locator('.rotary-dialog__tool')).toHaveCount(0)
+  await expect(ui.rotarySolid.dialog(page).locator('.ui-select')).toHaveCount(0)
+  await ui.rotarySolid.field(page, 'start').fill('0')
+  await ui.rotarySolid.field(page, 'length').fill('20')
+  await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
-  expect(await solidSnapshot(page)).toMatchObject({
-    folderCount: baseline.folderCount,
-    featureCount: baseline.featureCount,
-    operationCount: baseline.operationCount,
-    historyPast: baseline.historyPast,
-  })
+
+  const created = await solidSnapshot(page)
+  expect(created.featureCount).toBe(baseline.featureCount + 1)
+  expect(created.operationCount).toBe(baseline.operationCount)
+  expect(created.toolCount).toBe(baseline.toolCount)
 })
 
 test('the polygon inline bounds refuse bad input and Cancel creates nothing', async ({ app, ui }) => {
   const { page } = app
   const bar = await prepareMmRoundBarWithRotary(page)
-  await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   // Across flats beyond the bar's across-corners ceiling: refused inline.
   const ceiling = bar.diameter * Math.cos(Math.PI / 6)
@@ -1528,26 +1498,27 @@ test('the polygon inline bounds refuse bad input and Cancel creates nothing', as
 test('turning the stock or leaving Around while a solid dialog is open creates nothing', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
-  await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
 
   // Round → square while the polygon form is open: the form closes with the
-  // entry it belongs to and nothing is posted.
+  // context it was measured against and nothing is posted.
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'length').fill('10')
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('/src/store/projectStore')
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().setStockShape('square')
   })
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.squareToRoundButton(page)).toBeVisible()
+  await openCreationDrawer(page)
+  await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
   const afterFlip = await solidSnapshot(page)
 
-  // Leaving Around with the square-to-round form open closes it; returning
-  // mounts a fresh, closed one and never resurrects the stale request.
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  // Leaving Around with the Turn form open closes it; returning mounts a
+  // fresh, closed one and never resurrects the stale request.
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'length').fill('10')
   await switchToTop(page)
@@ -1563,20 +1534,21 @@ test('turning the stock or leaving Around while a solid dialog is open creates n
   expect(afterFlip.featureCount).toBe(baseline.featureCount)
 })
 
-test('square to round creates the finished round target inside the real blank', async ({ app, ui }) => {
+test('Turn on a square blank creates the finished round target inside the real blank', async ({ app, ui }) => {
   const { page } = app
   const blank = await prepareMmSquareBlankWithRotary(page)
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
-  await expect(ui.rotarySolid.squareToRoundButton(page)).toBeVisible()
-  await expect(ui.rotarySolid.polygonButton(page)).toHaveCount(0)
+  await openCreationDrawer(page)
+  await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
+  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
 
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  // The finished diameter defaults to the blank side, and beyond it is refused.
+  // The diameter defaults to the blank side, and beyond it is refused.
   await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue(String(blank.side))
   await ui.rotarySolid.field(page, 'diameter').fill(String(blank.side + 1))
-  await expect(ui.rotarySolid.error(page)).toContainText('cannot exceed the blank side')
+  await expect(ui.rotarySolid.error(page)).toContainText('cannot exceed')
   await expect(ui.rotarySolid.createButton(page)).toBeDisabled()
 
   await ui.rotarySolid.field(page, 'diameter').fill('20')
@@ -1586,10 +1558,9 @@ test('square to round creates the finished round target inside the real blank', 
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
 
   const snapshot = await solidSnapshot(page)
-  expect(snapshot.folderName).toContain('Square to round')
+  expect(snapshot.folderCount).toBe(baseline.folderCount)
   expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
-  expect(snapshot.operationCount).toBe(baseline.operationCount + 2)
-  expect(snapshot.operationKinds).toEqual(['rotary_rough', 'rotary_finish'])
+  expect(snapshot.operationCount).toBe(baseline.operationCount)
   expect(snapshot.historyPast).toBe(baseline.historyPast + 1)
   const bounds = snapshot.modelBounds[0]!
   expect(bounds.minX).toBeCloseTo(10, 3)
@@ -1603,37 +1574,56 @@ test('square to round creates the finished round target inside the real blank', 
   expect((project.stock as { shape?: string; thickness: number }).thickness).toBeCloseTo(25, 6)
 })
 
-test('square to round notes the chuck clearance, follows Start, and still creates', async ({ app, ui }) => {
+test('Edit polygon… reopens the dialog and a parameter change rebuilds the mesh', async ({ app, ui }) => {
   const { page } = app
-  await prepareMmSquareBlankWithChuck(page)
+  await prepareMmRoundBarWithRotary(page)
   await switchToAround(page)
-  const baseline = await solidSnapshot(page)
-
-  await ui.rotarySolid.squareToRoundButton(page).click()
-  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await ui.rotarySolid.field(page, 'diameter').fill('20')
-  await ui.rotarySolid.field(page, 'length').fill('30')
+  await openCreationDrawer(page)
+  await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'start').fill('10')
-
-  // The default chuck holds the first 15 mm and the Ø12 cutter adds its 6 mm
-  // radius, so the generator starts at 21 mm. The note carries that number,
-  // not the chuck body alone.
-  await expect(ui.rotarySolid.chuckNote(page)).toContainText('holds the first 15 mm')
-  await expect(ui.rotarySolid.chuckNote(page)).toContainText('cutting starts at 21 mm')
-  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
-
-  // A start past the kept-clear region needs no note, and the form is still
-  // creatable: the note was informational, never a refusal.
-  await ui.rotarySolid.field(page, 'start').fill('30')
-  await expect(ui.rotarySolid.chuckNote(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
+  await ui.rotarySolid.field(page, 'length').fill('20')
+  await ui.rotarySolid.field(page, 'sides').fill('6')
+  await ui.rotarySolid.field(page, 'across-flats').fill('15')
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
 
-  const snapshot = await solidSnapshot(page)
-  expect(snapshot.featureCount).toBe(baseline.featureCount + 1)
-  expect(snapshot.operationCount).toBe(baseline.operationCount + 2)
-  expect(snapshot.historyPast).toBe(baseline.historyPast + 1)
+  const before = await solidSnapshot(page)
+  expect(before.modelVertexCounts).toEqual([12])
+  const dialog = ui.rotarySolid.dialog(page)
+
+  // Properties shows the model's parameters on its summary line.
+  const summary = page.getByTestId('canned-shape-summary')
+  await expect(summary).toContainText('Polygon')
+  await expect(summary).toContainText('start 10')
+  await expect(summary).toContainText('across flats 15')
+  await expect(summary).toContainText('rotation 0°')
+
+  // The selected canned model shows the generic Properties Edit button; it
+  // reopens the same typed dialog with the stored numbers.
+  await page.getByRole('button', { name: /^Edit polygon/ }).click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.dialog-title')).toContainText('Edit polygon')
+  await expect(ui.rotarySolid.field(page, 'start')).toHaveValue('10')
+  await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('20')
+  await expect(ui.rotarySolid.field(page, 'sides')).toHaveValue('6')
+
+  await ui.rotarySolid.field(page, 'sides').fill('8')
+  await ui.rotarySolid.field(page, 'across-flats').fill('10')
+  await ui.rotarySolid.field(page, 'rotation').fill('22.5')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(dialog).toBeHidden()
+
+  const after = await solidSnapshot(page)
+  expect(after.featureCount).toBe(before.featureCount)
+  expect(after.operationCount).toBe(before.operationCount)
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  expect(after.modelVertexCounts).toEqual([16])
+  await expect(summary).toContainText('across flats 10')
+  await expect(summary).toContainText('rotation 22.5°')
+  const bounds = after.modelBounds[0]!
+  expect(bounds.maxZ - bounds.minZ).toBeCloseTo(10 / Math.cos(Math.PI / 8), 3)
+  expect(bounds.minX).toBeCloseTo(10, 3)
+  expect(bounds.maxX).toBeCloseTo(30, 3)
 })
 
 // ── C2-U2F: review corrections (#1016) ───────────────────────────────
@@ -1651,6 +1641,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await seedFluteTools(page)
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
+  await openCreationDrawer(page)
 
   // ── face change ──
   // Leaving Around unmounts the entry and the dialog; coming back must not
@@ -1673,6 +1664,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // ── units conversion ──
   // The old numbers were millimetres; after the conversion the same text would
   // be inches, so the form must open again with the converted default instead.
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'length').fill('7')
   await convertUnits(page, 'inch')
@@ -1715,6 +1707,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   // A saved file carries the workspace on a real setup, not the provisional
   // Around the form was opened on, so the Around job is re-entered as well.
   await switchToAround(page)
+  await openCreationDrawer(page)
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(inchBar.length))
@@ -1804,7 +1797,8 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await prepareMmSquareBlankWithRotary(page)
   await switchToAround(page)
   const squareBaseline = await solidSnapshot(page)
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'length').fill('5')
   await editSquareSide(page, 30)
@@ -1817,7 +1811,7 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
     historyPast: afterSide.historyPast,
   })
   expect(afterSide.folderCount).toBe(squareBaseline.folderCount)
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('30')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('120')
   await expect(ui.rotarySolid.field(page, 'length')).not.toHaveValue('5')
@@ -1938,6 +1932,7 @@ test('awkward stock dimensions keep an exact default and still create', async ({
   // own default and Create could never be pressed.
   const mmBar = roundStock(20.00006, 23.70006, 'x')
   await seedBar('mm', mmBar)
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(23.70006))
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(20.00006 * 0.75))
@@ -1953,6 +1948,7 @@ test('awkward stock dimensions keep an exact default and still create', async ({
   // The same failure in inch units: 4.70006 rounds to 4.7001.
   const inchBar = roundStock(0.80001, 4.70006, 'x')
   await seedBar('inch', inchBar)
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(4.70006))
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(0.80001 * 0.75))
@@ -1968,7 +1964,8 @@ test('awkward stock dimensions keep an exact default and still create', async ({
   // exceed, so the square-to-round form also opened disabled.
   const blank = squareStock(20.00006, 23.70006, 'x')
   await seedBar('mm', blank)
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue(String(20.00006))
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue(String(23.70006))
   await expect(ui.rotarySolid.error(page)).toHaveCount(0)
@@ -2029,6 +2026,7 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   }
 
   // A form open across the workflow change must not create anything or survive.
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await ui.rotarySolid.field(page, 'length').fill('5')
   await seedProject(page, JSON.stringify(asMilling))
@@ -2038,7 +2036,7 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   // …but the Around workflow is unavailable, so the command is absent instead
   // of offered and then refused by the store.
   await expect(ui.rotarySolid.polygonButton(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.squareToRoundButton(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.turnButton(page)).toHaveCount(0)
   expect(await solidSnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
     featureCount: baseline.featureCount,
@@ -2049,35 +2047,25 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   // The same file opened with its rotary type restores the command, with a
   // fresh closed form — never the one that was open before the change.
   await seedProject(page, JSON.stringify(aroundProject))
+  await openCreationDrawer(page)
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
 })
 
-test('a store refusal disappears when the request it described is corrected', async ({ app, ui }) => {
+test('an inline refusal disappears when the request it described is corrected', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
-  // A compatible cutter with no usable diameter: the picker offers it (policy
-  // is the cutter family), and only the store knows it cannot seed an
-  // operation. The form itself is valid, so Create is enabled.
-  await seedTools(page, [
-    {
-      ...defaultTool('mm', 1), id: 't-broken', name: 'Broken flat', type: 'flat_endmill',
-      diameter: 0, defaultFeed: 0, defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0,
-    },
-    {
-      ...defaultTool('mm', 2), id: 't-good', name: 'Good flat', type: 'flat_endmill',
-      diameter: 6, defaultFeed: 800, defaultPlungeFeed: 200, defaultStepdown: 2, defaultStepover: 3,
-    },
-  ])
   await switchToAround(page)
   const baseline = await solidSnapshot(page)
 
+  await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
-  await ui.rotarySolid.createButton(page).click()
-  await expect(ui.rotarySolid.error(page)).toContainText('no usable diameter or feeds')
-  // The refusal created nothing.
+  // A polygon wider than the bar is refused by the form itself; nothing is
+  // posted while the reason is on screen.
+  await ui.rotarySolid.field(page, 'across-flats').fill('30')
+  await expect(ui.rotarySolid.error(page)).toContainText('Across flats cannot exceed')
+  await expect(ui.rotarySolid.createButton(page)).toBeDisabled()
   expect(await solidSnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
     featureCount: baseline.featureCount,
@@ -2085,25 +2073,18 @@ test('a store refusal disappears when the request it described is corrected', as
     historyPast: baseline.historyPast,
   })
 
-  // Correcting an input clears the reason immediately: it described the
-  // request as it was, not the form now on screen. Rotation is the field to
-  // edit here: the length default is the whole bar, so moving the start would
-  // push the band past the bar and raise the form's own range refusal — a
-  // different, legitimate message.
-  await ui.rotarySolid.field(page, 'rotation').fill('1')
-  await expect(ui.rotarySolid.error(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
-
-  // Choosing a usable cutter is the actual fix; the same form then creates.
-  await ui.rotarySolid.toolTrigger(page).click()
-  await ui.rotarySolid.toolOption(page, 'Good flat').click()
+  // Correcting the value clears the reason immediately: it described the
+  // request as it was, not the form now on screen.
+  await ui.rotarySolid.field(page, 'across-flats').fill('10')
   await expect(ui.rotarySolid.error(page)).toHaveCount(0)
   await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
   const created = await solidSnapshot(page)
-  expect(created.folderCount).toBe(baseline.folderCount + 1)
-  expect(created.operationCount).toBe(baseline.operationCount + 2)
+  expect(created.folderCount).toBe(baseline.folderCount)
+  expect(created.featureCount).toBe(baseline.featureCount + 1)
+  expect(created.operationCount).toBe(baseline.operationCount)
+  expect(created.historyPast).toBe(baseline.historyPast + 1)
 })
 
 // ── Tablet geometry: the dialog must contain its own chrome ─────────────
@@ -2534,30 +2515,20 @@ async function solidDialogHasFocus(page: Page, selector: string): Promise<boolea
 test.describe('tablet solid dialogs', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
-  test('both solid dialogs keep their actions complete and their picker inside', async ({ app, ui }) => {
+  test('both solid dialogs keep their actions complete', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await seedFluteTools(page)
     await switchToAround(page)
 
-    // Polygon, on a round bar: the C1 frame contains its own chrome, and the
-    // tool list opens inside the dialog unaided.
+    // Polygon, on a round bar: the C1 frame contains its own chrome.
+    await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
     const dialog = ui.rotarySolid.dialog(page)
     await expect(dialog).toBeVisible()
     const controls = dialogChrome(dialog, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
     const fresh = await expectChromeComplete(page, dialog, controls, 'polygon fresh')
     await expectDialogStacked(dialog, 'polygon')
-    await expectPickerComplete(
-      page,
-      dialog,
-      ui.rotarySolid.toolTrigger(page),
-      ui.rotarySolid.toolOption(page, 'Ball 3'),
-      'Ball 3',
-      'Polygon Tool',
-    )
-    const afterPicker = await expectChromeComplete(page, dialog, controls, 'polygon after picker')
-    expectChromeUnchanged(fresh, afterPicker, 'polygon after picker')
     await expectBodyOwnsScroll(page, dialog, controls, fresh, 'polygon', { requireOverflow: false })
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
@@ -2565,7 +2536,8 @@ test.describe('tablet solid dialogs', () => {
     // Square to round, on a real blank: the short form fits the same frame.
     await prepareMmSquareBlankWithRotary(page)
     await switchToAround(page)
-    await ui.rotarySolid.squareToRoundButton(page).click()
+    await openCreationDrawer(page)
+    await ui.rotarySolid.turnButton(page).click()
     const square = ui.rotarySolid.dialog(page)
     await expect(square).toBeVisible()
     const squareControls = dialogChrome(square, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
@@ -2575,12 +2547,13 @@ test.describe('tablet solid dialogs', () => {
     await expect(square).toBeHidden()
   })
 
-  test('the solid dialog takes and traps keyboard focus, and Escape closes the picker first', async ({ app, ui }) => {
+  test('the solid dialog takes and traps keyboard focus, and Escape closes it', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await seedFluteTools(page)
     await switchToAround(page)
 
+    await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
     const dialog = ui.rotarySolid.dialog(page)
     await expect(dialog).toBeVisible()
@@ -2600,12 +2573,7 @@ test.describe('tablet solid dialogs', () => {
     await page.keyboard.press('Shift+Tab')
     expect(await solidDialogHasFocus(page, '.rotary-dialog__create'), 'Shift+Tab wraps back to Create').toBe(true)
 
-    // The picker owns the first Escape; the form owns the next one.
-    await ui.rotarySolid.toolTrigger(page).click()
-    await expect(ui.rotarySolid.toolOption(page, 'Ball 3')).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(dialog).toBeVisible()
-    await expect(ui.rotarySolid.toolOption(page, 'Ball 3')).toHaveCount(0)
+    // Escape closes the form; there is no Tool picker to dismiss first.
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
     // Closing returns focus to the canvas, the existing dialog contract.
@@ -2628,6 +2596,7 @@ test.describe('tablet solid dialogs on a short viewport', () => {
     await seedFluteTools(page)
     await switchToAround(page)
 
+    await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
     const dialog = ui.rotarySolid.dialog(page)
     await expect(dialog).toBeVisible()

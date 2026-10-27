@@ -23,7 +23,8 @@
  * available after a reload without any UI having opened.
  *
  * Slice A ships no real shape deliberately; slice D adds the five flat shapes,
- * slice E the gear and slice F the Around Thread and Flutes.
+ * slice E the gear, slice F the Around Thread and Flutes, and slice G the Turn
+ * and Polygon models.
  */
 
 import type { RegisteredCannedShapeGenerator } from '../types'
@@ -35,6 +36,8 @@ import { chamferRectCannedShape } from './chamferRect'
 import { gearCannedShape } from './gear'
 import { threadCannedShape } from './thread'
 import { flutesCannedShape } from './flutes'
+import { turnCannedShape } from './turn'
+import { polygonCannedShape } from './polygon'
 
 export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] = [
   ellipseCannedShape,
@@ -45,4 +48,6 @@ export const BUILT_IN_CANNED_SHAPES: readonly RegisteredCannedShapeGenerator[] =
   gearCannedShape,
   threadCannedShape,
   flutesCannedShape,
+  turnCannedShape,
+  polygonCannedShape,
 ]

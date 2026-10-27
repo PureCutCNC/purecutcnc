@@ -25,7 +25,7 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, aroundUnavailableReason, isCannedModelFeature, isFaceEditInProgress, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
@@ -377,7 +377,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     const throughChip = through
       ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
       : null
-    if (feature.authoringFace !== workspaceFace) {
+    if (!isCannedModelFeature(project, feature) && feature.authoringFace !== workspaceFace) {
       // A ghost: listed for reference, with the way to its own face on the
       // row menu. It cannot be selected, dragged or edited from here.
       const openGhostMenu = onFeatureContextMenu
@@ -485,7 +485,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return rootEntries.map((entry, rootIdx) => {
               if (entry.type === 'feature') {
                 const entryFeature = features.find((item) => item.id === entry.featureId)
-                if (face !== null && entryFeature?.authoringFace !== face) return null
+                if (face !== null && (!entryFeature || (entryFeature.authoringFace !== face
+                  && !(isCannedModelFeature(project, entryFeature) && face === workspaceFace)))) return null
                 return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
               }
 
@@ -499,7 +500,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               // belongs to the layer being worked on.
               const folderFeatures = face === null
                 ? allFolderFeatures
-                : allFolderFeatures.filter((feature) => feature.authoringFace === face)
+                : allFolderFeatures.filter((feature) => feature.authoringFace === face
+                  || (isCannedModelFeature(project, feature) && face === workspaceFace))
               if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
                 return null
               }
@@ -680,7 +682,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
             )}
             {bothFaces
               ? faceLayers.map((face) => {
-                  const count = machiningFeatures.filter((feature) => feature.authoringFace === face).length
+                  const count = machiningFeatures.filter((feature) => feature.authoringFace === face
+                    || (isCannedModelFeature(project, feature) && face === workspaceFace)).length
                   const active = face === workspaceFace
                   const entries = renderMachiningEntries(face)
                   // A face with nothing on it says so, once it is the face

@@ -15,7 +15,7 @@
  */
 
 /**
- * Registry keys for the canned shapes (issue #1112 slices D–F).
+ * Registry keys for the canned shapes (issue #1112 slices D–G).
  *
  * Creation actions and the generators must agree on the stored `kind`, so the
  * key lives once here rather than as a literal in two files.
@@ -28,3 +28,5 @@ export const ROUND_RECT_CANNED_KIND = 'roundrect'
 export const CHAMFER_RECT_CANNED_KIND = 'chamferrect'
 export const THREAD_CANNED_KIND = 'thread'
 export const FLUTES_CANNED_KIND = 'flutes'
+export const TURN_CANNED_KIND = 'turn'
+export const POLYGON_CANNED_KIND = 'polygon'

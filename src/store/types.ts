@@ -684,11 +684,11 @@ export interface ProjectStore {
    */
   addRotaryPattern: (input: RotaryPatternInput) => RotaryPatternResult
   /**
-   * Ordinary generated solids on the Around face (issue #1016 C2-B): a polygon
-   * prism from a round bar, or the round finished target of a square-to-round
-   * job from a real square blank. One undo step creates a folder, an ordinary
-   * `model` feature with its mesh asset, and one rotary rough plus one rotary
-   * finish operation targeting it. A typed refusal changes nothing.
+   * Canned Turn and Polygon models on the Around face (issue #1112 G): one
+   * generated `model` feature with its mesh asset, in one undo step. Creation
+   * adds no folder and no operation, and takes no tool; rotary operations are
+   * added to the model the ordinary way. Changing the parameters later rebuilds
+   * the mesh. A typed refusal changes nothing.
    */
   addRotarySolid: (input: RotarySolidInput) => RotarySolidResult
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
