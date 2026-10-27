@@ -33,6 +33,8 @@
  * - `diameter > side` accepted → the blank-fit refusal fails;
  * - the model's Z span anchored to the old bottom after a diameter edit → the
  *   centreline assertion fails;
+ * - the parameter edit pinning the regenerated mesh's raw Z bounds instead of
+ *   preserving the instance centre → the same assertion fails;
  * - the canned parameters not stored as the generator's set → the save/load
  *   round-trip fails;
  * - a Polygon on a square refused for needing a round bar → the square polygon
@@ -54,8 +56,6 @@ import { buildRotaryPolygonPrism } from '../engine/rotaryPrism'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
-import { generateCannedShapeMesh } from '../cannedShapes'
-import { computeMeshBounds } from '../engine/importedMesh'
 import { rotarySolidCannedData, type RotarySolidRefusal } from './helpers/rotarySolids'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { useProjectStore } from './projectStore'
@@ -320,10 +320,7 @@ function testDiameterEditStaysCentred(): void {
   assert.ok(frame)
   const canned = rotarySolidCannedData(frame, { kind: 'turn', start: 10, length: 30, diameter: 10 }, project.meta.units)
   assert.ok(canned)
-  const mesh = generateCannedShapeMesh(canned)
-  assert.ok(mesh)
-  const bounds = computeMeshBounds(mesh.positions)
-  store().updateFeature(model.id, { canned, z_bottom: bounds.minZ, z_top: bounds.maxZ })
+  store().updateFeature(model.id, { canned })
 
   const edited = store().project.features.find((feature) => feature.id === model.id)
   assert.ok(edited)

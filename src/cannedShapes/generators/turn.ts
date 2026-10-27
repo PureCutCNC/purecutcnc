@@ -128,6 +128,8 @@ export const turnCannedShape = defineCannedShape<TurnCannedParams>({
   },
   // The mesh is the output; expansion would freeze it and lose the parameters.
   capabilities: { expandable: false },
+  // A rotary solid stays centred on the bar's pivot when its size changes.
+  modelZAnchor: 'center',
   normalizeParams: normalizeTurnCannedParams,
   convertParams: (params, convertLength): TurnCannedParams => ({
     ...params,
