@@ -58,6 +58,35 @@ export interface AroundTurnLine {
   readonly solid: boolean
 }
 
+/**
+ * A label on one of the sheet's two edges (issue #1112 slice L, decision
+ * 8.13). The two edges are the same seam — the bottom of the bar, a = ±180° —
+ * so one reads −180° and the other +180°.
+ */
+export interface AroundSeamLabel {
+  readonly edge: 'first' | 'second'
+  readonly text: string
+  /** The world point on the edge the label hangs off, at the sheet's along start. */
+  readonly anchor: Point
+}
+
+/** The two seam labels, in sheet order. */
+export function aroundSeamLabels(
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'along'>,
+): AroundSeamLabel[] {
+  const first = sheet.sheetStart
+  const second = sheet.sheetStart + sheet.circumference
+  return sheet.axis === 'x'
+    ? [
+        { edge: 'first', text: '−180°', anchor: { x: sheet.along.min, y: first } },
+        { edge: 'second', text: '+180°', anchor: { x: sheet.along.min, y: second } },
+      ]
+    : [
+        { edge: 'first', text: '−180°', anchor: { x: first, y: sheet.along.min } },
+        { edge: 'second', text: '+180°', anchor: { x: second, y: sheet.along.min } },
+      ]
+}
+
 /** The clamp types a bar is actually held by; everything else is not drawn. */
 const BAND_CLAMP_TYPES: ReadonlySet<ClampType> = new Set<ClampType>(['chuck', 'tailstock'])
 

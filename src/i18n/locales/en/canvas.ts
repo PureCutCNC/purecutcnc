@@ -556,5 +556,5 @@ export const canvasEn = {
   'canvas.face.aroundTurnsBar': 'The bar turns in the rotary. This view is its surface unrolled: along the bar, and around it.',
 
   // ── The Around sheet's model bands (issue #1015 slice K) ──
-  'canvas.around.modelBand': '{name} — inside the bar, machined by Rotary rough and Rotary finish',
+  'canvas.around.modelBand': '{name}',
 } as const satisfies Record<string, string>

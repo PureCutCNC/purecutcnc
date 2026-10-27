@@ -458,6 +458,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.paramRef.finishWalls': 'Référence de finition des parois',
   'cam.paramRef.finishFloor': 'Référence de finition du fond',
   'cam.paramRef.stockRadial': 'Référence de surépaisseur radiale',
+  'cam.paramRef.stockRadialNote': 'Les parois sont radiales',
   'cam.paramRef.stockAxial': 'Référence de surépaisseur axiale',
   'cam.paramRef.passes': 'Référence des passes',
   'cam.paramRef.adaptiveSpacing': 'Référence de l’espacement adaptatif',

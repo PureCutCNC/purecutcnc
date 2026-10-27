@@ -464,7 +464,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const sheet = aroundSheet(project)
     const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
+    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -907,13 +907,14 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingSketchFilletRef.current = null
     setHoveredEditControl(null)
 
-    const hitTabId = aroundSheet(project) ? null : findHitTabId(world, project.tabs)
+    const sheet = aroundSheet(project)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       hoverFeature(null)
       return
     }
 
-    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
     hoverFeature(hitId)
   }
 
@@ -1032,9 +1033,10 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         const minY = Math.min(startWorld.y, endWorld.y)
         const maxX = Math.max(startWorld.x, endWorld.x)
         const maxY = Math.max(startWorld.y, endWorld.y)
+        const sheet = aroundSheet(project)
         const enclosedIds = editableProjectFeatures(project)
           .filter((feature) => feature.visible)
-          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
+          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY, sheet))
           .map((feature) => feature.id)
         const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
           .filter((id, index, array) => array.indexOf(id) === index)
@@ -1200,7 +1202,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
     if (!hitId) return
     // A generated shape has no editable sketch. Select it and say why, since a
     // double-click has no disabled button to hover (#1112 A2).

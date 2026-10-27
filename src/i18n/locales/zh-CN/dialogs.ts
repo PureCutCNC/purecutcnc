@@ -540,6 +540,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotarySolid.rotation': '旋转（°）',
   'dialogs.rotarySolid.diameter': '直径（{units}）',
   'dialogs.rotarySolid.note': '创建一个生成模型。请在 CAM 中为其添加旋转粗加工和精加工操作。',
+  'dialogs.rotarySolid.polygonNote': '多边形平面为近似显示：环绕视图显示展开后的棒料表面。',
   'dialogs.rotarySolid.create': '创建',
   'dialogs.rotarySolid.error.start': '请输入距卡盘端的起点距离。',
   'dialogs.rotarySolid.error.length': '请输入大于零的长度。',

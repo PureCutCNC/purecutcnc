@@ -1287,6 +1287,9 @@ test('a hex polygon creates one canned model, with no folder or operation', asyn
   await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  // #1112 decision 8.16: the Polygon dialog carries the flats limit note.
+  await expect(ui.rotarySolid.dialog(page).locator('.rotary-dialog__limit-note'))
+    .toHaveText('Flats are approximated on the around view.')
   // Defaults: six sides, across flats at 0.75 × the bar diameter, rotation 0.
   await expect(ui.rotarySolid.field(page, 'sides')).toHaveValue('6')
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(bar.diameter * 0.75))

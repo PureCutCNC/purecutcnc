@@ -489,6 +489,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotarySolid.rotation': 'Giro (°)',
   'dialogs.rotarySolid.diameter': 'Diámetro ({units})',
   'dialogs.rotarySolid.note': 'Crea un modelo generado. Añádale operaciones de desbaste y acabado rotativas desde CAM.',
+  'dialogs.rotarySolid.polygonNote': 'Las caras planas se aproximan: la vista alrededor muestra la superficie de la barra desenrollada.',
   'dialogs.rotarySolid.create': 'Crear',
   'dialogs.rotarySolid.error.start': 'Introduzca una distancia de inicio desde el plato.',
   'dialogs.rotarySolid.error.length': 'Introduzca una longitud mayor que cero.',

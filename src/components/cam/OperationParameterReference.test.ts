@@ -171,6 +171,11 @@ function testRotaryPicturesDiffer(): void {
   // one is the bar cross-section circle. Naming both makes the swap explicit.
   assert(wall.includes('M8 7h42v20H8z'), 'the default stockRadial picture stays the pocket wall')
   assert(rotary.includes('m-12 0a12 11'), 'the rotary stockRadial picture is a radial cross-section')
+  // #1112 decision 8.16: the rotary picture says the walls are radial, and the
+  // flat pocket picture must not carry that note.
+  assert(rotary.includes('op-param-ref-note'), 'the rotary stockRadial picture carries its limit note')
+  assert(rotary.includes('Walls are radial'), 'the rotary note reads "Walls are radial"')
+  assert(!wall.includes('op-param-ref-note'), 'the pocket-wall picture does not carry the rotary note')
 }
 
 testNoDuplicateKinds()

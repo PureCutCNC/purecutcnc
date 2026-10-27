@@ -517,6 +517,9 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   const radialMarkup = await radialPicture.innerHTML()
   expect(radialMarkup).toContain('m-12 0a12 11')
   expect(radialMarkup).not.toContain('M8 7h42v20H8z')
+  // #1112 decision 8.16: the rotary picture carries the "walls are radial"
+  // limit note; the flat pocket picture does not.
+  await expect(stockRadial.locator('.op-param-ref-note')).toHaveText('Walls are radial')
 
   // The Passes control lives in the collapsed Strategy group. Add selected the
   // operation, so its properties are already on screen; clicking its row again
