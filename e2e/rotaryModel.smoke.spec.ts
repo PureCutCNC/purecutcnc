@@ -471,7 +471,7 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   await expect(canvas).toBeVisible()
 
   // ── Simulation: the Around setup is the bar and the run removes material ──
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toBeVisible()
   await ui.simSetup.picker(page).selectOption(aroundSetup.id)
@@ -709,6 +709,19 @@ async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), 
 }
 
 /**
+ * Select an operation without toggling it off. Adding an operation already
+ * selects it, and a click on the selected row is the panel's deselect gesture;
+ * a simulation in "Selected" mode then has nothing to show.
+ */
+async function selectOperationRow(page: Page, ui: typeof import('./selectors'), label: string): Promise<void> {
+  const row = ui.operations.rowByName(page, label)
+  if (!(await row.evaluate((element) => element.classList.contains('tree-row--selected')))) {
+    await row.click()
+  }
+  await expect(row).toHaveClass(/tree-row--selected/)
+}
+
+/**
  * What the 3D preview actually drew, read from the panel's own readout. This is
  * the consumer output of the generation cache — the same path the scene built,
  * not a path recomputed beside it.
@@ -941,7 +954,7 @@ test('square to round generates inside the band and removes material', async ({ 
   expect(roughBand.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
 
   // Simulation: the Around bar view removes material.
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   const viewport = ui.simSetup.viewport(page)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
@@ -1272,7 +1285,7 @@ test('square playback starts from the prior rough, follows the finish and resets
   }
 
   // ── The selected finish opens as the shared heightfield, with removal ──
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toBeVisible()
   await ui.simSetup.picker(page).selectOption(around.id)
