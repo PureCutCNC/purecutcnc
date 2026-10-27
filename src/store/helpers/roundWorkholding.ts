@@ -73,9 +73,19 @@ export function chuckGripDiameter(stock: BarStock, jaws: 3 | 4 | 6): number {
 
 export function smallestFittingChuck(stock: BarStock, units: ProjectMeta['units']) {
   const diameterIn = convertLength(chuckGripDiameter(stock, 3), units, 'inch')
-  // Outside every listed range: use the nearest end preset and warn.
-  return STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
-    ?? (diameterIn < STANDARD_CHUCKS[0].minIn ? STANDARD_CHUCKS[0] : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1])
+  const fitting = STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
+  if (fitting) return fitting
+  // Outside every listed jaw range: the nearest end preset, so the panel can
+  // say the bar is out of its capacity — but only while that preset's own
+  // *body* still reaches past the bar. A body narrower than the stock it grips
+  // would sit inside the material; on a square blank the corner guard then
+  // refuses the whole setup, so the default must never be that. Such a bar
+  // gets the stock-derived body instead (no invented equipment, so no
+  // capacity to be outside of).
+  const nearest = diameterIn < STANDARD_CHUCKS[0].minIn
+    ? STANDARD_CHUCKS[0]
+    : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
+  return nearest.diameterIn >= diameterIn ? nearest : null
 }
 
 export function chuckOutOfRange(clamp: Clamp, stock: Stock, units: ProjectMeta['units']): boolean {
@@ -152,9 +162,10 @@ export function roundWorkholdingDiameter(clamp: Clamp, stock: BarStock): number 
 }
 
 /**
- * New chucks take the smallest fitting BISON preset; tailstocks retain their
- * existing stock-derived default. The grip is 15 mm, at most a quarter of the
- * bar length. Existing fixtures never pass through this creation helper on load.
+ * New chucks take the smallest fitting BISON preset; a bar no preset's *body*
+ * can reach (see `smallestFittingChuck`) and every tailstock keep the
+ * stock-derived default. The grip is 15 mm, at most a quarter of the bar
+ * length. Existing fixtures never pass through this creation helper on load.
  */
 export function defaultRoundWorkholding(
   type: 'chuck' | 'tailstock',
@@ -169,14 +180,22 @@ export function defaultRoundWorkholding(
   const ownDiameter = isSquareStock(stock)
     ? Math.max(4 * barMaxRadius(stock), convertLength(50, 'mm', units))
     : Math.max(2 * roundStockDiameter(stock), convertLength(50, 'mm', units))
-  // A tailstock stops at the far end face and adds only the body.
   const body = convertLength(40, 'mm', units)
   const bounds = getStockBounds(stock)
   const centre = barCentre(stock)
   const height = barPivotZ(stock) + ownDiameter / 2
+  const grip = Math.min(convertLength(15, 'mm', units), barLength(stock) / 4)
+
+  // Along the axis: a chuck covers `grip` inside the start end plus the body
+  // past it; a tailstock stops at the far end face and adds only the body.
+  const alongFrom = stock.axis === 'x'
+    ? (type === 'chuck' ? bounds.minX - body : bounds.maxX)
+    : (type === 'chuck' ? bounds.maxY - grip : bounds.minY - body)
+  const alongSize = type === 'chuck' ? body + grip : body
+
   return stock.axis === 'x'
-    ? { type, x: bounds.maxX, y: centre - ownDiameter / 2, w: body, h: ownDiameter, height }
-    : { type, x: centre - ownDiameter / 2, y: bounds.minY - body, w: ownDiameter, h: body, height }
+    ? { type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
+    : { type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
 }
 
 /**

@@ -464,7 +464,9 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   // valid target from either flat face (issue #1112 I).
   const pocketRow = featureRow(page, pocket.id)
   await pocketRow.locator('.tree-action-btn--operation').click()
-  await page.locator('.tree-operation-menu').getByRole('button', { name: 'Subtract', exact: true }).click()
+  // The menu entry is the icon span plus its label, so its accessible name is
+  // "− Subtract" — match the item's text, as the other specs do.
+  await page.locator('.tree-operation-menu__item').filter({ hasText: /^.?Subtract$/ }).click()
   const cutProject = await getProject(page) as unknown as {
     featureDefinitions: Record<string, { operation: string }>
   }

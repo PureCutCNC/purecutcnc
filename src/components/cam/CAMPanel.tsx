@@ -2284,7 +2284,7 @@ export function CAMPanel({
                   <div className="feature-tree-panel cam-operation-tree">
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
-                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
+                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} openForWarning={section.operations.some((operation) => uncutWarnings.has(operation.id))} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
                         {section.operations.map((operation) => {
                         // An operation of a setup the workspace is not on is a
                         // ghost row (issue #1102), like a feature from the other
