@@ -19,7 +19,9 @@ import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject, seedProject, rowByName } from './helpers'
-import { rectProfile, type Project } from '../src/types/project'
+import { defaultTool, rectProfile, roundStock, type Project, type Tool } from '../src/types/project'
+
+const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 async function seed(page: Page, bottomFeature = true, machineId = 'grbl') {
   await seedGcodeExportProject(page, { machineId })
@@ -47,6 +49,63 @@ async function seed(page: Page, bottomFeature = true, machineId = 'grbl') {
   project.setups = [project.setups[0]]
   project.activeSetupId = project.setups[0].id
   await seedProject(page,JSON.stringify(project))
+}
+
+function e2eTool(id: string, name: string, type: Tool['type'], diameter: number, maxCutDepth: number): Tool {
+  return {
+    ...defaultTool('mm', 1),
+    id,
+    name,
+    type,
+    diameter,
+    maxCutDepth,
+    vBitAngle: type === 'v_bit' ? 60 : null,
+    defaultStepdown: 0.4,
+    defaultStepover: 0.4,
+  }
+}
+
+/**
+ * The bolt's starting bar: a 20 mm round bar in a rotary project with the
+ * cutters CAM Plan may choose. The Polygon/Turn/Thread rows themselves are
+ * created through the drawer's own store actions after the face is switched.
+ */
+async function seedAroundBar(page: Page): Promise<void> {
+  await seedGcodeExportProject(page)
+  const project = await getProject(page) as unknown as Project
+  project.meta.name = 'Around bolt'
+  project.meta.units = 'mm'
+  project.meta.projectType = 'rotary'
+  project.meta.maxTravelZ = 30
+  project.stock = roundStock(20, 120, 'x')
+  project.origin = { ...project.origin, x: 0, y: 0, z: 20 }
+  project.features = []
+  project.featureDefinitions = {}
+  project.featureTree = []
+  project.featureFolders = []
+  project.operations = []
+  project.tabs = []
+  project.clamps = []
+  project.tools = [
+    e2eTool('t-ball', 'Ball 2mm', 'ball_endmill', 2, 30),
+    e2eTool('t-flat', 'Flat 2mm', 'flat_endmill', 2, 30),
+    e2eTool('t-vbit', 'V-bit 3mm', 'v_bit', 3, 10),
+  ]
+  await seedProject(page, JSON.stringify(project))
+}
+
+/** Polygon head, turned shank and one thread, through the real creation actions. */
+async function createAroundBolt(page: Page): Promise<{ polygonId: string; turnId: string; threadId: string }> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const polygon = useProjectStore.getState().addRotarySolid({ kind: 'polygon', start: 10, length: 12, sides: 6, acrossFlats: 15 })
+    if (!polygon.ok) throw new Error(`e2e polygon: ${polygon.reason}`)
+    const turn = useProjectStore.getState().addRotarySolid({ kind: 'turn', start: 22, length: 30, diameter: 14 })
+    if (!turn.ok) throw new Error(`e2e turn: ${turn.reason}`)
+    const thread = useProjectStore.getState().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 1.5, starts: 1, depth: 0.9 })
+    if (!thread.ok) throw new Error(`e2e thread: ${thread.reason}`)
+    return { polygonId: polygon.featureId, turnId: turn.featureId, threadId: thread.featureId }
+  })
 }
 
 test('CAM Plan on Bottom proposes its pocket and explains Top-covered through work (#1106)', async ({ app, ui }, testInfo) => {
@@ -86,16 +145,79 @@ test('CAM Plan on Bottom proposes its pocket and explains Top-covered through wo
   expect(after.operations.find(operation => operation.id === before.operations[0].id)).toEqual(before.operations[0])
 })
 
-test('CAM Plan stays disabled on Around with its reason (#1106)', async ({ app, ui }) => {
+/**
+ * CAM Plan on Around (#1112 slice J, decision 3).
+ *
+ * The acceptance bolt — Polygon head + turned shank + Thread — is created
+ * through the drawer's own actions, then planned on Around. It asserts:
+ * - the Plan button is enabled on Around and carries no "not available" reason;
+ * - the dialog proposes two Rotary rough and two Rotary finish rows (one pair
+ *   per model) plus one Engrave for the Thread, with the model names and the
+ *   V-bit/ball-endmill choices;
+ * - the Engrave's editable Carve depth is the pattern's 0.9 mm, not 1 mm;
+ * - nothing is created before Create is pressed;
+ * - applying creates exactly five Around operations, and one undo removes them.
+ */
+test('CAM Plan on Around plans the bolt: rotary rough/finish and a V-bit engraving (#1112 J)', async ({ app, ui }, testInfo) => {
   const { page } = app
-  await seed(page)
-  const project = await getProject(page) as unknown as Project
-  project.meta.projectType = 'rotary'
-  project.stock = { ...project.stock, shape: 'round', diameter: 2, axis: 'x' }
-  await seedProject(page, JSON.stringify(project))
+  await seedAroundBar(page)
   await ui.face.switchTo(page, 'Around')
-  await expect(ui.setupCam.planButton(page)).toBeDisabled()
-  await expect(ui.setupCam.planButton(page)).toHaveAttribute('title', 'The automatic plan is not available on the around face')
+  const ids = await createAroundBolt(page)
+
+  const planButton = ui.setupCam.planButton(page)
+  await expect(planButton).toBeEnabled()
+  await expect(planButton).not.toHaveAttribute('title', /not available/i)
+  await planButton.click()
+  const dialog = page.getByRole('dialog', { name: 'CAM Plan', exact: true })
+  await expect(dialog).toBeVisible()
+
+  const rough = dialog.locator('.cam-plan-row').filter({ hasText: 'Rotary rough · Rough' })
+  const finish = dialog.locator('.cam-plan-row').filter({ hasText: 'Rotary finish · Finish' })
+  const engrave = dialog.locator('.cam-plan-row').filter({ hasText: 'Engrave · Rough' })
+  await expect(rough).toHaveCount(2)
+  await expect(finish).toHaveCount(2)
+  await expect(engrave).toHaveCount(1)
+  await expect(rough.filter({ hasText: 'Hex' })).toHaveCount(1)
+  await expect(rough.filter({ hasText: 'Turn' })).toHaveCount(1)
+  await expect(engrave).toContainText('Thread')
+  await expect(engrave).toContainText('V-bit 3mm')
+  await expect(rough.first()).toContainText('Ball 2mm')
+  await expect(finish.first()).toContainText('Ball 2mm')
+
+  // The plan is a proposal: nothing exists until it is applied.
+  const before = await getProject(page) as unknown as Project
+  expect(before.operations).toEqual([])
+
+  await engrave.click()
+  const carveDepth = dialog.locator('.cam-plan-field').filter({ hasText: 'Carve depth' }).locator('input')
+  await expect(carveDepth).toHaveValue('0.9')
+  await dialog.screenshot({ path: testInfo.outputPath('around-cam-plan.png') })
+
+  const create = dialog.getByRole('button', { name: /^Create \d+ operations$/ })
+  await expect(create).toBeEnabled()
+  await expect(create).toHaveText('Create 5 operations')
+  await create.click()
+  await expect(dialog).not.toBeVisible()
+
+  const after = await getProject(page) as unknown as Project
+  expect(after.operations).toHaveLength(5)
+  const around = after.setups.find((setup) => setup.kind === 'around')
+  expect(around).toBeDefined()
+  expect(after.operations.every((operation) => operation.setupId === around!.id)).toBe(true)
+  expect(after.operations.filter((operation) => operation.kind === 'rotary_rough')).toHaveLength(2)
+  expect(after.operations.filter((operation) => operation.kind === 'rotary_finish')).toHaveLength(2)
+  expect(after.operations.find((operation) => operation.kind === 'follow_line')).toBeDefined()
+  const engraveOperation = after.operations.find((operation) => operation.kind === 'follow_line')!
+  expect(engraveOperation.carveDepth).toBeCloseTo(0.9, 9)
+  expect(engraveOperation.target.source).toBe('features')
+  if (engraveOperation.target.source === 'features') {
+    expect(engraveOperation.target.featureIds).toEqual([ids.threadId])
+  }
+  expect(after.tools.find((tool) => tool.id === engraveOperation.toolRef)?.type).toBe('v_bit')
+
+  await page.keyboard.press(`${modKey}+z`)
+  const undone = await getProject(page) as unknown as Project
+  expect(undone.operations).toEqual([])
 })
 
 for (const machine of ['grbl','shopbot']) {

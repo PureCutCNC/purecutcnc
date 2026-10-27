@@ -15,7 +15,7 @@
  */
 
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import type { OperationKind, OperationTarget, Project, Tool } from '../../../types/project'
+import type { OperationKind, OperationTarget, Project, Tool, ToolType } from '../../../types/project'
 import { convertLength, convertToolUnits } from '../../../utils/units'
 import { HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO } from '../../toolpaths/drilling'
 import { AUTO_TOOL_MAX_DIAMETER_INCH, autoToolDiameterLimit, capAutoToolDiameter, preferredToolTypes, targetFeatureSize } from '../toolSelection'
@@ -56,15 +56,14 @@ function toolCanReach(tool: Tool, requiredDepth: number): boolean {
   return tool.maxCutDepth <= 0 || tool.maxCutDepth + 1e-9 >= requiredDepth
 }
 
-function toolTypeRank(kind: OperationKind, tool: Tool): number {
-  const preferred = preferredToolTypes(kind)
-  const index = preferred.indexOf(tool.type)
+function toolTypeRank(kind: OperationKind, tool: Tool, preferredTypes: readonly ToolType[] = preferredToolTypes(kind)): number {
+  const index = preferredTypes.indexOf(tool.type)
   return index < 0 ? Number.POSITIVE_INFINITY : index
 }
 
-function compareTools(kind: OperationKind, projectUnits: Tool['units'], reusedToolIds: ReadonlySet<string>) {
+function compareTools(kind: OperationKind, projectUnits: Tool['units'], reusedToolIds: ReadonlySet<string>, preferredTypes?: readonly ToolType[]) {
   return (a: CamPlanTool, b: CamPlanTool): number => {
-    const typeDelta = toolTypeRank(kind, a.tool) - toolTypeRank(kind, b.tool)
+    const typeDelta = toolTypeRank(kind, a.tool, preferredTypes) - toolTypeRank(kind, b.tool, preferredTypes)
     if (typeDelta !== 0) return typeDelta
     const existingDelta = Number(b.source === 'existing') - Number(a.source === 'existing')
     if (existingDelta !== 0) return existingDelta
@@ -106,16 +105,17 @@ export function rankCamPlanTools(
   requiredDepth: number,
   reusedToolIds: ReadonlySet<string>,
   maximumDiameterOverride?: number | null,
+  preferredTypes?: readonly ToolType[],
 ): RankedCamPlanTools {
   const diameterLimit = maximumDiameterOverride != null
     ? capAutoToolDiameter(kind, project.meta.units, maximumDiameterOverride)
     : autoToolDiameterLimit(project, kind, target)
   const tools = pool
-    .filter((candidate) => Number.isFinite(toolTypeRank(kind, candidate.tool)))
+    .filter((candidate) => Number.isFinite(toolTypeRank(kind, candidate.tool, preferredTypes)))
     .filter((candidate) => candidate.tool.diameter > 0)
     .filter((candidate) => diameterLimit == null || candidate.tool.diameter <= diameterLimit + 1e-9)
     .filter((candidate) => toolCanReach(candidate.tool, requiredDepth))
-    .sort(compareTools(kind, project.meta.units, reusedToolIds))
+    .sort(compareTools(kind, project.meta.units, reusedToolIds, preferredTypes))
 
   return { tools, maximumDiameter: diameterLimit }
 }

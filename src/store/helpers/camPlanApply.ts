@@ -135,7 +135,6 @@ function appendRestRegions(
 }
 
 export function materializeCamPlan(project: Project, plan: CamPlanDraft): CamPlanMaterializationResult {
-  if (activeFace(project) === 'around') return { ok: false, reason: 'invalid', message: 'CAM Plan is not available on Around.' }
   if (camPlanProjectFingerprint(project) !== plan.sourceFingerprint) {
     return { ok: false, reason: 'stale', message: 'The project changed after this plan was calculated. Recalculate it before creating operations.' }
   }
