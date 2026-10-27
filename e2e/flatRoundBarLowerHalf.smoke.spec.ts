@@ -118,7 +118,7 @@ test('a Rotary round bar mounts the lower half in the static and playback views'
   const { page } = app
 
   await createNewProject(page, ui, { type: 'Rotary', shape: 'Round bar', size: '40', length: '200', axis: 'X' })
-  await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
   const created = await getProject(page) as unknown as ProjectShape
   expect(created.meta.projectType).toBe('rotary')
   expect(created.stock.shape).toBe('round')
@@ -153,7 +153,7 @@ test('a milling block never mounts a round-bar lower half', async ({ app, ui }) 
   const { page } = app
 
   await createNewProject(page, ui, { type: 'Milling / routing' })
-  await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
   const created = await getProject(page) as unknown as ProjectShape
   expect(created.meta.projectType).toBe('milling')
   expect(created.stock.shape).toBeUndefined()

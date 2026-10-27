@@ -18,168 +18,185 @@
  * Bottom has its own amber, which marks a place and never a problem —
  * warnings stay on --warning-text and errors on --danger-text. */
 
-/* ── Workspace face switch ──
- * A segmented toggle, not a second set of tabs (issue #1102 slice J): one
- * soft rounded track and a single filled pill for the active face. The group
- * carries no outer border and the segments carry no borders or underlines, so
- * it cannot be read as another row of workspace tabs. `--face-switch-height`
- * is the track's height; the flip chip and the eye take it too, which lines
- * the row up and keeps the whole switch clear of the header's bottom line. */
+/* ── Workspace face control ──
+ * One compact control, not a second set of tabs (issue #1112 slice B,
+ * decision 6; #1107): it names the face the workspace is on — with the flip
+ * axis on a Bottom view — and opens the menu of faces and the other-side
+ * overlay. It replaces the old segmented pills, the flip chip and the eye.
+ * `--face-switch-height` is the control's height on the header's row. */
 
 .face-switch {
   --face-switch-height: 30px;
   display: flex;
   align-items: center;
   align-self: center;
-  gap: 8px;
-  /* Shrinks only by the flip chip, so a narrow header never pushes the
-   * workspace wider than its column (issue #1102). */
+  /* Shrinks so a narrow header never pushes the workspace wider than its
+   * column (issue #1102). */
   flex-shrink: 1;
   min-width: 0;
   padding: 0 8px;
 }
 
-.face-switch__segments {
-  display: flex;
-  flex-shrink: 0;
-  gap: 2px;
-  height: var(--face-switch-height);
-  padding: 2px;
-  border: 0;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--line-strong) 55%, transparent);
-}
-
-.face-switch__segment,
-.face-switch__ghost {
+.face-switch__trigger {
   appearance: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--face-switch-height);
+  padding: 0 8px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+  color: var(--text);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-dim);
-  cursor: pointer;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.face-switch__segment {
-  height: calc(var(--face-switch-height) - 4px);
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.face-switch__segment:hover:not(:disabled),
-.face-switch__ghost:hover {
-  color: var(--text);
-}
-
-/* The pill sets the height. `.app-shell button` gives every button the hit
- * target as a minimum, which pushed the segments out of their track on
- * desktop; tablet shells restore the touch target further down. */
-.face-switch .face-switch__segment,
-.face-switch .face-switch__ghost {
+/* `.app-shell button` gives every button the hit target as a minimum, which
+ * would push this control out of the header's row; tablet shells restore the
+ * touch target further down. */
+.face-switch .face-switch__trigger {
+  min-width: 0;
   min-height: 0;
 }
 
-/* Inactive segments are plain text on the track; the hover is only a hint. */
-.face-switch__segment:hover:not(:disabled) {
+/* The control wears the colour of the face it names: top takes the accent,
+ * bottom its amber, Around the region violet (issue #395: the bar's unrolled
+ * surface, reusing the region token). */
+.face-switch__trigger--top {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+}
+
+.face-switch__trigger--bottom {
+  border-color: color-mix(in srgb, var(--face-bottom) 55%, var(--line));
+  background: color-mix(in srgb, var(--face-bottom) 12%, transparent);
+  color: var(--face-bottom-text);
+}
+
+.face-switch__trigger--around {
+  border-color: color-mix(in srgb, var(--role-region) 55%, var(--line));
+  background: color-mix(in srgb, var(--role-region) 12%, transparent);
+  color: var(--role-region-text);
+}
+
+.face-switch__trigger:hover {
   background: var(--surface-hover);
 }
 
-.face-switch__segment:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.face-switch__segment:focus-visible,
-.face-switch__ghost:focus-visible {
+.face-switch__trigger:focus-visible {
   outline: 2px solid var(--accent-strong);
   outline-offset: -2px;
 }
 
-/* The active face is a filled pill in that face's own colour, never an
- * underline: top takes the accent, bottom its amber, Around the region violet
- * (issue #395: the bar's unrolled surface, reusing the region token). */
-.face-switch__segment--top.face-switch__segment--active {
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
-  color: var(--text);
-}
-
-.face-switch__segment--bottom.face-switch__segment--active {
-  background: color-mix(in srgb, var(--face-bottom) 28%, transparent);
-  color: var(--face-bottom-text);
-}
-
-.face-switch__segment--around.face-switch__segment--active {
-  background: color-mix(in srgb, var(--role-region) 28%, transparent);
-  color: var(--role-region-text);
-}
-
-.face-switch__ghost {
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface-subtle);
-  /* Icon-only everywhere (issue #1102 slice E 15): the tablet look, squared. */
-  justify-content: center;
-  width: var(--face-switch-height);
-  height: var(--face-switch-height);
-  padding: 0;
-}
-
-/* The short flip note a Bottom view carries (issue #1102 slice E 8): the axis
- * only, on the switch's one row, with the full sentence as its title. */
-.face-switch__chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex: 0 1 auto;
-  /* Never smaller than its icon. */
-  min-width: 34px;
-  overflow: hidden;
-  height: var(--face-switch-height);
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--face-bottom) 60%, transparent);
-  /* Fully round at any height: the chip shares the track's height, which is
-   * the 30px toggle on desktop and the 44px tap target on a tablet shell. */
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--face-bottom) 9%, transparent);
-  color: var(--face-bottom-text);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.face-switch__chip svg {
-  flex-shrink: 0;
-}
-
-/* When the header is tight the words give way first, down to the icon; the
- * full sentence stays in the title. */
-.face-switch__chip span {
+/* The face's own name never gives way; the flip is the part that can be cut
+ * when the header is tight. */
+.face-switch__trigger-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The toggle wears the colour of the face it shows or hides. */
-.face-switch__ghost--top.face-switch__ghost--on {
-  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+.face-switch__chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* The menu is portalled to the body (see `FaceSwitch`): the tablet face row
+ * clips its own overflow, so the placement comes from `usePortalPosition` and
+ * this file only styles it. */
+.face-switch__menu {
+  z-index: 120;
+  width: 232px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-popover);
+  box-shadow: 0 18px 48px var(--shadow-strong);
+  backdrop-filter: blur(18px);
+}
+
+.face-switch__menu-item {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 18px 1fr 16px;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.face-switch__menu-item:hover:not(:disabled),
+.face-switch__menu-item:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.face-switch__menu-item[aria-checked='true'] {
+  background: var(--surface-hover);
+  font-weight: 600;
+}
+
+.face-switch__menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A face entry wears its face's colour, so the menu matches the control. */
+.face-switch__menu-item--top {
   color: var(--accent-strong);
 }
 
-.face-switch__ghost--bottom.face-switch__ghost--on {
-  border-color: color-mix(in srgb, var(--face-bottom) 65%, transparent);
+.face-switch__menu-item--bottom {
   color: var(--face-bottom-text);
 }
 
+.face-switch__menu-item--around {
+  color: var(--role-region-text);
+}
 
-/* Tablet shells carry the switch in the sketch's face row: full tap targets,
- * no label, and the row grows to hold them. The track takes the extra 2px of
- * its own padding so the segments stay a full 44px. */
+.face-switch__menu-item--other-side {
+  color: var(--text);
+}
+
+.face-switch__menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-switch__menu-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.face-switch__menu-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line);
+}
+
+/* Tablet shells carry the control in the sketch's face row: full tap targets,
+ * and the row grows to hold them. */
 [data-shell-mode='tablet'] .face-switch,
 [data-shell-mode='tablet-compact'] .face-switch {
   padding: 0;
@@ -191,11 +208,14 @@
   --face-banner-height: 56px;
 }
 
-[data-shell-mode='tablet'] .face-switch__segment,
-[data-shell-mode='tablet-compact'] .face-switch__segment,
-[data-shell-mode='tablet'] .face-switch__ghost,
-[data-shell-mode='tablet-compact'] .face-switch__ghost {
+[data-shell-mode='tablet'] .face-switch .face-switch__trigger,
+[data-shell-mode='tablet-compact'] .face-switch .face-switch__trigger {
   min-width: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
+}
+
+[data-shell-mode='tablet'] .face-switch__menu-item,
+[data-shell-mode='tablet-compact'] .face-switch__menu-item {
   min-height: var(--touch-target, 44px);
 }
 
@@ -220,7 +240,8 @@
 }
 
 /* The row carries the switch and nothing else (issue #1102 slice E 8): the
- * flip note and the Around explanation are the switch's own chip and tooltip. */
+ * flip and the Around explanation are the control's own label and tooltips,
+ * and its menu is portalled so this row's overflow cannot clip it. */
 .face-banner {
   display: flex;
   align-items: center;
@@ -292,7 +313,12 @@
   min-width: 0;
 }
 
+/* The face section heading is a button: it switches to that face, the same
+ * action as the header control (issue #1112 slice B, #1107). The Active/Ghost
+ * badge is gone, so the heading's own colour is what marks the current face. */
 .tree-face-layer {
+  appearance: none;
+  width: 100%;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -300,11 +326,36 @@
   min-width: 0;
   min-height: 30px;
   padding: 2px 4px 2px 6px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: var(--text-dim);
+  font: inherit;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* `.app-shell button` gives every button the hit target as a minimum, which
+ * would make a heading taller than the rows it introduces. */
+.tree-face-group .tree-face-layer {
+  min-width: 0;
+  min-height: 30px;
+}
+
+.tree-face-layer:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.tree-face-layer:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -2px;
+}
+
+.tree-face-layer:disabled {
+  cursor: not-allowed;
 }
 
 .tree-face-layer__label {
@@ -338,16 +389,24 @@
   background: color-mix(in srgb, var(--role-region) 14%, transparent);
 }
 
+.tree-face-layer--top.tree-face-layer--active:hover {
+  background: var(--accent-soft);
+}
+
+.tree-face-layer--bottom.tree-face-layer--active:hover {
+  background: color-mix(in srgb, var(--face-bottom) 14%, transparent);
+}
+
+.tree-face-layer--around.tree-face-layer--active:hover {
+  background: color-mix(in srgb, var(--role-region) 14%, transparent);
+}
+
 .tree-face-layer:not(.tree-face-layer--active) {
   opacity: 0.85;
 }
 
 .tree-face-layer__count {
   font-weight: 500;
-}
-
-.tree-face-layer__spacer {
-  flex: 1;
 }
 
 .tree-face-layer svg {

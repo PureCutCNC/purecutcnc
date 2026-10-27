@@ -184,7 +184,7 @@ export const appShellEn = {
   'appShell.toolRail.trim': 'Trim',
   'appShell.toolRail.extend': 'Extend',
 
-  // ── Workspace face switch (issue #945) ──
+  // ── Workspace face control (issues #945, #1112) ──
   'appShell.face.label': 'Face',
   'appShell.face.top': 'Top',
   'appShell.face.bottom': 'Bottom',
@@ -192,8 +192,10 @@ export const appShellEn = {
   'appShell.face.switchToTop': 'Work on the top face',
   'appShell.face.switchToBottom': 'Work on the bottom face',
   'appShell.face.busy': 'Finish the current edit before switching face',
+  'appShell.face.current': 'Current face: {face}',
+  'appShell.face.flippedShort': 'flipped {axis}',
   'appShell.face.otherSide': 'Other side',
   'appShell.face.showOtherSide': 'Show the other side as a ghost',
   'appShell.face.hideOtherSide': 'Hide the other side',
-  'appShell.face.flipped': 'Flipped about {axis}',
+  'appShell.face.showOtherSideItem': 'Show other side',
 } as const satisfies Record<string, string>

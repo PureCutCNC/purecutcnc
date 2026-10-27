@@ -489,9 +489,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   // ── Stock faces on the sketch (issue #945) ──
   'canvas.face.through': '贯穿',
   'canvas.face.topOriginLanding': '翻面后顶面原点位于此处',
-  'canvas.face.flippedAboutX': '毛坯绕 X 轴翻转（前边 ↔ 后边）。',
-  'canvas.face.flippedAboutY': '毛坯绕 Y 轴翻转（左边 ↔ 右边）。',
-  'canvas.face.topIsGhost': '顶面特征以虚影显示，无法在此编辑。',
   'canvas.face.aroundTurnsBar': '棒料在旋转轴中转动。此视图是其表面展开图：沿棒料方向和环绕方向。',
   'canvas.around.modelBand': '{name} — 位于棒料内部，由旋转粗加工和旋转精加工加工',
 }

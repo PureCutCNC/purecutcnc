@@ -226,7 +226,7 @@ test.describe('#994 tree guide touch capture', () => {
     await app.page.getByRole('button', { name: 'Close project panel', exact: true }).tap()
     await expect(row).not.toHaveClass(/tree-row--selected/)
     await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
-    await ui.face.otherSideToggle(app.page).tap()
+    await ui.face.toggleOtherSide(app.page)
     await panel.getByRole('button', { name: 'Pick guide', exact: true }).tap()
     await app.page.getByRole('button', { name: 'Open project panel', exact: true }).tap()
     await row.tap()

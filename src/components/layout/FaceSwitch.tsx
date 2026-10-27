@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+import { useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useProjectStore } from '../../store/projectStore'
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { activeFace, activeSetup, aroundUnavailableReason, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
@@ -23,20 +27,7 @@ import type { Project, SetupFace } from '../../types/project'
 import { Icon } from '../Icon'
 import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 import { faceSwitchExtras } from './faceSwitchExtras'
-
-/** One segment: the face it selects, and the icon and label it wears. */
-interface FaceEntry {
-  face: SetupFace
-  icon: string
-  label: 'appShell.face.top' | 'appShell.face.bottom' | 'appShell.face.around'
-}
-
-const FLAT_ENTRIES: readonly FaceEntry[] = [
-  { face: 'top', icon: 'face-top', label: 'appShell.face.top' },
-  { face: 'bottom', icon: 'face-bottom', label: 'appShell.face.bottom' },
-]
-
-const AROUND_ENTRY: FaceEntry = { face: 'around', icon: 'face-around', label: 'appShell.face.around' }
+import { faceIcon, faceLabelKey, faceMenu } from './faceSwitchMenu'
 
 /** Whether the project carries anything on Bottom: a Bottom setup or a Bottom feature. */
 function hasBottomContent(project: Project): boolean {
@@ -45,18 +36,23 @@ function hasBottomContent(project: Project): boolean {
 }
 
 /**
- * The Top | Bottom | Around segmented toggle in the workspace header, then —
- * on a flipped Bottom view — the short "Flipped about X/Y" chip, and last the
- * "Other side" ghost toggle (issue #1102 slices E and J).
+ * The workspace face control (issue #1112 slice B, decision 6; carried from
+ * #1107). One compact button names the face the workspace is on — "Bottom ·
+ * flipped X" on a flipped Bottom view — and opens a menu with the project's
+ * faces and the "Show other side" ghost overlay. It replaces the old segmented
+ * pills, the short flip chip and the separate eye.
  *
- * The Around segment appears only on a rotary project with a round bar
- * (issue #1028): those two authoring conditions are the whole reason the
- * segment can be absent, and no machine makes it unavailable — a missing,
- * non-rotary or wrong-axis machine still lets the user design on Around, and
- * is enforced instead when a program is posted (issue #1034). A plasma project
- * hides the switch entirely (#960) — a plasma table cuts through one sheet —
- * unless the project already carries content on both faces, which must stay
- * reachable.
+ * The tree's face section headings are the second home of the same action
+ * (`FeatureTree`), so switching is one call in both places and the refusal
+ * while an edit is in progress is one rule (`store/workspaceFace`).
+ *
+ * The Around entry appears only on a rotary project with a bar (issue #1028):
+ * those two authoring conditions are the whole reason the face can be absent,
+ * and no machine makes it unavailable — a missing, non-rotary or wrong-axis
+ * machine still lets the user design on Around, and is enforced instead when a
+ * program is posted (issue #1034). A plasma project hides the switch entirely
+ * (#960) — a plasma table cuts through one sheet — unless the project already
+ * carries content on both faces, which must stay reachable.
  */
 export function FaceSwitch() {
   const { t } = useI18n()
@@ -70,72 +66,159 @@ export function FaceSwitch() {
   const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
   const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
 
+  const [open, setOpen] = useState(false)
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuId = useId()
+
+  useOutsideDismiss({ open, refs: [hostRef, menuRef], onDismiss: () => setOpen(false) })
+
+  // The menu is portalled to the end of the document, so opening it puts focus
+  // on the face in view: Tab from the control would otherwise walk straight
+  // past the menu into the rest of the shell (issue #1112).
+  useEffect(() => {
+    if (!open) return
+    const checked = menuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"][aria-checked="true"]')
+    checked?.focus({ preventScroll: true })
+  }, [open])
+
+  // Escape closes the menu and gives the control its focus back, the same way
+  // choosing an entry does. It is caught in the capture phase and swallowed:
+  // an open menu owns Escape, so it cannot also cancel the sketch edit the
+  // workspace is refusing to leave (issue #1112).
+  useEffect(() => {
+    if (!open) return
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+    document.addEventListener('keydown', closeOnEscape, true)
+    return () => document.removeEventListener('keydown', closeOnEscape, true)
+  }, [open])
+
+  // The menu is portalled to the body: the tablet face row clips its own
+  // overflow, and an in-flow menu would be cut off there.
+  const coords = usePortalPosition(triggerRef, menuRef, open, (anchor, floating) => {
+    const margin = 8
+    const left = Math.max(margin, Math.min(anchor.left, window.innerWidth - floating.width - margin))
+    const top = Math.min(anchor.bottom + 6, window.innerHeight - floating.height - margin)
+    return { top, left }
+  })
+
   if (!showsFaceSwitch(machine, bothFaces)) return null
 
-  // A non-rotary project has no Around face at all (issue #1028), so its
-  // segment is hidden exactly as it is without a round bar. Nothing else can
-  // make the segment unavailable: the machine is not an authoring condition
-  // (issue #1034), so an Around segment that is shown is always usable.
-  const entries = aroundUnavailableReason(project) === null
-    ? [...FLAT_ENTRIES, AROUND_ENTRY]
-    : FLAT_ENTRIES
-  // The other-side toggle compares the two flat faces only: Around is not a
-  // half-turn of either, so it is never shown there.
-  const flatOtherSide = face !== 'around' && (face !== 'top' || hasBottomContent(project))
-  // A Bottom view is a flipped stock: the switch says so in a short chip
-  // instead of the old note row, and only once both faces are in use.
-  const extras = faceSwitchExtras({ face, bothFaces, axis: activeSetup(project).orientation.axis })
+  const aroundAvailable = aroundUnavailableReason(project) === null
+  const model = faceMenu({
+    face,
+    aroundAvailable,
+    bothFaces,
+    hasBottomContent: hasBottomContent(project),
+    busy,
+    showOtherSide,
+  })
+  // The control carries the face's own name and, on a flipped Bottom view, the
+  // axis it was turned about: "Bottom · flipped X".
+  const flipAxis = faceSwitchExtras({ face, bothFaces, axis: activeSetup(project).orientation.axis }).flipAxis
+  const faceLabel = t(faceLabelKey(face))
+  const label = flipAxis === null
+    ? faceLabel
+    : `${faceLabel} · ${t('appShell.face.flippedShort', { axis: flipAxis.toUpperCase() })}`
+  const accessibleName = t('appShell.face.current', { face: label })
+
+  function closeAndFocus(): void {
+    setOpen(false)
+    triggerRef.current?.focus({ preventScroll: true })
+  }
+
+  function choose(next: SetupFace): void {
+    switchWorkspaceFace(next)
+    closeAndFocus()
+  }
 
   return (
-    <div className="face-switch">
-      <div className="face-switch__segments" role="group" aria-label={t('appShell.face.label')}>
-        {entries.map((entry) => {
-          const pressed = face === entry.face
-          return (
-            <button
-              key={entry.face}
-              type="button"
-              className={`face-switch__segment face-switch__segment--${entry.face}${pressed ? ' face-switch__segment--active' : ''}`}
-              aria-pressed={pressed}
-              disabled={busy && !pressed}
-              title={busy && !pressed
-                ? t('appShell.face.busy')
-                : entry.face === 'around'
-                  ? t('canvas.face.aroundTurnsBar')
-                  : t(entry.face === 'top' ? 'appShell.face.switchToTop' : 'appShell.face.switchToBottom')}
-              onClick={() => { if (!pressed) switchWorkspaceFace(entry.face) }}
+    <div className="face-switch" ref={hostRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`face-switch__trigger face-switch__trigger--${face}`}
+        data-face={face}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={accessibleName}
+        title={accessibleName}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <Icon id={faceIcon(face)} size={18} />
+        <span className="face-switch__trigger-label">{label}</span>
+        <Icon id="chevron-down" size={14} className="face-switch__chevron" />
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              id={menuId}
+              className="face-switch__menu"
+              role="menu"
+              aria-label={t('appShell.face.label')}
+              style={{
+                position: 'fixed',
+                top: coords?.top ?? -9999,
+                left: coords?.left ?? -9999,
+                visibility: coords ? 'visible' : 'hidden',
+              }}
             >
-              <Icon id={entry.icon} size={18} />
-              <span>{t(entry.label)}</span>
-            </button>
+              {model.items.map((entry) => (
+                <button
+                  key={entry.face}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={entry.checked}
+                  data-face={entry.face}
+                  className={`face-switch__menu-item face-switch__menu-item--${entry.face}`}
+                  disabled={entry.disabled}
+                  title={t(entry.titleKey)}
+                  onClick={() => choose(entry.face)}
+                >
+                  <Icon id={entry.icon} size={16} />
+                  <span className="face-switch__menu-label">{t(entry.labelKey)}</span>
+                  <span className="face-switch__menu-check" aria-hidden="true">
+                    {entry.checked ? <Icon id="check" size={14} /> : null}
+                  </span>
+                </button>
+              ))}
+              {model.otherSide === null
+                ? null
+                : (
+                    <>
+                      <div className="face-switch__menu-separator" role="separator" />
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={model.otherSide.checked}
+                        className="face-switch__menu-item face-switch__menu-item--other-side"
+                        title={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
+                        onClick={() => {
+                          setShowOtherSide(!showOtherSide)
+                          closeAndFocus()
+                        }}
+                      >
+                        <Icon id={showOtherSide ? 'eye' : 'eye-off'} size={16} />
+                        <span className="face-switch__menu-label">{t('appShell.face.showOtherSideItem')}</span>
+                        <span className="face-switch__menu-check" aria-hidden="true">
+                          {showOtherSide ? <Icon id="check" size={14} /> : null}
+                        </span>
+                      </button>
+                    </>
+                  )}
+            </div>,
+            document.body,
           )
-        })}
-      </div>
-      {/* The flip chip explains the face just selected, so it sits beside the
-       * segments; the eye that shows the other side stays out to its right
-       * (issue #1102 slice J). */}
-      {extras.flipChip !== null && (
-        <span
-          className="face-switch__chip"
-          role="status"
-          title={`${t(extras.flipChip === 'x' ? 'canvas.face.flippedAboutX' : 'canvas.face.flippedAboutY')} ${t('canvas.face.topIsGhost')}`}
-        >
-          <Icon id="refresh" size={16} />
-          <span>{t('appShell.face.flipped', { axis: extras.flipChip.toUpperCase() })}</span>
-        </span>
-      )}
-      {bothFaces && flatOtherSide && (
-        <button
-          type="button"
-          className={`face-switch__ghost face-switch__ghost--${face === 'top' ? 'bottom' : 'top'}${showOtherSide ? ' face-switch__ghost--on' : ''}`}
-          aria-pressed={showOtherSide}
-          aria-label={t('appShell.face.otherSide')}
-          title={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
-          onClick={() => setShowOtherSide(!showOtherSide)}
-        >
-          <Icon id={showOtherSide ? 'eye' : 'eye-off'} size={16} />
-        </button>
-      )}
+        : null}
     </div>
   )
 }

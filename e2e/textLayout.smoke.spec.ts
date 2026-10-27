@@ -323,7 +323,7 @@ for (const face of ['top', 'bottom'] as const) {
       expect((await getProject(app.page)).features).toEqual(before.features)
       // The same explicit guide picker works from a named row while its overlay is off.
       await startLayout(app.page, 'path', 'AB')
-      await ui.face.otherSideToggle(app.page).click()
+      await ui.face.toggleOtherSide(app.page)
       await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
       const row = app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]')
       await row.click()
