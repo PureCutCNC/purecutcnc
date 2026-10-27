@@ -943,10 +943,6 @@ export const rotary = {
   direction: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__direction'),
   directionTrigger: (page: Page) => rotary.direction(page).locator('.ui-select__trigger'),
   directionOption: (page: Page, name: string) => rotary.direction(page).getByRole('option', { name }),
-  /** The Flutes tool picker, alone in its wrapper so direction never matches it. */
-  tool: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__tool'),
-  toolTrigger: (page: Page) => rotary.tool(page).locator('.ui-select__trigger'),
-  toolOption: (page: Page, name: string) => rotary.tool(page).getByRole('option', { name }),
   createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),

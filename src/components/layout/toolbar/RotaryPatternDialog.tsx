@@ -15,44 +15,59 @@
  */
 
 /**
- * The Thread and Flutes dialogs for the Around face (issue #1016 C1 slice B).
+ * The Thread and Flutes dialog (issues #1016 C1, #1112 F).
  *
- * Both collect the numbers the frozen `rotaryPatterns` helper takes and call
- * `addRotaryPattern` once. Nothing here is persisted: the dialog's fields
- * disappear with it, and the store writes ordinary lines, a folder and an
- * Engrave operation (plus a bundled V-bit for a thread when the project has
- * none). Lengths are project units; the inch thread field is threads per inch
- * and is converted to a physical pitch here, before the store call.
+ * One component creates and edits both canned shapes. Creation calls
+ * `addRotaryPattern` once, which writes one canned feature and no operation;
+ * editing updates the feature's stored parameters through the same
+ * `updateFeature` path every other Properties edit takes. The dialog has no
+ * Tool field — a Follow line operation is added to the feature the ordinary
+ * way (decision 3).
  *
- * Both dialogs show one Direction control: the physical hand of the helix,
- * right by default, never a machine A-axis reversal or a cut-direction
- * (climb/conventional) choice. A thread passes it to the store; a flute's
- * twist field is a magnitude the hand signs, so Left is that positive number
- * negated and a straight (0) flute is straight in either hand.
+ * Lengths are project units, and start/length are measured from the **chuck
+ * end**, the same as Turn/Polygon (decision 4). The inch thread field is
+ * threads per inch and is converted to a physical pitch before the store call.
+ * A flute's twist field is a magnitude; the physical hand signs the stored
+ * value, so Left is that positive number negated and a straight (0) flute is
+ * straight in either hand.
  *
- * Validation is local so Create can be disabled with an explanation before the
- * store is asked; a store refusal (a race, a tool policy change) is shown in
- * the same place and creates nothing.
+ * The dialog is opened from one module store: the creation drawer's rotary
+ * group calls `openRotaryPatternCreate`, and the canned-shape editor registry
+ * (the Properties "Edit thread…/Edit flutes…" button) calls
+ * `openRotaryPatternEdit`. One host, mounted once by AppShell, renders it, so
+ * the drawer closing on hover cannot unmount an open dialog and the expanded
+ * Properties modal cannot mount a second one. The host closes a create dialog
+ * as soon as Around stops being the available, active face, preserving the rule
+ * that leaving Around applies nothing.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { useProjectStore } from '../../../store/projectStore'
 import {
   THREAD_DEPTH_PER_PITCH,
+  rotaryPatternCannedData,
   rotaryPatternFrame,
   type RotaryPatternInput,
   type RotaryPatternRefusal,
 } from '../../../store/helpers/rotaryPatterns'
 import { getStockBounds } from '../../../types/project'
-import { isToolCompatibleWithOperation } from '../../../toolPolicy'
-import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../../toolLibrary'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
-import { Select } from '../../Select'
+import { resolveFeatureInstance } from '../../../store/helpers/resolveFeatures'
+import { activeFace, aroundSketchAuthoringAvailable } from '../../../store/helpers/activeFace'
+import { normalizeFlutesCannedParams } from '../../../cannedShapes/generators/flutes'
+import { normalizeThreadCannedParams } from '../../../cannedShapes/generators/thread'
 import { RotaryDirectionField } from './RotaryDirectionField'
+import {
+  closeRotaryPatternDialog,
+  dialogRequestSnapshot,
+  subscribeDialogRequest,
+  type RotaryPatternKind,
+} from './rotaryPatternDialogState'
 
-export type RotaryPatternKind = 'thread' | 'flutes'
+export type { RotaryPatternKind } from './rotaryPatternDialogState'
 
 /** UI caps, so a typo cannot ask the store for hundreds of lines. */
 const MAX_THREAD_STARTS = 32
@@ -75,10 +90,7 @@ const REFUSAL_KEYS: Record<RotaryPatternRefusal, MessageKey> = {
   invalidCount: 'dialogs.rotary.error.count',
   invalidTwist: 'dialogs.rotary.error.twist',
   depthReachesCentreline: 'dialogs.rotary.error.depthCentreline',
-  noVBitTool: 'dialogs.rotary.refusal.noVBitTool',
-  toolNotFound: 'dialogs.rotary.refusal.toolNotFound',
-  toolIncompatible: 'dialogs.rotary.refusal.toolIncompatible',
-  targetNotAllowed: 'dialogs.rotary.refusal.targetNotAllowed',
+  creationFailed: 'dialogs.rotary.refusal.creationFailed',
 }
 
 /** The second sentence an `aroundUnavailable` refusal adds, naming the cause. */
@@ -98,46 +110,116 @@ function tidy(value: number): string {
   return String(Number(value.toFixed(4)))
 }
 
+// ---------------------------------------------------------------------------
+// The dialog host (creation drawer + Properties editor)
+// ---------------------------------------------------------------------------
+
+/** Rendered once by AppShell; opens the create or edit dialog when asked. */
+export function RotaryPatternDialogHost() {
+  const request = useSyncExternalStore(
+    subscribeDialogRequest,
+    dialogRequestSnapshot,
+    dialogRequestSnapshot,
+  )
+  const project = useProjectStore((state) => state.project)
+  const face = activeFace(project)
+  const available = aroundSketchAuthoringAvailable(project)
+
+  // A create form belongs to the Around workspace: leaving it (or losing
+  // availability) closes the dialog, so a half-filled form cannot reappear
+  // with numbers that belong to a face the user left.
+  useEffect(() => {
+    if (request && !request.featureId && (face !== 'around' || !available)) closeRotaryPatternDialog()
+  }, [request, face, available])
+
+  if (!request || typeof document === 'undefined') return null
+  const key = `${request.kind}-${request.featureId ?? 'create'}`
+  return createPortal(
+    <RotaryPatternDialog
+      key={key}
+      kind={request.kind}
+      featureId={request.featureId}
+      onClose={closeRotaryPatternDialog}
+    />,
+    document.body,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Dialog
+// ---------------------------------------------------------------------------
+
 interface RotaryPatternDialogProps {
   kind: RotaryPatternKind
+  featureId?: string
   onClose: () => void
 }
 
-export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps) {
+export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternDialogProps) {
   useRestoreCanvasFocus()
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
   const addRotaryPattern = useProjectStore((state) => state.addRotaryPattern)
+  const updateFeature = useProjectStore((state) => state.updateFeature)
   const units = project.meta.units
   const unitLabel = units === 'inch' ? 'in' : 'mm'
-  const frame = rotaryPatternFrame(project)
+  const editing = featureId !== undefined
+  const feature = editing ? resolveFeatureInstance(project, featureId) : null
+  const storedCanned = feature?.canned && feature.canned.kind === kind ? feature.canned : null
+  // Normalize against the dialog's own kind, so a stored thread never gets read
+  // as flutes (or the reverse) and each branch keeps its concrete type.
+  const storedThread = kind === 'thread'
+    ? normalizeThreadCannedParams(storedCanned?.params ?? {})
+    : null
+  const storedFlutes = kind === 'flutes'
+    ? normalizeFlutesCannedParams(storedCanned?.params ?? {})
+    : null
+  const stored = storedThread ?? storedFlutes
+
+  useEffect(() => {
+    if (editing && !stored) onClose()
+  }, [editing, stored, onClose])
+
+  const frame = stored?.frame ?? rotaryPatternFrame(project)
   const radius = frame?.radius ?? 0
-
   const bounds = getStockBounds(project.stock)
-  const barLength = frame ? (frame.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY) : 0
+  const barLength = frame
+    ? (frame.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY)
+    : 0
 
-  const [start, setStart] = useState('0')
-  const [length, setLength] = useState(tidy(barLength))
-  const [pitchText, setPitchText] = useState(
-    units === 'inch' ? String(INCH_DEFAULT_TPI) : String(MM_DEFAULT_PITCH),
-  )
-  const [starts, setStarts] = useState('1')
-  const [depth, setDepth] = useState(tidy(
-    kind === 'thread'
-      ? THREAD_DEPTH_PER_PITCH * (units === 'inch' ? 1 / INCH_DEFAULT_TPI : MM_DEFAULT_PITCH)
-      : radius / 4 || THREAD_DEPTH_PER_PITCH,
-  ))
-  // Once the user edits the depth, the pitch default no longer owns it.
-  const [depthEdited, setDepthEdited] = useState(false)
-  const [count, setCount] = useState('4')
-  const [twist, setTwist] = useState('0')
+  const [start, setStart] = useState(() => (stored ? String(stored.start) : '0'))
+  const [length, setLength] = useState(() => (stored ? String(stored.length) : tidy(barLength)))
+  const [pitchText, setPitchText] = useState(() => {
+    if (storedThread) {
+      return tidy(units === 'inch' ? 1 / storedThread.pitch : storedThread.pitch)
+    }
+    return units === 'inch' ? String(INCH_DEFAULT_TPI) : String(MM_DEFAULT_PITCH)
+  })
+  const [starts, setStarts] = useState(() => (storedThread ? String(storedThread.starts) : '1'))
+  const [depth, setDepth] = useState(() => {
+    if (stored) return String(stored.depth)
+    return tidy(
+      kind === 'thread'
+        ? THREAD_DEPTH_PER_PITCH * (units === 'inch' ? 1 / INCH_DEFAULT_TPI : MM_DEFAULT_PITCH)
+        : radius / 4 || THREAD_DEPTH_PER_PITCH,
+    )
+  })
+  // Once the user edits the depth, the pitch default no longer owns it. An
+  // existing shape already has a chosen depth, so editing its pitch never
+  // silently rewrites it.
+  const [depthEdited, setDepthEdited] = useState(() => stored !== null)
+  const [count, setCount] = useState(() => (storedFlutes ? String(storedFlutes.count) : '4'))
+  const [twist, setTwist] = useState(() => (storedFlutes ? String(Math.abs(storedFlutes.twist)) : '0'))
   // The only direction state in either dialog: the physical hand, right by
-  // default. It is never inferred or silently defaulted a second time.
-  const [direction, setDirection] = useState<'right' | 'left'>('right')
-  const [toolRef, setToolRef] = useState('')
-  const [busy, setBusy] = useState(false)
+  // default. An edit starts from the stored hand.
+  const [direction, setDirection] = useState<'right' | 'left'>(() => {
+    if (storedThread) return storedThread.hand
+    if (storedFlutes) return storedFlutes.twist < 0 ? 'left' : 'right'
+    return 'right'
+  })
   const [refusal, setRefusal] = useState<string | null>(null)
-  // A catalog load can outlive the dialog; a closed dialog must create nothing.
+  // A close can outlive the click that opened the edit; the guard keeps a
+  // late continuation from writing after the user left.
   const activeRef = useRef(true)
 
   useEffect(() => () => {
@@ -153,16 +235,6 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const compatibleTools = useMemo(
-    () => project.tools.filter((tool) => isToolCompatibleWithOperation(tool, 'follow_line')),
-    [project.tools],
-  )
-  // The user's explicit pick survives a re-render; it only falls back when the
-  // chosen tool is gone from the project.
-  const selectedToolId = compatibleTools.some((tool) => tool.id === toolRef)
-    ? toolRef
-    : compatibleTools[0]?.id ?? ''
-
   function handlePitchChange(value: string) {
     setPitchText(value)
     if (depthEdited) return
@@ -174,7 +246,8 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
 
   function threadProblem(): string | null {
     if (!frame) return t('dialogs.rotary.error.around')
-    if (!Number.isFinite(parseNumber(start))) return t('dialogs.rotary.error.start')
+    const startValue = parseNumber(start)
+    if (!Number.isFinite(startValue) || startValue < 0) return t('dialogs.rotary.error.start')
     const lengthValue = parseNumber(length)
     if (!Number.isFinite(lengthValue) || lengthValue <= 0) return t('dialogs.rotary.error.length')
     const rawPitch = parseNumber(pitchText)
@@ -193,7 +266,8 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
 
   function flutesProblem(): string | null {
     if (!frame) return t('dialogs.rotary.error.around')
-    if (!Number.isFinite(parseNumber(start))) return t('dialogs.rotary.error.start')
+    const startValue = parseNumber(start)
+    if (!Number.isFinite(startValue) || startValue < 0) return t('dialogs.rotary.error.start')
     const lengthValue = parseNumber(length)
     if (!Number.isFinite(lengthValue) || lengthValue <= 0) return t('dialogs.rotary.error.length')
     const countValue = parseNumber(count)
@@ -205,7 +279,6 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
     const depthValue = parseNumber(depth)
     if (!Number.isFinite(depthValue) || depthValue <= 0) return t('dialogs.rotary.error.depth')
     if (radius > 0 && depthValue >= radius) return t('dialogs.rotary.error.depthCentreline')
-    if (!selectedToolId) return t('dialogs.rotary.error.noTool')
     return null
   }
 
@@ -221,7 +294,7 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
         length: parseNumber(length),
         pitch: units === 'inch' ? 1 / rawPitch : rawPitch,
         starts: parseNumber(starts),
-        direction,
+        hand: direction,
         depth: depthValue,
       }
     }
@@ -234,45 +307,51 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
       // either way, so a straight flute is straight in both hands.
       twist: (direction === 'left' ? -1 : 1) * parseNumber(twist),
       depth: depthValue,
-      toolRef: selectedToolId,
     }
   }
 
-  async function handleCreate() {
-    if (busy || problem !== null) return
-    const input = buildInput()
-    setBusy(true)
-    setRefusal(null)
-    try {
-      let libraryTools: ToolLibraryEntry[] = []
-      if (kind === 'thread') {
-        try {
-          libraryTools = (await loadBundledToolLibrary()).tools
-        } catch {
-          libraryTools = []
-        }
-      }
-      if (!activeRef.current) return
-      const result = addRotaryPattern(input, kind === 'thread' ? libraryTools : undefined)
-      if (result.ok) {
-        onClose()
+  function handleApply() {
+    if (problem !== null) return
+    if (editing && featureId) {
+      if (!stored) return
+      const input = buildInput()
+      const canned = rotaryPatternCannedData(stored.frame, input)
+      if (!canned) {
+        setRefusal(t('dialogs.rotary.refusal.creationFailed'))
         return
       }
-      const base = t(REFUSAL_KEYS[result.reason], {
-        max: result.reason === 'invalidStarts' ? MAX_THREAD_STARTS : MAX_FLUTE_COUNT,
+      const depthValue = parseNumber(depth)
+      // One parameter write, one history entry: `updateFeature` is the same
+      // path any other Properties edit takes (issue #1112).
+      updateFeature(featureId, {
+        canned,
+        z_top: project.stock.thickness,
+        z_bottom: project.stock.thickness - depthValue,
       })
-      const detailKey = result.reason === 'aroundUnavailable' && result.detail
-        ? AROUND_DETAIL_KEYS[result.detail]
-        : undefined
-      setRefusal(detailKey ? `${base} ${t(detailKey)}` : base)
-    } finally {
-      if (activeRef.current) setBusy(false)
+      if (activeRef.current) onClose()
+      return
     }
+
+    const result = addRotaryPattern(buildInput())
+    if (result.ok) {
+      onClose()
+      return
+    }
+    const base = t(REFUSAL_KEYS[result.reason], {
+      max: result.reason === 'invalidStarts' ? MAX_THREAD_STARTS : MAX_FLUTE_COUNT,
+    })
+    const detailKey = result.reason === 'aroundUnavailable' && result.detail
+      ? AROUND_DETAIL_KEYS[result.detail]
+      : undefined
+    setRefusal(detailKey ? `${base} ${t(detailKey)}` : base)
   }
 
   const titleKey: MessageKey = kind === 'thread'
-    ? 'dialogs.rotary.thread.title'
-    : 'dialogs.rotary.flutes.title'
+    ? (editing ? 'dialogs.rotary.thread.editTitle' : 'dialogs.rotary.thread.title')
+    : (editing ? 'dialogs.rotary.flutes.editTitle' : 'dialogs.rotary.flutes.title')
+
+  // A corrupt parameter set has no editable form; the effect above closes it.
+  if (editing && !stored) return null
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -302,6 +381,7 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
                 <input
                   id="rotary-start"
                   type="number"
+                  min="0"
                   step="any"
                   value={start}
                   onChange={(event) => setStart(event.target.value)}
@@ -430,20 +510,10 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
                       min="0"
                       step="any"
                       value={depth}
-                      onChange={(event) => setDepth(event.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="dialog-section-group rotary-dialog__tool">
-                  <label className="dialog-section-title">
-                    {t('dialogs.rotary.flutes.tool')}
-                  </label>
-                  <div className="properties-field">
-                    <Select
-                      value={selectedToolId}
-                      options={compatibleTools.map((tool) => ({ value: tool.id, label: tool.name }))}
-                      onChange={(value) => setToolRef(value)}
+                      onChange={(event) => {
+                        setDepthEdited(true)
+                        setDepth(event.target.value)
+                      }}
                     />
                   </div>
                 </div>
@@ -466,10 +536,10 @@ export function RotaryPatternDialog({ kind, onClose }: RotaryPatternDialogProps)
           <button
             className="feat-btn feat-btn--primary rotary-dialog__create"
             type="button"
-            disabled={problem !== null || busy}
-            onClick={() => { void handleCreate() }}
+            disabled={problem !== null}
+            onClick={handleApply}
           >
-            {busy ? t('dialogs.rotary.creating') : t('dialogs.rotary.create')}
+            {editing ? t('dialogs.common.apply') : t('dialogs.rotary.create')}
           </button>
         </div>
       </div>

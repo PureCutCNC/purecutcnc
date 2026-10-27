@@ -340,6 +340,14 @@ function CreationActions({
                         </div>
                       </>
                     )}
+                    {/*
+                      The rotary group lives inside the creation drawer, not in
+                      a separate toolbar group (issue #1112 decision 4). Thread
+                      and Flutes self-guard on a round, active Around face; the
+                      solids follow the bar shape and stay where they are until
+                      slice G moves them into the same drawer group.
+                    */}
+                    <RotaryPatternActions variant="drawer" tooltipSide="bottom" />
                   </div>,
                   document.body,
                 )
@@ -349,8 +357,6 @@ function CreationActions({
       )}
       {/* The one-shot solids appear only while the workspace is on Around. */}
       <RotarySolidActions tooltipSide={tooltipSide} />
-      {/* Thread and Flutes appear only while the workspace is on a round Around. */}
-      <RotaryPatternActions tooltipSide={tooltipSide} />
     </div>
   )
 }

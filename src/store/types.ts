@@ -677,11 +677,12 @@ export interface ProjectStore {
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
   addGearFeature: (name: string, center: Point, outsideRadius: number, params: GearCreationParams, depth: number) => string[]
   /**
-   * Canned Thread/Flutes on the Around face (issue #1016 C1): a named folder of
-   * ordinary open `line` features plus one Engrave operation, in one undo step.
-   * Returns the created ids, or a typed refusal that changed nothing.
+   * Canned Thread/Flutes on the Around face (issue #1112 F): one canned feature
+   * drawing all its open `line` outlines, in one undo step. Creation adds no
+   * operation and takes no tool. Returns the feature id, or a typed refusal
+   * that changed nothing.
    */
-  addRotaryPattern: (input: RotaryPatternInput, libraryTools?: ToolLibraryEntry[]) => RotaryPatternResult
+  addRotaryPattern: (input: RotaryPatternInput) => RotaryPatternResult
   /**
    * Ordinary generated solids on the Around face (issue #1016 C2-B): a polygon
    * prism from a round bar, or the round finished target of a square-to-round

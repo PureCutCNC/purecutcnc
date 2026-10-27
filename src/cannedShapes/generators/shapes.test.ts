@@ -170,7 +170,13 @@ test('unit conversion changes lengths only, never a side count or an angle', () 
 })
 
 test('generation is deterministic for the same parameters', () => {
+  // This file covers the five flat shapes; the gear and the rotary shapes have
+  // their own generator tests (gear.test.ts, thread.test.ts, flutes.test.ts).
+  const flatKinds = new Set(['ngon', 'ellipse', 'slot', 'roundrect', 'chamferrect'])
+  let checked = 0
   for (const generator of BUILT_IN_CANNED_SHAPES) {
+    if (!flatKinds.has(generator.kind)) continue
+    checked += 1
     const value = generator.kind === 'ngon'
       ? params({ sides: 7, size: 12, rotation: 15 })
       : generator.kind === 'ellipse'
@@ -186,6 +192,7 @@ test('generation is deterministic for the same parameters', () => {
       `${generator.kind}: same input, same outline`,
     )
   }
+  assertEqual(checked, flatKinds.size, 'every flat shape was checked')
 })
 
 // ── The Edit <shape>… form (pure half) ──────────────────────────────
