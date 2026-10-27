@@ -33,7 +33,6 @@
 import { rescueMachinesToLibrary } from '../../machine/store'
 import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
-import { projectWithMachineDefinitions } from '../../store/helpers/machineDefinitions'
 import type { Project } from '../../types/project'
 
 export interface SetupOnlyTemplateResult {
@@ -50,23 +49,18 @@ export function setupOnlyTemplate(template: Project): SetupOnlyTemplateResult {
     // Machines merely by opening this dialog.
     rescueMachinesToLibrary(definitions.filter((definition) => definition.id !== selectedId))
   ))
-  // One gate for the write: if the rescue above could not make an unselected
-  // machine durable, it stays in the template instead of disappearing (#1119).
-  const machineWrite = projectWithMachineDefinitions(
-    cloned,
-    {
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
-    },
-    { rescue: rescueMachinesToLibrary },
-  )
+  // The normalization above is the one rescue-or-keep gate for this write: it
+  // already moved the unselected machines into My Machines on a durable rescue,
+  // or kept them in the template when the rescue failed. Re-running the write
+  // gate would rescue them a second time and re-embed the originals under their
+  // old ids (#1119).
   return {
     project: {
       ...cloned,
       meta: {
         ...cloned.meta,
-        machineDefinitions: machineWrite.project.meta.machineDefinitions,
-        selectedMachineId: machineWrite.project.meta.selectedMachineId,
+        machineDefinitions: machines.machineDefinitions,
+        selectedMachineId: machines.selectedMachineId,
       },
       dimensions: {},
       features: [],
@@ -78,6 +72,6 @@ export function setupOnlyTemplate(template: Project): SetupOnlyTemplateResult {
       clamps: [],
       ai_history: [],
     },
-    diagnostics: [...machines.diagnostics, ...machineWrite.diagnostics],
+    diagnostics: machines.diagnostics,
   }
 }

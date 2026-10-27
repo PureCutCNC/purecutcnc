@@ -22,7 +22,9 @@
  *
  *  1. the caller names it as an explicit user delete, or
  *  2. it is an unmodified bundled copy (the build supplies it), or
- *  3. a durable rescue stored it somewhere that survives a reload.
+ *  3. a durable rescue stored it somewhere that survives a reload, or
+ *  4. the caller explicitly authorized replacing it in place (the user
+ *     accepted a newer copy of that same machine).
  *
  * With no rescue seam, or a rescue that cannot make itself durable, the
  * definition **stays in the project**. That is deliberately the safe default:
@@ -31,14 +33,21 @@
  * two machines became one on a blocked library.
  *
  * Every direct assignment to `meta.machineDefinitions` must go through
- * {@link projectWithMachineDefinitions}. The sweep test
- * `src/store/machineDefinitionsInvariant.test.ts` proves the load/save/restore
- * paths keep two machines when the library is blocked.
+ * {@link projectWithMachineDefinitions}, except the load/normalization paths,
+ * which go through `normalizeMachineDefinitions` — that function is itself the
+ * one rescue-or-keep gate for those paths and must not be re-run through this
+ * one. The sweep test `src/store/machineDefinitionsInvariant.test.ts` proves
+ * both gateways keep every machine's content when the library is blocked.
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
-import { getBundledMachine, isBundledMachineId, machinesFunctionallyEqual } from '../../machine/registry'
+import {
+  allocateMachineId,
+  getBundledMachine,
+  isBundledMachineId,
+  machinesFunctionallyEqual,
+} from '../../machine/registry'
 import type { Project } from '../../types/project'
 import type { MachineRescuer } from './normalize'
 
@@ -59,6 +68,14 @@ export interface ProjectMachineDefinitionsOptions {
    * leave without a rescue — clearing the selection is such an action.
    */
   explicitlyRemoved?: ReadonlySet<string>
+  /**
+   * IDs whose project copy the caller may replace with different content under
+   * the same id — the user accepting an update of that machine. Every other
+   * same-ID collision is a loss like a dropped definition: the existing
+   * content is rescued, or kept under a re-keyed id. Omitted means no write is
+   * authorized to overwrite a machine in place.
+   */
+  authorizedUpdates?: ReadonlySet<string>
 }
 
 export interface ProjectMachineDefinitionsResult {
@@ -109,6 +126,7 @@ export function projectWithMachineDefinitions(
   const current = project.meta.machineDefinitions ?? []
   const next = [...write.machineDefinitions]
   const explicitlyRemoved = options.explicitlyRemoved ?? new Set<string>()
+  const authorizedUpdates = options.authorizedUpdates ?? new Set<string>()
   const matched = new Array<boolean>(next.length).fill(false)
 
   const lost: MachineDefinition[] = []
@@ -132,9 +150,12 @@ export function projectWithMachineDefinitions(
       matched[index] = true
       continue
     }
-    // Same id, different content: an explicit update of the project copy (the
-    // machine manager's "use this version"), not a machine leaving the project.
-    if (next.some((candidate) => candidate.id === definition.id)) continue
+    // Same id, different content: only an explicitly authorized update (the
+    // user accepting a newer copy of that machine) may replace the project
+    // copy. Any other collision is a loss: the existing content is rescued or
+    // kept below, never silently discarded.
+    if (next.some((candidate) => candidate.id === definition.id)
+      && authorizedUpdates.has(definition.id)) continue
     if (explicitlyRemoved.has(definition.id)) continue
     if (isBundledMachineId(definition.id)) {
       const bundled = getBundledMachine(definition.id)
@@ -145,18 +166,42 @@ export function projectWithMachineDefinitions(
 
   const diagnostics: MachineLoadDiagnostic[] = []
   let kept: MachineDefinition[] = []
+  let rescueFailed = false
   if (lost.length > 0) {
     if (options.rescue) {
       const outcome = options.rescue(lost)
       diagnostics.push(...(outcome.diagnostics ?? []))
       if (!outcome.durable) {
         kept = lost
-        diagnostics.push(keptInProjectDiagnostic(kept))
+        rescueFailed = true
       }
     } else {
       kept = lost
     }
   }
+
+  // A kept definition that shares an id with a requested one cannot coexist
+  // with it unchanged. Re-key the kept copy (the requested definition keeps the
+  // id, so the selection and its library link stay meaningful) and report it.
+  const usedIds = new Set(next.map((definition) => definition.id))
+  kept = kept.map((definition) => {
+    if (!usedIds.has(definition.id)) {
+      usedIds.add(definition.id)
+      return definition
+    }
+    const id = allocateMachineId(definition.name || definition.id, usedIds)
+    usedIds.add(id)
+    diagnostics.push({
+      severity: 'warning',
+      kind: 'machine-rekeyed',
+      machineId: definition.id,
+      machineName: definition.name,
+      nextId: id,
+      message: `Machine "${definition.name}" was kept as "${id}" because "${definition.id}" is now used by a different machine.`,
+    })
+    return { ...definition, id }
+  })
+  if (rescueFailed && kept.length > 0) diagnostics.push(keptInProjectDiagnostic(kept))
 
   const definitions = orderSelectedFirst([...next, ...kept], write.selectedMachineId)
   const selectedMachineId = write.selectedMachineId !== null

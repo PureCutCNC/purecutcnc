@@ -49,7 +49,6 @@ import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
-import { projectWithMachineDefinitions } from './machineDefinitions'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
 import {
   dedupeProjectIds,
@@ -765,21 +764,17 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     authoritativeProject,
     migrationInfo?.rescueMachineDefinitions,
   )
-  // Every write of the project's machine list goes through this gate: it keeps
-  // any definition the normalization would drop when the rescue seam is absent
-  // or could not make itself durable (#1119).
-  const machineWrite = projectWithMachineDefinitions(
-    authoritativeProject,
-    {
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
-    },
-    { rescue: migrationInfo?.rescueMachineDefinitions },
-  )
-  const normalizedMachineDefinitions = machineWrite.project.meta.machineDefinitions
-  const normalizedSelectedMachineId = machineWrite.project.meta.selectedMachineId
+  // `normalizeMachineDefinitions` is the one rescue-or-keep gate for this path:
+  // it already moved every unselected definition into the library on a durable
+  // rescue, or kept it in `machineDefinitions` when the rescue failed. Running
+  // the write gate again would rescue the originals a second time and re-embed
+  // them under their old ids (an edited bundled copy would appear both in My
+  // Machines under its new id and in the project under the bundled one), and
+  // its diagnostics would disagree with `compacted` (#1119).
+  const normalizedMachineDefinitions = machines.machineDefinitions
+  const normalizedSelectedMachineId = machines.selectedMachineId
   if (migrationInfo) {
-    migrationInfo.machineDiagnostics = [...machines.diagnostics, ...machineWrite.diagnostics]
+    migrationInfo.machineDiagnostics = machines.diagnostics
     migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
     migrationInfo.machineNormalization = machines
   }

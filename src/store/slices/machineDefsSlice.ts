@@ -68,6 +68,13 @@ export function projectWithMachine(project: Project, snapshot: MachineDefinition
     },
     {
       rescue: rescueMachinesToLibrary,
+      // Replacing the currently selected copy with a newer version of the same
+      // machine is the explicit "update project copy" action. A same-ID write
+      // that does not update the selected machine (e.g. selecting a changed
+      // copy of a retained one) must preserve the retained content (#1119).
+      authorizedUpdates: snapshot && snapshot.id === project.meta.selectedMachineId
+        ? new Set([snapshot.id])
+        : undefined,
       // Clearing through this helper is an explicit user delete of the selected
       // machine, exactly like clearing it through the store action.
       explicitlyRemoved: snapshot || !project.meta.selectedMachineId
@@ -109,6 +116,12 @@ export function createMachineDefsSlice(
           },
           {
             rescue: rescueMachinesToLibrary,
+            // Only updating the selected copy is an authorized in-place
+            // replacement; a changed copy of a retained machine keeps the
+            // original content instead of overwriting it (#1119).
+            authorizedUpdates: snapshot && snapshot.id === s.project.meta.selectedMachineId
+              ? new Set([snapshot.id])
+              : undefined,
             explicitlyRemoved: snapshot || !s.project.meta.selectedMachineId
               ? undefined
               : new Set([s.project.meta.selectedMachineId]),
