@@ -27,6 +27,12 @@
  * shape was drawn against (`rotarySolidParams.ts`). The segment count is stored
  * too, so a unit conversion keeps the tessellation the diameter was authored
  * with instead of re-deriving it from the new unit's sagitta.
+ *
+ * A Turn may also carry a copied side profile (decision 11, `turnProfile.ts`).
+ * With one, the mesh is the profile revolved about the bar axis instead of the
+ * plain cylinder; the profile copy is authoritative, so editing or deleting the
+ * drawn source cannot change the Turn. Without one, everything below is
+ * exactly the plain-diameter behaviour slice G shipped.
  */
 
 import {
@@ -34,6 +40,8 @@ import {
   ROTARY_CYLINDER_MIN_SEGMENTS,
   buildRotaryCylinderMesh,
 } from '../../engine/rotaryCylinderMesh'
+import { buildRotaryRevolveMesh } from '../../engine/rotaryRevolve'
+import { computeMeshBounds } from '../../engine/importedMesh'
 import { rectProfile, type CannedShapeParams } from '../../types/project'
 import { defineCannedShape } from '../types'
 import { TURN_CANNED_KIND } from './kinds'
@@ -48,6 +56,13 @@ import {
   storedSolidFrameOf,
   type RotarySolidFrame,
 } from './rotarySolidParams'
+import {
+  convertTurnCannedProfile,
+  normalizeTurnCannedProfile,
+  turnProfileBand,
+  turnProfileProblem,
+  type TurnCannedProfile,
+} from './turnProfile'
 
 /** Stored parameters: the dialog's set plus the bar snapshot. */
 export type TurnCannedParams = CannedShapeParams & {
@@ -57,6 +72,8 @@ export type TurnCannedParams = CannedShapeParams & {
   /** Ring vertex count, chosen from the diameter and project units once. */
   segments: number
   frame: RotarySolidFrame
+  /** A copied side profile, revolved about the bar axis. Absent = a cylinder. */
+  profile?: TurnCannedProfile
 }
 
 function isTurnCannedParams(raw: CannedShapeParams): raw is TurnCannedParams {
@@ -73,7 +90,23 @@ export function normalizeTurnCannedParams(raw: CannedShapeParams): TurnCannedPar
   if (!isTurnCannedParams(raw)) return null
   const frame = storedSolidFrameOf(raw)
   if (!frame) return null
-  const { start, length, diameter, segments } = raw
+  const { segments } = raw
+  let { start, length, diameter } = raw
+
+  let profile: TurnCannedProfile | undefined
+  if (raw.profile !== undefined && raw.profile !== null) {
+    const normalized = normalizeTurnCannedProfile(raw.profile, frame)
+    if (!normalized) return null
+    profile = normalized
+    // The profile is the geometry: its own extent and widest radius are the
+    // start/length/diameter the summary and older readers see.
+    const band = turnProfileBand(frame, normalized)
+    start = band.start
+    length = band.length
+    diameter = band.diameter
+    if (turnProfileProblem(normalized, frame) !== null) return null
+  }
+
   if (diameter <= 0 || diameter > frame.thickness + ROTARY_SOLID_TOLERANCE) return null
   if (!Number.isInteger(segments)
     || segments < ROTARY_CYLINDER_MIN_SEGMENTS
@@ -85,10 +118,20 @@ export function normalizeTurnCannedParams(raw: CannedShapeParams): TurnCannedPar
     diameter,
     segments,
     frame: cloneStoredRotarySolidFrame(frame),
+    ...(profile ? { profile } : {}),
   } as unknown as TurnCannedParams
 }
 
 function buildTurnMesh(params: TurnCannedParams) {
+  if (params.profile) {
+    const mesh = buildRotaryRevolveMesh(
+      rotarySolidFrameStock(params.frame),
+      params.profile.contours,
+      params.segments,
+    )
+    const bounds = computeMeshBounds(mesh.positions)
+    return { positions: mesh.positions, index: mesh.indices, bounds }
+  }
   const { alongStart, alongEnd } = rotarySolidAlong(params.frame, params.start, params.length)
   return buildRotaryCylinderMesh(
     rotarySolidFrameStock(params.frame),
@@ -137,6 +180,7 @@ export const turnCannedShape = defineCannedShape<TurnCannedParams>({
     length: convertLength(params.length),
     diameter: convertLength(params.diameter),
     frame: convertStoredRotarySolidFrame(params.frame, convertLength),
+    ...(params.profile ? { profile: convertTurnCannedProfile(params.profile, convertLength) } : {}),
   }) as unknown as TurnCannedParams,
   summary: (params) => ({
     key: 'canned.turn.summary',

@@ -60,6 +60,7 @@ import { normalizeThreadCannedParams } from '../../cannedShapes/generators/threa
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from './buildShapeFeature'
 import { createDefinitionForFeature } from './featureDefinitions'
+import { rotaryPatternSurfaceSpan } from './rotarySurface'
 import type { ProjectStore } from '../types'
 
 export { THREAD_DEPTH_PER_PITCH, rotaryPatternFrame, buildRotaryPatternLines, rotaryHandedness, rotarySheetPoint } from '../../engine/rotaryPatterns'
@@ -207,7 +208,9 @@ function planRotaryPattern(project: Project, input: RotaryPatternInput): RotaryP
   ])
   const draft = buildShapeFeature(project, 'line', 'composite', worldProfile, name, input.depth)
   const frameProfile = cannedShapeFrame(canned) ?? worldProfile
-  const thickness = project.stock.thickness
+  // A band wholly on one Turn measures its depth from that Turn's surface
+  // (decision 10); on the plain bar this is exactly the old thickness span.
+  const span = rotaryPatternSurfaceSpan(project, input, input.depth)
   const feature: SketchFeature = {
     ...draft,
     // Creation adds no operation and no tool: the row is an ordinary Line, so
@@ -215,9 +218,10 @@ function planRotaryPattern(project: Project, input: RotaryPatternInput): RotaryP
     operation: 'line',
     authoringFace: 'around',
     canned,
-    // Around stores Top-like heights: surface = thickness, centreline = half.
-    z_top: thickness,
-    z_bottom: thickness - input.depth,
+    // Around stores Top-like heights: the bar surface is the stock thickness,
+    // the centreline half of it, and a Turn's surface sits at half + radius.
+    z_top: span.zTop,
+    z_bottom: span.zBottom,
     sketch: { ...draft.sketch, orientationAngle: 0, profile: frameProfile },
   }
   return { ok: true, feature }

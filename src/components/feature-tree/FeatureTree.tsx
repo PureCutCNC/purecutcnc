@@ -31,6 +31,7 @@ import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
 import { featureUncutWarnings } from '../cam/uncutWork'
+import { rotaryPatternSurfaceWarnings } from '../../store/helpers/rotarySurface'
 import { UncutWorkBadge } from '../common/UncutWorkBadge'
 
 interface FeatureTreeProps {
@@ -91,6 +92,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // Kept work the current stock (or an operation that reaches the centreline)
   // cannot cut, derived once per project rather than per row (issue #1112 K).
   const uncutWarnings = useMemo(() => featureUncutWarnings(project, features), [project, features])
+  // A Thread/Flutes band over a model or across two diameters warns on its own
+  // row (issue #1112 H, decision 10); the dialog shows the same rule.
+  const rotaryWarnings = useMemo(
+    () => rotaryPatternSurfaceWarnings(project, features.map((feature) => feature.id)),
+    [project, features],
+  )
   const { t } = useI18n()
   // Face layers, ghost rows and face chips exist only once the project uses
   // both faces; a Top-only project renders the tree it always did (#945).
@@ -387,6 +394,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
     // every action it had — nothing is hidden or removed.
     const uncutWarning = uncutWarnings.get(feature.id)
+    const rotaryWarning = rotaryWarnings.get(feature.id)
+    const rowWarning = uncutWarning
+      ?? (rotaryWarning ? t(rotaryWarning.key, rotaryWarning.values) : undefined)
     if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
       // row menu. It cannot be selected, dragged or edited from here. A model
@@ -402,7 +412,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={depth}
           ghost
           title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
-          warning={uncutWarning}
+          warning={rowWarning}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -452,7 +462,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isFirstFeature={feature.id === firstSolidFeature?.id && !barIsMaterial}
         subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
-        warning={uncutWarning}
+        warning={rowWarning}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}

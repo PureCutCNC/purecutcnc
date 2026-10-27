@@ -46,6 +46,18 @@ import type {
 } from '../../types/project'
 import { rotaryCylinderSegments } from '../../engine/rotaryCylinder'
 import { activeFace, activeSetup, aroundUnavailableReason } from './activeFace'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './resolveFeatures'
+import { getFeatureGeometryProfiles } from '../../text'
+import { sampleProfilePoints } from '../../types/project'
+import type {
+  TurnCannedProfile,
+  TurnProfileProblem,
+} from '../../cannedShapes/generators/turnProfile'
+import {
+  checkPickedContour,
+  turnProfileBand,
+  turnProfileProblem,
+} from '../../cannedShapes/generators/turnProfile'
 import { cannedShapeFrame, generateCannedShapeMesh } from '../../cannedShapes'
 import { rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import {
@@ -64,6 +76,7 @@ import { uniqueName } from '../../import'
 import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
 import { nextUniqueGeneratedId } from './ids'
 import { cloneProject, syncFeatureTreeProject } from './normalize'
+import { syncRotaryPatternSurfaces } from './rotarySurface'
 import { projectType } from './projectType'
 import type { ProjectStore } from '../types'
 
@@ -79,6 +92,8 @@ export interface RotaryTurnSolidInput {
   length: number
   /** Finished diameter, project units. At most the bar diameter or blank side. */
   diameter: number
+  /** A copied side profile, revolved about the bar axis instead of a cylinder. */
+  profile?: TurnCannedProfile | null
 }
 
 export interface RotaryPolygonSolidInput {
@@ -120,6 +135,22 @@ export type RotarySolidRefusal =
   | 'geometryNotRepresentable'
   /** The generated model could not be minted or stored. */
   | 'creationFailed'
+  /** The picked outline has no usable points. */
+  | 'profileEmpty'
+  /** The picked outline has points on both sides of the bar axis. */
+  | 'profileCrossesAxis'
+  /** An open outline reverses along the bar, so it is not a turning profile. */
+  | 'profileDoublesBack'
+  /** A feature with several outlines cannot be one Turn profile. */
+  | 'profileMultipleOutlines'
+  /** The outline reaches past the bar's surface. */
+  | 'profileExceedsStock'
+  /** The outline reaches past the bar's ends. */
+  | 'profileOutOfBar'
+  /** The remembered source feature no longer exists. */
+  | 'profileMissingSource'
+  /** The remembered source is not a drawn outline (a model or sheet drawing). */
+  | 'profileUnsupportedSource'
 
 export interface RotarySolidCreated {
   ok: true
@@ -151,18 +182,22 @@ export function rotarySolidCannedData(
   units: Project['meta']['units'],
 ): CannedShapeData | null {
   if (input.kind === 'turn') {
+    const profile = input.profile ?? null
+    const band = profile ? turnProfileBand(frame, profile) : null
+    const diameter = band?.diameter ?? input.diameter
     let segments: number
     try {
-      segments = rotaryCylinderSegments(input.diameter / 2, units)
+      segments = rotaryCylinderSegments(diameter / 2, units)
     } catch {
       return null
     }
     const params = normalizeTurnCannedParams({
-      start: input.start,
-      length: input.length,
-      diameter: input.diameter,
+      start: band?.start ?? input.start,
+      length: band?.length ?? input.length,
+      diameter,
       segments,
       frame,
+      ...(profile ? { profile } : {}),
     } as unknown as CannedShapeParams)
     return params ? { kind: TURN_CANNED_KIND, params } : null
   }
@@ -186,6 +221,12 @@ export function rotarySolidInputProblem(
   frame: RotarySolidFrame,
   input: RotarySolidInput,
 ): RotarySolidRefusal | null {
+  if (input.kind === 'turn' && input.profile) {
+    // The profile is the geometry, so it carries its own extent and stock
+    // checks; the start/length/diameter fields are derived from it.
+    return turnProfileProblem(input.profile, frame)
+  }
+
   const band = rotarySolidBandProblem(frame, input.start, input.length)
   if (band === 'start') return 'invalidStart'
   if (band === 'length') return 'invalidLength'
@@ -205,6 +246,142 @@ export function rotarySolidInputProblem(
   if (acrossCorners > frame.thickness + ROTARY_SOLID_TOLERANCE) return 'polygonExceedsStock'
   if (!Number.isFinite(input.rotationDeg ?? 0)) return 'invalidRotation'
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Turn profile pick / refresh (decision 11)
+// ---------------------------------------------------------------------------
+
+/** One copied profile plus the dialog numbers it stands for. */
+export type TurnProfilePick =
+  | {
+      ok: true
+      profile: TurnCannedProfile
+      /** Start from the chuck end, project units. */
+      start: number
+      /** Along the bar, project units. */
+      length: number
+      /** Twice the profile's largest radius, project units. */
+      diameter: number
+    }
+  | { ok: false; reason: RotarySolidRefusal; detail?: string }
+
+/** Why Refresh is unavailable, when it is. */
+export type TurnProfileRefreshReason =
+  | 'no-profile'
+  | 'profileMissingSource'
+  | 'profileUnsupportedSource'
+  | TurnProfileProblem
+
+export type TurnProfileRefreshState =
+  | { canRefresh: true; profile: TurnCannedProfile; sourceName: string }
+  | { canRefresh: false; reason: TurnProfileRefreshReason; sourceName?: string }
+
+/**
+ * Copy a drawn outline into the Turn. The returned profile is a plain list of
+ * `(along, radius)` points in the Turn's stored bar frame, so the copy never
+ * reads the source again after this call. Only `Refresh` calls this a second
+ * time.
+ *
+ * `signed` points decide the crossing refusal before the sign is folded away:
+ * a profile with points on both sides of the centreline would revolve into a
+ * solid that runs through the bar.
+ */
+export function turnProfileFromFeature(
+  project: Project,
+  frame: RotarySolidFrame,
+  sourceFeatureId: string,
+): TurnProfilePick {
+  const source = resolveFeatureInstance(project, sourceFeatureId)
+  if (!source) return { ok: false, reason: 'profileMissingSource' }
+  if (source.kind === 'stl' || source.operation === 'model') {
+    return { ok: false, reason: 'profileUnsupportedSource' }
+  }
+  // An Around feature stores the unrolled sheet's coordinates, which are not a
+  // side view of the bar; a profile must be drawn on Top or Bottom.
+  if ((source.authoringFace ?? 'top') === 'around') {
+    return { ok: false, reason: 'profileUnsupportedSource' }
+  }
+  const outlines = getFeatureGeometryProfiles(source).filter((profile) => profile.segments.length > 0)
+  if (outlines.length === 0) return { ok: false, reason: 'profileEmpty' }
+  if (outlines.length > 1) return { ok: false, reason: 'profileMultipleOutlines' }
+
+  const outline = outlines[0]
+  if (!outline) return { ok: false, reason: 'profileEmpty' }
+  const sampled = sampleProfilePoints(outline)
+  if (sampled.length < 2) return { ok: false, reason: 'profileEmpty' }
+
+  const signed = sampled.map((point) => ({
+    along: frame.axis === 'x' ? point.x : point.y,
+    radius: frame.axis === 'x' ? frame.acrossCentre - point.y : point.x - frame.acrossCentre,
+  }))
+  const problem = checkPickedContour(signed, outline.closed, frame)
+  if (problem) return { ok: false, reason: problem }
+
+  const profile: TurnCannedProfile = {
+    sourceFeatureId,
+    sourceName: source.name,
+    contours: [{
+      closed: outline.closed,
+      points: signed.map((point) => ({
+        along: point.along,
+        radius: Math.abs(point.radius) <= 1e-9 ? 0 : Math.abs(point.radius),
+      })),
+    }],
+  }
+  const band = turnProfileBand(frame, profile)
+  return { ok: true, profile, ...band }
+}
+
+/**
+ * Whether the dialog's **Refresh** action is available, and the source's
+ * display name. A profile whose source was deleted stays revolved exactly as
+ * copied; Refresh is refused with the reason instead of silently doing
+ * nothing (the same rule as text on a path).
+ */
+export function turnProfileRefreshState(
+  project: Project,
+  frame: RotarySolidFrame,
+  profile: TurnCannedProfile | null | undefined,
+): TurnProfileRefreshState {
+  if (!profile) return { canRefresh: false, reason: 'no-profile' }
+  const picked = turnProfileFromFeature(project, frame, profile.sourceFeatureId)
+  if (picked.ok) {
+    return { canRefresh: true, profile: picked.profile, sourceName: picked.profile.sourceName ?? '' }
+  }
+  return {
+    canRefresh: false,
+    reason: refreshRefusal(picked.reason),
+    sourceName: profile.sourceName,
+  }
+}
+
+/** The picker's refusal narrowed to the reasons Refresh can report. */
+function refreshRefusal(reason: RotarySolidRefusal): TurnProfileRefreshReason {
+  switch (reason) {
+    case 'profileEmpty':
+    case 'profileCrossesAxis':
+    case 'profileDoublesBack':
+    case 'profileMultipleOutlines':
+    case 'profileExceedsStock':
+    case 'profileOutOfBar':
+    case 'profileMissingSource':
+    case 'profileUnsupportedSource':
+      return reason
+    default:
+      return 'profileEmpty'
+  }
+}
+
+/** The drawn features the Turn dialog may pick a profile from. */
+export function turnProfileCandidates(project: Project): Array<{ id: string; name: string }> {
+  return resolvedProjectFeatures(project)
+    .filter((feature) => {
+      if (feature.kind === 'stl' || feature.operation === 'model') return false
+      if ((feature.authoringFace ?? 'top') === 'around') return false
+      return getFeatureGeometryProfiles(feature).some((profile) => profile.segments.length > 0)
+    })
+    .map((feature) => ({ id: feature.id, name: feature.name }))
 }
 
 // ---------------------------------------------------------------------------
@@ -302,11 +479,19 @@ export function planRotarySolid(
     minted.definitionId,
   )
 
-  const nextProject = syncFeatureTreeProject({
+  // A new Turn becomes the surface for any Thread/Flutes it covers, exactly as
+  // a diameter edit does (decision 10). The sync reads the updated features and
+  // definitions, so the new row is already visible to the resolver.
+  const withTurn = {
     ...project,
     modelAssets: rebuilt.modelAssets,
     featureDefinitions: rebuilt.featureDefinitions,
     features: [...project.features, instance],
+  }
+  const synced = syncRotaryPatternSurfaces(withTurn, withTurn.features, withTurn.featureDefinitions)
+  const nextProject = syncFeatureTreeProject({
+    ...withTurn,
+    features: synced,
     featureTree: [...project.featureTree, { type: 'feature', featureId }],
     meta: { ...project.meta, modified: new Date().toISOString() },
   })

@@ -34,6 +34,8 @@ import { refitTextFrameProfile } from '../../text'
 import { cloneCannedShapeData } from '../../types/project'
 import { cannedShapeFrame } from '../../cannedShapes'
 import { applyCannedShapeModelSpans, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
+import { TURN_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { syncRotaryPatternSurfaces } from './rotarySurface'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
@@ -211,6 +213,15 @@ export function applyFeaturePatch(
     featureDefinitions = rebuilt.featureDefinitions
     modelAssets = rebuilt.modelAssets
     features = applyCannedShapeModelSpans(project, features, rebuilt.models)
+    // A Turn's diameter is the reference surface a Thread/Flutes depth on it
+    // measures from, so a Turn edit moves those rows in the same write
+    // (decision 10). The resolver decides whether a row still follows it.
+    const turnChanged = [...changedDefinitionIds].some(
+      (definitionId) => featureDefinitions[definitionId]?.canned?.kind === TURN_CANNED_KIND,
+    )
+    if (turnChanged) {
+      features = syncRotaryPatternSurfaces({ ...project, featureDefinitions }, features, featureDefinitions)
+    }
   }
 
   return { features, featureDefinitions, modelAssets }
