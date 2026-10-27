@@ -21,7 +21,8 @@ import ts from 'typescript'
 import { aroundSelectionFixture } from './aroundSelection.testSupport'
 import { aroundSheet } from './aroundSheet'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { canvasColors, hexToRgba } from './canvasPalette'
+import { canvasColors } from './canvasPalette'
+import { hexToRgba } from './previewPrimitives'
 import { drawAroundModelBands } from './scenePrimitives'
 
 // Execute the live band's drawing and the SketchCanvas feature pass, with only
@@ -45,12 +46,12 @@ for (const axis of ['x', 'y'] as const) {
     canvas: { width: 800, height: 600 }, strokeStyle: '', fillStyle: '', lineWidth: 0,
     save() {}, restore() {}, setLineDash() {}, fillRect() {}, fillText() {},
     measureText: () => ({ width: 10 }),
-    strokeRect() { strokes.push({ stroke: this.strokeStyle, fill: this.fillStyle, width: this.lineWidth }) },
+    strokeRect(this: CanvasRenderingContext2D) { strokes.push({ stroke: String(this.strokeStyle), fill: String(this.fillStyle), width: this.lineWidth }) },
   } as unknown as CanvasRenderingContext2D
   const dependencies = {
     ctx, sheet, features, project: f.project, selection: f.selection,
     vt: { scale: 1, offsetX: 0, offsetY: 100 },
-    t: (_key: string, values: { name: string }) => values.name,
+    t: (key: string, values?: { name?: string }) => values?.name ?? key,
     drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null,
     drawOtherFace: () => new Set(), useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
     drawOriginMarker() {}, activeOriginInStock() {}, canvasPalette: canvasColors(),
