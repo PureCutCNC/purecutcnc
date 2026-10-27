@@ -50,6 +50,12 @@ if (typeof globals.navigator === 'undefined') {
 // Components use the automatic JSX runtime; the tsx runner transpiles this file
 // with the classic one, which expects a global `React`.
 globals.React = React
+// linkedom exposes `oninput` as an object, so React's feature detection
+// (`typeof … === 'function'`) concludes input events are unsupported and falls
+// back to an IE `attachEvent` polyfill that linkedom cannot run — `onChange`
+// never fires. Advertise the handler as a function before react-dom loads, so
+// React takes the modern `input`-event path a browser takes.
+Object.defineProperty(document, 'oninput', { value: () => {}, configurable: true })
 
 const { useProjectStore } = await import('../../../store/projectStore')
 const { I18nProvider } = await import('../../../i18n/I18nProvider')
@@ -99,12 +105,22 @@ async function waitFor(predicate: () => boolean, message: string, timeoutMs = 20
   }
 }
 
-/** Drive one controlled dialog input the way a user typing does. */
-function setInputValue(input: HTMLInputElement, value: string): void {
+/** Set the DOM value through the native setter, bypassing React's tracker. */
+function nativeInputValueSetter(): (value: string) => void {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
   assert.ok(setter, 'the DOM exposes the native value setter')
-  setter!.call(input, value)
+  return setter
+}
+
+/** Drive one controlled dialog input the way a user typing does. */
+function setInputValue(input: HTMLInputElement, value: string): void {
+  nativeInputValueSetter().call(input, value)
   input.dispatchEvent(new window.Event('input', { bubbles: true }))
+}
+
+/** Overwrite the DOM value without notifying React, to prove a field is controlled. */
+function overwriteInputDomValue(input: HTMLInputElement, value: string): void {
+  nativeInputValueSetter().call(input, value)
 }
 
 function solidDialog(): Element | null {
@@ -476,14 +492,21 @@ await scenario('a mounted rotary form ignores an unrelated store update and an i
     // Typing a parameter is dialog-local state, not a context change either.
     const start = document.querySelector('#rotary-start') as HTMLInputElement | null
     assert.ok(start, 'the thread dialog shows its start field')
-    if (start) setInputValue(start, '12')
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    if (!start) return
+    setInputValue(start, '12')
+    await waitFor(() => start.value === '12', 'the start field shows the typed value')
+
+    // A controlled input holds the state, not the raw DOM. Overwrite the DOM
+    // value behind React's back, then force a re-render from the store: React
+    // restores the state value. A test that only read the DOM would pass even
+    // when `onChange` never ran; this restores 12 only if it did, and 0 (the
+    // initial state) if it did not.
+    overwriteInputDomValue(start, '99')
+    assert.equal(start.value, '99', 'the DOM value was overwritten behind React')
+    store().setProjectName('Renamed after typing')
+    await waitFor(() => start.value === '12', 'the controlled start value is 12')
+
     assert.notEqual(patternDialog(), null, 'editing a parameter inside the dialog keeps it open')
-    assert.equal(
-      (document.querySelector('#rotary-start') as HTMLInputElement | null)?.value,
-      '12',
-      'the dialog holds the edited parameter',
-    )
   } finally {
     unmount(mounted)
   }
