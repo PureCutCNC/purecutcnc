@@ -376,12 +376,13 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   }))
   // Advisory only: the finish still emits exactly the model-following motion
   // above, and this warning changes nothing about it. The message names the
-  // models left uncovered (#1112 decision 7.11), in target order.
+  // models left uncovered (#1112 decision 7.11), in target order; the names
+  // stay a list so presentation joins them in the active language (#1112 C2).
   if (operation.kind === 'rotary_finish') {
     const uncovered = rotaryUncoveredModelIds(rotaryPrecedingRoughs(project, operation), modelIds, regions)
     if (uncovered.length > 0) {
       const names = uncovered.map((modelId) => modelNames[modelIds.indexOf(modelId)])
-      warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name, model: names.join(', ') } })
+      warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name, model: names } })
     }
   }
   return { ...result, warnings }

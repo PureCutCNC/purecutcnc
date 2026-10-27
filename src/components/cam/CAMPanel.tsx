@@ -1892,7 +1892,12 @@ export function CAMPanel({
             min={0}
             onCommit={(value) => updateOperation(operation.id, { stockToLeaveRadial: value })}
           />
-          <OperationParameterReference kind="stockRadial" />
+          {/* On a rotary operation the cleared wall is the bar's circumference,
+              so the leave is drawn across a radial cross-section (#1112). */}
+          <OperationParameterReference
+            kind="stockRadial"
+            variant={isRotaryOperationKind(operation.kind) ? 'rotary' : undefined}
+          />
         </label>
       ),
       slopeFilter: () => <SurfaceSlopeFields operation={operation} onPatch={(patch) => updateOperation(operation.id, patch)} />,
@@ -1985,6 +1990,12 @@ export function CAMPanel({
               { value: 'around', label: camT('cam.rotary.passAround') },
             ]}
             onChange={(value) => updateOperation(operation.id, { rotaryPassDirection: value })}
+          />
+          {/* Two motions, two pictures: along runs down the bar and steps
+              around; around turns the bar under the cutter (#1112). */}
+          <OperationParameterReference
+            kind="passes"
+            variant={operation.rotaryPassDirection ?? 'along'}
           />
         </label>
       ),

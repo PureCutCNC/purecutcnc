@@ -511,6 +511,20 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   // A finish on its own carries the advisory "no rough before this finish" (#1045).
   expect(along.warningCodes).toEqual(['rotaryFinishWithoutRough'])
 
+  // #1112 C2: on a rotary operation the radial stock reference is the bar
+  // cross-section, not the pocket-wall picture milling shows. The exact
+  // geometry is pinned by OperationParameterReference.test.ts; here the DOM
+  // proves the CAMPanel row chose the rotary variant.
+  const stockRadial = ui.cam.operationField(page, 'Stock to leave radial')
+  await expect(stockRadial).toBeVisible()
+  const radialPicture = stockRadial.locator('svg.op-param-ref')
+  await expect(radialPicture).toHaveCount(1)
+  await expect(radialPicture).toBeVisible()
+  await expect(radialPicture).toHaveAttribute('aria-label', 'Stock radial reference')
+  const radialMarkup = await radialPicture.innerHTML()
+  expect(radialMarkup).toContain('m-12 0a12 11')
+  expect(radialMarkup).not.toContain('M8 7h42v20H8z')
+
   // The Passes control lives in the collapsed Strategy group. Add selected the
   // operation, so its properties are already on screen; clicking its row again
   // would deselect it and close them.
@@ -518,9 +532,23 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   const passes = ui.cam.operationField(page, 'Passes')
   await expect(passes).toBeVisible()
   await expect(passes.locator('.ui-select__label')).toHaveText('Along the bar')
+
+  // #1112 C2: the Passes field carries a reference picture, and the picture
+  // must swap with the direction rather than stay on the along drawing. The
+  // unit test owns which drawing is which; this proves the render site passes
+  // the stored value through as the variant.
+  const passesPicture = passes.locator('svg.op-param-ref')
+  await expect(passesPicture).toHaveCount(1)
+  await expect(passesPicture).toBeVisible()
+  await expect(passesPicture).toHaveAttribute('aria-label', 'Passes reference')
+  const alongPicture = await passesPicture.innerHTML()
+  expect(alongPicture.length).toBeGreaterThan(0)
+
   await passes.locator('.ui-select__trigger').click()
   await page.getByRole('option', { name: 'Around the bar', exact: true }).click()
   await expect(passes.locator('.ui-select__label')).toHaveText('Around the bar')
+  const aroundPicture = await passesPicture.innerHTML()
+  expect(aroundPicture).not.toBe(alongPicture)
 
   // The control wrote the operation, and generation settled on the new motion.
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
