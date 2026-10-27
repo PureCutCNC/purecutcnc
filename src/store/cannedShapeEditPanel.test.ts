@@ -15,18 +15,16 @@
  */
 
 /**
- * The Edit <shape>… panel mounts and reopens with the current values
- * (issue #1112 slice D).
+ * The Edit <shape>… surface is the canvas side panel (issue #1112 DE2 review).
+ *
+ * The registry opener arms a `canned-edit` pending session; the canvas renders
+ * one page-level workflow panel with the shape's current values, and Apply is a
+ * single `updateFeature` write (one undo step). This renders the real panel in a
+ * DOM because the seam a plain model test cannot see is the panel itself: if the
+ * editor did not arm the pending session, or the panel did not read the stored
+ * parameters, Properties would open nothing or open blank fields.
  *
  * Run with: npx tsx src/store/cannedShapeEditPanel.test.ts
- *
- * Renders the real dialog the canvas registers, through the registry the
- * Properties panel uses, in a DOM. Linking the dialog back to the registry is
- * the part a plain unit test cannot see: if the canvas module did not register
- * an opener, the Properties button would stay disabled. The field-level logic
- * (values in, validated parameters out) is pure and covered in
- * `src/cannedShapes/generators/shapes.test.ts`; the undo step and the edit
- * itself are covered in `src/store/cannedShapeCreation.test.ts`.
  */
 
 import React from 'react'
@@ -51,9 +49,10 @@ globals.React = React
 const { useProjectStore } = await import('./projectStore')
 const { instantiateProjectTemplate } = await import('./helpers/normalize')
 const { getCannedShapeEditor } = await import('../cannedShapes')
-// Importing the canvas module registers the five editors, exactly as the app's
-// startup import graph does through SketchCanvas.
-await import('../components/canvas/CreationParameterReferences')
+const { CannedShapeEditPanel } = await import('../components/canvas/CannedShapeEditPanel')
+const { I18nProvider } = await import('../i18n/I18nProvider')
+const { defaultGearCreationParams } = await import('../sketch/gearProfile')
+const { createRoot } = await import('react-dom/client')
 
 let passCount = 0
 let failCount = 0
@@ -64,10 +63,18 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function flush(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await new Promise((resolve) => setTimeout(resolve, 50))
 }
 
-function seed(kind: string, params: Record<string, number>): string {
+async function waitFor(predicate: () => boolean, message: string, timeoutMs = 2000): Promise<void> {
+  const started = Date.now()
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) throw new Error(message)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+function seed(kind: string, params: CannedShapeData['params']): string {
   const project = instantiateProjectTemplate()
   const canned: CannedShapeData = { kind, params }
   const feature = {
@@ -121,6 +128,12 @@ function fieldInputs(): HTMLInputElement[] {
   return Array.from(document.body.querySelectorAll('input')) as unknown as HTMLInputElement[]
 }
 
+function pendingEdit() {
+  const pending = useProjectStore.getState().pendingAdd
+  assert(pending?.shape === 'canned-edit', 'the opener arms a canned-edit pending session')
+  return pending
+}
+
 async function scenario(name: string, fn: () => Promise<void>): Promise<void> {
   try {
     await fn()
@@ -134,32 +147,96 @@ async function scenario(name: string, fn: () => Promise<void>): Promise<void> {
   }
 }
 
-await scenario('the canvas registers an opener for every flat canned shape', async () => {
-  for (const kind of ['ellipse', 'slot', 'ngon', 'roundrect', 'chamferrect']) {
+await scenario('the canvas registers an opener for every canned shape', async () => {
+  for (const kind of ['ellipse', 'slot', 'ngon', 'roundrect', 'chamferrect', 'gear']) {
     assert(getCannedShapeEditor(kind) !== null, `${kind} has an editor`)
   }
   assert(getCannedShapeEditor('not-a-shape') === null, 'an unknown kind has none')
 })
 
-await scenario('the dialog opens with the current parameter values', async () => {
+await scenario('Edit opens the pending session and the panel shows the current values', async () => {
   const featureId = seed('ngon', { sides: 6, size: 20, rotation: 15 })
   getCannedShapeEditor('ngon')!(featureId)
+  const pending = pendingEdit()
+  assert(pending.featureId === featureId, 'the panel is armed for that feature')
+
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  root.render(React.createElement(I18nProvider, null, React.createElement(CannedShapeEditPanel, {
+    pending,
+    containerRef: { current: null },
+    canvasRef: { current: null },
+    clearTransientCanvasState: () => {},
+  })))
   await flush()
-  let inputs = fieldInputs()
+
+  await waitFor(() => fieldInputs().length === 3, 'the panel renders its three fields')
+  const inputs = fieldInputs()
   assert(inputs.length === 3, `expected three fields, got ${inputs.length}`)
   assert(inputs[0].value === '6', `sides field shows 6, got ${inputs[0].value}`)
   assert(inputs[1].value === '20', `size field shows 20, got ${inputs[1].value}`)
   assert(inputs[2].value === '15', `rotation field shows 15, got ${inputs[2].value}`)
+  assert(document.body.querySelector('.canvas-workflow-panel--creation') !== null, 'it is the creation side panel, not a modal')
+  assert(document.body.querySelector('.canned-shape-edit-host') === null, 'no second React root was mounted')
 
-  // Opening another shape replaces the panel rather than stacking two, and
-  // shows that shape's values (the per-dialog close callback).
-  const ellipseId = seed('ellipse', { rx: 30, ry: 20 })
-  getCannedShapeEditor('ellipse')!(ellipseId)
+  // Apply is one `updateFeature` write: one history entry, and the pending
+  // session closes.
+  const historyBefore = useProjectStore.getState().history.past.length
+  const save = Array.from(document.body.querySelectorAll('button'))
+    .find((button) => button.getAttribute('aria-label') === 'Save')
+  assert(save, 'the panel has an Apply action')
+  ;(save as HTMLButtonElement).click()
+  await waitFor(() => useProjectStore.getState().pendingAdd === null, 'Apply closes the pending session')
+  assert(
+    useProjectStore.getState().history.past.length === historyBefore + 1,
+    'Apply is exactly one undo step',
+  )
+  root.unmount()
+  host.remove()
+})
+
+await scenario('opening another shape replaces the session instead of stacking', async () => {
+  const featureId = seed('ellipse', { rx: 30, ry: 20 })
+  getCannedShapeEditor('ellipse')!(featureId)
+  assert(pendingEdit().featureId === featureId, 'the ellipse session is armed')
+  assert(document.body.querySelectorAll('.canvas-workflow-panel--creation').length === 0, 'no stale panel remains')
+})
+
+await scenario('the gear opens the same panel with its stored parameters', async () => {
+  const featureId = seed('gear', {
+    ...defaultGearCreationParams(20),
+    outsideRadius: 20,
+    boreDiameter: 6,
+  })
+  getCannedShapeEditor('gear')!(featureId)
+  const pending = pendingEdit()
+
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  root.render(React.createElement(I18nProvider, null, React.createElement(CannedShapeEditPanel, {
+    pending,
+    containerRef: { current: null },
+    canvasRef: { current: null },
+    clearTransientCanvasState: () => {},
+  })))
   await flush()
-  assert(document.querySelectorAll('.canned-shape-edit-host').length === 1, 'one dialog is open')
-  inputs = fieldInputs()
-  assert(inputs.length === 2, `expected two ellipse fields, got ${inputs.length}`)
-  assert(inputs[0].value === '30' && inputs[1].value === '20', 'the ellipse shows its own radii')
+
+  await waitFor(() => fieldInputs().length > 0, 'the gear panel renders its fields')
+  const values = fieldInputs().map((input) => input.value)
+  assert(values[0] === '20', `outside radius shows 20, got ${values[0]}`)
+  assert(values.includes('6'), 'the bore diameter is filled in')
+  assert(values.includes('24'), 'the tooth count is filled in')
+  const historyBefore = useProjectStore.getState().history.past.length
+  const save = Array.from(document.body.querySelectorAll('button'))
+    .find((button) => button.getAttribute('aria-label') === 'Save')
+  assert(save, 'the gear panel has an Apply action')
+  ;(save as HTMLButtonElement).click()
+  await waitFor(() => useProjectStore.getState().pendingAdd === null, 'gear Apply closes the pending session')
+  assert(useProjectStore.getState().history.past.length === historyBefore + 1, 'gear Apply is one undo step')
+  root.unmount()
+  host.remove()
 })
 
 console.log(`\n${passCount} passed, ${failCount} failed`)

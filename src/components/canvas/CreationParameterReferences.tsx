@@ -14,22 +14,11 @@
  * limitations under the License.
  */
 
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { PendingAddTool } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
-import { I18nProvider } from '../../i18n/I18nProvider'
 import type { MessageKey } from '../../i18n/locales/en'
-import { useProjectStore } from '../../store/projectStore'
-import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
-import { registerCannedShapeEditor } from '../../cannedShapes/registry'
 import type { CannedShapeEditorRequest } from '../../cannedShapes/generators/editorRequest'
-import { editorInitialValues, editorParamsFromValues } from '../../cannedShapes/generators/editorForm'
-import { ELLIPSE_EDITOR_REQUEST } from '../../cannedShapes/generators/ellipse'
-import { SLOT_EDITOR_REQUEST } from '../../cannedShapes/generators/slot'
-import { NGON_EDITOR_REQUEST } from '../../cannedShapes/generators/ngon'
-import { ROUND_RECT_EDITOR_REQUEST } from '../../cannedShapes/generators/roundRect'
-import { CHAMFER_RECT_EDITOR_REQUEST } from '../../cannedShapes/generators/chamferRect'
 
 type PendingNgon = Extract<PendingAddTool, { shape: 'ngon' }>
 type PendingRectCorner = Extract<PendingAddTool, { shape: 'roundrect' | 'chamferrect' }>
@@ -228,20 +217,9 @@ export function RectCornerParameterPanel({ pendingAdd, setPendingRectCorner }: R
 }
 
 /**
- * The Edit <shape>… panel (issue #1112 slice D).
- *
- * The five flat canned shapes keep their parameters, so the same fields the
- * creation panel shows reopen with the current values. The dialog is mounted
- * through a tiny root of its own because its trigger lives in the Properties
- * panel ("Edit …"), a different React tree: the canned-shape registry hands the
- * opener a feature id and nothing else, which keeps the model free of UI.
- *
- * Save writes one `updateFeature` patch, so one edit is one undo step. The
- * generator's own `normalize` validates the numbers first, so Save is disabled
- * instead of writing a parameter set that would generate nothing.
+ * The reference diagram shared by a canned shape's creation and edit panels.
  */
-
-function CannedShapeEditReference({
+export function CannedShapeEditReference({
   request,
   values,
 }: {
@@ -276,190 +254,4 @@ function CannedShapeEditReference({
     default:
       return null
   }
-}
-
-function CannedShapeEditDialog({
-  request,
-  featureId,
-  onClose,
-}: {
-  request: CannedShapeEditorRequest
-  featureId: string
-  onClose: () => void
-}) {
-  const { t } = useI18n()
-  const project = useProjectStore((state) => state.project)
-  const updateFeature = useProjectStore((state) => state.updateFeature)
-  const feature = resolveFeatureInstance(project, featureId)
-  const canned = feature?.canned?.kind === request.kind ? feature.canned : null
-  const [values, setValues] = useState<Record<string, string>>(
-    () => (canned ? editorInitialValues(request, canned.params) : {}),
-  )
-
-  // The feature can vanish while the dialog is open (undo, delete, make
-  // unique). Close rather than edit a row that no longer exists.
-  useEffect(() => {
-    if (!canned) onClose()
-  }, [canned, onClose])
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [onClose])
-
-  if (!canned) return null
-
-  const candidate = editorParamsFromValues(request, values)
-  const normalized = candidate ? request.normalize(candidate) : null
-  const invalid = normalized === null
-  const titleId = `canned-shape-edit-${request.kind}`
-
-  function commit(): void {
-    if (!normalized) return
-    updateFeature(featureId, { canned: { kind: request.kind, params: normalized } })
-    onClose()
-  }
-
-  return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="dialog dialog--import"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="dialog-header">
-          <h2 className="dialog-title" id={titleId}>
-            {t('canvas.cannedEdit.title', { shape: t(request.labelKey) })}
-          </h2>
-          <button
-            className="dialog-close"
-            onClick={onClose}
-            aria-label={t('dialogs.common.close')}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="dialog-body dialog-body--import">
-          <div className="dialog-section">
-            {request.fields.map((field) => (
-              <div className="dialog-section-group" key={field.key}>
-                <label className="dialog-section-title" htmlFor={`${titleId}-${field.key}`}>
-                  {t(field.labelKey)}
-                </label>
-                <input
-                  id={`${titleId}-${field.key}`}
-                  type="number"
-                  step="any"
-                  value={values[field.key] ?? ''}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    setValues((previous) => ({ ...previous, [field.key]: next }))
-                  }}
-                />
-              </div>
-            ))}
-            <div className="dialog-section-group">
-              <CannedShapeEditReference request={request} values={values} />
-            </div>
-            {invalid ? (
-              <p className="properties-region-note" role="alert">
-                {t('canvas.cannedEdit.invalid')}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="dialog-footer">
-          <button className="feat-btn" type="button" onClick={onClose}>
-            {t('dialogs.common.cancel')}
-          </button>
-          <button
-            className="feat-btn feat-btn--primary"
-            type="button"
-            disabled={invalid}
-            onClick={commit}
-          >
-            {t('canvas.cannedEdit.save')}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-interface OpenCannedShapeEditDialog {
-  root: Root
-  host: HTMLDivElement
-}
-
-let cannedEditDialog: OpenCannedShapeEditDialog | null = null
-
-function destroyCannedShapeEditDialog(entry: OpenCannedShapeEditDialog): void {
-  entry.root.unmount()
-  entry.host.remove()
-}
-
-/**
- * Open the panel for one feature. The close callback is bound to *this* dialog,
- * not to the module: a stale dialog's effect (its feature was undone, or
- * another shape was opened over it) must not unmount the dialog that replaced
- * it.
- */
-function openCannedShapeEditDialog(request: CannedShapeEditorRequest, featureId: string): void {
-  if (typeof document === 'undefined') return
-
-  const previous = cannedEditDialog
-  cannedEditDialog = null
-  if (previous) {
-    // The previous dialog's close button may be the element being clicked;
-    // remove it after the event rather than during it.
-    setTimeout(() => destroyCannedShapeEditDialog(previous), 0)
-  }
-
-  const host = document.createElement('div')
-  host.className = 'canned-shape-edit-host'
-  document.body.appendChild(host)
-  const entry: OpenCannedShapeEditDialog = { root: createRoot(host), host }
-  cannedEditDialog = entry
-
-  function close(): void {
-    if (cannedEditDialog !== entry) return
-    cannedEditDialog = null
-    setTimeout(() => destroyCannedShapeEditDialog(entry), 0)
-  }
-
-  entry.root.render(
-    <I18nProvider>
-      <CannedShapeEditDialog
-        request={request}
-        featureId={featureId}
-        onClose={close}
-      />
-    </I18nProvider>,
-  )
-}
-
-// Registering here is what makes the Properties panel's "Edit <shape>…" button
-// live: the button asks the registry for the opener, and this module is part of
-// the app's startup import graph (SketchCanvas).
-for (const request of [
-  ELLIPSE_EDITOR_REQUEST,
-  SLOT_EDITOR_REQUEST,
-  NGON_EDITOR_REQUEST,
-  ROUND_RECT_EDITOR_REQUEST,
-  CHAMFER_RECT_EDITOR_REQUEST,
-]) {
-  registerCannedShapeEditor(request.kind, (featureId) => openCannedShapeEditDialog(request, featureId))
 }
