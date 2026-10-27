@@ -1003,7 +1003,10 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    const resolvedFeatures = editableProjectFeatures(project)
+    // On Around a model is drawn and hit as a band, never as its flat
+    // footprint: leaving the footprint in this hit test lets it steal a click
+    // from a band that covers the same point (issue #1112 I2).
+    const resolvedFeatures = editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl')
     const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
     // A model's band is on the sheet itself, so it is checked only when no
     // outline at the point claims the click first (issue #1112 I).

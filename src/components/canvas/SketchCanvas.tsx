@@ -1016,7 +1016,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     // The imported models inside the bar, as reference under everything else
     // on the sheet (issue #1015 slice K). Only the sheet has them.
-    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }))
+    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }), selection)
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
@@ -1024,7 +1024,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
+      if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
