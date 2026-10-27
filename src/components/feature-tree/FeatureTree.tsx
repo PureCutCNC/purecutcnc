@@ -687,6 +687,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   // being worked on: an empty layer is where the next feature
                   // goes (issue #1112 slice B, the provisional setup).
                   const emptySection = !entries.some((entry) => entry !== null)
+                  // An empty face's section is a place to start, not a permanent
+                  // row: it shows while that face is current, or once it has
+                  // something on it. Otherwise looking at an empty Bottom and
+                  // returning to Around would leave Bottom behind, because
+                  // Around already makes the project use both faces.
+                  if (!active && count === 0 && emptySection) return null
                   // A heading switches face — the same action and the same
                   // refusal as the header control. The ACTIVE/GHOST badges are
                   // gone: the heading's own colour marks the current face, and

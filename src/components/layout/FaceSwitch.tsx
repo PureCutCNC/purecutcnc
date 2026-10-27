@@ -28,6 +28,7 @@ import { Icon } from '../Icon'
 import { machineMode, showsFaceSwitch } from '../cam/machineMode'
 import { faceSwitchExtras } from './faceSwitchExtras'
 import { faceIcon, faceLabelKey, faceMenu } from './faceSwitchMenu'
+import { useShellMode } from './useShellMode'
 
 /** Whether the project carries anything on Bottom: a Bottom setup or a Bottom feature. */
 function hasBottomContent(project: Project): boolean {
@@ -65,6 +66,10 @@ export function FaceSwitch() {
   const busy = useProjectStore(isFaceEditInProgress)
   const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
   const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
+  // The menu is portalled outside `.app-shell`, so it cannot inherit the
+  // shell's own attribute: carry it on the portal root for the tablet tap
+  // targets in face.css (issue #1112).
+  const shellMode = useShellMode()
 
   const [open, setOpen] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -163,6 +168,7 @@ export function FaceSwitch() {
               ref={menuRef}
               id={menuId}
               className="face-switch__menu"
+              data-shell-mode={shellMode}
               role="menu"
               aria-label={t('appShell.face.label')}
               style={{
