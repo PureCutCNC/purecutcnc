@@ -37,8 +37,9 @@
  * `openRotaryPatternEdit`. One host, mounted once by AppShell, renders it, so
  * the drawer closing on hover cannot unmount an open dialog and the expanded
  * Properties modal cannot mount a second one. The host closes a create dialog
- * as soon as Around stops being the available, active face, preserving the rule
- * that leaving Around applies nothing.
+ * as soon as Around stops being the available, active face, and any dialog,
+ * create or Edit, when the bar, units, document or face behind it change — the
+ * same context key Turn/Polygon uses (`rotaryDialogContext.ts`).
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -66,6 +67,7 @@ import {
   subscribeDialogRequest,
   type RotaryPatternKind,
 } from './rotaryPatternDialogState'
+import { rotaryDialogContextKey } from './rotaryDialogContext'
 
 export type { RotaryPatternKind } from './rotaryPatternDialogState'
 
@@ -122,8 +124,11 @@ export function RotaryPatternDialogHost() {
     dialogRequestSnapshot,
   )
   const project = useProjectStore((state) => state.project)
+  const projectKey = useProjectStore((state) => state.projectKey)
   const face = activeFace(project)
   const available = aroundSketchAuthoringAvailable(project)
+  const context = rotaryDialogContextKey(project, projectKey)
+  const lastContext = useRef(context)
 
   // A create form belongs to the Around workspace: leaving it (or losing
   // availability) closes the dialog, so a half-filled form cannot reappear
@@ -131,6 +136,15 @@ export function RotaryPatternDialogHost() {
   useEffect(() => {
     if (request && !request.featureId && (face !== 'around' || !available)) closeRotaryPatternDialog()
   }, [request, face, available])
+
+  // The numbers are measured against the live bar, so a change to the bar, the
+  // units, the machine origin or the document drops the form — for creation and
+  // for Edit, exactly like Turn/Polygon. Only a create form is tied to the
+  // Around face; Edit is reached from Properties on any face.
+  useEffect(() => {
+    if (request && lastContext.current !== context) closeRotaryPatternDialog()
+    lastContext.current = context
+  }, [request, context])
 
   if (!request || typeof document === 'undefined') return null
   const key = `${request.kind}-${request.featureId ?? 'create'}`

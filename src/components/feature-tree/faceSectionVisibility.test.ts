@@ -29,7 +29,9 @@
  * - hiding every non-current face, content or not → the "Bottom with content
  *   stays" assertion fails;
  * - showing the current face only when it has content → the "current empty
- *   Bottom still says so" assertion fails.
+ *   Bottom still says so" assertion fails;
+ * - listing a canned model under both its authoring face and the current face
+ *   → the "exactly one row" assertion fails (issue #1112).
  *
  * Run with: npx tsx src/components/feature-tree/faceSectionVisibility.test.ts
  */
@@ -109,6 +111,43 @@ function projectOn(face: 'top' | 'around' | 'bottom', withBottomFeature = false)
     z_top: 0.25,
     z_bottom: 0,
     authoringFace: 'bottom',
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  return {
+    ...project,
+    featureDefinitions: { ...project.featureDefinitions, [definition.id]: definition },
+    features: [instance],
+    featureTree: [{ type: 'feature', featureId: instance.id }],
+  }
+}
+
+/**
+ * The same project with one canned model. A canned model is authored on Top
+ * because that is the face the persisted-model loader accepts, but it is a
+ * model rather than face geometry: it must be listed in the face being worked
+ * on and nowhere else (issue #1112).
+ */
+function withCannedModel(project: Project): Project {
+  const definition: FeatureDefinition = {
+    id: 'def-hex',
+    kind: 'stl',
+    profile: rectProfile(0, 0, 4, 4),
+    dimensions: [],
+    operation: 'model',
+    stl: null,
+    canned: { kind: 'polygon', params: {} },
+  }
+  const instance: FeatureInstance = {
+    id: 'hex',
+    name: 'Hex',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    z_top: 4,
+    z_bottom: 0,
+    authoringFace: 'top',
     folderId: null,
     visible: true,
     locked: false,
@@ -255,6 +294,25 @@ for (const face of ['top', 'bottom', 'around'] as const) {
   assert(html.includes('data-feature-id="through"'), 'the through feature is listed on Bottom')
   assert(!rowTag(html, 'through').includes('data-ghost="true"'), 'and it is not a ghost row')
   assert(rowTag(html, 'blind').includes('data-ghost="true"'), 'the blind cut on the other face is a ghost row')
+}
+
+// A canned model authored on Top is listed once, under the face being worked
+// on. Rendering the authoring face too put one row under Top and one under
+// Around at the same time (issue #1112).
+{
+  const html = await renderTree(withCannedModel(projectOn('around')))
+  const rows = html.match(/data-feature-id="hex"/g) ?? []
+  assert(rows.length === 1, 'the canned model has exactly one row while Around is current')
+  assert(html.includes('data-face-layer="around"'), 'the row is in the current Around layer')
+  assert(!html.includes('data-face-layer="top"'), 'the authored Top layer is not also shown')
+}
+
+// The same row follows the face switch: one row on Top, none left behind.
+{
+  const html = await renderTree(withCannedModel(projectOn('top')))
+  const rows = html.match(/data-feature-id="hex"/g) ?? []
+  assert(rows.length === 1, 'the canned model has exactly one row while Top is current')
+  assert(html.includes('data-face-layer="top"'), 'the row is in the current Top layer')
 }
 
 console.log('face section visibility tests passed')
