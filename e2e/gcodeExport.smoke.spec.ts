@@ -254,10 +254,29 @@ for (const layout of [
     test.use({ viewport: layout.viewport, hasTouch: layout.hasTouch })
 
     test('a machine that still breaks a template rule blocks export with zero writes until repaired', async ({ app, ui }) => {
+      // A tablet shell puts the project tree and the CAM panel in separate
+      // slide-in drawers, and an open drawer's scrim covers the top-bar button
+      // that opens the other one. Read the shell's drawer state and hand over
+      // between them rather than trusting the Export button's visibility: a
+      // closed drawer is translated off-screen, which Playwright still reports
+      // as visible while the button is outside the viewport.
+      const shell = () => app.page.locator('.app-shell')
+      const drawerOpen = async (side: 'left' | 'right'): Promise<boolean> =>
+        (await shell().getAttribute(`data-${side}-open`)) === 'true'
+      const closeDrawer = async (side: 'left' | 'right'): Promise<void> => {
+        if (!(await drawerOpen(side))) return
+        await app.page.getByRole('button', {
+          name: side === 'right' ? 'Close operations panel' : 'Close project panel',
+          exact: true,
+        }).click()
+        await expect(shell()).not.toHaveAttribute(`data-${side}-open`, 'true')
+      }
       const openExport = async (): Promise<void> => {
-        const trigger = ui.operations.headerExportButton(app.page)
-        if (!(await trigger.isVisible())) await ui.operations.openPanelButton(app.page).click()
-        await trigger.click()
+        if (layout.hasTouch && !(await drawerOpen('right'))) {
+          await ui.operations.openPanelButton(app.page).click()
+          await expect(shell()).toHaveAttribute('data-right-open', 'true')
+        }
+        await ui.operations.headerExportButton(app.page).click()
       }
       // The reporter's 0.5.x Avid post with G90.1 in its header: structurally
       // valid, refused by the #1057 program-header rule (#1119).
@@ -288,6 +307,10 @@ for (const layout of [
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
       await expect(dialog).toBeHidden()
 
+      // The project tree is the other tablet drawer; close this one so its
+      // scrim stops covering the top-bar entry point for that drawer.
+      await closeDrawer('right')
+
       // Repair the project's embedded copy and apply it explicitly. A retained
       // machine is not copied into My Machines, so the project's copy is the only
       // row with this name.
@@ -311,6 +334,8 @@ for (const layout of [
       await expect(editor).toBeHidden()
       await expect(ui.machineManager.item(app.page, 'Avid Mach4 (inch, shop)')).toHaveCount(1)
       await ui.machineManager.doneButton(app.page).click()
+      // Hand back from the project drawer to the CAM drawer for the export.
+      await closeDrawer('left')
 
       // The repaired machine exports: the same dialog now has no machine
       // diagnostics and the save is attempted exactly once with real G-code.
