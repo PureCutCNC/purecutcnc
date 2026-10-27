@@ -8,8 +8,9 @@ canonical catalog and per-key fallback; other locales — built-in or
 user-created — are overlays. Mirrors the `src/theme/` architecture.
 
 - `catalog.ts` — message contract: `{placeholder}` interpolation, placeholder
-  parity helpers, and `Intl.PluralRules`-backed `.one`/`.other` variant
-  selection.
+  parity helpers, `Intl.PluralRules`-backed `.one`/`.other` variant selection,
+  and `Intl.ListFormat`-backed `formatList()` for params that carry several
+  user-authored names (`{model}` naming two uncovered rotary models, #1112 C2).
 - `locales/en/` — the canonical English catalog, one module per UI area
   (`shell`, `sketch`, `canvas`, `featureTree`, `cam`, `dialogs`, `viewport`,
   `appShell`, `warnings`, `languageManager`, `themeManager`, `booklet`,
@@ -41,8 +42,9 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   subscribe/notify for React, and `document.documentElement.lang` upkeep.
 - `warningText.ts` — the single presentation mapper for structured engine
   warnings (`{ code, params }` → localized text; injects the clamp move-kind
-  word). Catalog module `locales/*/warnings.ts`; coverage locked by
-  `warningsCoverage.test.ts`.
+  word and joins list params with `formatList()` in the active locale, so a
+  language switch re-joins without regenerating the warning). Catalog module
+  `locales/*/warnings.ts`; coverage locked by `warningsCoverage.test.ts`.
 - `bootstrap.ts` — resolves the locale before React renders (no
   wrong-language flash; covers the phone-blocker screen).
 - `i18nContext.ts` / `I18nProvider.tsx` — React context (`useI18n()` →

@@ -440,6 +440,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.paramRef.finishFloor': 'Referencia de acabado de suelo',
   'cam.paramRef.stockRadial': 'Referencia de material radial',
   'cam.paramRef.stockAxial': 'Referencia de material axial',
+  'cam.paramRef.passes': 'Referencia de pasadas',
   'cam.paramRef.adaptiveSpacing': 'Referencia de espaciado adaptativo',
   'cam.paramRef.adaptiveRefinement': 'Referencia de refinamiento adaptativo',
   'cam.paramRef.maxRings': 'Referencia de anillos máximos',

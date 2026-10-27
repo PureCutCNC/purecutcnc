@@ -509,6 +509,19 @@ export function OperationParameterReference({
       )
 
     case 'stockRadial':
+      // Same field, same name: on a rotary operation the wall to clear away is
+      // the bar's circumference, so the leave is measured across a radial
+      // cross-section instead of between pocket walls (#1112 decision 7.10).
+      if (variant === 'rotary') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__guide" d="M29 17m-12 0a12 11 0 1 0 24 0a12 11 0 1 0-24 0" />
+            <path className="gear-reference__outline" d="M29 17m-7 0a7 6 0 1 0 14 0a7 6 0 1 0-14 0" />
+            <path className="gear-reference__accent" d="M29 10.9v-4.5" />
+            <path className="gear-reference__accent-fill" d="M29 6l-1.7 2.5h3.4zM29 11l-1.7-2.5h3.4z" />
+          </OpParamRefFrame>
+        )
+      }
       return (
         <OpParamRefFrame label={label}>
           <path className="gear-reference__guide" d="M8 7h42v20H8z" />
@@ -517,6 +530,40 @@ export function OperationParameterReference({
           <path className="gear-reference__accent-fill" d="M38 17l3-2.2v4.4zM50 17l-3-2.2v4.4z" />
         </OpParamRefFrame>
       )
+
+    case 'passes': {
+      // Rotary rough/finish runs one of two ways (#1045). Along: the pass runs
+      // the length of the bar, then the cutter steps around it. Around: the bar
+      // turns under the cutter at one position, then the cutter steps along
+      // (#1112 decision 7.9). The bar is the side view every rotary picture
+      // uses; the two variants share it so the difference reads as the motion.
+      const bar = <path className="gear-reference__outline" d="M6 9h46v16H6z" />
+      const centre = <path className="gear-reference__guide" d="M6 17h46" />
+      if (variant === 'around') {
+        return (
+          <OpParamRefFrame label={label}>
+            {bar}
+            {centre}
+            <path className="gear-reference__guide" d="M31 10.5v13M43 10.5v13" />
+            <path className="gear-reference__accent" d="M18 11.5c3.7 0 6.5 2.5 6.5 5.5s-2.8 5.5-6.5 5.5" />
+            <path className="gear-reference__accent-fill" d="M16 22.5l3-2.3v4.6z" />
+            <path className="gear-reference__accent" d="M27 27.5h11" />
+            <path className="gear-reference__accent-fill" d="M40 27.5l-3.4-2.3v4.6z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          {bar}
+          {centre}
+          <path className="gear-reference__guide" d="M10 12.5h36M10 21.5h36" />
+          <path className="gear-reference__accent" d="M12 17h24" />
+          <path className="gear-reference__accent-fill" d="M38 17l-3.4-2.3v4.6z" />
+          <path className="gear-reference__accent" d="M47 12.5v9" />
+          <path className="gear-reference__accent-fill" d="M47 10.5l-2.2 3h4.4zM47 23.5l-2.2-3h4.4z" />
+        </OpParamRefFrame>
+      )
+    }
 
     case 'stockAxial':
       return (

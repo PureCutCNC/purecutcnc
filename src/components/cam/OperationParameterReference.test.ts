@@ -93,6 +93,10 @@ function testVariantKindsRenderEveryOption(): void {
     ['entryStrategy', ['plunge', 'helix', 'ramp']],
     ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking', 'helical', 'countersink']],
     ['engagementMode', ['slots_only', 'engagement']],
+    // #1112 decision 7: the rotary Passes field shows the two directions, and
+    // the radial stock uses a rotary cross-section instead of the pocket wall.
+    ['passes', ['along', 'around']],
+    ['stockRadial', ['rotary']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {
@@ -122,11 +126,34 @@ function testCutDirectionArrowOrientation(): void {
   assert(!arrowPointsRight(renderKind('cutDirection', 'conventional')), 'conventional arrow must point left')
 }
 
+// The two rotary pictures must actually differ: a variant that falls through
+// to the same branch would pass the geometry checks above while showing the
+// wrong direction, or leave the pocket-wall picture on a rotary operation.
+function testRotaryPicturesDiffer(): void {
+  const along = renderKind('passes', 'along')
+  const around = renderKind('passes', 'around')
+  assert(along !== around, 'passes along and around must not render the same picture')
+  assert(
+    along.includes(`aria-label="${operationParamRefLabel('passes')}"`)
+      && around.includes(`aria-label="${operationParamRefLabel('passes')}"`),
+    'both passes variants keep the same accessible label',
+  )
+
+  const wall = renderKind('stockRadial')
+  const rotary = renderKind('stockRadial', 'rotary')
+  assert(wall !== rotary, 'rotary stock-to-leave must not reuse the pocket-wall picture')
+  // The pocket-wall diagram is the rectangle in the default branch; the rotary
+  // one is the bar cross-section circle. Naming both makes the swap explicit.
+  assert(wall.includes('M8 7h42v20H8z'), 'the default stockRadial picture stays the pocket wall')
+  assert(rotary.includes('m-12 0a12 11'), 'the rotary stockRadial picture is a radial cross-section')
+}
+
 testNoDuplicateKinds()
 testAllKindsHaveNonEmptyLabel()
 testAllLabelsAreUnique()
 testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
 testCutDirectionArrowOrientation()
+testRotaryPicturesDiffer()
 
 console.log('OperationParameterReference tests passed')
