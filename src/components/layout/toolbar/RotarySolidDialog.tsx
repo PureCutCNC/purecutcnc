@@ -46,8 +46,18 @@ import { useProjectStore } from '../../../store/projectStore'
 import type {
   RotarySolidInput,
   RotarySolidRefusal,
+  TurnProfileRefreshReason,
 } from '../../../store/helpers/rotarySolids'
-import { rotarySolidCannedData, rotarySolidInputProblem } from '../../../store/helpers/rotarySolids'
+import {
+  rotarySolidCannedData,
+  rotarySolidInputProblem,
+  turnProfileCandidates,
+  turnProfileFromFeature,
+  turnProfileRefreshState,
+} from '../../../store/helpers/rotarySolids'
+import { Select } from '../../Select'
+import type { TurnCannedProfile } from '../../../cannedShapes/generators/turnProfile'
+import { turnProfileBand } from '../../../cannedShapes/generators/turnProfile'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -94,6 +104,14 @@ const REFUSAL_KEYS: Record<RotarySolidRefusal, MessageKey> = {
   polygonExceedsStock: 'dialogs.rotarySolid.error.acrossFlatsBound',
   geometryNotRepresentable: 'dialogs.rotarySolid.refusal.geometryNotRepresentable',
   creationFailed: 'dialogs.rotarySolid.refusal.creationFailed',
+  profileEmpty: 'dialogs.rotarySolid.profile.error.empty',
+  profileCrossesAxis: 'dialogs.rotarySolid.profile.error.crossesAxis',
+  profileDoublesBack: 'dialogs.rotarySolid.profile.error.doublesBack',
+  profileMultipleOutlines: 'dialogs.rotarySolid.profile.error.multiple',
+  profileExceedsStock: 'dialogs.rotarySolid.profile.error.exceedsStock',
+  profileOutOfBar: 'dialogs.rotarySolid.profile.error.outOfBar',
+  profileMissingSource: 'dialogs.rotarySolid.profile.error.missingSource',
+  profileUnsupportedSource: 'dialogs.rotarySolid.profile.error.unsupported',
 }
 
 function parseNumber(value: string): number {
@@ -209,6 +227,11 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
     if (storedTurn) return String(storedTurn.diameter)
     return tidy(frame?.thickness ?? 0)
   })
+  // The copied profile is dialog state until Apply writes it: Pick and Refresh
+  // both replace this copy, and the source is only re-read by Refresh.
+  const [profile, setProfile] = useState<TurnCannedProfile | null>(() => storedTurn?.profile ?? null)
+  const [profileSourceId, setProfileSourceId] = useState(() => storedTurn?.profile?.sourceFeatureId ?? '')
+  const [profileError, setProfileError] = useState<RotarySolidRefusal | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
   // A close can outlive the click that opened the edit; the guard keeps a late
   // continuation from writing after the user left.
@@ -267,6 +290,63 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
     }
   }
 
+  const profileCandidates = kind === 'turn' && frame ? turnProfileCandidates(project) : []
+  const profileRefresh = kind === 'turn' && frame && profile
+    ? turnProfileRefreshState(project, frame, profile)
+    : null
+  const profileBand = profile && frame ? turnProfileBand(frame, profile) : null
+
+  /** One pick or Refresh. A refusal clears the pending copy and names why. */
+  function pickProfile(sourceFeatureId: string) {
+    if (!frame) return
+    if (sourceFeatureId === '') {
+      setProfile(null)
+      setProfileSourceId('')
+      setProfileError(null)
+      setRefusal(null)
+      return
+    }
+    const picked = turnProfileFromFeature(project, frame, sourceFeatureId)
+    if (!picked.ok) {
+      setProfile(null)
+      setProfileSourceId(sourceFeatureId)
+      setProfileError(picked.reason)
+      setRefusal(null)
+      return
+    }
+    setProfile(picked.profile)
+    setProfileSourceId(picked.profile.sourceFeatureId)
+    setProfileError(null)
+    setRefusal(null)
+    setStart(String(picked.start))
+    setLength(String(picked.length))
+    setDiameter(String(picked.diameter))
+  }
+
+  function refreshProfile() {
+    if (!profileSourceId || profileRefresh?.canRefresh !== true) return
+    pickProfile(profileSourceId)
+  }
+
+  /** The disabled Refresh reason, in the user's terms. */
+  function refreshReasonText(reason: TurnProfileRefreshReason): string {
+    switch (reason) {
+      case 'no-profile':
+        return t('dialogs.rotarySolid.profile.refreshNoProfile')
+      case 'profileMissingSource':
+        return t('dialogs.rotarySolid.profile.refreshMissingSource')
+      case 'profileUnsupportedSource':
+        return t('dialogs.rotarySolid.profile.refreshUnsupported')
+      case 'profileEmpty':
+      case 'profileCrossesAxis':
+      case 'profileDoublesBack':
+      case 'profileMultipleOutlines':
+      case 'profileExceedsStock':
+      case 'profileOutOfBar':
+        return refusalText(reason)
+    }
+  }
+
   function buildInput(): RotarySolidInput {
     if (kind === 'turn') {
       return {
@@ -274,6 +354,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
         start: parseNumber(start),
         length: parseNumber(length),
         diameter: parseNumber(diameter),
+        ...(profile ? { profile } : {}),
       }
     }
     return {
@@ -307,7 +388,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
     })
   }
 
-  const problem = frame ? rotarySolidInputProblem(frame, buildInput()) : 'notOnBar'
+  const problem = profileError ?? (frame ? rotarySolidInputProblem(frame, buildInput()) : 'notOnBar')
   const problemText = problem === null ? null : refusalText(problem)
 
   function handleApply() {
@@ -343,6 +424,25 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
     setRefusal(refusalText(result.reason))
   }
 
+  const profileOptions: Array<{ value: string; label: string }> = [
+    { value: '', label: t('dialogs.rotarySolid.profile.none') },
+    ...profileCandidates.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+  ]
+  if (profileSourceId && !profileCandidates.some((candidate) => candidate.id === profileSourceId)) {
+    const missingName = profile?.sourceName ?? storedTurn?.profile?.sourceName ?? profileSourceId
+    profileOptions.push({
+      value: profileSourceId,
+      label: t('dialogs.rotarySolid.profile.missingOption', { name: missingName }),
+    })
+  }
+  const refreshUnavailable = profileRefresh?.canRefresh === true
+    ? null
+    : profileRefresh?.canRefresh === false
+      ? refreshReasonText(profileRefresh.reason)
+      : profileError
+        ? refusalText(profileError)
+        : refreshReasonText('no-profile')
+
   const titleKey: MessageKey = kind === 'turn'
     ? (editing ? 'dialogs.rotarySolid.turn.editTitle' : 'dialogs.rotarySolid.turn.title')
     : (editing ? 'dialogs.rotarySolid.polygon.editTitle' : 'dialogs.rotarySolid.polygon.title')
@@ -372,6 +472,46 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
 
         <div className="dialog-body dialog-body--import">
           <div className="dialog-section">
+            {kind === 'turn' ? (
+              <div className="dialog-section-group rotary-dialog__profile" role="group" aria-label={t('dialogs.rotarySolid.profile.pick')}>
+                <label className="dialog-section-title">{t('dialogs.rotarySolid.profile.pick')}</label>
+                <div className="properties-field rotary-dialog__profile-row">
+                  <Select
+                    value={profileSourceId}
+                    options={profileOptions}
+                    onChange={pickProfile}
+                  />
+                  <button
+                    className="feat-btn rotary-dialog__profile-refresh"
+                    type="button"
+                    disabled={profileRefresh?.canRefresh !== true}
+                    title={refreshUnavailable ?? undefined}
+                    onClick={refreshProfile}
+                  >
+                    {t('dialogs.rotarySolid.profile.refresh')}
+                  </button>
+                </div>
+                {profileBand ? (
+                  <p className="rotary-dialog__note rotary-dialog__profile-summary">
+                    {t('dialogs.rotarySolid.profile.summary', {
+                      name: profile?.sourceName ?? profileSourceId,
+                      diameter: formatLength(profileBand.diameter, units),
+                      length: formatLength(profileBand.length, units),
+                      units: unitLabel,
+                    })}
+                  </p>
+                ) : null}
+                {profile && profileRefresh?.canRefresh === false ? (
+                  <p className="rotary-dialog__note rotary-dialog__profile-missing">
+                    {refreshReasonText(profileRefresh.reason)}
+                  </p>
+                ) : null}
+                {profile ? (
+                  <p className="rotary-dialog__note">{t('dialogs.rotarySolid.profile.setsShape')}</p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="dialog-section-group">
               <label className="dialog-section-title" htmlFor="rotary-solid-start">
                 {t('dialogs.rotarySolid.start', { units: unitLabel })}
@@ -383,6 +523,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
                   min="0"
                   step="any"
                   value={start}
+                  disabled={profile !== null}
                   onChange={changeField(setStart)}
                 />
               </div>
@@ -399,6 +540,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
                   min="0"
                   step="any"
                   value={length}
+                  disabled={profile !== null}
                   onChange={changeField(setLength)}
                 />
               </div>
@@ -416,6 +558,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
                     min="0"
                     step="any"
                     value={diameter}
+                    disabled={profile !== null}
                     onChange={changeField(setDiameter)}
                   />
                 </div>

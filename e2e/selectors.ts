@@ -947,6 +947,10 @@ export const rotary = {
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+  // The read-only surface line: a Turn diameter, or the model/two-diameter/
+  // taper warning (issue #1112 H, decision 10).
+  surfaceNote: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__surface-note'),
+  surfaceWarning: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__surface-warning'),
 }
 
 // Turn and Polygon canned models on the Around face (#1112 G). Both entries
@@ -964,5 +968,11 @@ export const rotarySolid = {
   cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
+  // Turn side profile (#1112 H): Pick a shape, Refresh and the copied summary.
+  profile: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__profile'),
+  profileTrigger: (page: Page) => rotarySolid.profile(page).locator('.ui-select__trigger'),
+  profileOption: (page: Page, name: string) => rotarySolid.profile(page).getByRole('option', { name }),
+  profileRefresh: (page: Page) => rotarySolid.profile(page).locator('.rotary-dialog__profile-refresh'),
+  profileMissing: (page: Page) => rotarySolid.profile(page).locator('.rotary-dialog__profile-missing'),
 }
 

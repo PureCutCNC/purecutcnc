@@ -3533,6 +3533,38 @@
   line-height: 1.4;
 }
 
+/* The profile picker sits at the top of the Turn form, so its list must open
+   downward; the rotary rule above turns every other picker upward. */
+.dialog--rotary .rotary-dialog__profile .ui-select__dropdown {
+  top: calc(100% + 3px);
+  bottom: auto;
+  max-height: min(40vh, 240px);
+}
+
+.rotary-dialog__profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rotary-dialog__profile-row .ui-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rotary-dialog__profile-refresh {
+  flex: 0 0 auto;
+}
+
+.rotary-dialog__surface-note,
+.rotary-dialog__surface-warning {
+  margin: 0;
+}
+
+.rotary-dialog__surface-warning {
+  color: var(--warning-text, #d9a441);
+}
+
 .rotary-dialog__error {
   margin: 0;
 }

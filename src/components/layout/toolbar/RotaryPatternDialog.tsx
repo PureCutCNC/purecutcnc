@@ -54,12 +54,18 @@ import {
 } from '../../../store/helpers/rotaryPatterns'
 import { getStockBounds } from '../../../types/project'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
+import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { resolveFeatureInstance } from '../../../store/helpers/resolveFeatures'
 import { activeFace, aroundSketchAuthoringAvailable } from '../../../store/helpers/activeFace'
 import { normalizeFlutesCannedParams } from '../../../cannedShapes/generators/flutes'
 import { normalizeThreadCannedParams } from '../../../cannedShapes/generators/thread'
+import {
+  rotaryPatternSurface,
+  rotaryPatternSurfaceSpan,
+  rotaryPatternSurfaceWarning,
+} from '../../../store/helpers/rotarySurface'
 import { RotaryDirectionField } from './RotaryDirectionField'
 import {
   closeRotaryPatternDialog,
@@ -195,11 +201,15 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
   }, [editing, stored, onClose])
 
   const frame = stored?.frame ?? rotaryPatternFrame(project)
-  const radius = frame?.radius ?? 0
   const bounds = getStockBounds(project.stock)
   const barLength = frame
     ? (frame.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY)
     : 0
+  // The depth is measured from the surface the pattern cuts, not always from
+  // the bar: a band wholly on one Turn takes that Turn's diameter (decision
+  // 10). A new pattern's defaults use the full-bar band; the live span follows
+  // the fields below.
+  const defaultSurfaceRadius = rotaryPatternSurface(project, { start: 0, length: barLength }).diameter / 2
 
   const [start, setStart] = useState(() => (stored ? String(stored.start) : '0'))
   const [length, setLength] = useState(() => (stored ? String(stored.length) : tidy(barLength)))
@@ -215,7 +225,7 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     return tidy(
       kind === 'thread'
         ? THREAD_DEPTH_PER_PITCH * (units === 'inch' ? 1 / INCH_DEFAULT_TPI : MM_DEFAULT_PITCH)
-        : radius / 4 || THREAD_DEPTH_PER_PITCH,
+        : defaultSurfaceRadius / 4 || THREAD_DEPTH_PER_PITCH,
     )
   })
   // Once the user edits the depth, the pitch default no longer owns it. An
@@ -232,6 +242,11 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     return 'right'
   })
   const [refusal, setRefusal] = useState<string | null>(null)
+  // The surface the current band cuts is recomputed from the same resolver the
+  // store and the tree use, so the read-only line and the Z span cannot drift.
+  const surface = rotaryPatternSurface(project, { start: parseNumber(start), length: parseNumber(length) })
+  const surfaceRadius = surface.diameter / 2
+  const surfaceWarning = rotaryPatternSurfaceWarning(surface)
   // A close can outlive the click that opened the edit; the guard keeps a
   // late continuation from writing after the user left.
   const activeRef = useRef(true)
@@ -274,7 +289,7 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     }
     const depthValue = parseNumber(depth)
     if (!Number.isFinite(depthValue) || depthValue <= 0) return t('dialogs.rotary.error.depth')
-    if (radius > 0 && depthValue >= radius) return t('dialogs.rotary.error.depthCentreline')
+    if (surfaceRadius > 0 && depthValue >= surfaceRadius) return t('dialogs.rotary.error.depthCentreline')
     return null
   }
 
@@ -292,7 +307,7 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     if (!Number.isFinite(twistValue) || twistValue < 0) return t('dialogs.rotary.error.twist')
     const depthValue = parseNumber(depth)
     if (!Number.isFinite(depthValue) || depthValue <= 0) return t('dialogs.rotary.error.depth')
-    if (radius > 0 && depthValue >= radius) return t('dialogs.rotary.error.depthCentreline')
+    if (surfaceRadius > 0 && depthValue >= surfaceRadius) return t('dialogs.rotary.error.depthCentreline')
     return null
   }
 
@@ -336,11 +351,13 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
       }
       const depthValue = parseNumber(depth)
       // One parameter write, one history entry: `updateFeature` is the same
-      // path any other Properties edit takes (issue #1112).
+      // path any other Properties edit takes (issue #1112). The span follows
+      // the Turn surface the band sits on, not always the bar surface.
+      const span = rotaryPatternSurfaceSpan(project, input, depthValue)
       updateFeature(featureId, {
         canned,
-        z_top: project.stock.thickness,
-        z_bottom: project.stock.thickness - depthValue,
+        z_top: span.zTop,
+        z_bottom: span.zBottom,
       })
       if (activeRef.current) onClose()
       return
@@ -418,6 +435,20 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
                 />
               </div>
             </div>
+
+            {surface.kind === 'turn' ? (
+              <p className="rotary-dialog__note rotary-dialog__surface-note">
+                {t('dialogs.rotary.surface.onTurn', {
+                  name: surface.turnName ?? '',
+                  diameter: formatLength(surface.diameter, units),
+                  units: unitLabel,
+                })}
+              </p>
+            ) : surfaceWarning ? (
+              <p className="rotary-dialog__note rotary-dialog__surface-warning" role="status">
+                {t(surfaceWarning.key, surfaceWarning.values)}
+              </p>
+            ) : null}
 
             {kind === 'thread' ? (
               <>

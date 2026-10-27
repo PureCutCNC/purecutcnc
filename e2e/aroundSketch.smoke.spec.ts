@@ -460,6 +460,54 @@ async function prepareMmRoundBarWithRotary(page: Page): Promise<{ diameter: numb
   return { diameter: bar.thickness }
 }
 
+/** A half-profile on Top, drawn as an open construction spline. */
+async function seedHalfProfile(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: {
+        getProject: () => Promise<Record<string, unknown>>
+        loadProject: (json: string) => Promise<void>
+      }
+    }
+    const project = await w.__pcTest.getProject() as {
+      features: unknown[]
+      featureDefinitions: Record<string, unknown>
+      featureTree: unknown[]
+    }
+    project.featureDefinitions.dHalfProfile = {
+      id: 'dHalfProfile',
+      kind: 'spline',
+      operation: 'construction',
+      profile: {
+        start: { x: 20, y: 12.5 },
+        segments: [
+          { type: 'line', to: { x: 30, y: 5 } },
+          { type: 'line', to: { x: 60, y: 5 } },
+          { type: 'line', to: { x: 60, y: 12.5 } },
+        ],
+        closed: false,
+      },
+      dimensions: [],
+      text: null,
+      stl: null,
+    }
+    project.features.push({
+      id: 'fHalfProfile',
+      name: 'Half profile',
+      definitionId: 'dHalfProfile',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      constraints: [],
+      z_top: 5,
+      z_bottom: 0,
+      folderId: null,
+      visible: true,
+      locked: false,
+    })
+    project.featureTree.push({ type: 'feature', featureId: 'fHalfProfile' })
+    await w.__pcTest.loadProject(JSON.stringify(project))
+  })
+}
+
 /** Two compatible project tools for the flute dialog: a ball and a V-bit. */
 async function seedFluteTools(page: Page): Promise<void> {
   const project = await getProject(page)
@@ -1599,6 +1647,99 @@ test('Turn on a square blank creates the finished round target inside the real b
   const project = await getProject(page) as unknown as Project
   expect((project.stock as { shape?: string; thickness: number }).shape).toBe('square')
   expect((project.stock as { shape?: string; thickness: number }).thickness).toBeCloseTo(25, 6)
+})
+
+test('a Turn revolves a drawn half-profile and Refresh copies the edited source', async ({ app, ui }) => {
+  test.setTimeout(90_000)
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await seedHalfProfile(page)
+  await switchToAround(page)
+  const baseline = await solidSnapshot(page)
+
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.profileTrigger(page)).toContainText('None — one plain diameter')
+  await ui.rotarySolid.profileTrigger(page).click()
+  await ui.rotarySolid.profileOption(page, 'Half profile').click()
+
+  // The copied profile owns the extent and the diameter, so the fields are
+  // read-only and show the spline's real numbers.
+  await expect(ui.rotarySolid.field(page, 'start')).toHaveValue('20')
+  await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('40')
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('15')
+  await expect(ui.rotarySolid.field(page, 'start')).toBeDisabled()
+  await expect(ui.rotarySolid.field(page, 'length')).toBeDisabled()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toBeDisabled()
+  await expect(ui.rotarySolid.profile(page)).toContainText('Half profile')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  const created = await solidSnapshot(page)
+  expect(created.featureCount).toBe(baseline.featureCount + 1)
+  const firstBounds = created.modelBounds[0]!
+  expect(firstBounds.minX).toBeCloseTo(20, 3)
+  expect(firstBounds.maxX).toBeCloseTo(60, 3)
+  expect(firstBounds.maxY - firstBounds.minY).toBeCloseTo(15, 1)
+
+  // Editing the source is not a live link: the Turn keeps its copy until
+  // Refresh re-reads the spline, then it takes the new diameter.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const state = useProjectStore.getState()
+    const source = state.project.features.find((row) => row.name === 'Half profile')
+    if (!source) throw new Error('the half-profile source exists')
+    state.updateFeature(source.id, {
+      sketch: {
+        profile: {
+          start: { x: 20, y: 12.5 },
+          segments: [
+            { type: 'line', to: { x: 30, y: 8 } },
+            { type: 'line', to: { x: 60, y: 8 } },
+            { type: 'line', to: { x: 60, y: 12.5 } },
+          ],
+          closed: false,
+        },
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+    })
+  })
+
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('15')
+  await expect(ui.rotarySolid.profileRefresh(page)).toBeEnabled()
+  await ui.rotarySolid.profileRefresh(page).click()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('9')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  const refreshed = await solidSnapshot(page)
+  expect(refreshed.modelBounds[0]!.maxY - refreshed.modelBounds[0]!.minY).toBeCloseTo(9, 1)
+
+  // Deleting the source cannot break the copy; Refresh is disabled with the
+  // reason instead of silently doing nothing.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const state = useProjectStore.getState()
+    const source = state.project.features.find((row) => row.name === 'Half profile')
+    if (source) state.deleteFeature(source.id)
+  })
+  const turnId = refreshed.modelFeatureIds[0]!
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.profileRefresh(page)).toBeDisabled()
+  await expect(ui.rotarySolid.profileRefresh(page)).toHaveAttribute('title', /no longer exists/)
+  await expect(ui.rotarySolid.profileMissing(page)).toContainText('no longer exists')
+  await page.keyboard.press('Escape')
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
 })
 
 test('Edit polygon… reopens the dialog and a parameter change rebuilds the mesh', async ({ app, ui }) => {
