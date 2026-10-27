@@ -424,15 +424,23 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
     setRefusal(refusalText(result.reason))
   }
 
+  // The source name is live while the source exists: a rename must show the
+  // new name, not the name copied when the profile was picked. Only a deleted
+  // (or unavailable) source falls back to the snapshot.
+  const profileSourceName = profileSourceId
+    ? resolveFeatureInstance(project, profileSourceId)?.name
+      ?? profile?.sourceName
+      ?? storedTurn?.profile?.sourceName
+      ?? profileSourceId
+    : ''
   const profileOptions: Array<{ value: string; label: string }> = [
     { value: '', label: t('dialogs.rotarySolid.profile.none') },
     ...profileCandidates.map((candidate) => ({ value: candidate.id, label: candidate.name })),
   ]
   if (profileSourceId && !profileCandidates.some((candidate) => candidate.id === profileSourceId)) {
-    const missingName = profile?.sourceName ?? storedTurn?.profile?.sourceName ?? profileSourceId
     profileOptions.push({
       value: profileSourceId,
-      label: t('dialogs.rotarySolid.profile.missingOption', { name: missingName }),
+      label: t('dialogs.rotarySolid.profile.missingOption', { name: profileSourceName }),
     })
   }
   const refreshUnavailable = profileRefresh?.canRefresh === true
@@ -494,7 +502,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
                 {profileBand ? (
                   <p className="rotary-dialog__note rotary-dialog__profile-summary">
                     {t('dialogs.rotarySolid.profile.summary', {
-                      name: profile?.sourceName ?? profileSourceId,
+                      name: profileSourceName,
                       diameter: formatLength(profileBand.diameter, units),
                       length: formatLength(profileBand.length, units),
                       units: unitLabel,

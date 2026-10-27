@@ -44,7 +44,11 @@ import {
   type TurnCannedProfile,
 } from '../../cannedShapes/generators/turnProfile'
 import { rotarySolidAlong } from '../../cannedShapes/generators/rotarySolidParams'
-import { resolveFeatureInstance } from './resolveFeatures'
+import {
+  applyMatrixToPoint,
+  resolveFeatureInstance,
+} from './resolveFeatures'
+import { invertMatrix } from './instanceTransforms'
 import { normalizeThreadCannedParams } from '../../cannedShapes/generators/thread'
 import { normalizeFlutesCannedParams } from '../../cannedShapes/generators/flutes'
 
@@ -89,14 +93,26 @@ function overlap(
 interface TurnBand {
   id: string
   name: string
+  /** World-space along range, after this instance's placement transform. */
   alongMin: number
   alongMax: number
-  /** Constant radius of a plain-diameter Turn. */
+  /** Constant radius of a plain-diameter Turn, after the placement scale. */
   diameterRadius: number
+  /** The placement's radial scale, applied to a copied profile too. */
+  radiusScale: number
+  /** Map a world along position back to the copied profile's stored along. */
+  toProfileAlong: (worldAlong: number) => number
   /** A profile Turn's copied outlines; the band's range is read per overlap. */
   profile?: TurnCannedProfile
 }
 
+/**
+ * One Turn instance's world band. A Turn is stored in the bar frame it was
+ * drawn on, and the instance transform places that stored geometry, so both
+ * the along span and the radial size must be read through the transform.
+ * Linked copies share the definition but not the placement, so each row is
+ * resolved from its own matrix.
+ */
 function turnBands(project: Project): TurnBand[] {
   const bands: TurnBand[] = []
   for (const feature of project.features) {
@@ -105,12 +121,36 @@ function turnBands(project: Project): TurnBand[] {
     const params = normalizeTurnCannedParams(definition.canned.params)
     if (!params) continue
     const { alongStart, alongEnd } = rotarySolidAlong(params.frame, params.start, params.length)
+    const axis = params.frame.axis
+    const across = params.frame.acrossCentre
+    const alongOf = (point: { x: number; y: number }): number => (axis === 'x' ? point.x : point.y)
+    const acrossOf = (point: { x: number; y: number }): number => (axis === 'x' ? point.y : point.x)
+    const pointAt = (along: number, acrossValue: number): { x: number; y: number } => (
+      axis === 'x' ? { x: along, y: acrossValue } : { x: acrossValue, y: along }
+    )
+    const transform = feature.transform
+    const first = applyMatrixToPoint(transform, pointAt(alongStart, across))
+    const second = applyMatrixToPoint(transform, pointAt(alongEnd, across))
+    const worldFirst = alongOf(first)
+    const worldSecond = alongOf(second)
+    const worldAcross = acrossOf(first)
+    const inverse = invertMatrix(transform)
+    // The radial scale is the transform's effect across the bar. A similarity
+    // has the same factor along the bar, so scaling a Turn scales its diameter
+    // and its band together, as the placed mesh does.
+    const radiusScale = axis === 'x'
+      ? Math.hypot(transform.c, transform.d)
+      : Math.hypot(transform.a, transform.b)
     bands.push({
       id: feature.id,
       name: feature.name,
-      alongMin: alongStart,
-      alongMax: alongEnd,
-      diameterRadius: params.diameter / 2,
+      alongMin: Math.min(worldFirst, worldSecond),
+      alongMax: Math.max(worldFirst, worldSecond),
+      diameterRadius: (params.diameter / 2) * radiusScale,
+      radiusScale,
+      toProfileAlong: (worldAlong: number) => alongOf(
+        applyMatrixToPoint(inverse, pointAt(worldAlong, worldAcross)),
+      ),
       ...(params.profile ? { profile: params.profile } : {}),
     })
   }
@@ -132,15 +172,23 @@ function turnOverlaps(project: Project, range: { min: number; max: number }): Tu
     if (!overlapRange) continue
     // The surface over the *pattern's* band matters, not the whole Turn: a
     // pattern on the constant section of a stepped profile is on one diameter.
+    // The profile is stored in the Turn's own along coordinates, so the world
+    // overlap is mapped back through the placement before it is read.
     if (turn.profile) {
-      const sampled = turnProfileRadiusRange(turn.profile, overlapRange.min, overlapRange.max)
+      const first = turn.toProfileAlong(overlapRange.min)
+      const second = turn.toProfileAlong(overlapRange.max)
+      const sampled = turnProfileRadiusRange(
+        turn.profile,
+        Math.min(first, second),
+        Math.max(first, second),
+      )
       if (!sampled) continue
       overlaps.push({
         ...turn,
         overlapMin: overlapRange.min,
         overlapMax: overlapRange.max,
-        radiusMin: sampled.min,
-        radiusMax: sampled.max,
+        radiusMin: sampled.min * turn.radiusScale,
+        radiusMax: sampled.max * turn.radiusScale,
         step: sampled.step,
       })
     } else {
@@ -353,4 +401,20 @@ export function syncRotaryPatternSurfaces(
     return { ...feature, z_top: span.zTop, z_bottom: span.zBottom }
   })
   return changed ? next : features
+}
+
+/**
+ * The same sync for a whole project: one call after any write, so deleting,
+ * moving, transforming, expanding, making unique, re-parenting or importing a
+ * Turn moves its Thread/Flutes rows without every mutation knowing about the
+ * resolver. Returns the same project object when no span changed, so a write
+ * that does not touch a surface keeps its identity (and its undo comparison).
+ */
+export function syncRotaryPatternSurfaceProject(project: Project): Project {
+  const features = syncRotaryPatternSurfaces(
+    project,
+    project.features,
+    project.featureDefinitions,
+  )
+  return features === project.features ? project : { ...project, features }
 }

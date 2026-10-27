@@ -41,6 +41,8 @@ import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helper
 import { squareStock } from '../types/barStock'
 import { projectWithFeatures, replaceProjectFeatures, withBottomSetup } from '../test/projectFixtures'
 import { camjImportWarnings } from '../components/project/camjImportWarnings'
+import { rotarySolidCannedData } from '../store/helpers/rotarySolids'
+import { normalizeTurnCannedParams } from '../cannedShapes/generators/turn'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -81,6 +83,7 @@ function makeFeature(
     stl: overrides.stl ?? null,
     ...(overrides.definitionId ? { definitionId: overrides.definitionId } : {}),
     ...(overrides.transform ? { transform: overrides.transform } : {}),
+    ...(overrides.canned ? { canned: overrides.canned } : {}),
   }
 }
 
@@ -846,6 +849,57 @@ function testMergeRemapsTextPathSource(): void {
   )
 }
 
+function testMergeRemapsTurnProfileSource(): void {
+  const source = makeSourceProject('mm')
+  const frame = { axis: 'x' as const, thickness: 40, alongMin: 0, alongMax: 200, acrossCentre: 50 }
+  const canned = rotarySolidCannedData(frame, {
+    kind: 'turn',
+    start: 20,
+    length: 40,
+    diameter: 10,
+    profile: {
+      sourceFeatureId: 'f-src-2',
+      sourceName: 'Slot',
+      contours: [{
+        closed: false,
+        points: [{ along: 20, radius: 5 }, { along: 60, radius: 5 }],
+      }],
+    },
+  }, 'mm')
+  assert(canned !== null, 'the Turn fixture has usable canned data')
+  const withTurn = projectWithFeatures(source, [
+    ...source.features,
+    makeFeature({
+      id: 'f-src-turn',
+      name: 'Turn',
+      folderId: 'fd-src-a',
+      kind: 'stl',
+      operation: 'model',
+      canned,
+    }),
+  ])
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: withTurn,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const importedTurn = result.project.features.find((feature) => feature.name === 'Turn')
+  const importedSource = result.project.features.find((feature) => feature.name === 'Slot')
+  assert(importedTurn !== undefined, 'the Turn imports')
+  assert(importedSource !== undefined, 'the profile source imports with it')
+  const definition = result.project.featureDefinitions[importedTurn!.definitionId]
+  const params = normalizeTurnCannedParams(definition?.canned?.params ?? {})
+  if (!params?.profile) throw new Error('FAIL: the copied profile survives the import')
+  assert(
+    params.profile.sourceFeatureId !== 'f-src-2',
+    'the profile source id must not keep the source project id',
+  )
+  assert(
+    params.profile.sourceFeatureId === importedSource!.id,
+    'the profile source id must point at the imported copy so Refresh stays available',
+  )
+}
+
 function testMergeClearsTextPathSourceOutsideTheImport(): void {
   const source = makeSourceProject('mm')
   source.features = source.features.map((feature) => (
@@ -900,6 +954,7 @@ testMergePreservesLinkedInstanceTransform()
 testMergeRemapsIntersectionConstraintReferences()
 testMergeRemapsTextPathSource()
 testMergeClearsTextPathSourceOutsideTheImport()
+testMergeRemapsTurnProfileSource()
 console.log('camj import tests passed')
 
 function testMergeAroundKind(): void {

@@ -290,35 +290,37 @@ export function turnProfileRadiusAt(
   return best
 }
 
+interface ProfileSpan {
+  low: number
+  high: number
+  /** Radius at the span's low end. */
+  lowRadius: number
+  /** Radius at the span's high end. */
+  highRadius: number
+}
+
 /**
  * The radius range over a band, and whether the profile has a vertical step in
  * it (a diameter change, as opposed to a taper). Used by Thread/Flutes to
  * decide whether they can take a Turn's diameter automatically.
+ *
+ * The range is read from the profile's actual segments, not from samples: a
+ * short groove or taper between two samples is part of the surface and must be
+ * classified. `turnProfileRadiusAt` only sees one station at a time, so this
+ * walks the linear pieces of the outer envelope instead.
+ *
+ * Thread/Flutes are already refused when two Turns overlap, so this function
+ * only has to resolve one copied profile's own contours: the outer envelope is
+ * the maximum radius of every segment covering an along position.
  */
 export function turnProfileRadiusRange(
   profile: TurnCannedProfile,
   alongStart: number,
   alongEnd: number,
-  samples = 32,
 ): { min: number; max: number; step: boolean } | null {
   const low = Math.min(alongStart, alongEnd)
   const high = Math.max(alongStart, alongEnd)
-  const stations = new Set<number>([low, high])
-  for (let index = 0; index <= samples; index += 1) {
-    stations.add(low + ((high - low) * index) / samples)
-  }
-  let min = Number.POSITIVE_INFINITY
-  let max = Number.NEGATIVE_INFINITY
-  let found = false
-  for (const station of stations) {
-    const radius = turnProfileRadiusAt(profile, station)
-    if (radius === null) continue
-    found = true
-    min = Math.min(min, radius)
-    max = Math.max(max, radius)
-  }
-  if (!found) return null
-
+  const spans: ProfileSpan[] = []
   let step = false
   for (const contour of profile.contours) {
     const points = contour.points
@@ -327,12 +329,82 @@ export function turnProfileRadiusRange(
       const start = points[index]
       const end = points[(index + 1) % points.length]
       if (!start || !end) continue
-      if (!near(start.along, end.along)) continue
-      if (Math.abs(start.radius - end.radius) <= TURN_PROFILE_TOLERANCE) continue
-      if (start.along < low - TURN_PROFILE_TOLERANCE || start.along > high + TURN_PROFILE_TOLERANCE) continue
-      step = true
+      if (near(start.along, end.along)) {
+        // A vertical face changes the diameter, but the radii on either side
+        // belong to the segments that touch it; the face itself has no width.
+        if (Math.abs(start.radius - end.radius) <= TURN_PROFILE_TOLERANCE) continue
+        if (start.along < low - TURN_PROFILE_TOLERANCE || start.along > high + TURN_PROFILE_TOLERANCE) continue
+        step = true
+        continue
+      }
+      const spanLow = Math.min(start.along, end.along)
+      const spanHigh = Math.max(start.along, end.along)
+      if (spanHigh < low - TURN_PROFILE_TOLERANCE || spanLow > high + TURN_PROFILE_TOLERANCE) continue
+      spans.push({
+        low: spanLow,
+        high: spanHigh,
+        lowRadius: start.along <= end.along ? start.radius : end.radius,
+        highRadius: start.along <= end.along ? end.radius : start.radius,
+      })
     }
   }
+  if (spans.length === 0) return null
+
+  const radiusAt = (span: ProfileSpan, along: number): number => (
+    span.lowRadius
+    + ((along - span.low) / (span.high - span.low)) * (span.highRadius - span.lowRadius)
+  )
+
+  // The envelope is piecewise linear with breaks at every segment end and at
+  // every crossing of two overlapping pieces. Between two breaks it is one
+  // line, so its one-sided limits at the breaks give the exact range. Those
+  // limits matter: a groove's floor is the limit inside the groove, while the
+  // exact vertex is shared with the vertical face.
+  const breaks = new Set<number>([low, high])
+  for (const span of spans) {
+    for (const value of [span.low, span.high]) {
+      if (value > low + TURN_PROFILE_TOLERANCE && value < high - TURN_PROFILE_TOLERANCE) breaks.add(value)
+    }
+  }
+  for (let first = 0; first < spans.length; first += 1) {
+    for (let second = first + 1; second < spans.length; second += 1) {
+      const a = spans[first]
+      const b = spans[second]
+      if (!a || !b) continue
+      const slopeA = (a.highRadius - a.lowRadius) / (a.high - a.low)
+      const slopeB = (b.highRadius - b.lowRadius) / (b.high - b.low)
+      if (Math.abs(slopeA - slopeB) <= TURN_PROFILE_TOLERANCE) continue
+      const overlapLow = Math.max(low, a.low, b.low)
+      const overlapHigh = Math.min(high, a.high, b.high)
+      if (overlapHigh < overlapLow - TURN_PROFILE_TOLERANCE) continue
+      const crossing = (b.lowRadius - a.lowRadius + slopeA * a.low - slopeB * b.low) / (slopeA - slopeB)
+      if (crossing > low && crossing < high) breaks.add(crossing)
+    }
+  }
+
+  const stations = [...breaks].sort((a, b) => a - b)
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  let found = false
+  const consider = (radius: number): void => {
+    found = true
+    min = Math.min(min, radius)
+    max = Math.max(max, radius)
+  }
+  for (let index = 0; index < stations.length - 1; index += 1) {
+    const start = stations[index]
+    const end = stations[index + 1]
+    if (start === undefined || end === undefined || end - start <= TURN_PROFILE_TOLERANCE) continue
+    const middle = (start + end) / 2
+    const active = spans.filter((span) => span.low <= middle && span.high >= middle)
+    if (active.length === 0) continue
+    for (const station of [start, end]) {
+      let envelope = Number.NEGATIVE_INFINITY
+      for (const span of active) envelope = Math.max(envelope, radiusAt(span, station))
+      consider(envelope)
+    }
+  }
+  if (!found) return null
   return { min, max, step }
 }
 

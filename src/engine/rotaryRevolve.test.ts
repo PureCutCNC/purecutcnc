@@ -85,6 +85,46 @@ function signedVolume(positions: Float32Array, indices: Uint32Array): number {
   return volume
 }
 
+/**
+ * Edges used by exactly one triangle, welded by position. The revolver emits a
+ * separate vertex per ring, including the coincident axis ring, so an index
+ * boundary count would report false holes; position welding is what "closed"
+ * means for the layout and for CSG.
+ */
+function boundaryEdgeCount(
+  positions: Float32Array,
+  indices: Uint32Array,
+  tolerance = 1e-4,
+): number {
+  const key = (index: number): string => (
+    [
+      positions[index * 3],
+      positions[index * 3 + 1],
+      positions[index * 3 + 2],
+    ].map((value) => Math.round(value / tolerance)).join(',')
+  )
+  const edges = new Map<string, number>()
+  const add = (first: number, second: number): void => {
+    const a = key(first)
+    const b = key(second)
+    if (a === b) return
+    const edge = a < b ? `${a}/${b}` : `${b}/${a}`
+    edges.set(edge, (edges.get(edge) ?? 0) + 1)
+  }
+  for (let index = 0; index < indices.length; index += 3) {
+    const a = indices[index]
+    const b = indices[index + 1]
+    const c = indices[index + 2]
+    if (a === undefined || b === undefined || c === undefined) continue
+    add(a, b)
+    add(b, c)
+    add(c, a)
+  }
+  let boundary = 0
+  for (const count of edges.values()) if (count === 1) boundary += 1
+  return boundary
+}
+
 // A stepped half-profile: axis at both ends, a cone, a cylinder and a flat end.
 const STEP: RevolveProfileContour = {
   closed: false,
@@ -124,6 +164,20 @@ const volume = signedVolume(cylinder.positions, cylinder.indices)
 const facetArea = 0.5 * SEGMENTS * 36 * Math.sin((2 * Math.PI) / SEGMENTS)
 assertNear(volume, facetArea * 60, 'the cylinder volume is the faceted area times its length', 1e-2)
 
+// Every accepted profile revolves to a closed mesh, including an open profile
+// that starts off the axis: its ends are projected onto the axis and both caps
+// are needed, not only the far one.
+assert.equal(boundaryEdgeCount(mesh.positions, mesh.indices), 0, 'the stepped open profile is watertight')
+assert.equal(boundaryEdgeCount(cylinder.positions, cylinder.indices), 0, 'the closed half-section is watertight')
+const straight = buildRotaryRevolveMesh(STOCK, [{
+  closed: false,
+  points: [{ along: 20, radius: 5 }, { along: 80, radius: 5 }],
+}], SEGMENTS)
+assertNear(radiusAt(straight.positions, 20), 5, 'a straight off-axis profile keeps its start radius')
+assertNear(radiusAt(straight.positions, 80), 5, 'a straight off-axis profile keeps its end radius')
+assert.equal(boundaryEdgeCount(straight.positions, straight.indices), 0, 'a straight off-axis open profile is watertight')
+assert.ok(signedVolume(straight.positions, straight.indices) > 0, 'the straight profile is outward-facing')
+
 // Reversing the outline must not invert the solid.
 const reversed = buildRotaryRevolveMesh(STOCK, [{
   closed: true,
@@ -131,6 +185,7 @@ const reversed = buildRotaryRevolveMesh(STOCK, [{
 }], SEGMENTS)
 assert.ok(signedVolume(reversed.positions, reversed.indices) > 0, 'a reversed outline is still outward-facing')
 assertNear(radiusAt(reversed.positions, 80), 6, 'a reversed outline keeps its radius')
+assert.equal(boundaryEdgeCount(reversed.positions, reversed.indices), 0, 'a reversed outline is watertight')
 
 // Refusals: no surface, a negative radius, an empty outline, a bad segment count.
 const bad: Array<[string, RevolveProfileContour[], number]> = [
@@ -153,5 +208,6 @@ const Y_STOCK: RotaryBarGeometry = {
 const yMesh = buildRotaryRevolveMesh(Y_STOCK, [RECTANGLE], SEGMENTS)
 assertNear(yMesh.positions[1], 20, 'a Y bar keeps along in Y', 1e-4)
 assertNear(Math.hypot(yMesh.positions[0] - CENTRE, yMesh.positions[2] - PIVOT), 0, 'the Y-bar axis point collapses')
+assert.equal(boundaryEdgeCount(yMesh.positions, yMesh.indices), 0, 'the Y-bar mesh is watertight')
 
 console.log('rotary revolve: all assertions passed.')
