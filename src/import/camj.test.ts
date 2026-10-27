@@ -30,6 +30,7 @@ import {
   type PersistedImportedMesh,
   type Project,
   type SketchFeature,
+  type TextLayout,
   type Tool,
   newProject,
   rectProfile,
@@ -810,6 +811,69 @@ function testMergeRemapsIntersectionConstraintReferences(): void {
   assert(targetB.source === 'feature' && targetB.featureId === importedVertical!.id, 'intersection target B should be remapped')
 }
 
+const IMPORTED_PATH_LAYOUT: TextLayout = {
+  kind: 'path',
+  path: rectProfile(0, 0, 20, 10),
+  startOffset: 0,
+  endOffset: 60,
+  anchor: 'center',
+  fit: 'natural',
+  reversed: false,
+  orientation: 'follow',
+}
+
+function testMergeRemapsTextPathSource(): void {
+  const source = makeSourceProject('mm')
+  source.features = source.features.map((feature) => (
+    feature.id === 'f-src-1'
+      ? { ...feature, textLayout: { ...IMPORTED_PATH_LAYOUT, sourceFeatureId: 'f-src-2' } }
+      : feature
+  ))
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: source,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const imported = result.project.features.find((feature) => feature.textLayout?.kind === 'path')
+  const layout = imported?.textLayout
+  assert(layout?.kind === 'path', 'the path run should import')
+  if (layout?.kind !== 'path') throw new Error('unreachable')
+  assert(layout.sourceFeatureId !== 'f-src-2', 'the source id must not be the source project id')
+  assert(
+    layout.sourceFeatureId !== undefined
+      && result.createdFeatureIds.includes(layout.sourceFeatureId),
+    'the source id should point at the imported copy',
+  )
+}
+
+function testMergeClearsTextPathSourceOutsideTheImport(): void {
+  const source = makeSourceProject('mm')
+  source.features = source.features.map((feature) => (
+    feature.id === 'f-src-1'
+      // f-src-3 lives in fd-src-b, which is not selected, so the run's source
+      // is not part of this import and has no row to point at.
+      ? { ...feature, textLayout: { ...IMPORTED_PATH_LAYOUT, sourceFeatureId: 'f-src-3' } }
+      : feature
+  ))
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: source,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const imported = result.project.features.find((feature) => feature.textLayout?.kind === 'path')
+  const layout = imported?.textLayout
+  assert(layout?.kind === 'path', 'the path run should import')
+  if (layout?.kind !== 'path') throw new Error('unreachable')
+  assert(
+    layout.sourceFeatureId === undefined,
+    'a source outside the import must be cleared, not left dangling',
+  )
+  assert(
+    !('sourceFeatureId' in layout),
+    'the serialized instance must not carry a cleared source key',
+  )
+}
+
 testInspectListsFoldersWithFeatures()
 testInspectHidesEmptyFolders()
 testInspectRejectsBadJson()
@@ -834,6 +898,8 @@ testMergeImportsStockMmToInchScales()
 testMergeStockImportNoOpWhenSourceNotFeatureBased()
 testMergePreservesLinkedInstanceTransform()
 testMergeRemapsIntersectionConstraintReferences()
+testMergeRemapsTextPathSource()
+testMergeClearsTextPathSourceOutsideTheImport()
 console.log('camj import tests passed')
 
 function testMergeAroundKind(): void {

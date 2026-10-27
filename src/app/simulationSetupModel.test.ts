@@ -49,7 +49,8 @@ import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup } from '../test/p
 import {
   defaultTool, newProject, rectProfile, type Clamp, type Operation, type Project, type SetupFace, type SketchFeature,
 } from '../types/project'
-import { resolveSimulationSetup, simulationSetups } from './simulationSetup'
+import { buildSimulationSetupInput, resolveSimulationSetup, simulationSetups } from './simulationSetup'
+import { computeSimulationResultAsync, type SimulationResultInput } from './simulationCompute'
 import { useSimulationModel } from './useSimulationModel'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -116,6 +117,35 @@ function generate(project: Project, id: string): ToolpathResult {
   const envelope = computeOperationToolpath(project, op)
   assert(envelope, `fixture: ${id} is generated`)
   return envelope.result
+}
+
+/**
+ * The deferred entry point the hook awaits, with the same setup scoping the
+ * hook builds. The hook's tab-switch render is asserted separately to be a
+ * loading state, so the frame checks read the build that follows it.
+ */
+async function builtResult(project: Project, selectedId: string): Promise<SimulationResultInput['setupInput']> {
+  const selected = project.operations.find((entry) => entry.id === selectedId)
+  assert(selected, `fixture: ${selectedId} exists`)
+  const setup = resolveSimulationSetup(project, null, selected)
+  const paths = new Map<string, ToolpathResult>(project.operations.map((operation) => [operation.id, generate(project, operation.id)]))
+  return buildSimulationSetupInput(project, setup, paths)
+}
+
+async function selectedResult(project: Project, selectedId: string) {
+  const selected = project.operations.find((entry) => entry.id === selectedId)
+  assert(selected, `fixture: ${selectedId} exists`)
+  const setupInput = await builtResult(project, selectedId)
+  const result = await computeSimulationResultAsync({
+    setupInput,
+    project,
+    simulationMode: 'selected',
+    simulationDetailCells: 240,
+    selectedInSetup: selected,
+    paths: new Map(),
+  })
+  assert(result, 'the deferred simulation build completes')
+  return result
 }
 
 function topZAt(grid: SimulationGrid, x: number, y: number): number {
@@ -185,7 +215,7 @@ function testResolution(): void {
 
 // ── The hook simulates the chosen setup in its frame ──────────
 
-function testBottomSelectedSimulatesLocally(): void {
+async function testBottomSelectedSimulatesLocally(): Promise<void> {
   console.log('Testing a selected Bottom operation is simulated from the top of the flipped stock...')
   const project = { ...makeProject(), activeSetupId: makeProject().setups[0].id }
   const bottomPath = generate(project, 'opBottom')
@@ -193,8 +223,8 @@ function testBottomSelectedSimulatesLocally(): void {
 
   assert(result.simulationSetupPicker.selectedId === BOTTOM_SETUP_ID, 'selecting a Bottom operation simulates Bottom')
   assert(result.simulationSetupPicker.options.length === 2, 'the picker lists both setups')
-  const grid = result.simulationResult?.grid
-  assert(grid, 'a simulation result exists')
+  assert(result.simulationResult === null, 'the tab-switch render is a loading state')
+  const grid = (await selectedResult(project, 'opBottom')).grid
   const local = flipY(centre(BOTTOM_RECT))
   assert(
     topZAt(grid, local.x, local.y) < STOCK.t - DEPTH * 0.5,
@@ -222,14 +252,13 @@ function testBottomSelectedSimulatesLocally(): void {
   assert(Math.abs(topZAt(base, topLocal.x, topLocal.y) - STOCK.t) < 1e-6, 'Top\'s cut is not carried into Bottom playback')
 }
 
-function testTopIsUnchangedAndPickHolds(): void {
+async function testTopIsUnchangedAndPickHolds(): Promise<void> {
   console.log('Testing a Top selection simulates as before, and a pick lasts while the selection does...')
   const project = makeProject()
   const topPath = generate(project, 'opTop')
   const result = render(selectedArgs(project, 'opTop', topPath))
   assert(result.simulationSetupPicker.selectedId === project.setups[0].id, 'a Top operation simulates Top')
-  const grid = result.simulationResult?.grid
-  assert(grid, 'a simulation result exists')
+  const grid = (await selectedResult(project, 'opTop')).grid
   const at = centre(TOP_RECT)
   assert(topZAt(grid, at.x, at.y) < STOCK.t - DEPTH * 0.5, 'the Top pocket is cut where it is drawn')
   assert(result.simulationClamps[0].x === 14 && result.simulationClamps[0].y === 8, 'Top clamps are where they are drawn')
@@ -251,8 +280,8 @@ function testSingleSetupHasNoPicker(): void {
 }
 
 testResolution()
-testBottomSelectedSimulatesLocally()
-testTopIsUnchangedAndPickHolds()
+await testBottomSelectedSimulatesLocally()
+await testTopIsUnchangedAndPickHolds()
 testSingleSetupHasNoPicker()
 
 console.log('simulation setup model tests passed')

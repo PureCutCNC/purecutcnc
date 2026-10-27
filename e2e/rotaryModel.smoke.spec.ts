@@ -471,7 +471,7 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   await expect(canvas).toBeVisible()
 
   // ── Simulation: the Around setup is the bar and the run removes material ──
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toBeVisible()
   await ui.simSetup.picker(page).selectOption(aroundSetup.id)
@@ -688,6 +688,15 @@ async function seedSquareBlankProject(page: Page): Promise<Project> {
   return await getProject(page) as unknown as Project
 }
 
+/** Open the creation drawer, where the Turn and Polygon entries live. */
+async function openCreationDrawer(page: Page): Promise<void> {
+  const drawer = page.locator('.toolbar-creation-picker__drawer')
+  if ((await drawer.count()) === 0 || !(await drawer.isVisible())) {
+    await page.locator('.toolbar-creation-picker__drawer-btn').click()
+  }
+  await expect(drawer).toBeVisible()
+}
+
 /** Add a rotary operation through the real Add menu, the way a user does. */
 async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), label: 'Rotary rough' | 'Rotary finish'): Promise<void> {
   const row = ui.setupCam.addMenu(page).locator('.cam-operation-item')
@@ -697,6 +706,19 @@ async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), 
   await expect(row).toHaveCount(1)
   await row.getByRole('button', { name: 'Add', exact: true }).click()
   await expect(ui.operations.rowByName(page, label)).toBeVisible()
+}
+
+/**
+ * Select an operation without toggling it off. Adding an operation already
+ * selects it, and a click on the selected row is the panel's deselect gesture;
+ * a simulation in "Selected" mode then has nothing to show.
+ */
+async function selectOperationRow(page: Page, ui: typeof import('./selectors'), label: string): Promise<void> {
+  const row = ui.operations.rowByName(page, label)
+  if (!(await row.evaluate((element) => element.classList.contains('tree-row--selected')))) {
+    await row.click()
+  }
+  await expect(row).toHaveClass(/tree-row--selected/)
 }
 
 /**
@@ -899,14 +921,19 @@ test('square to round generates inside the band and removes material', async ({ 
   const { page } = app
   await seedSquareBlankProject(page)
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+  await openCreationDrawer(page)
 
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'start').fill('10')
   await ui.rotarySolid.field(page, 'length').fill('30')
   await ui.rotarySolid.field(page, 'diameter').fill('20')
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+  // Creation adds the model only (issue #1112 G); the two rotary operations
+  // are added through the ordinary CAM Add menu.
+  await addRotaryOperation(page, ui, 'Rotary rough')
+  await addRotaryOperation(page, ui, 'Rotary finish')
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
 
   const project = await getProject(page) as unknown as Project
@@ -927,7 +954,7 @@ test('square to round generates inside the band and removes material', async ({ 
   expect(roughBand.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
 
   // Simulation: the Around bar view removes material.
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   const viewport = ui.simSetup.viewport(page)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
@@ -1211,15 +1238,18 @@ test('square playback starts from the prior rough, follows the finish and resets
   expect(2 * barMaxRadius(blank)).toBeCloseTo(25 * Math.SQRT2, 6)
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
-  // The real square-to-round job: the app's own dialog creates the round target
-  // and both rotary operations in one history step.
-  await ui.rotarySolid.squareToRoundButton(page).click()
+  // The real square-to-round job: the app's own Turn dialog creates the round
+  // target, then the two rotary operations are added from CAM.
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'start').fill('10')
   await ui.rotarySolid.field(page, 'length').fill('30')
   await ui.rotarySolid.field(page, 'diameter').fill('20')
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+  await addRotaryOperation(page, ui, 'Rotary rough')
+  await addRotaryOperation(page, ui, 'Rotary finish')
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
 
   const project = await getProject(page) as unknown as Project
@@ -1255,7 +1285,7 @@ test('square playback starts from the prior rough, follows the finish and resets
   }
 
   // ── The selected finish opens as the shared heightfield, with removal ──
-  await ui.operations.rowByName(page, 'Rotary finish').click()
+  await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toBeVisible()
   await ui.simSetup.picker(page).selectOption(around.id)

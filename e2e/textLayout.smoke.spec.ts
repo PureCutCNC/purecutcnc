@@ -30,6 +30,7 @@ interface TextLayoutShape {
   anchor?: string
   reversed?: boolean
   path?: { segments: unknown[] }
+  sourceFeatureId?: string
 }
 
 /** Place a straight run and select it, without opening the layout panel. */
@@ -165,6 +166,9 @@ test('Path text needs a guide, then applies from the panel', async ({ app }) => 
   expect(layout?.kind).toBe('path')
   // The guide is baked in, not linked, so the outline travels with the text.
   expect((layout?.path?.segments ?? []).length).toBeGreaterThan(0)
+  // It also remembers where the copy came from, so Properties can Refresh it
+  // after the source is edited (issue #1112 E).
+  expect(typeof layout?.sourceFeatureId).toBe('string')
 })
 
 test('Escape backs out of guide picking without discarding the run', async ({ app }) => {

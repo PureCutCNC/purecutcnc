@@ -15,7 +15,7 @@
  */
 
 import { findOperationTool } from '../toolPolicy'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
@@ -24,11 +24,16 @@ import { setupFace } from '../engine/setupOrientation'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
 import { isSquareStock } from '../types/barStock'
 import {
-  computeSimulationResult,
+  computeSimulationResultAsync,
   priorReplayGrid,
   simulationBuildOptions,
   type SimulationResultInput,
 } from './simulationCompute'
+import {
+  applySimulationBuild,
+  simulationResultForInput,
+  type SimulationBuild,
+} from './simulationBuild'
 import {
   buildSimulationSetupInput,
   resolveSimulationSetup,
@@ -42,8 +47,8 @@ import {
 // tests can call it without rendering the hook. It is re-exported here because
 // this hook is where every simulation consumer and its test already look for
 // it.
-export { computeSimulationResult }
-export type { SimulationResultInput }
+export { computeSimulationResult } from './simulationCompute'
+export type { SimulationResultInput } from './simulationCompute'
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
 const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
@@ -244,23 +249,63 @@ export function useSimulationModel({
     }
   }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
 
-  const simulationResult = useMemo(() => {
-    if (centerTab !== 'simulation') {
+  // The render that opens the tab must be the one that commits it. The result
+  // is built in an effect, in yielding slices (issue #1112 review P1), so a
+  // heavy selected operation never runs inside a render; the panel shows its
+  // loading overlay until the build for *these* inputs lands.
+  const simulationBuildInput = useMemo<SimulationResultInput | null>(() => {
+    if (centerTab !== 'simulation' || paths === null) {
       return null
     }
-    return computeSimulationResult({
+    return {
       setupInput,
       project,
       simulationMode,
       simulationDetailCells,
       selectedInSetup,
       paths,
-    })
+    }
   }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
-  // Only a path acquisition is a wait now: every stock shape's result and
-  // playback base grid are computed synchronously from inputs already in hand.
-  const simulationInputPending = centerTab === 'simulation' && paths === null
+  const [simulationBuild, setSimulationBuild] = useState<SimulationBuild | null>(null)
+  /**
+   * The inputs a completion is judged against. Written in a layout effect, not
+   * during render: a render React discards must not move the target. A
+   * completion that lands between commit and this line is judged against the
+   * previous request and dropped, which is the conservative direction — it can
+   * never install a result the current selection no longer describes.
+   */
+  const requestedBuildInput = useRef<SimulationResultInput | null>(simulationBuildInput)
+  useLayoutEffect(() => {
+    requestedBuildInput.current = simulationBuildInput
+  }, [simulationBuildInput])
+
+  useEffect(() => {
+    if (simulationBuildInput === null) return
+    if (simulationBuild !== null && simulationBuild.input === simulationBuildInput) return
+    const controller = new AbortController()
+    let cancelled = false
+    void computeSimulationResultAsync(simulationBuildInput, { signal: controller.signal })
+      .then((result) => {
+        if (cancelled || result === null) return
+        setSimulationBuild((previous) => applySimulationBuild(
+          previous,
+          requestedBuildInput.current,
+          simulationBuildInput,
+          result,
+        ))
+      })
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [simulationBuild, simulationBuildInput])
+
+  const simulationResult = simulationResultForInput(simulationBuild, simulationBuildInput)
+
+  // A path acquisition and a build that has not produced this input's result
+  // are both waits; the panel shows one spinner for either.
+  const simulationInputPending = centerTab === 'simulation' && simulationResult === null
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {

@@ -324,6 +324,13 @@ export type TextLayout =
       /** Walk the guide backwards. The path analogue of `direction` above. */
       reversed: boolean
       orientation: TextBaselineOrientation
+      /**
+       * The feature the path was copied from, when it is still known. The path
+       * itself stays baked (deleting or editing the source cannot break the
+       * run); this only lets Properties offer "Refresh" to copy it again
+       * (issue #1112 slice E). Absent on runs wrapped before the field existed.
+       */
+      sourceFeatureId?: string
     }
 
 export interface TextFeatureData {
@@ -2054,7 +2061,7 @@ export function profileHasSelfIntersection(profile: SketchProfile): boolean {
   return false
 }
 
-export function getStockBounds(stock: Stock): Bounds2D {
+export function getStockBounds(stock: Pick<Stock, 'profile'>): Bounds2D {
   return getProfileBounds(stock.profile)
 }
 
