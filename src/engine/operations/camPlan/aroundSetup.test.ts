@@ -66,6 +66,7 @@ import { useProjectStore } from '../../../store/projectStore'
 import { switchWorkspaceFace } from '../../../store/workspaceFace'
 import { activeSetup } from '../../../store/helpers/activeFace'
 import { translate } from '../../../i18n/store'
+import { rotaryCylinderSegments } from '../../rotaryCylinder'
 import { createCamPlan } from './createCamPlan'
 import { reconcileCamPlanDownstream } from './reconcileRest'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
@@ -135,11 +136,15 @@ function bolt(): { project: Project; polygonId: string; turnId: string; threadId
 
   const [polygonRough, polygonFinish, turnRough, turnFinish, engrave] = plan.operations
   const apex = activeSetup(project)
+  // The hex's flats sit at the apothem (7.5), not at its 8.66 mm corners; the
+  // turn's mesh is faceted, so its deepest surface is the chord apothem.
+  const polygonReach = 10 - 15 / 2
+  const turnReach = 10 - 7 * Math.cos(Math.PI / rotaryCylinderSegments(7, 'mm'))
   for (const [draft, kind, featureId, reach] of [
-    [polygonRough, 'rotary_rough', polygonId, 10 - 15 / (2 * Math.cos(Math.PI / 6))],
-    [polygonFinish, 'rotary_finish', polygonId, 10 - 15 / (2 * Math.cos(Math.PI / 6))],
-    [turnRough, 'rotary_rough', turnId, 10 - 14 / 2],
-    [turnFinish, 'rotary_finish', turnId, 10 - 14 / 2],
+    [polygonRough, 'rotary_rough', polygonId, polygonReach],
+    [polygonFinish, 'rotary_finish', polygonId, polygonReach],
+    [turnRough, 'rotary_rough', turnId, turnReach],
+    [turnFinish, 'rotary_finish', turnId, turnReach],
   ] as const) {
     assert.equal(draft.operation.kind, kind)
     assert.equal(draft.operation.setupId, apex.id, 'a rotary draft joins the Around setup')
@@ -201,6 +206,122 @@ function bolt(): { project: Project; polygonId: string; turnId: string; threadId
   assert.equal(store().project.operations.length, 0, 'one undo removes it all again')
 }
 
+// ── reach is the model surface, not its vertices (issue #1112 J2) ─────
+//
+// A Ø20 bar with a 15 mm across-flats hex has its corners at 8.66 mm but its
+// flats at 7.5 mm. The old vertex measure reported a 1.34 mm reach and accepted
+// a 1.5 mm-deep cutter for a cut that is really 2.5 mm deep.
+
+{
+  const tiny = tool('ball-1.5', 'ball_endmill', 1.5, 1.5)
+  loadAround(barProject([tiny]))
+  const polygon = store().addRotarySolid({ kind: 'polygon', start: 10, length: 12, sides: 6, acrossFlats: 15 })
+  assert.ok(polygon.ok, `polygon created: ${polygon.ok ? '' : polygon.reason}`)
+  const project = store().project
+  const plan = createCamPlan(project, [])
+  const rotary = plan.operations.filter((draft) => draft.operation.kind === 'rotary_rough' || draft.operation.kind === 'rotary_finish')
+  assert.equal(rotary.length, 2, 'the hexagonal head is a rough/finish pair')
+  for (const draft of rotary) {
+    assert(Math.abs((draft.requiredCutDepth ?? 0) - 2.5) < 1e-6,
+      `the reach is the hex apothem, not its corner radius: ${draft.requiredCutDepth}`)
+    assert.equal(draft.operation.toolRef, null, 'the 1.5 mm-deep cutter cannot reach the flat')
+    assert(Boolean(draft.hardError), 'and the proposal is blocked rather than accepted')
+  }
+  const applied = materializeCamPlan(project, plan)
+  assert.equal(applied.ok, false, 'a plan whose cutter cannot reach the model is not created')
+}
+
+// ── one Engrave per pattern depth (issue #1112 J2) ────────────────────
+//
+// A 0.4 mm thread and a 1.2 mm flute in one Engrave would both cut at the
+// store's deepest depth. They are separate operations, each at its own depth.
+
+{
+  loadAround(barProject())
+  const shallow = store().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 1.5, starts: 1, depth: 0.4 })
+  assert.ok(shallow.ok, 'the first 0.4 mm thread is created')
+  const shallowTwin = store().addRotaryPattern({ kind: 'thread', start: 55, length: 20, pitch: 1.5, starts: 1, depth: 0.4 })
+  assert.ok(shallowTwin.ok, 'a second 0.4 mm thread is created')
+  const deep = store().addRotaryPattern({ kind: 'flutes', start: 25, length: 20, count: 2, twist: 0, depth: 1.2 })
+  assert.ok(deep.ok, 'the 1.2 mm flutes are created')
+  const project = store().project
+  const plan = createCamPlan(project, [])
+  const engravings = plan.operations.filter((draft) => draft.operation.kind === 'follow_line')
+  assert.equal(engravings.length, 2, `one Engrave per distinct depth: ${engravings.length}`)
+  const targetIds = (draft: (typeof engravings)[number]) => draft.operation.target.source === 'features'
+    ? draft.operation.target.featureIds
+    : []
+  const shallowDraft = engravings.find((entry) => targetIds(entry).includes(shallow.featureId))
+  const deepDraft = engravings.find((entry) => targetIds(entry).includes(deep.featureId))
+  assert(shallowDraft, 'an Engrave targets the shallow threads')
+  assert(deepDraft, 'an Engrave targets the deep flutes')
+  assert.deepEqual([...targetIds(shallowDraft)].sort(), [shallow.featureId, shallowTwin.featureId].sort(), 'the two 0.4 mm threads share one Engrave')
+  assert.equal(shallowDraft.operation.carveDepth, 0.4, 'the shallow group keeps its 0.4 mm depth')
+  assert.equal(shallowDraft.operation.maxCarveDepth, 0.4, 'and its maximum')
+  assert.equal(deepDraft.operation.carveDepth, 1.2, 'the flutes keep their 1.2 mm depth')
+  assert.equal(deepDraft.operation.maxCarveDepth, 1.2, 'and their maximum')
+  assert(!targetIds(deepDraft).includes(shallow.featureId), 'no Engrave mixes the two depths')
+
+  const applied = materializeCamPlan(project, plan)
+  assert(applied.ok, `the two Engraves apply: ${applied.ok ? '' : applied.message}`)
+  if (applied.ok) {
+    const created = applied.project.operations.filter((operation) => operation.kind === 'follow_line')
+    assert.equal(created.length, 2, 'two Engrave operations are created')
+    for (const [featureId, depth, sharedWith] of [
+      [shallow.featureId, 0.4, shallowTwin.featureId],
+      [deep.featureId, 1.2, null],
+    ] as const) {
+      const operation = created.find((entry) =>
+        entry.target.source === 'features' && entry.target.featureIds.includes(featureId))
+      assert.equal(operation?.carveDepth, depth, `${featureId} keeps its own applied depth`)
+      if (sharedWith) {
+        assert(operation?.target.source === 'features' && operation.target.featureIds.includes(sharedWith),
+          'same-depth patterns stay together after applying')
+      }
+    }
+  }
+}
+
+// ── a centreline proposal is blocked in Plan, not offered (issue #1112 J2) ──
+
+{
+  const deepCut: SketchFeature = {
+    id: 'deep-cut',
+    name: 'Deep cut',
+    kind: 'rect',
+    operation: 'subtract',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(10, -5, 30, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    z_top: 20,
+    z_bottom: 8,
+    visible: true,
+    locked: false,
+    authoringFace: 'around',
+  }
+  const project = loadAround(projectWithFeatures(barProject(), [deepCut]))
+  const plan = createCamPlan(project, [])
+  const drafts = plan.operations.filter((draft) => draft.coveredFeatureIds.includes(deepCut.id))
+  assert(drafts.length > 0, 'the deep cut is still shown as a proposal')
+  for (const draft of drafts) {
+    assert.equal(
+      draft.hardError,
+      translate('warnings.aroundCentreline', {
+        operation: draft.operation.name,
+        feature: deepCut.name,
+      }),
+      'each proposal carries the localized centreline reason',
+    )
+  }
+  const applied = materializeCamPlan(project, plan)
+  assert.equal(applied.ok, false, 'a centreline proposal is not created')
+}
+
 // ── sheet drawings get what they get on Top ───────────────────────────
 
 {
@@ -214,6 +335,7 @@ function bolt(): { project: Project; polygonId: string; turnId: string; threadId
       operation: 'add' | 'subtract',
       profile: SketchFeature['sketch']['profile'],
       bottom: number,
+      top = surface,
     ): SketchFeature => ({
       id,
       name: id,
@@ -221,16 +343,20 @@ function bolt(): { project: Project; polygonId: string; turnId: string; threadId
       operation,
       folderId: null,
       sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
-      z_top: surface,
+      z_top: top,
       z_bottom: bottom,
       visible: true,
       locked: false,
       authoringFace: face,
     })
+    // Nothing here may reach the centreline: an Around cut that does is
+    // refused by generation and is now blocked by the plan (issue #1112 J2).
+    // Top's equivalent depths are the unrolled Around ones, so the two plans
+    // still describe the same sheet work.
     return [
-      feature('body', 'rect', 'add', rectProfile(0, sheetY, 120, C), surface - 10),
-      feature('pocket', 'rect', 'subtract', rectProfile(20, sheetY + 10, 20, 10), surface - 3),
-      feature('hole', 'circle', 'subtract', circleProfile(60, sheetY + C / 2, 4), surface - 2),
+      feature('ledge', 'rect', 'add', rectProfile(5, 5, 40, 15), surface - 4, surface - 1),
+      feature('pocket', 'rect', 'subtract', rectProfile(55, -20, 20, 15), surface - 3),
+      feature('hole', 'circle', 'subtract', circleProfile(100, 0, 4), surface - 2),
     ]
   }
 
