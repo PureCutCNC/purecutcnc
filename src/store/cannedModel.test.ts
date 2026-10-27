@@ -24,6 +24,11 @@
  * `definition.stl`, so imported-model consumers use it unchanged. A model is
  * not expandable — expansion would throw the parameters away. `test-model` from
  * the test fixture proves the contract end to end.
+ *
+ * The consumed-geometry cases are the A3 contract: a regenerated height reaches
+ * `loadSTLTransformedGeometry` through every instance's Z span (including a
+ * linked copy at its own placement), and a rebuild keeps the user's `stl.scale`
+ * and transform instead of resetting them.
  */
 
 import {
@@ -40,6 +45,7 @@ import { instantiateProjectTemplate } from './helpers/normalize'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { cannedShapeIsExpandable } from '../cannedShapes'
 import { cannedShapeModelAssetId, rebuildCannedShapeModel } from '../cannedShapes/model'
+import { loadSTLTransformedGeometry } from '../engine/csg'
 import { readFileSync } from 'node:fs'
 import {
   registerTestCannedShapes,
@@ -155,6 +161,52 @@ function modelMesh(): {
   }
 }
 
+interface ConsumedGeometry {
+  zTop: number
+  zBottom: number
+  height: number
+  width: number
+  depth: number
+}
+
+/**
+ * What a consumer actually gets: the transformed geometry every downstream
+ * reader (CSG, 3D, simulation, surface toolpaths, export) loads from the
+ * instance span, not the asset's stored bounds.
+ */
+function consumedGeometry(featureId: string): ConsumedGeometry {
+  const project = useProjectStore.getState().project
+  const resolved = resolveFeatureInstance(project, featureId)
+  assert(resolved, `${featureId} resolves`)
+  const geometry = loadSTLTransformedGeometry(resolved, project)
+  assert(geometry, `${featureId} consumes its generated mesh`)
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (let index = 0; index < geometry.positions.length; index += 3) {
+    const x = geometry.positions[index]
+    const y = geometry.positions[index + 1]
+    const z = geometry.positions[index + 2]
+    minX = Math.min(minX, x)
+    maxX = Math.max(maxX, x)
+    minY = Math.min(minY, y)
+    maxY = Math.max(maxY, y)
+    minZ = Math.min(minZ, z)
+    maxZ = Math.max(maxZ, z)
+  }
+  return {
+    zTop: maxZ,
+    zBottom: minZ,
+    height: maxZ - minZ,
+    width: maxX - minX,
+    depth: maxY - minY,
+  }
+}
+
 test('a model generates a mesh into modelAssets on a parameter change', () => {
   seed()
   useProjectStore.getState().updateFeature('model', { canned: testModelCanned(40, 30, 10) })
@@ -203,9 +255,11 @@ test('a parameter change rebuilds the mesh used by imported-model readers', () =
   seed()
   useProjectStore.getState().updateFeature('model', { canned: testModelCanned(40, 30, 10) })
   const first = modelMesh()
+  const firstConsumed = consumedGeometry('model')
 
   useProjectStore.getState().updateFeature('model', { canned: testModelCanned(60, 20, 14) })
   const second = modelMesh()
+  const secondConsumed = consumedGeometry('model')
 
   assertEqual(second.assetId, first.assetId, 'one definition keeps one asset id')
   assertEqual(second.triangleCount, 12, 'the rebuilt mesh is still a box')
@@ -213,10 +267,61 @@ test('a parameter change rebuilds the mesh used by imported-model readers', () =
     minX: -30, maxX: 30, minY: -10, maxY: 10, minZ: -14, maxZ: 0,
   }, 'the rebuilt mesh follows the new parameters')
 
+  // Asset bounds are not the contract: consumers load the instance's Z span.
+  assertEqual(
+    [firstConsumed.width, firstConsumed.depth, firstConsumed.height],
+    [40, 30, 10],
+    'the first model is consumed at the height its parameters generated',
+  )
+  assertEqual(
+    [secondConsumed.width, secondConsumed.depth, secondConsumed.height],
+    [60, 20, 14],
+    'a parameter change reaches loadSTLTransformedGeometry, not only the asset',
+  )
+  assertEqual([secondConsumed.zBottom, secondConsumed.zTop], [0, 14], 'the consumed span is the mesh height')
+
   const resolved = resolveFeatureInstance(useProjectStore.getState().project, 'model')
   assert(resolved, 'the model resolves')
   assertEqual(resolved.stl?.meshAssetId, second.assetId, 'the resolved row exposes the generated mesh')
   assertEqual(resolved.operation, 'model', 'the resolved row is a model')
+  assertEqual([resolved.z_bottom, resolved.z_top], [0, 14], 'the instance span carries the regenerated height')
+})
+
+test('a regenerated height reaches a linked copy, each above its own bottom', () => {
+  const seeded = seed()
+  const source = seeded.features[0]
+  assert(source, 'the seeded model row exists')
+  const linked: FeatureInstance = {
+    ...source,
+    id: 'linked',
+    name: 'Linked copy',
+    z_bottom: 2,
+    z_top: 12,
+    transform: { ...source.transform, e: 60 },
+  }
+  useProjectStore.setState({
+    project: { ...seeded, features: [source, linked] },
+  } as unknown as Partial<ProjectStore>)
+
+  useProjectStore.getState().updateFeature('model', { canned: testModelCanned(40, 30, 20) })
+
+  const project = useProjectStore.getState().project
+  const resolvedSource = resolveFeatureInstance(project, 'model')
+  const resolvedLinked = resolveFeatureInstance(project, 'linked')
+  assert(resolvedSource && resolvedLinked, 'both rows resolve')
+  assertEqual(resolvedSource.definitionId, resolvedLinked.definitionId, 'the copy is linked to the same definition')
+  assertEqual([resolvedSource.z_bottom, resolvedSource.z_top], [0, 20], 'the edited row follows the new height')
+  assertEqual([resolvedLinked.z_bottom, resolvedLinked.z_top], [2, 22], 'the linked copy keeps its own bottom')
+
+  const sourceGeometry = consumedGeometry('model')
+  const linkedGeometry = consumedGeometry('linked')
+  assertEqual([sourceGeometry.zBottom, sourceGeometry.zTop], [0, 20], 'the edited row consumes the full height')
+  assertEqual([linkedGeometry.zBottom, linkedGeometry.zTop], [2, 22], 'the linked copy consumes the full height at its placement')
+  assertEqual(
+    [linkedGeometry.width, linkedGeometry.depth, linkedGeometry.height],
+    [40, 30, 20],
+    'the linked copy consumes the regenerated dimensions',
+  )
 })
 
 test('a rebuilt model never reuses a copied definition’s asset id', () => {
@@ -253,6 +358,50 @@ test('save and load keep the parameters and regenerate the mesh', () => {
   const after = modelMesh()
   assertEqual(after.triangleCount, 12, 'the mesh is regenerated on load')
   assertEqual(after.bounds, before.bounds, 'the regenerated mesh matches the saved parameters')
+})
+
+test('save and load keep stl.scale, the instance transform and the scaled height', () => {
+  seed()
+  useProjectStore.getState().updateFeature('model', { canned: testModelCanned(40, 30, 10) })
+  const definition = useProjectStore.getState().project.featureDefinitions['def-model']
+  assert(definition?.stl, 'the generated model has its stl record')
+
+  const placedTransform = { ...IDENTITY_MATRIX, e: 12, f: -4 }
+  useProjectStore.setState({
+    project: {
+      ...useProjectStore.getState().project,
+      features: useProjectStore.getState().project.features.map((feature) => (
+        feature.id === 'model' ? { ...feature, transform: placedTransform } : feature
+      )),
+    },
+  } as unknown as Partial<ProjectStore>)
+  useProjectStore.getState().updateFeature('model', {
+    stl: { ...definition.stl, scale: 2 },
+  })
+
+  const file = useProjectStore.getState().saveProject()
+  useProjectStore.getState().openProjectFromText(file, null)
+
+  const project = useProjectStore.getState().project
+  const loaded = project.featureDefinitions['def-model']
+  assertEqual(loaded.stl?.scale, 2, 'a rebuild keeps the user scale instead of resetting it to 1')
+  assertEqual(project.features[0].transform, placedTransform, 'the instance transform survives the same rebuild')
+
+  const consumed = consumedGeometry('model')
+  assertEqual(
+    [consumed.width, consumed.depth, consumed.height],
+    [80, 60, 20],
+    'the regenerated mesh is consumed at 2× on every axis, not halved in XY',
+  )
+
+  // A later parameter edit keeps the scale too: 15 local units → 30 consumed.
+  useProjectStore.getState().updateFeature('model', { canned: testModelCanned(40, 30, 15) })
+  const edited = consumedGeometry('model')
+  assertEqual(
+    [edited.width, edited.depth, edited.height],
+    [80, 60, 30],
+    'a parameter edit applies the kept scale to the regenerated mesh',
+  )
 })
 
 test('a model kind is not expandable and Expand does nothing', () => {

@@ -68,7 +68,7 @@ import { resolveFeatureInstance, resolveFeatureInstances, resolvedFeatureMap, re
 import { expandTextFeature } from '../helpers/textExpansion'
 import { expandCannedFeature } from '../helpers/cannedExpansion'
 import { cannedShapeIsExpandable, isCannedFeature } from '../../cannedShapes'
-import { rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
+import { cannedModelZTop, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -638,9 +638,15 @@ export function createFeatureSlice(
         )
         nextDefinitions = rebuiltCannedModel.featureDefinitions
         nextModelAssets = rebuiltCannedModel.modelAssets
+        // A new model's height comes from its regenerated mesh, not from the
+        // draft's placeholder span, so the first consumer already sees it.
+        const rebuiltModel = rebuiltCannedModel.models.get(definitionId)
+        const instanceDraft = rebuiltModel
+          ? { ...safeFeature, z_top: cannedModelZTop(s.project, safeFeature.z_bottom, rebuiltModel) }
+          : safeFeature
 
         const safeInstance = createFeatureInstance(
-          safeFeature,
+          instanceDraft,
           definitionId,
           referenceFields?.transform ?? IDENTITY_MATRIX,
         )
