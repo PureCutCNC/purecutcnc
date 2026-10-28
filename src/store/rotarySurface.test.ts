@@ -32,6 +32,16 @@
  *    same words the dialog uses.
  * 4. **A Turn added after the thread moves it too**, so order of creation does
  *    not decide the surface.
+ * 5. **The Thread's own placement places its band**: moving the row off a Turn
+ *    returns it to the bar, and moving it back takes the Turn again. Reading
+ *    the stored `start`/`length` alone is the named mutation.
+ * 6. **A Turn moved off the bar axis or rotated no longer supplies one
+ *    diameter**: it is warned about and measured from the bar, instead of
+ *    keeping the unrotated constant. Ignoring the placed geometry is the named
+ *    mutation.
+ * 7. **A Properties Z span is an override**: it survives the same write, an
+ *    unrelated write, save → open (which stays clean) and a later Turn edit.
+ *    Re-deriving on load or on the next sync is the named mutation.
  *
  * Other mutations checked one at a time:
  * - the surface resolved from the bar for every band → the on-Turn Z and the
@@ -40,7 +50,12 @@
  * - a model or a taper silently claiming a diameter → the warning assertions
  *   fail;
  * - the warning map not filtering by canned kind → a plain line row warns too
- *   and the "no warning on the plain bar" assertion fails.
+ *   and the "no warning on the plain bar" assertion fails;
+ * - the band read from the stored parameters instead of the placement → the
+ *   Thread move assertions fail;
+ * - the sync overwriting every stored span → the override assertions fail;
+ * - the sync re-deriving on open → the override-on-load assertion fails and
+ *   the opened document turns dirty.
  */
 
 import assert from 'node:assert/strict'
@@ -61,6 +76,7 @@ import { rotarySolidCannedData } from './helpers/rotarySolids'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import {
   rotaryPatternSurface,
+  rotaryPatternSurfaceOfFeature,
   rotaryPatternSurfaceWarnings,
   syncRotaryPatternSurfaces,
 } from './helpers/rotarySurface'
@@ -318,13 +334,16 @@ assertNear(threadZ(oldBand), BAR_DIAMETER, 'moving the Turn away moves the old b
 assertNear(threadZ(newBand), BAR_RADIUS + 5, 'the band at the transformed span takes the Turn diameter')
 
 // Transform (uniform resize of the Turn) scales the diameter the band reads.
+// The pivot is on the bar's centreline so this stays a *coaxial* resize; a
+// resize about an off-centre pivot moves the body off the axis and is covered
+// by the placement cases below.
 load()
 const resizeTurn = addTurn(20, 40, 10)
 const resizeThread = addThread(30, 20)
 store().startResizeFeature(resizeTurn)
-store().setPendingTransformReferenceStart({ x: 40, y: 50 })
-store().setPendingTransformReferenceEnd({ x: 60, y: 50 })
-store().completePendingTransform({ x: 64, y: 50 })
+store().setPendingTransformReferenceStart({ x: 40, y: 10 })
+store().setPendingTransformReferenceEnd({ x: 60, y: 10 })
+store().completePendingTransform({ x: 64, y: 10 })
 assertNear(threadZ(resizeThread), BAR_RADIUS + 6, 'a 1.2x Turn supplies a 1.2x radius')
 assert.equal(
   rotaryPatternSurface(store().project, { start: 30, length: 20 }).kind,
@@ -400,6 +419,107 @@ const importedThread = store().project.features.find(
 )
 assert.ok(importedThread, 'the imported folder contains the thread')
 assertNear(Number(importedThread.z_top), BAR_RADIUS + 5, 'import re-syncs the stale thread span onto the Turn')
+
+// ── the Thread's own placement decides its band ─────────────
+//
+// The stored `start`/`length` are where the row was drawn; moving the row
+// moves its band. Reading the parameters alone left the old Turn-derived Z
+// behind after a move.
+
+load()
+addTurn(20, 40, 10)
+const placedThread = addThread(25, 20)
+assertNear(threadZ(placedThread), BAR_RADIUS + 5, 'the thread starts on the Turn')
+store().startMoveFeature(placedThread)
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 50, y: 0 })
+assertNear(threadZ(placedThread), BAR_DIAMETER, 'moving the Thread off the Turn returns it to the bar')
+assert.equal(
+  rotaryPatternSurfaceOfFeature(store().project, placedThread)?.kind,
+  'bar',
+  'the moved row resolves from its new place, not its stored start',
+)
+store().startMoveFeature(placedThread)
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: -50, y: 0 })
+assertNear(threadZ(placedThread), BAR_RADIUS + 5, 'moving it back onto the Turn takes the Turn diameter again')
+
+// ── a Turn moved off the bar axis no longer supplies one diameter ──
+
+load()
+const shiftedTurn = addTurn(20, 40, 10)
+const shiftedThread = addThread(25, 20)
+assertNear(threadZ(shiftedThread), BAR_RADIUS + 5, 'the thread starts on the centred Turn')
+store().startMoveFeature(shiftedTurn)
+store().setPendingMoveFrom({ x: 20, y: 0 })
+store().completePendingMove({ x: 20, y: 5 })
+assertNear(threadZ(shiftedThread), BAR_DIAMETER, 'an off-centre Turn is not measured as the old diameter')
+assert.equal(
+  rotaryPatternSurfaceOfFeature(store().project, shiftedThread)?.kind,
+  'twoDiameters',
+  'the moved Turn spans a near and a far surface',
+)
+assert.equal(
+  rotaryPatternSurfaceWarnings(store().project).get(shiftedThread)?.key,
+  'dialogs.rotary.surface.twoDiameters',
+  'the row warns instead of keeping a stale constant',
+)
+
+// ── a rotated Turn is tilted away from the bar axis ─────────
+
+load()
+const rotatedTurn = addTurn(20, 40, 10)
+const rotatedThread = addThread(25, 20)
+store().startRotateFeature(rotatedTurn)
+store().setPendingTransformReferenceStart({ x: 40, y: 0 })
+store().setPendingTransformReferenceEnd({ x: 60, y: 0 })
+store().completePendingTransform({
+  x: 40 + 20 * Math.cos(Math.PI / 6),
+  y: 20 * Math.sin(Math.PI / 6),
+})
+assertNear(threadZ(rotatedThread), BAR_DIAMETER, 'a 30° Turn no longer reports the unrotated diameter')
+assert.equal(
+  rotaryPatternSurfaceOfFeature(store().project, rotatedThread)?.kind,
+  'taper',
+  'the tilted body reads as a varying surface',
+)
+assert.equal(
+  rotaryPatternSurfaceWarnings(store().project).get(rotatedThread)?.key,
+  'dialogs.rotary.surface.taper',
+  'the tilted row warns',
+)
+
+// ── a Properties Z override survives the sync and a reload ──
+
+load()
+const overrideTurn = addTurn(20, 40, 10)
+const overrideThread = addThread(25, 20)
+assertNear(threadZ(overrideThread), BAR_RADIUS + 5, 'the derived span before the override')
+store().updateFeature(overrideThread, { z_top: 18 })
+assertNear(threadZ(overrideThread), 18, 'the Properties Z top survives the same write')
+store().updateFeature(overrideThread, { name: 'Raised thread' })
+assertNear(threadZ(overrideThread), 18, 'an unrelated write does not reset the override')
+const overrideFile = store().saveProject()
+store().openProjectFromText(overrideFile, null)
+assertNear(threadZ(overrideThread), 18, 'save → open keeps the override')
+assert.equal(store().dirty, false, 'opening a saved file leaves the document clean')
+const overrideFrame = rotarySolidFrame(store().project)
+assert.ok(overrideFrame)
+const overrideCanned = rotarySolidCannedData(
+  overrideFrame,
+  { kind: 'turn', start: 20, length: 40, diameter: 8 },
+  store().project.meta.units,
+)
+assert.ok(overrideCanned)
+store().updateFeature(overrideTurn, { canned: overrideCanned })
+assertNear(threadZ(overrideThread), 18, 'the explicit span wins over a later Turn edit')
+const lateTurn = addTurn(70, 20, 8)
+assertNear(threadZ(overrideThread), 18, 'adding another Turn does not clobber the override')
+assert.equal(
+  resolveFeatureInstance(store().project, lateTurn)?.canned?.kind,
+  'turn',
+  'the added row is the new Turn',
+)
 
 // ── the sync helper leaves an unchanged span alone ─────────
 
