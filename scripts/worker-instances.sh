@@ -147,12 +147,12 @@ esac
 
 # Everything below reads from a snapshot of the process table, so a worker that
 # exits mid-run cannot make two phases disagree about it.
-listing="$(mktemp -t worker-instances)" || fail "cannot create a temporary file"
-records="$(mktemp -t worker-instances-records)" || fail "cannot create a temporary file"
-leaves_file="$(mktemp -t worker-instances-leaves)" || fail "cannot create a temporary file"
-raw_file="$(mktemp -t worker-instances-raw)" || fail "cannot create a temporary file"
-dispatch_file="$(mktemp -t worker-instances-dispatch)" || fail "cannot create a temporary file"
-apps_file="$(mktemp -t worker-instances-apps)" || fail "cannot create a temporary file"
+listing="$(mktemp "${TMPDIR:-/tmp}/worker-instances.XXXXXX")" || fail "cannot create a temporary file"
+records="$(mktemp "${TMPDIR:-/tmp}/worker-instances-records.XXXXXX")" || fail "cannot create a temporary file"
+leaves_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-leaves.XXXXXX")" || fail "cannot create a temporary file"
+raw_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-raw.XXXXXX")" || fail "cannot create a temporary file"
+dispatch_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-dispatch.XXXXXX")" || fail "cannot create a temporary file"
+apps_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-apps.XXXXXX")" || fail "cannot create a temporary file"
 cleanup() { rm -f "$listing" "$records" "$leaves_file" "$raw_file" "$dispatch_file" "$apps_file"; }
 trap cleanup EXIT
 

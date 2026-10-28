@@ -48,8 +48,8 @@ heartbeat_seconds="${CODEX_HEARTBEAT_SECONDS:-15}"
 task="$(cat)"
 [[ -n "${task//[[:space:]]/}" ]] || fail 'the piped prompt is empty'
 
-prompt_file="$(mktemp -t run-codex-agent-prompt)"
-result_file="$(mktemp -t run-codex-agent-result)"
+prompt_file="$(mktemp "${TMPDIR:-/tmp}/run-codex-agent-prompt.XXXXXX")"
+result_file="$(mktemp "${TMPDIR:-/tmp}/run-codex-agent-result.XXXXXX")"
 worker_pid=""
 cleanup() {
   if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
@@ -70,7 +70,7 @@ trap 'exit 143' TERM
     printf 'Review only. Do not edit, stage, or commit files. Report COMMIT: none.\n'
   fi
 } > "$prompt_file"
-[[ -n "$progress_log" ]] || progress_log="$(mktemp -t run-codex-agent-progress)"
+[[ -n "$progress_log" ]] || progress_log="$(mktemp "${TMPDIR:-/tmp}/run-codex-agent-progress.XXXXXX")"
 mkdir -p "$(dirname "$progress_log")" || fail "cannot create progress log directory: $progress_log"
 # Resolve before changing cwd, including caller-supplied relative log paths.
 progress_log="$(cd "$(dirname "$progress_log")" && pwd -P)/$(basename "$progress_log")"
