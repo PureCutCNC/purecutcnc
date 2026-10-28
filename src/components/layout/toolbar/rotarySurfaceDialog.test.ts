@@ -20,7 +20,9 @@
  * Rendered DOM is the only way to catch a read-only line the store data cannot
  * show: the Turn form must offer **Profile: Pick a shape** and disable the
  * numbers the profile owns, and the Thread form must say **on Turn · Ø10** and
- * disable Refresh with the reason once the source is gone.
+ * disable Refresh with the reason once the source is gone. A Thread moved onto
+ * another Turn must name that Turn and its diameter: the line resolves the
+ * placed band, not the stored parameters.
  *
  * Run with: npx tsx src/components/layout/toolbar/rotarySurfaceDialog.test.ts
  */
@@ -224,6 +226,37 @@ await scenario('the Thread dialog shows the Turn diameter read-only', async () =
   const note = document.querySelector('.rotary-dialog__surface-note')?.textContent ?? ''
   assert.match(note, /on Turn · Ø10 mm/, 'the read-only line names the Turn and its diameter')
   assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'a Turn surface has no warning')
+  unmount()
+})
+
+await scenario('the Thread dialog follows a moved Thread onto its new surface', async () => {
+  store().loadProject(projectWithSource())
+  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
+  const first = store().addRotarySolid({ kind: 'turn', start: 20, length: 40, diameter: 10 })
+  assert.ok(first.ok, 'the first Turn is created')
+  const second = store().addRotarySolid({ kind: 'turn', start: 70, length: 40, diameter: 16 })
+  assert.ok(second.ok, 'the second Turn is created')
+  store().updateFeature(second.featureId, { name: 'Shank' })
+  const thread = store().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 2, depth: 1 })
+  assert.ok(thread.ok, 'the thread starts on the first Turn')
+
+  // The row is moved before the dialog opens, so its stored band still lies
+  // over the first Turn while the placed band lies over the second. Reading the
+  // stored band would keep showing Ø10 (the named mutation).
+  store().startMoveFeature(thread.featureId)
+  store().setPendingMoveFrom({ x: 0, y: 0 })
+  store().completePendingMove({ x: 50, y: 0 })
+
+  const { unmount } = mount(React.createElement(RotaryPatternDialog, {
+    kind: 'thread',
+    featureId: thread.featureId,
+    onClose: () => undefined,
+  }))
+  await waitFor(() => document.querySelector('.rotary-dialog__surface-note') !== null, 'the surface note renders')
+  const note = document.querySelector('.rotary-dialog__surface-note')?.textContent ?? ''
+  assert.match(note, /on Shank · Ø16 mm/, 'the read-only line names the Turn under the placed band')
+  assert.doesNotMatch(note, /Ø10/, 'the stored band’s old diameter is not shown')
+  assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'one Turn has no warning')
   unmount()
 })
 

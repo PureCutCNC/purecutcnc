@@ -63,6 +63,7 @@ import { normalizeFlutesCannedParams } from '../../../cannedShapes/generators/fl
 import { normalizeThreadCannedParams } from '../../../cannedShapes/generators/thread'
 import {
   rotaryPatternSurface,
+  rotaryPatternSurfaceOfFeature,
   rotaryPatternSurfaceSpan,
   rotaryPatternSurfaceWarning,
 } from '../../../store/helpers/rotarySurface'
@@ -207,8 +208,8 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     : 0
   // The depth is measured from the surface the pattern cuts, not always from
   // the bar: a band wholly on one Turn takes that Turn's diameter (decision
-  // 10). A new pattern's defaults use the full-bar band; the live span follows
-  // the fields below.
+  // 10). A new pattern's defaults use the full-bar band; an existing row is
+  // resolved from its placed band below.
   const defaultSurfaceRadius = rotaryPatternSurface(project, { start: 0, length: barLength }).diameter / 2
 
   const [start, setStart] = useState(() => (stored ? String(stored.start) : '0'))
@@ -242,9 +243,29 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
     return 'right'
   })
   const [refusal, setRefusal] = useState<string | null>(null)
-  // The surface the current band cuts is recomputed from the same resolver the
-  // store and the tree use, so the read-only line and the Z span cannot drift.
-  const surface = rotaryPatternSurface(project, { start: parseNumber(start), length: parseNumber(length) })
+  // An existing row is read through its placement, with the same resolver the
+  // store sync uses: a moved Thread cuts the surface where the user put it, not
+  // the one its stored band was typed over. The resolver takes the band from
+  // the feature's definition, so the live draft is resolved as a draft
+  // definition: the line follows the fields without a second copy of the
+  // placement maths. A new pattern has no placement yet, so its draft band is
+  // resolved directly.
+  const placedSurface = editing && featureId && stored && feature
+    ? (() => {
+        const definition = project.featureDefinitions[feature.definitionId]
+        const canned = definition ? rotaryPatternCannedData(stored.frame, buildInput()) : null
+        if (!definition || !canned) return null
+        return rotaryPatternSurfaceOfFeature({
+          ...project,
+          featureDefinitions: {
+            ...project.featureDefinitions,
+            [feature.definitionId]: { ...definition, canned },
+          },
+        }, featureId)
+      })()
+    : null
+  const surface = placedSurface
+    ?? rotaryPatternSurface(project, { start: parseNumber(start), length: parseNumber(length) })
   const surfaceRadius = surface.diameter / 2
   const surfaceWarning = rotaryPatternSurfaceWarning(surface)
   // A close can outlive the click that opened the edit; the guard keeps a
