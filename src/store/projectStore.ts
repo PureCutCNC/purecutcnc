@@ -117,24 +117,28 @@ function withAutoDirty(rawSet: SetFn): SetFn {
 
 /**
  * Wrap the store's `set` so every project it writes re-measures the Thread and
- * Flutes bands against the surface they lie on (#1112 H2). Deleting, moving,
+ * Flutes bands against the surface they lie on (#1112 H2/H3). Deleting, moving,
  * transforming, expanding, making unique, re-parenting or importing a Turn all
  * change which surface a band sits on, so the sync belongs after every write
- * rather than at each action. An unchanged project keeps its identity, so a
- * write that does not touch a surface is not a new history state.
+ * rather than at each action. The previous project is what tells a derived span
+ * from a user's Properties override, and an unchanged project keeps its
+ * identity, so a write that does not touch a surface is not a new history state.
+ *
+ * Opening, creating or loading a document replaces the project wholesale
+ * (`projectKey` moves); the file's spans are authoritative there, so the sync
+ * stays out of the load and the document is not made dirty by it.
  */
 function withRotarySurfaceSync(rawSet: SetFn): SetFn {
-  const sync = (patch: Partial<ProjectStore>): Partial<ProjectStore> => {
-    if (!patch.project) return patch
-    const project = syncRotaryPatternSurfaceProject(patch.project)
-    return project === patch.project ? patch : { ...patch, project }
-  }
   return (update) => {
-    if (typeof update === 'function') {
-      rawSet((state) => sync(update(state)))
-    } else {
-      rawSet(sync(update))
-    }
+    // Always hand the inner setter a function: only then is the project being
+    // replaced still visible, and the sync needs it to read the old surface.
+    rawSet((state) => {
+      const patch = typeof update === 'function' ? update(state) : update
+      if (!patch.project) return patch
+      if (patch.projectKey !== undefined && patch.projectKey !== state.projectKey) return patch
+      const project = syncRotaryPatternSurfaceProject(patch.project, state.project)
+      return project === patch.project ? patch : { ...patch, project }
+    })
   }
 }
 

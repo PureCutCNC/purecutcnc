@@ -488,7 +488,12 @@ export function planRotarySolid(
     featureDefinitions: rebuilt.featureDefinitions,
     features: [...project.features, instance],
   }
-  const synced = syncRotaryPatternSurfaces(withTurn, withTurn.features, withTurn.featureDefinitions)
+  const synced = syncRotaryPatternSurfaces(
+    withTurn,
+    withTurn.features,
+    withTurn.featureDefinitions,
+    project,
+  )
   const nextProject = syncFeatureTreeProject({
     ...withTurn,
     features: synced,
