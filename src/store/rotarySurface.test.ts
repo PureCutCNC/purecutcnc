@@ -35,8 +35,8 @@
  * 5. **The Thread's own placement places its band**: moving the row off a Turn
  *    returns it to the bar, and moving it back takes the Turn again. Reading
  *    the stored `start`/`length` alone is the named mutation.
- * 6. **A Turn moved off the bar axis or rotated no longer supplies one
- *    diameter**: it is warned about and measured from the bar, instead of
+ * 6. **A Turn moved off the bar axis, raised in Z or rotated no longer supplies
+ *    one diameter**: it is warned about and measured from the bar, instead of
  *    keeping the unrotated constant. Ignoring the placed geometry is the named
  *    mutation.
  * 7. **A Properties Z span is an override**: it survives the same write, an
@@ -344,6 +344,15 @@ store().startResizeFeature(resizeTurn)
 store().setPendingTransformReferenceStart({ x: 40, y: 10 })
 store().setPendingTransformReferenceEnd({ x: 60, y: 10 })
 store().completePendingTransform({ x: 64, y: 10 })
+// An STL resize scales the instance Z band about its bottom, which lifts the
+// body off the bar's Z plane (5..17 after this 1.2x drag, axis at Z11). A
+// raised Turn is deliberately not a surface (see the Z-placement case below),
+// so re-centre it before reading the placed diameter: this assertion is about
+// the 1.2x radius, with the body coaxial again.
+store().updateFeature(resizeTurn, {
+  z_top: BAR_RADIUS + 6,
+  z_bottom: BAR_RADIUS - 6,
+})
 assertNear(threadZ(resizeThread), BAR_RADIUS + 6, 'a 1.2x Turn supplies a 1.2x radius')
 assert.equal(
   rotaryPatternSurface(store().project, { start: 30, length: 20 }).kind,
@@ -489,6 +498,36 @@ assert.equal(
   'the tilted row warns',
 )
 
+// ── a Turn raised out of the bar's Z plane is off-axis too ──
+//
+// The 2D placement keeps the axis on the bar's centreline; the instance Z span
+// puts it in the bar's Z plane. A Turn lifted by 3 mm has an unchanged stored
+// diameter, but it no longer presents one surface about the bar axis: near and
+// far sides are 3 mm differently placed, so the row must warn and measure from
+// the bar instead of keeping the old Ø10 span.
+
+load()
+const raisedTurn = addTurn(20, 40, 10)
+const raisedThread = addThread(25, 20)
+assertNear(threadZ(raisedThread), BAR_RADIUS + 5, 'the thread starts on the centred Turn')
+const raisedFeature = store().project.features.find((feature) => feature.id === raisedTurn)
+assert.ok(raisedFeature, 'the Turn row exists')
+store().updateFeature(raisedTurn, {
+  z_top: Number(raisedFeature.z_top) + 3,
+  z_bottom: Number(raisedFeature.z_bottom) + 3,
+})
+assertNear(threadZ(raisedThread), BAR_DIAMETER, 'a Turn raised in Z is not measured as the old diameter')
+assert.equal(
+  rotaryPatternSurfaceOfFeature(store().project, raisedThread)?.kind,
+  'twoDiameters',
+  'the raised body spans a near and a far surface',
+)
+assert.equal(
+  rotaryPatternSurfaceWarnings(store().project).get(raisedThread)?.key,
+  'dialogs.rotary.surface.twoDiameters',
+  'the raised row warns instead of keeping a stale Z span',
+)
+
 // ── a Properties Z override survives the sync and a reload ──
 
 load()
@@ -500,8 +539,15 @@ assertNear(threadZ(overrideThread), 18, 'the Properties Z top survives the same 
 store().updateFeature(overrideThread, { name: 'Raised thread' })
 assertNear(threadZ(overrideThread), 18, 'an unrelated write does not reset the override')
 const overrideFile = store().saveProject()
+// Open it as a **fresh** document, not as the one already in memory. The load
+// guard is what keeps the file's stored span authoritative; reopening the same
+// document would still have the old row in `previous` and mistake the override
+// for a derived span. A different document leaves no matching previous row, so
+// a sync on load would re-derive Z18 to the Turn surface and this assertion
+// fails — the named mutation for removing the guard.
+load()
 store().openProjectFromText(overrideFile, null)
-assertNear(threadZ(overrideThread), 18, 'save → open keeps the override')
+assertNear(threadZ(overrideThread), 18, 'save → open a fresh document keeps the override')
 assert.equal(store().dirty, false, 'opening a saved file leaves the document clean')
 const overrideFrame = rotarySolidFrame(store().project)
 assert.ok(overrideFrame)

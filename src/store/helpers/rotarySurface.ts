@@ -29,9 +29,10 @@
  * Both halves of the question are read through the **placement transform**:
  * a band is where the user put the Thread, not where its stored parameters were
  * typed, and a Turn's along span, radial size and coaxiality are those of the
- * placed body. A Turn moved off the bar centreline or rotated no longer
- * presents one diameter about the bar axis, so it is warned about and measured
- * from the bar rather than keeping a stale constant diameter.
+ * placed body. A Turn moved off the bar centreline, raised out of the bar's Z
+ * plane or rotated no longer presents one diameter about the bar axis, so it is
+ * warned about and measured from the bar rather than keeping a stale constant
+ * diameter.
  *
  * The resolver is shared by the dialog and the tree, so the number shown and
  * the cut generated cannot disagree. Nothing is stored on the Thread: its
@@ -41,7 +42,7 @@
  * open keeps it.
  */
 
-import { getProfileBounds, type Point, type Project } from '../../types/project'
+import { getProfileBounds, type DimensionRef, type Point, type Project } from '../../types/project'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { RotaryPatternFrame } from '../../engine/rotaryPatterns'
 import { buildRotaryPatternLines, rotaryPatternFrame } from '../../engine/rotaryPatterns'
@@ -109,6 +110,11 @@ function overlap(first: WorldBand, second: WorldBand): WorldBand | null {
 /** Why a placed Turn no longer supplies one diameter about the bar axis. */
 type TurnAmbiguity = 'offCentre' | 'tilted'
 
+/** An instance Z bound as a number; a named dimension resolves on the project. */
+function zValue(project: Pick<Project, 'dimensions'>, value: DimensionRef): number {
+  return typeof value === 'number' ? value : project.dimensions[value]?.value ?? 0
+}
+
 interface TurnBand {
   id: string
   name: string
@@ -175,8 +181,15 @@ function turnBands(project: Project, frame: RotaryPatternFrame): TurnBand[] {
     const alongUnitY = worldAxis === 'x' ? 0 : 1
     const parallel = axisLength > TOLERANCE
       && Math.abs(axisX * alongUnitY - axisY * alongUnitX) <= TOLERANCE * axisLength
+    // Coaxiality is a 3D fact: the 2D placement puts the axis on the bar's
+    // centreline, and the instance Z span puts it in the bar's Z plane. The
+    // placed body's axis is the middle of that span, so a Turn lifted in Z
+    // (Properties, a transform) is off-centre exactly like one moved across,
+    // even though its stored diameter is unchanged.
+    const placedAxisZ = (zValue(project, feature.z_top) + zValue(project, feature.z_bottom)) / 2
     const centred = Math.abs(acrossOf(axisStart) - frame.zero) <= TOLERANCE
       && Math.abs(acrossOf(axisEnd) - frame.zero) <= TOLERANCE
+      && Math.abs(placedAxisZ - frame.radius) <= TOLERANCE
     const ambiguity: TurnAmbiguity | null = !parallel
       ? 'tilted'
       : !centred ? 'offCentre' : null
@@ -428,6 +441,20 @@ export function rotaryPatternSurfaceSpan(
 ): { surface: RotaryPatternSurface; zTop: number; zBottom: number } {
   const surface = rotaryPatternSurface(project, band)
   return spanForSurface(project, surface, depth)
+}
+
+/**
+ * The instance Z span a depth gets on an **already resolved** surface. The
+ * dialog uses this so an Apply measures from the same placed band the line and
+ * the store sync show, rather than resolving the stored band a second time.
+ */
+export function rotaryPatternSurfaceSpanOn(
+  project: Project,
+  surface: RotaryPatternSurface,
+  depth: number,
+): { zTop: number; zBottom: number } {
+  const span = spanForSurface(project, surface, depth)
+  return { zTop: span.zTop, zBottom: span.zBottom }
 }
 
 function spanForSurface(

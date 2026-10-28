@@ -65,6 +65,7 @@ import {
   rotaryPatternSurface,
   rotaryPatternSurfaceOfFeature,
   rotaryPatternSurfaceSpan,
+  rotaryPatternSurfaceSpanOn,
   rotaryPatternSurfaceWarning,
 } from '../../../store/helpers/rotarySurface'
 import { RotaryDirectionField } from './RotaryDirectionField'
@@ -372,9 +373,13 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
       }
       const depthValue = parseNumber(depth)
       // One parameter write, one history entry: `updateFeature` is the same
-      // path any other Properties edit takes (issue #1112). The span follows
-      // the Turn surface the band sits on, not always the bar surface.
-      const span = rotaryPatternSurfaceSpan(project, input, depthValue)
+      // path any other Properties edit takes (issue #1112). The span comes from
+      // the **placed** band the dialog line shows, not the stored band the row
+      // was drawn over: an unchanged Apply after moving the row must keep the
+      // span it already follows, not push it back to the old surface.
+      const span = placedSurface
+        ? rotaryPatternSurfaceSpanOn(project, placedSurface, depthValue)
+        : rotaryPatternSurfaceSpan(project, input, depthValue)
       updateFeature(featureId, {
         canned,
         z_top: span.zTop,
