@@ -369,11 +369,14 @@ function simulationProbe(source: Project): string {
       simulationDetailCells: 30, selectedOperation: source.operations[0], selectedToolpath: cachedPath,
       requestToolpath: async () => null })
     return createElement('span', null, JSON.stringify({ count: result.simulationOperationCount,
-      playback: result.simulationPlaybackInput !== null, moves: result.simulationResult?.stats.processedMoveCount }))
+      playback: result.simulationPlaybackInput !== null }))
   }
   return renderToString(createElement(Probe))
 }
-assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:1,&quot;playback&quot;:false,&quot;moves&quot;:0}</span>',
+// The heightfield itself is deferred past this static render (issue #1112
+// review P1), so the hook probe pins the selection/playback lookups; the
+// torch rejection itself is asserted on the shipped static engine just above.
+assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:1,&quot;playback&quot;:false}</span>',
   'the hook counts a selected operation with a path but refuses a torch for a milling operation (issue #961)')
 assert.ok(simulationProbe({ ...project, operations: [operation] }).includes('&quot;playback&quot;:true'),
   'milling playback remains available')

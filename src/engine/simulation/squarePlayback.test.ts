@@ -27,7 +27,11 @@
  *
  * The subject is the real job: the sheet the app builds for the finish, the
  * prior-rough replay as its starting stock, and every frame the viewport's
- * `PlaybackController` would run. The reference is the **same** source moves
+ * `PlaybackController` would run. A second case builds the same job the way CAM
+ * Add does — with the bundled library, so rough keeps the seeded flat cutter
+ * and finish imports a ball endmill — and checks that playback result, because
+ * that finer ball stepover is the motion the browser actually plays. The
+ * reference is the **same** source moves
  * through the same playback code on the same starting stock with the periodic
  * wrap removed, so it takes the flat kernel and never enters the wrapped
  * kernel. Both lanes are therefore identical outside the code under guard:
@@ -44,6 +48,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { squareStock } from '../../types/barStock'
 import { defaultTool, newProject } from '../../types/project'
 import type { Operation, Project } from '../../types/project'
@@ -51,10 +56,12 @@ import { planRotarySolid } from '../../store/helpers/rotarySolids'
 import { useProjectStore } from '../../store/projectStore'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import type { SelectionState } from '../../store/types'
+import { parseToolLibraryFile, type ToolLibraryEntry } from '../../toolLibrary'
 import { computeOperationToolpath } from '../toolpaths/generateOperation'
 import { buildSimulationSetupInput } from '../../app/simulationSetup'
 import type { SimulationSetupInput } from '../../app/simulationSetup'
 import {
+  computeSimulationResult,
   priorReplayGrid,
   simulationBuildOptions,
 } from '../../app/simulationCompute'
@@ -117,8 +124,23 @@ interface SquareJob {
   options: PlaybackOptions
 }
 
-/** The exact job the browser smoke test seeds, through the app's own code. */
-function squareToRoundJob(): SquareJob {
+/** The bundled library, parsed from disk because this test has no `fetch`. */
+function bundledLibraryTools(): ToolLibraryEntry[] {
+  const payload = JSON.parse(readFileSync(new URL('../../../public/tool-library.json', import.meta.url), 'utf8'))
+  return parseToolLibraryFile(payload).tools
+}
+
+/**
+ * The exact job the browser smoke test seeds, through the app's own code.
+ *
+ * `withLibrary` is the CAM Add path: the panel loads the bundled library and
+ * `addOperation` picks from it. Rotary rough prefers the project's existing
+ * flat cutter; rotary finish prefers a ball endmill, so it imports one from the
+ * library. That imported ball — with its much finer library stepover — is the
+ * workload the browser actually replays, and the case this fixture used to
+ * miss.
+ */
+function squareToRoundJob(withLibrary = false): SquareJob {
   const seeded = seededSquareProject()
   const plan = planRotarySolid(seeded, EMPTY_SELECTION, {
     kind: 'turn',
@@ -132,8 +154,9 @@ function squareToRoundJob(): SquareJob {
   // rotary operations through the store exactly as the user does from CAM.
   useProjectStore.getState().loadProject(plan.project)
   const target = { source: 'features' as const, featureIds: [plan.created.featureId] }
-  assert(useProjectStore.getState().addOperation('rotary_rough', 'rough', target), 'fixture: rough added')
-  assert(useProjectStore.getState().addOperation('rotary_finish', 'finish', target), 'fixture: finish added')
+  const libraryTools = withLibrary ? bundledLibraryTools() : undefined
+  assert(useProjectStore.getState().addOperation('rotary_rough', 'rough', target, libraryTools), 'fixture: rough added')
+  assert(useProjectStore.getState().addOperation('rotary_finish', 'finish', target, libraryTools), 'fixture: finish added')
   const project = useProjectStore.getState().project
   const around = project.setups.find((setup) => setup.kind === 'around')
   const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')
@@ -155,7 +178,13 @@ function squareToRoundJob(): SquareJob {
   const finishPath = setupInput.toolpaths.get(finish.id)
   assert(finishPath && finishPath.moves.length > 0, 'fixture: the finish has a toolpath')
   const toolRecord = project.tools.find((tool) => tool.id === finish.toolRef)
-  assert(toolRecord && toolRecord.type === 'flat_endmill', 'fixture: the finish uses the flat cutter')
+  assert(toolRecord, 'fixture: the finish has a tool')
+  if (withLibrary) {
+    assert(toolRecord.type === 'ball_endmill', 'fixture: CAM Add imports the library ball finish')
+    assert(toolRecord.id !== 't1', 'fixture: the ball finish is not the seeded flat cutter')
+  } else {
+    assert(toolRecord.type === 'flat_endmill', 'fixture: the finish uses the seeded flat cutter')
+  }
 
   return {
     project,
@@ -177,6 +206,26 @@ function squareToRoundJob(): SquareJob {
 }
 
 const DETAIL_CELLS = 280
+
+/** Cells this grid has lowered below a reference grid's starting surface. */
+function removedAgainst(grid: SimulationGrid, baseline: SimulationGrid): number {
+  let removed = 0
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    if (grid.topZ[index] < baseline.topZ[index] - 1e-9) removed += 1
+  }
+  return removed
+}
+
+/** Cells a replayed grid has lowered below its own immutable virgin baseline. */
+function removedFromVirgin(grid: SimulationGrid): number {
+  const baseline = grid.initialTopZ
+  if (!baseline) return 0
+  let removed = 0
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    if (grid.topZ[index] < baseline[index] - 1e-9) removed += 1
+  }
+  return removed
+}
 
 interface PlaybackLane {
   /** Restores the starting stock and constructs the controller outside the measured region. */
@@ -265,23 +314,71 @@ function testSquarePlaybackTiming(): void {
   )
 
   // The lanes must actually cut, or the ratio compares nothing.
-  const countCut = (grid: SimulationGrid): number => {
-    let cut = 0
-    for (let index = 0; index < grid.topZ.length; index += 1) {
-      if (grid.topZ[index] < baseGrid.topZ[index] - 1e-9) cut += 1
-    }
-    return cut
-  }
   const wrappedGrid = wrapped.liveGrid()
   const flatGrid = flat.liveGrid()
   assert(wrappedGrid && flatGrid, 'lanes: the measured runs left a live grid')
-  const wrappedCut = countCut(wrappedGrid)
-  const flatCut = countCut(flatGrid)
+  const wrappedCut = removedAgainst(wrappedGrid, baseGrid)
+  const flatCut = removedAgainst(flatGrid, baseGrid)
   assert(wrappedCut > 0, 'fixture: the wrapped playback must remove material')
   assert(flatCut > 0, 'fixture: the flat reference playback must remove material')
 
   console.log(`square-to-round playback timing: PASSED (${wrappedCut} cells removed)`)
 }
 
+/**
+ * The CAM Add workload (issue #1112 review P2): rough keeps the seeded flat
+ * cutter, finish imports a ball endmill from the bundled library. Its library
+ * stepover is far finer than the seeded flat's, so this is the motion the
+ * browser smoke test actually plays — and it must still produce a real
+ * playback result: the prior rough as the starting stock, then more removal by
+ * the finish, with the batch result agreeing that material was cut.
+ */
+function testLibraryAddedPlayback(): void {
+  console.log('Testing the CAM Add library ball-finish playback result...')
+  const job = squareToRoundJob(true)
+  const buildOptions = simulationBuildOptions(job.setupInput, DETAIL_CELLS)
+  const baseGrid = priorReplayGrid(
+    job.project,
+    job.setupInput.operations,
+    job.setupInput.toolpaths,
+    job.finish.id,
+    buildOptions,
+  )
+  assert(
+    removedFromVirgin(baseGrid) > 0,
+    'the playback starting grid carries the prior rough, not virgin stock',
+  )
+  const startingTopZ = baseGrid.topZ.slice()
+
+  const lane = playbackLane(job, baseGrid, true)
+  lane.setup()
+  lane.run()
+  const live = lane.liveGrid()
+  assert(live, 'the library ball finish leaves a live playback grid')
+  assert(
+    removedAgainst(live, baseGrid) > 0,
+    'the library ball finish playback removes material from the prior rough',
+  )
+  // The starting stock itself is untouched: a lane mutates a clone.
+  assert(
+    baseGrid.topZ.every((value, index) => value === startingTopZ[index]),
+    'playback did not consume the starting grid',
+  )
+
+  // The batch selected result the panel shows must agree that the job cuts.
+  const batch = computeSimulationResult({
+    setupInput: job.setupInput,
+    project: job.project,
+    simulationMode: 'selected',
+    simulationDetailCells: DETAIL_CELLS,
+    selectedInSetup: job.finish,
+    paths: job.setupInput.toolpaths,
+  })
+  assert(batch.stats.removedCellCount > 0, 'the selected library ball finish removes material')
+
+  console.log(`library ball-finish playback: PASSED (${removedAgainst(live, baseGrid)} cells removed)`)
+}
+
 testSquarePlaybackTiming()
+testLibraryAddedPlayback()
 console.log('\nAll square playback cost tests PASSED.')
