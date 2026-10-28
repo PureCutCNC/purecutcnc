@@ -81,12 +81,14 @@ test('capacity uses square flats for four jaws and the corner circle for three o
   assert.ok(chuckOutOfRange(fixture(200).clamps[0], fixture(200).stock, 'mm'))
   // ...but a bar wider than the largest body is one no listed chuck can hold.
   // The minted default is then the stock-derived body (`smallestFittingChuck`
-  // returns no preset), so the clamp never sits inside its own bar; there is no
-  // invented equipment to be outside the capacity of.
+  // returns no preset), so the clamp never sits inside its own bar. It claims
+  // no size, but it still carries the largest listed capacity and the bar is
+  // past it — the tree/properties warning must not disappear (decision 9).
   const giant = fixture(1000).clamps[0]
-  assert.equal(giant.chuck, undefined, 'no preset is claimed for a bar no preset can reach')
+  assert.equal(giant.chuck?.size, undefined, 'no preset is claimed for a bar no preset can reach')
+  assert.ok(giant.chuck?.clampingRangeMm, 'the stock-derived chuck still has a capacity to be judged against')
   assert.ok(giant.h >= 1000, 'the stock-derived body clears the bar')
-  assert.equal(chuckOutOfRange(giant, fixture(1000).stock, 'mm'), false, 'nothing to be out of range of')
+  assert.ok(chuckOutOfRange(giant, fixture(1000).stock, 'mm'), 'no standard range holds the bar, so the bar is reported')
 })
 
 test('old file stays unchanged; every new field survives the real save → decode → normalize path', () => {
