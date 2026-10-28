@@ -22,7 +22,8 @@
  * numbers the profile owns, and the Thread form must say **on Turn · Ø10** and
  * disable Refresh with the reason once the source is gone. A Thread moved onto
  * another Turn must name that Turn and its diameter: the line resolves the
- * placed band, not the stored parameters.
+ * placed band, not the stored parameters. The same placement decides the span
+ * an unchanged Apply writes, so the row is not pushed back onto the old Turn.
  *
  * Run with: npx tsx src/components/layout/toolbar/rotarySurfaceDialog.test.ts
  */
@@ -246,6 +247,9 @@ await scenario('the Thread dialog follows a moved Thread onto its new surface', 
   store().startMoveFeature(thread.featureId)
   store().setPendingMoveFrom({ x: 0, y: 0 })
   store().completePendingMove({ x: 50, y: 0 })
+  const threadRow = () => store().project.features.find((row) => row.id === thread.featureId)
+  assert.equal(Number(threadRow()?.z_top), 28, 'the move re-derives the thread span onto the Ø16 Turn')
+  assert.equal(Number(threadRow()?.z_bottom), 27, 'the depth is measured down from the Ø16 Turn')
 
   const { unmount } = mount(React.createElement(RotaryPatternDialog, {
     kind: 'thread',
@@ -257,6 +261,14 @@ await scenario('the Thread dialog follows a moved Thread onto its new surface', 
   assert.match(note, /on Shank · Ø16 mm/, 'the read-only line names the Turn under the placed band')
   assert.doesNotMatch(note, /Ø10/, 'the stored band’s old diameter is not shown')
   assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'one Turn has no warning')
+
+  // An unchanged Apply must keep the span the row already follows. Resolving
+  // the **stored** band here would push it back to Ø10 (25/24), 3 mm too deep.
+  const apply = document.querySelector('.rotary-dialog__create') as HTMLButtonElement | null
+  assert.ok(apply, 'the edit dialog has an Apply action')
+  apply.click()
+  assert.equal(Number(threadRow()?.z_top), 28, 'an unchanged Apply keeps the placed Ø16 span')
+  assert.equal(Number(threadRow()?.z_bottom), 27, 'an unchanged Apply keeps the placed depth')
   unmount()
 })
 
