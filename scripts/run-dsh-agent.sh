@@ -118,11 +118,11 @@ fi
 
 mkdir -p "$(dirname "$progress_log")" 2>/dev/null \
   || fail "cannot create progress log directory for: $progress_log"
-result_file="$(mktemp -t run-dsh-agent-result)"
-stderr_file="$(mktemp -t run-dsh-agent-stderr)"
-session_snapshot_file="$(mktemp -t run-dsh-agent-sessions)"
-decoded_events_file="$(mktemp -t run-dsh-agent-events)"
-tail_segment_file="$(mktemp -t run-dsh-agent-segment)"
+result_file="$(mktemp "${TMPDIR:-/tmp}/run-dsh-agent-result.XXXXXX")"
+stderr_file="$(mktemp "${TMPDIR:-/tmp}/run-dsh-agent-stderr.XXXXXX")"
+session_snapshot_file="$(mktemp "${TMPDIR:-/tmp}/run-dsh-agent-sessions.XXXXXX")"
+decoded_events_file="$(mktemp "${TMPDIR:-/tmp}/run-dsh-agent-events.XXXXXX")"
+tail_segment_file="$(mktemp "${TMPDIR:-/tmp}/run-dsh-agent-segment.XXXXXX")"
 worker_pid=""
 cleanup() {
   if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
@@ -240,8 +240,8 @@ copy_artifact_segment() {
   # of treating tail's SIGPIPE as an artifact failure.
   tail -c "+$((start_byte + 1))" "$tail_artifact" 2>/dev/null \
     | head -c "$byte_count" > "$tail_segment_file" || true
-  copied_size="$(stat -f '%z' "$tail_segment_file" 2>/dev/null \
-    || stat -c '%s' "$tail_segment_file" 2>/dev/null)" || return 1
+  copied_size="$(stat -c '%s' "$tail_segment_file" 2>/dev/null \
+    || stat -f '%z' "$tail_segment_file" 2>/dev/null)" || return 1
   [[ "$copied_size" == "$byte_count" ]]
 }
 
@@ -249,8 +249,8 @@ tail_full_artifact() {
   local artifact_size
 
   [[ -f "$tail_artifact" ]] || return 0
-  artifact_size="$(stat -f '%z' "$tail_artifact" 2>/dev/null \
-    || stat -c '%s' "$tail_artifact" 2>/dev/null)" || return 0
+  artifact_size="$(stat -c '%s' "$tail_artifact" 2>/dev/null \
+    || stat -f '%z' "$tail_artifact" 2>/dev/null)" || return 0
   if ! decode_observed_events "$tail_artifact"; then
     return 0
   fi
@@ -267,8 +267,8 @@ tail_observed_events() {
   fi
   [[ -f "$tail_artifact" ]] || return 0
 
-  artifact_size="$(stat -f '%z' "$tail_artifact" 2>/dev/null \
-    || stat -c '%s' "$tail_artifact" 2>/dev/null)" || return 0
+  artifact_size="$(stat -c '%s' "$tail_artifact" 2>/dev/null \
+    || stat -f '%z' "$tail_artifact" 2>/dev/null)" || return 0
   if (( artifact_size < tail_cursor )); then
     printf '%s [tail] provider=dsh artifact-truncated; restarting cursor\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$progress_log"
