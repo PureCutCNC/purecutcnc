@@ -160,6 +160,27 @@ function warningsOf(analyzer: FeatureEffectAnalyzer, features: FeatureEffectFeat
   )
 }
 
+// An outer outline the coarse scale cannot represent must block the warning,
+// never disappear. Two 10×10 Adds, one at x = 4e10 (4e14 counts at the default
+// scale, beyond COVERAGE_MAX_COORD), and a Subtract covering only the first.
+// Dropping the unrepresentable outline would leave one covered outline and
+// wrongly warn that the whole Add has no effect.
+{
+  const analyzer = new FeatureEffectAnalyzer()
+  const features = [
+    feature('island', 'add', [
+      rect(0, 0, 10, 10, 'add'),
+      rect(4e10, 0, 10, 10, 'add'),
+    ]),
+    feature('pocket', 'subtract', [rect(-1, -1, 12, 12, 'subtract')]),
+  ]
+  assertEqual(
+    warningsOf(analyzer, features).join(','),
+    '',
+    'an unrepresentable outer outline blocks the warning',
+  )
+}
+
 // Exact coverage where the subject has an extra collinear vertex on its
 // hypotenuse. At the coarse scale (.03125, .96875) rounds to (313, 9688),
 // one count off the cover's edge, so the coarse difference is a quantization
