@@ -55,7 +55,10 @@
  *   other outline is decided by a confirmation pass at a 1,000× finer scale.
  * - The confirmation is range-checked. Above its trustworthy coordinate range
  *   the rounded product itself is too coarse to preserve a strip, so the
- *   analysis declines to warn rather than guessing.
+ *   analysis declines to warn rather than guessing. The same applies to an
+ *   outer outline the coarse grid cannot hold at all: it blocks the warning
+ *   for its feature and is never dropped, because a dropped outline would make
+ *   the remaining ones look fully covered.
  *
  * Performance: a box pre-filter runs before any Clipper work, and the result
  * is cached per feature. A changed feature only dirties itself and the
@@ -144,6 +147,12 @@ interface CacheEntry {
   outer: PreparedShape[]
   /** The same outer outlines, used as a later coverer (see the header). */
   cover: PreparedShape[]
+  /**
+   * True when an outer outline cannot be rounded onto the coarse grid at all.
+   * Such a feature can never be proven erased: dropping the outline would
+   * leave its representable siblings looking fully covered.
+   */
+  unrepresentableOuter: boolean
   result: boolean
 }
 
@@ -280,27 +289,49 @@ function perimeterOfPath(path: ClipperPath): number {
   return perimeter
 }
 
-/** One closed profile as normalized Clipper paths, or null when degenerate. */
-function pathsOf(
-  profile: SketchProfile,
-): { path: ClipperPath; finePath: ClipperPath | null } | null {
-  if (!profile.closed) return null
+/**
+ * One profile's rounded paths, or why it contributes no outline. An
+ * unrepresentable outline is kept distinct from a degenerate one: the former
+ * is real geometry the coarse grid cannot hold and must not be silently
+ * dropped, while the latter bounds no region and cannot affect coverage.
+ */
+type PathsResult =
+  | { status: 'ready'; path: ClipperPath; finePath: ClipperPath | null }
+  | { status: 'degenerate' }
+  | { status: 'unrepresentable' }
+
+/** One closed profile as normalized Clipper paths, or why it has none. */
+function pathsOf(profile: SketchProfile): PathsResult {
+  if (!profile.closed) return { status: 'degenerate' }
   const points = sampleProfilePoints(profile, CURVE_SAMPLES, ARC_STEP_RADIANS)
-  if (points.length < 3) return null
+  if (points.length < 3) return { status: 'degenerate' }
   const normalized = normalizeWinding(points, false)
   const path = toClipper(normalized, DEFAULT_CLIPPER_SCALE)
-  if (!path || path.length < 3) return null
+  if (!path || path.length < 3) return { status: 'unrepresentable' }
   const finePath = toClipper(normalized, COVERAGE_CLIPPER_SCALE)
-  return { path, finePath: finePath && finePath.length >= 3 ? finePath : null }
+  return {
+    status: 'ready',
+    path,
+    finePath: finePath && finePath.length >= 3 ? finePath : null,
+  }
 }
 
-function prepareShape(profile: SketchProfile): PreparedShape | null {
+type PreparedResult =
+  | { status: 'ready'; shape: PreparedShape }
+  | { status: 'degenerate' }
+  | { status: 'unrepresentable' }
+
+function prepareShape(profile: SketchProfile): PreparedResult {
   const paths = pathsOf(profile)
-  if (!paths) return null
+  if (paths.status !== 'ready') return paths
   return {
-    ...paths,
-    perimeter: perimeterOfPath(paths.path),
-    bounds: boundsOfPath(paths.path),
+    status: 'ready',
+    shape: {
+      path: paths.path,
+      finePath: paths.finePath,
+      perimeter: perimeterOfPath(paths.path),
+      bounds: boundsOfPath(paths.path),
+    },
   }
 }
 
@@ -345,9 +376,17 @@ function signatureOf(feature: FeatureEffectFeature, index: number): string {
 
 function prepareEntry(feature: FeatureEffectFeature, index: number, signature: string): CacheEntry {
   const shapes: Array<{ prepared: PreparedShape; operation: FeatureOperation }> = []
+  let unrepresentableOuter = false
   for (const shape of feature.shapes) {
     const prepared = prepareShape(shape.profile)
-    if (prepared) shapes.push({ prepared, operation: shape.operation })
+    if (prepared.status === 'ready') {
+      shapes.push({ prepared: prepared.shape, operation: shape.operation })
+    } else if (prepared.status === 'unrepresentable' && shape.operation === feature.operation) {
+      // Keep the feature eligible for a warning, never for a false one: an
+      // outer outline that exists but cannot be rounded is not covered by
+      // definition, so the feature must be left alone until it is fixed.
+      unrepresentableOuter = true
+    }
   }
   const outer = shapes
     .filter((shape) => shape.operation === feature.operation)
@@ -368,6 +407,7 @@ function prepareEntry(feature: FeatureEffectFeature, index: number, signature: s
     bounds,
     outer,
     cover: isShapeOperation(feature.operation) ? outer : [],
+    unrepresentableOuter,
     result: false,
   }
 }
@@ -438,6 +478,7 @@ function outlineCovered(outline: PreparedShape, cover: readonly PreparedShape[])
 function evaluate(entries: readonly CacheEntry[], index: number): boolean {
   const entry = entries[index]
   if (!entry.visible || !isShapeOperation(entry.operation)) return false
+  if (entry.unrepresentableOuter) return false
   if (entry.outer.length === 0 || !entry.bounds) return false
   if (!Number.isFinite(entry.zMin) || !Number.isFinite(entry.zMax)) return false
 
