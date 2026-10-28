@@ -80,8 +80,8 @@ export function smallestFittingChuck(stock: BarStock, units: ProjectMeta['units'
   // *body* still reaches past the bar. A body narrower than the stock it grips
   // would sit inside the material; on a square blank the corner guard then
   // refuses the whole setup, so the default must never be that. Such a bar
-  // gets the stock-derived body instead (no invented equipment, so no
-  // capacity to be outside of).
+  // gets the stock-derived body instead: no preset is claimed, and the caller
+  // still reports it past the largest listed capacity.
   const nearest = diameterIn < STANDARD_CHUCKS[0].minIn
     ? STANDARD_CHUCKS[0]
     : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
@@ -164,8 +164,10 @@ export function roundWorkholdingDiameter(clamp: Clamp, stock: BarStock): number 
 /**
  * New chucks take the smallest fitting BISON preset; a bar no preset's *body*
  * can reach (see `smallestFittingChuck`) and every tailstock keep the
- * stock-derived default. The grip is 15 mm, at most a quarter of the bar
- * length. Existing fixtures never pass through this creation helper on load.
+ * stock-derived default. A stock-derived chuck carries the largest listed
+ * capacity without claiming its size, so such a bar is still reported out of
+ * range. The grip is 15 mm, at most a quarter of the bar length. Existing
+ * fixtures never pass through this creation helper on load.
  */
 export function defaultRoundWorkholding(
   type: 'chuck' | 'tailstock',
@@ -176,6 +178,17 @@ export function defaultRoundWorkholding(
   // A chuck and a size pick share one envelope: the published body past the
   // start end plus its grip inside it.
   if (size) return { ...chuckSizePatch(size.id, stock, units), type }
+
+  // No listed equipment is claimed for a bar no listed body can reach, so the
+  // stock-derived body below stands in for it. It still carries the largest
+  // listed capacity, which the bar is inevitably outside of: without that
+  // metadata `chuckOutOfRange` has nothing to compare, the tree/properties
+  // warning vanishes, and decision 9 ("no standard range holds the bar → warn")
+  // silently stops holding for exactly the bars that need it most.
+  const largest = STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
+  const capacity: Pick<Clamp, 'chuck'> = type === 'chuck'
+    ? { chuck: { clampingRangeMm: { min: convertLength(largest.minIn, 'inch', 'mm'), max: convertLength(largest.maxIn, 'inch', 'mm') } } }
+    : {}
 
   const ownDiameter = isSquareStock(stock)
     ? Math.max(4 * barMaxRadius(stock), convertLength(50, 'mm', units))
@@ -194,8 +207,8 @@ export function defaultRoundWorkholding(
   const alongSize = type === 'chuck' ? body + grip : body
 
   return stock.axis === 'x'
-    ? { type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
-    : { type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
+    ? { ...capacity, type, x: alongFrom, y: centre - ownDiameter / 2, w: alongSize, h: ownDiameter, height }
+    : { ...capacity, type, x: centre - ownDiameter / 2, y: alongFrom, w: ownDiameter, h: alongSize, height }
 }
 
 /**
