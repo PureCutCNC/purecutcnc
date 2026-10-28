@@ -30,19 +30,32 @@
  *   A canned model (Turn, Polygon) carries a mesh, not outlines, so it never
  *   reaches this module as an add/subtract row.
  * - Every outer outline of the earlier feature must be covered in plan view
- *   (an exact Clipper difference is empty) by the outer outlines of later
- *   features whose Z span contains the earlier feature's whole span. A hole
- *   inside a later feature does not weaken that: the later feature's outer
- *   add/subtract normalises the material in that region before its own hole
- *   and island pieces are applied, so the result there is the same with or
- *   without the earlier feature. Only the outer, matching-operation outlines
- *   are therefore used as cover.
+ *   (an empty Clipper difference at the confirmation scale) by the outer
+ *   outlines of later features whose Z span contains the earlier feature's
+ *   whole span. A hole inside a later feature does not weaken that: the later
+ *   feature's outer add/subtract normalises the material in that region before
+ *   its own hole and island pieces are applied, so the result there is the
+ *   same with or without the earlier feature. Only the outer,
+ *   matching-operation outlines are therefore used as cover.
  * - Top and Bottom share one plan/stock space, so they cover each other
  *   exactly as the real fold does. Around compares only with Around, in its
  *   unrolled sheet coordinates. A shape across the seam is not matched to one
  *   on the other side of the seam — the same known limit as the nesting rule
  *   (#1108), and an under-claim in the safe direction.
  * - Hidden features are not folded, so they neither warn nor cover.
+ *
+ * Coverage is checked conservatively in both directions, because Clipper works
+ * on integers:
+ *
+ * - An empty difference at the coarse engine scale does not prove coverage: a
+ *   real strip can round away. A non-empty one does not prove a survivor
+ *   either: a vertex that lies exactly on the cover's edge can round off it.
+ * - The coarse pass is therefore only a fast pre-filter. A remainder clearly
+ *   larger than rounding could manufacture is conclusive non-coverage; every
+ *   other outline is decided by a confirmation pass at a 1,000× finer scale.
+ * - The confirmation is range-checked. Above its trustworthy coordinate range
+ *   the rounded product itself is too coarse to preserve a strip, so the
+ *   analysis declines to warn rather than guessing.
  *
  * Performance: a box pre-filter runs before any Clipper work, and the result
  * is cached per feature. A changed feature only dirties itself and the
@@ -53,7 +66,11 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import { DEFAULT_CLIPPER_SCALE } from './clipperScale'
+import {
+  COVERAGE_CLIPPER_SCALE,
+  COVERAGE_MAX_COORD,
+  DEFAULT_CLIPPER_SCALE,
+} from './clipperScale'
 import type { ClipperPath } from './toolpaths/types'
 import {
   sampleProfilePoints,
@@ -102,8 +119,13 @@ type Domain = 'flat' | 'around'
 interface PreparedShape {
   /** Fast pass at the engine's normal Clipper scale. */
   path: ClipperPath
-  /** Confirmation pass at the finer coverage scale. */
-  finePath: ClipperPath
+  /**
+   * Confirmation pass at the finer coverage scale, or null when a coordinate
+   * is outside the scale's trustworthy range (see `COVERAGE_MAX_COORD`).
+   */
+  finePath: ClipperPath | null
+  /** Coarse-path length in Clipper counts, for the rounding-area bound. */
+  perimeter: number
   bounds: Bounds2D
 }
 
@@ -129,23 +151,18 @@ interface CacheEntry {
 const Z_EPSILON = 1e-9
 
 /**
- * The confirmation scale for coverage, used only after the normal scale has
- * already reported an outline fully covered.
- *
- * The normal 10,000 counts per *project* unit is far coarser in absolute terms
- * for an inch project than for a millimetre one: a 0.00004 in strip is 0.4
- * counts and rounds away, so a 10 in Add and a 9.99996 in Subtract look equal
- * and the surviving strip would be reported erased (the same geometry in mm,
- * 254 vs 253.998984, is 10.16 counts and survives). Rechecking at 1,000× the
- * scale keeps that strip (400 counts) and every strip wider than 5e-8 project
- * units. Exact coverage is still an exact subtraction at either scale.
- *
- * The recheck is deliberately not used for every pair: at this scale Clipper's
- * range test switches large coordinates to its slower full-range arithmetic,
- * so a non-empty fast-pass remainder — the common "not covered" answer — is
- * taken as conclusive and never pays the fine-scale cost.
+ * How far a rounded vertex can move: half a count on each axis.
  */
-const COVERAGE_CLIPPER_SCALE = DEFAULT_CLIPPER_SCALE * 1000
+const ROUNDING_VERTEX_ERROR = Math.SQRT1_2
+
+/**
+ * Margin on the rounding-area bound. The symmetric difference between a
+ * polygon and its rounded copy is about `perimeter × ROUNDING_VERTEX_ERROR`;
+ * doubling it keeps a genuine quantization artefact (a collinear vertex that
+ * rounds off its edge) inside the "ambiguous" band without letting a real
+ * survivor through.
+ */
+const ROUNDING_AREA_FACTOR = 2
 
 function domainOf(face: SetupFace): Domain {
   return face === 'around' ? 'around' : 'flat'
@@ -235,29 +252,56 @@ function normalizeWinding(points: Point[], wantClockwise: boolean): Point[] {
   return reversed
 }
 
-function toClipper(points: Point[], scale: number): ClipperPath {
-  return ensureClosedPath(points).map((point) => ({
-    X: Math.round(point.x * scale),
-    Y: Math.round(point.y * scale),
-  }))
+/**
+ * Rounds one closed outline onto a Clipper integer grid, or null when a
+ * coordinate is outside the range where that scale's rounding is faithful.
+ * Refusing the scale is deliberate: guessing there can merge a strip that
+ * really survives (see `COVERAGE_MAX_COORD`).
+ */
+function toClipper(points: Point[], scale: number): ClipperPath | null {
+  const path: ClipperPath = []
+  for (const point of ensureClosedPath(points)) {
+    const x = point.x * scale
+    const y = point.y * scale
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+    if (Math.abs(x) > COVERAGE_MAX_COORD || Math.abs(y) > COVERAGE_MAX_COORD) return null
+    path.push({ X: Math.round(x), Y: Math.round(y) })
+  }
+  return path
+}
+
+function perimeterOfPath(path: ClipperPath): number {
+  let perimeter = 0
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const a = path[index]
+    const b = path[index + 1]
+    perimeter += Math.hypot(b.X - a.X, b.Y - a.Y)
+  }
+  return perimeter
 }
 
 /** One closed profile as normalized Clipper paths, or null when degenerate. */
-function pathsOf(profile: SketchProfile): { path: ClipperPath; finePath: ClipperPath } | null {
+function pathsOf(
+  profile: SketchProfile,
+): { path: ClipperPath; finePath: ClipperPath | null } | null {
   if (!profile.closed) return null
   const points = sampleProfilePoints(profile, CURVE_SAMPLES, ARC_STEP_RADIANS)
   if (points.length < 3) return null
   const normalized = normalizeWinding(points, false)
   const path = toClipper(normalized, DEFAULT_CLIPPER_SCALE)
-  if (path.length < 3) return null
+  if (!path || path.length < 3) return null
   const finePath = toClipper(normalized, COVERAGE_CLIPPER_SCALE)
-  return finePath.length >= 3 ? { path, finePath } : null
+  return { path, finePath: finePath && finePath.length >= 3 ? finePath : null }
 }
 
 function prepareShape(profile: SketchProfile): PreparedShape | null {
   const paths = pathsOf(profile)
   if (!paths) return null
-  return { ...paths, bounds: boundsOfPath(paths.path) }
+  return {
+    ...paths,
+    perimeter: perimeterOfPath(paths.path),
+    bounds: boundsOfPath(paths.path),
+  }
 }
 
 function executeClip(subject: ClipperPath[], clip: ClipperPath[], clipType: number): ClipperPath[] {
@@ -328,34 +372,63 @@ function prepareEntry(feature: FeatureEffectFeature, index: number, signature: s
   }
 }
 
-/** True when the cover shapes remove the subject path at one Clipper scale. */
-function pathsCover(
-  subject: ClipperPath,
-  cover: readonly PreparedShape[],
-  useFinePath: boolean,
-): boolean {
+/** The remainder after subtracting every cover path, or empty when covered. */
+function remainingAfterCover(subject: ClipperPath, cover: readonly ClipperPath[]): ClipperPath[] {
   let remaining = [subject]
-  for (const shape of cover) {
-    remaining = executeClip(
-      remaining,
-      [useFinePath ? shape.finePath : shape.path],
-      ClipperLib.ClipType.ctDifference,
-    )
-    if (remaining.length === 0) return true
+  for (const path of cover) {
+    remaining = executeClip(remaining, [path], ClipperLib.ClipType.ctDifference)
+    if (remaining.length === 0) return remaining
   }
-  return false
+  return remaining
+}
+
+/** Area of a remainder, in squared Clipper counts at the scale it came from. */
+function remainderArea(paths: readonly ClipperPath[]): number {
+  let area = 0
+  for (const path of paths) area += Math.abs(ClipperLib.Clipper.Area(path))
+  return area
+}
+
+/**
+ * The largest remainder the coarse rounding could manufacture. A rounded
+ * vertex moves at most half a count per axis, so a boundary (and the region it
+ * bounds) only differs from its rounded copy by about `perimeter × 0.707`.
+ */
+function roundingAreaBound(
+  outline: PreparedShape,
+  cover: readonly PreparedShape[],
+): number {
+  let perimeter = outline.perimeter
+  for (const shape of cover) perimeter += shape.perimeter
+  return perimeter * ROUNDING_VERTEX_ERROR * ROUNDING_AREA_FACTOR
 }
 
 /** True when later `cover` shapes remove all of one outer outline. */
 function outlineCovered(outline: PreparedShape, cover: readonly PreparedShape[]): boolean {
   const relevant = cover.filter((shape) => boundsOverlap(outline.bounds, shape.bounds))
   if (relevant.length === 0) return false
-  // The fast pass is conclusive when material survives: a non-empty remainder
-  // is real geometry, and the outline is not covered.
-  if (!pathsCover(outline.path, relevant, false)) return false
-  // Empty at the normal scale may be a rounding artefact (see the scale
-  // comment), so confirm at the scale that cannot round a real strip away.
-  return pathsCover(outline.finePath, relevant, true)
+
+  // The coarse pass is a fast pre-filter, not a verdict in either direction:
+  // an empty result may have rounded a real strip away, and a non-empty result
+  // may be a collinear vertex rounded off the cover's edge. Only a remainder
+  // clearly larger than rounding can manufacture proves non-coverage.
+  const coarseRemainder = remainingAfterCover(
+    outline.path,
+    relevant.map((shape) => shape.path),
+  )
+  if (coarseRemainder.length > 0) {
+    if (remainderArea(coarseRemainder) > roundingAreaBound(outline, relevant)) return false
+  }
+
+  // The confirmation scale decides. It must be trustworthy for this outline
+  // and every coverer; without it the coarse answer is not conclusive.
+  if (!outline.finePath) return false
+  const fineCover: ClipperPath[] = []
+  for (const shape of relevant) {
+    if (!shape.finePath) return false
+    fineCover.push(shape.finePath)
+  }
+  return remainingAfterCover(outline.finePath, fineCover).length === 0
 }
 
 /**

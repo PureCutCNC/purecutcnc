@@ -35,12 +35,16 @@
  * - never invalidating a cache entry on an edit: the edit test fails
  * - running coverage at the default Clipper scale: the inch-strip test fails
  *   (the surviving strip rounds away and the Add is wrongly reported covered)
+ * - taking a non-empty coarse remainder as conclusive: the collinear-vertex
+ *   test is missed (the coarse pass rounds the vertex off the cover edge)
+ * - dropping the confirmation-scale range check: the large-magnitude strip
+ *   test warns (the 4e8 coordinate lands on a half count and rounds away)
  *
  * Run with: npx tsx src/engine/featureEffect.test.ts
  */
 
 import { FeatureEffectAnalyzer, type FeatureEffectFeature, type FeatureEffectShape } from './featureEffect'
-import { rectProfile, type FeatureOperation, type SetupFace } from '../types/project'
+import { rectProfile, type FeatureOperation, type Point, type SetupFace } from '../types/project'
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
@@ -56,6 +60,19 @@ function rect(
   operation: FeatureOperation,
 ): FeatureEffectShape {
   return { profile: rectProfile(x, y, width, height), operation }
+}
+
+/** A closed polygon through the given points, in order. */
+function polygon(points: Point[], operation: FeatureOperation): FeatureEffectShape {
+  const [start, ...rest] = points
+  return {
+    profile: {
+      start,
+      segments: rest.map((point) => ({ type: 'line' as const, to: point })),
+      closed: true,
+    },
+    operation,
+  }
 }
 
 interface FeatureOptions {
@@ -123,6 +140,60 @@ function warningsOf(analyzer: FeatureEffectAnalyzer, features: FeatureEffectFeat
     feature('pocket', 'subtract', [rect(0, 0, 10, 10, 'subtract')]),
   ]
   assertEqual(warningsOf(exactAnalyzer, exact).join(','), 'island', 'an exact cover still warns')
+}
+
+// A surviving strip at large magnitude is not rounded away at either scale.
+// 400000000 vs 399999999.99999994 is a 5.96e-8 strip, one double step; at the
+// confirmation scale that coordinate is 4e15, where the double product lands
+// on a half count and Math.round erases the strip. The range check declines to
+// confirm rather than report coverage.
+{
+  const analyzer = new FeatureEffectAnalyzer()
+  const features = [
+    feature('island', 'add', [rect(0, 0, 400000000, 10, 'add')]),
+    feature('pocket', 'subtract', [rect(0, 0, 399999999.99999994, 10, 'subtract')]),
+  ]
+  assertEqual(
+    warningsOf(analyzer, features).join(','),
+    '',
+    'a surviving strip at large magnitude does not warn',
+  )
+}
+
+// Exact coverage where the subject has an extra collinear vertex on its
+// hypotenuse. At the coarse scale (.03125, .96875) rounds to (313, 9688),
+// one count off the cover's edge, so the coarse difference is a quantization
+// artefact; the confirmation scale must decide that the cover is exact.
+{
+  const analyzer = new FeatureEffectAnalyzer()
+  const features = [
+    feature('subject', 'add', [
+      polygon(
+        [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 0.03125, y: 0.96875 },
+          { x: 0, y: 1 },
+        ],
+        'add',
+      ),
+    ]),
+    feature('cover', 'subtract', [
+      polygon(
+        [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 0, y: 1 },
+        ],
+        'subtract',
+      ),
+    ]),
+  ]
+  assertEqual(
+    warningsOf(analyzer, features).join(','),
+    'subject',
+    'a collinear vertex does not hide an exact cover',
+  )
 }
 
 // Covering only part of the outline leaves material standing.
