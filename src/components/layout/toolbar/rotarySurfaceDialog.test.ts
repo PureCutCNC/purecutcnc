@@ -42,6 +42,12 @@ globals.Node = window.Node
 if (typeof globals.navigator === 'undefined') {
   globals.navigator = { language: 'en', languages: ['en'], userAgent: 'node', platform: '' }
 }
+// React decides once, when it first imports, whether an `input` event can drive
+// `onChange` (`'oninput' in document`). linkedom's document has no `oninput`, so
+// without this a typed field would take no edit at all — a silently inert test.
+if (!('oninput' in (document as unknown as object))) {
+  Object.defineProperty(document, 'oninput', { value: null, writable: true, configurable: true })
+}
 globals.React = React
 
 const { useProjectStore } = await import('../../../store/projectStore')
@@ -65,6 +71,16 @@ async function waitFor(predicate: () => boolean, message: string, timeoutMs = 20
     if (Date.now() - started > timeoutMs) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
+}
+
+/** Set a field the way typing does: value first, then the event React listens for. */
+function setInputValue(field: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  assert.ok(setter, 'linkedom has an input value setter')
+  setter.call(field, value)
+  field.dispatchEvent(new (window as unknown as {
+    Event: new (type: string, init?: { bubbles?: boolean }) => object
+  }).Event('input', { bubbles: true }) as unknown as Event)
 }
 
 function projectWithSource() {
@@ -262,13 +278,20 @@ await scenario('the Thread dialog follows a moved Thread onto its new surface', 
   assert.doesNotMatch(note, /Ø10/, 'the stored band’s old diameter is not shown')
   assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'one Turn has no warning')
 
-  // An unchanged Apply must keep the span the row already follows. Resolving
-  // the **stored** band here would push it back to Ø10 (25/24), 3 mm too deep.
+  // An Apply that leaves the depth alone must keep the span the row already
+  // follows. Resolving the **stored** band here would push it back to Ø10
+  // (25/24), 3 mm too deep. The pitch is edited first because an Apply with
+  // nothing changed is disabled (issue #1112 F4), and the span depends on the
+  // surface and the depth, neither of which the pitch touches.
   const apply = document.querySelector('.rotary-dialog__create') as HTMLButtonElement | null
   assert.ok(apply, 'the edit dialog has an Apply action')
+  assert.equal(apply.disabled, true, 'an unchanged Thread offers no Apply')
+  setInputValue(document.querySelector('#rotary-pitch') as HTMLInputElement, '2.5')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(apply.disabled, false, 'a changed pitch offers Apply')
   apply.click()
-  assert.equal(Number(threadRow()?.z_top), 28, 'an unchanged Apply keeps the placed Ø16 span')
-  assert.equal(Number(threadRow()?.z_bottom), 27, 'an unchanged Apply keeps the placed depth')
+  assert.equal(Number(threadRow()?.z_top), 28, 'the edited Apply keeps the placed Ø16 span')
+  assert.equal(Number(threadRow()?.z_bottom), 27, 'the edited Apply keeps the placed depth')
   unmount()
 })
 

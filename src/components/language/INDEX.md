@@ -14,4 +14,6 @@ nothing here touches project data.
   open), search plus all/untranslated/edited filtering, placeholder-parity
   gate blocking Apply, name + BCP-47 tag fields, and "Preview in app" which
   persists the draft (Cancel restores the on-open snapshot and previously
-  active language).
+  active language). Apply is disabled while the pack still matches the one the
+  editor opened on — comparing by value through `common/formDraft.ts`, since
+  the overrides object is rebuilt on every keystroke (issue #1112 F4).

@@ -54,6 +54,7 @@ import {
 } from '../../../store/helpers/rotaryPatterns'
 import { getStockBounds } from '../../../types/project'
 import { useCannedShapePreview } from '../../useCannedShapePreview'
+import { formHasChanges } from '../../common/formDraft'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -272,6 +273,32 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
   // A close can outlive the click that opened the edit; the guard keeps a
   // late continuation from writing after the user left.
   const activeRef = useRef(true)
+  // What Apply would write, as the form holds it (issue #1112 F4): editing a
+  // stored pattern without changing a field used to rewrite identical
+  // parameters as a new undo step, so the button is greyed out while nothing
+  // differs. The one field the dialog transforms stays in the form the user
+  // typed — a stored inch pitch read back as threads per inch is rounded, and
+  // re-deriving it would make an untouched inch dialog look edited — and a
+  // flute's hand is signed onto its twist exactly as `buildInput` signs it, so
+  // flipping the hand of a straight flute is not a change.
+  const draftFields = kind === 'thread'
+    ? {
+        start: parseNumber(start),
+        length: parseNumber(length),
+        pitch: parseNumber(pitchText),
+        starts: parseNumber(starts),
+        depth: parseNumber(depth),
+        hand: direction,
+      }
+    : {
+        start: parseNumber(start),
+        length: parseNumber(length),
+        count: parseNumber(count),
+        twist: (direction === 'left' ? -1 : 1) * parseNumber(twist),
+        depth: parseNumber(depth),
+      }
+  // The values the form opened with: a draft that never left them writes nothing.
+  const [openedFields] = useState(draftFields)
 
   useEffect(() => () => {
     activeRef.current = false
@@ -334,6 +361,8 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
   }
 
   const problem = kind === 'thread' ? threadProblem() : flutesProblem()
+  // Creation has no stored shape to compare against and keeps its own gate.
+  const untouched = editing && !formHasChanges(openedFields, draftFields)
 
   // Live preview (issue #1112 F1): every valid draft is written into the
   // project through the ordinary `updateFeature` path — parameters plus the Z
@@ -382,7 +411,8 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
   }
 
   function handleApply() {
-    if (problem !== null) return
+    // Nothing to write while the form still holds the stored pattern.
+    if (problem !== null || untouched) return
     if (editing && featureId) {
       if (!stored) return
       const input = buildInput()
@@ -625,7 +655,7 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
           <button
             className="feat-btn feat-btn--primary rotary-dialog__create"
             type="button"
-            disabled={problem !== null}
+            disabled={problem !== null || untouched}
             onClick={handleApply}
           >
             {editing ? t('dialogs.common.apply') : t('dialogs.rotary.create')}

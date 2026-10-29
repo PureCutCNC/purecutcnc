@@ -79,8 +79,8 @@ interface Mounted {
 }
 
 /** Render the dialog the way Properties opens it for an existing run. */
-async function mountEdit(initial: TextToolConfig): Promise<Mounted> {
-  return mountDialog('edit', initial)
+async function mountEdit(initial: TextToolConfig, units: 'mm' | 'inch' = 'mm'): Promise<Mounted> {
+  return mountDialog('edit', initial, units)
 }
 
 /** Render the dialog the toolbar opens to place new text. */
@@ -88,9 +88,13 @@ async function mountCreate(): Promise<Mounted> {
   return mountDialog('create', undefined)
 }
 
-async function mountDialog(mode: 'create' | 'edit', initial: TextToolConfig | undefined): Promise<Mounted> {
+async function mountDialog(
+  mode: 'create' | 'edit',
+  initial: TextToolConfig | undefined,
+  units: 'mm' | 'inch' = 'mm',
+): Promise<Mounted> {
   useProjectStore.setState({
-    project: { ...newProject('Text form', 'mm'), tools: [defaultTool('mm', 1)] },
+    project: { ...newProject('Text form', units), tools: [defaultTool(units, 1)] },
     history: { past: [], future: [], transactionStart: null },
   } as never)
   const confirmations: TextToolConfig[] = []
@@ -178,6 +182,9 @@ const saved: TextToolConfig = {
   layout: null,
 }
 
+/** The same run in a project whose units are inches: 12 mm is 0.4724… in. */
+const savedInInches: TextToolConfig = { ...saved, size: 12 / 25.4 }
+
 // ── Unchanged → disabled ────────────────────────────────────────────
 
 {
@@ -215,6 +222,50 @@ const saved: TextToolConfig = {
   assert(!applyButton().disabled, 'a changed operation enables Apply')
   await chooseOption('Add', 'Subtract')
   assert(applyButton().disabled, 'the saved operation disables Apply again')
+  dialog.unmount()
+}
+
+// ── The same rules hold in an inch project ──────────────────────────
+
+{
+  const dialog = await mountEdit(savedInInches, 'inch')
+  assert(applyButton().disabled, 'an untouched run in an inch project has Apply disabled')
+
+  typeInto(textField(), 'Drill 4 mm')
+  await flush()
+  assert(!applyButton().disabled, 'changed text enables Apply in an inch project')
+
+  typeInto(textField(), 'Drill 3 mm')
+  await flush()
+  assert(applyButton().disabled, 'the saved text disables Apply again in an inch project')
+
+  // The stored height is the number the project holds, in its own units: the
+  // same physical size written as millimetres is a different run.
+  typeInto(sizeField(), '12')
+  await flush()
+  assert(!applyButton().disabled, 'a value that is only equivalent across units is an edit')
+
+  typeInto(sizeField(), String(savedInInches.size))
+  await flush()
+  assert(applyButton().disabled, 'the saved inch height disables Apply again')
+  dialog.unmount()
+}
+
+// ── A unit toggle does not turn the form into an edit ───────────────
+
+{
+  const dialog = await mountEdit(saved)
+  assert(applyButton().disabled, 'the form starts unchanged')
+  // Converting the project's units (the Units menu's "Convert" choice) rewrites
+  // the stored run, but not what this dialog would save: the form has not
+  // changed, so Apply stays disabled (issue #1112 F4).
+  useProjectStore.getState().setUnits('inch', 'convert')
+  await flush()
+  assert(applyButton().disabled, 'a unit toggle with the same values keeps Apply disabled')
+
+  typeInto(sizeField(), '13')
+  await flush()
+  assert(!applyButton().disabled, 'an edit after the unit toggle enables Apply')
   dialog.unmount()
 }
 

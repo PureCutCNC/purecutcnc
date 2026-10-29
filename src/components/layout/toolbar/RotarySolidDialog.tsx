@@ -59,6 +59,7 @@ import { Select } from '../../Select'
 import type { TurnCannedProfile } from '../../../cannedShapes/generators/turnProfile'
 import { turnProfileBand } from '../../../cannedShapes/generators/turnProfile'
 import { useCannedShapePreview } from '../../useCannedShapePreview'
+import { formHasChanges } from '../../common/formDraft'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -236,6 +237,27 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
   // A close can outlive the click that opened the edit; the guard keeps a late
   // continuation from writing after the user left.
   const activeRef = useRef(true)
+  // What Apply would write, as the form holds it (issue #1112 F4): editing a
+  // stored model without changing a field used to rewrite identical parameters
+  // as a new undo step, so the button is greyed out while nothing differs. A
+  // Turn's picked profile is part of what Apply writes, so a re-picked profile
+  // counts even when it copies the same numbers into the fields.
+  const draftFields = kind === 'turn'
+    ? {
+        start: parseNumber(start),
+        length: parseNumber(length),
+        diameter: parseNumber(diameter),
+        profile: profile ?? null,
+      }
+    : {
+        start: parseNumber(start),
+        length: parseNumber(length),
+        sides: parseNumber(sides),
+        acrossFlats: parseNumber(acrossFlats),
+        rotation: parseNumber(rotation),
+      }
+  // The values the form opened with: a draft that never left them writes nothing.
+  const [openedFields] = useState(draftFields)
 
   useEffect(() => () => {
     activeRef.current = false
@@ -389,6 +411,8 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
   }
 
   const problem = profileError ?? (frame ? rotarySolidInputProblem(frame, buildInput()) : 'notOnBar')
+  // Creation has no stored model to compare against and keeps its own gate.
+  const untouched = editing && !formHasChanges(openedFields, draftFields)
   const problemText = problem === null ? null : refusalText(problem)
 
   // Live preview (issue #1112 F1): every valid draft is written into the
@@ -405,7 +429,8 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
   })
 
   function handleApply() {
-    if (problem !== null || !frame) return
+    // Nothing to write while the form still holds the stored model.
+    if (problem !== null || !frame || untouched) return
     if (editing && featureId) {
       if (!stored) return
       const input = buildInput()
@@ -661,7 +686,7 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
           <button
             className="feat-btn feat-btn--primary rotary-dialog__create"
             type="button"
-            disabled={problem !== null}
+            disabled={problem !== null || untouched}
             onClick={handleApply}
           >
             {editing ? t('dialogs.common.apply') : t('dialogs.rotarySolid.create')}

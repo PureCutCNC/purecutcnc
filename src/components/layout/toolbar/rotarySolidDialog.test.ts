@@ -41,6 +41,12 @@ globals.Node = window.Node
 if (typeof globals.navigator === 'undefined') {
   globals.navigator = { language: 'en', languages: ['en'], userAgent: 'node', platform: '' }
 }
+// React decides once, when it first imports, whether an `input` event can drive
+// `onChange` (`'oninput' in document`). linkedom's document has no `oninput`, so
+// without this a typed field would take no edit at all — a silently inert test.
+if (!('oninput' in (document as unknown as object))) {
+  Object.defineProperty(document, 'oninput', { value: null, writable: true, configurable: true })
+}
 // Components use the automatic JSX runtime; the tsx runner transpiles this file
 // with the classic one, which expects a global `React`.
 globals.React = React
@@ -54,8 +60,6 @@ const { bundledMachines } = await import('../../../machine/registry')
 const { validateMachineDefinition } = await import('../../../engine/gcode/types')
 const { projectWithFeatures } = await import('../../../test/projectFixtures')
 const { switchWorkspaceFace } = await import('../../../store/workspaceFace')
-const { rotarySolidCannedData } = await import('../../../store/helpers/rotarySolids')
-const { rotarySolidFrame } = await import('../../../cannedShapes/generators/rotarySolidParams')
 
 const store = () => useProjectStore.getState()
 
@@ -69,6 +73,17 @@ async function waitFor(predicate: () => boolean, message: string, timeoutMs = 20
     if (Date.now() - started > timeoutMs) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
+}
+
+/** Set a field the way typing does: value first, then the event React listens for. */
+function setInputValue(field: HTMLInputElement, value: string): void {
+  const prototype = Object.getPrototypeOf(field) as { value: string }
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+  assert.ok(setter, 'linkedom has an input value setter')
+  setter.call(field, value)
+  field.dispatchEvent(new (window as unknown as {
+    Event: new (type: string, init?: { bubbles?: boolean }) => object
+  }).Event('input', { bubbles: true }) as unknown as Event)
 }
 
 function rotaryProject(): ReturnType<typeof newProject> {
@@ -122,19 +137,13 @@ await scenario('Apply keeps a scaled, Z-moved instance and its linked copy in pl
   })
   assert.equal(switchWorkspaceFace('around'), true, 'Around survives the load')
 
-  // Make the stored parameter edit the dialog is about to apply: a Turn of
-  // diameter 10 in place of 20. The store update places both rows correctly;
-  // Apply then rewrites the same parameters, which is where the dialog used to
-  // pin the raw mesh bounds and undo that placement.
-  const frame = rotarySolidFrame(store().project)
-  assert.ok(frame)
-  const canned = rotarySolidCannedData(
-    frame,
-    { kind: 'turn', start: 0, length: 40, diameter: 10 },
-    store().project.meta.units,
-  )
-  assert.ok(canned)
-  store().updateFeature(model.id, { canned })
+  // A stored Turn of diameter 20 that the dialog's form will edit down to 10.
+  // The store update places both rows correctly; Apply then rewrites the
+  // parameters, which is where the dialog used to pin the raw mesh bounds and
+  // undo that placement. The edit is typed into the form because Apply is
+  // disabled while the form still holds the stored parameters (issue #1112 F4).
+  const storedCanned = store().project.featureDefinitions[model.definitionId]?.canned
+  assert.equal(storedCanned?.params.diameter, 20, 'the stored Turn has the created diameter')
 
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -152,7 +161,9 @@ await scenario('Apply keeps a scaled, Z-moved instance and its linked copy in pl
 
   await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit dialog renders')
   const diameter = document.querySelector('#rotary-solid-diameter') as HTMLInputElement
-  assert.equal(diameter.value, '10', 'the dialog shows the edited diameter')
+  assert.equal(diameter.value, '20', 'the dialog shows the stored diameter')
+  setInputValue(diameter, '10')
+  await new Promise((resolve) => setTimeout(resolve, 20))
 
   const apply = document.querySelector('.rotary-dialog__create') as HTMLButtonElement | null
   assert.ok(apply, 'the dialog has an Apply action')

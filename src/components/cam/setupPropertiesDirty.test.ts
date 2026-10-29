@@ -34,7 +34,7 @@
 
 import React from 'react'
 import { parseHTML } from 'linkedom'
-import type { MachiningSetup, Project } from '../../types/project'
+import type { MachiningSetup, Project, RegistrationReference } from '../../types/project'
 
 const { window, document } = parseHTML('<!doctype html><html><body></body></html>')
 const globals = globalThis as unknown as Record<string, unknown>
@@ -80,14 +80,14 @@ const dom = window as unknown as {
 }
 
 /** A Bottom setup in a two-setup project, which is the face with every field. */
-function bottomProject(): Project {
-  const project = newProject('Setup form', 'mm')
+function bottomProject(units: 'mm' | 'inch' = 'mm', registration: RegistrationReference[] = []): Project {
+  const project = newProject('Setup form', units)
   const bottom: MachiningSetup = {
     id: 'setup-bottom',
     name: 'Bottom',
     orientation: { axis: 'x', angleDeg: 180 },
     indexing: 'manual',
-    registration: [],
+    registration,
     notes: '',
     operationIds: [],
   }
@@ -97,11 +97,14 @@ function bottomProject(): Project {
 }
 
 /** Load a project and render the dialog on one of its setups. */
-async function mountDialog(setupId: string): Promise<{
+async function mountDialog(
+  setupId: string,
+  options: { units?: 'mm' | 'inch'; registration?: RegistrationReference[] } = {},
+): Promise<{
   closed: () => boolean
   unmount: () => void
 }> {
-  const project = bottomProject()
+  const project = bottomProject(options.units ?? 'mm', options.registration ?? [])
   useProjectStore.setState({
     project,
     history: { past: [], future: [], transactionStart: null },
@@ -163,6 +166,26 @@ function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string):
   assert(setter, 'linkedom has an input value setter')
   setter.call(field, value)
   field.dispatchEvent(new dom.Event('input', { bubbles: true }) as unknown as Event)
+}
+
+/**
+ * Type into a number field the way a browser reports it: linkedom has no
+ * `valueAsNumber`, and the registration editor reads it (`valueAsNumber` is
+ * NaN for a field that holds no number), so the element reports it here too.
+ */
+function typeNumberInto(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  Object.defineProperty(field, 'valueAsNumber', {
+    get: () => Number((field as HTMLInputElement).value),
+    configurable: true,
+  })
+  typeInto(field, value)
+}
+
+/** A key press as the browser reports it: handlers switch on `event.key`. */
+function pressKey(target: EventTarget, key: string): void {
+  const event = new dom.Event('keydown', { bubbles: true }) as unknown as { key?: string }
+  Object.defineProperty(event, 'key', { value: key, configurable: true })
+  target.dispatchEvent(event as unknown as Event)
 }
 
 /** linkedom's select value is a getter with no setter, so select the option. */
@@ -258,12 +281,113 @@ function bottomSetup(): MachiningSetup {
   assert(JSON.stringify(bottomSetup()) === before, 'clicking a disabled Save writes nothing')
 
   // There is no form around the fields, so Enter cannot submit one either: it
-  // must neither save nor close while there is nothing to save.
+  // must neither save nor close while there is nothing to save. The key press
+  // is a real Enter, so a handler that saves on Enter is caught here rather
+  // than passing a keyless event that no handler matches.
   const name = fieldInput('Name')
-  name.dispatchEvent(new dom.Event('keydown', { bubbles: true }) as unknown as Event)
+  pressKey(name, 'Enter')
   await flush()
   assert(!dialog.closed(), 'Enter with an unchanged form does not close the dialog')
   assert(JSON.stringify(bottomSetup()) === before, 'Enter with an unchanged form writes nothing')
+
+  // The same key must not be a hidden save path once the form has an edit: this
+  // dialog saves from its button alone.
+  typeInto(name, 'Back machining')
+  await flush()
+  pressKey(name, 'Enter')
+  await flush()
+  assert(!dialog.closed(), 'Enter never submits this dialog')
+  assert(bottomSetup().name === 'Bottom', 'Enter never writes the dialog')
+  dialog.unmount()
+}
+
+// ── The same rules hold in an inch project ──────────────────────────
+
+{
+  const dialog = await mountDialog('setup-bottom', { units: 'inch' })
+  assert(saveButton().disabled, 'an untouched form in an inch project has Save disabled')
+
+  const name = fieldInput('Name')
+  typeInto(name, 'Back machining')
+  await flush()
+  assert(!saveButton().disabled, 'a changed name enables Save in an inch project')
+
+  typeInto(name, 'Bottom')
+  const notes = fieldInput('Operator notes')
+  typeInto(notes, 'Seat on fixture pins')
+  await flush()
+  assert(!saveButton().disabled, 'changed notes enable Save in an inch project')
+  typeInto(notes, '')
+  await flush()
+  assert(saveButton().disabled, 'cleared notes disable Save again in an inch project')
+  dialog.unmount()
+}
+
+// ── A registration point is compared in the project's own units ─────
+
+/** Drop the saved reference and rebuild it from the add form, as a user would. */
+async function rebuildReference(x: number, y: number): Promise<void> {
+  const remove = document.body.querySelector('.setup-registration li button')
+  assert(remove, 'the saved reference can be removed')
+  ;(remove as unknown as HTMLButtonElement).click()
+  await flush()
+
+  choose(labelledSelect('Reference target'), 'point')
+  await flush()
+  typeNumberInto(fieldInput('X'), String(x))
+  typeNumberInto(fieldInput('Y'), String(y))
+  await flush()
+  const add = Array.from(document.body.querySelectorAll('button'))
+    .find((candidate) => (candidate.textContent ?? '').trim() === 'Add reference')
+  assert(add, 'the registration editor offers Add reference')
+  add.click()
+  await flush()
+}
+
+{
+  // The same physical point, written the way each project stores it.
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const inches: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 1, y: 0.5 } } },
+  ]
+
+  const metric = await mountDialog('setup-bottom', { registration: millimetres })
+  assert(saveButton().disabled, 'a saved reference in millimetres is not a change')
+  await rebuildReference(25.4, 12.7)
+  assert(saveButton().disabled, 'rebuilding the same millimetre reference leaves nothing to save')
+  metric.unmount()
+
+  const imperial = await mountDialog('setup-bottom', { units: 'inch', registration: inches })
+  assert(saveButton().disabled, 'the same point saved in inches is not a change either')
+  await rebuildReference(1, 0.5)
+  assert(saveButton().disabled, 'rebuilding the same inch reference leaves nothing to save')
+
+  // 25.4 inches is not the saved one inch: the comparison is in project units,
+  // not an equivalent physical length.
+  await rebuildReference(25.4, 12.7)
+  assert(!saveButton().disabled, 'a value that is only equivalent across units is still an edit')
+  imperial.unmount()
+}
+
+// ── A unit reinterpret does not turn the form into an edit ──────────
+
+{
+  const dialog = await mountDialog('setup-bottom')
+  assert(saveButton().disabled, 'the form starts unchanged')
+  // "Reinterpret" keeps the numbers and changes only the unit they mean, so
+  // nothing the dialog writes has changed (issue #1112 F4).
+  store().setUnits('inch', 'reinterpret')
+  await flush()
+  assert(saveButton().disabled, 'a unit toggle with the same values keeps Save disabled')
+  assert(!document.body.querySelector('[role="alert"]'), 'a unit toggle is not an edit to the setup')
+
+  // The form still works after the toggle: a real edit enables Save.
+  const name = fieldInput('Name')
+  typeInto(name, 'Back machining')
+  await flush()
+  assert(!saveButton().disabled, 'an edit after the unit toggle enables Save')
   dialog.unmount()
 }
 
