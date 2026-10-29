@@ -99,8 +99,11 @@ function setupListGrouped(project: Pick<Project, 'setups'>, listed: readonly Mac
  * The operations list shows every setup's operations, but only the active
  * setup's can be used from the face in view: an operation from another face is
  * listed as a ghost row, like a feature from the other face in the feature
- * tree. A project that is not grouped has one flat setup, so every operation
- * in it is on the active setup.
+ * tree. A ghost row is still selectable — selecting it turns the workspace over
+ * to its face (`store/workspaceFace.ts` `revealOperationFace`, issue #1112 F3),
+ * which is how the header face control stays the one setup choice. A project
+ * that is not grouped has one flat setup, so every operation in it is on the
+ * active setup.
  *
  * Membership follows the panel's own: an operation belongs to the setup its
  * `setupId` names, and one with no `setupId` reads as the first setup listed —

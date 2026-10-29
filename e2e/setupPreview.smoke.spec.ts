@@ -77,6 +77,27 @@ async function simStats(page: Page) {
   }
 }
 
+/**
+ * Open a setup card so its rows are in the DOM: only the active setup's card
+ * starts open (issue #1102). Selecting a row of the other face is a supported
+ * route — that click is what switches the face — so the test opens the card the
+ * way a user does, without switching the face first.
+ */
+async function openSetupCard(page: Page, face: 'top' | 'bottom'): Promise<void> {
+  const toggle = page.locator(`.cam-setup-group[data-setup-face="${face}"] .cam-setup-group__toggle`)
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+}
+
+/**
+ * Select a named operation from whichever face the workspace is on. On the
+ * other face its row is a ghost — dimmed, still a button — and clicking it
+ * turns the workspace over to its face (issue #1112 F3).
+ */
+async function selectOperation(page: Page, name: string, face: 'top' | 'bottom'): Promise<void> {
+  await openSetupCard(page, face)
+  await page.locator('.cam-operation-tree .tree-row--feature').filter({ hasText: name }).click()
+}
+
 test('simulation follows the face in view, cuts Bottom from the top of the flipped stock and explains its fresh stock', async ({ app, ui }, testInfo) => {
   const { page } = app
   const project = await seedTwoSetups(page)
@@ -84,9 +105,12 @@ test('simulation follows the face in view, cuts Bottom from the top of the flipp
   const viewport = ui.simSetup.viewport(page)
   const bottomNote = 'Bottom is simulated on fresh stock: material removed by other setups is not shown.'
 
-  // An operation is selected on its own face (issue #1102).
-  await ui.face.switchTo(page, 'Bottom')
-  await ui.operations.rowByName(page, 'Bottom pass').click()
+  // The Bottom operation is selected from Top, without switching faces first:
+  // its row is a clickable ghost row, and that click is what turns the
+  // workspace over to Bottom (issue #1112 F3, review of PR #1126). Selecting
+  // after switching would hide that route behind the face control.
+  await selectOperation(page, 'Bottom pass', 'bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   await ui.viewMenu.tabSimulation(page).click()
   // The workspace face is the simulation's setup (issue #1112 F3): there is no
   // picker to disagree with it, and the fresh-stock sentence lives behind the
@@ -127,10 +151,11 @@ test('simulation follows the face in view, cuts Bottom from the top of the flipp
 
   // Selecting an operation of another face switches the header face, and the
   // simulation follows it: there is no setup choice of its own to hand back.
+  // From Top, the Bottom row alone moves the workspace — no face switch first.
   await ui.face.switchTo(page, 'Top')
-  await ui.operations.rowByName(page, 'Top pass').click()
-  await ui.face.switchTo(page, 'Bottom')
-  await ui.operations.rowByName(page, 'Bottom pass').click()
+  await selectOperation(page, 'Top pass', 'top')
+  await selectOperation(page, 'Bottom pass', 'bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   await expect(viewport).toHaveAttribute('data-simulation-setup', 'setup-bottom')
 })
 

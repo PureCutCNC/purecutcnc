@@ -1981,8 +1981,10 @@ export function CAMPanel({
         </div>
         {/* Dev-only. The source-tag markers this draws are a debugging aid for
             the toolpath generators, not a setting on the operation, so it sits
-            outside the groups and ships in dev builds only. */}
-        {import.meta.env.DEV ? (
+            outside the groups and ships in dev builds only. `import.meta.env`
+            is Vite-only: the optional fallback keeps the operation panel
+            renderable in a plain Node render (unit tests), as in Icon.tsx. */}
+        {import.meta.env?.DEV ? (
           <label className="properties-check cam-operation-dev-toggle">
             <input
               type="checkbox"
@@ -2288,8 +2290,12 @@ export function CAMPanel({
                         {section.operations.map((operation) => {
                         // An operation of a setup the workspace is not on is a
                         // ghost row (issue #1102), like a feature from the other
-                        // face in the feature tree: listed, with its eye, never
-                        // selected, reordered or edited from here.
+                        // face in the feature tree: listed, with its eye, and
+                        // selectable — selecting it turns the workspace over to
+                        // its face (`revealOperationFace` in the app's
+                        // `useOperationSelection`, issue #1112 F3), which is what
+                        // keeps the header face control the one setup choice.
+                        // It is never reordered or edited from here.
                         const ghost = !operationOnActiveSetup(project, operation)
                         const uncutWarning = uncutWarnings.get(operation.id)
                         const ghostTitle = ghost
@@ -2311,15 +2317,15 @@ export function CAMPanel({
                           ].join(' ')}
                           data-ghost={ghost ? 'true' : undefined}
                           title={ghostTitle}
-                          onClick={ghost ? undefined : () => handleSelectOperation(operation.id)}
-                          onKeyDown={ghost ? undefined : (event) => {
+                          onClick={() => handleSelectOperation(operation.id)}
+                          onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
                               handleSelectOperation(operation.id)
                             }
                           }}
-                          role={ghost ? undefined : 'button'}
-                          tabIndex={ghost ? undefined : 0}
+                          role="button"
+                          tabIndex={0}
                           draggable={ghost ? undefined : true}
                           onDragStart={ghost ? undefined : () => handleOperationDragStart(operation.id)}
                           onDragEnd={ghost ? undefined : () => setDragOperationId(null)}

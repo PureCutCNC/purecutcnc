@@ -397,8 +397,9 @@ test('Move lists removed targets and setup deletion lists its operations', async
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
   await ui.face.switchTo(page, 'Top')
-  // From Top, the Bottom operation is a ghost row: listed, never selected.
-  // The inactive setup's card starts collapsed.
+  // From Top, the Bottom operation is a ghost row: listed, dimmed, and
+  // selectable (the click turns the workspace over to its face, issue #1112
+  // F3). The inactive setup's card starts collapsed.
   await ui.setupCam.section(page,'bottom').getByRole('button',{ name:/Bottom operations/ }).click()
   await expect(ui.setupCam.section(page,'bottom').locator('.tree-row--ghost')).toHaveCount(1)
   await ui.operations.rowByName(page,'Top pass').click()
