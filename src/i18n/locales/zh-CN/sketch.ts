@@ -49,6 +49,7 @@ export const sketchZhCN: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': '取消{shape}工具',
   'sketch.creation.chooseTarget': '选择{target}形状',
   'sketch.creation.closeDrawer': '关闭形状抽屉',
+  'sketch.creation.squareBarUnavailable': '方料暂不支持',
   'sketch.transform.copy': '复制所选特征',
   'sketch.transform.cancelCopy': '取消复制',
   'sketch.transform.move': '移动所选特征',

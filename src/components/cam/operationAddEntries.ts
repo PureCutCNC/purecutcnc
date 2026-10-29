@@ -163,7 +163,10 @@ interface OperationAddBlock {
  * The blocking reason for one kind, and where the reason comes from. The
  * project type is stated first, then a stock shape the user can change, and
  * only then the selection: on a square blank's Around face a round-only row
- * says "Needs a round bar" whatever is selected.
+ * says the work is not available on a square bar yet, whatever is selected.
+ * It used to say "Needs a round bar", which was wrong about what is missing —
+ * turning a square blank works, it is the sheet work that does not
+ * (issue #1112 decision 17).
  */
 function operationAddBlock(
   project: Project,
@@ -176,7 +179,7 @@ function operationAddBlock(
     return { hint: camT('cam.addMenu.needsPlasmaProject'), selectionBlocked: false, blockedInPlace: false }
   }
   if (face === 'around' && isSquareStock(project.stock) && !isRotaryOperationKind(kind)) {
-    return { hint: camT('cam.addMenu.needsRoundBar'), selectionBlocked: false, blockedInPlace: true }
+    return { hint: camT('cam.addMenu.squareBarUnavailable'), selectionBlocked: false, blockedInPlace: true }
   }
   const hint = getOperationAddHint(project, selection, kind)
   return { hint, selectionBlocked: hint !== null, blockedInPlace: false }

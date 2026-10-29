@@ -43,6 +43,7 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': '{shape}-Werkzeug abbrechen',
   'sketch.creation.chooseTarget': '{target}-Form wählen',
   'sketch.creation.closeDrawer': 'Formen-Schublade schließen',
+  'sketch.creation.squareBarUnavailable': 'Auf einem Vierkantrohling noch nicht verfügbar',
   'sketch.transform.copy': 'Ausgewählte Features kopieren',
   'sketch.transform.cancelCopy': 'Kopieren abbrechen',
   'sketch.transform.move': 'Ausgewählte Features verschieben',

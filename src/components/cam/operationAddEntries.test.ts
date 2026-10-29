@@ -157,8 +157,8 @@ for (const kind of ['pocket', 'v_carve', 'v_carve_medial', 'edge_route_inside', 
   const entry = squareByKind.get(kind)
   assert(entry, `${kind} is kept in the square blank's Around menu, not hidden`)
   assert(
-    entry.hint === camT('cam.addMenu.needsRoundBar'),
-    `${kind} says "Needs a round bar" on a square blank, got "${entry.hint ?? 'no hint'}"`,
+    entry.hint === camT('cam.addMenu.squareBarUnavailable'),
+    `${kind} says the work is not available on a square bar, got "${entry.hint ?? 'no hint'}"`,
   )
   // The menu renders these in place rather than in the selection disclosure
   // (issue #1112 K review): the reason is the stock, not the selection.
@@ -170,7 +170,7 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   const entry = squareByKind.get(kind)
   assert(entry, `${kind} is offered on a square blank`)
   assert(
-    entry.hint !== camT('cam.addMenu.needsRoundBar'),
+    entry.hint !== camT('cam.addMenu.squareBarUnavailable'),
     `${kind} is not refused for the stock shape`,
   )
   assert(!entry.blockedInPlace, `${kind} is not part of the stock-blocked rows`)
@@ -179,7 +179,7 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
 // selected, and the reason must stay the one the user can act on.
 assert(
   operationAddHint(SQUARE, modelSelection(), 'router', 'around', 'pocket')
-    === camT('cam.addMenu.needsRoundBar'),
+    === camT('cam.addMenu.squareBarUnavailable'),
   'the square-blank reason wins over a selection-based hint',
 )
 // The flat plasma cut is not offered on Around at all, square or round: it
@@ -198,7 +198,7 @@ assert(
 // never by the stock.
 for (const kind of ['pocket', 'follow_line'] as const) {
   assert(
-    operationAddHint(ROUND, noSelection(), 'router', 'around', kind) !== camT('cam.addMenu.needsRoundBar'),
+    operationAddHint(ROUND, noSelection(), 'router', 'around', kind) !== camT('cam.addMenu.squareBarUnavailable'),
     `${kind} is not refused for the stock shape on a round bar`,
   )
 }

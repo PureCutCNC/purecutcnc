@@ -58,7 +58,7 @@ import {
   restoreResolvedFeatureMetadata,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
-import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import { isCannedFeature } from '../../cannedShapes'
 
 export interface PendingCompletionSliceDependencies {
@@ -102,10 +102,12 @@ function instanceFromReferencedDraft(feature: ReferencedSketchFeature): FeatureI
  * their source's {@link SketchFeature.authoringFace}, and copies spread their
  * source row (`copyFeatures.ts`), so the resulting faces are what the policy
  * judges — not the current workspace face. All of these insert directly rather
- * than through `addFeature`. An unset face means Top and is never refused.
+ * than through `addFeature`. An unset face means Top and is never refused, and
+ * a derived region or construction row never cuts the sheet, so it is admitted
+ * there (issue #1112 decision 17).
  */
 function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
-  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
 }
 
 /**
@@ -118,7 +120,7 @@ function derivedAroundAuthoringRefused(project: Project, features: readonly Sket
 function pendingJoinWouldAuthorRefusedAround(project: Project, entityIds: string[]): boolean {
   const features = resolveFeatureInstances(project, entityIds)
     .filter((feature) => feature.sketch.profile.closed)
-  return features.length >= 2 && aroundSketchAuthoringRefused(project, features[0].authoringFace)
+  return features.length >= 2 && aroundSheetAuthoringRefused(project, features[0].authoringFace, featureOperation(project, features[0]))
 }
 
 export function createPendingCompletionSlice(

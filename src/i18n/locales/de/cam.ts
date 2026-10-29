@@ -407,6 +407,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.addMenu.selectFirst': 'Geometrie im Baum oder in der Skizze auswählen, dann eine Operation wählen',
   'cam.addMenu.needsPlasmaProject': 'Erfordert ein Plasma-Projekt. Der Typ wird beim Anlegen des Projekts gewählt.',
   'cam.addMenu.needsRoundBar': 'Benötigt eine Rundstange',
+  'cam.addMenu.squareBarUnavailable': 'Auf einem Vierkantrohling noch nicht verfügbar',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Keine Plasmaschnitte, für diesen Projekttyp vom Export ausgelassen: {count}',

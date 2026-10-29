@@ -419,7 +419,7 @@ async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
   const wrappedRow = addRows.find((entry) => entry.kind === 'pocket')
   assert(wrappedRow, 'the Add menu lists a wrapped row on this face')
   assert(
-    wrappedRow.blockedInPlace && wrappedRow.hint === camT('cam.addMenu.needsRoundBar'),
+    wrappedRow.blockedInPlace && wrappedRow.hint === camT('cam.addMenu.squareBarUnavailable'),
     `the square blank refuses the wrapped row, got ${JSON.stringify(wrappedRow)}`,
   )
   const quickOperations = validQuickOperationsForFeatureOnActiveFace(project, featureId)

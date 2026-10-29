@@ -50,7 +50,7 @@ import { buildShapeFeature } from './buildShapeFeature'
 import { createDefinitionForFeature } from './featureDefinitions'
 import { isMachinable, sectionForOperation } from './featureRoles'
 import { resolvedProjectFeatures } from './resolveFeatures'
-import { activeFace, aroundSketchAuthoringRefused } from './activeFace'
+import { activeFace, aroundSheetAuthoringRefused, featureOperation } from './activeFace'
 
 const GEAR_NAME_PATTERN = /^Gear (\d+)$/
 const GEAR_BORE_NAME_PATTERN = /^Gear Bore (\d+)$/
@@ -169,7 +169,7 @@ export function createAddGearFeatureAction(
     // round-only Around sheet must refuse it before any project, selection or
     // history mutation (issue #1016 C2-U1F).
     const gearFace = gearFeature.authoringFace ?? activeFace(state.project)
-    if (aroundSketchAuthoringRefused(state.project, gearFace)) {
+    if (aroundSheetAuthoringRefused(state.project, gearFace, featureOperation(state.project, gearFeature))) {
       return []
     }
 

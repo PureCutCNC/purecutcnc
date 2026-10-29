@@ -43,6 +43,7 @@ export const sketchEs: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': 'Cancelar herramienta {shape}',
   'sketch.creation.chooseTarget': 'Elija la forma {target}',
   'sketch.creation.closeDrawer': 'Cerrar cajón de formas',
+  'sketch.creation.squareBarUnavailable': 'Aún no disponible con una barra cuadrada',
   'sketch.transform.copy': 'Copiar elementos seleccionados',
   'sketch.transform.cancelCopy': 'Cancelar copia',
   'sketch.transform.move': 'Mover elementos seleccionados',

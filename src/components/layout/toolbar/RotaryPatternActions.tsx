@@ -24,9 +24,10 @@
  * same page-level panel the other canned shapes use — so the drawer closing
  * cannot unmount an open form, and no modal is involved.
  *
- * The entries exist only while the workspace is on an active Around face with
- * a **round** bar: the unrolled sheet's raw coordinates describe a round bar, so
- * a square blank does not offer them (issue #1016 C2-U2).
+ * The entries exist only while the workspace is on an active Around face. With
+ * a **round** bar they are live; on a square blank the unrolled sheet's raw
+ * coordinates describe a round bar, so they stay listed and disabled with the
+ * reason instead of vanishing (issue #1016 C2-U2, issue #1112 decision 17).
  */
 
 import { useProjectStore } from '../../../store/projectStore'
@@ -58,10 +59,14 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
   const start = useProjectStore((state) => state.startAddRotaryPatternPlacement)
+  if (activeFace(project) !== 'around') return null
   // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2): the
   // unrolled sheet's raw coordinates describe a round bar, so on a square blank
-  // the entries are absent rather than offered and refused.
-  if (activeFace(project) !== 'around' || !aroundSketchAuthoringAvailable(project)) return null
+  // they are refused — but listed and disabled with the reason, never hidden
+  // (issue #1112 decision 17).
+  const blockedReason = aroundSketchAuthoringAvailable(project)
+    ? undefined
+    : t('sketch.creation.squareBarUnavailable')
 
   if (variant === 'rail') {
     return (
@@ -75,11 +80,15 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
                 type="button"
                 data-command={entry.command}
                 aria-label={label}
+                disabled={blockedReason !== undefined}
+                title={blockedReason}
                 onClick={() => start(entry.kind)}
               >
                 <Icon id={entry.icon} />
               </button>
-              <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+              <span className="tool-rail__tooltip" role="tooltip">
+                {blockedReason ? `${label} — ${blockedReason}` : label}
+              </span>
             </div>
           )
         })}
@@ -98,6 +107,8 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
           icon={entry.icon}
           label={t(entry.labelKey)}
           command={entry.command}
+          disabled={blockedReason !== undefined}
+          disabledReason={blockedReason}
           tooltipSide={tooltipSide}
           onClick={() => start(entry.kind)}
         />

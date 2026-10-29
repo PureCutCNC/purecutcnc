@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../Icon'
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace, aroundSketchAuthoringRefused, aroundUnavailableReason } from '../../../store/helpers/activeFace'
+import { activeFace, aroundSheetTargetRefused, aroundUnavailableReason } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { useOutsideDismiss } from '../../../hooks/useOutsideDismiss'
@@ -107,9 +107,13 @@ function CreationActions({
 }) {
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
-  // True on a square blank's Around sheet: the sheet is round-only, so drawing
-  // is refused and the drawing controls are hidden (issue #1016 C2-U1/U2).
-  const sketchAuthoringRefused = aroundSketchAuthoringRefused(project, activeFace(project))
+  // A square blank's Around sheet takes a region and a construction line, and
+  // refuses everything that would be cut on it (issue #1112 decision 17). The
+  // refused entries stay in the drawer, disabled with the reason, rather than
+  // vanishing (#1016 hid them).
+  const face = activeFace(project)
+  const sheetRefusal = t('sketch.creation.squareBarUnavailable')
+  const shapeBlockedReason = aroundSheetTargetRefused(project, face, creationTarget) ? sheetRefusal : undefined
   const [lastShape, setLastShape] = useState<CreationShape>('rect')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement | null>(null)
@@ -225,8 +229,9 @@ function CreationActions({
 
   function renderCreationTargetButton(target: CreationTarget, icon: string, label: string) {
     const active = creationTarget === target
+    const blockedReason = aroundSheetTargetRefused(project, face, target) ? sheetRefusal : undefined
     return (
-      <ToolbarAction label={label} tooltipSide={tooltipSide}>
+      <ToolbarAction label={blockedReason ? `${label} — ${blockedReason}` : label} tooltipSide={tooltipSide}>
         <button
           type="button"
           className={[
@@ -236,9 +241,10 @@ function CreationActions({
             active ? 'toolbar-icon-btn--active toolbar-target-btn--active' : '',
           ].join(' ')}
           onClick={() => onCreationTargetChange(target)}
-          title={label}
+          title={blockedReason ?? label}
           aria-label={label}
           aria-pressed={active}
+          disabled={blockedReason !== undefined}
         >
           <Icon id={icon} />
         </button>
@@ -249,21 +255,20 @@ function CreationActions({
   return (
     <div className={`toolbar-creation-block toolbar-creation-block--${creationTarget}`}>
       {/*
-        On a square blank the Around sheet is round-only (issue #1016 C2-U1):
-        drawing there is refused, so the target toggle, the last-shape button
-        and the drawing rows are hidden instead of offering tools that would do
-        nothing. The creation drawer itself stays, holding only the rotary
-        group, so Turn and Polygon are still reachable there (issue #1112 G).
-        The same rule is applied in the tablet rail.
+        On a square blank the Around sheet is round-only except for the work
+        that never cuts it (issue #1112 decision 17): the target toggle, the
+        last-shape button and every drawing row stay in place, and the entries
+        that would cut the sheet are disabled with the reason instead of
+        disappearing. The two targets that do not cut — a region and a
+        construction line — stay live. The rotary group is unaffected, so Turn
+        and Polygon work there as before (issue #1112 G).
       */}
-      {sketchAuthoringRefused ? null : (
-        <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
-          {renderCreationTargetButton('feature', 'plus', t(CREATION_TARGET_LABEL_KEYS.feature))}
-          {renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))}
-          {renderCreationTargetButton('region', 'pocket', t(CREATION_TARGET_LABEL_KEYS.region))}
-          {renderCreationTargetButton('construction', 'construction', t(CREATION_TARGET_LABEL_KEYS.construction))}
-        </div>
-      )}
+      <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
+        {renderCreationTargetButton('feature', 'plus', t(CREATION_TARGET_LABEL_KEYS.feature))}
+        {renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))}
+        {renderCreationTargetButton('region', 'pocket', t(CREATION_TARGET_LABEL_KEYS.region))}
+        {renderCreationTargetButton('construction', 'construction', t(CREATION_TARGET_LABEL_KEYS.construction))}
+      </div>
       <div
         className="toolbar-group toolbar-group--drawing toolbar-creation-picker"
         ref={pickerRef}
@@ -300,17 +305,17 @@ function CreationActions({
                 <Icon id="feature-drawer" />
               </button>
             </ToolbarAction>
-            {sketchAuthoringRefused ? null : (
-              <ToolbarActionButton
-                icon={lastShapeOption.icon}
-                label={pendingShape === lastShapeOption.value
-                  ? t('sketch.creation.cancelTool', { shape: t(lastShapeOption.nounKey) })
-                  : t('sketch.creation.addShape', { target: targetNoun, shape: t(lastShapeOption.nounKey) })}
-                active={pendingShape === lastShapeOption.value}
-                tooltipSide={tooltipSide}
-                onClick={() => runShapeTool(lastShapeOption.value)}
-              />
-            )}
+            <ToolbarActionButton
+              icon={lastShapeOption.icon}
+              label={pendingShape === lastShapeOption.value
+                ? t('sketch.creation.cancelTool', { shape: t(lastShapeOption.nounKey) })
+                : t('sketch.creation.addShape', { target: targetNoun, shape: t(lastShapeOption.nounKey) })}
+              active={pendingShape === lastShapeOption.value}
+              disabled={shapeBlockedReason !== undefined}
+              disabledReason={shapeBlockedReason}
+              tooltipSide={tooltipSide}
+              onClick={() => runShapeTool(lastShapeOption.value)}
+            />
             {drawerOpen
               ? createPortal(
                   <div
@@ -336,37 +341,37 @@ function CreationActions({
                       }
                     }}
                   >
-                    {sketchAuthoringRefused ? null : (
+                    <div style={{ display: 'flex' }}>
+                      {primaryOptions.map((option) => (
+                        <ToolbarActionButton
+                          key={option.value}
+                          icon={option.icon}
+                          label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
+                          active={lastShapeOption.value === option.value}
+                          disabled={shapeBlockedReason !== undefined}
+                          disabledReason={shapeBlockedReason}
+                          tooltipSide="bottom"
+                          onClick={() => { selectShape(option.value) }}
+                        />
+                      ))}
+                    </div>
+                    {secondaryOptions.length > 0 && (
                       <>
+                        <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
                         <div style={{ display: 'flex' }}>
-                          {primaryOptions.map((option) => (
+                          {secondaryOptions.map((option) => (
                             <ToolbarActionButton
                               key={option.value}
                               icon={option.icon}
                               label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
                               active={lastShapeOption.value === option.value}
+                              disabled={shapeBlockedReason !== undefined}
+                              disabledReason={shapeBlockedReason}
                               tooltipSide="bottom"
                               onClick={() => { selectShape(option.value) }}
                             />
                           ))}
                         </div>
-                        {secondaryOptions.length > 0 && (
-                          <>
-                            <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
-                            <div style={{ display: 'flex' }}>
-                              {secondaryOptions.map((option) => (
-                                <ToolbarActionButton
-                                  key={option.value}
-                                  icon={option.icon}
-                                  label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
-                                  active={lastShapeOption.value === option.value}
-                                  tooltipSide="bottom"
-                                  onClick={() => { selectShape(option.value) }}
-                                />
-                              ))}
-                            </div>
-                          </>
-                        )}
                       </>
                     )}
                     <RotaryCreationGroup tooltipSide="bottom" />

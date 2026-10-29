@@ -53,7 +53,7 @@ import { projectType } from './projectType'
 import { defaultSetupForFace, provisionalSetupFor } from './provisionalSetup'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
-import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
+import type { CreationTarget, PendingAddTool, ProjectStore, SelectionState } from '../types'
 
 type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions' | 'dimensions'>>
 
@@ -767,4 +767,67 @@ export function aroundSketchAuthoringRefused(
   return face === 'around'
     && aroundUnavailableReason(project) === null
     && !aroundSketchAuthoringAvailable(project)
+}
+
+/**
+ * The operation of a row about to be inserted or already stored (issue #1112
+ * decision 17). Format 3.3 keeps it on the shared definition, so a
+ * `FeatureInstance` answers from its definition and a draft — the shape
+ * `addFeature`, `createDerivedFeature` and the copy helpers build — carries it
+ * itself. Reading either shape is what keeps the sheet rule about the row, not
+ * about which of the two the caller happens to hold.
+ */
+export function featureOperation(
+  project: Pick<Project, 'featureDefinitions'>,
+  feature: { operation?: FeatureOperation; definitionId?: string },
+): FeatureOperation | undefined {
+  if (feature.operation) return feature.operation
+  return feature.definitionId === undefined ? undefined : project.featureDefinitions[feature.definitionId]?.operation
+}
+
+/**
+ * Whether an operation cuts the sheet (issue #1112 decision 17). A **region** is
+ * a filter on a rotary operation (#1096) and **construction** geometry is never
+ * machined, so neither cuts the stock; every other operation — an add, a
+ * subtract, an engraving line, a model — does.
+ */
+function operationCutsSheet(operation: FeatureOperation | null | undefined): boolean {
+  return operation !== 'region' && operation !== 'construction'
+}
+
+/**
+ * The operation a creation target authors, when the question is only "does it
+ * cut?" — `null` for the targets that do (`feature`, `line`). The operation
+ * itself is `buildShapeFeature`'s, which also infers an open profile into a
+ * line; neither of those two is sheet-safe, so one answer covers both.
+ */
+function creationTargetOperation(target: CreationTarget): FeatureOperation | null {
+  if (target === 'region') return 'region'
+  if (target === 'construction') return 'construction'
+  return null
+}
+
+/**
+ * Whether authoring a row of this **operation** is refused on `face` (issue
+ * #1112 decision 17). The rule is {@link aroundSketchAuthoringRefused} with one
+ * exception: a region or a construction line is authored on a square blank's
+ * Around sheet as on any other face, because it never cuts the sheet — and a
+ * region is exactly how a rotary operation is limited to part of that sheet
+ * (#1096). Everything that would be cut there keeps its refusal.
+ */
+export function aroundSheetAuthoringRefused(
+  project: Pick<Project, 'stock' | 'meta'>,
+  face: SetupFace,
+  operation: FeatureOperation | null | undefined,
+): boolean {
+  return operationCutsSheet(operation) && aroundSketchAuthoringRefused(project, face)
+}
+
+/** {@link aroundSheetAuthoringRefused} for a creation target rather than a row's operation. */
+export function aroundSheetTargetRefused(
+  project: Pick<Project, 'stock' | 'meta'>,
+  face: SetupFace,
+  target: CreationTarget,
+): boolean {
+  return aroundSheetAuthoringRefused(project, face, creationTargetOperation(target))
 }

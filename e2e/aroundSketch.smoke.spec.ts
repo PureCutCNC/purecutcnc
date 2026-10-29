@@ -1333,7 +1333,8 @@ test('the rotary group offers Turn and Polygon on every face of a round or squar
   await switchToAround(page)
 
   // On a square blank the sheet authoring is gone, but Turn and Polygon stay:
-  // both work on a square blank (decision 13).
+  // both work on a square blank (decision 13). Thread and Flutes stay listed
+  // and are disabled with the reason instead of vanishing (decision 17).
   await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().setStockShape('square')
@@ -1342,8 +1343,12 @@ test('the rotary group offers Turn and Polygon on every face of a round or squar
   await openCreationDrawer(page)
   await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
 
   // Square blank from Top as well: the model is the same bar model.
   await switchToTop(page)

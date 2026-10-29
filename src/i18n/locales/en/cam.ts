@@ -410,6 +410,7 @@ export const camEn = {
   'cam.addMenu.selectFirst': 'Select geometry in the sketch or feature tree, then choose an operation',
   'cam.addMenu.needsPlasmaProject': 'Needs a plasma project. The type is chosen when the project is created.',
   'cam.addMenu.needsRoundBar': 'Needs a round bar',
+  'cam.addMenu.squareBarUnavailable': 'Not available on a square bar yet',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': 'Not plasma cuts, left out of the export for this project type: {count}',

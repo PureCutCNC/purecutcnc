@@ -48,6 +48,7 @@ export const sketchEn = {
   'sketch.creation.cancelTool': 'Cancel {shape} tool',
   'sketch.creation.chooseTarget': 'Choose {target} shape',
   'sketch.creation.closeDrawer': 'Close shape drawer',
+  'sketch.creation.squareBarUnavailable': 'Not available on a square bar yet',
   'sketch.transform.copy': 'Copy selected features',
   'sketch.transform.cancelCopy': 'Cancel copy',
   'sketch.transform.move': 'Move selected features',

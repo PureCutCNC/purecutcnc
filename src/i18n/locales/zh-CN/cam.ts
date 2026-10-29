@@ -411,6 +411,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.addMenu.selectFirst': '请在特征树或草图中选择几何图形，然后选择一项操作',
   'cam.addMenu.needsPlasmaProject': '需要等离子项目。项目类型在创建项目时选择。',
   'cam.addMenu.needsRoundBar': '需要圆棒料',
+  'cam.addMenu.squareBarUnavailable': '方料暂不支持',
 
   // ── What the project type does not cut (#960, #1034) ──
   'cam.operations.leftOutPlasma': '非等离子切割，因项目类型而未包含在导出中：{count}',
