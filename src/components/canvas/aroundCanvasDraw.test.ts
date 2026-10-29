@@ -45,6 +45,7 @@ for (const axis of ['x', 'y'] as const) {
   const sheet = aroundSheet(f.project)!
   const features = resolvedProjectFeatures(f.project)
   const flatDraws: string[] = []
+  let sideViewDrawn = new Set<string>()
   const strokes: { stroke: string; fill: string; width: number }[] = []
   // Paths are captured separately: the armed-operation ring is the only code in
   // this pass that strokes a beginPath outline (the model bands use strokeRect).
@@ -69,6 +70,7 @@ for (const axis of ['x', 'y'] as const) {
     t: (key: string, values?: { name?: string }) => values?.name ?? key,
     drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null as Set<string> | null,
     drawOtherFace: () => new Set(), useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
+    drawRotarySolidSideViews: () => sideViewDrawn,
     drawOriginMarker() {}, activeOriginInStock() {}, canvasPalette: canvasColors(),
     drawFeature: (_ctx: unknown, feature: { id: string }) => flatDraws.push(feature.id),
     drawLineFeatureBatch() {}, stlImageCacheRef: { current: new Map() },
@@ -149,5 +151,11 @@ for (const axis of ['x', 'y'] as const) {
   dependencies.sheet = null as unknown as typeof sheet
   run()
   assert.deepEqual(flatDraws, ['first', 'second'], 'Top still draws model silhouettes')
+  // A Turn or Polygon on Top is drawn by the side-view pass instead, so the
+  // editable pass must leave it out (#1112 rt2-d).
+  sideViewDrawn = new Set(['first'])
+  run()
+  assert.deepEqual(flatDraws, ['second'], 'a solid drawn as a side view is not drawn flat as well')
+  sideViewDrawn = new Set<string>()
 }
 console.log('aroundCanvasDraw: hover, selection and silhouette probes passed')

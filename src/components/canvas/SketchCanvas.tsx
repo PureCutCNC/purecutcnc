@@ -169,7 +169,7 @@ import {
 } from '../../platform/featureClipboard'
 import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMirror } from '../../store/helpers/activeFace'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { drawOtherFace } from './faceOverlay'
+import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -1022,11 +1022,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
+    // A Turn or Polygon is a solid about the bar, so a flat face draws its
+    // side view — dashed and read-only, but still selectable (#1112 rt2-d).
+    const sideViewIds = drawRotarySolidSideViews(ctx, project, features, vt, selection, operationHighlightIds)
     if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
+      if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || sideViewIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
@@ -1184,7 +1187,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Reset label rects before rebuilding
     constraintLabelRectsRef.current = []
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id)) continue
+      if (!feature.visible || ghostIds.has(feature.id) || sideViewIds.has(feature.id)) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid

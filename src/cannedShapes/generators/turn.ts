@@ -40,9 +40,9 @@ import {
   ROTARY_CYLINDER_MIN_SEGMENTS,
   buildRotaryCylinderMesh,
 } from '../../engine/rotaryCylinderMesh'
-import { buildRotaryRevolveMesh } from '../../engine/rotaryRevolve'
+import { buildRotaryRevolveMesh, revolveContourPolygon } from '../../engine/rotaryRevolve'
 import { computeMeshBounds } from '../../engine/importedMesh'
-import { rectProfile, type CannedShapeParams } from '../../types/project'
+import { polygonProfile, rectProfile, type CannedShapeParams, type SketchProfile } from '../../types/project'
 import { defineCannedShape } from '../types'
 import { TURN_CANNED_KIND } from './kinds'
 import { hasFiniteNumbers } from './rotaryPatternParams'
@@ -53,15 +53,20 @@ import {
   rotarySolidAlong,
   rotarySolidBandProblem,
   rotarySolidFrameStock,
+  rotarySolidSideViewPoint,
+  rotarySolidSideViewRect,
   storedSolidFrameOf,
   type RotarySolidFrame,
 } from './rotarySolidParams'
 import {
+  TURN_PROFILE_TOLERANCE,
   convertTurnCannedProfile,
   normalizeTurnCannedProfile,
   turnProfileBand,
   turnProfileProblem,
   type TurnCannedProfile,
+  type TurnProfileContour,
+  type TurnProfilePoint,
 } from './turnProfile'
 
 /** Stored parameters: the dialog's set plus the bar snapshot. */
@@ -140,23 +145,85 @@ function buildTurnMesh(params: TurnCannedParams) {
   )
 }
 
+/** `points` with every radius flipped to the other side of the bar's axis. */
+function mirroredAcrossAxis(points: readonly TurnProfilePoint[]): TurnProfilePoint[] {
+  return points.map((point) => ({ along: point.along, radius: -point.radius }))
+}
+
+function samePoint(a: TurnProfilePoint, b: TurnProfilePoint): boolean {
+  return Math.abs(a.along - b.along) <= TURN_PROFILE_TOLERANCE
+    && Math.abs(a.radius - b.radius) <= TURN_PROFILE_TOLERANCE
+}
+
+/** Drop a repeated vertex and a last point that repeats the first. */
+function closedLoop(points: readonly TurnProfilePoint[]): TurnProfilePoint[] {
+  const loop: TurnProfilePoint[] = []
+  for (const point of points) {
+    const previous = loop[loop.length - 1]
+    if (previous && samePoint(previous, point)) continue
+    loop.push(point)
+  }
+  const first = loop[0]
+  const last = loop[loop.length - 1]
+  if (loop.length > 1 && first && last && samePoint(first, last)) loop.pop()
+  return loop
+}
+
+/**
+ * One profile contour as the loops of the Turn's side view: the contour
+ * mirrored about the bar's axis.
+ *
+ * An outline that reaches the axis is the half-profile of a solid of
+ * revolution, so it becomes **one** loop — the drawn side, then its mirror
+ * back — which is the solid's silhouette seen from a flat face. A closed
+ * outline away from the axis (a ring or a groove) keeps its own loop and gets
+ * its mirror as a second one.
+ */
+function mirroredContourLoops(contour: TurnProfileContour): TurnProfilePoint[][] {
+  const polygon = revolveContourPolygon(contour)
+  if (polygon.length < 2) return []
+  const touchesAxis = polygon.some((point) => point.radius <= TURN_PROFILE_TOLERANCE)
+  if (contour.closed && !touchesAxis) {
+    return [polygon, mirroredAcrossAxis(polygon)]
+  }
+  return [closedLoop([...polygon, ...mirroredAcrossAxis(polygon).reverse()])]
+}
+
+/**
+ * The Turn's side view in stock XY, on Top or Bottom (issue #1112 rt2-d).
+ *
+ * A turned solid is symmetric about the bar's axis, so its side view is its
+ * profile mirrored about that axis over the band it covers — a rectangle for
+ * the plain cylinder. This is the exact silhouette, unlike the model's
+ * bounding rectangle, which is all a stepped profile would otherwise show.
+ */
+export function turnSideViewProfiles(params: TurnCannedParams): SketchProfile[] {
+  const frame = params.frame
+  if (!params.profile) {
+    const { alongStart, alongEnd } = rotarySolidAlong(frame, params.start, params.length)
+    const rect = rotarySolidSideViewRect(frame, alongStart, alongEnd, params.diameter / 2)
+    return [rectProfile(rect.x, rect.y, rect.width, rect.height)]
+  }
+  const profiles: SketchProfile[] = []
+  for (const contour of params.profile.contours) {
+    for (const loop of mirroredContourLoops(contour)) {
+      if (loop.length < 3) continue
+      profiles.push(polygonProfile(loop.map((point) => rotarySolidSideViewPoint(frame, point.along, point.radius))))
+    }
+  }
+  return profiles
+}
+
 export const turnCannedShape = defineCannedShape<TurnCannedParams>({
   kind: TURN_CANNED_KIND,
   labelKey: 'canned.turn.name',
-  // A model has no outlines of its own: its mesh is the output. The rectangle
-  // is the placement frame Properties, selection bounds and export read.
+  // A model has no sketch outlines: its mesh is the output. The outline is the
+  // model's side view — the silhouette a flat face draws (issue #1112 rt2-d) —
+  // whose bounds are also the placement frame Properties, selection and export
+  // read.
   generate: (params) => {
     try {
-      const mesh = buildTurnMesh(params)
-      return [{
-        profile: rectProfile(
-          mesh.bounds.minX,
-          mesh.bounds.minY,
-          mesh.bounds.maxX - mesh.bounds.minX,
-          mesh.bounds.maxY - mesh.bounds.minY,
-        ),
-        name: 'Turn',
-      }]
+      return turnSideViewProfiles(params).map((profile) => ({ profile, name: 'Turn' }))
     } catch {
       return []
     }

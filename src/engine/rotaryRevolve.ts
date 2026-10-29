@@ -95,8 +95,13 @@ function validate(stock: RotaryBarGeometry, contours: readonly RevolveProfileCon
   }
 }
 
-/** The outline closed into a polygon: an open half-profile is closed onto the axis. */
-function contourPolygon(contour: RevolveProfileContour): RevolveProfilePoint[] {
+/**
+ * The outline closed into a polygon: an open half-profile is closed onto the
+ * axis. Exported because the Turn's side-view outline (issue #1112 rt2-d)
+ * mirrors exactly the loop this builder revolves, so the two cannot disagree
+ * about where an open profile ends.
+ */
+export function revolveContourPolygon(contour: RevolveProfileContour): RevolveProfilePoint[] {
   const points = contour.points.map((point) => ({
     along: point.along,
     radius: point.radius <= TOLERANCE ? 0 : point.radius,
@@ -195,7 +200,7 @@ export function buildRotaryRevolveMesh(
   }
 
   for (const contour of contours) {
-    const polygon = contourPolygon(contour)
+    const polygon = revolveContourPolygon(contour)
     if (polygon.length < 3) {
       throw new RangeError('Revolved profile outline collapses to fewer than three distinct points.')
     }
@@ -209,7 +214,7 @@ export function buildRotaryRevolveMesh(
       return ring
     })
 
-    // `contourPolygon` has already closed an open outline onto the axis, so the
+    // `revolveContourPolygon` has already closed an open outline onto the axis, so the
     // polygon is always a closed loop. Walking every edge includes the two
     // caps an off-axis open profile needs; stopping one edge short left the
     // start face open (24 boundary edges on a straight radius-5 profile).

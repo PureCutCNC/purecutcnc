@@ -26,8 +26,8 @@
  * shape was drawn against (`rotarySolidParams.ts`).
  */
 
-import { buildRotaryPolygonPrism } from '../../engine/rotaryPrism'
-import { rectProfile, type CannedShapeParams } from '../../types/project'
+import { buildRotaryPolygonPrism, rotaryPolygonCrossSection } from '../../engine/rotaryPrism'
+import { rectProfile, type CannedShapeParams, type SketchProfile } from '../../types/project'
 import { defineCannedShape } from '../types'
 import { POLYGON_CANNED_KIND } from './kinds'
 import { hasFiniteNumbers } from './rotaryPatternParams'
@@ -38,6 +38,7 @@ import {
   rotarySolidAlong,
   rotarySolidBandProblem,
   rotarySolidFrameStock,
+  rotarySolidSideViewRect,
   storedSolidFrameOf,
   type RotarySolidFrame,
 } from './rotarySolidParams'
@@ -98,21 +99,38 @@ function buildPolygonMesh(params: PolygonCannedParams) {
   })
 }
 
+/**
+ * The Polygon's side view in stock XY, on Top or Bottom (issue #1112 rt2-d).
+ *
+ * A prism projects onto a rectangle whose width across the bar is the
+ * cross-section's own extent on that direction — the across-corners width with
+ * a corner across, the across-flats width with a flat across — so the stored
+ * rotation decides it. The cross-section is the prism builder's, not a second
+ * copy of its rotation convention.
+ */
+export function polygonSideViewProfiles(params: PolygonCannedParams): SketchProfile[] {
+  const frame = params.frame
+  const cross = rotaryPolygonCrossSection({
+    sides: params.sides,
+    acrossFlats: params.acrossFlats,
+    rotationDeg: params.rotation,
+  })
+  const halfWidth = Math.max(...cross.map((point) => Math.abs(point.across)))
+  const { alongStart, alongEnd } = rotarySolidAlong(frame, params.start, params.length)
+  const rect = rotarySolidSideViewRect(frame, alongStart, alongEnd, halfWidth)
+  return [rectProfile(rect.x, rect.y, rect.width, rect.height)]
+}
+
 export const polygonCannedShape = defineCannedShape<PolygonCannedParams>({
   kind: POLYGON_CANNED_KIND,
   labelKey: 'canned.polygon.name',
+  // A model has no sketch outlines: its mesh is the output. The outline is the
+  // model's side view — the silhouette a flat face draws (issue #1112 rt2-d) —
+  // whose bounds are also the placement frame Properties, selection and export
+  // read.
   generate: (params) => {
     try {
-      const mesh = buildPolygonMesh(params)
-      return [{
-        profile: rectProfile(
-          mesh.bounds.minX,
-          mesh.bounds.minY,
-          mesh.bounds.maxX - mesh.bounds.minX,
-          mesh.bounds.maxY - mesh.bounds.minY,
-        ),
-        name: 'Polygon',
-      }]
+      return polygonSideViewProfiles(params).map((profile) => ({ profile, name: 'Polygon' }))
     } catch {
       return []
     }
