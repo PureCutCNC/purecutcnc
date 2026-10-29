@@ -1245,6 +1245,13 @@ export function buildBarModelSolid(
  * The wrapped slab of an Around region as a display-only mesh (issue #395):
  * the same slab the boolean model uses, with the region material the flat
  * regions draw with.
+ *
+ * The material records its base colour like every other feature mesh, because
+ * the viewport recolors these meshes in place right after a build and on every
+ * selection/hover change (issue #1112 F5). Without it, clearing the highlight
+ * reset an unselected region to the default model grey instead of its purple —
+ * and the viewport applies the highlight immediately after every build, so
+ * that happened on an empty selection too.
  */
 export function buildAroundRegionMesh(
   module: ManifoldToplevel,
@@ -1258,8 +1265,9 @@ export function buildAroundRegionMesh(
   if (!solid) return null
   try {
     const geometry = manifoldMeshToGeometry(solid.getMesh())
+    const baseColor = featureMeshBaseColor(feature, true, threePalette)
     const material = new THREE.MeshStandardMaterial({
-      color: threePalette.meshFeatureRegion,
+      color: baseColor,
       roughness: 0.78,
       metalness: 0.08,
       side: THREE.DoubleSide,
@@ -1270,6 +1278,7 @@ export function buildAroundRegionMesh(
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     })
+    markFeatureBaseColor(material, baseColor)
     const mesh = new THREE.Mesh(geometry, material)
     mesh.renderOrder = 1
     mesh.scale.z = -1

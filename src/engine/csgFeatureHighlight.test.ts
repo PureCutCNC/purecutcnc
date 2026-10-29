@@ -27,14 +27,19 @@
  *
  * The highlight is an in-place recolor, exactly like clamps and tabs (#261):
  * `buildScene` takes no selection, so the viewport recolors the meshes it
- * already built instead of rebuilding the CSG model. The two seams are locked
- * here:
+ * already built instead of rebuilding the CSG model. An Around region is a
+ * feature mesh of the same map, so it has to restore its own region colour
+ * too. The seams are locked here:
  *   1. (runtime) `applyFeatureHighlights` colors the scene's real Turn/Polygon
  *      meshes — the exact map, helper and palette the viewport calls with.
  *      Selected and hovered are distinct, selected wins, multi-select paints
  *      every selected row, and clearing restores the colour the mesh was built
  *      in (the operation colour for an extrusion, not a palette guess).
- *   2. (structural) Viewport3D mirrors the built feature meshes into a ref,
+ *   2. (runtime) the same for an Around region, which is a display-only mesh
+ *      built outside `buildFeatureMesh`: its purple has to survive the
+ *      highlight the viewport applies straight after every build, so an empty
+ *      selection cannot repaint it in the default model grey.
+ *   3. (structural) Viewport3D mirrors the built feature meshes into a ref,
  *      feeds it `selection.selectedFeatureIds` / `selection.hoveredFeatureId`
  *      from its own effect, and recolors fresh meshes right after a build —
  *      without adding selection to the scene-build effect's dependencies.
@@ -55,6 +60,8 @@
  *   7. Match drawn ids exactly instead of by `<featureId>:` prefix — the
  *      ellipse (drawn as `<id>:canned:0`) never highlights and its assertion
  *      fails.
+ *   8. Stop recording the Around region's base colour — the region repaints in
+ *      the default model grey on an empty selection and its assertions fail.
  *
  * Run with: npx tsx src/engine/csgFeatureHighlight.test.ts
  */
@@ -64,12 +71,13 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as THREE from 'three'
 import { squareStock } from '../types/barStock'
-import { newProject, rectProfile, type Project, type SketchFeature } from '../types/project'
+import { newProject, rectProfile, roundStock, type Project, type SketchFeature } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { THEME_PALETTES } from '../theme/palette'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { planRotarySolid } from '../store/helpers/rotarySolids'
 import type { SelectionState } from '../store/types'
+import { aroundFrame } from './aroundFrame'
 import { applyFeatureHighlights, buildScene } from './csg'
 
 const threePalette = THEME_PALETTES.dark.three
@@ -289,7 +297,87 @@ function assertColorsAreDistinct(a: number, b: number, label: string): void {
   assertColorsAreDistinct(threePalette.meshFeatureSubtract, threePalette.meshFeatureDefault, 'subtract vs neutral')
 }
 
-// ── 3. Structural: the viewport wires the selection into that helper ────────
+// ── 3. An Around region keeps its own purple when the highlight clears ─────
+
+{
+  // An Around region is a display-only mesh (#395), built by
+  // `buildAroundRegionMesh` in the region material rather than through
+  // `buildFeatureMesh`. It has to record that colour too: the viewport applies
+  // the highlight immediately after every build, so without it an empty
+  // selection repainted the region in the default model grey.
+  const bar = roundStock(40, 200, 'x', { x: 10, y: 30 })
+  const frame = aroundFrame(bar)
+  const region: SketchFeature = {
+    id: 'f-around-region',
+    name: 'Around region',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(50, frame.zero + frame.circumference / 4 - 5, 20, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    z_top: 40,
+    z_bottom: 32,
+    authoringFace: 'around',
+    visible: true,
+    locked: false,
+  }
+  const base = newProject('Around region highlight', 'mm')
+  base.meta.projectType = 'rotary'
+  base.stock = bar
+  const project = projectWithFeatures(base, [region])
+
+  const scene = await buildScene(project, threePalette)
+  const around = scene.featureMeshes.get(region.id)
+  assert(around, 'the Around region is drawn as its own display mesh')
+
+  // The built appearance is the region colour, not the model default.
+  assertEveryColor(around, threePalette.meshFeatureRegion, 'Around region as built')
+  assertColorsAreDistinct(threePalette.meshFeatureRegion, threePalette.meshFeatureDefault, 'region vs model grey')
+
+  // The viewport highlights right after a build: an empty selection is still a
+  // trip through the helper, and it must leave the purple alone.
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [], hoveredFeatureId: null }, threePalette)
+  assertEveryColor(around, threePalette.meshFeatureRegion, 'Around region under an empty selection')
+
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [region.id], hoveredFeatureId: null }, threePalette)
+  assertEveryColor(around, threePalette.meshFeatureSelected, 'Around region selected')
+
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [], hoveredFeatureId: region.id }, threePalette)
+  assertEveryColor(around, threePalette.meshFeatureHovered, 'Around region hovered')
+
+  applyFeatureHighlights(
+    scene.featureMeshes,
+    { selectedFeatureIds: [region.id], hoveredFeatureId: region.id },
+    threePalette,
+  )
+  assertEveryColor(around, threePalette.meshFeatureSelected, 'a selected and hovered Around region reads as selected')
+
+  // Clearing restores the region colour exactly, and stays idempotent.
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [], hoveredFeatureId: null }, threePalette)
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [], hoveredFeatureId: null }, threePalette)
+  assertEveryColor(around, threePalette.meshFeatureRegion, 'Around region restored to its region colour')
+
+  // The display-only look survives the recolor: the mesh is still translucent.
+  for (const drawn of drawnMeshes(around)) {
+    assert(drawn.material.transparent, 'the reclaimed Around region is still transparent')
+    assert(drawn.material.opacity === 0.55, `the region keeps its opacity, got ${drawn.material.opacity}`)
+    assert(drawn.material.depthWrite === false, 'the region still does not write depth')
+  }
+
+  // The highlight follows the palette it is given (the viewport passes the
+  // live theme); clearing keeps restoring the colour the mesh was built in.
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [region.id], hoveredFeatureId: null }, THEME_PALETTES.light.three)
+  assertEveryColor(around, THEME_PALETTES.light.three.meshFeatureSelected, 'Around region selected in the light theme')
+  applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [], hoveredFeatureId: null }, threePalette)
+  assertEveryColor(around, threePalette.meshFeatureRegion, 'Around region restored after a light-theme highlight')
+}
+
+// ── 4. Structural: the viewport wires the selection into that helper ────────
 
 {
   const here = dirname(fileURLToPath(import.meta.url))
