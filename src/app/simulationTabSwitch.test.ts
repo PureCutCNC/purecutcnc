@@ -33,6 +33,13 @@
  *   - pressing play on a later operation starts from the heightfield the
  *     earlier operation's own result already is.
  *
+ * It also covers the mode transition (review P2): Visible and Selected must
+ * never share a cached result unless they replay the same paths. A hidden
+ * selection's preview path is carried in `canonicalPaths` for the selected
+ * mode, and the visible replay drops it, so naming it in the visible key made
+ * both modes collide — Visible showed the selection's cut, or Selected showed
+ * Visible's empty sheet.
+ *
  * Mutations these assertions were checked against, each applied on its own and
  * reverted:
  * - dropping `?? cachedResult` from `simulationResult` → "the result is
@@ -42,6 +49,8 @@
  * - replaying the base grid directly (`priorReplayGrid`) instead of through
  *   `rememberedReplay` → "play starts from the earlier operation's own result"
  *   fails;
+ * - naming every setup operation in the visible key instead of the operations
+ *   the visible replay cuts → both mode-transition checks fail;
  *
  * Run with: NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/app/simulationTabSwitch.test.ts
  */
@@ -133,6 +142,16 @@ function makeToolpath(operation: Operation): ToolpathResult {
   return { operationId: operation.id, moves, warnings: [], bounds }
 }
 
+/**
+ * The same document with nothing shown: the visible replay then cuts nothing,
+ * while the selected mode still replays the selection (it does not read
+ * `showToolpath`). The preview path stays in hand, which is what made the two
+ * modes share a key before the fix.
+ */
+function withNothingShown(project: Project): Project {
+  return { ...project, operations: project.operations.map((operation) => ({ ...operation, showToolpath: false })) }
+}
+
 // ── The harness ──────────────────────────────────────────────────
 
 interface Captured {
@@ -157,12 +176,13 @@ async function main(): Promise<void> {
   const history: Captured[] = []
   let centerTab: 'sketch' | 'simulation' = 'sketch'
   let selected: Operation | null = operations[0]!
+  let simulationMode: 'selected' | 'visible' = 'selected'
 
   function Probe() {
     const model = useSimulationModel({
       project,
       centerTab,
-      simulationMode: 'selected',
+      simulationMode,
       simulationDetailCells: 120,
       selectedOperation: selected,
       selectedToolpath: selected ? paths.get(selected.id) ?? null : null,
@@ -285,6 +305,66 @@ async function main(): Promise<void> {
       && afterEdit.grid.topZ.every((value, index) => value === finish.grid.topZ[index]),
       'and it is the same heightfield, so the rebuild is not a different result',
     )
+
+    // ── The mode transition: Visible must not serve Selected's cut, or the
+    //    other way round (review P2) ──
+    //
+    // A hidden selection still has its preview path in hand, and the selected
+    // mode replays it; the visible replay drops every hidden operation. The two
+    // are different work and must never share a cached result, whichever mode
+    // ran first. Each direction gets a fresh project identity so the cache it
+    // starts from is the one that direction can collide with.
+    selected = operations[0]!
+
+    console.log('Testing Visible does not inherit the selected cut when nothing is shown...')
+    simulationMode = 'visible'
+    project = withNothingShown(project)
+    await render()
+    await waitForResult()
+    await settle()
+    const visibleNothing = captured.result as SimulationResult
+    assert(
+      visibleNothing.stats.removedCellCount === 0,
+      `the visible replay has nothing to cut, got ${visibleNothing.stats.removedCellCount} removed cells`,
+    )
+
+    // Switching to the selection must build its own cut instead of serving the
+    // visible mode's empty sheet.
+    simulationMode = 'selected'
+    mark = history.length
+    await render()
+    assert(history[mark].result === null, 'the switch to Selected starts without a cached result')
+    await waitForResult()
+    await settle()
+    const selectedAfterVisible = captured.result as SimulationResult
+    assert(
+      selectedAfterVisible.stats.removedCellCount > 0,
+      `the selected cut is its own work, got ${selectedAfterVisible.stats.removedCellCount} removed cells`,
+    )
+    assert(selectedAfterVisible !== visibleNothing, 'and it is not the visible mode\'s result')
+
+    console.log('Testing Visible does not serve the selected cut when nothing is shown...')
+    // The opposite order: the selected cut is the one already cached.
+    project = withNothingShown(project)
+    simulationMode = 'selected'
+    await render()
+    await waitForResult()
+    await settle()
+    const hiddenCut = captured.result as SimulationResult
+    assert(hiddenCut.stats.removedCellCount > 0, 'the hidden selection is still cut in the selected mode')
+
+    simulationMode = 'visible'
+    mark = history.length
+    await render()
+    assert(history[mark].result === null, 'the switch to Visible starts without a cached result')
+    await waitForResult()
+    await settle()
+    const visibleAfterSelected = captured.result as SimulationResult
+    assert(
+      visibleAfterSelected.stats.removedCellCount === 0,
+      `the visible replay must not inherit the selected cut, got ${visibleAfterSelected.stats.removedCellCount} removed cells`,
+    )
+    assert(visibleAfterSelected !== hiddenCut, 'and it is not the selected mode\'s result')
   } finally {
     await act(async () => { root.unmount() })
     host.remove()

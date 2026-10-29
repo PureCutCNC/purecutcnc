@@ -172,14 +172,34 @@ function selectedReplayItem(
   }
 }
 
+/**
+ * The operations a visible replay cuts, in cut order: enabled, its toolpath
+ * shown, and a tool that can cut its kind (issue #1112 rt2-h review P2).
+ *
+ * Exported because the panel's replay key must name exactly this list. A key
+ * built from every setup operation instead names a hidden selection's preview
+ * path, which the visible replay drops — and that let the visible key equal the
+ * selected key, so one mode served the other's heightfield.
+ */
+export function visibleReplayOperations(
+  project: Project,
+  operations: readonly Operation[],
+): Operation[] {
+  return operations.filter((operation) =>
+    operation.enabled
+    && operation.showToolpath
+    && operation.toolRef
+    && findOperationTool(project, operation) !== null,
+  )
+}
+
 /** The visible mode's replay items, in cut order, skipping anything unbuildable. */
 function visibleReplayItems(
   context: SimulationContext,
   setupInput: SimulationSetupInput | null,
   paths: ReadonlyMap<string, ToolpathResult> | null,
 ): SimulationReplayItem[] {
-  return (setupInput?.operations ?? [])
-    .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
+  return visibleReplayOperations(context.localProject, setupInput?.operations ?? [])
     .map((operation) => {
       const toolpath = paths === null ? null : context.localPaths.get(operation.id) ?? null
       const toolRecord = findOperationTool(context.localProject, operation)

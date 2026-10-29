@@ -33,7 +33,10 @@
  * so the same key means the same heightfield however the panel reached it
  * (`computeSimulationResult` and `priorReplayResult` share one kernel and one
  * grid initialization). Two entry points that name the same items therefore
- * share one result, which is what removes the duplicated prior replay.
+ * share one result, which is what removes the duplicated prior replay. Each
+ * entry point names exactly the paths its own replay reads: the visible set is
+ * `visibleReplayOperations`, so a mode that drops a hidden operation can never
+ * key the same as one that cuts it (issue #1112 rt2-h review P2).
  *
  * What makes a key a safe cache hit — a key that names *fewer* inputs than the
  * replay reads would serve a stale heightfield — is that every key component is
@@ -83,12 +86,18 @@ export interface SimulationReplayKey {
  * The paths `operations` contribute to a replay: one entry per operation that
  * has a generated path, in the order given.
  *
- * Callers pass the list the mode replays — the selection alone, the operations
- * before it, or all of them. Eligibility (enabled, shown, a resolvable tool) is
- * deliberately **not** applied here: the kernel drops such an operation, so
- * naming it in the key only makes a key stricter (a miss where a hit was
- * possible), while omitting a path the kernel does read would make two
- * different replays share a key. The safe direction is the superset.
+ * Callers pass the **exact** list the mode's replay reads — eligibility
+ * included, not just "the interesting operations". Naming an operation the
+ * replay drops is not the safe superset it looks like (issue #1112 rt2-h review
+ * P2): a hidden selection keeps its preview path for the selected mode, and a
+ * visible key that named it equalled the selected key, so each mode served the
+ * other's heightfield. Omitting a path the replay does read is the mirror
+ * fault, letting two different replays share a key.
+ *
+ * Presence in the map is applied here because the caller cannot know which
+ * paths the acquisition produced; the mode's own eligibility filter belongs in
+ * the caller (`visibleReplayOperations` for the visible set and the prior
+ * operations the playback base replays).
  */
 export function simulationReplayEntries(
   operations: readonly Operation[],

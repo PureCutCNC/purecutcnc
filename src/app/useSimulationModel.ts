@@ -27,6 +27,7 @@ import {
   computeSimulationResultAsync,
   priorReplayResult,
   simulationBuildOptions,
+  visibleReplayOperations,
   type SimulationResultInput,
 } from './simulationCompute'
 import {
@@ -172,20 +173,29 @@ export function useSimulationModel({
 
   // Every operation simulation may need: the visible set for 'visible' mode,
   // and the prior operations for 'selected' playback's starting stock.
+  //
+  // `visibleOperations` is also the list the visible replay *cuts*, so it is
+  // what the panel's replay key names (review P2): a hidden selection keeps its
+  // preview path in `canonicalPaths` for the selected mode, and naming it in
+  // the visible key made the two modes share a cached result.
+  const visibleOperations = useMemo(
+    () => visibleReplayOperations(project, setupScopedOperations),
+    [project, setupScopedOperations],
+  )
   const requiredOperationIds = useMemo(() => {
     if (centerTab !== 'simulation') return []
-    const eligible = (operation: Operation): boolean =>
-      operation.enabled && operation.showToolpath && findOperationTool(project, operation) !== null
     // Only the simulated setup's operations: each setup starts from fresh
     // stock, so another setup's cuts are never part of its starting state.
     if (simulationMode === 'visible') {
-      return setupScopedOperations.filter(eligible).map((operation) => operation.id)
+      return visibleOperations.map((operation) => operation.id)
     }
     if (!selectedInSetup) return []
     const selectedIndex = setupScopedOperations.findIndex((operation) => operation.id === selectedInSetup.id)
     const prior = selectedIndex >= 0 ? setupScopedOperations.slice(0, selectedIndex) : []
-    return prior.filter(eligible).map((operation) => operation.id)
-  }, [centerTab, project, selectedInSetup, setupScopedOperations, simulationMode])
+    // The prior replay drops exactly what the visible replay drops
+    // (`buildPriorReplayItems` filters the same way), so both use one predicate.
+    return visibleReplayOperations(project, prior).map((operation) => operation.id)
+  }, [centerTab, project, selectedInSetup, setupScopedOperations, simulationMode, visibleOperations])
 
   const requiredKey = requiredOperationIds.join(',')
 
@@ -272,14 +282,20 @@ export function useSimulationModel({
    * everything it acquired, so it has nothing to key until the acquisition
    * lands. The selected mode's result reads only the selected path, so it is
    * keyable (and reusable) even while the prior operations are still arriving.
+   *
+   * Both branches name exactly the items their mode's replay reads, because a
+   * key that names anything else is not a cache key for that result (review
+   * P2). The visible branch passes `visibleOperations`, the same eligibility
+   * `visibleReplayItems` applies; the selected branch passes the selection,
+   * which the selected replay does not filter.
    */
   const shownEntries = useMemo<SimulationPathEntry[] | null>(() => {
     if (centerTab !== 'simulation') return null
     if (simulationMode === 'visible') {
-      return paths === null ? null : simulationReplayEntries(setupScopedOperations, canonicalPaths)
+      return paths === null ? null : simulationReplayEntries(visibleOperations, canonicalPaths)
     }
     return selectedInSetup ? simulationReplayEntries([selectedInSetup], canonicalPaths) : []
-  }, [centerTab, canonicalPaths, paths, selectedInSetup, setupScopedOperations, simulationMode])
+  }, [centerTab, canonicalPaths, paths, selectedInSetup, simulationMode, visibleOperations])
 
   const shownKey = useMemo<SimulationReplayKey | null>(() => (
     centerTab === 'simulation' && shownEntries !== null
@@ -416,7 +432,9 @@ export function useSimulationModel({
       project,
       setup: simulationSetup,
       detailCells: simulationDetailCells,
-      items: simulationReplayEntries(priorOperations, canonicalPaths),
+      // The operations `buildPriorReplayItems` replays, not the whole slice: the
+      // key names what the replay cuts (review P2).
+      items: simulationReplayEntries(visibleReplayOperations(project, priorOperations), canonicalPaths),
     }
     const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => rememberedReplay(
       replayCache,
