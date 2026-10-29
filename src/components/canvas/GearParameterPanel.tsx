@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   GEAR_MAX_TEETH,
   GEAR_MIN_TEETH,
@@ -80,6 +80,29 @@ function commitNumber(
   const next = normalize(parseNumber(value, fallback))
   commit(next)
   return String(next)
+}
+
+/**
+ * Edit gear follows the field while it is being typed in (issue #1112 F1).
+ *
+ * The blur commit still owns rounding and clamping, so the field text is
+ * normalized when the user leaves it; this only feeds the raw number to the
+ * draft, which is what the live preview renders. Text that is not a number is
+ * ignored, and a value the generator refuses leaves the last valid preview in
+ * place instead of drawing something else. Both panels share these fields, so
+ * creation keeps its commit-on-blur behaviour and only Edit opts in.
+ */
+function liveNumber(
+  live: boolean,
+  commit: (value: number) => void,
+): ((event: FormEvent<HTMLInputElement>) => void) | undefined {
+  if (!live) return undefined
+  return (event) => {
+    const text = event.currentTarget.value.trim()
+    if (text === '') return
+    const parsed = Number(text)
+    if (Number.isFinite(parsed)) commit(parsed)
+  }
 }
 
 function GearField({ children, labelKey, params, reference }: GearFieldProps) {
@@ -245,10 +268,12 @@ interface GearFieldsProps {
   size?: number
   onSize?: (value: number) => void
   autoFocusTeeth?: boolean
+  /** Edit previews the field while it is typed in; creation commits on blur. */
+  live?: boolean
 }
 
 /** The full gear parameter set, shared by the creation panel and Edit gear. */
-export function GearFields({ params, session, onParams, size, onSize, autoFocusTeeth }: GearFieldsProps) {
+export function GearFields({ params, session, onParams, size, onSize, autoFocusTeeth, live = false }: GearFieldsProps) {
   const { t } = useI18n()
   return (
     <>
@@ -260,6 +285,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             type="text"
             inputMode="decimal"
             defaultValue={size}
+            onInput={liveNumber(live, onSize)}
             onBlur={(event) => {
               event.currentTarget.value = commitNumber(
                 event.currentTarget.value,
@@ -280,6 +306,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           type="text"
           inputMode="numeric"
           defaultValue={params.teeth}
+          onInput={liveNumber(live, (value) => onParams({ teeth: value }))}
           onBlur={(event) => {
             event.currentTarget.value = commitNumber(
               event.currentTarget.value,
@@ -299,6 +326,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           type="text"
           inputMode="decimal"
           defaultValue={params.wholeDepth}
+          onInput={liveNumber(live, (value) => onParams({ wholeDepth: value }))}
           onBlur={(event) => {
             event.currentTarget.value = commitNumber(
               event.currentTarget.value,
@@ -329,6 +357,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             type="text"
             inputMode="decimal"
             defaultValue={params.pressureAngleDeg}
+            onInput={liveNumber(live, (value) => onParams({ pressureAngleDeg: value }))}
             onBlur={(event) => {
               event.currentTarget.value = commitNumber(
                 event.currentTarget.value,
@@ -361,6 +390,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             type="text"
             inputMode="decimal"
             defaultValue={params.rootFilletRadius}
+            onInput={liveNumber(live, (value) => onParams({ rootFilletRadius: value }))}
             onBlur={(event) => {
               event.currentTarget.value = commitNumber(
                 event.currentTarget.value,
@@ -392,6 +422,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             type="text"
             inputMode="decimal"
             defaultValue={params.crestRadius}
+            onInput={liveNumber(live, (value) => onParams({ crestRadius: value }))}
             onBlur={(event) => {
               event.currentTarget.value = commitNumber(
                 event.currentTarget.value,
@@ -411,6 +442,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           type="text"
           inputMode="decimal"
           defaultValue={params.boreDiameter === 0 ? '' : params.boreDiameter}
+          onInput={liveNumber(live, (value) => onParams({ boreDiameter: value }))}
           onBlur={(event) => {
             event.currentTarget.value = commitNumber(
               event.currentTarget.value,

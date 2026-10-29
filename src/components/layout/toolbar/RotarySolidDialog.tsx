@@ -58,6 +58,7 @@ import {
 import { Select } from '../../Select'
 import type { TurnCannedProfile } from '../../../cannedShapes/generators/turnProfile'
 import { turnProfileBand } from '../../../cannedShapes/generators/turnProfile'
+import { useCannedShapePreview } from '../../useCannedShapePreview'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -195,7 +196,6 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
   const dialogRef = useRef<HTMLDivElement>(null)
   const project = useProjectStore((state) => state.project)
   const addRotarySolid = useProjectStore((state) => state.addRotarySolid)
-  const updateFeature = useProjectStore((state) => state.updateFeature)
   const units = project.meta.units
   const unitLabel = units === 'inch' ? 'in' : 'mm'
   const editing = featureId !== undefined
@@ -391,6 +391,19 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
   const problem = profileError ?? (frame ? rotarySolidInputProblem(frame, buildInput()) : 'notOnBar')
   const problemText = problem === null ? null : refusalText(problem)
 
+  // Live preview (issue #1112 F1): every valid draft is written into the
+  // project through the ordinary `updateFeature` path, so the sketch and the 3D
+  // model follow the fields instead of waiting for Apply. A draft the dialog
+  // refuses is never written, and closing without Apply restores the stored
+  // model exactly; Apply commits the preview as one undo step.
+  const draft = editing && frame && stored && problem === null
+    ? rotarySolidCannedData(stored.frame, buildInput(), units)
+    : null
+  const { commitPreview } = useCannedShapePreview({
+    featureId: featureId ?? null,
+    draft,
+  })
+
   function handleApply() {
     if (problem !== null || !frame) return
     if (editing && featureId) {
@@ -406,12 +419,14 @@ export function RotarySolidDialog({ kind, featureId, onClose }: RotarySolidDialo
         setRefusal(t('dialogs.rotarySolid.refusal.geometryNotRepresentable'))
         return
       }
-      // One parameter write, one history entry. The store rebuilds the mesh
-      // and re-fits every instance's span from its own placement — the edited
-      // row and every linked copy keep their own Z centre and scale, so a
-      // diameter change cannot reset the edited instance or misalign a copy.
-      // Pinning the mesh's raw Z bounds here would do exactly that.
-      updateFeature(featureId, { canned })
+      // One parameter write, one history entry. The preview already wrote this
+      // draft inside a transaction; committing it is what makes the whole edit
+      // one undo step. The store rebuilds the mesh and re-fits every instance's
+      // span from its own placement — the edited row and every linked copy keep
+      // their own Z centre and scale, so a diameter change cannot reset the
+      // edited instance or misalign a copy. Pinning the mesh's raw Z bounds here
+      // would do exactly that.
+      commitPreview(canned)
       if (activeRef.current) onClose()
       return
     }

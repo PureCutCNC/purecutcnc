@@ -53,6 +53,7 @@ import {
   type RotaryPatternRefusal,
 } from '../../../store/helpers/rotaryPatterns'
 import { getStockBounds } from '../../../types/project'
+import { useCannedShapePreview } from '../../useCannedShapePreview'
 import { useRestoreCanvasFocus } from '../../../utils/useRestoreCanvasFocus'
 import { formatLength } from '../../../utils/units'
 import { useI18n } from '../../../i18n/i18nContext'
@@ -182,7 +183,6 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
   const addRotaryPattern = useProjectStore((state) => state.addRotaryPattern)
-  const updateFeature = useProjectStore((state) => state.updateFeature)
   const units = project.meta.units
   const unitLabel = units === 'inch' ? 'in' : 'mm'
   const editing = featureId !== undefined
@@ -335,6 +335,26 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
 
   const problem = kind === 'thread' ? threadProblem() : flutesProblem()
 
+  // Live preview (issue #1112 F1): every valid draft is written into the
+  // project through the ordinary `updateFeature` path — parameters plus the Z
+  // span they imply — so the sketch and the 3D model follow the fields instead
+  // of waiting for Apply. A draft the dialog refuses is never written, and
+  // closing without Apply restores the stored lines exactly; Apply commits the
+  // preview as one undo step.
+  const previewDraft = editing && featureId && stored && problem === null
+    ? rotaryPatternCannedData(stored.frame, buildInput())
+    : null
+  const previewSpan = previewDraft
+    ? (placedSurface
+        ? rotaryPatternSurfaceSpanOn(project, placedSurface, parseNumber(depth))
+        : rotaryPatternSurfaceSpan(project, buildInput(), parseNumber(depth)))
+    : null
+  const { commitPreview } = useCannedShapePreview({
+    featureId: featureId ?? null,
+    draft: previewDraft,
+    span: previewSpan ? { z_top: previewSpan.zTop, z_bottom: previewSpan.zBottom } : null,
+  })
+
   function buildInput(): RotaryPatternInput {
     const depthValue = parseNumber(depth)
     if (kind === 'thread') {
@@ -371,20 +391,18 @@ export function RotaryPatternDialog({ kind, featureId, onClose }: RotaryPatternD
         setRefusal(t('dialogs.rotary.refusal.creationFailed'))
         return
       }
+      // One parameter write, one history entry: the preview already wrote this
+      // draft (parameters plus the Z span they imply) inside a transaction, and
+      // committing it is what makes the whole edit one undo step (issue #1112).
+      // The span comes from the **placed** band the dialog line shows, not the
+      // stored band the row was drawn over: an unchanged Apply after moving the
+      // row must keep the span it already follows, not push it back to the old
+      // surface.
       const depthValue = parseNumber(depth)
-      // One parameter write, one history entry: `updateFeature` is the same
-      // path any other Properties edit takes (issue #1112). The span comes from
-      // the **placed** band the dialog line shows, not the stored band the row
-      // was drawn over: an unchanged Apply after moving the row must keep the
-      // span it already follows, not push it back to the old surface.
       const span = placedSurface
         ? rotaryPatternSurfaceSpanOn(project, placedSurface, depthValue)
         : rotaryPatternSurfaceSpan(project, input, depthValue)
-      updateFeature(featureId, {
-        canned,
-        z_top: span.zTop,
-        z_bottom: span.zBottom,
-      })
+      commitPreview(canned, { z_top: span.zTop, z_bottom: span.zBottom })
       if (activeRef.current) onClose()
       return
     }

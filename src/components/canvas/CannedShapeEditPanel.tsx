@@ -19,9 +19,10 @@
  *
  * Creation and editing share one surface: the Properties "Edit <shape>…"
  * button arms a `canned-edit` pending session, and this panel renders the same
- * page-level workflow panel the creation tools use. Apply writes the stored
- * parameters through the normal `updateFeature` path, so it is one undo step and
- * linked copies follow. There is no second React root and no modal.
+ * page-level workflow panel the creation tools use. Every valid field value is
+ * previewed live through `useCannedShapePreview`, and Apply commits that preview
+ * so it is one undo step and linked copies follow. There is no second React root
+ * and no modal.
  */
 
 import { useEffect, useState } from 'react'
@@ -55,6 +56,7 @@ import type { MessageKey } from '../../i18n/locales/en'
 import { CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
+import { useCannedShapePreview } from '../useCannedShapePreview'
 import { CannedShapeEditReference } from './CreationParameterReferences'
 import { GearFields } from './GearParameterPanel'
 
@@ -109,7 +111,6 @@ export function CannedShapeEditPanel({
 }: CannedShapeEditPanelProps) {
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
-  const updateFeature = useProjectStore((state) => state.updateFeature)
   const cancelPendingAdd = useProjectStore((state) => state.cancelPendingAdd)
   const featureId = pending.featureId
   const feature = resolveFeatureInstance(project, featureId)
@@ -142,15 +143,24 @@ export function CannedShapeEditPanel({
     if (!canned) cancelPendingAdd()
   }, [canned, cancelPendingAdd])
 
-  if (!canned) return null
-
-  const labelKey = cannedShapeLabelKey(canned)
   const normalized = isGear
     ? normalizeGearCannedParams({
         ...normalizeGearCreationParams(gearParams),
         outsideRadius: Number(gearSize),
       })
     : flatNormalized(request, values)
+  // Every valid draft is written into the project as it is typed, so the sketch
+  // and the 3D preview follow the fields; a value the generator refuses keeps
+  // the last valid preview on screen. Apply commits that one preview
+  // (issue #1112 F1).
+  const { commitPreview } = useCannedShapePreview({
+    featureId,
+    draft: canned && normalized ? { kind: canned.kind, params: normalized } : null,
+  })
+
+  if (!canned) return null
+
+  const labelKey = cannedShapeLabelKey(canned)
   const gearErrors = isGear
     ? validateGearProfileParams({
         ...gearParams,
@@ -162,7 +172,7 @@ export function CannedShapeEditPanel({
 
   function apply(): void {
     if (!canned || !normalized) return
-    updateFeature(featureId, { canned: { kind: canned.kind, params: normalized } })
+    commitPreview({ kind: canned.kind, params: normalized })
     cancelPendingAdd()
   }
 
@@ -198,6 +208,7 @@ export function CannedShapeEditPanel({
             onParams={(patch) => setGearParams((current) => normalizeGearCreationParams({ ...current, ...patch }))}
             size={Number(gearSize)}
             onSize={(value) => setGearSize(String(value))}
+            live
           />
         </div>
       ) : request ? (
