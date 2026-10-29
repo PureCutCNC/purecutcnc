@@ -29,32 +29,43 @@
  * rather than assumed.
  *
  * A square blank's Around sheet is round-only for authoring (#1016 C2-U1), so
- * nothing is created there — rt2-c keeps those drawer entries disabled and
- * #1128 owns sheet work. Its *default* is still pinned as Subtract: item 14
- * names both bar shapes, and the classifier asks whether the bar is the
- * material, not what shape its outline is.
+ * no *cutting* canned shape can be created through the store there yet — that
+ * refusal is pinned in its own test and stays with #1016 / the drawer slice
+ * (rt2-c keeps those entries disabled with their own reason; #1128 owns sheet
+ * work). Its *default* is pinned all the same, per kind, at the point creation
+ * decides it: `buildShapeFeature` is the draft builder every canned creator
+ * passes its profile to, and `gearCreationOperation` is the first-gear rule the
+ * gear action applies to that draft. Item 14 names both bar shapes, and the
+ * classifier asks whether the bar is the material, not what shape its outline
+ * is — enabling the sheet later must not quietly bring the gear's Add back.
  *
  * Mutations checked one at a time against these assertions:
- * - dropping the `gearFace !== 'around'` condition in `gearFeature.ts` (i.e.
- *   the first gear on Around goes back to Add) → the Around gear assertions
- *   fail;
+ * - dropping the `face !== 'around'` condition in `gearCreationOperation`
+ *   (i.e. the first gear on Around goes back to Add) → the Around gear
+ *   assertions fail, on the round bar and on the square blank's draft;
  * - making that condition unconditional (every face subtract) → the Top and
  *   Bottom assertions fail;
  * - removing `inferManualFeatureOperation` from `buildShapeFeature`'s closed
  *   path (so a canned shape is always Add) → every Around assertion fails;
  * - scoping the Around branch of `inferManualFeatureOperation` to a round bar
- *   (so a square bar's sheet classifies like a block) → the square-bar default
- *   assertions fail.
+ *   (so a square bar's sheet classifies like a block) → the square-bar
+ *   creation-draft assertions (every kind) fail;
+ * - dropping the square-blank guard in `addFeature` / `createAddGearFeatureAction`
+ *   (so a cutting outline is authored on the round-only sheet) → the
+ *   square-Around refusal assertions fail.
  *
  * Run with: npx tsx src/store/cannedShapeAroundDefaults.test.ts
  */
 
 import {
-  circleProfile,
   newProject,
+  ellipseProfile,
+  ngonProfile,
   roundStock,
+  slotProfile,
   type Project,
   type SketchFeature,
+  type SketchProfile,
   type Stock,
 } from '../types/project'
 import { squareStock } from '../types/barStock'
@@ -65,7 +76,9 @@ import { resolveCannedShapeShapes } from '../cannedShapes'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
 import { activeFace } from './helpers/activeFace'
-import { inferManualFeatureOperation } from './helpers/manualFeatureOperation'
+import { buildShapeFeature } from './helpers/buildShapeFeature'
+import { gearCreationOperation } from './helpers/gearFeature'
+import { chamferedRectProfile, roundedRectProfile } from './helpers/cannedRectProfiles'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 
@@ -133,6 +146,29 @@ const CANNED_CREATORS: ReadonlyArray<[kind: string, create: () => unknown]> = [
   ['roundrect', () => useProjectStore.getState().addRoundRectFeature('Rounded rect', 10, 10, 20, 10, 2, 5)],
   ['chamferrect', () => useProjectStore.getState().addChamferRectFeature('Chamfered rect', 10, 10, 20, 10, 2, 5)],
 ]
+
+/**
+ * The profile each canned creator passes to `buildShapeFeature` — the one call
+ * that decides the operation a new canned shape is created with. These are the
+ * same arguments the creators above use, so the draft the default is read from
+ * is the draft creation would write.
+ */
+const CANNED_DRAFT_PROFILES: ReadonlyArray<[kind: string, profile: () => SketchProfile]> = [
+  ['ellipse', () => ellipseProfile(10, 10, 4, 3)],
+  ['slot', () => slotProfile({ x: 10, y: 20 }, { x: 30, y: 20 }, 4)],
+  ['ngon', () => ngonProfile(20, 30, 6, 5, 0)],
+  ['roundrect', () => roundedRectProfile({ x: 10, y: 10 }, { x: 30, y: 20 }, 2)],
+  ['chamferrect', () => chamferedRectProfile({ x: 10, y: 10 }, { x: 30, y: 20 }, 2)],
+]
+
+/** The gear profile the gear action builds, at the size the fixtures use. */
+function gearProfile(): SketchProfile {
+  return buildGearProfile({
+    ...defaultGearCreationParams(8),
+    center: { x: 40, y: 30 },
+    outsideRadius: 8,
+  })
+}
 
 /** The gear through the placement + completion path the canvas button uses. */
 function createGear(center = { x: 40, y: 30 }, radius = 8): string[] {
@@ -238,35 +274,51 @@ function testTopAndBottomKeepTheirDefaults(): void {
 function testSquareBarDefaultsAreSubtract(): void {
   // Item 14 names both bar shapes, and the default is a property of the face,
   // not of the bar's outline: `inferManualFeatureOperation` asks whether the bar
-  // is the material, which a square blank is as much as a round one. Authoring
-  // on a square blank's Around sheet is a *different* rule and stays refused
-  // (#1016 C2-U1): rt2-c keeps those drawer entries disabled with their own
-  // reason and #1128 owns sheet work on the turned section, so nothing is
-  // created here. The default the same draft would carry is pinned all the same
-  // — enabling that sheet later must not quietly bring the gear's Add back.
+  // is the material, which a square blank is as much as a round one. This is
+  // pinned per kind on the draft creation would write — `buildShapeFeature` is
+  // the one call every canned creator makes, and `gearCreationOperation` is the
+  // gear action's extra first-gear rule applied to that draft — so the default
+  // is read from the production path, not re-derived here.
   const squareAround = (): Project => {
     onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
     return useProjectStore.getState().project
   }
 
+  for (const [kind, profile] of CANNED_DRAFT_PROFILES) {
+    const draft = buildShapeFeature(squareAround(), 'feature', 'composite', profile(), `Square ${kind}`, 5)
+    assertEqual(draft.operation, 'subtract', `a ${kind}'s creation draft on a square bar's Around cuts into the bar`)
+  }
+
+  const around = squareAround()
+  const aroundGear = buildShapeFeature(around, 'feature', 'composite', gearProfile(), 'Gear', 5)
+  assertEqual(aroundGear.operation, 'subtract', "a gear's creation draft on a square bar's Around cuts into the bar")
   assertEqual(
-    inferManualFeatureOperation(squareAround(), circleProfile(40, 30, 4)),
+    gearCreationOperation(around, aroundGear, 'around'),
     'subtract',
-    "a closed outline defaults to Subtract on a square bar's Around",
-  )
-  const gearProfile = buildGearProfile({
-    ...defaultGearCreationParams(8),
-    center: { x: 40, y: 30 },
-    outsideRadius: 8,
-  })
-  assertEqual(
-    inferManualFeatureOperation(squareAround(), gearProfile),
-    'subtract',
-    "a gear defaults to Subtract on a square bar's Around",
+    "the first-gear Add rule does not override it on Around",
   )
 
-  // The refusal is that policy, not the default: every kind still writes
-  // nothing on a square blank's Around sheet.
+  // The same gear draft on Top keeps the historical first-gear Add, so the
+  // square-bar pin above cannot pass by weakening that rule everywhere.
+  onFace(projectWith(SQUARE_BAR, 'rotary'), 'top')
+  const top = useProjectStore.getState().project
+  const topGear = buildShapeFeature(top, 'feature', 'composite', gearProfile(), 'Gear', 5)
+  assertEqual(
+    gearCreationOperation(top, topGear, 'top'),
+    'add',
+    "a first gear on a bar's Top is still the historical Add",
+  )
+  console.log('square Around: every canned creation draft is a cut: PASSED')
+}
+
+function testSquareAroundAuthoringStaysRefused(): void {
+  // The refusal is #1016 C2-U1's round-only sheet, not item 14's default: a
+  // square blank is workflow-available on Around (its generated rotary models
+  // cut there) but the unrolled sheet's raw coordinates only describe a round
+  // bar, so a cutting outline is not authored on it. rt2-c keeps the drawer
+  // entries visible and disabled ("Not available on a square bar yet") and
+  // #1128 owns sheet work on the turned section. Pinned separately so that
+  // enabling the sheet is a deliberate change, not a side effect of a default.
   for (const [kind, create] of CANNED_CREATORS) {
     onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
     const before = useProjectStore.getState().project
@@ -277,7 +329,7 @@ function testSquareBarDefaultsAreSubtract(): void {
   const before = useProjectStore.getState().project
   assertEqual(createGear(), [], 'the gear is refused on a square blank')
   assertEqual(useProjectStore.getState().project, before, 'the refusal writes nothing')
-  console.log('square Around: the default is Subtract, authoring stays refused: PASSED')
+  console.log('square Around: cutting authoring stays refused until #1128: PASSED')
 }
 
 testEveryCannedKindOnAroundCutsIntoTheBar()
@@ -285,3 +337,4 @@ testLaterShapesOnAroundStillNest()
 testGearBoreOnAroundIsAnAddIsland()
 testTopAndBottomKeepTheirDefaults()
 testSquareBarDefaultsAreSubtract()
+testSquareAroundAuthoringStaysRefused()

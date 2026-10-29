@@ -32,6 +32,7 @@ import type {
   FeatureOperation,
   Point,
   Project,
+  SetupFace,
   SketchFeature,
 } from '../../types/project'
 import {
@@ -115,6 +116,35 @@ function referencedCannedDraft(
   } as unknown as SketchFeature
 }
 
+/**
+ * The operation a new gear is created with (issue #1112 R2 item 14).
+ *
+ * Preserve the original creation rule exactly: the first *machining* feature is
+ * Add, not "the first solid on a block project". In particular a rotary bar
+ * needs no base add (`barSeedsModel`), but the old command still created its
+ * first gear as Add, which is what gives the first gear+bore the Add/Subtract
+ * pair it has always had (issue #1112 DE2 review). `addFeature`'s base-solid
+ * rule then agrees with this operation.
+ *
+ * Around is the one face where that Add is wrong: the bar is already the
+ * material there (#395, #1108), exactly as it is for a hand-drawn outline, so a
+ * gear drawn on the unrolled sheet is a cut into the bar and the classifier's
+ * Subtract stands. Top and Bottom keep the historical first-gear Add. `face` is
+ * passed in rather than read here so the rule can be pinned for a square
+ * blank's Around sheet, which is round-only for authoring and so cannot reach
+ * this action (see `cannedShapeAroundDefaults.test.ts`).
+ */
+export function gearCreationOperation(
+  project: Project,
+  draft: SketchFeature,
+  face: SetupFace,
+): FeatureOperation {
+  const isFirstMachiningFeature = face !== 'around'
+    && isMachinable(draft)
+    && !resolvedProjectFeatures(project).some(isMachinable)
+  return isFirstMachiningFeature ? 'add' : draft.operation
+}
+
 export function createAddGearFeatureAction(
   _set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -143,22 +173,9 @@ export function createAddGearFeatureAction(
       return []
     }
 
-    // Preserve the original creation rule exactly: the first *machining*
-    // feature is Add, not "the first solid on a block project". In particular
-    // a rotary bar needs no base add (`barSeedsModel`), but the old command
-    // still created its first gear as Add, which is what gives the first
-    // gear+bore the Add/Subtract pair it has always had (issue #1112 DE2
-    // review). `addFeature`'s base-solid rule then agrees with this operation.
-    //
-    // Around is the one face where that Add is wrong (issue #1112 R2 item 14):
-    // the bar is already the material there (#395, #1108), exactly as it is
-    // for a hand-drawn outline, so a gear drawn on the unrolled sheet is a cut
-    // into the bar and the classifier's Subtract stands. Top and Bottom keep
-    // the historical first-gear Add.
-    const isFirstMachiningFeature = gearFace !== 'around'
-      && isMachinable(gearFeature)
-      && !resolvedProjectFeatures(state.project).some(isMachinable)
-    const operation: FeatureOperation = isFirstMachiningFeature ? 'add' : gearFeature.operation
+    // Preserve the original creation rule exactly, with the Around exception
+    // that makes item 14's default a cut into the bar (see the rule itself).
+    const operation: FeatureOperation = gearCreationOperation(state.project, gearFeature, gearFace)
     // A region/construction gear has no solid to bore; the old command created
     // the bore only for the features section, and that stays true.
     const boreDiameter = sectionForOperation(operation) === 'features' ? params.boreDiameter : 0
