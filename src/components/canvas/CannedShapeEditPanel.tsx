@@ -103,6 +103,35 @@ function flatNormalized(
   return candidate ? request.normalize(candidate) : null
 }
 
+/** A gear field's number, or `NaN` when the text is unusable. */
+function draftNumber(text: string): number {
+  return text.trim() === '' ? Number.NaN : Number(text)
+}
+
+/** The gear fields exactly as typed, before the creation clamp touches them. */
+function rawGearDraft(params: GearCreationParams, size: number): GearCreationParams & { outsideRadius: number } {
+  return { ...params, outsideRadius: size }
+}
+
+/**
+ * The gear preview for a draft, or `null` while the draft is not a gear.
+ *
+ * The **raw** draft is validated: `normalizeGearCreationParams` rounds and
+ * clamps (a tooth count of 1 becomes the 6-tooth minimum), so normalizing
+ * first would turn a value the gear refuses into a different, valid shape and
+ * draw it with no error. Only a draft the validator accepts is normalized, and
+ * that is what reaches the preview and the generator (#1112 F1 review).
+ */
+function gearDraft(params: GearCreationParams, size: number): CannedShapeParams | null {
+  if (validateGearProfileParams({ ...rawGearDraft(params, size), center: { x: 0, y: 0 } }).length > 0) {
+    return null
+  }
+  return normalizeGearCannedParams({
+    ...normalizeGearCreationParams(params),
+    outsideRadius: size,
+  })
+}
+
 export function CannedShapeEditPanel({
   pending,
   containerRef,
@@ -143,11 +172,9 @@ export function CannedShapeEditPanel({
     if (!canned) cancelPendingAdd()
   }, [canned, cancelPendingAdd])
 
+  const gearSizeValue = draftNumber(gearSize)
   const normalized = isGear
-    ? normalizeGearCannedParams({
-        ...normalizeGearCreationParams(gearParams),
-        outsideRadius: Number(gearSize),
-      })
+    ? gearDraft(gearParams, gearSizeValue)
     : flatNormalized(request, values)
   // Every valid draft is written into the project as it is typed, so the sketch
   // and the 3D preview follow the fields; a value the generator refuses keeps
@@ -161,11 +188,13 @@ export function CannedShapeEditPanel({
   if (!canned) return null
 
   const labelKey = cannedShapeLabelKey(canned)
+  // The gear's own validator reads the draft as typed, which is the only form
+  // that can report a value the creation clamp would otherwise hide.
   const gearErrors = isGear
     ? validateGearProfileParams({
         ...gearParams,
         center: { x: 0, y: 0 },
-        outsideRadius: Number(gearSize),
+        outsideRadius: gearSizeValue,
       })
     : []
   const invalid = normalized === null
@@ -205,8 +234,11 @@ export function CannedShapeEditPanel({
           <GearFields
             params={gearParams}
             session={`edit-${featureId}`}
-            onParams={(patch) => setGearParams((current) => normalizeGearCreationParams({ ...current, ...patch }))}
-            size={Number(gearSize)}
+            // The draft holds the raw numbers: clamping and rounding here would
+            // replace a refused value with a valid-looking one before the
+            // validator and the preview ever see it (#1112 F1 review).
+            onParams={(patch) => setGearParams((current) => ({ ...current, ...patch }))}
+            size={gearSizeValue}
             onSize={(value) => setGearSize(String(value))}
             live
           />

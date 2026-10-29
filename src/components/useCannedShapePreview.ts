@@ -38,8 +38,14 @@
  *  - `commitPreview` writes the final draft and closes the transaction, which
  *    turns the whole edit into one undo step,
  *  - unloading without it (Cancel, Escape, a backdrop click, a face, unit or
- *    document change) cancels the transaction, which restores the project
- *    snapshot taken before the first preview write.
+ *    document change) puts back **only the data the preview wrote** — the
+ *    shape's stored parameters, which the store re-derives everything else
+ *    from. Anything else that changed while the editor was open (a stock
+ *    resize, a unit switch, a deletion) belongs to the user and stays: a
+ *    preview must not be able to discard an unrelated edit (#1112 F1 review).
+ *    When nothing else changed the transaction is cancelled, which is also
+ *    what leaves no undo entry; when something did, the session is committed
+ *    instead, so one undo takes the project back to where the editor opened.
  *
  * A transaction another edit opened is never adopted: only the one this hook
  * opened is committed or cancelled.
@@ -49,6 +55,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { CannedShapeData, Project } from '../types/project'
 import { useProjectStore } from '../store/projectStore'
 import { cannedParamsKey } from '../cannedShapes/cache'
+import { convertCannedShapeData } from '../cannedShapes'
+import { convertLength, type Units } from '../utils/units'
 
 /** Fields an editor writes together with the parameters (a Flutes Z span). */
 export interface CannedShapePreviewSpan {
@@ -94,6 +102,48 @@ function previewKey(draft: CannedShapeData | null, span: CannedShapePreviewSpan 
   if (!draft) return null
   const key = `${draft.kind}\u0000${cannedParamsKey(draft.params)}`
   return span ? `${key}\u0000${span.z_top}\u0000${span.z_bottom}` : key
+}
+
+/**
+ * The shape parameters a preview overwrote, as they were in the project
+ * snapshot taken before the first write, expressed in the units the project is
+ * in now: a unit switch converts the open transaction's snapshot with the
+ * project, so the shape must come back as the same physical size, not the same
+ * number (#1112 F1).
+ *
+ * Only the parameters are restored. Everything else the preview derived from
+ * them — the definition's placement frame, a model's mesh asset, every
+ * instance's Z span, a Thread/Flutes band following the surface under it — is
+ * rebuilt by the store on this one write, so putting a derived value back by
+ * hand would only fight the resolver.
+ */
+function baselineCanned(
+  snapshot: Project,
+  featureId: string,
+  units: Units,
+): CannedShapeData | null {
+  const instance = snapshot.features.find((row) => row.id === featureId)
+  if (!instance) return null
+  const stored = snapshot.featureDefinitions[instance.definitionId]?.canned
+  if (!stored) return null
+  return convertCannedShapeData(
+    stored,
+    (value) => convertLength(value, snapshot.meta.units, units),
+  )
+}
+
+/**
+ * Whether the project differs from this snapshot by nothing but the modified
+ * stamp the store writes on every change. Comparing after the preview fields
+ * have been put back answers "was there any other edit at all?" without having
+ * to watch every action the user could take while an editor is open.
+ */
+function unchangedApartFromStamp(project: Project, snapshot: Project): boolean {
+  const canonical = (value: Project): string => {
+    const { modified: _modified, ...meta } = value.meta
+    return JSON.stringify({ ...value, meta })
+  }
+  return canonical(project) === canonical(snapshot)
 }
 
 export function useCannedShapePreview({
@@ -147,13 +197,33 @@ export function useCannedShapePreview({
   useEffect(() => {
     if (!editing) return undefined
     return () => {
+      const target = featureId
       const snapshot = snapshotRef.current
-      if (committedRef.current || snapshot === null) return
+      if (target === null || committedRef.current || snapshot === null) return
       if (transactionSignature(useProjectStore.getState().history.transactionStart)
         !== transactionSignature(snapshot)) return
-      cancelHistoryTransaction()
+      // Put back the shape's own parameters first, so what remains of the
+      // transaction is everything the user changed elsewhere while the editor
+      // was open. The write goes through the ordinary path, so the regenerated
+      // outlines, mesh asset, Z spans and surface bands follow the restored
+      // parameters (#1112 F1).
+      const restore = baselineCanned(
+        snapshot,
+        target,
+        useProjectStore.getState().project.meta.units,
+      )
+      if (restore) updateFeature(target, { canned: restore })
+      if (unchangedApartFromStamp(useProjectStore.getState().project, snapshot)) {
+        // Nothing else happened: put the snapshot back whole. That is also the
+        // one path that closes the transaction without an undo entry.
+        cancelHistoryTransaction()
+      } else {
+        // The other changes stay. Committing makes them one undo step whose
+        // "before" is the state the editor opened on.
+        commitHistoryTransaction()
+      }
     }
-  }, [editing, cancelHistoryTransaction])
+  }, [editing, featureId, updateFeature, cancelHistoryTransaction, commitHistoryTransaction])
 
   const commitPreview = useCallback((
     finalDraft: CannedShapeData | null,

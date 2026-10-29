@@ -24,9 +24,16 @@
  * Every editor keeps a local draft, so the only way to see whether the sketch
  * and the 3D view follow a field is to drive the real editor and read the
  * project. For each canned kind this renders the editor that Properties opens
- * and changes every numeric field in it, asserting that the geometry the views
- * read changed, that a refused value changed nothing, and that closing without
- * Apply puts the stored shape back byte-for-byte.
+ * and changes every field in it — the typed numbers, a Thread/Flute's
+ * Right/Left hand and a Turn's copied profile included — asserting that the
+ * geometry the views read changed, that a refused value changed nothing, that
+ * Save/Apply is exactly one undo step, and that closing without Apply puts the
+ * stored shape back byte-for-byte.
+ *
+ * Closing must put back **only the shape**: a change the user made elsewhere
+ * while an editor was open (a bar resize, a rename) survives it. Closing a
+ * preview used to restore the whole history snapshot and take that change with
+ * it (#1112 F1 review), which is why both kinds of test live here.
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/canvas/cannedShapeLivePreview.test.ts
@@ -206,6 +213,24 @@ function setSelectValue(select: HTMLSelectElement, value: string): void {
   assert(option, `the select has the ${value} option`)
   ;(option as unknown as { selected: boolean }).selected = true
   select.dispatchEvent(new dom.Event('change', { bubbles: true }) as unknown as Event)
+}
+
+/**
+ * The shared `Select` is a button plus a listbox, so it is driven the way a
+ * pointer drives it: open the trigger, then press the option by its label. The
+ * rotary dialogs' Direction field and the Turn's profile picker are the two
+ * parameters that are not typed into a number field.
+ */
+async function chooseSelectOption(container: ParentNode, label: string): Promise<void> {
+  const trigger = container.querySelector('.ui-select__trigger') as unknown as HTMLButtonElement | null
+  assert(trigger, 'the select renders its trigger')
+  trigger.click()
+  await flush()
+  const option = Array.from(container.querySelectorAll('.ui-select__option'))
+    .find((candidate) => (candidate.textContent ?? '').trim() === label)
+  assert(option, `the select offers "${label}"`)
+  option.dispatchEvent(new dom.Event('pointerdown', { bubbles: true }) as unknown as Event)
+  await flush()
 }
 
 interface Mounted {
@@ -449,26 +474,114 @@ await scenario('a value the generator refuses keeps the last valid preview and s
   }
 })
 
-await scenario('Save is one undo step and one undo restores the stored shape', async () => {
-  const featureId = flatProject('roundrect')
+// Save on every kind, not just the rounded rectangle: the draft -> project ->
+// one-undo-step path is the same code for all of them, and a kind that slipped
+// out of it would otherwise pass by not being looked at.
+for (const flatCase of FLAT_CASES) {
+  await scenario(`${flatCase.kind}: Save is one undo step and one undo restores the stored shape`, async () => {
+    const featureId = flatProject(flatCase.kind)
+    const storedDefinition = definitionJson(featureId)
+    const storedHistory = historyLength()
+    const mounted = await openPanel(featureId, flatCase.kind)
+    try {
+      await waitFor(() => panelInputs().length === flatCase.request.fields.length, 'every field renders')
+      const inputs = panelInputs()
+      setInputValue(inputs[0], flatCase.values[0])
+      if (inputs.length > 1) setInputValue(inputs[inputs.length - 1], flatCase.values[flatCase.values.length - 1])
+      await flush()
+      const previewed = previewGeometry(featureId)
+      assert(previewed !== '', 'the draft previewed before Save')
+
+      buttonByLabel('Save').click()
+      await waitFor(() => historyLength() === storedHistory + 1, 'Save is one undo step')
+      await waitFor(() => store().pendingAdd === null, 'Save closes the panel session')
+      assert(previewGeometry(featureId) === previewed, 'Save kept the previewed shape')
+    } finally {
+      mounted.unmount()
+    }
+    await flush()
+
+    store().undo()
+    await flush()
+    assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored definition')
+  })
+}
+
+// A disabled Save is the panel's own refusal, so the field that produced it is
+// allowed to be a value the creation clamp would have hidden (issue #1112 F1).
+await scenario('a gear value the validator refuses keeps the last valid preview and reports it', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
+  const storedHistory = historyLength()
+  const storedTeeth = resolveFeatureInstance(project(), featureId)?.canned?.params.teeth
+  assert(typeof storedTeeth === 'number', 'the gear stores its tooth count')
+  const mounted = await openPanel(featureId, 'gear')
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    const teeth = panelInputs()[1]
+    const valid = previewGeometry(featureId)
+
+    // One tooth is below the gear's minimum. Normalizing the draft first would
+    // quietly clamp it to six and draw a six-tooth gear with no error.
+    setInputValue(teeth, '1')
+    await flush()
+    assert(previewGeometry(featureId) === valid, 'a refused tooth count kept the last valid preview')
+    assert(document.body.querySelector('[role="alert"]') !== null, 'the panel reports the refused value')
+    assert(
+      resolveFeatureInstance(project(), featureId)?.canned?.params.teeth === storedTeeth,
+      'the project kept the stored tooth count',
+    )
+    assert(historyLength() === storedHistory, 'a refused value is not an undo step')
+    assert(
+      (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled === true,
+      'Save is refused while the draft is invalid',
+    )
+
+    setInputValue(teeth, '22')
+    await flush()
+    assert(previewGeometry(featureId) !== valid, 'a valid value resumes the preview')
+    assert(
+      (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled !== true,
+      'Save is offered again for a valid draft',
+    )
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
+// The gear's Save path goes through the same preview commit as the flats.
+await scenario('gear: Save is one undo step and one undo restores the stored gear', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
   const storedDefinition = definitionJson(featureId)
   const storedHistory = historyLength()
-  const mounted = await openPanel(featureId, 'roundrect')
-  await waitFor(() => panelInputs().length === 3, 'three fields render')
-  const inputs = panelInputs()
-  setInputValue(inputs[0], '70')
-  setInputValue(inputs[2], '9')
-  await flush()
-  assert(previewGeometry(featureId) !== 'no-canned', 'the draft previewed before Save')
-
-  buttonByLabel('Save').click()
-  await waitFor(() => historyLength() === storedHistory + 1, 'Save is one undo step')
-  mounted.unmount()
+  const mounted = await openPanel(featureId, 'gear')
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    setInputValue(panelInputs()[1], '22')
+    await flush()
+    const previewed = previewGeometry(featureId)
+    buttonByLabel('Save').click()
+    await waitFor(() => historyLength() === storedHistory + 1, 'Save is one undo step')
+    await waitFor(() => store().pendingAdd === null, 'Save closes the panel session')
+    assert(previewGeometry(featureId) === previewed, 'Save kept the previewed gear')
+  } finally {
+    mounted.unmount()
+  }
   await flush()
 
   store().undo()
   await flush()
-  assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored definition')
+  assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored gear')
 })
 
 await scenario('a unit switch during a preview is not rolled back by Cancel', async () => {
@@ -502,6 +615,81 @@ await scenario('a unit switch during a preview is not rolled back by Cancel', as
     Math.abs((width as number) - 60 / 25.4) < 1e-9,
     `Cancel restored the 60 mm width as ${String(width)} in, expected ${60 / 25.4}`,
   )
+})
+
+// A preview must not be able to throw away work the user did elsewhere while an
+// editor was open. The host closes a rotary dialog as soon as the bar changes,
+// so a stock resize made with a preview live is the ordinary way this happens:
+// closing the dialog used to restore the whole transaction snapshot and take
+// the resize with it (issue #1112 F1 review).
+await scenario('closing a preview keeps a change made elsewhere in the project', async () => {
+  const featureId = rotaryFeature('turn')
+  const storedDefinition = definitionJson(featureId)
+  const storedStock = JSON.stringify(project().stock)
+  const storedHistory = historyLength()
+  const { mounted } = await openDialog('turn', featureId)
+  const diameter = document.body.querySelector('#rotary-solid-diameter') as unknown as HTMLInputElement
+  assert(diameter, 'the diameter field renders')
+  setInputValue(diameter, '12')
+  await flush()
+  assert(previewGeometry(featureId) !== '', 'the diameter previewed live')
+
+  const resized = roundStock(50, 200, 'x', { x: 10, y: 30 })
+  store().setStock(resized)
+  await flush()
+  assert(JSON.stringify(project().stock) === JSON.stringify(resized), 'the stock resize reached the project')
+
+  mounted.unmount()
+  await flush()
+  assert(
+    JSON.stringify(project().stock) === JSON.stringify(resized),
+    'closing the editor kept the stock resize',
+  )
+  assert(definitionJson(featureId) === storedDefinition, 'closing the editor restored the stored Turn')
+  assert(
+    historyLength() === storedHistory + 1,
+    'the session is one undo step, so the change stays undoable',
+  )
+
+  store().undo()
+  await flush()
+  assert(JSON.stringify(project().stock) === storedStock, 'one undo put the stock back')
+  assert(definitionJson(featureId) === storedDefinition, 'one undo left the stored Turn in place')
+})
+
+// A Thread preview also moves the row's Z span. Restoring the parameters must
+// put the span back through the store's own resolver, not by a second guess.
+await scenario('closing a thread preview keeps an unrelated rename and restores the span', async () => {
+  const featureId = rotaryFeature('thread')
+  const storedDefinition = definitionJson(featureId)
+  const storedSpan = spanFingerprint(featureId)
+  const storedHistory = historyLength()
+  const { mounted } = await openDialog('thread', featureId)
+  const depth = document.body.querySelector('#rotary-depth') as unknown as HTMLInputElement
+  assert(depth, 'the depth field renders')
+  setInputValue(depth, '1.2')
+  await flush()
+  assert(spanFingerprint(featureId) !== storedSpan, 'the depth previewed a new span')
+
+  store().updateFeature(featureId, { name: 'Renamed thread' })
+  await flush()
+  mounted.unmount()
+  await flush()
+  assert(
+    project().features.find((row) => row.id === featureId)?.name === 'Renamed thread',
+    'closing kept the rename',
+  )
+  assert(definitionJson(featureId) === storedDefinition, 'closing restored the stored Thread')
+  assert(spanFingerprint(featureId) === storedSpan, 'closing restored the stored span')
+  assert(historyLength() === storedHistory + 1, 'the session is one undo step')
+
+  store().undo()
+  await flush()
+  assert(
+    project().features.find((row) => row.id === featureId)?.name.startsWith('Thread'),
+    'one undo put the rename back',
+  )
+  assert(definitionJson(featureId) === storedDefinition, 'one undo left the stored Thread in place')
 })
 
 await scenario('the gear previews every numeric field live and Cancel restores it', async () => {
@@ -566,6 +754,12 @@ interface DialogCase {
    * surface and the depth decides where the cut enters it).
    */
   fields: Array<{ id: string; value: string; changes: 'geometry' | 'span' }>
+  /**
+   * The Right/Left hand, which is a parameter like any other: it signs the
+   * helix of a Thread and the twist of a Flute, so the drawn lines must follow
+   * it. `stored` is the parameter the dialog's draft must write.
+   */
+  direction?: { label: string; stored: [key: string, value: string | number] }
 }
 
 const DIALOG_CASES: DialogCase[] = [
@@ -578,6 +772,7 @@ const DIALOG_CASES: DialogCase[] = [
       { id: 'rotary-starts', value: '2', changes: 'geometry' },
       { id: 'rotary-depth', value: '1.2', changes: 'span' },
     ],
+    direction: { label: 'Left-hand', stored: ['hand', 'left'] },
   },
   {
     kind: 'flutes',
@@ -588,6 +783,8 @@ const DIALOG_CASES: DialogCase[] = [
       { id: 'rotary-twist', value: '10', changes: 'geometry' },
       { id: 'rotary-depth', value: '1.2', changes: 'span' },
     ],
+    // The field is a magnitude, so the stored twist is the negated 10 typed above.
+    direction: { label: 'Left-hand', stored: ['twist', -10] },
   },
   {
     kind: 'turn',
@@ -647,6 +844,24 @@ for (const dialogCase of DIALOG_CASES) {
         spanBefore = span
         assert(historyLength() === storedHistory, `${dialogCase.kind} #${field.id}: a preview is not an undo step`)
       }
+      if (dialogCase.direction) {
+        const directionGroup = document.body.querySelector('.rotary-dialog__direction')
+        assert(directionGroup, `${dialogCase.kind} renders its direction field`)
+        await chooseSelectOption(directionGroup, dialogCase.direction.label)
+        const geometry = previewGeometry(featureId)
+        assert(
+          geometry !== previousGeometry,
+          `${dialogCase.kind} direction: the previewed geometry did not change`,
+        )
+        previousGeometry = geometry
+        const [key, expected] = dialogCase.direction.stored
+        const storedParams = resolveFeatureInstance(project(), featureId)?.canned?.params
+        assert(
+          storedParams?.[key] === expected,
+          `${dialogCase.kind} direction: the draft stored ${key}=${String(storedParams?.[key])}, expected ${String(expected)}`,
+        )
+        assert(historyLength() === storedHistory, `${dialogCase.kind} direction: a preview is not an undo step`)
+      }
     } finally {
       mounted.unmount()
     }
@@ -660,28 +875,87 @@ for (const dialogCase of DIALOG_CASES) {
   })
 }
 
-await scenario('a Turn edit applied from the dialog is one undo step', async () => {
+// Apply from every dialog, not just the Turn: an editor whose Apply skips the
+// preview commit would otherwise leave the shape as a normal undo entry.
+for (const dialogCase of DIALOG_CASES) {
+  await scenario(`${dialogCase.kind}: Apply is one undo step and one undo restores the stored feature`, async () => {
+    const featureId = rotaryFeature(dialogCase.kind)
+    const storedDefinition = definitionJson(featureId)
+    const storedHistory = historyLength()
+    const storedSpans = JSON.stringify(project().features.map((row) => [row.id, row.z_bottom, row.z_top]))
+    const { mounted, closed } = await openDialog(dialogCase.kind, featureId)
+    try {
+      for (const field of dialogCase.fields) {
+        const input = document.body.querySelector(`#${field.id}`) as unknown as HTMLInputElement | null
+        assert(input, `the dialog has #${field.id}`)
+        setInputValue(input, field.value)
+      }
+      await flush()
+      const previewed = previewGeometry(featureId)
+      assert(previewed !== '', 'the draft previewed before Apply')
+
+      const apply = document.body.querySelector('.rotary-dialog__create') as unknown as HTMLButtonElement | null
+      assert(apply, 'the dialog has an Apply action')
+      assert(apply.disabled === false, 'Apply is enabled')
+      apply.click()
+      await waitFor(() => closed(), 'Apply closes the dialog')
+      await waitFor(() => historyLength() === storedHistory + 1, 'Apply is one undo step')
+      assert(previewGeometry(featureId) === previewed, 'Apply kept the previewed shape')
+    } finally {
+      mounted.unmount()
+    }
+    await flush()
+
+    store().undo()
+    await flush()
+    assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored feature')
+    assert(
+      JSON.stringify(project().features.map((row) => [row.id, row.z_bottom, row.z_top])) === storedSpans,
+      'one undo restored the instance spans',
+    )
+  })
+}
+
+// A drawn outline on Top is the bar's side view, so a Turn can copy it as its
+// own profile. Picking one changes the draft's shape like any other field
+// (issue #1112 H, live preview in F1).
+await scenario('a Turn profile pick previews live and closing restores the stored Turn', async () => {
   const featureId = rotaryFeature('turn')
+  const sourceId = (() => {
+    assert(switchWorkspaceFace('top'), 'the workspace enters Top')
+    // Inside one half of the bar, clear of both the centreline and the surface:
+    // along 20..80, radius 8..16 from the bar's centreline at y = 50.
+    store().addRectFeature('Side profile', 20, 34, 60, 8, 5)
+    assert(switchWorkspaceFace('around'), 'the workspace returns to Around')
+    const row = project().features.find((feature) => feature.name === 'Side profile')
+    assert(row, 'the profile source was drawn')
+    return row.id
+  })()
   const storedDefinition = definitionJson(featureId)
   const storedHistory = historyLength()
-  const { mounted, closed } = await openDialog('turn', featureId)
-  const diameter = document.body.querySelector('#rotary-solid-diameter') as unknown as HTMLInputElement
-  assert(diameter, 'the diameter field renders')
-  setInputValue(diameter, '12')
-  await flush()
-  assert(previewGeometry(featureId).startsWith('mesh'), 'the Turn preview is a rebuilt mesh')
+  const cylinder = previewGeometry(featureId)
+  const { mounted } = await openDialog('turn', featureId)
+  try {
+    const picker = document.body.querySelector('.rotary-dialog__profile')
+    assert(picker, 'the Turn dialog renders its profile picker')
+    await chooseSelectOption(picker, 'Side profile')
+    const profiled = previewGeometry(featureId)
+    assert(profiled !== cylinder, 'picking a profile changed the previewed mesh')
+    const stored = resolveFeatureInstance(project(), featureId)?.canned?.params
+    assert(
+      JSON.stringify(stored?.profile ?? null).includes(sourceId),
+      'the previewed profile names the feature it was copied from',
+    )
+    assert(historyLength() === storedHistory, 'a profile pick is not an undo step')
 
-  const apply = document.body.querySelector('.rotary-dialog__create') as unknown as HTMLButtonElement | null
-  assert(apply, 'the dialog has an Apply action')
-  assert(apply.disabled === false, 'Apply is enabled')
-  apply.click()
-  await waitFor(() => closed(), 'Apply closes the dialog')
-  mounted.unmount()
-  await waitFor(() => historyLength() === storedHistory + 1, 'Apply is one undo step')
-
-  store().undo()
+    await chooseSelectOption(picker, 'None — one plain diameter')
+    assert(previewGeometry(featureId) !== profiled, 'clearing the pick changed the previewed mesh')
+  } finally {
+    mounted.unmount()
+  }
   await flush()
-  assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored Turn')
+  assert(definitionJson(featureId) === storedDefinition, 'closing restored the stored Turn')
+  assert(historyLength() === storedHistory, 'closing left the undo history alone')
 })
 
 // A model's parameter edit must reach the linked copy that shares its
