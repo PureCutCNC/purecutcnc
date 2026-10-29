@@ -552,6 +552,78 @@ async function rebuildReference(x: number, y: number): Promise<void> {
   dialog.unmount()
 }
 
+// ── A conversion cannot clear an external registration edit ─────────
+
+{
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const elsewhere: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 76.2, y: 38.1 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  await rebuildReference(50.8, 25.4)
+  assert(!saveButton().disabled, 'the rebuilt reference is an edit')
+  // Another path moves the stored reference after the dialog opened.
+  store().updateSetup('setup-bottom', { registration: elsewhere })
+  await flush()
+  assert(document.body.querySelector('[role="alert"]'), 'an external registration edit blocks Save')
+  assert(saveButton().disabled, 'the stale reference cannot be saved over')
+
+  // The conversion rewrites both the stored reference and the dialog's copy of
+  // it. The dialog's saved values must keep their own converted numbers instead
+  // of adopting the store's, or the external edit stops blocking Save and the
+  // pending point overwrites it (review r5-4, finding 1).
+  store().setUnits('inch', 'convert')
+  await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  const converted = savedReferencePoint()
+  assert(approx(converted.x, 3) && approx(converted.y, 1.5), 'the external reference converts with the project')
+  assert(document.body.querySelector('[role="alert"]'), 'a conversion does not clear the external registration warning')
+  assert(saveButton().disabled, 'a conversion cannot re-enable Save over the external reference')
+  saveButton().click()
+  await flush()
+  const after = savedReferencePoint()
+  assert(approx(after.x, 3) && approx(after.y, 1.5), 'clicking Save writes nothing over the external reference')
+  assert(!dialog.closed(), 'the dialog stays open to be reopened')
+  dialog.unmount()
+}
+
+// ── An intervening stock edit does not change how pending values convert ─
+
+{
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  await rebuildReference(50.8, 25.4)
+  assert(!saveButton().disabled, 'the rebuilt reference is an edit')
+
+  // Another path doubles the stock while the dialog is open. That moves a stored
+  // length, but it is not a unit conversion (review r5-4, finding 2).
+  const stock = store().project.stock
+  store().setStock({ ...stock, thickness: stock.thickness * 2 })
+  await flush()
+
+  // A reinterpret keeps every stored number, so the pending point keeps its
+  // numbers too instead of being rescaled by the doubled stock.
+  store().setUnits('inch', 'reinterpret')
+  await flush()
+  const kept = registrationNumbers()
+  assert(kept.length === 2 && approx(kept[0], 50.8) && approx(kept[1], 25.4),
+    'a stock edit does not turn a reinterpret into a conversion')
+  assert(!saveButton().disabled, 'the pending reference is still an edit')
+  assert(!document.body.querySelector('[role="alert"]'), 'the stock edit is not an edit to the setup')
+
+  // The next conversion still uses the toggle's fixed factor, not the stock's.
+  store().setUnits('mm', 'convert')
+  await flush()
+  const converted = registrationNumbers()
+  assert(converted.length === 2 && approx(converted[0], 50.8 * 25.4) && approx(converted[1], 25.4 * 25.4),
+    'the pending point converts by the fixed mm/inch factor')
+  dialog.unmount()
+}
+
 // ── An enabled Save writes the edit and closes ──────────────────────
 
 {

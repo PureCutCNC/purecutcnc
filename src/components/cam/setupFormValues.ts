@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { MachiningSetup, Project, RegistrationReference, RegistrationTarget, SetupFace } from '../../types/project'
+import type { MachiningSetup, RegistrationReference, SetupFace } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 
 /**
@@ -54,14 +54,6 @@ export function setupFormValues(source: SetupFormSource, face: SetupFace): Setup
   }
 }
 
-/** Every coordinate pair a registration target stores, in a stable order. */
-function targetCoordinates(target: RegistrationTarget): [number, number][] {
-  if (target.type === 'point') return [[target.point.x, target.point.y]]
-  if (target.type === 'edge') return [[target.start.x, target.start.y], [target.end.x, target.end.y]]
-  // A feature reference names a feature and stores no length of its own.
-  return []
-}
-
 /**
  * The same references with every stored length converted, the way the store
  * rewrites them when a project's units are **converted** — used to move a
@@ -89,52 +81,4 @@ export function convertRegistration(
     }
     return reference
   })
-}
-
-/**
- * The lengths a unit conversion rewrites, in a stable order, so two project
- * snapshots can be compared slot by slot. The stock and the project's own
- * settings come first because they exist in every project: a setup's
- * registration can be empty, and a switching dialog still has to tell a
- * conversion from a reinterpret when it is.
- */
-function projectLengths(project: Project): number[] {
-  const lengths = [
-    project.stock.thickness,
-    project.meta.maxTravelZ,
-    project.meta.operationClearanceZ,
-    project.meta.clampClearanceXY,
-    project.meta.clampClearanceZ,
-    project.grid.extent,
-    project.grid.majorSpacing,
-    project.grid.minorSpacing,
-    project.grid.snapIncrement,
-  ]
-  for (const setup of project.setups) {
-    for (const reference of setup.registration) {
-      for (const [x, y] of targetCoordinates(reference.target)) lengths.push(x, y)
-    }
-  }
-  return lengths
-}
-
-/**
- * The scale a unit switch applied to the project's stored lengths (#1112
- * r4-4): `convert` rescales them all, `reinterpret` keeps every number. Reading
- * it from the two store snapshots means a dialog open across the switch needs no
- * idea which mode ran, and cannot mistake a pending edit of its own for one.
- * When no stored length is non-zero (nothing a conversion could move) it reports
- * 1, "nothing changed", rather than an invented ratio.
- */
-export function unitSwitchScale(previous: Project, next: Project): number {
-  const before = projectLengths(previous)
-  const after = projectLengths(next)
-  for (let index = 0; index < Math.min(before.length, after.length); index++) {
-    const from = before[index]
-    const to = after[index]
-    // A stored zero carries no ratio, and a non-finite number is no
-    // measurement either.
-    if (from !== 0 && Number.isFinite(from) && Number.isFinite(to)) return to / from
-  }
-  return 1
 }

@@ -19,6 +19,7 @@
 import { newProject } from '../types/project'
 import type { Project } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { lastUnitSwitchMode } from './helpers/unitSwitch'
 import type { ProjectStore } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -107,6 +108,21 @@ function serializedWithoutUnitMetadata(project: Project): string {
   assert(state.project === before, 'same-unit calls keep the project reference')
   assert(state.history.past.length === 0, 'same-unit calls do not create history')
   console.log('same-unit no-op PASS')
+}
+
+// The store records the mode it actually applied, so an open dialog can move
+// its pending values by the toggle it made instead of guessing from snapshots
+// (#1112 r5-4). A same-unit call applies nothing and records nothing.
+{
+  resetStore()
+  useProjectStore.getState().setUnits('inch', 'convert')
+  assert(lastUnitSwitchMode('mm', 'inch') === 'convert', 'a conversion is recorded as one')
+  useProjectStore.getState().setUnits('mm', 'reinterpret')
+  assert(lastUnitSwitchMode('inch', 'mm') === 'reinterpret', 'a reinterpret is recorded as one')
+  useProjectStore.getState().setUnits('mm', 'convert')
+  assert(lastUnitSwitchMode('inch', 'mm') === 'reinterpret', 'a same-unit call records nothing')
+  assert(lastUnitSwitchMode('mm', 'mm') === null, 'a transition the store did not make has no mode')
+  console.log('unit switch record PASS')
 }
 
 console.log('\nall unitChange.test.ts assertions passed')

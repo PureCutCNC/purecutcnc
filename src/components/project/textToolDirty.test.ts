@@ -391,6 +391,29 @@ async function mountStoredRun(): Promise<Mounted> {
   dialog.unmount()
 }
 
+// ── An edit to the run does not turn a reinterpret into a conversion ─
+
+{
+  const dialog = await mountStoredRun()
+  typeInto(textField(), 'Drill 4 mm')
+  typeInto(sizeField(), '15')
+  await flush()
+  assert(!applyButton().disabled, 'the pending text and height are an edit')
+
+  // Another path rewrites the stored run, and the units are reinterpreted in the
+  // same pass: the stored height's number changes, but the switch kept every
+  // stored number, so the pending height must keep its own (review r5-4). Read
+  // from the two stored heights, the edit looked like a conversion.
+  useProjectStore.getState().updateFeature(TEXT_RUN_ID, {
+    text: { text: saved.text, style: saved.style, fontId: saved.fontId, size: 20 },
+  })
+  useProjectStore.getState().setUnits('inch', 'reinterpret')
+  await flush()
+  assert(useProjectStore.getState().project.meta.units === 'inch', 'the project is in inches')
+  assert(Number(sizeField().value) === 15, 'an edit to the run does not rescale a reinterpreted pending height')
+  dialog.unmount()
+}
+
 // ── Disabled Apply is never reached; an enabled one writes ──────────
 
 {

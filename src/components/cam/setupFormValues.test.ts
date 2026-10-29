@@ -23,10 +23,9 @@
  */
 
 import assert from 'node:assert/strict'
-import type { MachiningSetup, Project, RegistrationReference } from '../../types/project'
-import { newProject } from '../../types/project'
-import { MM_PER_INCH, convertProjectUnits } from '../../utils/units'
-import { convertRegistration, setupFormValues, unitSwitchScale } from './setupFormValues'
+import type { MachiningSetup, RegistrationReference } from '../../types/project'
+import { MM_PER_INCH } from '../../utils/units'
+import { convertRegistration, setupFormValues } from './setupFormValues'
 
 const top: MachiningSetup = {
   id: 'setup-top',
@@ -106,16 +105,5 @@ assert.deepEqual(
 assert.deepEqual(convertRegistration([feature()], 'mm', 'inch'), [feature()], 'a feature reference is left alone')
 // The exchange rate works both ways, as the store's own `convertLength` does.
 assert.deepEqual(convertRegistration([point(1, 0.5)], 'inch', 'mm'), [point(MM_PER_INCH, 0.5 * MM_PER_INCH)], 'inch to mm multiplies')
-
-// "Convert" rewrites every length in the project, so two snapshots say the mode
-// ran; "reinterpret" keeps every number.
-const metric: Project = newProject('Units', 'mm')
-const imperial: Project = convertProjectUnits(metric, 'inch')
-assert.ok(Math.abs(unitSwitchScale(metric, imperial) - 1 / MM_PER_INCH) < 1e-12, 'a conversion is measured from the project')
-assert.equal(unitSwitchScale(metric, { ...metric, meta: { ...metric.meta, units: 'inch' } }), 1, 'a reinterpret moves no length')
-// The stock and the project settings are measured before any setup's
-// registration, so a setup with no references cannot hide a conversion.
-const noReferences = { ...metric, setups: metric.setups.map((setup) => ({ ...setup, registration: [] })) }
-assert.ok(unitSwitchScale(noReferences, { ...convertProjectUnits(noReferences, 'inch') }) !== 1, 'an empty registration cannot hide it')
 
 console.log('setup form value tests passed')
