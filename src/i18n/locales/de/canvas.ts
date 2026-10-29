@@ -534,9 +534,6 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   // ── Stock faces on the sketch (issue #945) ──
   'canvas.face.through': 'DURCH',
   'canvas.face.topOriginLanding': 'Nullpunkt der Oberseite liegt nach dem Wenden hier',
-  'canvas.face.flippedAboutX': 'Rohteil um X gewendet (Vorderkante ↔ Hinterkante).',
-  'canvas.face.flippedAboutY': 'Rohteil um Y gewendet (linke Kante ↔ rechte Kante).',
-  'canvas.face.topIsGhost': 'Features der Oberseite sind ein Geisterbild und können hier nicht bearbeitet werden.',
   'canvas.face.aroundTurnsBar': 'Die Stange dreht sich in der Drehachse. Diese Ansicht ist ihre abgewickelte Oberfläche: entlang der Stange und um sie herum.',
   'canvas.around.modelBand': '{name} — in der Stange, bearbeitet von Rotationsschruppen und Rotationsschlichten',
 }

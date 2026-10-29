@@ -25,8 +25,8 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
-import { useFaceViewStore } from '../../store/faceViewStore'
+import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
 
@@ -90,8 +90,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // both faces; a Top-only project renders the tree it always did (#945).
   const bothFaces = projectUsesBothFaces(project)
   const workspaceFace = activeFace(project)
-  const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
-  const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
+  // A face section heading switches face exactly as the header control does,
+  // and refuses the same way: an edit in progress belongs to its own face.
+  const faceEditInProgress = useProjectStore(isFaceEditInProgress)
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -667,9 +668,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
           onDrop={handleDrop}
         />
-        {featuresCollapsed ? null : machiningFeatures.length === 0 && featureFolders.length === 0 ? (
-          <div className="feature-tree-empty">{t('featureTree.tree.empty.features')}</div>
-        ) : (
+        {/* A project that uses faces shows its sections even before the first
+          * feature: the empty face being worked on is where the next one goes
+          * (issue #1112 slice B, as the provisional setup already did). */}
+        {featuresCollapsed ? null : bothFaces || machiningFeatures.length > 0 || featureFolders.length > 0 ? (
           <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
@@ -680,41 +682,63 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               ? faceLayers.map((face) => {
                   const count = machiningFeatures.filter((feature) => feature.authoringFace === face).length
                   const active = face === workspaceFace
+                  const entries = renderMachiningEntries(face)
+                  // A face with nothing on it says so, once it is the face
+                  // being worked on: an empty layer is where the next feature
+                  // goes (issue #1112 slice B, the provisional setup).
+                  const emptySection = !entries.some((entry) => entry !== null)
+                  // An empty face's section is a place to start, not a permanent
+                  // row: it shows while that face is current, or once it has
+                  // something on it. Otherwise looking at an empty Bottom and
+                  // returning to Around would leave Bottom behind, because
+                  // Around already makes the project use both faces.
+                  if (!active && count === 0 && emptySection) return null
+                  // A heading switches face — the same action and the same
+                  // refusal as the header control. The ACTIVE/GHOST badges are
+                  // gone: the heading's own colour marks the current face, and
+                  // the one being worked on needs no tooltip to say so. Around
+                  // keeps its layer when its content exists but the stock is no
+                  // longer a bar; the heading says why it cannot be entered
+                  // instead of doing nothing (issue #1034's authoring guard).
+                  const aroundRefused = face === 'around' && aroundUnavailableReason(project) !== null
+                  const title = active
+                    ? undefined
+                    : aroundRefused
+                      ? t('dialogs.rotary.around.needsRoundBar')
+                      : faceEditInProgress
+                        ? t('appShell.face.busy')
+                        : t(face === 'top' ? 'appShell.face.switchToTop' : face === 'bottom' ? 'appShell.face.switchToBottom' : 'canvas.face.aroundTurnsBar')
                   return (
                     <div key={face} className="tree-face-group" data-face={face}>
-                      <div
+                      <button
+                        type="button"
                         className={`tree-face-layer tree-face-layer--${face}${active ? ' tree-face-layer--active' : ''}`}
                         data-face-layer={face}
                         data-face-state={active ? 'active' : 'ghost'}
+                        aria-pressed={active}
+                        disabled={aroundRefused || (faceEditInProgress && !active)}
+                        title={title}
+                        onClick={() => switchWorkspaceFace(face)}
                       >
                         <Icon id={face === 'top' ? 'face-top' : face === 'bottom' ? 'face-bottom' : 'face-around'} size={16} />
                         <span className="tree-face-layer__label">
                           {t(face === 'top' ? 'featureTree.face.topFace' : face === 'bottom' ? 'featureTree.face.bottomFace' : 'featureTree.face.aroundLayer')}
                         </span>
                         <span className="tree-face-layer__count">{count}</span>
-                        <span className="tree-face-layer__spacer" />
-                        <span className={`face-chip ${active ? `face-chip--${face}` : ''}`}>
-                          {t(active ? 'featureTree.face.stateActive' : 'featureTree.face.stateGhost')}
-                        </span>
-                        {active ? null : (
-                          <button
-                            type="button"
-                            className={`tree-action-btn${showOtherSide ? '' : ' tree-action-btn--muted'}`}
-                            aria-pressed={showOtherSide}
-                            title={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
-                            aria-label={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
-                            onClick={() => setShowOtherSide(!showOtherSide)}
-                          >
-                            <Icon id={showOtherSide ? 'eye' : 'eye-off'} />
-                          </button>
-                        )}
+                      </button>
+                      <div className="tree-face-children">
+                        {active && emptySection ? (
+                          <div className="feature-tree-empty">{t('featureTree.face.empty')}</div>
+                        ) : null}
+                        {entries}
                       </div>
-                      <div className="tree-face-children">{renderMachiningEntries(face)}</div>
                     </div>
                   )
                 })
               : renderMachiningEntries(null)}
           </div>
+        ) : (
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.features')}</div>
         )}
         <TreeRow
           label={t('featureTree.tree.regions')}

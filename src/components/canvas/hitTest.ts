@@ -15,17 +15,22 @@
  */
 
 import { rectProfile, sampleProfilePoints } from '../../types/project'
-import type { Clamp, Point, Project, SketchProfile, Tab } from '../../types/project'
+import type { CannedShapeData, Clamp, FeatureOperation, Matrix2D, Point, Project, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import type { ArcSeg } from '../../store/helpers/segmentIntersection'
+import { isCannedFeature, resolveCannedShapeShapes } from '../../cannedShapes'
 
 export interface FeatureLike {
   id: string
   visible: boolean
   sketch: { profile: SketchProfile }
+  /** Generated shapes hit-test their outlines, never the stored placement frame. */
+  canned?: CannedShapeData | null
+  transform?: Matrix2D
+  operation?: FeatureOperation
 }
 
 export type FeatureSelectionHit =
@@ -235,54 +240,59 @@ export function segmentHitTest(
 
   for (const feature of features) {
     if (!feature.visible) continue
-    const profile = feature.sketch.profile
-    if (opts.openOnly && profile.closed) continue
 
-    const resolved = resolveProfileSegments(profile)
-    if (resolved.length === 0) continue
+    // A generated shape's editable-segment index means nothing (it has no
+    // editable sketch), but reference picking must still find the drawn lines
+    // rather than the frame (#1112 A2).
+    for (const profile of featureHitProfiles(feature)) {
+      if (opts.openOnly && profile.closed) continue
 
-    for (let index = 0; index < resolved.length; index += 1) {
-      const seg = resolved[index]
-      if (!seg) continue // bezier → skip
+      const resolved = resolveProfileSegments(profile)
+      if (resolved.length === 0) continue
 
-      let dist: number
-      let point: Point
-      let t: number
+      for (let index = 0; index < resolved.length; index += 1) {
+        const seg = resolved[index]
+        if (!seg) continue // bezier → skip
 
-      if (seg.kind === 'line') {
-        const dx = seg.p1.x - seg.p0.x
-        const dy = seg.p1.y - seg.p0.y
-        const len2 = dx * dx + dy * dy
-        if (len2 < EPS) {
-          // Degenerate line (point)
-          dist = Math.hypot(worldPoint.x - seg.p0.x, worldPoint.y - seg.p0.y)
-          point = seg.p0
-          t = 0
-        } else {
-          t = Math.max(0, Math.min(1,
-            ((worldPoint.x - seg.p0.x) * dx + (worldPoint.y - seg.p0.y) * dy) / len2,
-          ))
-          point = {
-            x: seg.p0.x + dx * t,
-            y: seg.p0.y + dy * t,
+        let dist: number
+        let point: Point
+        let t: number
+
+        if (seg.kind === 'line') {
+          const dx = seg.p1.x - seg.p0.x
+          const dy = seg.p1.y - seg.p0.y
+          const len2 = dx * dx + dy * dy
+          if (len2 < EPS) {
+            // Degenerate line (point)
+            dist = Math.hypot(worldPoint.x - seg.p0.x, worldPoint.y - seg.p0.y)
+            point = seg.p0
+            t = 0
+          } else {
+            t = Math.max(0, Math.min(1,
+              ((worldPoint.x - seg.p0.x) * dx + (worldPoint.y - seg.p0.y) * dy) / len2,
+            ))
+            point = {
+              x: seg.p0.x + dx * t,
+              y: seg.p0.y + dy * t,
+            }
+            dist = Math.hypot(worldPoint.x - point.x, worldPoint.y - point.y)
           }
-          dist = Math.hypot(worldPoint.x - point.x, worldPoint.y - point.y)
+        } else {
+          // arc
+          const result = distancePointToArc(worldPoint, seg)
+          dist = result.dist
+          point = result.point
+          t = result.t
         }
-      } else {
-        // arc
-        const result = distancePointToArc(worldPoint, seg)
-        dist = result.dist
-        point = result.point
-        t = result.t
-      }
 
-      if (dist <= toleranceWorld && dist < bestDist) {
-        bestDist = dist
-        best = {
-          featureId: feature.id,
-          segmentIndex: index, // TRUE profile.segments index
-          point,
-          t,
+        if (dist <= toleranceWorld && dist < bestDist) {
+          bestDist = dist
+          best = {
+            featureId: feature.id,
+            segmentIndex: index, // TRUE profile.segments index
+            point,
+            t,
+          }
         }
       }
     }
@@ -291,9 +301,44 @@ export function segmentHitTest(
   return best
 }
 
+/**
+ * The profiles a feature is actually drawn from. A generated (canned) shape
+ * stores only its placement frame in `sketch.profile`; hit testing against that
+ * frame would make the empty space between generated lines — or outside a
+ * curved outline — clickable, so the generated outlines are used instead
+ * (issue #1112 A2).
+ */
+export function featureHitProfiles(feature: FeatureLike): SketchProfile[] {
+  if (isCannedFeature(feature) && feature.operation) {
+    const shapes = resolveCannedShapeShapes({
+      operation: feature.operation,
+      canned: feature.canned,
+      transform: feature.transform,
+    })
+    if (shapes.length > 0) return shapes.map((shape) => shape.profile)
+  }
+  return [feature.sketch.profile]
+}
+
+function featureProfileHit(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): {
+  hit: boolean
+  nearOutline: boolean
+} {
+  let hit = false
+  let nearOutline = false
+  for (const profile of featureHitProfiles(feature)) {
+    if (pointNearProfile(worldPoint, profile, vt)) {
+      hit = true
+      nearOutline = true
+    } else if (pointInProfile(worldPoint.x, worldPoint.y, profile)) {
+      hit = true
+    }
+  }
+  return { hit, nearOutline }
+}
+
 function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): boolean {
-  return pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)
-    || pointNearProfile(worldPoint, feature.sketch.profile, vt)
+  return featureProfileHit(feature, worldPoint, vt).hit
 }
 
 /**
@@ -333,13 +378,16 @@ export function resolveFeatureSelectionHit(
     const feature = features[index]
     if (!feature.visible) continue
 
-    const nearOutline = pointNearProfile(worldPoint, feature.sketch.profile, vt)
-    if (!nearOutline && !pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)) {
+    const profiles = featureHitProfiles(feature)
+    const outlineHit = featureProfileHit(feature, worldPoint, vt)
+    if (!outlineHit.hit) {
       continue
     }
 
-    candidates.push({ id: feature.id, profile: feature.sketch.profile })
-    if (nearOutline) nearbyOutlineIds.push(feature.id)
+    // Nesting resolution still needs one representative contour; generators
+    // emit the outer contour first, so that is the shape's extent.
+    candidates.push({ id: feature.id, profile: profiles[0] })
+    if (outlineHit.nearOutline) nearbyOutlineIds.push(feature.id)
   }
 
   const candidateIds = candidates.map((candidate) => candidate.id)
@@ -371,7 +419,7 @@ export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLi
     const feature = features[index]
     if (!feature.visible) continue
     if (featureContainsPoint(feature, worldPoint, vt)) {
-      candidates.push({ id: feature.id, profile: feature.sketch.profile })
+      candidates.push({ id: feature.id, profile: featureHitProfiles(feature)[0] })
     }
   }
   return resolveInnermostOrTopmostId(candidates)
@@ -382,12 +430,18 @@ function pointInRect(point: Point, minX: number, minY: number, maxX: number, max
 }
 
 export function featureFullyInsideRect(feature: FeatureLike, minX: number, minY: number, maxX: number, maxY: number): boolean {
-  const points = sampleProfilePoints(feature.sketch.profile)
-  if (points.length === 0) {
-    return false
+  let sawPoints = false
+  for (const profile of featureHitProfiles(feature)) {
+    const points = sampleProfilePoints(profile)
+    if (points.length === 0) {
+      return false
+    }
+    sawPoints = true
+    if (!points.every((point) => pointInRect(point, minX, minY, maxX, maxY))) {
+      return false
+    }
   }
-
-  return points.every((point) => pointInRect(point, minX, minY, maxX, maxY))
+  return sawPoints
 }
 
 export function findHitClampId(worldPoint: Point, clamps: Clamp[]): string | null {

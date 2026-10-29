@@ -483,9 +483,6 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   // ── Stock faces on the sketch (issue #945) ──
   'canvas.face.through': 'PASANTE',
   'canvas.face.topOriginLanding': 'El origen de la cara superior queda aquí tras el volteo',
-  'canvas.face.flippedAboutX': 'Material en bruto volteado sobre X (borde frontal ↔ borde trasero).',
-  'canvas.face.flippedAboutY': 'Material en bruto volteado sobre Y (borde izquierdo ↔ borde derecho).',
-  'canvas.face.topIsGhost': 'Los elementos de la cara superior se muestran como fantasma y no se pueden editar aquí.',
   'canvas.face.aroundTurnsBar': 'La barra gira en el rotativo. Esta vista es su superficie desplegada: a lo largo de la barra y alrededor de ella.',
   'canvas.around.modelBand': '{name} — dentro de la barra, mecanizado por Desbaste rotativo y Acabado rotativo',
 }

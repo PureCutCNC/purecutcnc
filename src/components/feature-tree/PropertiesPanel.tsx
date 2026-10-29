@@ -41,7 +41,14 @@ import { machineOptionsForType, projectTypeLabelKey } from './projectTypeChoice'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
-import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
+import { defaultFontIdForStyle, getFeatureGeometryProfiles, getTextFontOptions } from '../../text'
+import {
+  cannedShapeIsExpandable,
+  cannedShapeLabelKey,
+  cannedShapeSummary,
+  getCannedShapeEditor,
+  isCannedFeature,
+} from '../../cannedShapes'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -116,6 +123,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const deleteConstraint = useProjectStore((s) => s.deleteConstraint)
   const makeUnique = useProjectStore((s) => s.makeUnique)
   const expandTextFeature = useProjectStore((s) => s.expandTextFeature)
+  const expandCannedFeature = useProjectStore((s) => s.expandCannedFeature)
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const { t } = useI18n()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
@@ -1480,8 +1488,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
   const isTextFeature = selectedFeature.kind === 'text' && !!selectedFeature.text
   const textFeature = isTextFeature ? selectedFeature.text : null
-  const hasSelfIntersection = isTextFeature ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
-  const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
+  // A canned shape owns its geometry through parameters; its stored profile is
+  // only the placement frame, so the sketch-based readers below must not run on
+  // it (issue #1112).
+  const isCannedShape = isCannedFeature(selectedFeature)
+  const cannedSummary = isCannedShape ? cannedShapeSummary(selectedFeature.canned) : null
+  const cannedLabelKey = isCannedShape ? cannedShapeLabelKey(selectedFeature.canned) : null
+  const cannedEditor = isCannedShape && selectedFeature.canned
+    ? getCannedShapeEditor(selectedFeature.canned.kind)
+    : null
+  const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
+  const cannedShapesOpen = isCannedShape
+    ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
+    : !selectedFeature.sketch.profile.closed
+  const hasSelfIntersection = isTextFeature || isCannedShape ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
+  const exceedsStock = isTextFeature || isCannedShape ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
@@ -1519,9 +1540,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         >
           <label className="properties-field">
             <span>{t("featureTree.properties.operation")}</span>
-            {!selectedFeature.sketch.profile.closed ? (
+            {cannedShapesOpen ? (
               // Open profiles convert between Line (engraved path) and
               // Construction (sketch reference) only — mirrors the tree menu.
+              // A canned shape's open lines are open by construction (#1112).
               <Select
                 value={selectedFeature.operation === 'construction' ? 'construction' : 'line'}
                 options={[
@@ -1626,6 +1648,48 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </label>
             </>
           ) : null}
+          {isCannedShape ? (
+            <>
+              {cannedSummary ? (
+                <p className="properties-linked-face-note" data-testid="canned-shape-summary">
+                  {t(cannedSummary.key as MessageKey, cannedSummary.values)}
+                </p>
+              ) : (
+                <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
+                  {t('featureTree.properties.canned.unknown')}
+                </p>
+              )}
+              {cannedLabelKey ? (
+                <div className="properties-actions" style={{ marginTop: '12px' }}>
+                  <button
+                    className="feat-btn"
+                    type="button"
+                    disabled={!cannedEditor}
+                    title={cannedEditor ? undefined : t('featureTree.properties.canned.editUnavailable')}
+                    onClick={() => { if (cannedEditor) cannedEditor(selectedFeature.id) }}
+                  >
+                    {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
+                  </button>
+                  {cannedExpandable ? (
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      onClick={() => {
+                        expandCannedFeature(selectedFeature.id)
+                        closeExpanded()
+                      }}
+                    >
+                      {t('featureTree.properties.canned.expand')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="properties-region-note">
+                <span className="properties-region-note__badge">{t('featureTree.properties.canned.noteBadge')}</span>
+                <span>{t(cannedExpandable ? 'featureTree.properties.canned.note' : 'featureTree.properties.canned.modelNote')}</span>
+              </div>
+            </>
+          ) : null}
           {isTextFeature ? (
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
@@ -1715,7 +1779,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </>
           ) : selectedFeature.authoringFace === 'bottom' ? (
             <FaceZRange features={[selectedFeature]} />
-          ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+          ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}
               zTop={zTop}
@@ -1779,14 +1843,20 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button className="feat-btn" type="button" onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }} disabled={isTextFeature}>
+        <button
+          className="feat-btn"
+          type="button"
+          onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
+          disabled={isTextFeature || isCannedShape}
+          title={isCannedShape ? t('featureTree.properties.canned.sketchDisabled') : undefined}
+        >
           {t('featureTree.properties.stock.editSketch')}
         </button>
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           {t('featureTree.properties.deleteFeature')}
         </button>
       </div>
-      {selectedFeature.sketch.constraints.filter((c) => c.type === 'fixed_distance').length > 0 ? (
+      {!isCannedShape && selectedFeature.sketch.constraints.filter((c) => c.type === 'fixed_distance').length > 0 ? (
         <div className="properties-group">
           <span className="properties-section-title">{t('featureTree.properties.constraints.title')}</span>
           {selectedFeature.sketch.constraints

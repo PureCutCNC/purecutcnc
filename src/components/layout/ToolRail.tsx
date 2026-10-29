@@ -37,6 +37,7 @@ function RailButton({
   active = false,
   emphasized = false,
   disabled = false,
+  disabledReason,
   onClick,
 }: {
   icon: string
@@ -44,6 +45,7 @@ function RailButton({
   active?: boolean
   emphasized?: boolean
   disabled?: boolean
+  disabledReason?: string
   onClick: () => void
 }) {
   return (
@@ -53,6 +55,7 @@ function RailButton({
         type="button"
         aria-label={label}
         disabled={disabled}
+        title={disabled && disabledReason ? disabledReason : undefined}
         onClick={(e) => {
           onClick()
           e.currentTarget.blur()
@@ -60,7 +63,9 @@ function RailButton({
       >
         <Icon id={icon} />
       </button>
-      <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+      <span className="tool-rail__tooltip" role="tooltip">
+        {disabled && disabledReason ? `${label} — ${disabledReason}` : label}
+      </span>
     </div>
   )
 }
@@ -155,6 +160,9 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const sketchAuthoringRefused = aroundSketchAuthoringRefused(project, activeFace(project))
   const aroundFace = activeFace(project) === 'around'
   const sketchCommands = useSketchCommands()
+  const cannedRefusal = sketchCommands.predicates.hasCannedSelectedFeatures
+    ? t('sketch.canned.actionRefused')
+    : undefined
   const creationCommands = useCreationShapeCommands({
     onRequestText: () => setShowTextDialog(true),
   })
@@ -308,10 +316,10 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
             <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
             <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
-            <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} onClick={sketchCommands.boolean.offset.onActivate} />
-            <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} onClick={sketchCommands.constraint.onActivate} />
-            <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} onClick={sketchCommands.boolean.join.onActivate} />
-            <RailButton icon="cut" label={t('appShell.toolRail.cut')} active={sketchCommands.boolean.cut.active} onClick={sketchCommands.boolean.cut.onActivate} />
+            <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.offset.onActivate} />
+            <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.constraint.onActivate} />
+            <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} disabled={!sketchCommands.boolean.join.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.join.onActivate} />
+            <RailButton icon="cut" label={t('appShell.toolRail.cut')} active={sketchCommands.boolean.cut.active} disabled={!sketchCommands.boolean.cut.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.cut.onActivate} />
           </div>
         )}
 

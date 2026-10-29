@@ -19,16 +19,20 @@ import { ToolbarActionButton } from './primitives'
 
 function ShapeToolActions({
   pendingShapeAction,
+  hasCannedSelection = false,
   tooltipSide,
   onJoin,
   onCut,
 }: {
   pendingShapeAction: 'join' | 'cut' | null
+  /** A generated shape is in the selection, so both actions refuse. */
+  hasCannedSelection?: boolean
   tooltipSide?: 'bottom' | 'right'
   onJoin: () => void
   onCut: () => void
 }) {
   const { t } = useI18n()
+  const disabledReason = hasCannedSelection ? t('sketch.canned.actionRefused') : undefined
 
   return (
     <div className="toolbar-group">
@@ -36,6 +40,8 @@ function ShapeToolActions({
         icon="merge"
         label={pendingShapeAction === 'join' ? t('sketch.boolean.cancelJoin') : t('sketch.boolean.join')}
         active={pendingShapeAction === 'join'}
+        disabled={hasCannedSelection}
+        disabledReason={disabledReason}
         tooltipSide={tooltipSide}
         onClick={onJoin}
       />
@@ -43,6 +49,8 @@ function ShapeToolActions({
         icon="cut"
         label={pendingShapeAction === 'cut' ? t('sketch.boolean.cancelCut') : t('sketch.boolean.cut')}
         active={pendingShapeAction === 'cut'}
+        disabled={hasCannedSelection}
+        disabledReason={disabledReason}
         tooltipSide={tooltipSide}
         onClick={onCut}
       />

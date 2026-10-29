@@ -41,6 +41,7 @@ import {
   type TextLayout,
 } from '../types/project'
 import { clonePoint, cloneProfile, transformProfile, translateProfile } from '../geometry/profile'
+import { isCannedFeature, resolveCannedShapeProfiles, resolveCannedShapeShapes } from '../cannedShapes'
 
 export interface TextToolConfig {
   text: string
@@ -794,21 +795,62 @@ export function resolveTextFeatureShapes(feature: SketchFeature): GeneratedTextS
 }
 
 export function getFeatureGeometryProfiles(feature: SketchFeature): SketchProfile[] {
-  return isTextFeature(feature)
-    ? resolveTextFeatureShapes(feature).map((shape) => shape.profile)
-    : [feature.sketch.profile]
+  if (isTextFeature(feature)) {
+    return resolveTextFeatureShapes(feature).map((shape) => shape.profile)
+  }
+  if (isCannedFeature(feature)) {
+    const profiles = resolveCannedShapeProfiles(feature)
+    // An unregistered kind (a file from a later build) keeps its stored frame
+    // visible instead of vanishing; the parameters still round-trip untouched.
+    return profiles.length > 0 ? profiles : [feature.sketch.profile]
+  }
+  return [feature.sketch.profile]
+}
+
+/**
+ * A feature's generated pieces, each with its resolved operation. Plain
+ * features are one shape; Text and canned shapes resolve into several, and
+ * their holes carry the inverse of the feature's operation (issue #861/#1112).
+ */
+export interface FeatureGeometryShape {
+  profile: SketchProfile
+  operation: SketchFeature['operation']
+  name?: string
+}
+
+export function resolveFeatureGeometryShapes(feature: SketchFeature): FeatureGeometryShape[] {
+  if (isTextFeature(feature)) {
+    return resolveTextFeatureShapes(feature).map((shape) => ({
+      profile: shape.profile,
+      operation: shape.operation,
+      name: shape.name,
+    }))
+  }
+  if (isCannedFeature(feature)) {
+    return resolveCannedShapeShapes(feature).map((shape) => ({
+      profile: shape.profile,
+      operation: shape.operation,
+      name: shape.name,
+    }))
+  }
+  return [{ profile: feature.sketch.profile, operation: feature.operation }]
 }
 
 /**
  * Whether any shape this feature resolves into has `operation`. A plain feature
  * is its own single shape; a text feature resolves into glyph outlines carrying
  * its operation and counters carrying the inverse — so an add text's counters
- * are subtracts an inside route or pocket can target (issue #861).
+ * are subtracts an inside route or pocket can target (issue #861). Canned
+ * shapes follow the same nesting rule (issue #1112).
  */
 export function featureHasShapeWithOperation(feature: SketchFeature, operation: SketchFeature['operation']): boolean {
-  return isTextFeature(feature)
-    ? resolveTextFeatureShapes(feature).some((shape) => shape.operation === operation)
-    : feature.operation === operation
+  if (isTextFeature(feature)) {
+    return resolveTextFeatureShapes(feature).some((shape) => shape.operation === operation)
+  }
+  if (isCannedFeature(feature)) {
+    return resolveCannedShapeShapes(feature).some((shape) => shape.operation === operation)
+  }
+  return feature.operation === operation
 }
 
 export function featureHasClosedGeometry(feature: SketchFeature): boolean {
@@ -841,6 +883,21 @@ export function expandFeatureGeometry(feature: SketchFeature, includeSynthetic =
       name: feature.name,
       kind: 'composite',
       text: null,
+      sketch: {
+        ...feature.sketch,
+        profile: shape.profile,
+      },
+      operation: shape.operation,
+    }))
+  }
+
+  if (isCannedFeature(feature)) {
+    return resolveCannedShapeShapes(feature).map((shape, index) => ({
+      ...feature,
+      id: `${feature.id}:canned:${index}`,
+      name: feature.name,
+      kind: 'composite',
+      canned: null,
       sketch: {
         ...feature.sketch,
         profile: shape.profile,

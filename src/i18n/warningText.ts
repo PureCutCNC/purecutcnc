@@ -16,7 +16,26 @@
 
 import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
 import type { MessageKey } from './locales/en'
-import { translate } from './store'
+import { formatList, type MessageParams } from './catalog'
+import { getI18nSnapshot, translate } from './store'
+
+/**
+ * Turn the engine's param values into interpolation strings. A list param is a
+ * set of user-authored names the engine deliberately left unjoined, so it is
+ * joined here in the active language rather than with a comma hard-coded at
+ * the call site (#1112 C2).
+ */
+function localizeParams(params: ToolpathWarning['params']): MessageParams | undefined {
+  if (!params) return undefined
+  const languageTag = getI18nSnapshot().languageTag
+  const localized: MessageParams = {}
+  for (const [name, value] of Object.entries(params)) {
+    localized[name] = typeof value === 'string' || typeof value === 'number'
+      ? value
+      : formatList(value, languageTag)
+  }
+  return localized
+}
 
 /**
  * The single presentation mapper for structured engine warnings: resolves
@@ -31,7 +50,7 @@ export function toolpathWarningText(warning: ToolpathWarning): string {
   if (params && typeof params.moveKindId === 'string') {
     params = { ...params, moveKind: translate(`warnings.moveKind.${params.moveKindId}` as MessageKey) }
   }
-  return translate(`warnings.${warning.code}` as MessageKey, params)
+  return translate(`warnings.${warning.code}` as MessageKey, localizeParams(params))
 }
 
 /** Convenience for rendering a whole warning list. */

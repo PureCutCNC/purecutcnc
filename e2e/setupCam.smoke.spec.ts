@@ -55,7 +55,7 @@ test('CAM Plan on Bottom proposes its pocket and explains Top-covered through wo
   const seeded = await getProject(page) as unknown as Project
   seeded.tools = seeded.tools.map(tool => ({ ...tool, maxCutDepth: 3 }))
   await seedProject(page, JSON.stringify(seeded))
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await expect(ui.setupCam.planButton(page)).toBeEnabled()
   await ui.setupCam.planButton(page).click()
   const dialog = page.getByRole('dialog', { name: 'CAM Plan', exact: true })
@@ -93,7 +93,7 @@ test('CAM Plan stays disabled on Around with its reason (#1106)', async ({ app, 
   project.meta.projectType = 'rotary'
   project.stock = { ...project.stock, shape: 'round', diameter: 2, axis: 'x' }
   await seedProject(page, JSON.stringify(project))
-  await ui.face.segment(page, 'Around').click()
+  await ui.face.switchTo(page, 'Around')
   await expect(ui.setupCam.planButton(page)).toBeDisabled()
   await expect(ui.setupCam.planButton(page)).toHaveAttribute('title', 'The automatic plan is not available on the around face')
 })
@@ -103,7 +103,7 @@ for (const machine of ['grbl','shopbot']) {
     const { page } = app
     await seed(page,true,machine)
     writeFileSync(testInfo.outputPath('two-sides.camj'),JSON.stringify(await getProject(page),null,2))
-    await ui.face.segment(page,'Bottom').click()
+    await ui.face.switchTo(page, 'Bottom')
     await expect(ui.setupCam.planButton(page)).toBeEnabled()
     await expect(ui.setupCam.planButton(page)).not.toHaveAttribute('title',/top face only/)
     await rowByName(page,'Bottom pocket').click()
@@ -155,7 +155,7 @@ for (const machine of ['grbl','shopbot']) {
 test('provisional Bottom cross-face Add does not select a ghost', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
-  await ui.face.segment(page,'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await expect(ui.setupCam.section(page,'bottom')).toContainText('No operations')
   await ui.setupCam.add(page).click()
   await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
@@ -175,13 +175,13 @@ test('Move lists removed targets and setup deletion lists its operations', async
   // Operations are selected on their own face (issue #1102), and Move lists
   // only real setups from there: give Bottom its setup first by adding an
   // operation to it, then pick Top pass on Top.
-  await ui.face.segment(page,'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await ui.setupCam.add(page).click()
   await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
   await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
-  await ui.face.segment(page,'Top').click()
+  await ui.face.switchTo(page, 'Top')
   // From Top, the Bottom operation is a ghost row: listed, never selected.
   // The inactive setup's card starts collapsed.
   await ui.setupCam.section(page,'bottom').getByRole('button',{ name:/Bottom operations/ }).click()
@@ -215,7 +215,7 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   await seedProject(page,JSON.stringify(imported))
   const loaded = await getProject(page) as unknown as Project
   const model = loaded.features.find((feature) => loaded.featureDefinitions[feature.definitionId].kind === 'stl')!
-  await ui.face.segment(page,'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await ui.setupCam.add(page).click()
   await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
   await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker label').filter({ hasText:model.name }).locator('input').check()
@@ -236,7 +236,7 @@ test('setup properties fit a landscape tablet and keyboard cancel restores focus
   const { page } = app
   await page.setViewportSize({ width:1024,height:768 })
   await seed(page,false)
-  await ui.face.segment(page,'Bottom').tap()
+  await ui.face.switchTo(page, 'Bottom')
   await page.getByRole('button',{ name:'Open operations panel',exact:true }).tap()
   const trigger = ui.setupCam.section(page,'bottom').getByRole('button',{ name:'Setup properties: Bottom',exact:true })
   await trigger.click()

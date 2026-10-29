@@ -455,6 +455,8 @@ export interface ProjectStore {
   cutSelectedFeatures: (keepOriginals?: boolean) => string[]
   offsetSelectedFeatures: (distance: number) => string[]
   expandTextFeature: (textFeatureId: string) => void
+  /** Explode a canned shape into plain outline rows (issue #1112). */
+  expandCannedFeature: (cannedFeatureId: string) => void
   reorderFeatures: (ids: string[]) => void
   alignFeatures: (ids: string[], alignment: FeatureAlignment) => void
   distributeFeatures: (ids: string[], distribution: FeatureDistribution) => void

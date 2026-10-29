@@ -93,6 +93,10 @@ function testVariantKindsRenderEveryOption(): void {
     ['entryStrategy', ['plunge', 'helix', 'ramp']],
     ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking', 'helical', 'countersink']],
     ['engagementMode', ['slots_only', 'engagement']],
+    // #1112 decision 7: the rotary Passes field shows the two directions, and
+    // the radial stock uses a rotary cross-section instead of the pocket wall.
+    ['passes', ['along', 'around']],
+    ['stockRadial', ['rotary']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {
@@ -122,11 +126,59 @@ function testCutDirectionArrowOrientation(): void {
   assert(!arrowPointsRight(renderKind('cutDirection', 'conventional')), 'conventional arrow must point left')
 }
 
+// The `data-arrow` marker names each rotary picture's signature arrow. Reading
+// the marked path's geometry (not just its presence) is what makes a swap of
+// the two pictures fail: the along arrow must be a straight run down the bar,
+// the around arrow an arc, and neither picture may carry the other's marker.
+function markedArrow(html: string, marker: string): string {
+  const path = html.split('<path ').find((part) => part.includes(`data-arrow="${marker}"`))
+  assert(path, `no data-arrow="${marker}" arrow in the picture`)
+  const d = /\bd="([^"]+)"/.exec(path)
+  assert(d, `data-arrow="${marker}" arrow has no path data`)
+  return d[1]
+}
+
+function testRotaryPicturesDiffer(): void {
+  const along = renderKind('passes', 'along')
+  const around = renderKind('passes', 'around')
+  assert(along !== around, 'passes along and around must not render the same picture')
+  assert(
+    along.includes(`aria-label="${operationParamRefLabel('passes')}"`)
+      && around.includes(`aria-label="${operationParamRefLabel('passes')}"`),
+    'both passes variants keep the same accessible label',
+  )
+
+  // Along the bar is one straight horizontal pass at the bar's centre line;
+  // around the bar is the same motion drawn as an arc, so swapping the two
+  // pictures (or their marked paths) fails here instead of merely differing.
+  const alongArrow = markedArrow(along, 'along-bar')
+  assert(
+    /^M[\d.]+ 17h\d+$/.test(alongArrow),
+    `the along picture needs the longitudinal arrow along the bar, got "${alongArrow}"`,
+  )
+  const aroundArrow = markedArrow(around, 'around-bar')
+  assert(
+    /[cCsS]/.test(aroundArrow),
+    `the around picture needs the rotational (curved) arrow, got "${aroundArrow}"`,
+  )
+  assert(!along.includes('data-arrow="around-bar"'), 'the along picture must not contain the around arrow')
+  assert(!around.includes('data-arrow="along-bar"'), 'the around picture must not contain the along arrow')
+
+  const wall = renderKind('stockRadial')
+  const rotary = renderKind('stockRadial', 'rotary')
+  assert(wall !== rotary, 'rotary stock-to-leave must not reuse the pocket-wall picture')
+  // The pocket-wall diagram is the rectangle in the default branch; the rotary
+  // one is the bar cross-section circle. Naming both makes the swap explicit.
+  assert(wall.includes('M8 7h42v20H8z'), 'the default stockRadial picture stays the pocket wall')
+  assert(rotary.includes('m-12 0a12 11'), 'the rotary stockRadial picture is a radial cross-section')
+}
+
 testNoDuplicateKinds()
 testAllKindsHaveNonEmptyLabel()
 testAllLabelsAreUnique()
 testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
 testCutDirectionArrowOrientation()
+testRotaryPicturesDiffer()
 
 console.log('OperationParameterReference tests passed')

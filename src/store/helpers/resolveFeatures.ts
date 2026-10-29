@@ -35,9 +35,10 @@ import type {
   SketchProfile,
   STLFeatureData,
 } from '../../types/project'
-import { cloneTextFeatureData, cloneTextLayout } from '../../types/project'
+import { cloneCannedShapeData, cloneTextFeatureData, cloneTextLayout } from '../../types/project'
 import { transformProfile as transformProfileAffine } from '../../geometry/profile'
 import { getTextFrameProfile } from '../../text'
+import { cannedShapeFrame } from '../../cannedShapes'
 import { multiplyMatrix, translateMatrix } from './instanceTransforms'
 
 // ============================================================================
@@ -60,6 +61,8 @@ export interface ResolvedSketchFeature {
   transform: Matrix2D
   kind: FeatureDefinition['kind']
   text: FeatureDefinition['text']
+  /** Canned-shape kind and parameters (definition-owned). */
+  canned: FeatureDefinition['canned']
   /** Per-instance curved baseline, resolved into world space alongside `sketch`. */
   textLayout: FeatureInstance['textLayout']
   stl: FeatureDefinition['stl']
@@ -448,6 +451,16 @@ export function resolveFeatureRow(
       (point) => applyMatrixToPoint(transform, point),
     )
   }
+
+  // A canned shape's frame is derived from its parameters for the same reason:
+  // the parameters are authoritative, so a stale stored frame can never make
+  // selection bounds or placement lag behind the geometry (issue #1112).
+  if (definition.canned) {
+    const frame = cannedShapeFrame(definition.canned)
+    if (frame) {
+      sketch.profile = transformProfileAffine(frame, (point) => applyMatrixToPoint(transform, point))
+    }
+  }
   // Layer per-instance constraints onto the resolved sketch.
   sketch.constraints = feature.constraints.map((c) => ({ ...c }))
 
@@ -461,6 +474,7 @@ export function resolveFeatureRow(
     transform,
     kind: definition.kind,
     text: cloneTextFeatureData(definition.text),
+    canned: cloneCannedShapeData(definition.canned),
     // The baseline is the instance's, not the definition's, so two copies of
     // one text run can wrap two different circles.
     textLayout: cloneTextLayout(feature.textLayout),

@@ -17,6 +17,8 @@
 import { warningsEn } from './locales/en/warnings'
 import { warningsZhCN } from './locales/zh-CN/warnings'
 import { interpolate } from './catalog'
+import { resetI18nStoreForTests, setActiveLocale } from './store'
+import { toolpathWarningText } from './warningText'
 import type { ToolpathWarning, ToolpathWarningCode } from '../engine/toolpaths/warningCodes'
 
 function assert(condition: boolean, message: string): void {
@@ -145,16 +147,43 @@ assert(
   'the work-budget message names the operation and the remedy',
 )
 // The 2026-10-22 finish advisory names the operation and states the consequence
-// without claiming a refusal.
+// without claiming a refusal; since #1112 decision 7.11 it names the uncovered
+// model instead of saying "this model".
 assert(
-  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish' })
-    === 'Rotary finish: no rough on this model comes before this finish in the setup; it will cut to full depth in one pass.',
-  'the finish-without-rough advisory names the operation and the consequence',
+  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish', model: 'Turn 2' })
+    === 'Rotary finish: no earlier rough for Turn 2 comes before this finish in the setup; it will cut to full depth in one pass.',
+  'the finish-without-rough advisory names the operation, the uncovered model and the consequence',
 )
+
+// A list param is joined at display time in the active language (#1112 C2),
+// not with a comma the engine baked in: switching language changes the
+// conjunction while the operation and model names stay verbatim.
+const multiModelWarning: ToolpathWarning = {
+  code: 'rotaryFinishWithoutRough',
+  params: { operation: 'Rotary finish', model: ['Model', 'Second'] },
+}
+assert(
+  toolpathWarningText(multiModelWarning)
+    === 'Rotary finish: no earlier rough for Model and Second comes before this finish in the setup; it will cut to full depth in one pass.',
+  'English joins the uncovered models with "and" at display time',
+)
+setActiveLocale('de')
+assert(
+  toolpathWarningText(multiModelWarning).includes('Model und Second'),
+  'German joins the same list with "und" without regenerating the warning',
+)
+resetI18nStoreForTests()
 
 // The debug passthrough renders its text verbatim in both locales.
 const debugWarning: ToolpathWarning = { code: 'debug', params: { text: 'Debug: xyz 42' } }
-assert(interpolate(warningsEn['warnings.debug'], debugWarning.params) === 'Debug: xyz 42', 'en debug passthrough')
-assert(interpolate(warningsZhCN['warnings.debug'], debugWarning.params) === 'Debug: xyz 42', 'zh debug passthrough')
+assert(
+  interpolate(warningsEn['warnings.debug'], { text: 'Debug: xyz 42' }) === 'Debug: xyz 42',
+  'en debug passthrough',
+)
+assert(
+  interpolate(warningsZhCN['warnings.debug'], { text: 'Debug: xyz 42' }) === 'Debug: xyz 42',
+  'zh debug passthrough',
+)
+assert(toolpathWarningText(debugWarning) === 'Debug: xyz 42', 'the mapper keeps the debug text verbatim')
 
 console.log('warnings coverage tests passed')

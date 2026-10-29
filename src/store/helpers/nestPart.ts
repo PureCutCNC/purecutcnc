@@ -42,7 +42,7 @@ import {
 import { normalizeToolForProject, resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
 import { CLAMP_KEEPOUT_EPSILON } from '../../engine/toolpaths/modelProtection'
 import type { ClipperPath } from '../../engine/toolpaths/types'
-import { getFeatureGeometryProfiles, isTextFeature, resolveTextFeatureShapes } from '../../text'
+import { getFeatureGeometryProfiles, resolveFeatureGeometryShapes } from '../../text'
 import {
   getStockBounds,
   type FeatureOperation,
@@ -326,9 +326,9 @@ interface PartShape {
 export function nestPartHoles(project: Project, features: ResolvedSketchFeature[], tolerance: number): NestRing[] {
   const shapes: PartShape[] = features.filter(isMachinable).flatMap((feature) => {
     const span = resolveFeatureZSpan(project, feature)
-    const own = isTextFeature(feature)
-      ? resolveTextFeatureShapes(feature)
-      : [{ operation: feature.operation, profile: feature.sketch.profile }]
+    // Text and canned shapes resolve into several pieces; a hole carries the
+    // inverse operation. A plain feature is its own single shape.
+    const own = resolveFeatureGeometryShapes(feature)
     return own.map((shape) => ({ featureId: feature.id, operation: shape.operation, profile: shape.profile, min: span.min, max: span.max }))
   })
   const adds = shapes.filter((shape) => shape.operation === 'add' && shape.profile.closed)

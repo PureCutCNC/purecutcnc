@@ -22,6 +22,7 @@ import { keepWorkspaceFace } from '../helpers/provisionalSetup'
 import { isGhostFeature } from '../helpers/activeFace'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
 
 export interface SelectionSliceDependencies {
   normalizeProject: (project: Project) => Project
@@ -259,7 +260,11 @@ export function createSelectionSlice(
         const selectedFeature = id ? featureById(s.project, id) : null
 
         if (joinMode) {
-          if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          if (selectedFeature && (
+            !selectedFeature.sketch.profile.closed
+            || selectedFeature.locked
+            || isCannedFeature(selectedFeature)
+          )) {
             return {}
           }
 
@@ -307,7 +312,7 @@ export function createSelectionSlice(
             return {}
           }
 
-          if (selectedFeature && selectedFeature.locked) {
+          if (selectedFeature && (selectedFeature.locked || isCannedFeature(selectedFeature))) {
             return {}
           }
           // Open features as targets are only allowed when at least one
@@ -978,6 +983,9 @@ export function createSelectionSlice(
       set((s) => {
         const feature = featureById(s.project, id)
         if (!feature || isGhostFeature(s.project, feature)) return {}
+        // A canned shape has no editable sketch — its parameters own the
+        // geometry. Expand to features first (issue #1112).
+        if (isCannedFeature(feature)) return {}
         return {
           pendingTransform: null,
           pendingOffset: null,

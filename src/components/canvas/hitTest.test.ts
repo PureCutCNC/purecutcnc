@@ -34,6 +34,10 @@ import {
   resolveFeatureSelectionHit,
 } from './hitTest'
 import type { ViewTransform } from './viewTransform'
+import { registerTestCannedShapes, testOpenLineCanned, testPlateCanned } from '../../test/cannedShapeFixture'
+import type { FeatureLike } from './hitTest'
+
+registerTestCannedShapes()
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAIL: ${message}`)
@@ -337,6 +341,47 @@ function makeProject(
   assert(result.featureId === 'only', `expected only candidate, got ${result.featureId}`)
 
   console.log('   ✓ single candidate still resolves directly')
+}
+
+// A generated (canned) shape stores only a placement frame, so selection must
+// test the outlines it draws — not the frame (issue #1112 A2).
+{
+  console.log('12. Generated-shape hit testing...')
+
+  const openLine: FeatureLike = {
+    id: 'open-line',
+    visible: true,
+    sketch: { profile: rectProfile(0, -8, 60, 16) },
+    canned: testOpenLineCanned(60, 8),
+    operation: 'line',
+  }
+
+  // Inside the frame rectangle, far from every generated segment: empty space.
+  const emptySpace = resolveFeatureSelectionHit({ x: 10, y: -7.5 }, [openLine], vt)
+  assert(emptySpace.kind === 'none', `empty space inside the frame must not select, got ${emptySpace.kind}`)
+  assert(findHitFeatureId({ x: 10, y: -7.5 }, [openLine], vt) === null, 'hover must not find the empty frame interior')
+  assert(findHitFeatureIds({ x: 10, y: -7.5 }, [openLine], vt).length === 0, 'candidate list must be empty in frame-only space')
+
+  // The generated outline itself is selectable, hover included.
+  const onLine = resolveFeatureSelectionHit({ x: 0, y: 0 }, [openLine], vt)
+  assert(onLine.kind === 'direct' && onLine.featureId === 'open-line', `expected the generated line, got ${onLine.kind}`)
+  assert(findHitFeatureId({ x: 0, y: 0 }, [openLine], vt) === 'open-line', 'hover follows the generated outline')
+
+  // A closed generated shape is hit through its material, not its corners'
+  // bounding box: the plate's frame and outline differ where the curve is.
+  const plate: FeatureLike = {
+    id: 'plate',
+    visible: true,
+    sketch: { profile: rectProfile(0, 0, 100, 60) },
+    canned: testPlateCanned(100, 60, 12),
+    operation: 'add',
+  }
+  const plateMaterial = resolveFeatureSelectionHit({ x: 20, y: 10 }, [plate], vt)
+  assert(plateMaterial.kind === 'direct' && plateMaterial.featureId === 'plate', 'material between the outlines selects')
+  const plateOutline = resolveFeatureSelectionHit({ x: 0, y: 30 }, [plate], vt)
+  assert(plateOutline.kind === 'direct' && plateOutline.featureId === 'plate', 'the generated outer outline is clickable')
+
+  console.log('   ✓ generated outlines, not the frame, define the hit area')
 }
 
 console.log('\nall hitTest.test.ts assertions passed')

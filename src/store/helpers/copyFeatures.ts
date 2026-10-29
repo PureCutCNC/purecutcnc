@@ -16,7 +16,7 @@
 
 import { newProject } from '../../types/project'
 import type { Clamp, FeatureDefinition, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneCannedShapeData, cloneTextFeatureData } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { moveDelta, multiplyMatrix, rotateDelta } from './instanceTransforms'
 import { duplicateClampName, duplicateFeatureName, duplicateTabName } from './naming'
@@ -198,6 +198,7 @@ export function buildCopiedFeatures(
           profile: { ...definition.profile, segments: definition.profile.segments.map((s) => ({ ...s } as typeof s)) },
           dimensions: definition.dimensions.map((d) => ({ ...d })),
           text: cloneTextFeatureData(definition.text),
+          canned: cloneCannedShapeData(definition.canned),
           stl: definition.stl ? { ...definition.stl } : null,
         }
         const resolvedProfile = resolveProfile(clonedDef, newTransform)
@@ -259,6 +260,7 @@ export function buildTransformedCopiedFeatures(
             profile: { ...definition.profile, segments: definition.profile.segments.map((segment) => ({ ...segment } as typeof segment)) },
             dimensions: definition.dimensions.map((dimension) => ({ ...dimension })),
             text: cloneTextFeatureData(definition.text),
+            canned: cloneCannedShapeData(definition.canned),
             stl: definition.stl ? { ...definition.stl } : null,
           }
         : undefined

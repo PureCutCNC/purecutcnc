@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { interpolate, placeholderNames, placeholdersMatch, pluralVariant } from './catalog'
+import { formatList, interpolate, placeholderNames, placeholdersMatch, pluralVariant } from './catalog'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -44,5 +44,15 @@ assert(pluralVariant('en', 2) === 'other', 'English 2 is other')
 assert(pluralVariant('zh-CN', 1) === 'other', 'Chinese has no grammatical plural')
 assert(pluralVariant('zh-CN', 5) === 'other', 'Chinese counts stay other')
 assert(pluralVariant('not a tag!', 1) === 'one', 'invalid tag falls back to English rules')
+
+// List joins (#1112 C2): the advisory names several uncovered models as one
+// placeholder, so the conjunction has to be the active language's own.
+assert(formatList([], 'en') === '', 'an empty list has nothing to join')
+assert(formatList(['Turn 2'], 'en') === 'Turn 2', 'a single name is not joined with a conjunction')
+assert(formatList(['Model', 'Second'], 'en') === 'Model and Second', 'English joins with "and"')
+assert(formatList(['Model', 'Second'], 'de') === 'Model und Second', 'German joins with "und"')
+assert(formatList(['Model', 'Second'], 'fr') === 'Model et Second', 'French joins with "et"')
+assert(formatList(['Model', 'Second'], 'zh-CN') === 'Model和Second', 'Chinese joins without a comma-space')
+assert(formatList(['Model', 'Second'], 'not a tag!') === 'Model, Second', 'invalid tag falls back to a comma join')
 
 console.log('i18n catalog tests passed')

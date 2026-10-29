@@ -64,7 +64,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.operationStepoverRatioRange': 'La relación de paso de la operación debe estar entre 0 y 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: el paso es inferior a 0,01 mm; auméntelo',
   'warnings.rotaryWorkBudgetExceeded': '{operation}: esto generaría demasiados movimientos; aumente el paso o el paso lateral',
-  'warnings.rotaryFinishWithoutRough': '{operation}: ninguna operación de desbaste de este modelo precede a este acabado en el montaje; cortará hasta la profundidad completa en una pasada.',
+  'warnings.rotaryFinishWithoutRough': '{operation}: ninguna operación de desbaste para {model} precede a este acabado en el montaje; cortará hasta la profundidad completa en una pasada.',
   'warnings.vcarveMedialWrongKind': 'Solo las operaciones V-carve medial pueden resolverse con el generador de eje medial',
   'warnings.vcarveMedialNeedsVBit': 'V-carve medial requiere una herramienta de broca en V',
   'warnings.vcarveBandNoDepth': 'La banda {topZ} -> {bottomZ} no deja profundidad utilizable para V-carve',
