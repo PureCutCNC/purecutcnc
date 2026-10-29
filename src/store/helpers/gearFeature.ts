@@ -149,7 +149,14 @@ export function createAddGearFeatureAction(
     // still created its first gear as Add, which is what gives the first
     // gear+bore the Add/Subtract pair it has always had (issue #1112 DE2
     // review). `addFeature`'s base-solid rule then agrees with this operation.
-    const isFirstMachiningFeature = isMachinable(gearFeature)
+    //
+    // Around is the one face where that Add is wrong (issue #1112 R2 item 14):
+    // the bar is already the material there (#395, #1108), exactly as it is
+    // for a hand-drawn outline, so a gear drawn on the unrolled sheet is a cut
+    // into the bar and the classifier's Subtract stands. Top and Bottom keep
+    // the historical first-gear Add.
+    const isFirstMachiningFeature = gearFace !== 'around'
+      && isMachinable(gearFeature)
       && !resolvedProjectFeatures(state.project).some(isMachinable)
     const operation: FeatureOperation = isFirstMachiningFeature ? 'add' : gearFeature.operation
     // A region/construction gear has no solid to bore; the old command created

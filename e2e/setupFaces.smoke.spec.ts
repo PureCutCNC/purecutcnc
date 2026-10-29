@@ -503,30 +503,32 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
 
 test('the face control is reachable and operable from the keyboard', async ({ app, ui }) => {
   const { page } = app
-  // The control closes the centre panel's tab bar (issue #1112 F3). With the
+  // The face control sits at the right end of the centre panel's tab bar,
+  // just left of the CAM pull-out handle (issue #1112 F3, R2 item 11). With the
   // Sketch tab focused — the only tab in the tab order — Tab walks the row as
-  // it is drawn: the right pull-out handle comes next, then the face switch.
+  // it is drawn: the face switch comes next, then the right pull-out handle.
   await page.getByRole('tab', { name: 'Sketch', exact: true }).focus()
   const rightHandle = ui.panelHandles.rightHandle(page)
   await page.keyboard.press('Tab')
-  await expect(rightHandle).toBeFocused()
-  await page.keyboard.press('Tab')
   const control = ui.face.current(page)
   await expect(control).toBeFocused()
+  // Keyboard focus is visible on the control itself.
+  expect(await control.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
+  await page.keyboard.press('Tab')
+  await expect(rightHandle).toBeFocused()
   // Keyboard order is the visual order: the switch sits to the right of the
-  // handle and of the last tab, at the right end of the row.
+  // last tab, and the handle closes the row at the far right edge.
   const handleBox = await rightHandle.boundingBox()
   const lastTabBox = await page.getByRole('tab', { name: 'Simulation', exact: true }).boundingBox()
   const controlBox = await control.boundingBox()
   expect(handleBox).not.toBeNull()
   expect(lastTabBox).not.toBeNull()
   expect(controlBox).not.toBeNull()
-  expect(controlBox!.x).toBeGreaterThan(handleBox!.x)
   expect(controlBox!.x).toBeGreaterThan(lastTabBox!.x)
-  // Keyboard focus is visible on the control itself.
-  expect(await control.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
+  expect(handleBox!.x).toBeGreaterThan(controlBox!.x)
 
   // Enter opens the menu on the face in view; the faces are ordinary buttons.
+  await control.focus()
   await page.keyboard.press('Enter')
   await expect(ui.face.item(page, 'Top')).toBeFocused()
   await page.keyboard.press('Tab')

@@ -43,7 +43,7 @@ interface RotarySolidCommand {
 }
 
 const ROTARY_SOLID_COMMANDS: readonly RotarySolidCommand[] = [
-  { kind: 'turn', command: 'rotary-turn', icon: 'roundrect', labelKey: 'dialogs.rotarySolid.turn.button' },
+  { kind: 'turn', command: 'rotary-turn', icon: 'turn', labelKey: 'dialogs.rotarySolid.turn.button' },
   { kind: 'polygon', command: 'rotary-polygon', icon: 'ngon', labelKey: 'dialogs.rotarySolid.polygon.button' },
 ]
 

@@ -176,9 +176,10 @@ test('selecting the chuck shows Type and its diameter and no Z control', async (
   await expect(ui.properties.clampType(page)).toBeVisible()
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
   // A chuck's diameter is its standard size (#1112 M): the Ø40 mm bar picks
-  // the 5 inch body, and the label names that diameter.
+  // the 5 inch body, and the label names only that size (issue #1112 R2
+  // item 13) — the catalogue the preset comes from is not in the picker.
   await expect(ui.properties.chuckSize(page)).toBeVisible()
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('BISON 3204 · 5"')
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('5"')
   // The height is derived from the bar, so there is no Z control to set it.
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 })
@@ -207,7 +208,7 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
   await expect(ui.properties.chuckSize(page)).toBeVisible()
   // A 40 mm square's corner circle needs the 6 inch body.
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('BISON 3204 · 6"')
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('6"')
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 
   // A plain clamp gives up the chuck size, and choosing Chuck mints one sized
@@ -232,13 +233,13 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   // on the pivot and derives its height — exactly the round bar's rule, using
   // the square's own pivot.
   await ui.properties.chuckSize(page).locator('.ui-select__trigger').click()
-  await ui.properties.chuckSizeOption(page, 'BISON 3204 · 12"').click()
+  await ui.properties.chuckSizeOption(page, '12"').click()
   const editedDiameter = convertLength(12.4, 'inch', 'mm')
   const edited = ((await getProject(page)) as unknown as Project).clamps.find((clamp) => clamp.id === chuckId)!
   expect(blank.axis === 'x' ? edited.h : edited.w).toBeCloseTo(editedDiameter, 6)
   expect(blank.axis === 'x' ? edited.y : edited.x).toBeCloseTo(centre - editedDiameter / 2, 6)
   expect(edited.height).toBeCloseTo(pivotZ + editedDiameter / 2, 6)
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('BISON 3204 · 12"')
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('12"')
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
 })
 

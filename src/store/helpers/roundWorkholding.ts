@@ -55,15 +55,20 @@ import { convertLength } from '../../utils/units'
  * Values below are the published INCH dimensions, converted without rounding.
  * These are starter equipment presets, not a claim that other jaw sets share
  * this capacity. In particular we do not merge the distinct d2/d3 jaw steps.
+ *
+ * The label is the size alone — `4"`, not `BISON 3204 · 4"` (issue #1112 R2
+ * item 13): the picked field is a *size*, and the catalogue entry behind it
+ * stays in this table (the ids and the two source links above), not in the
+ * picker's text.
  */
 export const STANDARD_CHUCKS = [
-  { id: 'bison-3204-3', label: 'BISON 3204 · 3"', diameterIn: 3.15, bodyIn: 1.73, minIn: 0.08, maxIn: 1.06 },
-  { id: 'bison-3204-4', label: 'BISON 3204 · 4"', diameterIn: 3.94, bodyIn: 1.97, minIn: 0.12, maxIn: 1.3 },
-  { id: 'bison-3204-5', label: 'BISON 3204 · 5"', diameterIn: 4.92, bodyIn: 2.2, minIn: 0.12, maxIn: 1.97 },
-  { id: 'bison-3204-6', label: 'BISON 3204 · 6"', diameterIn: 6.3, bodyIn: 2.54, minIn: 0.12, maxIn: 2.52 },
-  { id: 'bison-3204-8', label: 'BISON 3204 · 8"', diameterIn: 7.87, bodyIn: 2.95, minIn: 0.16, maxIn: 3.54 },
-  { id: 'bison-3204-10', label: 'BISON 3204 · 10"', diameterIn: 9.84, bodyIn: 3.35, minIn: 0.2, maxIn: 4.6 },
-  { id: 'bison-3204-12', label: 'BISON 3204 · 12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2 },
+  { id: 'bison-3204-3', label: '3"', diameterIn: 3.15, bodyIn: 1.73, minIn: 0.08, maxIn: 1.06 },
+  { id: 'bison-3204-4', label: '4"', diameterIn: 3.94, bodyIn: 1.97, minIn: 0.12, maxIn: 1.3 },
+  { id: 'bison-3204-5', label: '5"', diameterIn: 4.92, bodyIn: 2.2, minIn: 0.12, maxIn: 1.97 },
+  { id: 'bison-3204-6', label: '6"', diameterIn: 6.3, bodyIn: 2.54, minIn: 0.12, maxIn: 2.52 },
+  { id: 'bison-3204-8', label: '8"', diameterIn: 7.87, bodyIn: 2.95, minIn: 0.16, maxIn: 3.54 },
+  { id: 'bison-3204-10', label: '10"', diameterIn: 9.84, bodyIn: 3.35, minIn: 0.2, maxIn: 4.6 },
+  { id: 'bison-3204-12', label: '12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2 },
 ] as const
 
 /** Square capacity is across flats for four jaws, the corner circle otherwise. */

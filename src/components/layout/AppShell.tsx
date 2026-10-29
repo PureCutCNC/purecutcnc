@@ -612,6 +612,16 @@ export function AppShell({
                 </button>
               </div>
               <div className="panel-tabs-spacer" />
+              {/* The workspace's one face control sits at the right end of the
+                  tab row, just left of the CAM pull-out handle (issue #1112 F3,
+                  R2 item 11): it reads as the face everything in the panel below
+                  belongs to, and the pull-out handle keeps the far edge so the
+                  row still ends where the panel edge is. The row's keyboard order
+                  is the order it is drawn in — tabs, face control, handle. A
+                  tablet shell keeps the row too, with the view tabs in its top
+                  command bar; the switch itself decides whether it shows
+                  (`showsFaceSwitch`). */}
+              <FaceSwitch />
               {!tabletShell && (
                 <button
                   id="panel-handle-right"
@@ -626,13 +636,6 @@ export function AppShell({
                   <Icon id={showRight ? 'chevrons-right' : 'chevrons-left'} size={18} />
                 </button>
               )}
-              {/* The workspace's one face control closes this row (issue #1112
-                  F3), right-aligned after the tabs and the pull-out handles: it
-                  reads as the face everything in the panel below belongs to, and
-                  the row's keyboard order is the order it is drawn in. A tablet
-                  shell keeps the row too, with the view tabs in its top command
-                  bar; the switch itself decides whether it shows (`showsFaceSwitch`). */}
-              <FaceSwitch />
             </div>
             <div className="centre-stage">
               <div

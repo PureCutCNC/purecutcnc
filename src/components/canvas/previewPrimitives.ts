@@ -33,6 +33,7 @@ import { getFeatureGeometryBounds } from '../../text'
 import { featureDisplayProfiles } from './aroundFeatureDisplay'
 import type { AroundWrapWindow } from './aroundDisplayWrap'
 import {
+  circleProfile,
   getProfileBounds,
   splineProfile,
   slotProfile,
@@ -910,10 +911,34 @@ export function drawPendingGear(
       outsideRadius,
     })
     drawPreviewProfile(ctx, profile, vt, `OD R = ${formatLength(outsideRadius, units)}`)
+    // The bore is never part of the outline `buildGearProfile` returns — the
+    // canned gear emits it as its own nested Subtract outline — so the pending
+    // preview has to draw it here. Without this a bore typed while creating the
+    // gear could not show up on the canvas at all (issue #1112 R2 item 12).
+    if (Number.isFinite(params.boreDiameter) && params.boreDiameter > 0) {
+      drawPreviewHole(ctx, circleProfile(anchor.x, anchor.y, params.boreDiameter / 2), vt)
+    }
   } catch {
     // Invalid parameter combinations are surfaced in the workflow panel.
   }
   drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
+}
+
+/**
+ * A hole inside a draft profile: filled with the canvas background so the draft
+ * wash around it reads as material, then outlined in the same dashed draft
+ * stroke as the shape itself. Mirrors how a nested Subtract child is painted
+ * rather than erasing what is already on the canvas.
+ */
+function drawPreviewHole(ctx: CanvasRenderingContext2D, profile: SketchProfile, vt: ViewTransform): void {
+  traceProfilePath(ctx, profile, vt)
+  ctx.fillStyle = canvasRgba('background', 1)
+  ctx.fill()
+  ctx.setLineDash([8, 5])
+  ctx.strokeStyle = canvasColors().draft
+  ctx.lineWidth = 2
+  ctx.stroke()
+  ctx.setLineDash([])
 }
 
 export function drawPendingRoundRect(

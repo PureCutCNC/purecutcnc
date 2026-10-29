@@ -72,6 +72,7 @@ const { newProject, defaultTool, roundStock } = await import('../../types/projec
 const { createRoot } = await import('react-dom/client')
 const { I18nProvider } = await import('../../i18n/I18nProvider')
 const { CannedShapeEditPanel } = await import('./CannedShapeEditPanel')
+const { GearParameterPanel } = await import('./GearParameterPanel')
 const { RotarySolidDialog } = await import('../layout/toolbar/RotarySolidDialog')
 const { RotaryPatternDialog } = await import('../layout/toolbar/RotaryPatternDialog')
 const { getCannedShapeEditor, resolveCannedShapeProfiles } = await import('../../cannedShapes')
@@ -633,6 +634,44 @@ await scenario('a cleared or unreadable gear field is kept as a draft and report
   assert(historyLength() === storedHistory, 'Cancel left the gear undo history alone')
 })
 
+// The other half of item 12: in the Edit panel the bore is the *first* field
+// touched. Blank is the rendering of a stored zero, so the first usable value
+// typed there has to reach the preview by itself — no earlier field, and no
+// blur, to carry it (issue #1112 R2 item 12).
+await scenario('Edit gear: the first typed bore value previews at once', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
+  const storedHistory = historyLength()
+  const mounted = await openPanel(featureId, 'gear')
+  const saveDisabled = (): boolean =>
+    (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled === true
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    const bore = panelInputs()[panelInputs().length - 1]
+    assert(bore.value === '', `a zero bore renders blank (it reads "${bore.value}")`)
+    const noBore = previewGeometry(featureId)
+
+    setInputValue(bore, '6')
+    await flush()
+    const withBore = previewGeometry(featureId)
+    assert(withBore !== noBore, 'the first typed bore changed the previewed shape')
+    assert(
+      resolveFeatureInstance(project(), featureId)?.canned?.params.boreDiameter === 6,
+      'the typed bore reached the stored draft',
+    )
+    assert(!saveDisabled(), 'a valid bore is Save-able')
+    assert(document.body.querySelector('[role="alert"]') === null, 'a valid bore reports no error')
+    assert(historyLength() === storedHistory, 'the first bore preview is not an undo step')
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
 // A zero bore is shown as a blank field, so its blank is the rendering of the
 // stored zero, not text the user deleted. Leaving that field untouched used to
 // send the blank through the unusable-text path and disable Save on a draft
@@ -770,6 +809,66 @@ await scenario('gear: Save is one undo step and one undo restores the stored gea
   store().undo()
   await flush()
   assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored gear')
+})
+
+// A gear being *created* previews its bore as the first value is typed
+// (issue #1112 R2 item 12). A zero bore renders as a blank field, so the value
+// typed into it is the only signal the canvas draft gets: the creation panel
+// commits on blur for every other field, which left the previewed gear without
+// its hole until the field was left — and never at all, since the pending-gear
+// preview had no bore to draw (`previewPrimitives.test.ts` covers that half).
+await scenario('creating a gear: the first bore value reaches the draft as it is typed', async () => {
+  resetStore()
+  const store = () => useProjectStore.getState()
+  store().startAddGearPlacement()
+  store().setPendingAddAnchor({ x: 40, y: 30 })
+  store().setPendingGearRadiusAt({ x: 70, y: 30 })
+  const pending = store().pendingAdd
+  assert(pending?.shape === 'gear', 'the creation session is armed')
+  const draftBore = (): number | null => {
+    const current = store().pendingAdd
+    return current && current.shape === 'gear' ? current.params.boreDiameter : null
+  }
+  const mounted = mount(React.createElement(GearParameterPanel, {
+    pendingAdd: pending,
+    units: 'mm',
+    setPendingGearParams: (patch) => store().setPendingGearParams(patch),
+  }))
+  try {
+    // Creation's default gear: teeth, whole depth, pressure angle, root fillet
+    // and bore (the outside radius comes from the canvas drag until an Edit
+    // panel is open).
+    // The creation panel is the gear fields alone here (the side panel wraps
+    // them in the canvas), so read every input it renders.
+    const creationInputs = (): HTMLInputElement[] =>
+      Array.from(document.body.querySelectorAll('input')) as unknown as HTMLInputElement[]
+    await waitFor(() => creationInputs().length === 5, 'the five creation numeric fields render')
+    const bore = creationInputs()[creationInputs().length - 1]
+    assert(bore.value === '', `a zero bore renders blank (it reads "${bore.value}")`)
+    assert(draftBore() === 0, 'the draft starts with no bore')
+
+    setInputValue(bore, '6')
+    await flush()
+    assert(draftBore() === 6, `the typed bore reached the draft without leaving the field (it reads ${String(draftBore())})`)
+    assert(String(bore.value) === '6', 'the field keeps what was typed')
+
+    // A half-typed value keeps the last usable number rather than dropping the
+    // bore mid-keystroke; the blur commit settles the field.
+    setInputValue(bore, '')
+    await flush()
+    assert(draftBore() === 6, 'a blank field keeps the last bore until the field is left')
+    setInputValue(bore, '6')
+    await flush()
+    bore.dispatchEvent(new dom.Event('focusout', { bubbles: true }) as unknown as Event)
+    await flush()
+    assert(draftBore() === 6, 'leaving the field keeps the typed bore')
+    setInputValue(bore, '8')
+    await flush()
+    assert(draftBore() === 8, 'a later edit follows the field too')
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
 })
 
 await scenario('a unit switch during a preview is not rolled back by Cancel', async () => {

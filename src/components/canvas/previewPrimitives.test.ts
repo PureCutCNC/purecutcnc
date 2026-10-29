@@ -16,7 +16,7 @@
 
 import { rectProfile } from '../../types/project'
 import type { SketchFeature } from '../../types/project'
-import { drawFeatureInfo, drawLineFeatureBatch, drawToolpath, featureUsesSketchFill } from './previewPrimitives'
+import { drawFeatureInfo, drawLineFeatureBatch, drawPendingGear, drawToolpath, featureUsesSketchFill } from './previewPrimitives'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ViewTransform } from './viewTransform'
@@ -340,5 +340,61 @@ function testFeatureInfoHeights(): void {
   assert(labels.includes('z 18 → 10'), `only Bottom flips the label range: ${labels.join(' | ')}`)
 }
 testFeatureInfoHeights()
+
+// A gear being created previews its bore (issue #1112 R2 item 12). The bore is
+// not part of the outline `buildGearProfile` returns — the canned gear emits it
+// as a separate nested outline — so `drawPendingGear` has to draw it, or a bore
+// typed into the creation panel could never appear on the canvas. A recording
+// context counts the arcs: the gear outline traces line segments, the bore is
+// the only circle.
+function testPendingGearPreviewsItsBore(): void {
+  interface Arc { cx: number; cy: number; r: number }
+  const arcs: Arc[] = []
+  let outlines = 0
+  const gearCtx = {
+    beginPath: () => undefined,
+    moveTo: () => undefined,
+    lineTo: () => undefined,
+    closePath: () => { outlines += 1 },
+    bezierCurveTo: () => undefined,
+    arc: (cx: number, cy: number, r: number) => { arcs.push({ cx, cy, r }) },
+    fill: () => undefined,
+    stroke: () => undefined,
+    setLineDash: () => undefined,
+    fillText: () => undefined,
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 0,
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+  } as unknown as CanvasRenderingContext2D
+  const vt = { scale: 1, offsetX: 0, offsetY: 0 }
+  const anchor = { x: 40, y: 30 }
+  const cursor = { x: 55, y: 30 }
+  const params = {
+    teeth: 20,
+    wholeDepth: 4,
+    flankProfile: 'involute' as const,
+    pressureAngleDeg: 20,
+    rootForm: 'flat' as const,
+    rootFilletRadius: 0,
+    crestForm: 'flat' as const,
+    crestRadius: 0,
+    boreDiameter: 0,
+  }
+
+  drawPendingGear(gearCtx, anchor, cursor, params, vt, 'mm')
+  assert(outlines === 1, `the gear outline itself traces a closed loop, got ${outlines}`)
+  assert(arcs.length === 0, 'a gear with no bore previews no circle')
+
+  const outlinesBeforeBore = outlines
+  drawPendingGear(gearCtx, anchor, cursor, { ...params, boreDiameter: 6 }, vt, 'mm')
+  assert(outlines - outlinesBeforeBore === 2, `the gear and its hole are two closed loops, got ${outlines - outlinesBeforeBore}`)
+  assert(arcs.length === 1, `a gear with a bore previews one hole, got ${arcs.length}`)
+  assert(arcs[0].cx === anchor.x && arcs[0].cy === anchor.y, `the hole sits on the gear's centre: ${JSON.stringify(arcs[0])}`)
+  assert(Math.abs(arcs[0].r - 3) < 1e-9, `the hole is the bore's radius, not the gear's: ${arcs[0].r}`)
+}
+testPendingGearPreviewsItsBore()
 
 console.log('previewPrimitives.test.ts passed')

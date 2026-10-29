@@ -220,6 +220,17 @@ test('an axis Y bar starts at maxY and sits across X', () => {
 
 console.log('\nPicking a standard chuck size')
 
+test('a preset label is the size alone, so the picker reads as sizes not catalogue lines', () => {
+  // Issue #1112 R2 item 13: the field is a *size*. The catalogue entry (BISON
+  // 3204, its two source links) stays in the table's id and comment, never in
+  // the text the picker shows.
+  assert.deepEqual(STANDARD_CHUCKS.map((size) => size.label), ['3"', '4"', '5"', '6"', '8"', '10"', '12"'])
+  for (const size of STANDARD_CHUCKS) {
+    assert.match(size.label, /^\d+"$/, `${size.id}: the label is an inch size and nothing else`)
+    assert.equal(size.label, `${size.id.slice('bison-3204-'.length)}"`, `${size.id}: the label is its own size`)
+  }
+})
+
 test('picking each preset uses its published body length and still grips the bar end', () => {
   for (const axis of ['x', 'y'] as const) {
     const bar = roundStock(20, 100, axis, { x: 0, y: 0 })

@@ -110,7 +110,8 @@ function fieldText(value: number): string | number {
  * then draw nothing new, report nothing and still offer Save — a blank field is
  * a draft value the validator has to see (issue #1112 H1 review). Both panels
  * share these fields, so creation keeps its commit-on-blur behaviour and only
- * Edit opts in.
+ * Edit opts in — except the bore, whose blank field *is* a valid value (see
+ * `boreNumberInput`).
  */
 function liveNumber(
   live: boolean,
@@ -118,6 +119,28 @@ function liveNumber(
 ): ((event: FormEvent<HTMLInputElement>) => void) | undefined {
   if (!live) return undefined
   return (event) => commit(draftNumber(event.currentTarget.value))
+}
+
+/**
+ * The bore follows a *usable* number while it is typed, in both panels
+ * (issue #1112 R2 item 12).
+ *
+ * A zero bore renders as a blank field, so unlike every other gear field the
+ * first value typed there is the only sign the preview can get: with the
+ * creation panel committing on blur it did not appear until the field was left.
+ * Blank and half-typed text ("-", ".", "") keep the last value in creation,
+ * where the blur commit is the one that settles them; Edit keeps its own draft
+ * rule above, so a cleared field there is still the refusal the validator sees.
+ */
+function boreNumberInput(
+  live: boolean,
+  commit: (value: number) => void,
+): (event: FormEvent<HTMLInputElement>) => void {
+  if (live) return (event) => commit(draftNumber(event.currentTarget.value))
+  return (event) => {
+    const next = draftNumber(event.currentTarget.value)
+    if (Number.isFinite(next)) commit(next)
+  }
 }
 
 /**
@@ -488,7 +511,7 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           type="text"
           inputMode="decimal"
           defaultValue={params.boreDiameter === 0 ? '' : fieldText(params.boreDiameter)}
-          onInput={liveNumber(live, (value) => onParams({ boreDiameter: value }))}
+          onInput={boreNumberInput(live, (value) => onParams({ boreDiameter: value }))}
           onBlur={(event) => {
             blurNumber(
               live,
