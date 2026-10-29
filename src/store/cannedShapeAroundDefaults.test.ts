@@ -28,16 +28,21 @@
  * later, on both bar shapes and on a block, so "Top/Bottom unchanged" is proven
  * rather than assumed.
  *
- * A square blank's Around sheet is round-only for authoring (#1016 C2-U1), so
- * no *cutting* canned shape can be created through the store there yet — that
- * refusal is pinned in its own test and stays with #1016 / the drawer slice
- * (rt2-c keeps those entries disabled with their own reason; #1128 owns sheet
- * work). Its *default* is pinned all the same, per kind, at the point creation
- * decides it: `buildShapeFeature` is the draft builder every canned creator
- * passes its profile to, and `gearCreationOperation` is the first-gear rule the
- * gear action applies to that draft. Item 14 names both bar shapes, and the
- * classifier asks whether the bar is the material, not what shape its outline
- * is — enabling the sheet later must not quietly bring the gear's Add back.
+ * A square blank's Around sheet is round-only for authoring (#1016 C2-U1): its
+ * frozen policy test (`squareAroundPolicy.test.ts`, four axis/unit specs) pins
+ * that every Around authoring path — `addFeature`, the drawing tools, imports,
+ * paste, and both gear branches — writes nothing on it, and rt2-c keeps those
+ * drawer entries visible-but-disabled while #1128 owns sheet work. That
+ * refusal is therefore *not* item 14's default and must not be lifted here: a
+ * square blank authors Top and Bottom, so its coverage is two-fold.
+ *  1. Real creation of every named kind on the square blank's authorable
+ *     faces (Top and Bottom) is a cut into the bar, proving the bar-is-material
+ *     rule through the store actions rather than a draft;
+ *  2. its Around *default* is pinned per kind at the point creation decides
+ *     it — `buildShapeFeature` is the draft builder every canned creator
+ *     passes its profile to, and `gearCreationOperation` is the first-gear
+ *     rule the gear action applies to that draft — so enabling the sheet
+ *     later (#1128) cannot quietly bring the gear's Add back.
  *
  * Mutations checked one at a time against these assertions:
  * - dropping the `face !== 'around'` condition in `gearCreationOperation`
@@ -47,9 +52,10 @@
  *   Bottom assertions fail;
  * - removing `inferManualFeatureOperation` from `buildShapeFeature`'s closed
  *   path (so a canned shape is always Add) → every Around assertion fails;
- * - scoping the Around branch of `inferManualFeatureOperation` to a round bar
- *   (so a square bar's sheet classifies like a block) → the square-bar
- *   creation-draft assertions (every kind) fail;
+ * - scoping the bar-is-material branch of `inferManualFeatureOperation` to a
+ *   round bar (`barSeedsModel` && round stock) (so a square bar classifies like
+ *   a block) → the square-blank real-creation assertions on Top and Bottom
+ *   (every kind) fail, and so do its Around creation-draft assertions;
  * - dropping the square-blank guard in `addFeature` / `createAddGearFeatureAction`
  *   (so a cutting outline is authored on the round-only sheet) → the
  *   square-Around refusal assertions fail.
@@ -311,14 +317,47 @@ function testSquareBarDefaultsAreSubtract(): void {
   console.log('square Around: every canned creation draft is a cut: PASSED')
 }
 
+function testSquareBarCreationIsACut(): void {
+  // Item 14 names both bar shapes, and a square blank is a bar: the bar is the
+  // material on every face, so the first canned outline created on it is a cut.
+  // This runs the real store creators — the same actions the drawer calls — and
+  // reads the operation off the created row, not off a draft.
+  //
+  // A square blank's *Around sheet* is the one place those creators do not run:
+  // #1016 C2-U1 freezes it round-only (pinned by `squareAroundPolicy.test.ts`
+  // for every path and both gear branches) and #1128 owns that sheet. Top and
+  // Bottom are where a square blank authors, so that is where the bar-is-material
+  // default is proven through creation; the Around default it will need is
+  // pinned per kind in `testSquareBarDefaultsAreSubtract` above.
+  for (const face of ['top', 'bottom'] as const) {
+    for (const [kind, create] of CANNED_CREATORS) {
+      onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+      create()
+      assertEqual(operations(), ['subtract'], `a first ${kind} created on a square bar's ${face} cuts into the bar`)
+    }
+
+    // The gear keeps its historical first-gear Add on a flat face (item 14
+    // scopes the change to Around), and that stays pinned on the square bar too,
+    // so the assertions above cannot pass by making every square-bar shape a cut.
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    assertEqual(createGear().length, 1, `the gear is created on a square bar's ${face}`)
+    assertEqual(operations(), ['add'], `the historical first-gear Add on a square bar's ${face} is unchanged`)
+  }
+  console.log('square bar: every canned outline created on Top/Bottom is a cut: PASSED')
+}
+
 function testSquareAroundAuthoringStaysRefused(): void {
   // The refusal is #1016 C2-U1's round-only sheet, not item 14's default: a
   // square blank is workflow-available on Around (its generated rotary models
   // cut there) but the unrolled sheet's raw coordinates only describe a round
-  // bar, so a cutting outline is not authored on it. rt2-c keeps the drawer
-  // entries visible and disabled ("Not available on a square bar yet") and
-  // #1128 owns sheet work on the turned section. Pinned separately so that
-  // enabling the sheet is a deliberate change, not a side effect of a default.
+  // bar, so a cutting outline is not authored on it — and a non-rotary cut
+  // stored there would not even be part of the job (`operationCutsInProject`).
+  // rt2-c keeps the drawer entries visible and disabled ("Not available on a
+  // square bar yet") and #1128 owns sheet work on the turned section. Pinned
+  // here as the guard's own contract — a canned creator must not grow a private
+  // path around `addFeature` — so that enabling the sheet is a deliberate change
+  // in #1128, not a side effect of a default. `squareAroundPolicy.test.ts` holds
+  // the store-wide version of this rule; do not remove either one.
   for (const [kind, create] of CANNED_CREATORS) {
     onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
     const before = useProjectStore.getState().project
@@ -337,4 +376,5 @@ testLaterShapesOnAroundStillNest()
 testGearBoreOnAroundIsAnAddIsland()
 testTopAndBottomKeepTheirDefaults()
 testSquareBarDefaultsAreSubtract()
+testSquareBarCreationIsACut()
 testSquareAroundAuthoringStaysRefused()
