@@ -127,6 +127,12 @@ function liveNumber(
  * a number the user never entered. The draft keeps the refusal (`NaN`), so the
  * validator's message and the disabled Save stay while the field is cleared
  * (issue #1112 H1 review).
+ *
+ * A field that still shows exactly what its draft renders is not unreadable
+ * text: a zero bore is *displayed* as a blank field, so clicking into it and
+ * leaving it again used to replace the zero with `NaN` and disable Save on a
+ * valid draft (#1112 R3-1 review). Only text that differs from what the draft
+ * renders is unusable.
  */
 function blurNumber(
   live: boolean,
@@ -135,11 +141,14 @@ function blurNumber(
   commit: (value: number) => void,
   normalize: (value: number) => number = (next) => next,
 ): void {
-  if (live && !Number.isFinite(draftNumber(event.currentTarget.value))) {
-    commit(Number.NaN)
+  const input = event.currentTarget
+  if (live && !Number.isFinite(draftNumber(input.value))) {
+    if (input.value !== String(input.defaultValue)) {
+      commit(Number.NaN)
+    }
     return
   }
-  event.currentTarget.value = commitNumber(event.currentTarget.value, fallback, commit, normalize)
+  input.value = commitNumber(input.value, fallback, commit, normalize)
 }
 
 function GearField({ children, labelKey, params, reference }: GearFieldProps) {

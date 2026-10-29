@@ -633,6 +633,115 @@ await scenario('a cleared or unreadable gear field is kept as a draft and report
   assert(historyLength() === storedHistory, 'Cancel left the gear undo history alone')
 })
 
+// A zero bore is shown as a blank field, so its blank is the rendering of the
+// stored zero, not text the user deleted. Leaving that field untouched used to
+// send the blank through the unusable-text path and disable Save on a draft
+// with nothing wrong with it (issue #1112 R3-1 review).
+await scenario('an untouched blank bore is a valid draft, a cleared one is not', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
+  const storedHistory = historyLength()
+  const mounted = await openPanel(featureId, 'gear')
+  const saveDisabled = (): boolean =>
+    (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled === true
+  const draftBore = (): number | null => {
+    const value = resolveFeatureInstance(project(), featureId)?.canned?.params.boreDiameter
+    return typeof value === 'number' ? value : null
+  }
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    const [, teeth] = panelInputs()
+    // Bore is the last of the seven numeric fields.
+    const bore = panelInputs()[panelInputs().length - 1]
+    assert(bore.value === '', `a zero bore renders blank (it reads "${bore.value}")`)
+
+    // A valid edit that has nothing to do with the bore.
+    setInputValue(teeth, '22')
+    await flush()
+    const edited = previewGeometry(featureId)
+    assert(draftBore() === 0, 'the gear still has no bore')
+    assert(!saveDisabled(), 'the valid tooth count is Save-able')
+
+    // Clicking into the bore and leaving it again is what a user does while
+    // reading the panel. React dispatches `onBlur` from `focusout`.
+    bore.dispatchEvent(new dom.Event('focusout', { bubbles: true }) as unknown as Event)
+    await flush()
+    assert(bore.value === '', `the untouched bore still renders blank (it reads "${bore.value}")`)
+    assert(!saveDisabled(), 'leaving the untouched blank bore kept Save enabled')
+    assert(document.body.querySelector('[role="alert"]') === null, 'the blank bore reported no error')
+    assert(previewGeometry(featureId) === edited, 'the untouched bore left the preview alone')
+    assert(draftBore() === 0, 'the untouched bore stayed zero')
+    assert(historyLength() === storedHistory, 'the untouched bore is not an undo step')
+
+    // Blank is valid only because it renders the zero: text the user actually
+    // removes is still the unusable draft a cleared field always was, or the
+    // blank-field refusal would be gone for this field alone.
+    setInputValue(bore, '6')
+    await flush()
+    assert(previewGeometry(featureId) !== edited, 'a typed bore previews')
+    assert(draftBore() === 6, 'the typed bore reached the draft')
+    assert(!saveDisabled(), 'a typed bore is Save-able')
+
+    setInputValue(bore, '')
+    await flush()
+    assert(saveDisabled(), 'a bore the user cleared is refused')
+    assert(document.body.querySelector('[role="alert"]') !== null, 'the cleared bore is reported')
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
+// A field the browser changed without dispatching an `input` event (an
+// autofill, a paste the browser handles on its own) holds text the draft never
+// saw. The blur validates what is on screen, so neither unreadable text nor a
+// blank field can pass for the draft's older number (#1112 R3-1 review).
+await scenario('blurring a gear field with text the draft never saw is refused', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
+  const mounted = await openPanel(featureId, 'gear')
+  const saveDisabled = (): boolean =>
+    (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled === true
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    const [, teeth] = panelInputs()
+    setInputValue(teeth, '22')
+    await flush()
+    const previewed = previewGeometry(featureId)
+    assert(!saveDisabled(), 'the typed tooth count is Save-able')
+
+    const setter = Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, 'value')?.set
+    assert(setter, 'linkedom has an input value setter')
+    // No `input` event either time: the draft holds 22 while the field reads the
+    // text, so the blur is the only thing that can notice the disagreement.
+    for (const text of ['two', '']) {
+      setInputValue(teeth, '22')
+      await flush()
+      assert(!saveDisabled(), 'each round starts from the valid draft')
+      setter.call(teeth, text)
+      teeth.dispatchEvent(new dom.Event('focusout', { bubbles: true }) as unknown as Event)
+      await flush()
+      assert(saveDisabled(), `Save is refused for "${text}", which the draft never saw`)
+      assert(
+        document.body.querySelector('[role="alert"]') !== null,
+        `"${text}" is reported instead of silently keeping the draft's 22`,
+      )
+      assert(previewGeometry(featureId) === previewed, 'the last valid preview is kept')
+    }
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
 // The gear's Save path goes through the same preview commit as the flats.
 await scenario('gear: Save is one undo step and one undo restores the stored gear', async () => {
   resetStore()
