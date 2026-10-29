@@ -24,7 +24,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { formHasChanges } from './formDraft'
+import { formHasChanges, renameTarget } from './formDraft'
 
 // Primitives, including the two cases `===` gets wrong for form values.
 assert.equal(formHasChanges('Top', 'Top'), false, 'the same text is unchanged')
@@ -76,5 +76,15 @@ class Marker {
 assert.equal(formHasChanges(new Marker(), new Marker()), true, 'separate non-plain objects differ')
 const shared = new Marker()
 assert.equal(formHasChanges({ marker: shared }, { marker: shared }), false, 'the same object is unchanged')
+
+// An inline rename writes the trimmed name, and only when it names something
+// new; that is exactly the condition that enables its Save (issue #1112 F4).
+assert.equal(renameTarget('Workshop', 'Workshop'), null, 'the saved name has nothing to write')
+assert.equal(renameTarget('Workshop', '  Workshop  '), null, 'the saved name, padded, has nothing to write')
+assert.equal(renameTarget('Workshop', '   '), null, 'a blank name names nothing')
+assert.equal(renameTarget('Workshop', ''), null, 'an empty name names nothing')
+assert.equal(renameTarget('Workshop', 'Workshop 2'), 'Workshop 2', 'a new name is written as typed')
+assert.equal(renameTarget('Workshop', '  Workshop 2  '), 'Workshop 2', 'the written name is trimmed')
+assert.equal(renameTarget('Workshop', 'Workshop 2 '), 'Workshop 2', 'a trailing space does not pad the saved name')
 
 console.log('form draft tests passed')

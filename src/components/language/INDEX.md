@@ -8,7 +8,9 @@ nothing here touches project data.
 - `LanguageManagerDialog.tsx` — built-in locales + custom language packs;
   activate, duplicate-and-edit, rename, edit, delete, import, and export
   actions with translation-progress reporting; mirrors `ThemeManagerDialog`
-  and reuses its list/detail layout classes.
+  and reuses its list/detail layout classes. The inline rename's Save is
+  disabled while the trimmed draft still names the saved language (issue
+  #1112 F4), through `renameTarget` in `common/formDraft.ts`.
 - `LanguageEditorDialog.tsx` — per-key translation editor: rows grouped by
   key namespace in collapsed sections (rows render only when a section is
   open), search plus all/untranslated/edited filtering, placeholder-parity

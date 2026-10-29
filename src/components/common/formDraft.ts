@@ -66,3 +66,18 @@ function sameValue(a: unknown, b: unknown): boolean {
 export function formHasChanges(saved: unknown, draft: unknown): boolean {
   return !sameValue(saved, draft)
 }
+
+/**
+ * The name an inline rename would write, or `null` when it would write
+ * nothing — which is exactly when its Save is disabled (issue #1112 F4).
+ *
+ * A saved name is stored trimmed, so a draft that differs only in surrounding
+ * whitespace is not an edit, and a blank draft names nothing at all. Comparing
+ * the trimmed draft with the saved name is what makes typing the saved name
+ * back disable Save again.
+ */
+export function renameTarget(savedName: string, draft: string): string | null {
+  const trimmed = draft.trim()
+  if (trimmed === '' || !formHasChanges(savedName, trimmed)) return null
+  return trimmed
+}
