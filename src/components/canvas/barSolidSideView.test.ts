@@ -30,7 +30,11 @@
  * - drawing a sheet feature on a flat face as well → "on a flat face only the
  *   solid is drawn" fails;
  * - drawing on the Around sheet too → "on Around the sheet draws its own
- *   features, not a side view" fails.
+ *   features, not a side view" fails;
+ * - widening an odd-sided Polygon's across extents to the larger one → "the
+ *   side view is only the material the triangle has" fails;
+ * - closing an open Turn profile onto the axis before mirroring it → "the side
+ *   view is the tube's rectangle, with no centerline" fails.
  *
  * Run with: npx tsx src/components/canvas/barSolidSideView.test.ts
  */
@@ -320,6 +324,63 @@ for (const axis of ['x', 'y'] as const) {
   }
 }
 
+// ── An open profile does not draw the axis inside the Turn ─────────────────
+
+/**
+ * A constant-radius half-profile that never reaches the axis, (10, r) →
+ * (30, r): the turned solid is a plain length of bar, so its side view is one
+ * rectangle spanning the band and both signed radii. Closing that outline onto
+ * the axis (which the revolve builder does so the mesh has a region) and then
+ * mirroring it retraces the axis segment, which is a centerline through the
+ * material and not a silhouette edge.
+ */
+for (const axis of ['x', 'y'] as const) {
+  const label = `tube profile ${axis}`
+  const project = barProject('mm', 'round', axis)
+  const frame = rotarySolidFrame(project)
+  assert(frame, `${label}: the bar has a frame`)
+  const radius = frame.thickness / 4
+  const created = createSolid(project, {
+    kind: 'turn',
+    start: 0,
+    length: 1,
+    diameter: 1,
+    profile: {
+      sourceFeatureId: 'f-source',
+      sourceName: 'Bushing',
+      contours: [{
+        closed: false,
+        points: [
+          { along: frame.alongMin + 10, radius },
+          { along: frame.alongMin + 30, radius },
+        ],
+      }],
+    },
+  })
+  const turn = solidOf(created, TURN_CANNED_KIND)
+  const profiles = getFeatureGeometryProfiles(turn)
+  assert.equal(profiles.length, 1, `${label}: one silhouette loop`)
+  const loop = profiles[0]
+  assert(loop, `${label}: the side view exists`)
+  const at = (along: number, signedRadius: number): Point => (axis === 'x'
+    ? { x: along, y: frame.acrossCentre + signedRadius }
+    : { x: frame.acrossCentre + signedRadius, y: along })
+  assertPoints(sampleProfilePoints(loop), [
+    at(frame.alongMin + 10, radius),
+    at(frame.alongMin + 30, radius),
+    at(frame.alongMin + 30, -radius),
+    at(frame.alongMin + 10, -radius),
+  ], `${label}: the side view is the tube's rectangle, with no centerline`)
+  // Every vertex is off the axis: no artificial closure was joined in.
+  for (const point of sampleProfilePoints(loop)) {
+    const across = axis === 'x' ? point.y : point.x
+    assert(
+      Math.abs(across - frame.acrossCentre) > 1e-6,
+      `${label}: no silhouette vertex lies on the bar's axis`,
+    )
+  }
+}
+
 // ── A Polygon's width follows its rotation ─────────────────────────────────
 
 for (const axis of ['x', 'y'] as const) {
@@ -360,6 +421,66 @@ for (const axis of ['x', 'y'] as const) {
       `${label}: a 30° turn puts the across-flats width across the bar`,
     )
   }
+}
+
+// ── A rotated odd-sided Polygon keeps its own asymmetry ────────────────────
+
+/**
+ * A triangle tells a real silhouette from a widened one. At across-flats 10 and
+ * rotation 30° one corner reaches the across-corners distance (10) below the
+ * axis while the opposite flat is only the apothem (5) above it, so the side
+ * view spans −10…+5. Taking the largest absolute across value instead would
+ * mirror that corner and claim material from +5 to +10 that the solid does not
+ * have — drawn and clickable on both bar axes.
+ */
+for (const axis of ['x', 'y'] as const) {
+  const label = `triangle ${axis}`
+  const project = barProject('mm', 'round', axis)
+  const created = createSolid(project, {
+    kind: 'polygon',
+    start: 10,
+    length: 30,
+    sides: 3,
+    acrossFlats: 10,
+    rotationDeg: 30,
+  })
+  const frame = rotarySolidFrame(created)
+  assert(frame, `${label}: the bar has a frame`)
+  const { alongStart, alongEnd } = rotarySolidAlong(frame, 10, 30)
+  const expected = axis === 'x'
+    ? {
+        minX: alongStart,
+        maxX: alongEnd,
+        minY: frame.acrossCentre - 10,
+        maxY: frame.acrossCentre + 5,
+      }
+    : {
+        minX: frame.acrossCentre - 10,
+        maxX: frame.acrossCentre + 5,
+        minY: alongStart,
+        maxY: alongEnd,
+      }
+  const solid = solidOf(created, POLYGON_CANNED_KIND)
+  const [profile] = getFeatureGeometryProfiles(solid)
+  assert(profile, `${label}: the Polygon has a side view`)
+  assertRect(profile, expected, `${label}: the side view is only the material the triangle has`)
+  // The placement frame is the same outline's bounds, so Properties, selection
+  // and export narrow to the real extent instead of boxing the shape.
+  assertRect(solid.sketch.profile, expected, `${label}: the placement frame is the true extent`)
+
+  // Clicking the space the widened outline used to cover (across +8, off the
+  // corner side) hits nothing; +4 is inside the material and selects the model.
+  const features = resolvedProjectFeatures(created)
+  const vt = computeSketchViewTransform(created, CANVAS.width, CANVAS.height, VIEW)
+  const point = (across: number): Point => (axis === 'x'
+    ? { x: (alongStart + alongEnd) / 2, y: frame.acrossCentre + across }
+    : { x: frame.acrossCentre + across, y: (alongStart + alongEnd) / 2 })
+  assert.equal(findHitFeatureId(point(4), features, vt), solid.id, `${label}: the material is clickable`)
+  assert.equal(
+    findHitFeatureId(point(8), features, vt),
+    null,
+    `${label}: the space the triangle does not fill is not clickable`,
+  )
 }
 
 // ── Drawing: dashed, ghost-coloured, and mirrored with the Bottom view ─────

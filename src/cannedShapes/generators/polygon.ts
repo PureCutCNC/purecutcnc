@@ -38,7 +38,7 @@ import {
   rotarySolidAlong,
   rotarySolidBandProblem,
   rotarySolidFrameStock,
-  rotarySolidSideViewRect,
+  rotarySolidSideViewSpanRect,
   storedSolidFrameOf,
   type RotarySolidFrame,
 } from './rotarySolidParams'
@@ -102,11 +102,14 @@ function buildPolygonMesh(params: PolygonCannedParams) {
 /**
  * The Polygon's side view in stock XY, on Top or Bottom (issue #1112 rt2-d).
  *
- * A prism projects onto a rectangle whose width across the bar is the
- * cross-section's own extent on that direction — the across-corners width with
- * a corner across, the across-flats width with a flat across — so the stored
- * rotation decides it. The cross-section is the prism builder's, not a second
- * copy of its rotation convention.
+ * A prism projects onto a rectangle whose extents across the bar are the
+ * cross-section's own, so the stored rotation decides them: the across-corners
+ * width with a corner across, the across-flats width with a flat across. An
+ * odd-sided polygon is not symmetric about the bar's axis — a triangle with
+ * its corner across reaches the across-corners distance one way and only the
+ * across-flats distance the other — so each side keeps its own extent instead
+ * of being widened to the larger one. The cross-section is the prism builder's,
+ * not a second copy of its rotation convention.
  */
 export function polygonSideViewProfiles(params: PolygonCannedParams): SketchProfile[] {
   const frame = params.frame
@@ -115,9 +118,10 @@ export function polygonSideViewProfiles(params: PolygonCannedParams): SketchProf
     acrossFlats: params.acrossFlats,
     rotationDeg: params.rotation,
   })
-  const halfWidth = Math.max(...cross.map((point) => Math.abs(point.across)))
+  const acrossLow = Math.min(...cross.map((point) => point.across))
+  const acrossHigh = Math.max(...cross.map((point) => point.across))
   const { alongStart, alongEnd } = rotarySolidAlong(frame, params.start, params.length)
-  const rect = rotarySolidSideViewRect(frame, alongStart, alongEnd, halfWidth)
+  const rect = rotarySolidSideViewSpanRect(frame, alongStart, alongEnd, acrossLow, acrossHigh)
   return [rectProfile(rect.x, rect.y, rect.width, rect.height)]
 }
 

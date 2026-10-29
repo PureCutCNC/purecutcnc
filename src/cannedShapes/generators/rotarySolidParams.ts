@@ -167,19 +167,37 @@ export function rotarySolidSideViewPoint(
 }
 
 /**
- * A rectangle of the side view given the band it covers and its half width
- * about the centreline, as stock XY. The one place the axis decides which
- * project coordinate is the band and which is the width.
+ * A rectangle of the side view given the band it covers and its **two** across
+ * extents about the centreline, as stock XY. The one place the axis decides
+ * which project coordinate is the band and which is the width.
+ *
+ * The extents are signed distances from the centreline, not a half width: a
+ * shape need not have the same amount of material on both sides of the axis
+ * (an odd-sided polygon with a corner across reaches further one way than the
+ * other), and the outline must not gain material it does not have.
  */
+export function rotarySolidSideViewSpanRect(
+  frame: RotarySolidFrame,
+  alongStart: number,
+  alongEnd: number,
+  acrossLow: number,
+  acrossHigh: number,
+): { x: number; y: number; width: number; height: number } {
+  const acrossMin = frame.acrossCentre + Math.min(acrossLow, acrossHigh)
+  const acrossMax = frame.acrossCentre + Math.max(acrossLow, acrossHigh)
+  const acrossWidth = acrossMax - acrossMin
+  const along = Math.abs(alongEnd - alongStart)
+  return frame.axis === 'x'
+    ? { x: alongStart, y: acrossMin, width: along, height: acrossWidth }
+    : { x: acrossMin, y: alongStart, width: acrossWidth, height: along }
+}
+
+/** A side-view rectangle symmetric about the centreline, `halfWidth` each way. */
 export function rotarySolidSideViewRect(
   frame: RotarySolidFrame,
   alongStart: number,
   alongEnd: number,
   halfWidth: number,
 ): { x: number; y: number; width: number; height: number } {
-  const acrossMin = frame.acrossCentre - halfWidth
-  const along = Math.abs(alongEnd - alongStart)
-  return frame.axis === 'x'
-    ? { x: alongStart, y: acrossMin, width: along, height: halfWidth * 2 }
-    : { x: acrossMin, y: alongStart, width: halfWidth * 2, height: along }
+  return rotarySolidSideViewSpanRect(frame, alongStart, alongEnd, -halfWidth, halfWidth)
 }

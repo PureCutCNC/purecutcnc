@@ -40,7 +40,7 @@ import {
   ROTARY_CYLINDER_MIN_SEGMENTS,
   buildRotaryCylinderMesh,
 } from '../../engine/rotaryCylinderMesh'
-import { buildRotaryRevolveMesh, revolveContourPolygon } from '../../engine/rotaryRevolve'
+import { buildRotaryRevolveMesh } from '../../engine/rotaryRevolve'
 import { computeMeshBounds } from '../../engine/importedMesh'
 import { polygonProfile, rectProfile, type CannedShapeParams, type SketchProfile } from '../../types/project'
 import { defineCannedShape } from '../types'
@@ -170,6 +170,23 @@ function closedLoop(points: readonly TurnProfilePoint[]): TurnProfilePoint[] {
 }
 
 /**
+ * A contour's own points as the polygon the side view mirrors: the radius
+ * clamped the way the revolve builder clamps it, repeated vertices dropped,
+ * and nothing added.
+ *
+ * In particular an open half-profile is **not** closed onto the axis here. The
+ * revolve builder does that because the mesh needs a closed region; on the
+ * side view the axis segment is inside the mirrored solid, so joining the two
+ * halves would draw it as a centerline through the material.
+ */
+function contourSideViewPolygon(contour: TurnProfileContour): TurnProfilePoint[] {
+  return closedLoop(contour.points.map((point) => ({
+    along: point.along,
+    radius: point.radius <= TURN_PROFILE_TOLERANCE ? 0 : point.radius,
+  })))
+}
+
+/**
  * One profile contour as the loops of the Turn's side view: the contour
  * mirrored about the bar's axis.
  *
@@ -180,7 +197,7 @@ function closedLoop(points: readonly TurnProfilePoint[]): TurnProfilePoint[] {
  * its mirror as a second one.
  */
 function mirroredContourLoops(contour: TurnProfileContour): TurnProfilePoint[][] {
-  const polygon = revolveContourPolygon(contour)
+  const polygon = contourSideViewPolygon(contour)
   if (polygon.length < 2) return []
   const touchesAxis = polygon.some((point) => point.radius <= TURN_PROFILE_TOLERANCE)
   if (contour.closed && !touchesAxis) {
