@@ -117,28 +117,37 @@ interface SimulationContext {
   localProject: Project
   localPaths: ReadonlyMap<string, ToolpathResult>
   options: SimulationBuildOptions
-  empty: SimulationResult
 }
 
-/** The setup-local inputs and the empty result every mode starts from. */
+/**
+ * The setup-local inputs every mode starts from. The empty result is **not**
+ * built here: a mode that has something to replay throws it away, and a fresh
+ * grid is the most expensive thing a build allocates (issue #1112 rt2-e). It is
+ * built on demand by {@link emptySimulationResult}.
+ */
 function simulationContext(
   setupInput: SimulationSetupInput | null,
   project: Project,
   simulationDetailCells: number,
 ): SimulationContext {
-  const localProject = setupInput?.project ?? project
-  const localPaths = setupInput?.toolpaths ?? NO_PATHS
-  const options = simulationBuildOptions(setupInput, simulationDetailCells)
-  const emptyGrid = createSimulationGrid(localProject, options)
   return {
-    localProject,
-    localPaths,
-    options,
-    empty: {
-      grid: emptyGrid,
-      stats: emptySimulationStats(emptyGrid),
-      warnings: [],
-    },
+    localProject: setupInput?.project ?? project,
+    localPaths: setupInput?.toolpaths ?? NO_PATHS,
+    options: simulationBuildOptions(setupInput, simulationDetailCells),
+  }
+}
+
+/**
+ * No operation to draw: the blank itself, built through the same option set as
+ * every other mode so a square blank's or round bar's seeded surface is what
+ * the panel reports.
+ */
+function emptySimulationResult(context: SimulationContext): SimulationResult {
+  const grid = createSimulationGrid(context.localProject, context.options)
+  return {
+    grid,
+    stats: emptySimulationStats(grid),
+    warnings: [],
   }
 }
 
@@ -211,13 +220,13 @@ export function computeSimulationResult({
 
   if (simulationMode === 'selected') {
     const item = selectedReplayItem(context, selectedInSetup)
-    if (!item) return context.empty
+    if (!item) return emptySimulationResult(context)
     return simulateOperationHeightfield(context.localProject, selectedInSetup!, item.toolpath, context.options)
   }
 
   const replayItems = visibleReplayItems(context, setupInput, paths)
   if (replayItems.length === 0) {
-    return context.empty
+    return emptySimulationResult(context)
   }
 
   return simulateReplayItemsHeightfield(context.localProject, replayItems, context.options)
@@ -244,7 +253,7 @@ export async function computeSimulationResultAsync(
 
   if (simulationMode === 'selected') {
     const item = selectedReplayItem(context, selectedInSetup)
-    if (!item) return context.empty
+    if (!item) return emptySimulationResult(context)
     return simulateOperationHeightfieldChunked(
       context.localProject,
       selectedInSetup!,
@@ -256,7 +265,7 @@ export async function computeSimulationResultAsync(
 
   const replayItems = visibleReplayItems(context, setupInput, paths)
   if (replayItems.length === 0) {
-    return context.empty
+    return emptySimulationResult(context)
   }
 
   return simulateReplayItemsHeightfieldChunked(context.localProject, replayItems, context.options, chunk)
