@@ -21,6 +21,7 @@ import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStock
 import { barCentre, barPivotZ, isBarStock } from '../types/barStock'
 import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, SquareStock, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
+import { cannedShapeIsModel } from '../cannedShapes'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { aroundFeaturesActive, barSeedsModel } from '../store/helpers/projectType'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
@@ -577,6 +578,13 @@ export function buildFeatureMesh(
 
   // Line features are flat path geometry rendered as line overlays — never extrude.
   if (feature.operation === 'line') {
+    return new THREE.Group()
+  }
+
+  // A canned model draws from its mesh alone (issue #1112 F5). Reaching here
+  // means its generated mesh asset was missing, and its outline is only the
+  // placement frame — extruding it would draw the box around the shape.
+  if (cannedShapeIsModel(feature.canned)) {
     return new THREE.Group()
   }
 
@@ -1447,6 +1455,12 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
       // If buildBooleanModel failed, we need the rest of the meshes too.
       // Open features (polylines) are skipped — they're rendered as lines via buildOpenFeatureLine.
       if (!modelMesh) {
+        // A canned model (Turn, Polygon) is drawn from its mesh alone (issue
+        // #1112 F5). Expanding it yields its generated outline, which is only
+        // the placement frame, so the fallback's extrusion painted a second,
+        // box-shaped solid around every Turn and Polygon that flickered
+        // through the real shape. Outline kinds keep their extruded solids.
+        if (cannedShapeIsModel(feature.canned)) continue
         for (const expanded of expandFeatureGeometry(feature)) {
           if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
             if (!expanded.sketch.profile.closed || expanded.operation === 'line') continue

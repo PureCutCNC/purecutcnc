@@ -225,6 +225,20 @@ export function cannedShapeIsExpandable(canned: CannedShapeData | null | undefin
 }
 
 /**
+ * True when a kind's output is a **mesh** rather than an outline (Turn,
+ * Polygon): `generateMesh` is the model half of the generator contract.
+ *
+ * Such a feature is drawn from its mesh alone. Its generated outline is only
+ * the placement frame the selection bounds, Properties and export read, so
+ * extruding it would put a second, box-shaped solid around the real shape
+ * (issue #1112 F5).
+ */
+export function cannedShapeIsModel(canned: CannedShapeData | null | undefined): boolean {
+  if (!canned) return false
+  return !!getCannedShapeGenerator(canned.kind)?.generateMesh
+}
+
+/**
  * Build a canned model's mesh from its current parameters. `null` for a sketch
  * kind, an unregistered kind, a parameter set the generator refuses, or a
  * generator that declines to build one.
