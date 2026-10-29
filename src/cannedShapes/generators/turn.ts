@@ -211,8 +211,8 @@ function joinedAxisChainLoop(chain: readonly TurnProfilePoint[]): TurnProfilePoi
  * through the material. Instead the outline's axis edges are cut out and each
  * remaining chain is closed through its mirror image, which is the region's
  * boundary seen from a flat face. Returns no loop when the outline has no axis
- * edge (it only touches the axis at a vertex), leaving the caller its plain
- * join.
+ * edge (it only touches the axis at a vertex, if at all), leaving the caller
+ * to draw the outline and its mirror separately.
  */
 function closedContourAxisLoops(polygon: readonly TurnProfilePoint[]): TurnProfilePoint[][] {
   const count = polygon.length
@@ -255,24 +255,29 @@ function closedContourAxisLoops(polygon: readonly TurnProfilePoint[]): TurnProfi
  * One profile contour as the loops of the Turn's side view: the contour
  * mirrored about the bar's axis.
  *
- * An outline that reaches the axis is the half-profile of a solid of
- * revolution, so it becomes **one** loop — the drawn side, then its mirror
- * back — which is the solid's silhouette seen from a flat face. A closed
- * outline away from the axis (a ring or a groove) keeps its own loop and gets
- * its mirror as a second one. A closed outline that touches the axis shares
- * that edge with its mirror, so the edge is cut out and the halves are joined
- * without it.
+ * An outline that runs along the axis shares that edge with its mirror, so the
+ * edge is cut out and each remaining chain is closed through its mirror image:
+ * the solid's silhouette seen from a flat face. An outline that does not run
+ * along the axis shares no **edge** with its mirror — not even when it touches
+ * the axis at a vertex — so it stays two loops, the outline and its mirror. An
+ * open half-profile already has the shape of a silhouette, so it is closed onto
+ * its own mirror.
  */
 function mirroredContourLoops(contour: TurnProfileContour): TurnProfilePoint[][] {
   const polygon = contourSideViewPolygon(contour)
   if (polygon.length < 2) return []
-  const touchesAxis = polygon.some((point) => point.radius <= TURN_PROFILE_TOLERANCE)
-  if (contour.closed && !touchesAxis) {
-    return [polygon, mirroredAcrossAxis(polygon)]
-  }
   if (contour.closed) {
+    // Only an edge along the axis is shared with the mirror: cut it out and
+    // join the off-axis chains through their mirror image.
     const loops = closedContourAxisLoops(polygon)
     if (loops.length > 0) return loops
+    // No shared edge, so the silhouette is the outline and its mirror as two
+    // loops. Joining them through a single on-axis vertex — as this used to do
+    // for a closed outline that only touches the axis — instead closes the
+    // outline along a false edge across the mirror, and which vertex sits at
+    // the seam changes with the outline's starting vertex (issue #1112 rt2-d
+    // correction 3).
+    return [polygon, mirroredAcrossAxis(polygon)]
   }
   return [closedLoop([...polygon, ...mirroredAcrossAxis(polygon).reverse()])]
 }

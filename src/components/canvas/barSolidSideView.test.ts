@@ -37,7 +37,13 @@
  *   view is the tube's rectangle, with no centerline" fails;
  * - joining a closed Turn profile's halves through the axis edge they share →
  *   "the rectangle's outline, mirrored about the bar axis" and "edge N does
- *   not run along the bar's axis" fail.
+ *   not run along the bar's axis" fail;
+ * - joining a closed Turn profile that only touches the axis at a vertex
+ *   through that point instead of drawing it and its mirror separately →
+ *   "point contact x, variant 0: the material between the apexes is not
+ *   clickable" fails first (the false end edge made (29, axis) a hit), and
+ *   with that click removed "the triangle is the same two lobes from every
+ *   starting vertex and winding" fails.
  *
  * Run with: npx tsx src/components/canvas/barSolidSideView.test.ts
  */
@@ -114,6 +120,24 @@ function assertRect(profile: SketchProfile, expected: { minX: number; maxX: numb
     { x: expected.maxX, y: expected.maxY },
     { x: expected.minX, y: expected.maxY },
   ], label)
+}
+
+/**
+ * One loop as text that ignores where the loop starts and which way it winds:
+ * the smallest of its rotations, forward and reversed. Two loops with the same
+ * key are the same polygon, so a set of keys compares outline sets without
+ * caring about the profile's starting vertex or winding direction.
+ */
+function canonicalLoop(points: readonly Point[]): string {
+  const values = points.map((point) => `${Math.round(point.x * 1e6)},${Math.round(point.y * 1e6)}`)
+  const rotations = (list: readonly string[]): string[] => list.map((_, index) => (
+    [...list.slice(index), ...list.slice(0, index)].join(' ')
+  ))
+  return [...rotations(values), ...rotations([...values].reverse())].sort()[0] ?? ''
+}
+
+function canonicalLoops(loops: readonly (readonly Point[])[]): string[] {
+  return loops.map(canonicalLoop).sort()
 }
 
 /**
@@ -459,6 +483,108 @@ for (const axis of ['x', 'y'] as const) {
     { x: frameBounds.maxX, y: frameBounds.maxY },
     { x: frameBounds.minX, y: frameBounds.maxY },
   ], `${label}: the placement frame is the side view's bounds`)
+}
+
+// ── A closed profile touching the axis at one vertex is start-independent ──
+
+/**
+ * The accepted triangle (10,0) → (30,5) → (10,5) rests on the bar's axis at a
+ * single vertex and has no edge along it, so it shares no edge with its mirror:
+ * the silhouette is the triangle and its mirror image, two lobes meeting at
+ * (10, axis). Joining them through that one point instead closed the triangle
+ * along a false edge from (30,−5) to (30,5) — material the solid does not have,
+ * clickable at (29, axis) — and *which* vertex landed at the seam, and so
+ * whether the false edge appeared at all, changed with the profile's starting
+ * vertex and winding.
+ *
+ * The same outline is therefore stored four ways — from each of its three
+ * vertices, and once reversed — and each must draw the same two triangles.
+ */
+for (const axis of ['x', 'y'] as const) {
+  const label = `point contact ${axis}`
+  const project = barProject('mm', 'round', axis)
+  const frame = rotarySolidFrame(project)
+  assert(frame, `${label}: the bar has a frame`)
+  const alongOf = (point: Point): number => (axis === 'x' ? point.x : point.y)
+  const acrossOf = (point: Point): number => (axis === 'x' ? point.y : point.x)
+  const at = (along: number, signedRadius: number): Point => (axis === 'x'
+    ? { x: along, y: frame.acrossCentre + signedRadius }
+    : { x: frame.acrossCentre + signedRadius, y: along })
+
+  // (10,0) → (30,5) → (10,5), from every starting vertex and once reversed.
+  // The tip first: that is the start whose false end edge made (29, axis)
+  // clickable.
+  const variants = [
+    [{ along: 30, radius: 5 }, { along: 10, radius: 5 }, { along: 10, radius: 0 }],
+    [{ along: 10, radius: 0 }, { along: 30, radius: 5 }, { along: 10, radius: 5 }],
+    [{ along: 10, radius: 5 }, { along: 10, radius: 0 }, { along: 30, radius: 5 }],
+    [{ along: 10, radius: 0 }, { along: 10, radius: 5 }, { along: 30, radius: 5 }],
+  ]
+  const expected = canonicalLoops([
+    [at(10, 0), at(30, 5), at(10, 5)],
+    [at(10, 0), at(30, -5), at(10, -5)],
+  ])
+  variants.forEach((points, variant) => {
+    const created = createSolid(barProject('mm', 'round', axis), {
+      kind: 'turn',
+      start: 0,
+      length: 1,
+      diameter: 1,
+      profile: {
+        sourceFeatureId: 'f-source',
+        sourceName: 'Cone',
+        contours: [{ closed: true, points }],
+      },
+    })
+    const turn = solidOf(created, TURN_CANNED_KIND)
+    const variantLabel = `${label}, variant ${variant}`
+    // The same click in every variant: (29, axis) is between the apexes, not
+    // material — the false end edge used to make it a hit once the profile
+    // started at (30,5) — and (25, 2) is between the slanted edge and the
+    // axis. Only the two lobes are material.
+    const features = resolvedProjectFeatures(created)
+    const vt = computeSketchViewTransform(created, CANVAS.width, CANVAS.height, VIEW)
+    assert.equal(
+      findHitFeatureId(at(29, 0), features, vt),
+      null,
+      `${variantLabel}: the material between the apexes is not clickable`,
+    )
+    assert.equal(
+      findHitFeatureId(at(25, 2), features, vt),
+      null,
+      `${variantLabel}: the bar between the slanted edge and the axis is not clickable`,
+    )
+    assert.equal(findHitFeatureId(at(15, 3), features, vt), turn.id, `${variantLabel}: the upper lobe is clickable`)
+    assert.equal(findHitFeatureId(at(15, -3), features, vt), turn.id, `${variantLabel}: the mirrored lobe is clickable`)
+    const profiles = getFeatureGeometryProfiles(turn)
+    assert.equal(profiles.length, 2, `${variantLabel}: the triangle and its mirror, two lobes`)
+    assert.deepEqual(
+      canonicalLoops(profiles.map((profile) => sampleProfilePoints(profile))),
+      expected,
+      `${variantLabel}: the triangle is the same two lobes from every starting vertex and winding`,
+    )
+    // No outline edge may cross the bar at the apexes: that false edge is what
+    // made the silhouette depend on the starting vertex.
+    for (const profile of profiles) {
+      const points = sampleProfilePoints(profile)
+      for (let index = 0; index < points.length; index += 1) {
+        const current = points[index]
+        const next = points[(index + 1) % points.length]
+        assert(current && next, `${variantLabel}: edge ${index} exists`)
+        assert(
+          !(Math.abs(alongOf(current) - 30) <= 1e-6
+            && Math.abs(alongOf(next) - 30) <= 1e-6
+            && Math.abs(acrossOf(current) - acrossOf(next)) > 1e-6),
+          `${variantLabel}: edge ${index} does not span the bar across the apex`,
+        )
+        assert(
+          !(Math.abs(acrossOf(current) - frame.acrossCentre) <= 1e-6
+            && Math.abs(acrossOf(next) - frame.acrossCentre) <= 1e-6),
+          `${variantLabel}: edge ${index} does not run along the bar's axis`,
+        )
+      }
+    }
+  })
 }
 
 // ── A Polygon's width follows its rotation ─────────────────────────────────
