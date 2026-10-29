@@ -34,7 +34,10 @@
  * - widening an odd-sided Polygon's across extents to the larger one → "the
  *   side view is only the material the triangle has" fails;
  * - closing an open Turn profile onto the axis before mirroring it → "the side
- *   view is the tube's rectangle, with no centerline" fails.
+ *   view is the tube's rectangle, with no centerline" fails;
+ * - joining a closed Turn profile's halves through the axis edge they share →
+ *   "the rectangle's outline, mirrored about the bar axis" and "edge N does
+ *   not run along the bar's axis" fail.
  *
  * Run with: npx tsx src/components/canvas/barSolidSideView.test.ts
  */
@@ -379,6 +382,83 @@ for (const axis of ['x', 'y'] as const) {
       `${label}: no silhouette vertex lies on the bar's axis`,
     )
   }
+}
+
+// ── A closed profile on the axis does not draw the axis inside the Turn ────
+
+/**
+ * The accepted closed outline (10,0) → (30,0) → (30,5) → (10,5): a rectangle
+ * resting on the bar's axis. Its region and its mirror share the axis edge, so
+ * joining the halves vertex for vertex would traverse that edge forward and
+ * back — a centerline through the material. The silhouette is the rectangle:
+ * the axis points stay as collinear vertices at its two ends, but no edge runs
+ * along the axis.
+ */
+for (const axis of ['x', 'y'] as const) {
+  const label = `closed profile ${axis}`
+  const project = barProject('mm', 'round', axis)
+  const created = createSolid(project, {
+    kind: 'turn',
+    start: 0,
+    length: 1,
+    diameter: 1,
+    profile: {
+      sourceFeatureId: 'f-source',
+      sourceName: 'Boss',
+      contours: [{
+        closed: true,
+        points: [
+          { along: 10, radius: 0 },
+          { along: 30, radius: 0 },
+          { along: 30, radius: 5 },
+          { along: 10, radius: 5 },
+        ],
+      }],
+    },
+  })
+  const frame = rotarySolidFrame(created)
+  assert(frame, `${label}: the bar has a frame`)
+  const turn = solidOf(created, TURN_CANNED_KIND)
+  const profiles = getFeatureGeometryProfiles(turn)
+  assert.equal(profiles.length, 1, `${label}: one silhouette loop`)
+  const loop = profiles[0]
+  assert(loop, `${label}: the side view exists`)
+  assert.equal(loop.closed, true, `${label}: the side view is closed`)
+  const at = (along: number, signedRadius: number): Point => (axis === 'x'
+    ? { x: along, y: frame.acrossCentre + signedRadius }
+    : { x: frame.acrossCentre + signedRadius, y: along })
+  assertPoints(sampleProfilePoints(loop), [
+    at(30, 0),
+    at(30, 5),
+    at(10, 5),
+    at(10, 0),
+    at(10, -5),
+    at(30, -5),
+  ], `${label}: the rectangle's outline, mirrored about the bar axis`)
+  // The axis edge is inside the solid, so no outline edge may run along it.
+  const points = sampleProfilePoints(loop)
+  const onAxis = (point: Point): boolean => (
+    Math.abs((axis === 'x' ? point.y : point.x) - frame.acrossCentre) <= 1e-6
+  )
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    assert(current && next, `${label}: edge ${index} exists`)
+    assert(
+      !onAxis(current) || !onAxis(next),
+      `${label}: edge ${index} does not run along the bar's axis`,
+    )
+  }
+  // The placement frame is the same outline's bounds.
+  const frameBounds = axis === 'x'
+    ? { minX: 10, maxX: 30, minY: frame.acrossCentre - 5, maxY: frame.acrossCentre + 5 }
+    : { minX: frame.acrossCentre - 5, maxX: frame.acrossCentre + 5, minY: 10, maxY: 30 }
+  assertPoints(sampleProfilePoints(turn.sketch.profile), [
+    { x: frameBounds.minX, y: frameBounds.minY },
+    { x: frameBounds.maxX, y: frameBounds.minY },
+    { x: frameBounds.maxX, y: frameBounds.maxY },
+    { x: frameBounds.minX, y: frameBounds.maxY },
+  ], `${label}: the placement frame is the side view's bounds`)
 }
 
 // ── A Polygon's width follows its rotation ─────────────────────────────────
