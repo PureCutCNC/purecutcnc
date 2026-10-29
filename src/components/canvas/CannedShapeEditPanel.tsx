@@ -59,6 +59,14 @@ import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 import { useCannedShapePreview } from '../useCannedShapePreview'
 import { CannedShapeEditReference } from './CreationParameterReferences'
 import { GearFields } from './GearParameterPanel'
+import { RotaryPatternPanel } from './RotaryPatternPanel'
+import { RotarySolidPanel } from './RotarySolidPanel'
+import {
+  POLYGON_CANNED_KIND,
+  TURN_CANNED_KIND,
+  FLUTES_CANNED_KIND,
+  THREAD_CANNED_KIND,
+} from '../../cannedShapes/generators/kinds'
 
 type PendingCannedEdit = Extract<PendingAddTool, { shape: 'canned-edit' }>
 
@@ -82,6 +90,14 @@ interface CannedShapeEditPanelProps {
   containerRef: RefObject<HTMLElement | null>
   canvasRef: RefObject<HTMLElement | null>
   clearTransientCanvasState: () => void
+}
+
+/** The four canned rotary kinds, edited in their own canvas panels. */
+const ROTARY_EDIT_PARTS: Record<string, { shape: 'solid'; kind: 'turn' | 'polygon' } | { shape: 'pattern'; kind: 'thread' | 'flutes' }> = {
+  [TURN_CANNED_KIND]: { shape: 'solid', kind: 'turn' },
+  [POLYGON_CANNED_KIND]: { shape: 'solid', kind: 'polygon' },
+  [THREAD_CANNED_KIND]: { shape: 'pattern', kind: 'thread' },
+  [FLUTES_CANNED_KIND]: { shape: 'pattern', kind: 'flutes' },
 }
 
 const EDITOR_REQUESTS: Record<string, CannedShapeEditorRequest> = Object.fromEntries(
@@ -132,7 +148,48 @@ function gearDraft(params: GearCreationParams, size: number): CannedShapeParams 
   })
 }
 
-export function CannedShapeEditPanel({
+/**
+ * Edit a canned shape in the canvas side panel.
+ *
+ * The four canned rotary kinds render the same page-level panel creation uses
+ * (issue #1112 rt2-b): they carry a bar frame, a mesh and a live preview of
+ * their own, so they have their own field components. Everything else — the
+ * five flat shapes and the gear — renders below.
+ */
+export function CannedShapeEditPanel(props: CannedShapeEditPanelProps) {
+  const project = useProjectStore((state) => state.project)
+  const cancelPendingAdd = useProjectStore((state) => state.cancelPendingAdd)
+  const feature = resolveFeatureInstance(project, props.pending.featureId)
+  const rotary = feature?.canned ? ROTARY_EDIT_PARTS[feature.canned.kind] ?? null : null
+  const hostRefs = {
+    containerRef: props.containerRef,
+    canvasRef: props.canvasRef,
+    clearTransientCanvasState: props.clearTransientCanvasState,
+  }
+  if (rotary?.shape === 'solid') {
+    return (
+      <RotarySolidPanel
+        kind={rotary.kind}
+        featureId={props.pending.featureId}
+        onClose={cancelPendingAdd}
+        {...hostRefs}
+      />
+    )
+  }
+  if (rotary?.shape === 'pattern') {
+    return (
+      <RotaryPatternPanel
+        kind={rotary.kind}
+        featureId={props.pending.featureId}
+        onClose={cancelPendingAdd}
+        {...hostRefs}
+      />
+    )
+  }
+  return <FlatCannedShapeEditPanel {...props} />
+}
+
+function FlatCannedShapeEditPanel({
   pending,
   containerRef,
   canvasRef,

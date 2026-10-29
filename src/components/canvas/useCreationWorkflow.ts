@@ -56,6 +56,15 @@ export interface CreationWorkflowCtx {
 
 type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'gear' | 'roundrect' | 'chamferrect' | null
 
+/**
+ * True for a Turn/Polygon/Thread/Flutes creation session. Those render their own
+ * page-level panel and nothing is placed on the canvas, so they are neither a
+ * creation-panel shape nor a placement prompt (issue #1112 rt2-b).
+ */
+function isRotaryCreate(pendingAdd: PendingAddTool | null): boolean {
+  return pendingAdd?.shape === 'rotary-solid' || pendingAdd?.shape === 'rotary-pattern'
+}
+
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
   creationPanelHasAnchor: boolean
@@ -137,8 +146,12 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   })
 
   // A canned-shape edit borrows `pendingAdd` as its open flag but has its own
-  // side panel, so it is neither a creation panel nor a placement prompt.
-  const placementPanelActive = !!pendingAdd && pendingAdd.shape !== 'canned-edit' && !creationPanelShape
+  // side panel, so it is neither a creation panel nor a placement prompt. A
+  // rotary create session is the same: its own page-level panel, nothing placed.
+  const placementPanelActive = !!pendingAdd
+    && pendingAdd.shape !== 'canned-edit'
+    && !isRotaryCreate(pendingAdd)
+    && !creationPanelShape
   const placementWorkflowPanel = useCanvasWorkflowPanel({
     open: placementPanelActive,
     phaseKey: pendingAdd?.shape ?? 'place',

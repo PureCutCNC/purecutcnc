@@ -48,10 +48,17 @@ const CREATION_TARGET_NOUN_KEYS: Record<CreationTarget, MessageKey> = {
   construction: 'sketch.target.construction',
 }
 
-/** The drawer's rotary group: Thread/Flutes and Turn/Polygon in one row. */
+/**
+ * The drawer's rotary group: Thread/Flutes and Turn/Polygon in one row.
+ *
+ * The group follows the bar workflow, not the Around face alone (issue #1112
+ * rt2-b item 20): Turn and Polygon belong to the bar, so they are offered from
+ * Top and Bottom as well, while Thread and Flutes still hide themselves off
+ * Around. A block keeps the group out entirely — there is no bar to turn.
+ */
 function RotaryCreationGroup({ tooltipSide }: { tooltipSide: 'bottom' | 'right' }) {
   const project = useProjectStore((state) => state.project)
-  if (activeFace(project) !== 'around' || aroundUnavailableReason(project) !== null) return null
+  if (aroundUnavailableReason(project) !== null) return null
   return (
     <>
       <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />

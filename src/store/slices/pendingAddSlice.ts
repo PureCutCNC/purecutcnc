@@ -24,7 +24,14 @@ import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
-import { activeFace, aroundSketchAuthoringRefused, faceArtworkTransform, newFeatureSpan } from '../helpers/activeFace'
+import {
+  activeFace,
+  aroundSketchAuthoringAvailable,
+  aroundSketchAuthoringRefused,
+  aroundUnavailableReason,
+  faceArtworkTransform,
+  newFeatureSpan,
+} from '../helpers/activeFace'
 import { resolvedProjectFeatures, resolveFeatureInstance } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
@@ -59,6 +66,8 @@ export type PendingAddSlice = Pick<
   | 'startAddRoundRectPlacement'
   | 'startAddChamferRectPlacement'
   | 'beginCannedShapeEdit'
+  | 'startAddRotarySolidPlacement'
+  | 'startAddRotaryPatternPlacement'
   | 'cancelPendingAdd'
   | 'setPendingAddAnchor'
   | 'placePendingAddAt'
@@ -129,6 +138,10 @@ function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
       return { shape: 'text', config: current.config, session }
     case 'canned-edit':
       return { shape: 'canned-edit', featureId: current.featureId, session }
+    case 'rotary-solid':
+      return { shape: 'rotary-solid', kind: current.kind, session }
+    case 'rotary-pattern':
+      return { shape: 'rotary-pattern', kind: current.kind, session }
     case 'origin':
       return { shape: 'origin', session }
   }
@@ -337,6 +350,44 @@ export function createPendingAddSlice(
           },
         }
       }),
+
+    /**
+     * Open the Turn/Polygon creation panel (issue #1112 rt2-b). The two canned
+     * models belong to the bar, not to a face, so the panel is offered on every
+     * face of a bar-stock rotary project — the model made from Top or Bottom is
+     * the same model and lands in the same feature-tree place as one made on
+     * Around (item 20). A block is still refused: there is no bar to turn.
+     */
+    startAddRotarySolidPlacement: (kind) =>
+      set((s) => aroundUnavailableReason(s.project) !== null ? {} : ({
+        pendingAdd: { shape: 'rotary-solid', kind, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        pendingTextLayout: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    /**
+     * Open the Thread/Flutes creation panel. These are unrolled-sheet geometry,
+     * so they keep the round-bar Around rule the dialog had: on any other face
+     * or a square blank the entry is absent and this arms nothing.
+     */
+    startAddRotaryPatternPlacement: (kind) =>
+      set((s) => (activeFace(s.project) !== 'around' || !aroundSketchAuthoringAvailable(s.project)) ? {} : ({
+        pendingAdd: { shape: 'rotary-pattern', kind, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        pendingTextLayout: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
 
     cancelPendingAdd: () => set({ pendingAdd: null }),
 

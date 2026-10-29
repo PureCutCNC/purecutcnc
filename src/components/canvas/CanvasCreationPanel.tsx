@@ -22,15 +22,19 @@
  * only renders the shape-specific fields.
  */
 
+import type { RefObject } from 'react'
 import type { Project } from '../../types/project'
 import type { GearCreationParams } from '../../sketch/gearProfile'
 import type { CreationTarget, PendingAddTool } from '../../store/types'
+import { useProjectStore } from '../../store/projectStore'
 import { useI18n } from '../../i18n/i18nContext'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { CANVAS_SHORTCUT, withShortcut } from './canvasShortcuts'
 import { NgonParameterPanel, RectCornerParameterPanel } from './CreationParameterReferences'
 import { GearParameterPanel } from './GearParameterPanel'
+import { RotaryPatternPanel } from './RotaryPatternPanel'
+import { RotarySolidPanel } from './RotarySolidPanel'
 import type { CreationWorkflow } from './useCreationWorkflow'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 
@@ -48,6 +52,10 @@ export interface CanvasCreationPanelProps {
   setPendingGearParams: (patch: Partial<GearCreationParams>) => void
   setPendingNgonSides: (sides: number) => void
   setPendingRectCorner: (corner: number) => void
+  /** The canvas container, for the panels that position themselves against it. */
+  containerRef: RefObject<HTMLElement | null>
+  canvasRef: RefObject<HTMLElement | null>
+  clearTransientCanvasState: () => void
 }
 
 export function CanvasCreationPanel({
@@ -61,8 +69,38 @@ export function CanvasCreationPanel({
   setPendingGearParams,
   setPendingNgonSides,
   setPendingRectCorner,
+  containerRef,
+  canvasRef,
+  clearTransientCanvasState,
 }: CanvasCreationPanelProps) {
   const { t } = useI18n()
+  const cancelPendingAdd = useProjectStore((state) => state.cancelPendingAdd)
+
+  // The rotary kinds are created in the same page-level canvas panel the other
+  // canned shapes use, so their fields and their Create/Cancel live in their
+  // own components rather than in the shape switch below (issue #1112 rt2-b).
+  if (pendingAdd?.shape === 'rotary-solid') {
+    return (
+      <RotarySolidPanel
+        kind={pendingAdd.kind}
+        onClose={cancelPendingAdd}
+        containerRef={containerRef}
+        canvasRef={canvasRef}
+        clearTransientCanvasState={clearTransientCanvasState}
+      />
+    )
+  }
+  if (pendingAdd?.shape === 'rotary-pattern') {
+    return (
+      <RotaryPatternPanel
+        kind={pendingAdd.kind}
+        onClose={cancelPendingAdd}
+        containerRef={containerRef}
+        canvasRef={canvasRef}
+        clearTransientCanvasState={clearTransientCanvasState}
+      />
+    )
+  }
 
   return (
     <>

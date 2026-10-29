@@ -2361,9 +2361,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         scheduleDraw()
         return
       }
-      // A canned-shape edit borrows `pendingAdd` only to open its side panel;
-      // the canvas is not placing anything, so there is no preview point.
-      if (pendingAdd.shape === 'canned-edit') {
+      // A canned-shape edit and a rotary create session borrow `pendingAdd` only
+      // to open their side panel; the canvas is not placing anything, so there
+      // is no preview point (issue #1112 rt2-b).
+      if (pendingAdd.shape === 'canned-edit'
+        || pendingAdd.shape === 'rotary-solid'
+        || pendingAdd.shape === 'rotary-pattern') {
         setPendingPreviewPointRef(null)
         return
       }
@@ -3251,6 +3254,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         setPendingGearParams={setPendingGearParams}
         setPendingNgonSides={setPendingNgonSides}
         setPendingRectCorner={setPendingRectCorner}
+        containerRef={containerRef}
+        canvasRef={canvasRef}
+        clearTransientCanvasState={clearTransientCanvasState}
       />
       {pendingAdd?.shape === 'canned-edit' && (
         <CannedShapeEditPanel

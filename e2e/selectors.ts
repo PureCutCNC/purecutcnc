@@ -944,49 +944,55 @@ export const setupCam = {
 }
 
 // Thread and Flutes on the Around face (#1016 C1). The commands carry a stable
-// `data-command` hook; their accessible names are localized button labels. The
-// Flutes dialog holds two `Select`s (direction and tool), so each is scoped by
-// its own stable wrapper class instead of matching every `.ui-select__trigger`.
+// `data-command` hook; their accessible names are localized button labels.
+// Since #1112 rt2-b the form is the canvas side panel the other canned shapes
+// use, not a modal, so `dialog` names that panel root and the field ids are
+// unchanged. The panel holds one `Select` (Direction), scoped by its own stable
+// wrapper class.
 export const rotary = {
   threadButton: (page: Page) => page.locator('[data-command="rotary-thread"]'),
   flutesButton: (page: Page) => page.locator('[data-command="rotary-flutes"]'),
-  dialog: (page: Page) => page.locator('.dialog--rotary'),
+  dialog: (page: Page) => page.locator('.rotary-pattern-panel'),
   field: (page: Page, name: 'start' | 'length' | 'pitch' | 'starts' | 'depth' | 'count' | 'twist') =>
     page.locator(`#rotary-${name}`),
-  /** The Right/Left physical-hand group shown by both dialogs. */
-  direction: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__direction'),
+  /** The Right/Left physical-hand group shown by both panels. */
+  direction: (page: Page) => rotary.dialog(page).locator('.rotary-panel__direction'),
   directionTrigger: (page: Page) => rotary.direction(page).locator('.ui-select__trigger'),
   directionOption: (page: Page, name: string) => rotary.direction(page).getByRole('option', { name }),
-  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
+  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-panel__create'),
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
-  error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
-  note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+  error: (page: Page) => rotary.dialog(page).locator('.rotary-panel__error'),
+  note: (page: Page) => rotary.dialog(page).locator('.rotary-panel__note'),
   // The read-only surface line: a Turn diameter, or the model/two-diameter/
   // taper warning (issue #1112 H, decision 10).
-  surfaceNote: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__surface-note'),
-  surfaceWarning: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__surface-warning'),
+  surfaceNote: (page: Page) => rotary.dialog(page).locator('.rotary-panel__surface-note'),
+  surfaceWarning: (page: Page) => rotary.dialog(page).locator('.rotary-panel__surface-warning'),
 }
 
-// Turn and Polygon canned models on the Around face (#1112 G). Both entries
-// work on a round bar or a square blank and carry stable `data-command` hooks.
-// They share the C1 rotary dialog frame, but keep their own
-// `rotary-solid-dialog` root, so the two dialogs' selectors can never be
-// confused if both are mounted.
+// Turn and Polygon canned models (#1112 G), created and edited in the canvas
+// panel since rt2-b. Both entries work on a round bar or a square blank and on
+// every face of one, and carry stable `data-command` hooks. Each rotary form
+// lives in its own panel root, so the two selectors can never be confused if
+// both are mounted.
 export const rotarySolid = {
   turnButton: (page: Page) => page.locator('[data-command="rotary-turn"]'),
   polygonButton: (page: Page) => page.locator('[data-command="rotary-polygon"]'),
-  dialog: (page: Page) => page.locator('.rotary-solid-dialog'),
+  dialog: (page: Page) => page.locator('.rotary-solid-panel'),
   field: (page: Page, name: 'start' | 'length' | 'sides' | 'across-flats' | 'rotation' | 'diameter') =>
     page.locator(`#rotary-solid-${name}`),
-  createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__create'),
+  createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__create'),
   cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
-  error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
-  note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
-  // Turn side profile (#1112 H): Pick a shape, Refresh and the copied summary.
-  profile: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__profile'),
+  error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__error'),
+  note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__note'),
+  // Turn side profile (#1112 H, items 16/17): Pick a shape, the drawing hint,
+  // Refresh and the copied summary, plus the picture beside them.
+  profile: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__profile'),
   profileTrigger: (page: Page) => rotarySolid.profile(page).locator('.ui-select__trigger'),
   profileOption: (page: Page, name: string) => rotarySolid.profile(page).getByRole('option', { name }),
-  profileRefresh: (page: Page) => rotarySolid.profile(page).locator('.rotary-dialog__profile-refresh'),
-  profileMissing: (page: Page) => rotarySolid.profile(page).locator('.rotary-dialog__profile-missing'),
+  profileRefresh: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-refresh'),
+  profileMissing: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-missing'),
+  profileHint: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-empty'),
+  profileFigure: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-figure'),
 }
+
 

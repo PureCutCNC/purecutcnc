@@ -45,7 +45,7 @@ import type {
   SketchFeature,
 } from '../../types/project'
 import { rotaryCylinderSegments } from '../../engine/rotaryCylinder'
-import { activeFace, activeSetup, aroundUnavailableReason } from './activeFace'
+import { activeSetup, aroundUnavailableReason } from './activeFace'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './resolveFeatures'
 import { getFeatureGeometryProfiles } from '../../text'
 import { sampleProfilePoints } from '../../types/project'
@@ -111,10 +111,8 @@ export interface RotaryPolygonSolidInput {
 export type RotarySolidInput = RotaryTurnSolidInput | RotaryPolygonSolidInput
 
 export type RotarySolidRefusal =
-  /** The project is not rotary, so there is no Around face to create on. */
+  /** The project is not rotary, so there is no bar to turn. */
   | 'notRotaryProject'
-  /** The workspace is not on an Around setup. */
-  | 'notAroundFace'
   /** The active Around setup turns about the other bar axis. */
   | 'setupAxisMismatch'
   /** The stock is not a bar (round or square). */
@@ -419,14 +417,22 @@ export function planRotarySolid(
   input: RotarySolidInput,
 ): RotarySolidPlan {
   if (projectType(project) !== 'rotary') return { ok: false, reason: 'notRotaryProject' }
-  if (activeFace(project) !== 'around') return { ok: false, reason: 'notAroundFace' }
+  // Turn and Polygon belong to the bar, not to a face (issue #1112 rt2-b item
+  // 20): the model made from Top or Bottom is the same canned model on the same
+  // bar, so creating it there is allowed on round and square bar stock alike.
+  // Everything the model stores is derived from the stock, never from the
+  // active setup, which is why no face check is needed here any more. A block
+  // still has no bar to turn and is refused below.
   if (aroundUnavailableReason(project) !== null) return { ok: false, reason: 'notOnBar' }
   const stock = project.stock
   if (!isBarStock(stock)) return { ok: false, reason: 'notOnBar' }
 
+  // Only an Around setup carries a bar axis of its own to disagree with the
+  // stock; the flat faces' orientation is the Bottom flip axis, not the bar.
   const setup = activeSetup(project)
-  if (setup.kind !== 'around') return { ok: false, reason: 'notAroundFace' }
-  if (setup.orientation.axis !== stock.axis) return { ok: false, reason: 'setupAxisMismatch' }
+  if (setup.kind === 'around' && setup.orientation.axis !== stock.axis) {
+    return { ok: false, reason: 'setupAxisMismatch' }
+  }
 
   const frame = rotarySolidFrame(project)
   if (!frame) return { ok: false, reason: 'notOnBar' }

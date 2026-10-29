@@ -15,17 +15,17 @@
  */
 
 /**
- * The two dialog faces of decision 10/11 (issue #1112 slice H).
+ * The two panel faces of decision 10/11 (issue #1112 slice H).
  *
  * Rendered DOM is the only way to catch a read-only line the store data cannot
  * show: the Turn form must offer **Profile: Pick a shape** and disable the
- * numbers the profile owns, and the Thread form must say **on Turn · Ø10** and
+ * numbers the profile owns, and the Thread panel must say **on Turn · Ø10** and
  * disable Refresh with the reason once the source is gone. A Thread moved onto
  * another Turn must name that Turn and its diameter: the line resolves the
  * placed band, not the stored parameters. The same placement decides the span
  * an unchanged Apply writes, so the row is not pushed back onto the old Turn.
  *
- * Run with: npx tsx src/components/layout/toolbar/rotarySurfaceDialog.test.ts
+ * Run with: npx tsx src/components/canvas/rotaryPanelSurface.test.ts
  */
 
 import assert from 'node:assert/strict'
@@ -50,18 +50,18 @@ if (!('oninput' in (document as unknown as object))) {
 }
 globals.React = React
 
-const { useProjectStore } = await import('../../../store/projectStore')
-const { I18nProvider } = await import('../../../i18n/I18nProvider')
-const { RotarySolidDialog } = await import('./RotarySolidDialog')
-const { RotaryPatternDialog } = await import('./RotaryPatternDialog')
+const { useProjectStore } = await import('../../store/projectStore')
+const { I18nProvider } = await import('../../i18n/I18nProvider')
+const { RotarySolidPanel } = await import('./RotarySolidPanel')
+const { RotaryPatternPanel } = await import('./RotaryPatternPanel')
 const { createRoot } = await import('react-dom/client')
-const { newProject, roundStock } = await import('../../../types/project')
-const { projectWithFeatures } = await import('../../../test/projectFixtures')
-const { bundledMachines } = await import('../../../machine/registry')
-const { validateMachineDefinition } = await import('../../../engine/gcode/types')
-const { switchWorkspaceFace } = await import('../../../store/workspaceFace')
-const { turnProfileFromFeature } = await import('../../../store/helpers/rotarySolids')
-const { rotarySolidFrame } = await import('../../../cannedShapes/generators/rotarySolidParams')
+const { newProject, roundStock } = await import('../../types/project')
+const { projectWithFeatures } = await import('../../test/projectFixtures')
+const { bundledMachines } = await import('../../machine/registry')
+const { validateMachineDefinition } = await import('../../engine/gcode/types')
+const { switchWorkspaceFace } = await import('../../store/workspaceFace')
+const { turnProfileFromFeature } = await import('../../store/helpers/rotarySolids')
+const { rotarySolidFrame } = await import('../../cannedShapes/generators/rotarySolidParams')
 
 const store = () => useProjectStore.getState()
 
@@ -84,7 +84,7 @@ function setInputValue(field: HTMLInputElement, value: string): void {
 }
 
 function projectWithSource() {
-  const base = newProject('Dialogs', 'mm')
+  const base = newProject('Panels', 'mm')
   base.meta.projectType = 'rotary'
   base.stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
   const machine = validateMachineDefinition({
@@ -151,7 +151,7 @@ function mount(element: React.ReactElement) {
   }
 }
 
-await scenario('the Turn dialog picks a profile and disables the numbers it owns', async () => {
+await scenario('the Turn panel picks a profile and disables the numbers it owns', async () => {
   store().loadProject(projectWithSource())
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   const frame = rotarySolidFrame(store().project)
@@ -168,14 +168,14 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   assert.ok(created.ok, 'the profiled Turn is created')
 
   let closed = false
-  const { unmount } = mount(React.createElement(RotarySolidDialog, {
+  const { unmount } = mount(React.createElement(RotarySolidPanel, {
     kind: 'turn',
     featureId: created.featureId,
     onClose: () => { closed = true },
   }))
-  await waitFor(() => document.querySelector('.rotary-dialog__profile') !== null, 'the profile field renders')
+  await waitFor(() => document.querySelector('.rotary-panel__profile') !== null, 'the profile field renders')
 
-  const profile = document.querySelector('.rotary-dialog__profile')
+  const profile = document.querySelector('.rotary-panel__profile')
   assert.ok(profile, 'the profile group exists')
   assert.match(profile.textContent ?? '', /Profile: pick a shape/, 'the label names Pick a shape')
   assert.match(
@@ -187,11 +187,11 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   assert.equal((document.querySelector('#rotary-solid-length') as HTMLInputElement).disabled, true, 'length is set by the profile')
   assert.equal((document.querySelector('#rotary-solid-diameter') as HTMLInputElement).disabled, true, 'diameter is set by the profile')
   assert.match(
-    profile.querySelector('.rotary-dialog__profile-summary')?.textContent ?? '',
+    profile.querySelector('.rotary-panel__profile-summary')?.textContent ?? '',
     /From Half profile · Ø20 mm/,
     'the summary reports the copied size',
   )
-  const refresh = profile.querySelector('.rotary-dialog__profile-refresh') as HTMLButtonElement
+  const refresh = profile.querySelector('.rotary-panel__profile-refresh') as HTMLButtonElement
   assert.equal(refresh.disabled, false, 'Refresh is available while the source exists')
   assert.equal(closed, false)
 
@@ -199,7 +199,7 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   store().updateFeature('f-half-profile', { name: 'Renamed profile' })
   await waitFor(
     () => /From Renamed profile · Ø20 mm/.test(
-      document.querySelector('.rotary-dialog__profile-summary')?.textContent ?? '',
+      document.querySelector('.rotary-panel__profile-summary')?.textContent ?? '',
     ),
     'the summary follows a source rename',
   )
@@ -208,17 +208,17 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   // reason, instead of silently doing nothing.
   store().deleteFeature('f-half-profile')
   await waitFor(
-    () => (document.querySelector('.rotary-dialog__profile-refresh') as HTMLButtonElement | null)?.disabled === true,
+    () => (document.querySelector('.rotary-panel__profile-refresh') as HTMLButtonElement | null)?.disabled === true,
     'Refresh becomes unavailable',
   )
-  const after = document.querySelector('.rotary-dialog__profile') as HTMLElement
+  const after = document.querySelector('.rotary-panel__profile') as HTMLElement
   assert.match(
-    after.querySelector('.rotary-dialog__profile-refresh')?.getAttribute('title') ?? '',
+    after.querySelector('.rotary-panel__profile-refresh')?.getAttribute('title') ?? '',
     /source shape no longer exists/,
     'the disabled reason names the missing source',
   )
   assert.match(
-    after.querySelector('.rotary-dialog__profile-missing')?.textContent ?? '',
+    after.querySelector('.rotary-panel__profile-missing')?.textContent ?? '',
     /The source shape no longer exists/,
     'the reason is visible beside the field',
   )
@@ -226,7 +226,7 @@ await scenario('the Turn dialog picks a profile and disables the numbers it owns
   unmount()
 })
 
-await scenario('the Thread dialog shows the Turn diameter read-only', async () => {
+await scenario('the Thread panel shows the Turn diameter read-only', async () => {
   store().loadProject(projectWithSource())
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   const turn = store().addRotarySolid({ kind: 'turn', start: 20, length: 40, diameter: 10 })
@@ -234,19 +234,19 @@ await scenario('the Thread dialog shows the Turn diameter read-only', async () =
   const thread = store().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 2, depth: 1 })
   assert.ok(thread.ok, 'the thread is created')
 
-  const { unmount } = mount(React.createElement(RotaryPatternDialog, {
+  const { unmount } = mount(React.createElement(RotaryPatternPanel, {
     kind: 'thread',
     featureId: thread.featureId,
     onClose: () => undefined,
   }))
-  await waitFor(() => document.querySelector('.rotary-dialog__surface-note') !== null, 'the surface note renders')
-  const note = document.querySelector('.rotary-dialog__surface-note')?.textContent ?? ''
+  await waitFor(() => document.querySelector('.rotary-panel__surface-note') !== null, 'the surface note renders')
+  const note = document.querySelector('.rotary-panel__surface-note')?.textContent ?? ''
   assert.match(note, /on Turn · Ø10 mm/, 'the read-only line names the Turn and its diameter')
-  assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'a Turn surface has no warning')
+  assert.equal(document.querySelector('.rotary-panel__surface-warning'), null, 'a Turn surface has no warning')
   unmount()
 })
 
-await scenario('the Thread dialog follows a moved Thread onto its new surface', async () => {
+await scenario('the Thread panel follows a moved Thread onto its new surface', async () => {
   store().loadProject(projectWithSource())
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   const first = store().addRotarySolid({ kind: 'turn', start: 20, length: 40, diameter: 10 })
@@ -257,7 +257,7 @@ await scenario('the Thread dialog follows a moved Thread onto its new surface', 
   const thread = store().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 2, depth: 1 })
   assert.ok(thread.ok, 'the thread starts on the first Turn')
 
-  // The row is moved before the dialog opens, so its stored band still lies
+  // The row is moved before the panel opens, so its stored band still lies
   // over the first Turn while the placed band lies over the second. Reading the
   // stored band would keep showing Ø10 (the named mutation).
   store().startMoveFeature(thread.featureId)
@@ -267,28 +267,28 @@ await scenario('the Thread dialog follows a moved Thread onto its new surface', 
   assert.equal(Number(threadRow()?.z_top), 28, 'the move re-derives the thread span onto the Ø16 Turn')
   assert.equal(Number(threadRow()?.z_bottom), 27, 'the depth is measured down from the Ø16 Turn')
 
-  const { unmount } = mount(React.createElement(RotaryPatternDialog, {
+  const { unmount } = mount(React.createElement(RotaryPatternPanel, {
     kind: 'thread',
     featureId: thread.featureId,
     onClose: () => undefined,
   }))
-  await waitFor(() => document.querySelector('.rotary-dialog__surface-note') !== null, 'the surface note renders')
-  const note = document.querySelector('.rotary-dialog__surface-note')?.textContent ?? ''
+  await waitFor(() => document.querySelector('.rotary-panel__surface-note') !== null, 'the surface note renders')
+  const note = document.querySelector('.rotary-panel__surface-note')?.textContent ?? ''
   assert.match(note, /on Shank · Ø16 mm/, 'the read-only line names the Turn under the placed band')
   assert.doesNotMatch(note, /Ø10/, 'the stored band’s old diameter is not shown')
-  assert.equal(document.querySelector('.rotary-dialog__surface-warning'), null, 'one Turn has no warning')
+  assert.equal(document.querySelector('.rotary-panel__surface-warning'), null, 'one Turn has no warning')
 
   // An Apply that leaves the depth alone must keep the span the row already
   // follows. Resolving the **stored** band here would push it back to Ø10
   // (25/24), 3 mm too deep. The pitch is edited first because an Apply with
   // nothing changed is disabled (issue #1112 F4), and the span depends on the
   // surface and the depth, neither of which the pitch touches.
-  const apply = document.querySelector('.rotary-dialog__create') as HTMLButtonElement | null
-  assert.ok(apply, 'the edit dialog has an Apply action')
-  assert.equal(apply.disabled, true, 'an unchanged Thread offers no Apply')
+  const apply = document.querySelector('.rotary-panel__create') as HTMLButtonElement | null
+  assert.ok(apply, 'the edit panel has a Save action')
+  assert.equal(apply.disabled, true, 'an unchanged Thread offers no Save')
   setInputValue(document.querySelector('#rotary-pitch') as HTMLInputElement, '2.5')
   await new Promise((resolve) => setTimeout(resolve, 20))
-  assert.equal(apply.disabled, false, 'a changed pitch offers Apply')
+  assert.equal(apply.disabled, false, 'a changed pitch offers Save')
   apply.click()
   assert.equal(Number(threadRow()?.z_top), 28, 'the edited Apply keeps the placed Ø16 span')
   assert.equal(Number(threadRow()?.z_bottom), 27, 'the edited Apply keeps the placed depth')

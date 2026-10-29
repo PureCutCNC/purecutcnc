@@ -608,3 +608,126 @@
 .canvas-workflow-panel--plasma-start {
   width: min(340px, calc(100% - 24px));
 }
+
+/* ── Turn / Polygon / Thread / Flutes in the canvas panel (#1112 rt2-b) ──
+   The four rotary kinds use the same page-level panel as every other canned
+   shape, so these rules only describe the fields they add: a bounded label
+   column, the profile row with its Refresh action, and the inline picture. */
+/*
+ * The form can be taller than a short tablet viewport, so the panel caps its
+ * own height and its body scrolls: the title and the actions stay reachable
+ * instead of being pushed off screen. The dialog this replaced had the same
+ * contract with a scrolling dialog body (issue #1016 C1 D2), and the e2e
+ * short-viewport checks still assert it.
+ */
+.canvas-workflow-panel--rotary {
+  width: min(430px, calc(100% - 24px));
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-workflow-panel--rotary .canvas-workflow-panel__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.canvas-workflow-panel__rotary-fields {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.canvas-workflow-panel__rotary-fields .canvas-workflow-panel__field {
+  grid-template-columns: minmax(120px, 1fr) minmax(90px, 120px);
+}
+
+/* The Direction picker shares the field grid; its Select fills the value column. */
+.rotary-panel__direction .ui-select {
+  width: min(180px, 100%);
+}
+
+.rotary-panel__profile {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.rotary-panel__profile-row {
+  grid-template-columns: minmax(104px, 1fr) minmax(120px, 1.2fr) auto;
+}
+
+.rotary-panel__profile-refresh {
+  height: 32px;
+  white-space: nowrap;
+}
+
+/* The Turn picture (item 17): the drawn outline beside the part it makes. */
+.rotary-panel__profile-figure {
+  display: grid;
+  grid-template-columns: minmax(0, 148px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.rotary-panel__profile-figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid color-mix(in oklab, var(--accent) 24%, var(--line));
+  border-radius: 6px;
+  background: var(--surface-input);
+}
+
+.rotary-panel__profile-figure figcaption {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* The same reference-SVG palette as the gear fields, so the picture reads in
+   both themes: `--text-dim` for the bar and the part, `--accent-strong` for the
+   drawn profile, and the guide for the axis. */
+.turn-figure__outline,
+.turn-figure__guide,
+.turn-figure__accent {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.turn-figure__outline {
+  stroke: var(--text-dim);
+  stroke-width: 1.6;
+}
+
+.turn-figure__guide {
+  stroke: color-mix(in oklab, var(--text-dim) 58%, transparent);
+  stroke-width: 1.1;
+}
+
+.turn-figure__accent {
+  stroke: var(--accent-strong);
+  stroke-width: 1.9;
+}
+
+.rotary-panel__note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.rotary-panel__profile-empty {
+  color: var(--text);
+}
+
+.rotary-panel__surface-warning {
+  color: var(--warning-text);
+}
+
+.rotary-panel__error {
+  margin: 0;
+}

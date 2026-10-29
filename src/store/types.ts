@@ -154,6 +154,21 @@ export type PendingAddTool =
    * `updateFeature` write. Transient, never persisted.
    */
   | { shape: 'canned-edit'; featureId: string; session: number }
+  /**
+   * A canned rotary model (Turn/Polygon) or pattern (Thread/Flutes) being
+   * created in the canvas creation panel (issue #1112 rt2-b). The panel owns
+   * the fields and calls the same store action the old dialog did, so the
+   * pending session only says which shape's panel is open. Transient, never
+   * persisted.
+   */
+  | { shape: 'rotary-solid'; kind: RotarySolidCannedKind; session: number }
+  | { shape: 'rotary-pattern'; kind: RotaryPatternCannedKind; session: number }
+
+/** The canned rotary models the canvas creation panel creates (Turn/Polygon). */
+export type RotarySolidCannedKind = 'turn' | 'polygon'
+
+/** The canned rotary patterns the canvas creation panel creates (Thread/Flutes). */
+export type RotaryPatternCannedKind = 'thread' | 'flutes'
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
@@ -613,6 +628,14 @@ export interface ProjectStore {
   startAddChamferRectPlacement: () => void
   /** Reopen a canned shape's parameters in the canvas creation side panel. */
   beginCannedShapeEdit: (featureId: string) => void
+  /**
+   * Open the Turn/Polygon creation panel (issue #1112 rt2-b). Offered on every
+   * face of a bar-stock rotary project, so the model can be made from Top or
+   * Bottom as well as Around.
+   */
+  startAddRotarySolidPlacement: (kind: RotarySolidCannedKind) => void
+  /** Open the Thread/Flutes creation panel; Around on a round bar only. */
+  startAddRotaryPatternPlacement: (kind: RotaryPatternCannedKind) => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void

@@ -73,8 +73,8 @@ const { createRoot } = await import('react-dom/client')
 const { I18nProvider } = await import('../../i18n/I18nProvider')
 const { CannedShapeEditPanel } = await import('./CannedShapeEditPanel')
 const { GearParameterPanel } = await import('./GearParameterPanel')
-const { RotarySolidDialog } = await import('../layout/toolbar/RotarySolidDialog')
-const { RotaryPatternDialog } = await import('../layout/toolbar/RotaryPatternDialog')
+const { RotarySolidPanel } = await import('./RotarySolidPanel')
+const { RotaryPatternPanel } = await import('./RotaryPatternPanel')
 const { getCannedShapeEditor, resolveCannedShapeProfiles } = await import('../../cannedShapes')
 const { resolveFeatureInstance, resolvedProjectFeatures } = await import('../../store/helpers/resolveFeatures')
 const { defaultGearCreationParams } = await import('../../sketch/gearProfile')
@@ -1007,7 +1007,7 @@ await scenario('closing a preview keeps a change made elsewhere in the project',
   const storedDefinition = definitionJson(featureId)
   const storedStock = JSON.stringify(project().stock)
   const storedHistory = historyLength()
-  const { mounted } = await openDialog('turn', featureId)
+  const { mounted } = await openEditor('turn', featureId)
   const diameter = document.body.querySelector('#rotary-solid-diameter') as unknown as HTMLInputElement
   assert(diameter, 'the diameter field renders')
   setInputValue(diameter, '12')
@@ -1044,7 +1044,7 @@ await scenario('closing a thread preview keeps an unrelated rename and restores 
   const storedDefinition = definitionJson(featureId)
   const storedSpan = spanFingerprint(featureId)
   const storedHistory = historyLength()
-  const { mounted } = await openDialog('thread', featureId)
+  const { mounted } = await openEditor('thread', featureId)
   const depth = document.body.querySelector('#rotary-depth') as unknown as HTMLInputElement
   assert(depth, 'the depth field renders')
   setInputValue(depth, '1.2')
@@ -1122,9 +1122,9 @@ await scenario('the gear previews every numeric field live and Cancel restores i
   assert(historyLength() === storedHistory, 'Cancel left the gear undo history alone')
 })
 
-// ── Thread, Flutes, Turn and Polygon, in their own dialogs ──────────
+// ── Thread, Flutes, Turn and Polygon, in their own canvas panels ──────────
 
-interface DialogCase {
+interface PanelCase {
   kind: 'thread' | 'flutes' | 'turn' | 'polygon'
   /**
    * Input ids in the order they are changed, with the value to type and what
@@ -1142,7 +1142,7 @@ interface DialogCase {
   direction?: { label: string; stored: [key: string, value: string | number] }
 }
 
-const DIALOG_CASES: DialogCase[] = [
+const PANEL_CASES: PanelCase[] = [
   {
     kind: 'thread',
     fields: [
@@ -1186,29 +1186,29 @@ const DIALOG_CASES: DialogCase[] = [
   },
 ]
 
-async function openDialog(kind: DialogCase['kind'], featureId: string): Promise<{ mounted: Mounted; closed: () => boolean }> {
+async function openEditor(kind: PanelCase['kind'], featureId: string): Promise<{ mounted: Mounted; closed: () => boolean }> {
   let closed = false
   const onClose = () => { closed = true }
   const element = kind === 'thread' || kind === 'flutes'
-    ? React.createElement(RotaryPatternDialog, { kind, featureId, onClose })
-    : React.createElement(RotarySolidDialog, { kind: kind === 'turn' ? 'turn' : 'polygon', featureId, onClose })
+    ? React.createElement(RotaryPatternPanel, { kind, featureId, onClose })
+    : React.createElement(RotarySolidPanel, { kind, featureId, onClose })
   const mounted = mount(element)
-  await waitFor(() => document.body.querySelector('.dialog') !== null, 'the dialog renders')
+  await waitFor(() => document.body.querySelector('.canvas-workflow-panel--rotary') !== null, 'the panel renders')
   return { mounted, closed: () => closed }
 }
 
-for (const dialogCase of DIALOG_CASES) {
-  await scenario(`${dialogCase.kind}: every field previews live and closing restores the stored feature`, async () => {
-    const featureId = rotaryFeature(dialogCase.kind)
+for (const panelCase of PANEL_CASES) {
+  await scenario(`${panelCase.kind}: every field previews live and closing restores the stored feature`, async () => {
+    const featureId = rotaryFeature(panelCase.kind)
     const storedDefinition = definitionJson(featureId)
     const storedHistory = historyLength()
     const storedFeatures = JSON.stringify(project().features.map((row) => ({ id: row.id, z_top: row.z_top, z_bottom: row.z_bottom })))
-    const { mounted } = await openDialog(dialogCase.kind, featureId)
+    const { mounted } = await openEditor(panelCase.kind, featureId)
     try {
       const geometryBefore = previewGeometry(featureId)
       let spanBefore = spanFingerprint(featureId)
       let previousGeometry = geometryBefore
-      for (const field of dialogCase.fields) {
+      for (const field of panelCase.fields) {
         const input = document.body.querySelector(`#${field.id}`) as unknown as HTMLInputElement | null
         assert(input, `the dialog has #${field.id}`)
         setInputValue(input, field.value)
@@ -1216,71 +1216,71 @@ for (const dialogCase of DIALOG_CASES) {
         const geometry = previewGeometry(featureId)
         const span = spanFingerprint(featureId)
         if (field.changes === 'span') {
-          assert(span !== spanBefore, `${dialogCase.kind} #${field.id}: the previewed Z span did not change`)
+          assert(span !== spanBefore, `${panelCase.kind} #${field.id}: the previewed Z span did not change`)
         } else {
-          assert(geometry !== previousGeometry, `${dialogCase.kind} #${field.id}: the previewed geometry did not change`)
+          assert(geometry !== previousGeometry, `${panelCase.kind} #${field.id}: the previewed geometry did not change`)
         }
         previousGeometry = geometry
         spanBefore = span
-        assert(historyLength() === storedHistory, `${dialogCase.kind} #${field.id}: a preview is not an undo step`)
+        assert(historyLength() === storedHistory, `${panelCase.kind} #${field.id}: a preview is not an undo step`)
       }
-      if (dialogCase.direction) {
-        const directionGroup = document.body.querySelector('.rotary-dialog__direction')
-        assert(directionGroup, `${dialogCase.kind} renders its direction field`)
-        await chooseSelectOption(directionGroup, dialogCase.direction.label)
+      if (panelCase.direction) {
+        const directionGroup = document.body.querySelector('.rotary-panel__direction')
+        assert(directionGroup, `${panelCase.kind} renders its direction field`)
+        await chooseSelectOption(directionGroup, panelCase.direction.label)
         const geometry = previewGeometry(featureId)
         assert(
           geometry !== previousGeometry,
-          `${dialogCase.kind} direction: the previewed geometry did not change`,
+          `${panelCase.kind} direction: the previewed geometry did not change`,
         )
         previousGeometry = geometry
-        const [key, expected] = dialogCase.direction.stored
+        const [key, expected] = panelCase.direction.stored
         const storedParams = resolveFeatureInstance(project(), featureId)?.canned?.params
         assert(
           storedParams?.[key] === expected,
-          `${dialogCase.kind} direction: the draft stored ${key}=${String(storedParams?.[key])}, expected ${String(expected)}`,
+          `${panelCase.kind} direction: the draft stored ${key}=${String(storedParams?.[key])}, expected ${String(expected)}`,
         )
-        assert(historyLength() === storedHistory, `${dialogCase.kind} direction: a preview is not an undo step`)
+        assert(historyLength() === storedHistory, `${panelCase.kind} direction: a preview is not an undo step`)
       }
     } finally {
       mounted.unmount()
     }
     await flush()
-    assert(definitionJson(featureId) === storedDefinition, `${dialogCase.kind}: closing restored the stored definition`)
+    assert(definitionJson(featureId) === storedDefinition, `${panelCase.kind}: closing restored the stored definition`)
     assert(
       JSON.stringify(project().features.map((row) => ({ id: row.id, z_top: row.z_top, z_bottom: row.z_bottom }))) === storedFeatures,
-      `${dialogCase.kind}: closing restored the instance spans`,
+      `${panelCase.kind}: closing restored the instance spans`,
     )
-    assert(historyLength() === storedHistory, `${dialogCase.kind}: closing left the undo history alone`)
+    assert(historyLength() === storedHistory, `${panelCase.kind}: closing left the undo history alone`)
   })
 }
 
-// Apply from every dialog, not just the Turn: an editor whose Apply skips the
+// Save from every panel, not just the Turn: an editor whose Save skips the
 // preview commit would otherwise leave the shape as a normal undo entry.
-for (const dialogCase of DIALOG_CASES) {
-  await scenario(`${dialogCase.kind}: Apply is one undo step and one undo restores the stored feature`, async () => {
-    const featureId = rotaryFeature(dialogCase.kind)
+for (const panelCase of PANEL_CASES) {
+  await scenario(`${panelCase.kind}: Save is one undo step and one undo restores the stored feature`, async () => {
+    const featureId = rotaryFeature(panelCase.kind)
     const storedDefinition = definitionJson(featureId)
     const storedHistory = historyLength()
     const storedSpans = JSON.stringify(project().features.map((row) => [row.id, row.z_bottom, row.z_top]))
-    const { mounted, closed } = await openDialog(dialogCase.kind, featureId)
+    const { mounted, closed } = await openEditor(panelCase.kind, featureId)
     try {
-      for (const field of dialogCase.fields) {
+      for (const field of panelCase.fields) {
         const input = document.body.querySelector(`#${field.id}`) as unknown as HTMLInputElement | null
         assert(input, `the dialog has #${field.id}`)
         setInputValue(input, field.value)
       }
       await flush()
       const previewed = previewGeometry(featureId)
-      assert(previewed !== '', 'the draft previewed before Apply')
+      assert(previewed !== '', 'the draft previewed before Save')
 
-      const apply = document.body.querySelector('.rotary-dialog__create') as unknown as HTMLButtonElement | null
-      assert(apply, 'the dialog has an Apply action')
-      assert(apply.disabled === false, 'Apply is enabled')
+      const apply = document.body.querySelector('.rotary-panel__create') as unknown as HTMLButtonElement | null
+      assert(apply, 'the panel has a Save action')
+      assert(apply.disabled === false, 'Save is enabled')
       apply.click()
-      await waitFor(() => closed(), 'Apply closes the dialog')
-      await waitFor(() => historyLength() === storedHistory + 1, 'Apply is one undo step')
-      assert(previewGeometry(featureId) === previewed, 'Apply kept the previewed shape')
+      await waitFor(() => closed(), 'Save closes the panel')
+      await waitFor(() => historyLength() === storedHistory + 1, 'Save is one undo step')
+      assert(previewGeometry(featureId) === previewed, 'Save kept the previewed shape')
     } finally {
       mounted.unmount()
     }
@@ -1314,10 +1314,10 @@ await scenario('a Turn profile pick previews live and closing restores the store
   const storedDefinition = definitionJson(featureId)
   const storedHistory = historyLength()
   const cylinder = previewGeometry(featureId)
-  const { mounted } = await openDialog('turn', featureId)
+  const { mounted } = await openEditor('turn', featureId)
   try {
-    const picker = document.body.querySelector('.rotary-dialog__profile')
-    assert(picker, 'the Turn dialog renders its profile picker')
+    const picker = document.body.querySelector('.rotary-panel__profile')
+    assert(picker, 'the Turn panel renders its profile picker')
     await chooseSelectOption(picker, 'Side profile')
     const profiled = previewGeometry(featureId)
     assert(profiled !== cylinder, 'picking a profile changed the previewed mesh')
@@ -1339,7 +1339,7 @@ await scenario('a Turn profile pick previews live and closing restores the store
 })
 
 // A model's parameter edit must reach the linked copy that shares its
-// definition through the Z span, exactly as an Apply from the dialog does.
+// definition through the Z span, exactly as a Save from the panel does.
 await scenario('a live Turn edit keeps the linked copy aligned and Cancel puts both back', async () => {
   const featureId = rotaryFeature('turn')
   const row = project().features.find((feature) => feature.id === featureId)
@@ -1350,7 +1350,7 @@ await scenario('a live Turn edit keeps the linked copy aligned and Cancel puts b
   })
   const storedDefinition = definitionJson(featureId)
   const storedSpans = JSON.stringify(project().features.map((feature) => [feature.id, feature.z_bottom, feature.z_top]))
-  const { mounted } = await openDialog('turn', featureId)
+  const { mounted } = await openEditor('turn', featureId)
   const diameter = document.body.querySelector('#rotary-solid-diameter') as unknown as HTMLInputElement
   setInputValue(diameter, '10')
   await flush()
@@ -1369,11 +1369,11 @@ await scenario('a live Turn edit keeps the linked copy aligned and Cancel puts b
   )
 })
 
-// The Turn dialog builds its canned data from the frame snapshot, the same
+// The Turn panel builds its canned data from the frame snapshot, the same
 // builder the store action uses, so a preview and an Apply cannot drift.
 await scenario('a preview writes the same parameters the Apply path builds', async () => {
   const featureId = rotaryFeature('turn')
-  const { mounted } = await openDialog('turn', featureId)
+  const { mounted } = await openEditor('turn', featureId)
   const diameter = document.body.querySelector('#rotary-solid-diameter') as unknown as HTMLInputElement
   setInputValue(diameter, '10')
   await flush()

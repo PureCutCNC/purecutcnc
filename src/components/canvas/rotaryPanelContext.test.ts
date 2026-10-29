@@ -57,25 +57,24 @@ globals.React = React
 // React takes the modern `input`-event path a browser takes.
 Object.defineProperty(document, 'oninput', { value: () => {}, configurable: true })
 
-const { useProjectStore } = await import('../../../store/projectStore')
-const { I18nProvider } = await import('../../../i18n/I18nProvider')
-const { RotarySolidDialogHost } = await import('./RotarySolidDialog')
-const { RotaryPatternDialogHost } = await import('./RotaryPatternDialog')
-const { openRotarySolidCreate, openRotarySolidEdit, closeRotarySolidDialog } = await import('./rotarySolidDialogState')
-const { openRotaryPatternCreate, openRotaryPatternEdit, closeRotaryPatternDialog } = await import('./rotaryPatternDialogState')
-const { rotaryDialogContextKey } = await import('./rotaryDialogContext')
+const { useProjectStore } = await import('../../store/projectStore')
+const { I18nProvider } = await import('../../i18n/I18nProvider')
+const { RotarySolidPanel } = await import('./RotarySolidPanel')
+const { RotaryPatternPanel } = await import('./RotaryPatternPanel')
+const { CannedShapeEditPanel } = await import('./CannedShapeEditPanel')
+const { rotaryPanelContextKey } = await import('./rotaryPanelContext')
 const { createRoot } = await import('react-dom/client')
-const { defaultTool, defaultTopSetup, newProject, roundStock } = await import('../../../types/project')
-const { bundledMachines } = await import('../../../machine/registry')
-const { validateMachineDefinition } = await import('../../../engine/gcode/types')
-const { projectWithFeatures } = await import('../../../test/projectFixtures')
-const { switchWorkspaceFace } = await import('../../../store/workspaceFace')
-const { originAfterStockEdit, resizeRoundStock } = await import('../../../store/helpers/stockShape')
+const { defaultTool, defaultTopSetup, newProject, roundStock } = await import('../../types/project')
+const { bundledMachines } = await import('../../machine/registry')
+const { validateMachineDefinition } = await import('../../engine/gcode/types')
+const { projectWithFeatures } = await import('../../test/projectFixtures')
+const { switchWorkspaceFace } = await import('../../store/workspaceFace')
+const { originAfterStockEdit, resizeRoundStock } = await import('../../store/helpers/stockShape')
 
 const store = () => useProjectStore.getState()
 
 function rotaryProject(): ReturnType<typeof newProject> {
-  const base = newProject('Dialog context', 'mm')
+  const base = newProject('Panel context', 'mm')
   base.meta.projectType = 'rotary'
   base.stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
   const machine = validateMachineDefinition({
@@ -123,12 +122,44 @@ function overwriteInputDomValue(input: HTMLInputElement, value: string): void {
   nativeInputValueSetter().call(input, value)
 }
 
+/** The rendered Turn/Polygon panel, wherever it is portaled. */
 function solidDialog(): Element | null {
-  return document.querySelector('#rotary-solid-dialog-title')
+  return document.querySelector('.rotary-solid-panel')
 }
 
+/** The rendered Thread/Flutes panel. */
 function patternDialog(): Element | null {
-  return document.querySelector('#rotary-dialog-title')
+  return document.querySelector('.rotary-pattern-panel')
+}
+
+/**
+ * The canvas renderer for the open pending session: a create session opens the
+ * matching panel, and a `canned-edit` session (what Properties arms) opens the
+ * edit panel, which dispatches the four rotary kinds itself.
+ */
+/** The panel only reads these for positioning; the harness has no canvas. */
+const NO_CONTAINER = { current: null } as React.RefObject<HTMLElement | null>
+const NO_CANVAS = { current: null } as React.RefObject<HTMLElement | null>
+
+function PanelHost() {
+  const pendingAdd = useProjectStore((state) => state.pendingAdd)
+  const cancelPendingAdd = useProjectStore((state) => state.cancelPendingAdd)
+  if (pendingAdd?.shape === 'rotary-solid') {
+    return React.createElement(RotarySolidPanel, { kind: pendingAdd.kind, onClose: cancelPendingAdd })
+  }
+  if (pendingAdd?.shape === 'rotary-pattern') {
+    return React.createElement(RotaryPatternPanel, { kind: pendingAdd.kind, onClose: cancelPendingAdd })
+  }
+  if (pendingAdd?.shape === 'canned-edit') {
+    return React.createElement(CannedShapeEditPanel, {
+      key: pendingAdd.session,
+      pending: pendingAdd,
+      containerRef: NO_CONTAINER,
+      canvasRef: NO_CANVAS,
+      clearTransientCanvasState: () => undefined,
+    })
+  }
+  return null
 }
 
 interface Mounted {
@@ -136,23 +167,17 @@ interface Mounted {
   host: HTMLElement
 }
 
-/** The two real hosts, over the real store, mounted once per scenario. */
+/** The canvas panel host, over the real store, mounted once per scenario. */
 function mountHosts(): Mounted {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
-  root.render(React.createElement(
-    I18nProvider,
-    null,
-    React.createElement(RotarySolidDialogHost),
-    React.createElement(RotaryPatternDialogHost),
-  ))
+  root.render(React.createElement(I18nProvider, null, React.createElement(PanelHost)))
   return { root, host }
 }
 
 function unmount({ root, host }: Mounted): void {
-  closeRotarySolidDialog()
-  closeRotaryPatternDialog()
+  store().cancelPendingAdd()
   root.unmount()
   host.remove()
 }
@@ -186,53 +211,53 @@ async function scenario(name: string, fn: () => Promise<void>): Promise<void> {
 
 await scenario('the context key changes with the document session', async () => {
   const project = rotaryProject()
-  assert.notEqual(rotaryDialogContextKey(project, 0), rotaryDialogContextKey(project, 1))
+  assert.notEqual(rotaryPanelContextKey(project, 0), rotaryPanelContextKey(project, 1))
 })
 
 await scenario('the context key changes with the units', async () => {
   const project = rotaryProject()
   assert.notEqual(
-    rotaryDialogContextKey(project, 0),
-    rotaryDialogContextKey({ ...project, meta: { ...project.meta, units: 'inch' } }, 0),
+    rotaryPanelContextKey(project, 0),
+    rotaryPanelContextKey({ ...project, meta: { ...project.meta, units: 'inch' } }, 0),
   )
 })
 
 await scenario('the context key changes with the workflow type', async () => {
   const project = rotaryProject()
   assert.notEqual(
-    rotaryDialogContextKey(project, 0),
-    rotaryDialogContextKey({ ...project, meta: { ...project.meta, projectType: 'milling' } }, 0),
+    rotaryPanelContextKey(project, 0),
+    rotaryPanelContextKey({ ...project, meta: { ...project.meta, projectType: 'milling' } }, 0),
   )
 })
 
 await scenario('the context key changes with the bar shape, axis, diameter and box', async () => {
   const project = rotaryProject()
-  const key = rotaryDialogContextKey(project, 0)
+  const key = rotaryPanelContextKey(project, 0)
   assert.notEqual(
     key,
-    rotaryDialogContextKey({ ...project, stock: { ...project.stock, shape: 'square', axis: 'x' } }, 0),
+    rotaryPanelContextKey({ ...project, stock: { ...project.stock, shape: 'square', axis: 'x' } }, 0),
   )
   assert.notEqual(
     key,
-    rotaryDialogContextKey({ ...project, stock: roundStock(40, 200, 'y', { x: 10, y: 30 }) }, 0),
+    rotaryPanelContextKey({ ...project, stock: roundStock(40, 200, 'y', { x: 10, y: 30 }) }, 0),
   )
   assert.notEqual(
     key,
-    rotaryDialogContextKey({ ...project, stock: roundStock(30, 200, 'x', { x: 10, y: 30 }) }, 0),
+    rotaryPanelContextKey({ ...project, stock: roundStock(30, 200, 'x', { x: 10, y: 30 }) }, 0),
   )
   assert.notEqual(
     key,
-    rotaryDialogContextKey({ ...project, stock: roundStock(40, 100, 'x', { x: 10, y: 30 }) }, 0),
+    rotaryPanelContextKey({ ...project, stock: roundStock(40, 100, 'x', { x: 10, y: 30 }) }, 0),
   )
 })
 
 await scenario('the context key changes with each machine-origin coordinate', async () => {
   const project = rotaryProject()
-  const key = rotaryDialogContextKey(project, 0)
+  const key = rotaryPanelContextKey(project, 0)
   for (const axis of ['x', 'y', 'z'] as const) {
     assert.notEqual(
       key,
-      rotaryDialogContextKey({
+      rotaryPanelContextKey({
         ...project,
         origin: { ...project.origin, [axis]: project.origin[axis] + 5 },
       }, 0),
@@ -254,11 +279,11 @@ await scenario('the context key changes with the active setup', async () => {
     setups: [...project.setups, around],
     activeSetupId: around.id,
   }
-  assert.notEqual(rotaryDialogContextKey(project, 0), rotaryDialogContextKey(withAround, 0))
+  assert.notEqual(rotaryPanelContextKey(project, 0), rotaryPanelContextKey(withAround, 0))
   // A rotated setup re-maps the bar's axes, so it is a context change too.
   assert.notEqual(
-    rotaryDialogContextKey(withAround, 0),
-    rotaryDialogContextKey({
+    rotaryPanelContextKey(withAround, 0),
+    rotaryPanelContextKey({
       ...withAround,
       setups: [project.setups[0]!, { ...around, orientation: { axis: 'x', angleDeg: 90 } }],
     }, 0),
@@ -267,10 +292,10 @@ await scenario('the context key changes with the active setup', async () => {
 
 await scenario('the context key ignores changes a form is not measured against', async () => {
   const project = rotaryProject()
-  const key = rotaryDialogContextKey(project, 0)
+  const key = rotaryPanelContextKey(project, 0)
   assert.equal(
     key,
-    rotaryDialogContextKey({
+    rotaryPanelContextKey({
       ...project,
       meta: { ...project.meta, name: 'renamed', modified: new Date(0).toISOString() },
     }, 0),
@@ -278,17 +303,17 @@ await scenario('the context key ignores changes a form is not measured against',
 })
 
 // ---------------------------------------------------------------------------
-// The real host: the rendered Turn/Polygon form drops on every trigger.
+// The real host: the rendered Turn/Polygon panel drops on every trigger.
 // ---------------------------------------------------------------------------
 
 await scenario('a Turn/Polygon create form drops when the face changes', async () => {
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     assert.equal(switchWorkspaceFace('top'), true, 'the workspace leaves Around')
-    await waitFor(() => solidDialog() === null, 'the face change closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the face change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -298,10 +323,10 @@ await scenario('a Turn/Polygon create form drops when the units change', async (
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     store().setUnits('inch', 'convert')
-    await waitFor(() => solidDialog() === null, 'the units conversion closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the units conversion closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -311,10 +336,10 @@ await scenario('a Turn/Polygon create form drops when the document is replaced',
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     store().loadProject(rotaryProject())
-    await waitFor(() => solidDialog() === null, 'the document load closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the document load closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -324,10 +349,10 @@ await scenario('a Turn/Polygon create form drops when the bar moves', async () =
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     editBar({ axis: 'y' })
-    await waitFor(() => solidDialog() === null, 'the bar-axis change closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the bar-axis change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -337,10 +362,10 @@ await scenario('a Turn/Polygon create form drops when the bar is resized', async
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     editBar({ diameter: 30 })
-    await waitFor(() => solidDialog() === null, 'the diameter change closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the diameter change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -350,10 +375,10 @@ await scenario('a Turn/Polygon create form drops when the bar is shortened', asy
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     editBar({ length: 100 })
-    await waitFor(() => solidDialog() === null, 'the bar-length change closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the bar-length change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -363,11 +388,11 @@ await scenario('a Turn/Polygon create form drops when the machine origin changes
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotarySolidCreate('polygon')
-    await waitFor(() => solidDialog() !== null, 'the polygon dialog opens')
+    store().startAddRotarySolidPlacement('polygon')
+    await waitFor(() => solidDialog() !== null, 'the polygon panel opens')
     const origin = store().project.origin
     store().setOrigin({ ...origin, x: origin.x + 5 })
-    await waitFor(() => solidDialog() === null, 'the origin change closes the dialog')
+    await waitFor(() => solidDialog() === null, 'the origin change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -382,13 +407,13 @@ await scenario('a Turn/Polygon Edit form drops when the context changes, and ope
   assert.equal(switchWorkspaceFace('top'), true, 'the workspace goes to Top')
   const mounted = mountHosts()
   try {
-    openRotarySolidEdit('turn', created.featureId)
-    await waitFor(() => solidDialog() !== null, 'the Edit dialog opens on Top')
+    store().beginCannedShapeEdit(created.featureId)
+    await waitFor(() => solidDialog() !== null, 'the Edit panel opens on Top')
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.notEqual(solidDialog(), null, 'the Edit dialog survives opening off-Around')
+    assert.notEqual(solidDialog(), null, 'the Edit panel survives opening off-Around')
     const origin = store().project.origin
     store().setOrigin({ ...origin, y: origin.y + 5 })
-    await waitFor(() => solidDialog() === null, 'the origin change closes the Edit dialog')
+    await waitFor(() => solidDialog() === null, 'the origin change closes the Edit panel')
     // The model and its definition are untouched by the dropped form.
     assert.equal(store().project.features.length, project.features.length + 1)
   } finally {
@@ -404,11 +429,11 @@ await scenario('a Thread/Flutes create form drops when the machine origin change
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotaryPatternCreate('thread')
-    await waitFor(() => patternDialog() !== null, 'the thread dialog opens')
+    store().startAddRotaryPatternPlacement('thread')
+    await waitFor(() => patternDialog() !== null, 'the thread panel opens')
     const origin = store().project.origin
     store().setOrigin({ ...origin, x: origin.x + 5 })
-    await waitFor(() => patternDialog() === null, 'the origin change closes the dialog')
+    await waitFor(() => patternDialog() === null, 'the origin change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -418,10 +443,10 @@ await scenario('a Thread/Flutes create form drops when the units change', async 
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotaryPatternCreate('thread')
-    await waitFor(() => patternDialog() !== null, 'the thread dialog opens')
+    store().startAddRotaryPatternPlacement('thread')
+    await waitFor(() => patternDialog() !== null, 'the thread panel opens')
     store().setUnits('inch', 'convert')
-    await waitFor(() => patternDialog() === null, 'the units conversion closes the dialog')
+    await waitFor(() => patternDialog() === null, 'the units conversion closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -431,10 +456,10 @@ await scenario('a Thread/Flutes create form drops when the bar is resized', asyn
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotaryPatternCreate('flutes')
-    await waitFor(() => patternDialog() !== null, 'the flutes dialog opens')
+    store().startAddRotaryPatternPlacement('flutes')
+    await waitFor(() => patternDialog() !== null, 'the flutes panel opens')
     editBar({ diameter: 30 })
-    await waitFor(() => patternDialog() === null, 'the diameter change closes the dialog')
+    await waitFor(() => patternDialog() === null, 'the diameter change closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -444,10 +469,10 @@ await scenario('a Thread/Flutes create form drops when the document is replaced'
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotaryPatternCreate('flutes')
-    await waitFor(() => patternDialog() !== null, 'the flutes dialog opens')
+    store().startAddRotaryPatternPlacement('flutes')
+    await waitFor(() => patternDialog() !== null, 'the flutes panel opens')
     store().loadProject(rotaryProject())
-    await waitFor(() => patternDialog() === null, 'the document load closes the dialog')
+    await waitFor(() => patternDialog() === null, 'the document load closes the panel')
   } finally {
     unmount(mounted)
   }
@@ -462,13 +487,13 @@ await scenario('a Thread/Flutes Edit form drops when the context changes, and op
   assert.equal(switchWorkspaceFace('top'), true, 'the workspace goes to Top')
   const mounted = mountHosts()
   try {
-    openRotaryPatternEdit('thread', created.featureId)
-    await waitFor(() => patternDialog() !== null, 'the Thread Edit dialog opens on Top')
+    store().beginCannedShapeEdit(created.featureId)
+    await waitFor(() => patternDialog() !== null, 'the Thread Edit panel opens on Top')
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.notEqual(patternDialog(), null, 'the Thread Edit dialog survives opening off-Around')
+    assert.notEqual(patternDialog(), null, 'the Thread Edit panel survives opening off-Around')
     const origin = store().project.origin
     store().setOrigin({ ...origin, y: origin.y + 5 })
-    await waitFor(() => patternDialog() === null, 'the origin change closes the Thread Edit dialog')
+    await waitFor(() => patternDialog() === null, 'the origin change closes the Thread Edit panel')
     // The stored feature is untouched by the dropped form.
     assert.equal(store().project.features.length, project.features.length + 1)
   } finally {
@@ -476,12 +501,12 @@ await scenario('a Thread/Flutes Edit form drops when the context changes, and op
   }
 })
 
-await scenario('a mounted rotary form ignores an unrelated store update and an in-dialog parameter edit', async () => {
+await scenario('a mounted rotary form ignores an unrelated store update and an in-panel parameter edit', async () => {
   loadAroundProject()
   const mounted = mountHosts()
   try {
-    openRotaryPatternCreate('thread')
-    await waitFor(() => patternDialog() !== null, 'the thread dialog opens')
+    store().startAddRotaryPatternPlacement('thread')
+    await waitFor(() => patternDialog() !== null, 'the thread panel opens')
 
     // A store update that is not part of the physical context must not close a
     // half-filled form.
@@ -491,7 +516,7 @@ await scenario('a mounted rotary form ignores an unrelated store update and an i
 
     // Typing a parameter is dialog-local state, not a context change either.
     const start = document.querySelector('#rotary-start') as HTMLInputElement | null
-    assert.ok(start, 'the thread dialog shows its start field')
+    assert.ok(start, 'the thread panel shows its start field')
     if (!start) return
     setInputValue(start, '12')
     await waitFor(() => start.value === '12', 'the start field shows the typed value')
@@ -506,7 +531,7 @@ await scenario('a mounted rotary form ignores an unrelated store update and an i
     store().setProjectName('Renamed after typing')
     await waitFor(() => start.value === '12', 'the controlled start value is 12')
 
-    assert.notEqual(patternDialog(), null, 'editing a parameter inside the dialog keeps it open')
+    assert.notEqual(patternDialog(), null, 'editing a parameter inside the panel keeps it open')
   } finally {
     unmount(mounted)
   }

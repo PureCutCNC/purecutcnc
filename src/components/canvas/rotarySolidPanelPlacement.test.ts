@@ -15,16 +15,16 @@
  */
 
 /**
- * Turn/Polygon Apply keeps each instance's placement (issue #1112 G review).
+ * Turn/Polygon Save keeps each instance's placement (issue #1112 G review).
  *
- * The bug this pins was in the dialog itself, not the store: `handleApply`
+ * The bug this pins was in the editor itself, not the store: its apply handler
  * wrote the regenerated mesh's raw Z bounds onto the edited instance, so a
  * parameter edit reset its placement (and its `stl.scale`) while linked copies
- * kept theirs. Rendering the real dialog is the only way to catch a
+ * kept theirs. Rendering the real panel is the only way to catch a
  * reintroduced explicit `z_bottom`/`z_top` patch; a store-level test that only
  * calls `updateFeature({ canned })` cannot see it.
  *
- * Run with: npx tsx src/components/layout/toolbar/rotarySolidDialog.test.ts
+ * Run with: npx tsx src/components/canvas/rotarySolidPanelPlacement.test.ts
  */
 
 import assert from 'node:assert/strict'
@@ -51,15 +51,15 @@ if (!('oninput' in (document as unknown as object))) {
 // with the classic one, which expects a global `React`.
 globals.React = React
 
-const { useProjectStore } = await import('../../../store/projectStore')
-const { I18nProvider } = await import('../../../i18n/I18nProvider')
-const { RotarySolidDialog } = await import('./RotarySolidDialog')
+const { useProjectStore } = await import('../../store/projectStore')
+const { I18nProvider } = await import('../../i18n/I18nProvider')
+const { RotarySolidPanel } = await import('./RotarySolidPanel')
 const { createRoot } = await import('react-dom/client')
-const { defaultTool, newProject, roundStock } = await import('../../../types/project')
-const { bundledMachines } = await import('../../../machine/registry')
-const { validateMachineDefinition } = await import('../../../engine/gcode/types')
-const { projectWithFeatures } = await import('../../../test/projectFixtures')
-const { switchWorkspaceFace } = await import('../../../store/workspaceFace')
+const { defaultTool, newProject, roundStock } = await import('../../types/project')
+const { bundledMachines } = await import('../../machine/registry')
+const { validateMachineDefinition } = await import('../../engine/gcode/types')
+const { projectWithFeatures } = await import('../../test/projectFixtures')
+const { switchWorkspaceFace } = await import('../../store/workspaceFace')
 
 const store = () => useProjectStore.getState()
 
@@ -137,9 +137,9 @@ await scenario('Apply keeps a scaled, Z-moved instance and its linked copy in pl
   })
   assert.equal(switchWorkspaceFace('around'), true, 'Around survives the load')
 
-  // A stored Turn of diameter 20 that the dialog's form will edit down to 10.
+  // A stored Turn of diameter 20 that the panel's form will edit down to 10.
   // The store update places both rows correctly; Apply then rewrites the
-  // parameters, which is where the dialog used to pin the raw mesh bounds and
+  // parameters, which is where the editor used to pin the raw mesh bounds and
   // undo that placement. The edit is typed into the form because Apply is
   // disabled while the form still holds the stored parameters (issue #1112 F4).
   const storedCanned = store().project.featureDefinitions[model.definitionId]?.canned
@@ -152,24 +152,24 @@ await scenario('Apply keeps a scaled, Z-moved instance and its linked copy in pl
   root.render(React.createElement(
     I18nProvider,
     null,
-    React.createElement(RotarySolidDialog, {
+    React.createElement(RotarySolidPanel, {
       kind: 'turn',
       featureId: model.id,
       onClose: () => { closed = true },
     }),
   ))
 
-  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit dialog renders')
+  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit panel renders')
   const diameter = document.querySelector('#rotary-solid-diameter') as HTMLInputElement
-  assert.equal(diameter.value, '20', 'the dialog shows the stored diameter')
+  assert.equal(diameter.value, '20', 'the panel shows the stored diameter')
   setInputValue(diameter, '10')
   await new Promise((resolve) => setTimeout(resolve, 20))
 
-  const apply = document.querySelector('.rotary-dialog__create') as HTMLButtonElement | null
-  assert.ok(apply, 'the dialog has an Apply action')
-  assert.equal(apply.disabled, false, 'Apply is enabled')
+  const apply = document.querySelector('.rotary-panel__create') as HTMLButtonElement | null
+  assert.ok(apply, 'the panel has a Save action')
+  assert.equal(apply.disabled, false, 'Save is enabled')
   apply.click()
-  await waitFor(() => closed, 'Apply closes the dialog')
+  await waitFor(() => closed, 'Save closes the panel')
 
   const project = store().project
   const edited = project.features.find((feature) => feature.id === model.id)

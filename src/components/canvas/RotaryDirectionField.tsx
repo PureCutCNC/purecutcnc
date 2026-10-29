@@ -15,10 +15,8 @@
  */
 
 /**
- * The Right/Left hand picker shared by the Thread and Flutes dialogs
- * (issue #1016 C1 direction, slice D). Extracted so `RotaryPatternDialog.tsx`
- * stays inside its line budget and both dialogs render the control from one
- * place.
+ * The Right/Left hand picker shared by the Thread and Flutes panels
+ * (issue #1016 C1 direction; moved into the canvas panels by #1112 rt2-b).
  *
  * "Hand" is the physical helix — right-hand is the ordinary one — never the
  * machine's A-axis reversal or a cut-direction (climb/conventional) choice.
@@ -27,8 +25,8 @@
  * heard. The control is the shared `Select`, which is already tablet-sized.
  */
 
-import { useI18n } from '../../../i18n/i18nContext'
-import { Select } from '../../Select'
+import { useI18n } from '../../i18n/i18nContext'
+import { Select } from '../Select'
 
 export type RotaryDirection = 'right' | 'left'
 
@@ -40,18 +38,20 @@ interface RotaryDirectionFieldProps {
 export function RotaryDirectionField({ value, onChange }: RotaryDirectionFieldProps) {
   const { t } = useI18n()
   return (
-    <div className="dialog-section-group rotary-dialog__direction" role="group" aria-label={t('dialogs.rotary.direction')}>
-      <label className="dialog-section-title">{t('dialogs.rotary.direction')}</label>
-      <div className="properties-field">
-        <Select
-          value={value}
-          options={[
-            { value: 'right', label: t('dialogs.rotary.direction.right') },
-            { value: 'left', label: t('dialogs.rotary.direction.left') },
-          ]}
-          onChange={onChange}
-        />
-      </div>
+    <div
+      className="canvas-workflow-panel__field rotary-panel__direction"
+      role="group"
+      aria-label={t('dialogs.rotary.direction')}
+    >
+      <span>{t('dialogs.rotary.direction')}</span>
+      <Select
+        value={value}
+        options={[
+          { value: 'right', label: t('dialogs.rotary.direction.right') },
+          { value: 'left', label: t('dialogs.rotary.direction.left') },
+        ]}
+        onChange={onChange}
+      />
     </div>
   )
 }

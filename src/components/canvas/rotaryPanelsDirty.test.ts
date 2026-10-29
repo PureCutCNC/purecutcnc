@@ -15,20 +15,20 @@
  */
 
 /**
- * The rotary edit dialogs only offer Apply when the form really differs from
- * the stored shape (issue #1112 F4).
+ * The rotary edit panels only offer Save when the form really differs from the
+ * stored shape (issue #1112 F4; canvas panels in rt2-b item 18).
  *
  * Editing a stored Thread/Flutes or Turn/Polygon rewrites its parameters, and
- * the live preview (F1) already wrote the draft, so an Apply with nothing
- * changed was a second, empty undo step. This drives the real dialogs: an
- * untouched edit is disabled, one changed field enables it, typing the value
- * back disables it again, and creation — which has no stored shape to compare
- * against — keeps its own behaviour. The comparison is on the parsed field
- * values, so "5.0" over a saved 5 is not an edit and the hand of a straight
- * flute (whose stored twist is 0 either way) is not one either.
+ * the live preview (F1) already wrote the draft, so a Save with nothing changed
+ * was a second, empty undo step. This drives the real panels: an untouched edit
+ * is disabled, one changed field enables it, typing the value back disables it
+ * again, and creation — which has no stored shape to compare against — keeps
+ * its own behaviour. The comparison is on the parsed field values, so "5.0"
+ * over a saved 5 is not an edit and the hand of a straight flute (whose stored
+ * twist is 0 either way) is not one either.
  *
  * Run with:
- *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/layout/toolbar/rotaryDialogsDirty.test.ts
+ *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/canvas/rotaryPanelsDirty.test.ts
  */
 
 import assert from 'node:assert/strict'
@@ -53,16 +53,16 @@ if (!('oninput' in (document as unknown as object))) {
 }
 globals.React = React
 
-const { useProjectStore } = await import('../../../store/projectStore')
-const { I18nProvider } = await import('../../../i18n/I18nProvider')
-const { RotaryPatternDialog } = await import('./RotaryPatternDialog')
-const { RotarySolidDialog } = await import('./RotarySolidDialog')
+const { useProjectStore } = await import('../../store/projectStore')
+const { I18nProvider } = await import('../../i18n/I18nProvider')
+const { RotaryPatternPanel } = await import('./RotaryPatternPanel')
+const { RotarySolidPanel } = await import('./RotarySolidPanel')
 const { createRoot } = await import('react-dom/client')
-const { defaultTool, newProject, roundStock } = await import('../../../types/project')
-const { projectWithFeatures } = await import('../../../test/projectFixtures')
-const { bundledMachines } = await import('../../../machine/registry')
-const { validateMachineDefinition } = await import('../../../engine/gcode/types')
-const { switchWorkspaceFace } = await import('../../../store/workspaceFace')
+const { defaultTool, newProject, roundStock } = await import('../../types/project')
+const { projectWithFeatures } = await import('../../test/projectFixtures')
+const { bundledMachines } = await import('../../machine/registry')
+const { validateMachineDefinition } = await import('../../engine/gcode/types')
+const { switchWorkspaceFace } = await import('../../store/workspaceFace')
 
 const store = () => useProjectStore.getState()
 
@@ -136,13 +136,13 @@ function field(id: string): HTMLInputElement {
   return input as unknown as HTMLInputElement
 }
 
-function applyButton(): HTMLButtonElement {
-  const button = document.body.querySelector('.rotary-dialog__create') as unknown as HTMLButtonElement | null
-  assert.ok(button, 'the dialog has an Apply action')
+function saveButton(): HTMLButtonElement {
+  const button = document.body.querySelector('.rotary-panel__create') as unknown as HTMLButtonElement | null
+  assert.ok(button, 'the panel has a Save action')
   return button
 }
 
-/** The stored canned parameters of a feature, as the dialog would write them. */
+/** The stored canned parameters of a feature, as the panel would write them. */
 function storedParams(featureId: string): Record<string, number> {
   const feature = store().project.features.find((row) => row.id === featureId)
   assert.ok(feature, 'the edited feature is stored')
@@ -153,8 +153,8 @@ function storedParams(featureId: string): Record<string, number> {
 
 /** Move the shared Select to another entry, the way a pointer does. */
 async function chooseOption(label: string): Promise<void> {
-  const group = document.body.querySelector('.rotary-dialog__direction')
-  assert.ok(group, 'the dialog has a direction field')
+  const group = document.body.querySelector('.rotary-panel__direction')
+  assert.ok(group, 'the panel has a direction field')
   ;(group.querySelector('.ui-select__trigger') as unknown as HTMLButtonElement).click()
   await flush()
   const option = Array.from(group.querySelectorAll('.ui-select__option'))
@@ -179,7 +179,7 @@ async function scenario(name: string, fn: () => Promise<void>): Promise<void> {
   }
 }
 
-/** Load the project and make Around the active face, so the dialogs can render. */
+/** Load the project and make Around the active face, so the panels can render. */
 function loadProject(): void {
   store().loadProject(rotaryProject())
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
@@ -191,37 +191,37 @@ await scenario('an untouched Turn edit offers no Apply, and a changed field does
   assert.ok(created.ok, 'the Turn is created')
   const before = JSON.stringify(storedParams(created.featureId))
 
-  const mounted = mount(React.createElement(RotarySolidDialog, { kind: 'turn', featureId: created.featureId, onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit dialog renders')
-  assert.equal(applyButton().disabled, true, 'an untouched Turn has Apply disabled')
+  const mounted = mount(React.createElement(RotarySolidPanel, { kind: 'turn', featureId: created.featureId, onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit panel renders')
+  assert.equal(saveButton().disabled, true, 'an untouched Turn has Save disabled')
 
-  applyButton().click()
+  saveButton().click()
   await flush()
-  assert.equal(mounted.closed(), false, 'clicking a disabled Apply does not close the dialog')
-  assert.equal(JSON.stringify(storedParams(created.featureId)), before, 'clicking a disabled Apply writes nothing')
+  assert.equal(mounted.closed(), false, 'clicking a disabled Save does not close the panel')
+  assert.equal(JSON.stringify(storedParams(created.featureId)), before, 'clicking a disabled Save writes nothing')
 
   typeInto(field('rotary-solid-diameter'), '12')
   await flush()
-  assert.equal(applyButton().disabled, false, 'a changed diameter enables Apply')
+  assert.equal(saveButton().disabled, false, 'a changed diameter enables Save')
 
   typeInto(field('rotary-solid-diameter'), '20')
   await flush()
-  assert.equal(applyButton().disabled, true, 'the stored diameter disables Apply again')
+  assert.equal(saveButton().disabled, true, 'the stored diameter disables Save again')
   mounted.unmount()
 })
 
-await scenario('an enabled Turn Apply writes the typed diameter and closes', async () => {
+await scenario('an enabled Turn Save writes the typed diameter and closes', async () => {
   loadProject()
   const created = store().addRotarySolid({ kind: 'turn', start: 0, length: 40, diameter: 20 })
   assert.ok(created.ok, 'the Turn is created')
 
-  const mounted = mount(React.createElement(RotarySolidDialog, { kind: 'turn', featureId: created.featureId, onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit dialog renders')
+  const mounted = mount(React.createElement(RotarySolidPanel, { kind: 'turn', featureId: created.featureId, onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the edit panel renders')
   typeInto(field('rotary-solid-diameter'), '12')
   await flush()
-  applyButton().click()
-  await waitFor(() => mounted.closed(), 'Apply closes the dialog')
-  assert.equal(storedParams(created.featureId).diameter, 12, 'Apply stored the typed diameter')
+  saveButton().click()
+  await waitFor(() => mounted.closed(), 'Save closes the panel')
+  assert.equal(storedParams(created.featureId).diameter, 12, 'Save stored the typed diameter')
   mounted.unmount()
 })
 
@@ -230,41 +230,41 @@ await scenario('a polygon edit compares its side count', async () => {
   const created = store().addRotarySolid({ kind: 'polygon', start: 0, length: 40, sides: 6, acrossFlats: 20 })
   assert.ok(created.ok, 'the polygon is created')
 
-  const mounted = mount(React.createElement(RotarySolidDialog, { kind: 'polygon', featureId: created.featureId, onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-solid-sides') !== null, 'the edit dialog renders')
-  assert.equal(applyButton().disabled, true, 'an untouched polygon has Apply disabled')
+  const mounted = mount(React.createElement(RotarySolidPanel, { kind: 'polygon', featureId: created.featureId, onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-solid-sides') !== null, 'the edit panel renders')
+  assert.equal(saveButton().disabled, true, 'an untouched polygon has Save disabled')
 
   typeInto(field('rotary-solid-sides'), '8')
   await flush()
-  assert.equal(applyButton().disabled, false, 'a changed side count enables Apply')
+  assert.equal(saveButton().disabled, false, 'a changed side count enables Save')
 
   typeInto(field('rotary-solid-sides'), '6')
   await flush()
-  assert.equal(applyButton().disabled, true, 'the stored side count disables Apply again')
+  assert.equal(saveButton().disabled, true, 'the stored side count disables Save again')
   mounted.unmount()
 })
 
-await scenario('an untouched Thread edit offers no Apply, and a re-typed number is not an edit', async () => {
+await scenario('an untouched Thread edit offers no Save, and a re-typed number is not an edit', async () => {
   loadProject()
   const created = store().addRotaryPattern({ kind: 'thread', start: 5, length: 20, pitch: 2, depth: 1 })
   assert.ok(created.ok, 'the thread is created')
 
-  const mounted = mount(React.createElement(RotaryPatternDialog, { kind: 'thread', featureId: created.featureId, onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-pitch') !== null, 'the edit dialog renders')
-  assert.equal(applyButton().disabled, true, 'an untouched thread has Apply disabled')
+  const mounted = mount(React.createElement(RotaryPatternPanel, { kind: 'thread', featureId: created.featureId, onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-pitch') !== null, 'the edit panel renders')
+  assert.equal(saveButton().disabled, true, 'an untouched thread has Save disabled')
 
   // The same number written with a decimal is not a changed value.
   typeInto(field('rotary-start'), '5.0')
   await flush()
-  assert.equal(applyButton().disabled, true, 'a re-typed number is not an edit')
+  assert.equal(saveButton().disabled, true, 'a re-typed number is not an edit')
 
   typeInto(field('rotary-pitch'), '2.5')
   await flush()
-  assert.equal(applyButton().disabled, false, 'a changed pitch enables Apply')
+  assert.equal(saveButton().disabled, false, 'a changed pitch enables Save')
 
   typeInto(field('rotary-pitch'), '2')
   await flush()
-  assert.equal(applyButton().disabled, true, 'the stored pitch disables Apply again')
+  assert.equal(saveButton().disabled, true, 'the stored pitch disables Save again')
   mounted.unmount()
 })
 
@@ -273,34 +273,34 @@ await scenario('a Flutes edit ignores a hand that cannot change a straight flute
   const created = store().addRotaryPattern({ kind: 'flutes', start: 5, length: 20, count: 4, twist: 0, depth: 1 })
   assert.ok(created.ok, 'the flutes are created')
 
-  const mounted = mount(React.createElement(RotaryPatternDialog, { kind: 'flutes', featureId: created.featureId, onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-twist') !== null, 'the edit dialog renders')
-  assert.equal(applyButton().disabled, true, 'an untouched flute has Apply disabled')
+  const mounted = mount(React.createElement(RotaryPatternPanel, { kind: 'flutes', featureId: created.featureId, onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-twist') !== null, 'the edit panel renders')
+  assert.equal(saveButton().disabled, true, 'an untouched flute has Save disabled')
 
   // A straight flute is straight in either hand: the stored twist is 0 both ways.
   await chooseOption('Left-hand')
-  assert.equal(applyButton().disabled, true, 'the hand of a straight flute is not an edit')
+  assert.equal(saveButton().disabled, true, 'the hand of a straight flute is not an edit')
 
   typeInto(field('rotary-twist'), '1')
   await flush()
-  assert.equal(applyButton().disabled, false, 'a twist in the left hand enables Apply')
+  assert.equal(saveButton().disabled, false, 'a twist in the left hand enables Save')
 
   await chooseOption('Right-hand')
-  assert.equal(applyButton().disabled, false, 'the other hand of a twisted flute is still an edit')
+  assert.equal(saveButton().disabled, false, 'the other hand of a twisted flute is still an edit')
   mounted.unmount()
 })
 
-await scenario('creation keeps its own Apply: no stored shape to compare against', async () => {
+await scenario('creation keeps its own Save: no stored shape to compare against', async () => {
   loadProject()
 
-  const solid = mount(React.createElement(RotarySolidDialog, { kind: 'turn', onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the create dialog renders')
-  assert.equal(applyButton().disabled, false, 'creating a Turn offers Apply without an edit')
+  const solid = mount(React.createElement(RotarySolidPanel, { kind: 'turn', onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-solid-diameter') !== null, 'the create panel renders')
+  assert.equal(saveButton().disabled, false, 'creating a Turn offers Create without an edit')
   solid.unmount()
 
-  const pattern = mount(React.createElement(RotaryPatternDialog, { kind: 'thread', onClose: () => undefined }))
-  await waitFor(() => document.querySelector('#rotary-pitch') !== null, 'the create dialog renders')
-  assert.equal(applyButton().disabled, false, 'creating a thread offers Apply without an edit')
+  const pattern = mount(React.createElement(RotaryPatternPanel, { kind: 'thread', onClose: () => undefined }))
+  await waitFor(() => document.querySelector('#rotary-pitch') !== null, 'the create panel renders')
+  assert.equal(saveButton().disabled, false, 'creating a thread offers Create without an edit')
   pattern.unmount()
 })
 
