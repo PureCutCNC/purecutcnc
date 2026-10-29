@@ -93,6 +93,8 @@ const noop = (): void => {}
 
 const actions: FeatureTreeActions = {
   editSketch: noop,
+  editCannedShape: noop,
+  expandCannedFeature: noop,
   constraint: noop,
   copyFeature: noop,
   makeUnique: noop,
@@ -186,6 +188,7 @@ function menuProps(
     menuHasLockedSelection: false,
     menuFeatureHasLinkedInstances: false,
     menuQuickOperations: [],
+    menuFeatureTargetableFromFace: false,
     quickOpsSubmenu: null,
     menuFeatureFolders: [],
     menuAddToOperationCandidates: [],
@@ -304,7 +307,7 @@ async function testCannedRefusalIsVisibleOnDesktopAndTablet(): Promise<void> {
   const { project, menuFeature } = cannedProject()
   const refusal = enMessages['sketch.canned.actionRefused']
   const cases: Array<[string, string]> = [
-    [enMessages['featureTree.contextMenu.editSketch'], enMessages['sketch.canned.editSketchRefused']],
+    [enMessages['featureTree.contextMenu.editSketch'], refusal],
     [enMessages['featureTree.contextMenu.addConstraint'], refusal],
     [enMessages['featureTree.contextMenu.offset'], refusal],
     [enMessages['featureTree.contextMenu.join'], refusal],

@@ -1209,7 +1209,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const hitFeature = editableProjectFeatures(project).find((feature) => feature.id === hitId)
     if (hitFeature && isCannedFeature(hitFeature)) {
       selectFeatures([hitId])
-      useNoticeStore.getState().showNotice('sketch.canned.editSketchRefused')
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     enterSketchEdit(hitId)

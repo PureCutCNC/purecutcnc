@@ -41,13 +41,19 @@
  * Run with: npx tsx src/components/cam/operationAddEntries.test.ts
  */
 
-import { operationAddEntries, operationAddHint, operationAddKinds } from './operationAddEntries'
+import {
+  operationAddEntries,
+  operationAddHint,
+  operationAddKinds,
+  validQuickOperationsForFeatureOnActiveFace,
+} from './operationAddEntries'
 import { selectAllCompatibleFeatureIds } from './operationValidity'
 import { camT } from './camI18n'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { squareStock } from '../../types/barStock'
 import type { SelectionState } from '../../store/types'
-import type { OperationKind, Project } from '../../types/project'
+import { rectProfile, type MachiningSetup, type OperationKind, type Project, type SketchFeature } from '../../types/project'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -196,5 +202,71 @@ for (const kind of ['pocket', 'follow_line'] as const) {
     `${kind} is not refused for the stock shape on a round bar`,
   )
 }
+
+// ── A feature's own Create-operation list, from another face (#1112 F2) ──
+
+function kindsFor(project: Project, featureId: string): string {
+  return validQuickOperationsForFeatureOnActiveFace(project, featureId).map((quickOp) => quickOp.kind).join()
+}
+
+/** The same fixture with `face` turned up, since the list follows the Add menu. */
+function onFace(project: Project, face: 'top' | 'bottom'): Project {
+  const setup: MachiningSetup = {
+    ...project.setups[0],
+    id: `setup-${face}`,
+    name: face,
+    orientation: { axis: 'x', angleDeg: face === 'bottom' ? 180 : 0 },
+  }
+  return { ...project, setups: [project.setups[0], setup], activeSetupId: setup.id }
+}
+
+// The fixture's model is authored on Top. On the Around face only the rotary
+// rows can take it: the 2D kinds either cannot target a model from Around
+// (`activeSetupTargetHint`) or are blocked by the square blank's stock, and the
+// surface strategies are not offered on Around at all. An unfiltered list would
+// bring Edge route outside / Surface clean back on the round bar, and the
+// CAM panel's quick list (which asks the face without a kind) answers nothing.
+assert(
+  kindsFor(SQUARE, 'model') === 'rotary_rough,rotary_finish',
+  `a model on a square blank's Around face is cut by the rotary rows, got "${kindsFor(SQUARE, 'model')}"`,
+)
+assert(
+  kindsFor(ROUND, 'model') === 'rotary_rough,rotary_finish',
+  `and on a round bar it is still the rotary rows, not the hidden flat ones, got "${kindsFor(ROUND, 'model')}"`,
+)
+// A wrapped 2D feature on its own face keeps the wrapped operations, and is not
+// offered a rotary operation that would target the bar's model instead.
+const aroundKindsForSketch = kindsFor(ROUND, 'sketch')
+assert(aroundKindsForSketch.split(',').includes('pocket'), `an Around subtract can still be pocketed, got "${aroundKindsForSketch}"`)
+assert(!aroundKindsForSketch.split(',').includes('rotary_rough'), 'a non-model feature is never offered a rotary operation')
+
+// A blind feature on the other flat face is not a target of this face at all.
+const blind: SketchFeature = {
+  id: 'top-add',
+  name: 'Top add',
+  kind: 'rect',
+  folderId: null,
+  sketch: { profile: rectProfile(1, 1, 4, 4), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  operation: 'add',
+  authoringFace: 'top',
+  z_top: 11,
+  z_bottom: 10,
+  visible: true,
+  locked: false,
+}
+const BLIND = projectWithFeatures(ROUND, [...ROUND.features, blind])
+assert(
+  kindsFor(onFace(BLIND, 'bottom'), 'top-add') === '',
+  `an add that does not reach Bottom offers nothing there, got "${kindsFor(onFace(BLIND, 'bottom'), 'top-add')}"`,
+)
+// A through cut is the exception: the other flat face may machine it.
+const through: SketchFeature = { ...blind, id: 'top-through', operation: 'subtract', z_top: 12, z_bottom: 0 }
+const THROUGH = projectWithFeatures(ROUND, [...ROUND.features, through])
+assert(
+  kindsFor(onFace(THROUGH, 'bottom'), 'top-through').split(',').includes('pocket'),
+  `a through cut can be pocketed from the other face, got "${kindsFor(onFace(THROUGH, 'bottom'), 'top-through')}"`,
+)
+// A feature the project does not have offers nothing.
+assert(kindsFor(ROUND, 'no-such-feature') === '', 'an unknown feature id offers nothing')
 
 console.log('operation add entries tests passed')

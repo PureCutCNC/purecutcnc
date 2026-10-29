@@ -22,7 +22,7 @@ import type { ProjectStore } from '../store/types'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import { commonSectionOfIds } from '../store/helpers/featureRoles'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
-import { isCannedFeature } from '../cannedShapes'
+import { getCannedShapeEditor, isCannedFeature } from '../cannedShapes'
 import { useNoticeStore } from '../store/noticeStore'
 import { loadBundledToolLibrary } from '../toolLibrary'
 
@@ -68,6 +68,7 @@ type FeatureTreeActionStore = Pick<
   | 'groupSelectedFeaturesIntoNewFolder'
   | 'assignFeaturesToFolder'
   | 'addFeatureFolder'
+  | 'expandCannedFeature'
   | 'project'
 >
 
@@ -77,6 +78,13 @@ interface CreateFeatureTreeActionsArgs extends UseFeatureTreeActionsArgs {
 
 export interface FeatureTreeActions {
   editSketch: (featureId: string) => void
+  /**
+   * Open a generated shape's own parameter editor — the same opener Properties
+   * uses, so the two entry points can never drift (issue #1112 F2).
+   */
+  editCannedShape: (featureId: string) => void
+  /** Replace a generated shape with its plain features (Properties' action). */
+  expandCannedFeature: (featureId: string) => void
   constraint: (featureId: string) => void
   copyFeature: (featureId: string) => void
   makeUnique: (featureId: string) => void
@@ -150,6 +158,7 @@ export function createFeatureTreeActions({
     groupSelectedFeaturesIntoNewFolder,
     assignFeaturesToFolder,
     addFeatureFolder,
+    expandCannedFeature: storeExpandCannedFeature,
     project,
   } = storeActions
 
@@ -170,11 +179,23 @@ export function createFeatureTreeActions({
       requestAuthoringFaceChange(featureIds)
       closeTreeContextMenu()
     },
+    editCannedShape: (featureId: string) => {
+      // The registered opener owns the dialog — for a sketch kind it is the
+      // canvas panel, for Turn/Polygon the same typed dialog Properties opens.
+      const canned = resolveFeatureInstance(project, featureId)?.canned
+      const editor = canned ? getCannedShapeEditor(canned.kind) : null
+      editor?.(featureId)
+      closeTreeContextMenu()
+    },
+    expandCannedFeature: (featureId: string) => {
+      storeExpandCannedFeature(featureId)
+      closeTreeContextMenu()
+    },
     editSketch: (featureId: string) => {
       // A generated shape's parameters own its geometry, so the entry states
       // the way out instead of silently doing nothing (#1112 A2).
       if (isCannedFeature(resolveFeatureInstance(project, featureId))) {
-        useNoticeStore.getState().showNotice('sketch.canned.editSketchRefused')
+        useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
         closeTreeContextMenu()
         return
       }
@@ -379,6 +400,7 @@ export function useFeatureTreeActions({
     groupSelectedFeaturesIntoNewFolder,
     assignFeaturesToFolder,
     addFeatureFolder,
+    expandCannedFeature,
     project,
   } = useProjectStore()
 
@@ -418,6 +440,7 @@ export function useFeatureTreeActions({
       groupSelectedFeaturesIntoNewFolder,
       assignFeaturesToFolder,
       addFeatureFolder,
+      expandCannedFeature,
       project,
     },
   }), [
@@ -434,6 +457,7 @@ export function useFeatureTreeActions({
     enterClampEdit,
     enterSketchEdit,
     enterTabEdit,
+    expandCannedFeature,
     groupSelectedFeaturesIntoNewFolder,
     onSelectedOperationIdChange,
     project,

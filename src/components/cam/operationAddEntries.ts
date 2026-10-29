@@ -36,13 +36,29 @@
  * - The other family's kinds are left out entirely, as before (`machineMode`),
  *   and a plasma cut on a flat face is offered as blocked with the
  *   project-type reason.
+ *
+ * `validQuickOperationsForFeatureOnActiveFace` answers the feature-context menu's
+ * "Create operation" list from the same table when the feature is authored on
+ * another face (issue #1112 F2), so the two surfaces cannot offer a different
+ * set of operations for the same face and stock.
  */
 
-import { isRotaryOperationKind, type OperationKind, type Project, type SetupFace } from '../../types/project'
+import { isRotaryOperationKind, type OperationKind, type OperationPass, type Project, type SetupFace } from '../../types/project'
 import type { SelectionState } from '../../store/types'
 import { isSquareStock } from '../../types/barStock'
-import { getOperationAddHint, rotaryAddKindsForFace, selectAllCompatibleFeatureIds } from './operationValidity'
-import { operationOffer, type MachineMode } from './machineMode'
+import {
+  getOperationAddHint,
+  operationSelectionHint,
+  quickOperationGroup,
+  quickOperationLabel,
+  rotaryAddKindsForFace,
+  selectAllCompatibleFeatureIds,
+  singleFeatureSelection,
+  type QuickOperation,
+} from './operationValidity'
+import { operationOffer, machineMode, type MachineMode } from './machineMode'
+import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
+import { activeFace } from '../../store/helpers/activeFace'
 import { camT } from './camI18n'
 
 export interface OperationAddEntry {
@@ -200,4 +216,46 @@ export function operationAddEntries(
         selectAllFeatureIds: block.selectionBlocked ? selectAllCompatibleFeatureIds(project, kind) : [],
       }
     })
+}
+
+/**
+ * The operations a *single* feature can be given from the face in view — the
+ * feature's own "Create operation" list when it is authored on another face
+ * (issue #1112 F2), where the Add menu is the only authority on what belongs
+ * there. The face is the active setup's, exactly as the Add menu's is; a
+ * caller with another face in mind makes that face active first.
+ *
+ * Three filters, and each is load-bearing:
+ *
+ * - the Add menu's kinds for that face and stock (`operationAddKinds` plus the
+ *   square-blank rule), so a wrapped 2D path is not offered on a blank's
+ *   Around face and a flat plasma cut is not offered on the sheet at all;
+ * - the selection half of the hint, judged on this one feature — the rotary
+ *   rows skip the selection when Add creates them from the panel, so without
+ *   this a wrapped feature would be offered a rotary operation that targets
+ *   the bar's model instead of itself;
+ * - the face half, so a feature this face cannot reach offers nothing.
+ *
+ * A feature outside the project, or one every kind refuses, answers `[]` — the
+ * caller then knows the current face has no operation for it at all.
+ */
+export function validQuickOperationsForFeatureOnActiveFace(
+  project: Project,
+  featureId: string,
+): QuickOperation[] {
+  const face = activeFace(project)
+  const featureById = resolvedFeatureMap(project)
+  if (!featureById.has(featureId)) return []
+  const selection = singleFeatureSelection(featureId)
+  const machine = machineMode(project)
+  return operationAddKinds(project, face)
+    .filter((kind) => operationOffer(machine, kind) === 'available')
+    .filter((kind) => operationAddHint(project, selection, machine, face, kind) === null)
+    .filter((kind) => operationSelectionHint(selection, kind, featureById) === null)
+    .map((kind) => ({
+      kind,
+      pass: 'rough' as OperationPass,
+      label: quickOperationLabel(kind),
+      group: quickOperationGroup(kind),
+    }))
 }

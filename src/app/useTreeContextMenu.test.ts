@@ -23,6 +23,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useProjectStore } from '../store/projectStore'
 import { projectWithFeatures } from '../test/projectFixtures'
+import { rotaryOperationFixture } from '../test/rotaryOperationFixture'
+import { squareStock } from '../types/barStock'
 import type { Clamp, Operation, Project, SketchFeature, Tab } from '../types/project'
 import { newProject, rectProfile } from '../types/project'
 import { useTreeContextMenu } from './useTreeContextMenu'
@@ -438,6 +440,47 @@ function testUnselectedClampRemainsSingleton() {
   console.log('unselected clamp singleton: PASSED')
 }
 
+// A model authored on Top, seen from the Around face on a square blank. The
+// menu cannot use the same-face quick list here: the model is not a target of
+// that face's 2D operations, and the Add menu's own rows for the stock are the
+// rotary pair (issue #1112 F2).
+function testOtherFaceMenuUsesTheAddMenuList() {
+  console.log('Testing the other-face Create-operation list...')
+
+  const square = { ...rotaryOperationFixture('x'), stock: squareStock(12, 30, 'x') }
+  let didOpen = false
+  const reachable = renderUseTreeContextMenu({ project: square }, (current) => {
+    if (didOpen) return
+    didOpen = true
+    current.openFeatureContextMenu('model', 12, 34)
+  })
+  assert(reachable.menuFeatureTargetableFromFace, 'a model on another face is targetable from here')
+  assert(
+    reachable.menuQuickOperations.map((quickOp) => quickOp.kind).join() === 'rotary_rough,rotary_finish',
+    `Create operation lists the Add menu's rows, got ${reachable.menuQuickOperations.map((op) => op.kind).join()}`,
+  )
+
+  // A blind Bottom subtract cannot be cut from Top: the menu stays the way to
+  // its own face, and offers no operation at all.
+  const project = projectWithFeatures(
+    { ...rotaryOperationFixture('x'), activeSetupId: rotaryOperationFixture('x').setups[0].id },
+    [{ ...makeFeature('bottom-pit', { operation: 'subtract', z_top: 12, z_bottom: 10 }), authoringFace: 'bottom' as const }],
+  )
+  didOpen = false
+  const unreachable = renderUseTreeContextMenu({ project }, (current) => {
+    if (didOpen) return
+    didOpen = true
+    current.openFeatureContextMenu('bottom-pit', 12, 34)
+  })
+  assert(!unreachable.menuFeatureTargetableFromFace, 'a blind feature on the other face is not targetable')
+  assert(
+    unreachable.menuQuickOperations.length === 0,
+    `and it offers no operation, got ${unreachable.menuQuickOperations.map((op) => op.kind).join()}`,
+  )
+
+  console.log('other-face Create-operation list: PASSED')
+}
+
 try {
   testOpenFeatureContextMenuDerivesFeatureAndSelection()
   testCloseTreeContextMenuResetsState()
@@ -447,6 +490,7 @@ try {
   testClampContextMenuCarriesFullSelection()
   testUnselectedClampRemainsSingleton()
   testOperationTargetCandidateLists()
+  testOtherFaceMenuUsesTheAddMenuList()
   console.log('\nAll useTreeContextMenu tests PASSED.')
 } catch (e) {
   console.error(e)

@@ -3217,6 +3217,10 @@
   position: fixed;
   z-index: 1000;
   min-width: 168px;
+  /* A disabled item's reason is visible text, so one long reason used to
+     stretch the menu across the viewport. The cap keeps it a menu: reasons
+     wrap inside it, labels stay on one line and truncate (#1112 F2). */
+  max-width: 280px;
   max-height: calc(100vh - 16px);
   max-height: calc(100dvh - 16px);
   padding: 4px;
@@ -3283,6 +3287,21 @@
   text-align: left;
   padding: 0 8px;
   cursor: pointer;
+  /* The label is one line and truncates at the menu's cap; a reason (below)
+     overrides this to wrap (#1112 F2). */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A reason sits in its own line under the label, so the label itself is what
+   has to truncate — a flex item does not inherit the button's ellipsis. */
+.feature-context-menu__item-label,
+.feature-context-menu__item-text > span:first-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .feature-context-menu__item:hover {

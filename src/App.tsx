@@ -130,6 +130,7 @@ function App() {
     menuTab,
     menuClamp,
     menuQuickOperations,
+    menuFeatureTargetableFromFace,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
     addToFolderSubmenu,
@@ -585,6 +586,7 @@ function App() {
         menuHasLockedSelection={menuHasLockedSelection}
         menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
+        menuFeatureTargetableFromFace={menuFeatureTargetableFromFace}
         quickOpsSubmenu={quickOpsSubmenu}
         menuFeatureFolders={menuFeatureFolders}
         menuAddToOperationCandidates={menuAddToOperationCandidates}

@@ -249,6 +249,10 @@
 @media (pointer: coarse) {
   .feature-context-menu {
     min-width: 220px;
+    /* The same width cap the desktop menu has: a long refusal wraps in the
+       item instead of stretching the touch menu wider than the screen
+       (issue #1112 F2). */
+    max-width: 280px;
   }
 
   .feature-context-menu__item {

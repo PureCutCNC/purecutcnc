@@ -39,7 +39,8 @@ import { aroundFeaturesActive } from '../../store/helpers/projectType'
 import { camT } from './camI18n'
 import { machineMode, operationOffer } from './machineMode'
 
-type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
+/** Every resolved feature of one project, keyed by id — what the hint reads. */
+export type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
@@ -200,8 +201,26 @@ export function getOperationAddHint(
 
   // What the selection is comes first; which face it is on only matters for
   // a selection the operation could otherwise take.
-  return getOperationAddHintWithMap(selection, kind, resolvedFeatureMap(project))
+  return operationSelectionHint(selection, kind, resolvedFeatureMap(project))
     ?? activeSetupTargetHint(project, selection.selectedFeatureIds)
+}
+
+/**
+ * The selection half of {@link getOperationAddHint}: why `kind` cannot take
+ * this selection at all, or null when it can.
+ *
+ * Separate because the face half is `activeSetupTargetHint`, and a caller
+ * judging a feature from the face it was *not* authored on asks the two in a
+ * different order than the CAM panel does (issue #1112 F2): the rotary rows
+ * deliberately ignore the selection when Add creates them, so a feature list
+ * built for one feature must still check that this feature is a model.
+ */
+export function operationSelectionHint(
+  selection: SelectionState,
+  kind: OperationKind,
+  featureById: ResolvedFeatureMap,
+): string | null {
+  return getOperationAddHintWithMap(selection, kind, featureById)
 }
 
 function getOperationAddHintWithMap(
@@ -574,7 +593,7 @@ export function quickOperationLabel(kind: OperationKind): string {
  * the tree/canvas produce when exactly that feature is selected. Used to run a
  * feature through `getOperationAddHint` without touching the live selection.
  */
-function singleFeatureSelection(featureId: string): SelectionState {
+export function singleFeatureSelection(featureId: string): SelectionState {
   return {
     mode: 'feature',
     selectedFeatureId: featureId,
