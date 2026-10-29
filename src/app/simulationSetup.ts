@@ -322,31 +322,3 @@ export function setupOperations(project: Project, setup: MachiningSetup): Operat
   })
 }
 
-/**
- * Which setup the simulation shows. An explicit pick wins while that setup
- * still exists; otherwise the simulation follows the selected operation's
- * setup, so selecting a Bottom operation simulates Bottom, and with nothing
- * selected it follows the face the workspace is on. An operation naming a
- * missing setup is left to the paths that refuse it; here it simply does not
- * steer the choice.
- */
-export function resolveSimulationSetup(
-  project: Project,
-  chosenSetupId: string | null,
-  selectedOperation: Pick<Operation, 'id'> | null,
-): MachiningSetup {
-  const setups = simulationSetups(project)
-  const chosen = chosenSetupId === null ? undefined : setups.find((entry) => entry.id === chosenSetupId)
-  if (chosen) return chosen
-  if (selectedOperation) {
-    const owner = setups.find((entry) => {
-      try {
-        return setupOperations(project, entry).some((operation) => operation.id === selectedOperation.id)
-      } catch {
-        return false
-      }
-    })
-    if (owner) return owner
-  }
-  return activeSetup(project)
-}

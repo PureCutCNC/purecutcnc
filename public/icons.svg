@@ -329,6 +329,11 @@
     <path d="M 2 15 L 12 15" />
     <path d="M 9 12 L 12 15 L 9 18" />
   </symbol>
+  <symbol id="info" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M 12 11 L 12 16.5" />
+    <path d="M 12 7.4 L 12 7.45" />
+  </symbol>
   <symbol id="language" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="9"/>
     <ellipse cx="12" cy="12" rx="4" ry="9"/>

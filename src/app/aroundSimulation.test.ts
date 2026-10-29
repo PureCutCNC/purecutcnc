@@ -37,6 +37,7 @@ import {
 import * as THREE from 'three'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { syncProjectSetups } from '../store/helpers/setups'
+import { activeSetup } from '../store/helpers/activeFace'
 import { aroundFrame } from '../engine/aroundFrame'
 import { buildClampMesh } from '../engine/csg'
 import { THEME_PALETTES } from '../theme/palette'
@@ -45,7 +46,7 @@ import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { PocketToolpathResult, ToolpathResult } from '../engine/toolpaths/types'
 import { simulateReplayItemsHeightfield, type SimulationGrid, type SimulationResult } from '../engine/simulation'
 import { findMillingOperationTool } from '../toolPolicy'
-import { buildSimulationBar, buildSimulationSetupInput, resolveSimulationSetup, simulationSetups, type SimulationSetupInput } from './simulationSetup'
+import { buildSimulationBar, buildSimulationSetupInput, simulationSetups, type SimulationSetupInput } from './simulationSetup'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -292,11 +293,12 @@ function testFlatSetupDropsAroundFeatures(): void {
     'a project with no Around feature simulates exactly the object it always did')
 }
 
-function testPickerAndBrokenAround(): void {
-  console.log('Testing the picker lists an Around setup and a broken one yields no simulation...')
+function testListedSetupAndBrokenAround(): void {
+  console.log('Testing the Around setup is the listed one and a broken one yields no simulation...')
   const { project, setup, paths } = makeAroundProject()
-  assertEqual(simulationSetups(project).map((entry) => entry.id), ['setup-around'], 'the picker lists the Around setup')
-  assertEqual(resolveSimulationSetup(project, null, project.operations[0]).id, 'setup-around', 'and resolution finds it')
+  assertEqual(simulationSetups(project).map((entry) => entry.id), ['setup-around'], 'the Around setup is the project\'s one')
+  // The face in view is the setup the simulation runs (issue #1112 F3).
+  assertEqual(activeSetup(project).id, 'setup-around', 'and the workspace face is on it')
 
   // The bar is no longer a round bar on the setup's axis: no simulation, no
   // exception.
@@ -436,7 +438,7 @@ function testSecondTurnPocketAndBarData(): void {
 testSecondTurnPocketAndBarData()
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
-testPickerAndBrokenAround()
+testListedSetupAndBrokenAround()
 testFlatSetupDropsAroundFeatures()
 testAroundClampBandsAreFlatBoxes()
 testFlatSetupKeepsItsClampsAndBar()

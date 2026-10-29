@@ -77,17 +77,28 @@ async function simStats(page: Page) {
   }
 }
 
-test('simulation follows the selected setup, cuts Bottom from the top of the flipped stock and says it is fresh stock', async ({ app, ui }, testInfo) => {
+test('simulation follows the face in view, cuts Bottom from the top of the flipped stock and explains its fresh stock', async ({ app, ui }, testInfo) => {
   const { page } = app
   const project = await seedTwoSetups(page)
   const topId = project.setups[0].id
+  const viewport = ui.simSetup.viewport(page)
+  const bottomNote = 'Bottom is simulated on fresh stock: material removed by other setups is not shown.'
 
   // An operation is selected on its own face (issue #1102).
   await ui.face.switchTo(page, 'Bottom')
   await ui.operations.rowByName(page, 'Bottom pass').click()
   await ui.viewMenu.tabSimulation(page).click()
-  await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
-  await expect(ui.simSetup.note(page)).toHaveText('Bottom is simulated on fresh stock: material removed by other setups is not shown.')
+  // The workspace face is the simulation's setup (issue #1112 F3): there is no
+  // picker to disagree with it, and the fresh-stock sentence lives behind the
+  // info button at the end of the toolbar — its tooltip and accessible name.
+  await expect(viewport).toHaveAttribute('data-simulation-setup', 'setup-bottom')
+  await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', bottomNote)
+  await expect(ui.simSetup.info(page)).toHaveAttribute('title', bottomNote)
+  // A tap opens it, which is all the touch shell has (there is no hover).
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveText(bottomNote)
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveCount(0)
 
   // Bottom: the pocket is cut down from the top of the turned stock — in the
   // canonical frame the cutter would come from under it and remove nothing.
@@ -98,10 +109,11 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   await expect(ui.simSetup.playTool(page)).toBeEnabled()
   await page.screenshot({ path: testInfo.outputPath('bottom-simulation.png') })
 
-  // Picking Top keeps the Bottom operation off Top's stock in selected mode…
-  await ui.simSetup.picker(page).selectOption(topId)
-  await expect(ui.simSetup.note(page)).toContainText('Top is simulated on fresh stock')
-  await expect.poll(async () => (await simStats(page)).setup).toBe(topId)
+  // Switching the header face to Top keeps the Bottom operation off Top's
+  // stock in selected mode: the selection does not follow the stock over…
+  await ui.face.switchTo(page, 'Top')
+  await expect(viewport).toHaveAttribute('data-simulation-setup', topId)
+  await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', 'Top is simulated on fresh stock: material removed by other setups is not shown.')
   await expect.poll(async () => (await simStats(page)).removed).toBe(0)
   await expect(ui.simSetup.playTool(page)).toBeDisabled()
 
@@ -113,28 +125,29 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   expect(Math.abs(top.minZ - TOP_FLOOR)).toBeLessThan(0.05)
   await page.screenshot({ path: testInfo.outputPath('top-simulation.png') })
 
-  // Selecting an operation hands the choice back to its setup.
+  // Selecting an operation of another face switches the header face, and the
+  // simulation follows it: there is no setup choice of its own to hand back.
   await ui.face.switchTo(page, 'Top')
   await ui.operations.rowByName(page, 'Top pass').click()
   await ui.face.switchTo(page, 'Bottom')
   await ui.operations.rowByName(page, 'Bottom pass').click()
-  await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
+  await expect(viewport).toHaveAttribute('data-simulation-setup', 'setup-bottom')
 })
 
-// Review of PR #992: the picker changes what must be acquired without
-// changing the project, so a set acquired for the other setup must not count
+// Review of PR #992: a face switch changes what must be acquired without
+// changing the document, so a set acquired for the other setup must not count
 // as ready. Here Bottom's earlier operation is still being produced when the
-// picker returns to Bottom: playback must wait for it, not start on fresh
+// workspace returns to Bottom: playback must wait for it, not start on fresh
 // stock without that operation's cut.
-test('switching setups waits for the new setup\'s acquisition before offering playback', async ({ app }) => {
+test('switching the workspace face waits for the new setup\'s acquisition before offering playback', async ({ app }) => {
   const { page } = app
   const project = await seedTwoSetups(page)
   const bottom = project.operations.find((operation) => operation.id === 'op-bottom')!
   project.operations.push({ ...bottom, id: 'op-bottom-2', name: 'Bottom pass 2' })
   const steps = await page.evaluate(async ({ project, topId }) => {
     const probeUrl = '/e2e/setupSimulationProbe.ts'
-    const { runPickerTransitionProbe } = await import(probeUrl) as typeof import('./setupSimulationProbe')
-    return runPickerTransitionProbe(project, 'op-bottom-2', topId)
+    const { runFaceTransitionProbe } = await import(probeUrl) as typeof import('./setupSimulationProbe')
+    return runFaceTransitionProbe(project, 'op-bottom-2', topId)
   }, { project, topId: project.setups[0].id })
 
   expect(steps.initial).toMatchObject({ setup: 'setup-bottom', pending: true, playback: false })
@@ -148,7 +161,7 @@ test('switching setups waits for the new setup\'s acquisition before offering pl
   expect(steps.backAcquired.baseCutCells).toBe(steps.acquired.baseCutCells)
 })
 
-test('a single-setup project simulates as before, with no picker and no note', async ({ app, ui }) => {
+test('a single-setup project simulates as before, with no info button and no note', async ({ app, ui }) => {
   const { page } = app
   await seedTwoSetups(page, false)
   await ui.operations.rowByName(page, 'Top pass').click()
@@ -158,7 +171,7 @@ test('a single-setup project simulates as before, with no picker and no note', a
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
   await ui.viewMenu.tabSimulation(page).click()
   await expect.poll(async () => (await simStats(page)).removed, { timeout: 30_000 }).toBeGreaterThan(0)
-  await expect(ui.simSetup.picker(page)).toHaveCount(0)
+  await expect(ui.simSetup.info(page)).toHaveCount(0)
   await expect(ui.simSetup.note(page)).toHaveCount(0)
 })
 

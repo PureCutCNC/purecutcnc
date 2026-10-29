@@ -1079,17 +1079,18 @@
   display: inline-flex;
 }
 
-/* Hide centre workspace tabs header on tablet (view tabs are in the top command bar) */
-[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header,
-[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header {
+/* The view tabs live in the tablet's top command bar, so this row carries no
+   tabs — but it is still the one row above the workspace, and it holds the face
+   control (issue #1112 F3). Keep the row, drop its tablist. */
+[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header .panel-tablist,
+[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header .panel-tablist {
   display: none;
 }
 
-/* With the tabs header hidden, the workspace grid (auto 1fr) would put the stage
-   in the auto row and collapse it.  Switch to a single-row stretch layout. */
-[data-shell-mode="tablet"] .centre-workspace,
-[data-shell-mode="tablet-compact"] .centre-workspace {
-  grid-template-rows: 1fr;
+/* The face control needs a real tap target on the row; the row grows for it. */
+[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header,
+[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header {
+  padding: 4px 6px;
 }
 
 /* ── Drag grip handle (tablet only) ──────────────────────── */

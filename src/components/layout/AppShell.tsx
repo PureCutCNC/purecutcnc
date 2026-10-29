@@ -29,9 +29,6 @@ import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
 import { Icon } from '../Icon'
 import { ChangeFaceDialog } from '../feature-tree/ChangeFaceDialog'
-import { projectUsesBothFaces } from '../../store/helpers/activeFace'
-import { machineMode, showsFaceSwitch } from '../cam/machineMode'
-import { FaceBanner } from './FaceBanner'
 import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
 import { CommandNoticeToast } from './CommandNoticeToast'
@@ -128,14 +125,6 @@ export function AppShell({
   const shellMode = useShellMode()
   const { t } = useI18n()
   const tabletShell = isTabletMode(shellMode)
-  // A tablet shell carries the face switch in its own row above the canvas
-  // (#945); a desktop shell keeps it in the workspace header and gets no row
-  // at all (issue #1102 slice E 8).
-  const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
-  // #960: a plasma machine hides the switch, so the tablet row must not reserve
-  // space for a banner that renders nothing.
-  const machine = useProjectStore((state) => machineMode(state.project))
-  const faceBannerVisible = tabletShell && showsFaceSwitch(machine, bothFaces)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
@@ -622,11 +611,6 @@ export function AppShell({
                   {t('appShell.workspace.simulation')}
                 </button>
               </div>
-              {/* Tablet shells hide this header; their switch sits in the sketch's face row.
-                  The switch follows the tabs and the spacer comes after it, so
-                  the Bottom flip chip grows the row to the right and the face
-                  pills never move (issue #1102). */}
-              {!tabletShell && <FaceSwitch />}
               <div className="panel-tabs-spacer" />
               {!tabletShell && (
                 <button
@@ -642,16 +626,22 @@ export function AppShell({
                   <Icon id={showRight ? 'chevrons-right' : 'chevrons-left'} size={18} />
                 </button>
               )}
+              {/* The workspace's one face control closes this row (issue #1112
+                  F3), right-aligned after the tabs and the pull-out handles: it
+                  reads as the face everything in the panel below belongs to, and
+                  the row's keyboard order is the order it is drawn in. A tablet
+                  shell keeps the row too, with the view tabs in its top command
+                  bar; the switch itself decides whether it shows (`showsFaceSwitch`). */}
+              <FaceSwitch />
             </div>
             <div className="centre-stage">
               <div
                 id="workspace-panel-sketch"
-                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}${faceBannerVisible ? ' centre-view--face-banner' : ''}`}
+                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}`}
                 role="tabpanel"
                 aria-labelledby="workspace-tab-sketch"
                 aria-hidden={centerTab !== 'sketch'}
               >
-                <FaceBanner withSwitch={tabletShell} />
                 {sketchCanvas}
                 <ChangeFaceDialog />
               </div>

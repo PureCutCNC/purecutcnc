@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import type { SetupFace } from '../types/project'
+import type { MachiningSetup, SetupFace } from '../types/project'
+import { setupFace, setupForOperation } from '../engine/setupOrientation'
 import { useFaceViewStore } from './faceViewStore'
 import { aroundUnavailableReason, activeFace, canChangeAuthoringFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
 import { provisionalSetupId } from './helpers/provisionalSetup'
@@ -41,6 +42,37 @@ export function switchWorkspaceFace(face: SetupFace): boolean {
   if (isFaceEditInProgress(store)) return false
   store.setActiveSetup(findSetupForFace(store.project, face)?.id ?? provisionalSetupId(face))
   return activeFace(useProjectStore.getState().project) === face
+}
+
+/**
+ * Put the workspace on the face the operation is cut on (issue #1112 F3).
+ *
+ * Selecting an operation selects work on its own face, and the face control
+ * is the workspace's one statement of which face that is: an operation of
+ * another face turns the stock over exactly as clicking that face's heading
+ * in the tree does. The simulation then shows that face's setup without a
+ * picker of its own, so "the selected operation's setup" and "the face in
+ * view" cannot disagree.
+ *
+ * Refused in the same cases a face switch is (an edit in progress), and for
+ * an operation whose `setupId` names no setup: the operation stays selected
+ * and the face stays where it is. Returns true when the face moved.
+ */
+export function revealOperationFace(operationId: string): boolean {
+  const store = useProjectStore.getState()
+  const operation = store.project.operations.find((entry) => entry.id === operationId)
+  if (!operation) return false
+  let setup: MachiningSetup | null | undefined
+  try {
+    // Throws for an operation naming a setup the project does not define.
+    setup = setupForOperation(store.project, operation) ?? store.project.setups?.[0]
+  } catch {
+    return false
+  }
+  if (!setup) return false
+  const face = setupFace(setup)
+  if (face === activeFace(store.project)) return false
+  return switchWorkspaceFace(face)
 }
 
 /**

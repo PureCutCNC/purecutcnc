@@ -49,6 +49,7 @@ import { useFeatureTreeActions } from './app/useFeatureTreeActions'
 import { useSnapSettings } from './app/useSnapSettings'
 import { useZoomWindow } from './app/useZoomWindow'
 import { useEmptyStateEngagement } from './app/useEmptyStateEngagement'
+import { useOperationSelection } from './app/useOperationSelection'
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 
@@ -64,7 +65,9 @@ function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
   const tabletShell = isTabletMode(useShellMode())
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+  // The selection and its one write: selecting an operation of another face
+  // turns the workspace over to that face (issue #1112 F3).
+  const { selectedOperationId, selectOperation } = useOperationSelection()
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   // Non-null opens the Export G-code dialog; operationIds narrows the
@@ -187,9 +190,7 @@ function App() {
   // Selecting another operation while the simulation panel is open is the
   // hook's input changing; it drops the old build and shows the overlay until
   // the new one lands. The selection itself stays cheap in every view.
-  const handleSelectedOperationIdChange = useCallback((id: string | null) => {
-    setSelectedOperationId(id)
-  }, [])
+  const handleSelectedOperationIdChange = selectOperation
 
   const featureActions = useFeatureTreeActions({
     setCenterTab,
@@ -248,7 +249,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationInputPending, simulationPlaybackInput, simulationSetupPicker, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationInputPending, simulationPlaybackInput, simulationSetup, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -453,7 +454,7 @@ function App() {
             clamps={simulationClamps}
             bar={simulationBar}
             flatRoundBar={simulationFlatRoundBar}
-            setupPicker={simulationSetupPicker}
+            setup={simulationSetup}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin} units={project.meta.units} stock={simulationStock}

@@ -16,13 +16,13 @@
 
 import { findOperationTool } from '../toolPolicy'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
+import type { SimulationPlaybackInput, SimulationSetupView } from '../components/simulation/SimulationViewport'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
-import { setupFace } from '../engine/setupOrientation'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
 import { isSquareStock } from '../types/barStock'
+import { activeSetup } from '../store/helpers/activeFace'
 import {
   computeSimulationResultAsync,
   priorReplayGrid,
@@ -36,7 +36,6 @@ import {
 } from './simulationBuild'
 import {
   buildSimulationSetupInput,
-  resolveSimulationSetup,
   setupOperations,
   simulationSetups,
   type SimulationSetupInput,
@@ -106,8 +105,11 @@ export function useSimulationModel({
   simulationPlaybackInput: SimulationPlaybackInput | null
   /** True while the paths simulation needs are still being produced. */
   simulationInputPending: boolean
-  /** The setups the simulation can show, and which one it shows (issue #947). */
-  simulationSetupPicker: SimulationSetupPicker
+  /**
+   * The setup the simulation shows (issue #1112 F3): the one the workspace
+   * face control is on, plus whether the fresh-stock note applies.
+   */
+  simulationSetup: SimulationSetupView
   /** Visible clamps, placed where they sit in the simulated setup's frame. */
   simulationClamps: Clamp[]
   /**
@@ -125,21 +127,14 @@ export function useSimulationModel({
   simulationFlatRoundBar?: FlatRoundBarDescriptor
 } {
   /**
-   * The simulated setup (issue #947). A pick from the panel holds while the
-   * same operation stays selected; selecting another operation hands the
-   * choice back to `resolveSimulationSetup`, which follows that operation's
-   * setup — so selecting a Bottom operation never shows it on Top stock.
+   * The simulated setup (issue #1112 F3) is the setup the workspace face
+   * control is on, and nothing else: the panel has no picker of its own, so
+   * the one face control cannot disagree with what is simulated. Selecting an
+   * operation of another face puts the workspace on that face (see
+   * `revealOperationFace`), which is how "selected operation's setup" keeps
+   * working through the face control.
    */
-  const [choice, setChoice] = useState<{ setupId: string; operationId: string | null } | null>(null)
-  const selectedOperationId = selectedOperation?.id ?? null
-  // Dropped, not just ignored, once the selection moves on: reselecting the
-  // operation the pick was made with must not bring a stale pick back.
-  if (choice !== null && choice.operationId !== selectedOperationId) setChoice(null)
-  const chosenSetupId = choice !== null && choice.operationId === selectedOperationId ? choice.setupId : null
-  const simulationSetup = useMemo(
-    () => resolveSimulationSetup(project, chosenSetupId, selectedOperation),
-    [chosenSetupId, project, selectedOperation],
-  )
+  const simulationSetup = useMemo(() => activeSetup(project), [project])
   const setupScopedOperations = useMemo(
     () => scopedOperations(project, simulationSetup),
     [project, simulationSetup],
@@ -399,11 +394,13 @@ export function useSimulationModel({
     }
   }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
-  const simulationSetupPicker = useMemo<SimulationSetupPicker>(() => ({
-    options: simulationSetups(project).map((setup) => ({ id: setup.id, name: setup.name, face: setupFace(setup) })),
-    selectedId: simulationSetup.id,
-    onChange: (setupId: string) => setChoice({ setupId, operationId: selectedOperationId }),
-  }), [project, selectedOperationId, simulationSetup.id])
+  // A single-setup project has nothing carried over to explain, so the panel
+  // then looks as it did before setups (issue #947).
+  const simulationSetupView = useMemo<SimulationSetupView>(() => ({
+    id: simulationSetup.id,
+    name: simulationSetup.name,
+    freshStockNote: simulationSetups(project).length > 1,
+  }), [project, simulationSetup])
 
   const simulationClamps = useMemo(
     () => (setupInput?.project ?? project).clamps.filter((clamp) => clamp.visible),
@@ -419,7 +416,7 @@ export function useSimulationModel({
     simulationOperationCount,
     simulationPlaybackInput,
     simulationInputPending,
-    simulationSetupPicker,
+    simulationSetup: simulationSetupView,
     simulationClamps,
     simulationStock,
     simulationBar: setupInput?.bar,

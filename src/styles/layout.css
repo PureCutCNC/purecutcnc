@@ -1158,27 +1158,65 @@
   color: var(--text);
 }
 
-.simulation-setup-control__select {
-  max-width: 140px;
-  min-height: 28px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface-input);
-  color: var(--text);
-  font-size: 12px;
+/* Fresh-stock limitation (issue #947; issue #1112 F3 moved it behind an info
+ * button at the end of the toolbar, so the row no longer grows a full-width
+ * line under the controls). */
+.simulation-setup-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
-/* Fresh-stock limitation (issue #947): a full-width line under the controls. */
-.simulation-setup-note {
-  flex-basis: 100%;
-  margin: 0;
-  padding: 4px 8px;
+.simulation-setup-info__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-hit-target);
+  height: var(--control-hit-target);
+  min-height: var(--control-hit-target);
+  padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--surface-translucent);
   color: var(--text-dim);
-  font-size: 11px;
-  text-align: right;
+  cursor: pointer;
+}
+
+.simulation-setup-info__button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.simulation-setup-info__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The tooltip's sentence, opened by a tap on touch (a `title` alone never
+ * shows there). Right-aligned with the button it belongs to. */
+.simulation-setup-info__text {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-popover);
+  box-shadow: 0 12px 28px var(--shadow-strong);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* Tablet shells keep a real tap target for the button too. */
+[data-shell-mode='tablet'] .simulation-setup-info__button,
+[data-shell-mode='tablet-compact'] .simulation-setup-info__button {
+  min-width: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
 }
 
 .simulation-mode-toggle {

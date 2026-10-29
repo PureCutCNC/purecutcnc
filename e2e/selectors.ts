@@ -888,7 +888,8 @@ export const face = {
     await face.current(page).click()
     await face.item(page, name).click()
   },
-  banner: (page: Page) => page.locator('.face-banner'),
+  /** The control's home: the right end of the centre panel's tab bar (issue #1112 F3). */
+  tabBarControl: (page: Page) => page.locator('.panel-tabs-header .face-switch'),
   /** A face section heading in the tree: a button that switches face (#1107). */
   heading: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
@@ -904,7 +905,8 @@ export const face = {
   changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
 }
 
-// Simulation setup picker and its fresh-stock note (#947).
+// Simulation toolbar and its fresh-stock info button (#947; issue #1112 F3
+// replaced the setup picker and the full-width note with one info button).
 export const simSetup = {
   canvas: (page: Page) => page.locator('#workspace-panel-simulation canvas'),
   progress: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__readout'),
@@ -912,8 +914,13 @@ export const simSetup = {
   coordA: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__coord--a .simulation-playback-bar__coord-value'),
   playPause: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn--primary'),
   viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),
-  picker: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('combobox', { name: 'Setup' }),
-  note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-note'),
+  /**
+   * The info button at the end of the toolbar: present only when the project
+   * has more than one setup. Its title and accessible name carry the sentence.
+   */
+  info: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-info__button'),
+  /** The sentence the button opens on a tap (a `title` alone never shows on touch). */
+  note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-info__text'),
   modeSelected: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Selected', exact: true }),
   modeVisible: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Visible', exact: true }),
   playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),

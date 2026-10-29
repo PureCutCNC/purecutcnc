@@ -364,8 +364,9 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // ── The switch, the banner and the empty Around layer ──
   await ui.face.switchTo(page, 'Around')
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
-  // The explanation is the Around entry's tooltip; desktop has no banner row (issue #1102).
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  // The explanation is the Around entry's tooltip, and the control lives at the
+  // right end of the centre panel's tab bar (issue #1112 F3).
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   // A flat face and Around share no plane: the other-side entry is gone.
   await ui.face.current(page).click()
   await expect(ui.face.item(page, 'Around')).toHaveAttribute('title', /^The bar turns in the rotary\./)
@@ -470,7 +471,8 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
 
-    // The tablet shell carries the control in the face row, still enabled.
+    // The tablet shell carries the control in its workspace header row, still
+    // enabled (issue #1112 F3).
     const control = ui.face.current(page)
     await expect(control).toBeVisible()
 

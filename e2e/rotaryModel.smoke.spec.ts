@@ -466,9 +466,11 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
   // ── Simulation: the Around setup is the bar and the run removes material ──
   await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
-  await expect(ui.simSetup.picker(page)).toBeVisible()
-  await ui.simSetup.picker(page).selectOption(aroundSetup.id)
+  // The Around operation is cut in the Around setup, so selecting it puts the
+  // workspace on that face and the simulation follows it (issue #1112 F3).
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
   const viewport = ui.simSetup.viewport(page)
+  await expect(viewport).toHaveAttribute('data-simulation-setup', aroundSetup.id)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
   await expect.poll(
     async () => Number(await viewport.getAttribute('data-simulation-removed-cells')),
@@ -1301,9 +1303,11 @@ test('square playback starts from the prior rough, follows the finish and resets
   // ── The selected finish opens as the shared heightfield, with removal ──
   await selectOperationRow(page, ui, 'Rotary finish')
   await ui.viewMenu.tabSimulation(page).click()
-  await expect(ui.simSetup.picker(page)).toBeVisible()
-  await ui.simSetup.picker(page).selectOption(around.id)
+  // The workspace is on the Around face, so the simulation shows that setup
+  // with no picker of its own (issue #1112 F3).
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
   const viewport = ui.simSetup.viewport(page)
+  await expect(viewport).toHaveAttribute('data-simulation-setup', around.id)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
   // A square grid draws the same surface and instanced boundary as the round
   // bar; a square-only branch that skipped the heightfield would leave this

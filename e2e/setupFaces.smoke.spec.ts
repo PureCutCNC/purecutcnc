@@ -105,7 +105,7 @@ test('a Top-only project shows the face switch and nothing else about faces', as
   await expect(ui.face.otherSideItem(page)).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(ui.face.menu(page)).toHaveCount(0)
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(ui.face.layer(page, 'top')).toHaveCount(0)
   await expect(page.locator('.face-chip')).toHaveCount(0)
   await page.locator('.tree-row--feature').first().click()
@@ -170,7 +170,7 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   // The control names the flip itself: "Bottom · flipped X" (issue #1112).
   await expect(ui.face.current(page)).toContainText('flipped X')
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -250,7 +250,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   expect(withoutModified(await getProject(page))).toEqual(before)
 
   await ui.face.switchTo(page, 'Top')
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
