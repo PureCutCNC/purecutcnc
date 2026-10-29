@@ -22,8 +22,10 @@
  * again, so an unchanged Apply was an undo step that changed nothing. The
  * comparison normalises the way Save stores the values — the text collapses to
  * one line and the height parses from the typed string — so a line break between
- * the same words or "12.0" over a saved 12 is not an edit. Creation has no saved
- * state to compare against and keeps its own behaviour.
+ * the same words or "12.0" over a saved 12 is not an edit. A conversion of the
+ * project's units rewrites the stored height, and the form follows that run, so
+ * the same physical height is still not an edit. Creation has no saved state to
+ * compare against and keeps its own behaviour.
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/project/textToolDirty.test.ts
@@ -31,6 +33,7 @@
 
 import React from 'react'
 import { parseHTML } from 'linkedom'
+import type { Project } from '../../types/project'
 import type { TextToolConfig } from '../../text'
 
 const { window, document } = parseHTML('<!doctype html><html><body></body></html>')
@@ -54,7 +57,9 @@ if (!('oninput' in (document as unknown as object))) {
 globals.React = React
 
 const { useProjectStore } = await import('../../store/projectStore')
-const { newProject, defaultTool } = await import('../../types/project')
+const { newProject, defaultTool, rectProfile } = await import('../../types/project')
+const { projectWithFeatures, resolvedFeature } = await import('../../test/projectFixtures')
+const { convertLength } = await import('../../utils/units')
 const { createRoot } = await import('react-dom/client')
 const { I18nProvider } = await import('../../i18n/I18nProvider')
 const { TextToolDialog } = await import('./TextToolDialog')
@@ -185,6 +190,65 @@ const saved: TextToolConfig = {
 /** The same run in a project whose units are inches: 12 mm is 0.4724… in. */
 const savedInInches: TextToolConfig = { ...saved, size: 12 / 25.4 }
 
+/** Id of the run the store-backed harness opens. */
+const TEXT_RUN_ID = 'run'
+
+/** A project that stores {@link saved} as a real text run. */
+function storedRunProject(): Project {
+  return projectWithFeatures({ ...newProject('Text form', 'mm'), tools: [defaultTool('mm', 1)] }, [
+    {
+      id: TEXT_RUN_ID, name: saved.text, kind: 'text', operation: saved.operation, visible: true, locked: false,
+      z_top: 5, z_bottom: 0, folderId: null, stl: null,
+      text: { text: saved.text, style: saved.style, fontId: saved.fontId, size: saved.size },
+      sketch: { origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [], profile: rectProfile(0, 0, 40, 20) },
+    },
+  ])
+}
+
+/**
+ * The dialog as Properties opens it: the run it edits is read back from the
+ * store on every render, so converting the project rewrites the values the
+ * dialog was handed.
+ */
+function StoredRunParent({ onClose, onConfirm }: { onClose: () => void; onConfirm: (config: TextToolConfig) => void }) {
+  const project = useProjectStore((state) => state.project)
+  const feature = resolvedFeature(project, TEXT_RUN_ID)
+  const text = feature.text
+  assert(text, 'the stored run has text')
+  return React.createElement(TextToolDialog, {
+    mode: 'edit',
+    initial: { text: text.text, style: text.style, fontId: text.fontId, size: text.size, operation: feature.operation },
+    onClose,
+    onConfirm,
+  })
+}
+
+/** Render the edit dialog over a stored run instead of a literal config. */
+async function mountStoredRun(): Promise<Mounted> {
+  useProjectStore.setState({
+    project: storedRunProject(),
+    history: { past: [], future: [], transactionStart: null },
+  } as never)
+  const confirmations: TextToolConfig[] = []
+  let closed = false
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  root.render(React.createElement(I18nProvider, null, React.createElement(StoredRunParent, {
+    onClose: () => { closed = true },
+    onConfirm: (config: TextToolConfig) => { confirmations.push(config) },
+  })))
+  await flush()
+  return {
+    confirmations,
+    closed: () => closed,
+    unmount: () => {
+      root.unmount()
+      host.remove()
+    },
+  }
+}
+
 // ── Unchanged → disabled ────────────────────────────────────────────
 
 {
@@ -251,21 +315,29 @@ const savedInInches: TextToolConfig = { ...saved, size: 12 / 25.4 }
   dialog.unmount()
 }
 
-// ── A unit toggle does not turn the form into an edit ───────────────
+// ── A unit conversion is not an edit to the stored run ──────────────
 
 {
-  const dialog = await mountEdit(saved)
-  assert(applyButton().disabled, 'the form starts unchanged')
-  // Converting the project's units (the Units menu's "Convert" choice) rewrites
-  // the stored run, but not what this dialog would save: the form has not
-  // changed, so Apply stays disabled (issue #1112 F4).
+  const dialog = await mountStoredRun()
+  assert(Number(sizeField().value) === saved.size, 'the stored run reads its saved height')
+  assert(applyButton().disabled, 'a stored run is not an edit')
+
+  // "Convert" keeps the physical height and rewrites the stored number with
+  // every other length in the project (issue #1112 F4). The dialog follows the
+  // converted run, so the form still holds the values it would have saved.
   useProjectStore.getState().setUnits('inch', 'convert')
   await flush()
-  assert(applyButton().disabled, 'a unit toggle with the same values keeps Apply disabled')
+  const inches = convertLength(saved.size, 'mm', 'inch')
+  assert(useProjectStore.getState().project.meta.units === 'inch', 'the project is in inches')
+  assert(resolvedFeature(useProjectStore.getState().project, TEXT_RUN_ID).text?.size === inches,
+    'the stored height converts with the project')
+  assert(Number(sizeField().value) === inches, 'the dialog follows the converted height')
+  assert(applyButton().disabled, 'a converted height is not an edit')
 
+  // The form still works after the conversion: a real edit enables Apply.
   typeInto(sizeField(), '13')
   await flush()
-  assert(!applyButton().disabled, 'an edit after the unit toggle enables Apply')
+  assert(!applyButton().disabled, 'a changed height after the conversion enables Apply')
   dialog.unmount()
 }
 

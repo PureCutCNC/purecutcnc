@@ -29,10 +29,12 @@ import { useI18n } from '../../i18n/i18nContext'
 
 export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup: MachiningSetup; onClose: () => void }) {
   const { t } = useI18n()
-  const [setup] = useState(initialSetup)
+  const [setup, setSetup] = useState(initialSetup)
   const [deleteSnapshot, setDeleteSnapshot] = useState<Project | null>(null)
   const close = onClose
   const { project, updateSetup, deleteSetup } = useProjectStore()
+  const units = project.meta.units
+  const [openedUnits, setOpenedUnits] = useState(units)
   const [name, setName] = useState(setup.name)
   const [axis, setAxis] = useState(setup.orientation.axis)
   const [notes, setNotes] = useState(setup.notes)
@@ -41,6 +43,19 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const face = setupFace(setup)
   const sections = setupDialogSections(face)
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
+  // A unit conversion happens under the dialog too: the store rescales every
+  // length with the project, this setup's registration points included (#1112
+  // F4). Re-read the converted setup, as reopening the dialog would, so the form
+  // keeps showing the same physical reference — the old millimetre numbers would
+  // otherwise read as inches, a real edit the user never made, and the
+  // stale-form guard below would refuse a Save it should have disabled anyway.
+  if (units !== openedUnits) {
+    setOpenedUnits(units)
+    if (current) {
+      setSetup(current)
+      setRegistration(current.registration)
+    }
+  }
   // A dialog cannot save over an intervening undo/edit to the setup.
   const storeUnchanged = Boolean(current) && JSON.stringify(current) === JSON.stringify(setup)
   // Compare the draft with the saved setup through the values Save would write

@@ -70,6 +70,25 @@ export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }:
     size: defaults.size,
     operation: defaults.operation,
   }
+
+  // The run this dialog edits can be rewritten while it is open: converting the
+  // project's units converts the stored height with every other length (#1112
+  // F4). Follow the saved values, as reopening the dialog would, so the form
+  // keeps showing the same physical run — a stale millimetre height would
+  // otherwise read as an edit in an inch project and be saved as inches. React
+  // re-renders before painting, so the button never shows the stale comparison;
+  // the check is by value because the parent hands back a fresh object each
+  // render.
+  const [openedOn, setOpenedOn] = useState(saved)
+  if (isEdit && formHasChanges(openedOn, saved)) {
+    setOpenedOn(saved)
+    setText(saved.text)
+    setStyle(saved.style)
+    setFontId(saved.fontId)
+    setSize(String(saved.size))
+    setOperation(saved.operation)
+  }
+
   const canApply = valid && (!isEdit || formHasChanges(saved, draft))
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {

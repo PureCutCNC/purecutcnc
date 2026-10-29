@@ -26,7 +26,10 @@
  * it, typing the value back disables it again (including a whitespace-only name
  * difference, which the store trims away), a field the face does not store does
  * not enable it, and Save is never reached while disabled — by click or by
- * Enter. The intervening-edit guard keeps working alongside it.
+ * Enter. A unit change under the dialog is not an edit either: the form reads
+ * the same physical reference back after a conversion, and the numbers the form
+ * would write after a reinterpret. The intervening-edit guard keeps working
+ * alongside all of it.
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/cam/setupPropertiesDirty.test.ts
@@ -203,6 +206,28 @@ function bottomSetup(): MachiningSetup {
   return setup
 }
 
+function approx(left: number, right: number): boolean {
+  return Math.abs(left - right) < 1e-9
+}
+
+function sameNumbers(actual: number[], expected: number[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => approx(value, expected[index]))
+}
+
+/** The one point the Bottom setup's saved reference registers. */
+function savedReferencePoint(): { x: number; y: number } {
+  const [reference] = bottomSetup().registration
+  assert(reference && reference.target.type === 'point', 'the Bottom setup stores a point reference')
+  return reference.target.point
+}
+
+/** The numbers the dialog's saved-reference list shows, in order. */
+function registrationNumbers(): number[] {
+  const row = document.body.querySelector('.setup-registration li span')
+  assert(row, 'the dialog lists the saved reference')
+  return ((row.textContent ?? '').match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number)
+}
+
 // ── Unchanged → disabled ────────────────────────────────────────────
 
 {
@@ -371,15 +396,51 @@ async function rebuildReference(x: number, y: number): Promise<void> {
   imperial.unmount()
 }
 
-// ── A unit reinterpret does not turn the form into an edit ──────────
+// ── A unit conversion is not an edit to a saved reference ───────────
 
 {
-  const dialog = await mountDialog('setup-bottom')
-  assert(saveButton().disabled, 'the form starts unchanged')
+  // "Convert" keeps the physical point and rewrites the stored numbers, so a
+  // form that follows it has still changed nothing it would write.
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  assert(saveButton().disabled, 'a saved reference is not an edit')
+  assert(sameNumbers(registrationNumbers(), [25.4, 12.7]), 'the saved reference reads in the project’s millimetres')
+
+  store().setUnits('inch', 'convert')
+  await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  const converted = savedReferencePoint()
+  assert(approx(converted.x, 1) && approx(converted.y, 0.5), 'the stored reference converts with the project')
+  assert(sameNumbers(registrationNumbers(), [1, 0.5]), 'the dialog follows the converted reference')
+  assert(saveButton().disabled, 'a converted reference is not an edit')
+  assert(!document.body.querySelector('[role="alert"]'), 'a unit conversion is not an edit to the setup')
+
+  // The form still works after the conversion: a real edit enables Save.
+  typeInto(fieldInput('Name'), 'Back machining')
+  await flush()
+  assert(!saveButton().disabled, 'an edit after the conversion enables Save')
+  dialog.unmount()
+}
+
+// ── A unit reinterpret keeps the numbers, and is not an edit either ─
+
+{
   // "Reinterpret" keeps the numbers and changes only the unit they mean, so
   // nothing the dialog writes has changed (issue #1112 F4).
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  assert(saveButton().disabled, 'the form starts unchanged')
+
   store().setUnits('inch', 'reinterpret')
   await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  const kept = savedReferencePoint()
+  assert(approx(kept.x, 25.4) && approx(kept.y, 12.7), 'reinterpret keeps the stored numbers')
+  assert(sameNumbers(registrationNumbers(), [25.4, 12.7]), 'the form still shows the same reference')
   assert(saveButton().disabled, 'a unit toggle with the same values keeps Save disabled')
   assert(!document.body.querySelector('[role="alert"]'), 'a unit toggle is not an edit to the setup')
 
