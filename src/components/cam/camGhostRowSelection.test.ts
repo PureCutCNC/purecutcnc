@@ -37,7 +37,11 @@
  *   from Top selects it" and the focusability and keyboard assertions fail;
  * - dropping `revealOperationFace` from `useOperationSelection` → "the header
  *   face follows the click" fails, the face staying on Top;
- * - dropping the ghost's dimmed class → "the row still reads as a ghost" fails.
+ * - dropping the ghost's dimmed class → "the row still reads as a ghost" fails;
+ * - dropping `event.target !== event.currentTarget` from the row's `onKeyDown`
+ *   (review finding 3) → "Enter/Space on the eye is left to the button" fails:
+ *   the row claims the key the eye needs for its own activation, and the face
+ *   ends up flipped to Bottom.
  *
  * Run with: NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/cam/camGhostRowSelection.test.ts
  */
@@ -154,10 +158,11 @@ async function openBottomSection(host: HTMLElement): Promise<void> {
 }
 
 /** A keydown as the DOM delivers it (linkedom has no `KeyboardEvent`). */
-function pressKey(target: Element, key: string): void {
+function pressKey(target: Element, key: string): Event {
   const event = new window.Event('keydown', { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'key', { value: key })
   target.dispatchEvent(event)
+  return event
 }
 
 // ── The off-face row is a focusable button again ──────────────
@@ -202,6 +207,31 @@ for (const key of ['Enter', ' '] as const) {
   flushSync(() => pressKey(ghostRow(harness.host), key))
   assert(harness.selection() === 'bottomOp', `${key === ' ' ? 'Space' : key} on a ghost row selects it`)
   assert(activeFace(current()) === 'bottom', `${key === ' ' ? 'Space' : key} on a ghost row turns the face over`)
+  harness.unmount()
+}
+
+// ── A key on the row's eye stays the eye's own ────────────────
+// The row is a button that contains buttons (issue #1112 F3 review of PR #1126,
+// finding 3). A keydown on the eye bubbles to the row, and if the row claimed
+// Enter/Space the button would never receive its native activation: Space on a
+// Bottom operation's eye would turn the workspace over to Bottom and toggle
+// nothing. The row's handler has to ignore keys aimed at its children.
+for (const key of ['Enter', ' '] as const) {
+  const label = key === ' ' ? 'Space' : key
+  const harness = await mountPanel(twoFaceProject())
+  await openBottomSection(harness.host)
+  const { flushSync } = await import('react-dom')
+  const eye = ghostRow(harness.host).querySelector<HTMLElement>('button')
+  assert(eye, 'the ghost row carries its eye button')
+  const before = current().operations.find((operation) => operation.id === 'bottomOp')?.showToolpath
+  let event: Event | undefined
+  flushSync(() => { event = pressKey(eye, key) })
+  assert(event, `${label} on the eye reaches the DOM`)
+  assert(!event.defaultPrevented, `${label} on the eye is left to the button, not claimed by the row`)
+  assert(harness.selection() === null, `${label} on the eye does not select the operation`)
+  assert(activeFace(current()) === 'top', `${label} on the eye keeps the face on Top`)
+  assert(current().operations.find((operation) => operation.id === 'bottomOp')?.showToolpath === before,
+    `${label} on the eye does not toggle the toolpath through the row`)
   harness.unmount()
 }
 

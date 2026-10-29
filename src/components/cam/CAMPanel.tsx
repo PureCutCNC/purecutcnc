@@ -2319,6 +2319,13 @@ export function CAMPanel({
                           title={ghostTitle}
                           onClick={() => handleSelectOperation(operation.id)}
                           onKeyDown={(event) => {
+                            // Only the row's own focus selects it (issue #1112
+                            // F3 review of PR #1126, finding 3): key events
+                            // bubble from the row's buttons, and claiming them
+                            // here would replace the button's activation —
+                            // Space on the eye would flip the workspace to the
+                            // operation's face instead of showing its toolpath.
+                            if (event.target !== event.currentTarget) return
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
                               handleSelectOperation(operation.id)
