@@ -141,11 +141,13 @@ test('the default clears the corner envelope and is never raised to the corner r
   }
 })
 
-test('a small square takes the 3 inch standard chuck', () => {
+test('a small square takes the 4 inch starter too, held across flats', () => {
   const stock = squareStock(10, 100, 'x', { x: 0, y: 0 })
   const chuck = defaultRoundWorkholding('chuck', stock, 'mm')
-  assert.equal(chuck.h, convertLength(3.15, 'inch', 'mm'), 'the 3 inch preset holds this blank')
-  assert.equal(chuck.height, 5 + convertLength(3.15, 'inch', 'mm') / 2, 'the height follows the body and the pivot')
+  // #1112 R2 item 23: 10 mm across flats is inside the 4 inch range (0.12–1.3
+  // in), so the square keeps the starter rather than a smaller body.
+  assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), 'the 4 inch preset holds this blank')
+  assert.equal(chuck.height, 5 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows the body and the pivot')
 })
 
 test('the defaults are converted for an inch blank', () => {
@@ -182,13 +184,18 @@ test('a square on Y starts at maxY and sits across X', () => {
   closeTo(tailstock.x + tailstock.w / 2, 15, 'centred across X')
 })
 
-test('the square default is larger than the round default on the same nominal bar', () => {
+test('the square default clears the corner envelope the round one need not', () => {
   const square = squareStock(20, 100, 'x', { x: 0, y: 0 })
   const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
   const squareChuck = defaultRoundWorkholding('chuck', square, 'mm')
   const roundChuck = defaultRoundWorkholding('chuck', bar, 'mm')
-  assert.equal(roundChuck.h, convertLength(3.15, 'inch', 'mm'), 'the smallest round-bar preset')
-  assert.ok(squareChuck.h > roundChuck.h, 'the square default clears corners the round one need not')
+  assert.equal(roundChuck.h, convertLength(3.94, 'inch', 'mm'), 'the 4 inch starter on a round bar')
+  // Both bars take the starter here, so the square's claim is not that it is
+  // bigger — it is that its body clears the corners the round one need not.
+  assert.ok(squareChuck.h / 2 >= barMaxRadius(square), 'the square body clears the corner radius')
+  assert.ok(roundChuck.h / 2 >= barMaxRadius(bar), 'and the round one covers its diameter')
+  assert.equal(squareChuck.chuck?.jawCount, 4, 'the square default is the 4-jaw set')
+  assert.equal(roundChuck.chuck?.jawCount, 3, 'the round default is the 3-jaw set')
 })
 
 // ── syncRoundWorkholding ──────────────────────────────────────

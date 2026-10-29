@@ -33,7 +33,9 @@ export function ChuckProperties({ clamp, stock, units, onChange }: Props) {
     if (!range) return
     const next = { ...range, [key]: convertLength(value, units, 'mm') }
     if (next.min < 0 || next.max < next.min || !Number.isFinite(value)) return
-    onChange({ chuck: { ...data, clampingRangeMm: next } })
+    // A typed capacity is the operator's own equipment: it stops following the
+    // bar (#1112 R2 item 23).
+    onChange({ chuck: { ...data, clampingRangeMm: next, manual: true } })
   }
   return <>
     <label className="properties-field">
@@ -44,7 +46,11 @@ export function ChuckProperties({ clamp, stock, units, onChange }: Props) {
             ...(!knownSize ? [{ value: '', label: `${t('featureTree.properties.chuckExisting')} · Ø${formatLength(roundWorkholdingDiameter(clamp, stock), units)}${data?.size ? ` (${data.size})` : ''}` }] : []),
             ...STANDARD_CHUCKS.map((size) => ({ value: size.id, label: size.label })),
           ]}
-          onChange={(id) => { if (id) onChange(chuckSizePatch(id, stock, units)) }} />
+          onChange={(id) => {
+            // A size pick replaces the body and capacity, never the jaw set the
+            // operator chose; it is still their chuck afterwards (#1112 R2 item 23).
+            if (id) onChange(chuckSizePatch(id, stock, units, { manual: true, jawCount: data?.jawCount }))
+          }} />
       </div>
     </label>
     {range ? (['min', 'max'] as const).map((limit) => <label className="properties-field" key={limit}>
@@ -52,16 +58,18 @@ export function ChuckProperties({ clamp, stock, units, onChange }: Props) {
       <DraftNumberInput key={`${clamp.id}-${limit}-${range[limit]}`} value={convertLength(range[limit], 'mm', units)}
         units={units} min={0} onCommit={(next) => setLimit(limit, next)} />
     </label>) : <>
-      <UnsetChuckRange key={`${clamp.id}-${units}`} units={units} onCommit={(clampingRangeMm) => onChange({ chuck: { ...data, clampingRangeMm } })} />
+      <UnsetChuckRange key={`${clamp.id}-${units}`} units={units} onCommit={(clampingRangeMm) => onChange({ chuck: { ...data, clampingRangeMm, manual: true } })} />
       <span className="properties-hint">{t('featureTree.properties.chuckUnknownRange')}</span>
     </>}
     <label className="properties-field">
       <span>{t('featureTree.properties.chuckJaws')}</span>
-      <Select value={String(data?.jawCount ?? 3)} options={[3, 4, 6].map((count) => ({ value: String(count), label: String(count) }))}
-        onChange={(value) => {
-          const jawCount = Number(value)
-          if (jawCount === 3 || jawCount === 4 || jawCount === 6) onChange({ chuck: { ...data, jawCount } })
-        }} />
+      <div data-testid="chuck-jaws">
+        <Select value={String(data?.jawCount ?? 3)} options={[3, 4, 6].map((count) => ({ value: String(count), label: String(count) }))}
+          onChange={(value) => {
+            const jawCount = Number(value)
+            if (jawCount === 3 || jawCount === 4 || jawCount === 6) onChange({ chuck: { ...data, jawCount, manual: true } })
+          }} />
+      </div>
     </label>
     <span className="properties-hint">{t('featureTree.properties.chuckSquareRange')}</span>
     <ChuckRangeWarning clamp={clamp} stock={stock} units={units} />

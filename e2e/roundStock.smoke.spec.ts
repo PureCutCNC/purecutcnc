@@ -207,8 +207,11 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   await expect(ui.properties.clampType(page)).toBeVisible()
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
   await expect(ui.properties.chuckSize(page)).toBeVisible()
-  // A 40 mm square's corner circle needs the 6 inch body.
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('6"')
+  // A 40 mm square starts with four jaws, which grip across flats — 40 mm,
+  // 1.575 in — so its capacity is judged on that, not on the 56.6 mm corner
+  // circle a 3-jaw set would have to clear (#1112 R2 item 23). The 4 inch
+  // starter stops at 1.3 in, so this blank takes the 5 inch body.
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('5"')
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 
   // A plain clamp gives up the chuck size, and choosing Chuck mints one sized

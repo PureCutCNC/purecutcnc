@@ -83,6 +83,42 @@ const renderProperties = (value: Clamp): Promise<string> => render(createElement
   createElement(ChuckProperties, { clamp: value, stock, units: 'mm', onChange: () => {} }),
 ))
 
+/** Render and keep the host, so a pick can be driven like the user's. */
+async function mountProperties(
+  value: Clamp,
+  onChange: (patch: Partial<Clamp>) => void,
+  onChangeStock: typeof stock = stock,
+): Promise<{ host: HTMLElement; unmount: () => void }> {
+  const { createRoot } = await import('react-dom/client')
+  const { flushSync } = await import('react-dom')
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  flushSync(() => root.render(createElement(I18nProvider, null,
+    createElement(ChuckProperties, { clamp: value, stock: onChangeStock, units: 'mm', onChange }))))
+  return {
+    host,
+    unmount: () => {
+      flushSync(() => root.unmount())
+      host.remove()
+    },
+  }
+}
+
+/** Press a Select: open its trigger, then choose the option with this label. */
+async function pick(host: HTMLElement, testId: string, label: string): Promise<void> {
+  const { flushSync } = await import('react-dom')
+  const field = host.querySelector(`[data-testid="${testId}"]`)
+  assert(field, `${testId} is rendered`)
+  const trigger = field.querySelector<HTMLElement>('.ui-select__trigger')
+  assert(trigger, `${testId} has a trigger`)
+  flushSync(() => trigger.click())
+  const option = [...field.querySelectorAll<HTMLElement>('.ui-select__option')]
+    .find((entry) => entry.textContent?.trim() === label)
+  assert(option, `${testId} offers ${label}`)
+  flushSync(() => option.dispatchEvent(new window.Event('pointerdown', { bubbles: true })))
+}
+
 // A chuck whose capacity covers the bar shows no warning but still shows the
 // equipment fields, so the size is always editable.
 {
@@ -120,6 +156,30 @@ const renderProperties = (value: Clamp): Promise<string> => render(createElement
   assert(html.includes('Existing size'), 'a legacy chuck keeps its existing size')
   assert(html.includes('Capacity unknown'), 'and its capacity is explicitly unknown')
   assert(legacy.chuck === undefined, 'rendering does not infer equipment onto it')
+}
+
+// A hand edit of the equipment is recorded as such (#1112 R2 item 23): the
+// size pick marks the chuck manual and keeps the jaw set; the jaw pick marks it
+// manual itself. Without the flag a stock change would re-default both.
+{
+  const patches: Partial<Clamp>[] = []
+  const mounted = await mountProperties(clamp, (patch) => patches.push(patch))
+  await pick(mounted.host, 'chuck-size', '12"')
+  mounted.unmount()
+  assert(patches.length === 1, 'a size pick reports one patch')
+  assert(patches[0].chuck?.manual === true, 'a picked size is the operator\'s chuck')
+  assert(patches[0].chuck?.size === 'bison-3204-12', 'the picked preset')
+  assert(patches[0].chuck?.jawCount === 3, 'and it keeps the jaws the chuck already had')
+}
+
+{
+  const patches: Partial<Clamp>[] = []
+  const mounted = await mountProperties(clamp, (patch) => patches.push(patch))
+  await pick(mounted.host, 'chuck-jaws', '6')
+  mounted.unmount()
+  assert(patches.length === 1, 'a jaw pick reports one patch')
+  assert(patches[0].chuck?.jawCount === 6, 'the chosen jaw count')
+  assert(patches[0].chuck?.manual === true, 'and it is a hand edit too')
 }
 
 console.log('chuck properties view tests passed')

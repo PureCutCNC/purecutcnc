@@ -33,6 +33,7 @@ import {
   getStockBounds,
   roundStockDiameter,
   type BarStock,
+  type ChuckData,
   type Clamp,
   type Project,
   type ProjectMeta,
@@ -71,13 +72,35 @@ export const STANDARD_CHUCKS = [
   { id: 'bison-3204-12', label: '12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2 },
 ] as const
 
+/** One listed chuck: its catalogue id, its size label and its published dimensions. */
+export type ChuckPreset = (typeof STANDARD_CHUCKS)[number]
+
+/**
+ * The preset a new chuck takes whenever the bar fits it (#1112 R2 item 23):
+ * Frank's 4 inch starter, a 100 mm body. A bar outside its capacity falls back
+ * to the smallest preset whose range holds it.
+ */
+export const DEFAULT_CHUCK_ID = 'bison-3204-4'
+
+/**
+ * The jaw count a bar shape starts from: four for a square blank, whose four
+ * jaws grip across flats, and three for a round bar.
+ */
+export function defaultJawCount(stock: BarStock): 3 | 4 {
+  return isSquareStock(stock) ? 4 : 3
+}
+
 /** Square capacity is across flats for four jaws, the corner circle otherwise. */
 export function chuckGripDiameter(stock: BarStock, jaws: 3 | 4 | 6): number {
   return isSquareStock(stock) && jaws === 4 ? stock.thickness : 2 * barMaxRadius(stock)
 }
 
-export function smallestFittingChuck(stock: BarStock, units: ProjectMeta['units']) {
-  const diameterIn = convertLength(chuckGripDiameter(stock, 3), units, 'inch')
+export function smallestFittingChuck(
+  stock: BarStock,
+  units: ProjectMeta['units'],
+  jaws: 3 | 4 | 6 = 3,
+): ChuckPreset | null {
+  const diameterIn = convertLength(chuckGripDiameter(stock, jaws), units, 'inch')
   const fitting = STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
   if (fitting) return fitting
   // Outside every listed jaw range: the nearest end preset, so the panel can
@@ -91,6 +114,38 @@ export function smallestFittingChuck(stock: BarStock, units: ProjectMeta['units'
     ? STANDARD_CHUCKS[0]
     : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
   return nearest.diameterIn >= diameterIn ? nearest : null
+}
+
+/**
+ * The size a new chuck on `stock` takes (#1112 R2 item 23): the 4 inch preset
+ * unless the bar is outside its capacity, in which case the smallest preset
+ * whose range holds the bar. `jaws` decides which grip diameter the capacity is
+ * measured against — the matching rule of `chuckGripDiameter` — so a square
+ * blank held in four jaws is judged across flats, not by its corner circle.
+ * Null when no listed preset holds the bar; the stock-derived fallback and its
+ * warning then stand.
+ */
+export function defaultChuckSize(
+  stock: BarStock,
+  units: ProjectMeta['units'],
+  jaws: 3 | 4 | 6 = defaultJawCount(stock),
+): ChuckPreset | null {
+  const diameterIn = convertLength(chuckGripDiameter(stock, jaws), units, 'inch')
+  const preferred = STANDARD_CHUCKS.find((size) => size.id === DEFAULT_CHUCK_ID)
+  const candidate = preferred && diameterIn >= preferred.minIn && diameterIn <= preferred.maxIn
+    ? preferred
+    : smallestFittingChuck(stock, units, jaws)
+  if (!candidate) return null
+  // A square blank's corners turn further than its flats: a body narrower than
+  // the corner envelope would sit inside the material, and the square guard
+  // refuses that setup outright. Such a bar gets the stock-derived body
+  // instead — no preset claimed, still reported past the largest capacity —
+  // exactly as a bar no preset's *body* can reach does (see
+  // `smallestFittingChuck`).
+  if (isSquareStock(stock) && convertLength(candidate.diameterIn, 'inch', units) < 2 * barMaxRadius(stock)) {
+    return null
+  }
+  return candidate
 }
 
 export function chuckOutOfRange(clamp: Clamp, stock: Stock, units: ProjectMeta['units']): boolean {
@@ -137,8 +192,18 @@ export type ChuckSizePatch = Pick<Clamp, 'x' | 'y' | 'w' | 'h' | 'height' | 'chu
  * its published axial body length, and re-places the chuck against the bar end
  * so the whole envelope is real — the old length was the old chuck's. Existing
  * chucks keep their dimensions until a size is picked (format rule).
+ *
+ * The jaw count starts from the bar shape's default (#1112 R2 item 23), unless
+ * the caller carries one through. `manual` records that the operator chose this
+ * chuck, so a later stock change leaves its equipment alone; a default minted
+ * here is left without it.
  */
-export function chuckSizePatch(sizeId: string, stock: BarStock, units: ProjectMeta['units']): ChuckSizePatch {
+export function chuckSizePatch(
+  sizeId: string,
+  stock: BarStock,
+  units: ProjectMeta['units'],
+  options: { jawCount?: 3 | 4 | 6; manual?: boolean } = {},
+): ChuckSizePatch {
   const size = STANDARD_CHUCKS.find((entry) => entry.id === sizeId)
   if (!size) throw new RangeError('Unknown standard chuck size')
   const diameter = convertLength(size.diameterIn, 'inch', units)
@@ -148,7 +213,8 @@ export function chuckSizePatch(sizeId: string, stock: BarStock, units: ProjectMe
     chuck: {
       size: size.id,
       clampingRangeMm: { min: convertLength(size.minIn, 'inch', 'mm'), max: convertLength(size.maxIn, 'inch', 'mm') },
-      jawCount: 3,
+      jawCount: options.jawCount ?? defaultJawCount(stock),
+      ...(options.manual ? { manual: true } : {}),
     },
   }
 }
@@ -167,19 +233,20 @@ export function roundWorkholdingDiameter(clamp: Clamp, stock: BarStock): number 
 }
 
 /**
- * New chucks take the smallest fitting BISON preset; a bar no preset's *body*
- * can reach (see `smallestFittingChuck`) and every tailstock keep the
- * stock-derived default. A stock-derived chuck carries the largest listed
- * capacity without claiming its size, so such a bar is still reported out of
- * range. The grip is 15 mm, at most a quarter of the bar length. Existing
- * fixtures never pass through this creation helper on load.
+ * New chucks take the 4 inch starter, or the smallest fitting BISON preset when
+ * the bar is outside it (#1112 R2 item 23); a bar no preset's *body* can reach
+ * (see `smallestFittingChuck`) and every tailstock keep the stock-derived
+ * default. A stock-derived chuck carries the largest listed capacity without
+ * claiming its size, so such a bar is still reported out of range. The grip is
+ * 15 mm, at most a quarter of the bar length. Existing fixtures never pass
+ * through this creation helper on load.
  */
 export function defaultRoundWorkholding(
   type: 'chuck' | 'tailstock',
   stock: BarStock,
   units: ProjectMeta['units'],
 ): Pick<Clamp, 'type' | 'x' | 'y' | 'w' | 'h' | 'height' | 'chuck'> {
-  const size = type === 'chuck' ? smallestFittingChuck(stock, units) : null
+  const size = type === 'chuck' ? defaultChuckSize(stock, units) : null
   // A chuck and a size pick share one envelope: the published body past the
   // start end plus its grip inside it.
   if (size) return { ...chuckSizePatch(size.id, stock, units), type }
@@ -192,7 +259,12 @@ export function defaultRoundWorkholding(
   // silently stops holding for exactly the bars that need it most.
   const largest = STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
   const capacity: Pick<Clamp, 'chuck'> = type === 'chuck'
-    ? { chuck: { clampingRangeMm: { min: convertLength(largest.minIn, 'inch', 'mm'), max: convertLength(largest.maxIn, 'inch', 'mm') } } }
+    ? {
+      chuck: {
+        clampingRangeMm: { min: convertLength(largest.minIn, 'inch', 'mm'), max: convertLength(largest.maxIn, 'inch', 'mm') },
+        jawCount: defaultJawCount(stock),
+      },
+    }
     : {}
 
   const ownDiameter = isSquareStock(stock)
@@ -349,4 +421,64 @@ export function syncRoundWorkholding(project: Project): Project {
   })
 
   return changed ? { ...project, clamps } : project
+}
+
+/**
+ * A hand-set jaw count that the previous shape's default cannot explain is
+ * taken as the operator's choice. This is the pre-flag reading (#1112 R2 item
+ * 23): a file saved before `ChuckData.manual` existed records no hand edit, so
+ * a square blank's 3-jaw chuck — a sibling build's pick, not the 4-jaw default
+ * — must keep its jaws rather than be re-defaulted. Every chuck this build
+ * mints matches its shape's default, so the test stays quiet for them.
+ */
+function jawsChosenByHand(previous: BarStock, data: ChuckData): boolean {
+  return data.jawCount !== undefined && data.jawCount !== defaultJawCount(previous)
+}
+
+/**
+ * Keeps a *default* chuck in step with the bar it holds (#1112 R2 item 23): the
+ * 4 inch starter — or the smallest preset whose range fits — and the bar
+ * shape's jaw count (four on a square blank's flats, three on a round bar).
+ * It runs on a stock *transition* only, never on load, so a saved project keeps
+ * the jaw count it stored.
+ *
+ * A chuck the operator described by hand (`ChuckData.manual`: a size pick, a
+ * jaw count, a typed capacity or a dragged body) is never touched, and neither
+ * is a legacy clamp with no chuck data — the 3.3 rule that missing equipment is
+ * never inferred. Nor is a tailstock. When no listed preset holds the new bar,
+ * today's behaviour stands: the clamp is left as it is and reported out of
+ * range rather than silently replaced by a body that cannot reach the stock.
+ * Returns the same project object when no chuck follows.
+ */
+export function followBarChuck(previous: Stock, next: Project): Project {
+  const stock = next.stock
+  if (!isBarStock(stock) || !isBarStock(previous)) return next
+  const shapeChanged = previous.shape !== stock.shape
+  const sizeChanged = previous.thickness !== stock.thickness
+  if (!shapeChanged && !sizeChanged) return next
+  const units = next.meta.units
+  let changed = false
+
+  const clamps = next.clamps.map((clamp) => {
+    if (clamp.type !== 'chuck' || !clamp.chuck) return clamp
+    const data = clamp.chuck
+    const byHand = data.manual === true || jawsChosenByHand(previous, data)
+    const jaws = shapeChanged && !byHand ? defaultJawCount(stock) : data.jawCount
+    const size = defaultChuckSize(stock, units, jaws ?? defaultJawCount(stock))
+    if (!byHand && size && size.id !== data.size) {
+      changed = true
+      // New equipment: its published body replaces the old one, so the whole
+      // default envelope is rebuilt. The jaws it already had are carried over;
+      // a chuck that never recorded any takes the shape's default, which is the
+      // jaw count its capacity was just measured against.
+      return { ...clamp, ...chuckSizePatch(size.id, stock, units, { jawCount: jaws ?? defaultJawCount(stock) }) }
+    }
+    if (jaws !== undefined && jaws !== data.jawCount) {
+      changed = true
+      return { ...clamp, chuck: { ...data, jawCount: jaws } }
+    }
+    return clamp
+  })
+
+  return changed ? { ...next, clamps } : next
 }

@@ -16,14 +16,22 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { newProject, roundStock, defaultOrigin, type Clamp } from '../../types/project'
-import { squareStock, barCentre, barPivotZ } from '../../types/barStock'
+import { newProject, roundStock, defaultOrigin, type BarStock, type Clamp, type Project } from '../../types/project'
+import { squareStock, barCentre, barMaxRadius, barPivotZ } from '../../types/barStock'
 import { convertLength, convertProjectUnits } from '../../utils/units'
 import { useProjectStore } from '../projectStore'
 import { newChuck, projectWithStockShape } from './stockShape'
 import { normalizeProject, decodeProjectFormat } from './projectFormat'
 import { expandedClampBounds } from '../../engine/toolpaths/clamps'
-import { STANDARD_CHUCKS, chuckGripDiameter, chuckOutOfRange, chuckSizePatch, syncRoundWorkholding } from './roundWorkholding'
+import {
+  DEFAULT_CHUCK_ID,
+  STANDARD_CHUCKS,
+  chuckGripDiameter,
+  chuckOutOfRange,
+  chuckSizePatch,
+  defaultJawCount,
+  defaultRoundWorkholding,
+} from './roundWorkholding'
 
 function fixture(diameter = 20, units: 'mm' | 'inch' = 'mm', axis: 'x' | 'y' = 'x') {
   const stock = roundStock(diameter, diameter * 8, axis, { x: 7, y: 11 })
@@ -31,38 +39,194 @@ function fixture(diameter = 20, units: 'mm' | 'inch' = 'mm', axis: 'x' | 'y' = '
   return { ...project, clamps: [newChuck(project, stock)] }
 }
 
-test('new project takes the smallest fitting actual equipment, at each capacity boundary on both axes and units', () => {
+test('new project takes the 4 inch starter, or the smallest fitting actual equipment past it, on both axes and units', () => {
+  const starter = STANDARD_CHUCKS.find((size) => size.id === DEFAULT_CHUCK_ID)!
+  // #1112 R2 item 23 names the size: 4 inch (100 mm), not merely "the default".
+  assert.equal(starter.id, 'bison-3204-4', 'the starter is the 4 inch preset')
   for (const units of ['mm', 'inch'] as const) for (const axis of ['x', 'y'] as const) {
     for (const diameterIn of [0.1, 1.06, 1.061, 1.3, 1.301, 1.97, 1.971, 2.52, 2.521, 3.54, 3.541, 4.6, 4.601, 5.2]) {
       const project = fixture(convertLength(diameterIn, 'inch', units), units, axis)
       useProjectStore.getState().createNewProject(project, 'New rotary project')
       const chuck = useProjectStore.getState().project.clamps[0]
-      const expected = STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
+      // #1112 R2 item 23: the 4 inch starter unless the bar is outside its
+      // gripping range; then the smallest preset whose range holds the bar.
+      const expected = diameterIn >= starter.minIn && diameterIn <= starter.maxIn
+        ? starter
+        : STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
       assert.equal(chuck.chuck?.size, expected?.id)
       assert.equal(axis === 'x' ? chuck.h : chuck.w, convertLength(expected!.diameterIn, 'inch', units))
+      assert.equal(chuck.chuck?.jawCount, 3, 'a round bar starts with three jaws')
+      assert.equal(chuck.chuck?.manual, undefined, 'a minted default is not hand-set')
     }
   }
 })
 
-test('stock resize, axis and shape changes preserve chosen equipment, including a too-small legacy chuck', () => {
+test('a stock resize re-defaults an untouched chuck, keeps a hand-set one and never touches legacy equipment', () => {
   for (const axis of ['x', 'y'] as const) {
+    const across = (clamp: Clamp): number => (axis === 'x' ? clamp.h : clamp.w)
     const project = fixture(20, 'mm', axis)
     useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } })
     useProjectStore.getState().setRectStockDimension(axis === 'x' ? 'height' : 'width', 70, 'top')
     const resized = useProjectStore.getState().project
-    const chuck = resized.clamps[0]
-    assert.equal(axis === 'x' ? chuck.h : chuck.w, axis === 'x' ? project.clamps[0].h : project.clamps[0].w)
-    assert.deepEqual(chuck.chuck, project.clamps[0].chuck)
-    assert.equal((axis === 'x' ? chuck.y + chuck.h / 2 : chuck.x + chuck.w / 2), barCentre(resized.stock as typeof project.stock))
-    assert.equal(chuck.height, barPivotZ(resized.stock as typeof project.stock) + (axis === 'x' ? chuck.h : chuck.w) / 2)
-    assert.ok(chuckOutOfRange(chuck, resized.stock, 'mm'))
-    const square = syncRoundWorkholding(projectWithStockShape(resized, 'square'))
-    assert.equal(axis === 'x' ? square.clamps[0].h : square.clamps[0].w, axis === 'x' ? chuck.h : chuck.w)
-    const legacy: Clamp = { ...chuck, h: 5, w: 5 }
+    const resizedBar = resized.stock as BarStock
+    const followed = resized.clamps[0]
+    // 70 mm is past the 4, 5 and 6 inch capacities, inside the 8 inch one.
+    assert.equal(followed.chuck?.size, 'bison-3204-8', 'the default follows the bar up')
+    assert.equal(across(followed), convertLength(7.87, 'inch', 'mm'), 'the 8 inch body replaces the 4 inch one')
+    assert.equal((axis === 'x' ? followed.y + followed.h / 2 : followed.x + followed.w / 2), barCentre(resizedBar),
+      'centred on the resized bar')
+    assert.equal(followed.height, barPivotZ(resizedBar) + across(followed) / 2, 'the height derives from the body')
+    assert.equal(chuckOutOfRange(followed, resized.stock, 'mm'), false, 'the new equipment holds the bar')
+
+    // The same resize with the chuck set by hand leaves it exactly as it was.
+    const manual: Clamp = { ...project.clamps[0], chuck: { ...project.clamps[0].chuck, manual: true } }
+    useProjectStore.setState({ project: { ...project, clamps: [manual] }, history: { past: [], future: [], transactionStart: null } })
+    useProjectStore.getState().setRectStockDimension(axis === 'x' ? 'height' : 'width', 70, 'top')
+    const keptByHand = useProjectStore.getState().project.clamps[0]
+    assert.equal(keptByHand.chuck?.size, DEFAULT_CHUCK_ID, 'the hand-set size survives')
+    assert.equal(across(keptByHand), across(manual), 'and so does its body')
+    assert.ok(chuckOutOfRange(keptByHand, useProjectStore.getState().project.stock, 'mm'),
+      'the operator is told the bar is now out of range')
+
+    // A legacy chuck carries no equipment at all: nothing is inferred onto it.
+    const legacy: Clamp = { ...project.clamps[0], h: 5, w: 5 }
     delete legacy.chuck
-    const switched = projectWithStockShape({ ...project, clamps: [legacy] }, 'square')
-    assert.equal(switched.clamps[0], legacy)
+    useProjectStore.setState({ project: { ...project, clamps: [legacy] }, history: { past: [], future: [], transactionStart: null } })
+    useProjectStore.getState().setRectStockDimension(axis === 'x' ? 'height' : 'width', 70, 'top')
+    const untouched = useProjectStore.getState().project.clamps[0]
+    assert.equal(untouched.chuck, undefined, 'no equipment is invented for it')
+    assert.equal(across(untouched), 5, 'and its body is kept, exactly as the sync keeps a hand-set diameter')
   }
+})
+
+test('a new bar setup starts from the 4 inch starter with the shape\'s jaw count', () => {
+  // Both bar shapes a block can turn into (the New project dialog's rotary
+  // blank and the Shape control's conversions run this same minting).
+  const round = projectWithStockShape(newProject('block', 'mm'), 'round')
+  assert.equal(round.clamps[0].chuck?.size, 'bison-3204-4', 'a round bar takes the 4 inch starter')
+  assert.equal(round.clamps[0].chuck?.jawCount, 3, 'with three jaws')
+  const square = projectWithStockShape(newProject('block', 'mm'), 'square')
+  assert.equal(square.clamps[0].chuck?.size, 'bison-3204-4', 'a square blank takes it too')
+  assert.equal(square.clamps[0].chuck?.jawCount, 4, 'with four jaws, gripping its flats')
+  assert.equal(square.clamps[0].chuck?.manual, undefined, 'neither is recorded as a hand edit')
+
+  // A bar past the starter's capacity takes the smallest size that holds it.
+  const wide = defaultRoundWorkholding('chuck', roundStock(convertLength(1.34, 'inch', 'mm'), 100, 'x'), 'mm')
+  assert.equal(wide.chuck?.size, 'bison-3204-5', '34 mm is past the 4 inch maximum (1.3 in), so 5 inch')
+})
+
+test('a chuck body dragged by hand stops following the bar', () => {
+  const project = fixture(20, 'mm', 'x')
+  const id = project.clamps[0].id
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } })
+  useProjectStore.getState().moveClampControl(id, { kind: 'anchor', index: 0 }, { x: -40, y: -30 })
+  const dragged = useProjectStore.getState().project.clamps[0]
+  assert.equal(dragged.chuck?.manual, true, 'a dragged body is the operator\'s chuck')
+
+  useProjectStore.getState().setRectStockDimension('height', 70, 'top')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.size, DEFAULT_CHUCK_ID,
+    'a 70 mm bar does not re-default the size the operator sized by hand')
+  useProjectStore.getState().setStockShape('square')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 3,
+    'and the shape does not re-default its jaws either')
+})
+
+test('an untouched chuck follows the bar shape: four jaws on a blank, three on a round bar', () => {
+  useProjectStore.setState({ project: fixture(20), history: { past: [], future: [], transactionStart: null } })
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 3, 'a round bar starts at three')
+  useProjectStore.getState().setStockShape('square')
+  const blank = useProjectStore.getState().project.clamps[0]
+  assert.equal(blank.chuck?.jawCount, 4, 'the square blank gets four jaws')
+  assert.equal(blank.chuck?.size, DEFAULT_CHUCK_ID, 'the starter still holds it, so the size does not move')
+  assert.equal(blank.chuck?.manual, undefined, 'following the shape is not a hand edit')
+  useProjectStore.getState().setStockShape('round')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 3, 'and back to three on the round bar')
+})
+
+test('a hand-set jaw count stays through round → square → round', () => {
+  const project = fixture(20)
+  const byHand: Clamp = { ...project.clamps[0], chuck: { ...project.clamps[0].chuck, jawCount: 6, manual: true } }
+  useProjectStore.setState({ project: { ...project, clamps: [byHand] }, history: { past: [], future: [], transactionStart: null } })
+  useProjectStore.getState().setStockShape('square')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 6, 'still six jaws on the blank')
+  useProjectStore.getState().setStockShape('round')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 6, 'and on the round bar')
+})
+
+test('a jaw count saved before the flag existed is read as a hand pick, not re-defaulted', () => {
+  // A sibling build's 3-jaw square chuck records no `manual`: the stored value
+  // is what its operator saw, so a shape change must not raise it to four.
+  const squareProject = projectWithStockShape(fixture(20), 'square')
+  const stored: Clamp = { ...squareProject.clamps[0], chuck: { ...squareProject.clamps[0].chuck, jawCount: 3 } }
+  useProjectStore.setState({ project: { ...squareProject, clamps: [stored] }, history: { past: [], future: [], transactionStart: null } })
+  useProjectStore.getState().setStockShape('round')
+  assert.equal(useProjectStore.getState().project.clamps[0].chuck?.jawCount, 3, 'the unexplained three jaws are kept')
+})
+
+test('a saved 3-jaw square project loads with the jaws and size it stored', () => {
+  const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
+  const stored: Clamp = {
+    id: 'cl-chuck',
+    name: 'Chuck',
+    visible: true,
+    type: 'chuck',
+    x: -20,
+    w: 45,
+    y: barCentre(stock) - 30,
+    h: 60,
+    height: barPivotZ(stock) + 30,
+    chuck: { size: 'bison-3204-5', clampingRangeMm: { min: 3.048, max: 50.038 }, jawCount: 3 },
+  }
+  const savedProject: Project = {
+    ...newProject('saved', 'mm'),
+    stock,
+    origin: defaultOrigin(stock),
+    clamps: [stored],
+  }
+  // Loading over a different document (a 40 mm round bar with its own default
+  // chuck) is the transition a load must not treat as a stock edit.
+  useProjectStore.setState({ project: fixture(40), history: { past: [], future: [], transactionStart: null } })
+  useProjectStore.getState().loadProject(savedProject)
+  const loaded = useProjectStore.getState().project.clamps[0]
+  assert.equal(loaded.chuck?.jawCount, 3, 'the stored three jaws are kept')
+  assert.equal(loaded.chuck?.size, 'bison-3204-5', 'and the stored size')
+  assert.equal(loaded.h, 60, 'and its body')
+  assert.equal(loaded.chuck?.manual, undefined, 'loading infers no hand-set flag')
+  assert.equal(useProjectStore.getState().project.stock.shape, 'square', 'the file\'s own blank')
+
+  // The save → decode → normalize round trip keeps the same record.
+  useProjectStore.setState({ project: savedProject })
+  const decoded = decodeProjectFormat(JSON.parse(useProjectStore.getState().saveProject())).project
+  assert.deepEqual(decoded.clamps[0].chuck, stored.chuck)
+})
+
+test('the square default is measured across flats, so a 4-jaw blank takes the size its capacity holds', () => {
+  // A 30 mm square: 30 mm across flats (1.18 in) is inside the 4 inch range,
+  // while its 42.4 mm corner circle would need a 5 inch body. A default picked
+  // by the corner circle would therefore be the wrong equipment for four jaws.
+  const stock = squareStock(30, 100, 'x')
+  const defaults = defaultRoundWorkholding('chuck', stock, 'mm')
+  assert.equal(defaults.chuck?.size, DEFAULT_CHUCK_ID, 'the starter holds the flats')
+  assert.equal(defaults.chuck?.jawCount, 4, 'the square default is the 4-jaw set')
+  const clamp: Clamp = { ...fixture().clamps[0], ...defaults }
+  assert.equal(chuckOutOfRange(clamp, stock, 'mm'), false, 'so the blank is inside its capacity')
+  const max = defaults.chuck?.clampingRangeMm?.max ?? 0
+  assert.ok(chuckGripDiameter(stock, 3) > max, 'the corner circle this blank turns through is past it')
+  assert.ok(chuckGripDiameter(stock, 6) > max, 'and six jaws measure that same corner circle')
+  assert.equal(defaultJawCount(stock), 4, 'four jaws are what a square blank starts with')
+})
+
+test('a square blank no preset can clear keeps the stock-derived body, not a too-small one', () => {
+  // A 320 mm side turns through a 452 mm corner circle; the largest listed
+  // body (12.4 in, 315 mm) cannot clear it, so no preset may be claimed for
+  // the blank — the setup would be refused by the square's physical guard.
+  const stock = squareStock(320, 1000, 'x')
+  const defaults = defaultRoundWorkholding('chuck', stock, 'mm')
+  assert.equal(defaults.chuck?.size, undefined, 'no preset is claimed')
+  const body = stock.axis === 'x' ? defaults.h : defaults.w
+  assert.ok(body / 2 >= barMaxRadius(stock), 'and the stock-derived body clears the corners')
+  const clamp: Clamp = { ...fixture().clamps[0], ...defaults }
+  assert.equal(chuckOutOfRange(clamp, stock, 'mm'), true, 'the blank is still reported past the largest capacity')
 })
 
 test('capacity uses square flats for four jaws and the corner circle for three or six; boundaries inclusive', () => {

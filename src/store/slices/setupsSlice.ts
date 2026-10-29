@@ -34,7 +34,7 @@ import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { aroundUnavailableReason, dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
 import { manualIndexingApplies } from '../helpers/projectType'
 import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
-import { syncRoundWorkholding, transposeRoundWorkholding } from '../helpers/roundWorkholding'
+import { syncRoundWorkholding, transposeRoundWorkholding, followBarChuck } from '../helpers/roundWorkholding'
 import type { ProjectStore, SelectionState } from '../types'
 
 export type SetupsSlice = Pick<
@@ -64,6 +64,12 @@ type SetFn = Parameters<StateCreator<ProjectStore>>[0]
  * turns them with the bar (#1016 C2): the clamps keep their distance from the
  * bar's start end while the along and across dimensions swap. A write that
  * does not affect them leaves the project's identity alone.
+ *
+ * A stock *transition* — its size or its shape — also re-defaults a chuck the
+ * operator has not set by hand (4 inch, or the smallest preset that fits, with
+ * the shape's jaw count; #1112 R2 item 23). Opening or creating a document is
+ * a replacement, not a stock edit, so a saved project keeps the jaw count it
+ * stored.
  */
 export function withSetupSync<S extends { project: Project }>(
   set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
@@ -79,7 +85,15 @@ export function withSetupSync<S extends { project: Project }>(
     const transposed = next.clamps === previous.clamps
       ? transposeRoundWorkholding(previous.stock, next)
       : next
-    const project = syncRoundWorkholding(transposed)
+    // A document that is being replaced (open, new, load) carries its own
+    // workholding; only an edit of the project in front of the operator is a
+    // stock change a default chuck follows (the same guard the rotary surface
+    // sync uses). `projectKey` is not part of this wrapper's generic state, so
+    // it is read through the shape the store's own sync uses.
+    const patchKey = (patch as { projectKey?: number }).projectKey
+    const replaced = patchKey !== undefined && patchKey !== (state as { projectKey?: number }).projectKey
+    const followed = replaced ? transposed : followBarChuck(previous.stock, transposed)
+    const project = syncRoundWorkholding(followed)
     return project === patch.project ? patch : { ...patch, project }
   })
 }
