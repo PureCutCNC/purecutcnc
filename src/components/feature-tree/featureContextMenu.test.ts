@@ -30,7 +30,13 @@
  *    editable item disabled with the switch-face reason — the reason the tree
  *    row's tooltip carries (item 10);
  *  - the same feature with nothing it can be cut with keeps the hint-only ghost
- *    menu (`menuFeatureTargetableFromFace` is the switch).
+ *    menu (`menuFeatureTargetableFromFace` is the switch);
+ *  - "Change authoring face…" is present on the Around face when a feature from
+ *    another face is selected, disabled with the switch-face reason, instead
+ *    of being hidden;
+ *  - a mixed-face selection refuses the bulk actions (move, resize, rotate,
+ *    mirror, offset, join, cut, delete) with the *offending* feature's
+ *    switch-face reason, even when the right-clicked feature is on this face.
  *
  * Mutations checked one at a time:
  *  - showing "Expand to features" for Turn/Polygon → the absence assertion
@@ -41,7 +47,13 @@
  *    face-filtered list → Create operation is empty (or lists a kind this face
  *    does not offer) and the exact-list assertion fails;
  *  - rendering the ghost menu regardless of the flag → the Copy/Edit assertions
- *    fail.
+ *    fail;
+ *  - judging the selection's face by the primary feature alone → the mixed-face
+ *    test finds Move selected/Delete selected enabled;
+ *  - hiding "Change authoring face…" whenever the workspace is Around → the
+ *    other-face menu test cannot find it;
+ *  - a round-stock fixture → the square-blank assertion on the Add menu rows
+ *    fails (no wrapped row says "Needs a round bar").
  *
  * Run with: NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/featureContextMenu.test.ts
  */
@@ -72,7 +84,11 @@ const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { newProject, rectProfile } = await import('../../types/project')
 const { resolveFeatureInstance } = await import('../../store/helpers/resolveFeatures')
 const { rotaryOperationFixture } = await import('../../test/rotaryOperationFixture')
-const { validQuickOperationsForFeatureOnActiveFace } = await import('../cam/operationAddEntries')
+const { validQuickOperationsForFeatureOnActiveFace, operationAddEntries } = await import('../cam/operationAddEntries')
+const { singleFeatureSelection } = await import('../cam/operationValidity')
+const { machineMode } = await import('../cam/machineMode')
+const { camT } = await import('../cam/camI18n')
+const { squareStock, isSquareStock } = await import('../../types/barStock')
 const { registerCannedShapeEditor } = await import('../../cannedShapes')
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -88,6 +104,9 @@ interface RenderOptions {
   targetableFromFace?: boolean
   addToOperationCandidates?: Operation[]
   removeFromOperationCandidates?: RemoveFromOperationCandidate[]
+  /** The whole selection; the primary feature is the one that was clicked. */
+  ids?: readonly string[]
+  multipleSelection?: boolean
   actions?: FeatureTreeActions
 }
 
@@ -157,7 +176,7 @@ async function renderMenu(
       menuFeature: feature,
       menuTab: null,
       menuClamp: null,
-      menuHasMultipleSelection: false,
+      menuHasMultipleSelection: options.multipleSelection ?? false,
       menuCanUseAsStock: false,
       menuHasLockedSelection: false,
       menuFeatureHasLinkedInstances: false,
@@ -177,7 +196,7 @@ async function renderMenu(
       menuSelectionIsGroup: false,
       tabletShell: false,
       primaryId: featureId,
-      ids: [featureId],
+      ids: options.ids ?? [featureId],
       actions,
       onOpenQuickOpsSubmenu: noop,
       onCloseQuickOpsSubmenu: noop,
@@ -250,6 +269,11 @@ function cannedProject(kind: string): Project {
 /** A rotary project whose around setup is active, on a square blank. */
 function squareRotaryProject(): { project: Project; featureId: string } {
   const base = rotaryOperationFixture('x')
+  // The fixture is born on a round bar; this test's claims are about a square
+  // blank's Around face, where only the rotary rows belong. Set it explicitly
+  // so the fixture cannot silently assert round-stock behaviour (#1112 F2
+  // review).
+  base.stock = squareStock(12, 30, 'x')
   const row: SketchFeature = {
     ...cannedRow('polygon'),
     id: 'hex',
@@ -262,6 +286,20 @@ function squareRotaryProject(): { project: Project; featureId: string } {
   }
   const project = projectWithFeatures(base, [...base.features, row])
   return { project, featureId: row.id }
+}
+
+/**
+ * The same square blank with an Around-authored feature in the primary slot and
+ * a Top-authored model beside it in the selection: the mixed-face selection
+ * that used to get its bulk actions through (issue #1112 F2 review).
+ */
+function mixedFaceSelection(): { project: Project; primaryId: string } {
+  const { project } = squareRotaryProject()
+  assert(project.features.some((feature) => feature.id === 'sketch' && feature.authoringFace === 'around'),
+    'the fixture carries an Around-authored feature')
+  assert(project.features.some((feature) => feature.id === 'model' && feature.authoringFace === 'top'),
+    'and a Top-authored one')
+  return { project, primaryId: 'sketch' }
 }
 
 // ── Items 5 and 6: the generated shape's own two entries ─────────
@@ -368,6 +406,22 @@ const EDITABLE_LABELS = [
 
 async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
   const { project, featureId } = squareRotaryProject()
+  // The fixture really is a square blank: the Add menu lists the wrapped rows
+  // refused by the stock, so "the rotary rows alone" below is the square-blank
+  // rule at work rather than a round bar's list (#1112 F2 review).
+  assert(isSquareStock(project.stock), 'the fixture is a square blank, as its comments claim')
+  const addRows = operationAddEntries(
+    project,
+    singleFeatureSelection(featureId),
+    machineMode(project),
+    'around',
+  )
+  const wrappedRow = addRows.find((entry) => entry.kind === 'pocket')
+  assert(wrappedRow, 'the Add menu lists a wrapped row on this face')
+  assert(
+    wrappedRow.blockedInPlace && wrappedRow.hint === camT('cam.addMenu.needsRoundBar'),
+    `the square blank refuses the wrapped row, got ${JSON.stringify(wrappedRow)}`,
+  )
   const quickOperations = validQuickOperationsForFeatureOnActiveFace(project, featureId)
   const operation = project.operations[0]
   assert(operation, 'the fixture has an operation to add the feature to')
@@ -431,6 +485,67 @@ async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
     )
     assert(button.getAttribute('title') === SWITCH_REASON, `${label} carries the reason as its tooltip too`)
   }
+
+  // "Change authoring face…" is a bulk edit of the selection: on Around it is
+  // normally left out (#395), but a feature from another face needs its
+  // refusal readable, so it stays disabled with the switch-face reason
+  // (item 10, issue #1112 F2 review).
+  const changeFace = buttonByLabel(host, enMessages['featureTree.face.changeAuthoringFace'])
+  assert(changeFace, 'the face change is present on Around for another face\'s feature')
+  assert(changeFace.hasAttribute('disabled'), 'and refused, because the feature belongs to its own face')
+  assert(
+    textOf(changeFace).includes(SWITCH_REASON),
+    `the face change says "${SWITCH_REASON}", got "${textOf(changeFace)}"`,
+  )
+  assert(changeFace.getAttribute('title') === SWITCH_REASON, 'and carries the reason as its tooltip too')
+}
+
+/** The bulk actions all act on every selected feature. */
+const BULK_EDIT_LABELS = [
+  'featureTree.contextMenu.moveSelected',
+  'featureTree.contextMenu.resize',
+  'featureTree.contextMenu.rotate',
+  'featureTree.contextMenu.mirror',
+  'featureTree.contextMenu.offset',
+  'featureTree.contextMenu.join',
+  'featureTree.contextMenu.cut',
+  'featureTree.contextMenu.deleteSelected',
+] as const
+
+async function testMixedFaceSelectionRefusesBulkEditing(): Promise<void> {
+  const { project, primaryId } = mixedFaceSelection()
+  const host = await renderMenu(project, primaryId, {
+    ids: ['sketch', 'model'],
+    multipleSelection: true,
+  })
+
+  // One selected feature on Top refuses every action that would edit it, even
+  // though the right-clicked feature is on this face.
+  for (const key of BULK_EDIT_LABELS) {
+    const label = enMessages[key]
+    const button = buttonByLabel(host, label)
+    assert(button, `${label} is present in a mixed-face selection menu`)
+    assert(button.hasAttribute('disabled'), `${label} is refused: one selected feature is on Top`)
+    assert(
+      textOf(button).includes(SWITCH_REASON),
+      `${label} says "${SWITCH_REASON}", got "${textOf(button)}"`,
+    )
+    assert(button.getAttribute('title') === SWITCH_REASON, `${label} carries the reason as its tooltip too`)
+  }
+
+  // The primary is on this face, so editing *it* stays available: the rule is
+  // about the bulk actions, not a blanket freeze of the menu.
+  const editSketch = buttonByLabel(host, enMessages['featureTree.contextMenu.editSketch'])
+  assert(editSketch, 'Edit sketch is present for the own-face primary')
+  assert(!editSketch.hasAttribute('disabled'), 'the own-face primary can still be edited from here')
+
+  const changeFace = buttonByLabel(host, enMessages['featureTree.face.changeAuthoringFace'])
+  assert(changeFace, 'the face change stays visible with its reason on Around')
+  assert(changeFace.hasAttribute('disabled'), 'and is refused for the mixed selection')
+  assert(
+    textOf(changeFace).includes(SWITCH_REASON),
+    `the face change says "${SWITCH_REASON}", got "${textOf(changeFace)}"`,
+  )
 }
 
 async function testOtherFaceWithoutAnOperationKeepsTheGhostMenu(): Promise<void> {
@@ -454,6 +569,7 @@ async function main(): Promise<void> {
   await testCannedMenuItems()
   await testCannedEntriesAct()
   await testOtherFaceMenuIsTheNormalOne()
+  await testMixedFaceSelectionRefusesBulkEditing()
   await testOtherFaceWithoutAnOperationKeepsTheGhostMenu()
   console.log('feature context menu tests passed')
 }

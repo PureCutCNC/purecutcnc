@@ -20,7 +20,7 @@ import type { RemoveFromOperationCandidate } from '../cam/operationTargetLists'
 import { camT } from '../cam/camI18n'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
 import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, OperationTargetSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
-import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, Operation, SetupFace, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import { useProjectStore } from '../../store/projectStore'
@@ -187,13 +187,14 @@ export function FeatureContextMenu({
   // to its own face and the explicit face change, and no edit (issue #945).
   const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
   const onOtherFace = menuFeature !== null && menuFeatureFace !== workspaceFace
-  const switchFaceLabel = t(
-    menuFeatureFace === 'bottom'
+  const switchFaceLabelFor = (face: SetupFace): string => t(
+    face === 'bottom'
       ? 'featureTree.face.switchToBottomToEdit'
-      : menuFeatureFace === 'around'
+      : face === 'around'
         ? 'featureTree.face.switchToAroundToEdit'
         : 'featureTree.face.switchToTopToEdit',
   )
+  const switchFaceLabel = switchFaceLabelFor(menuFeatureFace)
   // When an operation on this face can still cut the feature (a through cut, a
   // model), the menu is the normal one and only its editable items are
   // refused: the face, not the feature, is what has to change (issue #1112
@@ -249,8 +250,24 @@ export function FeatureContextMenu({
   // Past the ghost menu: every item that edits the feature is refused from
   // here, because its geometry belongs to the face it was drawn on.
   const otherFaceEditingReason = onOtherFace ? switchFaceLabel : undefined
+  // Bulk actions (move, resize, rotate, mirror, offset, join, cut, delete and
+  // the face change) act on the whole selection, so one selected feature from
+  // another face refuses every one of them — checking only the right-clicked
+  // feature let an own-face primary carry another face's features through
+  // (issue #1112 F2 review). The reason names that feature's face, which need
+  // not be the primary's.
+  const selectionOtherFace = project.features.find(
+    (feature) => ids.includes(feature.id) && (feature.authoringFace ?? 'top') !== workspaceFace,
+  ) ?? null
+  const selectionOnOtherFace = onOtherFace || selectionOtherFace !== null
+  const selectionEditingReason = onOtherFace
+    ? switchFaceLabel
+    : selectionOtherFace
+      ? switchFaceLabelFor(selectionOtherFace.authoringFace ?? 'top')
+      : undefined
   const otherFaceSwitchReason = faceBusy ? t('appShell.face.busy') : undefined
   const otherFaceOr = (reason: string | undefined) => otherFaceEditingReason ?? reason
+  const selectionOr = (reason: string | undefined) => selectionEditingReason ?? reason
   const editSketchReason = otherFaceOr(menuFeatureIsCanned ? cannedRefusal : undefined)
   const editCannedReason = otherFaceEditingReason
     ?? (cannedEditor ? undefined : t('featureTree.properties.canned.editUnavailable'))
@@ -259,21 +276,21 @@ export function FeatureContextMenu({
       ? cannedRefusal
       : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
   )
-  const moveReason = otherFaceOr(
+  const moveReason = selectionOr(
     menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
   )
-  const offsetReason = otherFaceOr(
+  const offsetReason = selectionOr(
     menuHasCannedSelection
       ? cannedRefusal
       : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
   )
-  const joinReason = otherFaceOr(
+  const joinReason = selectionOr(
     menuHasCannedSelection
       ? cannedRefusal
       : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined,
   )
-  const cutReason = otherFaceOr(menuHasCannedSelection ? cannedRefusal : undefined)
-  const changeFaceReason = otherFaceOr(
+  const cutReason = selectionOr(menuHasCannedSelection ? cannedRefusal : undefined)
+  const changeFaceReason = selectionOr(
     menuHasLockedSelection
       ? t('featureTree.contextMenu.lockedTooltip')
       : faceBusy
@@ -554,7 +571,7 @@ export function FeatureContextMenu({
             className={menuItemClass(moveReason)}
             type="button"
             onClick={() => actions.moveFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || onOtherFace}
+            disabled={menuHasLockedSelection || selectionOnOtherFace}
             title={moveReason}
           >
             <MenuItemText reason={moveReason}>
@@ -562,38 +579,38 @@ export function FeatureContextMenu({
             </MenuItemText>
           </button>
           <button
-            className={menuItemClass(otherFaceEditingReason)}
+            className={menuItemClass(selectionEditingReason)}
             type="button"
             onClick={() => actions.resizeFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || onOtherFace}
-            title={otherFaceEditingReason}
+            disabled={menuHasLockedSelection || selectionOnOtherFace}
+            title={selectionEditingReason}
           >
-            <MenuItemText reason={otherFaceEditingReason}>{t('featureTree.contextMenu.resize')}</MenuItemText>
+            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.resize')}</MenuItemText>
           </button>
           <button
-            className={menuItemClass(otherFaceEditingReason)}
+            className={menuItemClass(selectionEditingReason)}
             type="button"
             onClick={() => actions.rotateFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || onOtherFace}
-            title={otherFaceEditingReason}
+            disabled={menuHasLockedSelection || selectionOnOtherFace}
+            title={selectionEditingReason}
           >
-            <MenuItemText reason={otherFaceEditingReason}>{t('featureTree.contextMenu.rotate')}</MenuItemText>
+            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.rotate')}</MenuItemText>
           </button>
           <button
-            className={menuItemClass(otherFaceEditingReason)}
+            className={menuItemClass(selectionEditingReason)}
             type="button"
             onClick={() => actions.mirrorFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || onOtherFace}
-            title={otherFaceEditingReason}
+            disabled={menuHasLockedSelection || selectionOnOtherFace}
+            title={selectionEditingReason}
           >
-            <MenuItemText reason={otherFaceEditingReason}>{t('featureTree.contextMenu.mirror')}</MenuItemText>
+            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.mirror')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button
             className={menuItemClass(offsetReason)}
             type="button"
             onClick={() => actions.offsetFeatures()}
-            disabled={menuHasLockedSelection || menuHasCannedSelection || onOtherFace}
+            disabled={menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={offsetReason}
           >
             <MenuItemText reason={offsetReason}>{t('featureTree.contextMenu.offset')}</MenuItemText>
@@ -676,7 +693,7 @@ export function FeatureContextMenu({
             className={menuItemClass(joinReason)}
             type="button"
             onClick={() => actions.joinFeatures()}
-            disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection || onOtherFace}
+            disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={joinReason}
           >
             <MenuItemText reason={joinReason}>{t('featureTree.contextMenu.join')}</MenuItemText>
@@ -685,7 +702,7 @@ export function FeatureContextMenu({
             className={menuItemClass(cutReason)}
             type="button"
             onClick={() => actions.cutFeatures()}
-            disabled={menuHasLockedSelection || menuHasCannedSelection || onOtherFace}
+            disabled={menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={cutReason}
           >
             <MenuItemText reason={cutReason}>{t('featureTree.contextMenu.cut')}</MenuItemText>
@@ -700,14 +717,19 @@ export function FeatureContextMenu({
           >
             <MenuItemText reason={useAsStockReason}>{t('featureTree.contextMenu.useAsStock')}</MenuItemText>
           </button>
-          {bothFaces && !selectionOnAround ? (
+          {/* From Around the face change is refused (issue #395/#1015), so the
+              entry is normally left out rather than dead. A selection holding
+              another face's feature is the exception: item 10 requires it
+              present and disabled with the switch-face reason, the only way
+              touch can read why it cannot run (#1112 F2 review). */}
+          {bothFaces && (!selectionOnAround || selectionEditingReason !== undefined) ? (
             <>
               <div className="feature-context-menu__separator" />
               <button
                 className={menuItemClass(changeFaceReason)}
                 type="button"
                 onClick={() => actions.changeAuthoringFace([...ids])}
-                disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace || onOtherFace}
+                disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace || selectionOnOtherFace}
                 title={changeFaceReason}
               >
                 <MenuItemText reason={changeFaceReason}>{t('featureTree.face.changeAuthoringFace')}</MenuItemText>
@@ -716,13 +738,13 @@ export function FeatureContextMenu({
           ) : null}
           <div className="feature-context-menu__separator" />
           <button
-            className={menuItemClass(otherFaceEditingReason, 'feature-context-menu__item--danger')}
+            className={menuItemClass(selectionEditingReason, 'feature-context-menu__item--danger')}
             type="button"
             onClick={() => actions.deleteFeatures([...ids])}
-            disabled={onOtherFace}
-            title={otherFaceEditingReason}
+            disabled={selectionOnOtherFace}
+            title={selectionEditingReason}
           >
-            <MenuItemText reason={otherFaceEditingReason}>
+            <MenuItemText reason={selectionEditingReason}>
               {menuSelectionIsGroup ? t('featureTree.contextMenu.deleteGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.deleteSelected') : t('featureTree.contextMenu.delete')}
             </MenuItemText>
           </button>
