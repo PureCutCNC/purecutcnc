@@ -69,11 +69,17 @@ type SetFn = Parameters<StateCreator<ProjectStore>>[0]
  * operator has not set by hand (4 inch, or the smallest preset that fits, with
  * the shape's jaw count; #1112 R2 item 23). Opening or creating a document is
  * a replacement, not a stock edit, so a saved project keeps the jaw count it
- * stored.
+ * stored. History restoration is not an edit either: the store hands undo,
+ * redo and a cancelled transaction a setter with `followStockChuck: false`,
+ * because the snapshot's own equipment is what the operator had, even where
+ * that differs from the shape's default today. Without it a square saved with
+ * three jaws, switched to round and undone, would come back with four.
  */
 export function withSetupSync<S extends { project: Project }>(
   set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
+  options: { followStockChuck?: boolean } = {},
 ): (update: Partial<S> | ((state: S) => Partial<S>)) => void {
+  const followStockChuck = options.followStockChuck !== false
   return (update) => set((state) => {
     const patch = typeof update === 'function' ? update(state) : update
     if (!patch.project) return patch
@@ -92,7 +98,7 @@ export function withSetupSync<S extends { project: Project }>(
     // it is read through the shape the store's own sync uses.
     const patchKey = (patch as { projectKey?: number }).projectKey
     const replaced = patchKey !== undefined && patchKey !== (state as { projectKey?: number }).projectKey
-    const followed = replaced ? transposed : followBarChuck(previous.stock, transposed)
+    const followed = replaced || !followStockChuck ? transposed : followBarChuck(previous.stock, transposed)
     const project = syncRoundWorkholding(followed)
     return project === patch.project ? patch : { ...patch, project }
   })

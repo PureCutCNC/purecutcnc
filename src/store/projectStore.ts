@@ -146,7 +146,15 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   // Every project written through `set` has its setups reconciled (#944), no
   // write leaves a feature from the other face selected (#945), and every
   // Thread/Flutes band follows the Turn surface it sits on.
-  const set = withAutoDirty(withRotarySurfaceSync(withSetupSync(withGhostSelectionGuard(rawSet))))
+  const wrapSet = (options: { followStockChuck?: boolean }) =>
+    withAutoDirty(withRotarySurfaceSync(withSetupSync(withGhostSelectionGuard(rawSet), options)))
+  const set = wrapSet({})
+  // Undo, redo and a cancelled transaction put a stored snapshot back
+  // (#1112 R2 item 23): its equipment is what the operator had, so it is not a
+  // stock transition a default chuck follows. Everything else about the write
+  // is the same, which is why this is the same pipeline with one option off
+  // rather than a separate restore path.
+  const setRestored = wrapSet({ followStockChuck: false })
   const applyProfileBreak = (
     featureId: string,
     resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,
@@ -319,7 +327,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     rawSet,
     normalizeProject,
   }),
-  ...createHistorySlice(set, get, {
+  ...createHistorySlice(setRestored, get, {
     normalizeProject,
   }),
   ...createWorkpieceSlice(set),

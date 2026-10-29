@@ -200,6 +200,53 @@ test('a saved 3-jaw square project loads with the jaws and size it stored', () =
   assert.deepEqual(decoded.clamps[0].chuck, stored.chuck)
 })
 
+test('undoing a stock change restores the equipment the snapshot stored, not a re-defaulted chuck', () => {
+  // Codex review of #1112 rt2-f, P2: a saved square blank records three jaws
+  // and no `manual` (a sibling build's pick). Switching it to round keeps those
+  // jaws; undo must put the square back exactly as it was stored — that is a
+  // history restoration, not a stock transition a default chuck follows.
+  const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
+  const stored: Clamp = {
+    id: 'cl-chuck',
+    name: 'Chuck',
+    visible: true,
+    type: 'chuck',
+    x: -20,
+    w: 45,
+    y: barCentre(stock) - 30,
+    h: 60,
+    height: barPivotZ(stock) + 30,
+    chuck: { size: 'bison-3204-5', clampingRangeMm: { min: 3.048, max: 50.038 }, jawCount: 3 },
+  }
+  const savedProject: Project = {
+    ...newProject('saved', 'mm'),
+    stock,
+    origin: defaultOrigin(stock),
+    clamps: [stored],
+  }
+  useProjectStore.setState({ project: fixture(40), history: { past: [], future: [], transactionStart: null } })
+  useProjectStore.getState().loadProject(savedProject)
+
+  useProjectStore.getState().setStockShape('round')
+  const round = useProjectStore.getState().project.clamps[0]
+  assert.equal(round.chuck?.jawCount, 3, 'the round bar keeps the jaws the saved blank recorded')
+  assert.equal(round.chuck?.size, 'bison-3204-5', 'and the size it recorded')
+
+  useProjectStore.getState().undo()
+  const restored = useProjectStore.getState().project.clamps[0]
+  assert.equal(useProjectStore.getState().project.stock.shape, 'square', 'the snapshot\'s own blank is back')
+  assert.equal(restored.chuck?.jawCount, 3, 'undo must not raise the stored three jaws to the square default')
+  assert.equal(restored.chuck?.size, 'bison-3204-5', 'nor replace the stored size')
+  assert.equal(restored.h, 60, 'nor its stored body')
+  assert.equal(restored.w, 45, 'nor its stored length')
+  assert.deepEqual(restored.chuck, stored.chuck, 'the whole record is the one that was stored')
+
+  useProjectStore.getState().redo()
+  const redone = useProjectStore.getState().project.clamps[0]
+  assert.equal(redone.chuck?.jawCount, 3, 'redo restores the round bar\'s equipment too')
+  assert.equal(redone.chuck?.size, 'bison-3204-5', 'with the size it was left at')
+})
+
 test('the square default is measured across flats, so a 4-jaw blank takes the size its capacity holds', () => {
   // A 30 mm square: 30 mm across flats (1.18 in) is inside the 4 inch range,
   // while its 42.4 mm corner circle would need a 5 inch body. A default picked
