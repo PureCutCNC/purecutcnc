@@ -452,6 +452,106 @@ async function rebuildReference(x: number, y: number): Promise<void> {
   dialog.unmount()
 }
 
+// ── A unit toggle converts pending edits instead of dropping them ───
+
+{
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  // Replace the saved reference with one twice as far from the corner. It is
+  // the user's unsaved edit, so a unit switch has to move it with the project.
+  await rebuildReference(50.8, 25.4)
+  assert(!saveButton().disabled, 'the rebuilt reference is an edit')
+
+  store().setUnits('inch', 'convert')
+  await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  const pending = registrationNumbers()
+  assert(pending.length === 2 && approx(pending[0], 2) && approx(pending[1], 1),
+    'the pending reference converts with the project instead of being dropped')
+  assert(!saveButton().disabled, 'a converted pending edit is still an edit')
+  assert(!document.body.querySelector('[role="alert"]'), 'converting a pending edit is not an intervening edit')
+
+  // Toggling back converts the same pending reference back, not a stale one.
+  store().setUnits('mm', 'convert')
+  await flush()
+  const back = registrationNumbers()
+  assert(back.length === 2 && approx(back[0], 50.8) && approx(back[1], 25.4),
+    'toggling units again converts the pending reference back')
+
+  // And Save writes the converted pending edit, not the saved one.
+  store().setUnits('inch', 'convert')
+  await flush()
+  saveButton().click()
+  await flush()
+  const [written] = bottomSetup().registration
+  assert(written && written.target.type === 'point', 'the stored reference is a point')
+  assert(approx(written.target.point.x, 2) && approx(written.target.point.y, 1), 'Save writes the converted pending reference')
+  dialog.unmount()
+}
+
+// ── A unit reinterpret keeps pending numbers as they are ────────────
+
+{
+  const millimetres: RegistrationReference[] = [
+    { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x: 25.4, y: 12.7 } } },
+  ]
+  const dialog = await mountDialog('setup-bottom', { registration: millimetres })
+  await rebuildReference(50.8, 25.4)
+  assert(!saveButton().disabled, 'the rebuilt reference is an edit')
+
+  // "Reinterpret" keeps every number in the project, so it must keep the
+  // pending numbers too: converting them would move the point the user typed.
+  store().setUnits('inch', 'reinterpret')
+  await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  const kept = registrationNumbers()
+  assert(kept.length === 2 && approx(kept[0], 50.8) && approx(kept[1], 25.4), 'a reinterpret keeps the pending numbers')
+  assert(!saveButton().disabled, 'the pending reference is still an edit')
+  dialog.unmount()
+}
+
+// ── A unit toggle keeps the stale-form protection ───────────────────
+
+{
+  const dialog = await mountDialog('setup-bottom')
+  const name = fieldInput('Name')
+  typeInto(name, 'Back machining')
+  await flush()
+  assert(!saveButton().disabled, 'the draft differs, so Save is offered')
+  // Another path changed the stored setup after the dialog opened.
+  store().renameSetup('setup-bottom', 'Renamed elsewhere')
+  await flush()
+  assert(document.body.querySelector('[role="alert"]'), 'an external rename blocks Save')
+  assert(saveButton().disabled, 'the stale dialog cannot save over the newer setup')
+
+  // Reinterpreting the units rewrites nothing the dialog writes, and must not
+  // clear the warning the external rename raised (r4-4).
+  store().setUnits('inch', 'reinterpret')
+  await flush()
+  assert(store().project.meta.units === 'inch', 'the project is in inches')
+  assert(bottomSetup().name === 'Renamed elsewhere', 'the rename is still stored')
+  assert(document.body.querySelector('[role="alert"]'), 'a reinterpret does not clear the stale warning')
+  assert(saveButton().disabled, 'a reinterpret cannot re-enable Save over the external rename')
+  saveButton().click()
+  await flush()
+  assert(bottomSetup().name === 'Renamed elsewhere', 'clicking Save over the external rename writes nothing')
+  assert(!dialog.closed(), 'the dialog stays open to be reopened')
+
+  // A real conversion under the dialog keeps blocking too.
+  store().setUnits('mm', 'convert')
+  await flush()
+  assert(store().project.meta.units === 'mm', 'the project is back in millimetres')
+  assert(document.body.querySelector('[role="alert"]'), 'a conversion does not clear the stale warning either')
+  assert(saveButton().disabled, 'a conversion cannot re-enable Save over the external rename')
+  saveButton().click()
+  await flush()
+  assert(bottomSetup().name === 'Renamed elsewhere', 'the conversion writes nothing over the rename')
+  assert(!dialog.closed(), 'the stale dialog is still open')
+  dialog.unmount()
+}
+
 // ── An enabled Save writes the edit and closes ──────────────────────
 
 {

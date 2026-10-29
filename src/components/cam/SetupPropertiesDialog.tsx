@@ -22,7 +22,7 @@ import { activeSetup } from '../../store/helpers/activeFace'
 import { formHasChanges } from '../common/formDraft'
 import { operationsDeletedWithSetup } from './setupSections'
 import { setupDialogSections } from './setupDialogSections'
-import { setupFormValues } from './setupFormValues'
+import { convertRegistration, setupFormValues, unitSwitchScale } from './setupFormValues'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
@@ -34,7 +34,6 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const close = onClose
   const { project, updateSetup, deleteSetup } = useProjectStore()
   const units = project.meta.units
-  const [openedUnits, setOpenedUnits] = useState(units)
   const [name, setName] = useState(setup.name)
   const [axis, setAxis] = useState(setup.orientation.axis)
   const [notes, setNotes] = useState(setup.notes)
@@ -43,17 +42,33 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const face = setupFace(setup)
   const sections = setupDialogSections(face)
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
-  // A unit conversion happens under the dialog too: the store rescales every
-  // length with the project, this setup's registration points included (#1112
-  // F4). Re-read the converted setup, as reopening the dialog would, so the form
-  // keeps showing the same physical reference — the old millimetre numbers would
-  // otherwise read as inches, a real edit the user never made, and the
-  // stale-form guard below would refuse a Save it should have disabled anyway.
-  if (units !== openedUnits) {
-    setOpenedUnits(units)
-    if (current) {
-      setSetup(current)
-      setRegistration(current.registration)
+  // A unit switch happens under the dialog too: the store rescales every length
+  // with the project, this setup's registration points included (#1112 F4).
+  // Follow it without either of the two things that would be wrong (r4-4). The
+  // **draft** keeps the edits typed since the dialog opened, converted rather
+  // than replaced; and the **baseline** keeps the name and notes it opened on,
+  // so an external rename still blocks Save after the toggle. Whether the store
+  // converted at all is measured from the two project snapshots (`reinterpret`
+  // moves nothing), because this setup may have no registration of its own to
+  // show it. Both writes are plain values derived from this render's state, so
+  // a repeated render queues the same result instead of converting twice.
+  const [unitsShown, setUnitsShown] = useState({ units, project })
+  if (unitsShown.units !== units) {
+    const converting = unitSwitchScale(unitsShown.project, project) !== 1
+    setUnitsShown({ units, project })
+    if (converting) {
+      const converted = current?.registration ?? setup.registration
+      // The baseline takes the store's own converted numbers rather than a
+      // rescaled copy: the stale-form guard compares by value, so a pure toggle
+      // must not read as an intervening edit.
+      setSetup({ ...setup, registration: converted })
+      // Pending references are the user's edit, so they move with the project
+      // instead of disappearing under it.
+      setRegistration(
+        formHasChanges(setup.registration, registration)
+          ? convertRegistration(registration, unitsShown.units, units)
+          : converted,
+      )
     }
   }
   // A dialog cannot save over an intervening undo/edit to the setup.

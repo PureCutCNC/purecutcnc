@@ -21,6 +21,7 @@ import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type 
 import { useProjectStore } from '../../store/projectStore'
 import { Select } from '../Select'
 import { formHasChanges } from '../common/formDraft'
+import { convertLength, type Units } from '../../utils/units'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -73,14 +74,34 @@ export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }:
 
   // The run this dialog edits can be rewritten while it is open: converting the
   // project's units converts the stored height with every other length (#1112
-  // F4). Follow the saved values, as reopening the dialog would, so the form
-  // keeps showing the same physical run — a stale millimetre height would
-  // otherwise read as an edit in an inch project and be saved as inches. React
-  // re-renders before painting, so the button never shows the stale comparison;
-  // the check is by value because the parent hands back a fresh object each
-  // render.
+  // F4). A unit switch follows the rewritten run **without** discarding what
+  // the user has typed since (r4-4) — the pending height is converted with the
+  // project, and the text, font, style and operation stay because units do not
+  // touch them. `saved.size` is a number the store itself rewrote, so it also
+  // says whether this was a conversion or a reinterpret that kept the numbers.
+  // Anything else that rewrites the run takes its values whole, as reopening
+  // the dialog would. The writes are plain values derived from this render's
+  // state: a repeated render queues the same result instead of converting the
+  // pending height twice. React re-renders before painting, so the button never
+  // shows the stale comparison; the check is by value because the parent hands
+  // back a fresh object each render.
   const [openedOn, setOpenedOn] = useState(saved)
-  if (isEdit && formHasChanges(openedOn, saved)) {
+  const [unitsShown, setUnitsShown] = useState<Units>(units)
+  if (isEdit && units !== unitsShown) {
+    setUnitsShown(units)
+    const typedSize = Number(size)
+    const converted = saved.size !== openedOn.size
+    // An untouched height is taken from the store itself, not recomputed from
+    // the scale, so it holds exactly the number the project now stores.
+    setSize(
+      typedSize === openedOn.size
+        ? String(saved.size)
+        : converted && Number.isFinite(typedSize)
+          ? String(convertLength(typedSize, unitsShown, units))
+          : size,
+    )
+    setOpenedOn(saved)
+  } else if (isEdit && formHasChanges(openedOn, saved)) {
     setOpenedOn(saved)
     setText(saved.text)
     setStyle(saved.style)

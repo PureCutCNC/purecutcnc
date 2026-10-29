@@ -341,6 +341,56 @@ async function mountStoredRun(): Promise<Mounted> {
   dialog.unmount()
 }
 
+// ── A unit conversion keeps what the form is still typing ──────────
+
+{
+  const dialog = await mountStoredRun()
+  typeInto(textField(), 'Drill 4 mm')
+  typeInto(sizeField(), '15')
+  await flush()
+  assert(!applyButton().disabled, 'the pending text and height are an edit')
+
+  // Converting the project rewrites the stored height. The pending text and
+  // height are the user's unsaved edit, so they move with the project instead
+  // of being reset to the stored run (r4-4).
+  useProjectStore.getState().setUnits('inch', 'convert')
+  await flush()
+  assert(useProjectStore.getState().project.meta.units === 'inch', 'the project is in inches')
+  assert(textField().value === 'Drill 4 mm', 'the pending text survives the unit conversion')
+  const convertedPending = convertLength(15, 'mm', 'inch')
+  assert(Math.abs(Number(sizeField().value) - convertedPending) < 1e-9,
+    'the pending height converts with the project instead of being dropped')
+  assert(!applyButton().disabled, 'a converted pending edit is still an edit')
+
+  applyButton().click()
+  await flush()
+  const written = dialog.confirmations[0]
+  assert(written, 'Apply writes the pending edit')
+  assert(written.text === 'Drill 4 mm', 'Apply writes the pending text')
+  assert(written.size !== undefined && Math.abs(written.size - convertedPending) < 1e-9,
+    'Apply writes the converted pending height')
+  dialog.unmount()
+}
+
+// ── A unit reinterpret keeps the pending numbers as they are ────────
+
+{
+  const dialog = await mountStoredRun()
+  typeInto(textField(), 'Drill 4 mm')
+  typeInto(sizeField(), '15')
+  await flush()
+
+  // Reinterpreting keeps every number in the project, so the pending height
+  // keeps its number too instead of being converted (r4-4).
+  useProjectStore.getState().setUnits('inch', 'reinterpret')
+  await flush()
+  assert(useProjectStore.getState().project.meta.units === 'inch', 'the project is in inches')
+  assert(textField().value === 'Drill 4 mm', 'the pending text survives a reinterpret')
+  assert(Number(sizeField().value) === 15, 'a reinterpret keeps the pending height number')
+  assert(!applyButton().disabled, 'the pending height is still an edit')
+  dialog.unmount()
+}
+
 // ── Disabled Apply is never reached; an enabled one writes ──────────
 
 {

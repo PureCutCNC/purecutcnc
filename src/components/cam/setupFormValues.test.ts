@@ -23,8 +23,10 @@
  */
 
 import assert from 'node:assert/strict'
-import type { MachiningSetup } from '../../types/project'
-import { setupFormValues } from './setupFormValues'
+import type { MachiningSetup, Project, RegistrationReference } from '../../types/project'
+import { newProject } from '../../types/project'
+import { MM_PER_INCH, convertProjectUnits } from '../../utils/units'
+import { convertRegistration, setupFormValues, unitSwitchScale } from './setupFormValues'
 
 const top: MachiningSetup = {
   id: 'setup-top',
@@ -78,5 +80,42 @@ assert.deepEqual(
 // not needed for comparison, but re-reading it must give the same values.
 const source = { ...bottom }
 assert.deepEqual(setupFormValues(source, 'bottom'), setupFormValues({ ...bottom }, 'bottom'), 'the shape is stable')
+
+// ── A unit switch under the dialog moves the pending lengths with it ──
+
+function point(x: number, y: number): RegistrationReference {
+  return { id: 'registration-1', kind: 'dowel', target: { type: 'point', point: { x, y } } }
+}
+function edge(start: [number, number], end: [number, number]): RegistrationReference {
+  return { id: 'registration-1', kind: 'fence', target: { type: 'edge', start: { x: start[0], y: start[1] }, end: { x: end[0], y: end[1] } } }
+}
+function feature(): RegistrationReference {
+  return { id: 'registration-1', kind: 'corner', target: { type: 'feature', featureId: 'feature-1' } }
+}
+
+// A pending draft is converted with the project, not replaced: the store's own
+// arithmetic, so a pending point and the saved copy of the same point end up as
+// the same numbers (#1112 r4-4). Ids, kinds, order and feature references are
+// preserved.
+assert.deepEqual(convertRegistration([point(50.8, 25.4)], 'mm', 'inch'), [point(2, 1)], 'a pending point converts')
+assert.deepEqual(
+  convertRegistration([edge([25.4, 0], [50.8, 12.7])], 'mm', 'inch'),
+  [edge([1, 0], [2, 0.5])],
+  'a pending edge converts',
+)
+assert.deepEqual(convertRegistration([feature()], 'mm', 'inch'), [feature()], 'a feature reference is left alone')
+// The exchange rate works both ways, as the store's own `convertLength` does.
+assert.deepEqual(convertRegistration([point(1, 0.5)], 'inch', 'mm'), [point(MM_PER_INCH, 0.5 * MM_PER_INCH)], 'inch to mm multiplies')
+
+// "Convert" rewrites every length in the project, so two snapshots say the mode
+// ran; "reinterpret" keeps every number.
+const metric: Project = newProject('Units', 'mm')
+const imperial: Project = convertProjectUnits(metric, 'inch')
+assert.ok(Math.abs(unitSwitchScale(metric, imperial) - 1 / MM_PER_INCH) < 1e-12, 'a conversion is measured from the project')
+assert.equal(unitSwitchScale(metric, { ...metric, meta: { ...metric.meta, units: 'inch' } }), 1, 'a reinterpret moves no length')
+// The stock and the project settings are measured before any setup's
+// registration, so a setup with no references cannot hide a conversion.
+const noReferences = { ...metric, setups: metric.setups.map((setup) => ({ ...setup, registration: [] })) }
+assert.ok(unitSwitchScale(noReferences, { ...convertProjectUnits(noReferences, 'inch') }) !== 1, 'an empty registration cannot hide it')
 
 console.log('setup form value tests passed')
