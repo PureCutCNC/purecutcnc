@@ -353,3 +353,12 @@ for (const request of Object.values(EDITOR_REQUESTS)) {
   registerCannedShapeEditor(request.kind, openCannedShapeEdit)
 }
 registerCannedShapeEditor(GEAR_CANNED_KIND, openCannedShapeEdit)
+
+// The four rotary kinds are edited in their own panels, through the same
+// session, so they register the same opener. Without these entries Properties
+// offers their Edit action disabled with "This shape's editor is not available
+// yet", which stopped being true when they moved off the dialogs (issue #1112
+// rt2-b) — the browser lane caught it.
+for (const kind of Object.keys(ROTARY_EDIT_PARTS)) {
+  registerCannedShapeEditor(kind, openCannedShapeEdit)
+}

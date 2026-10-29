@@ -66,7 +66,7 @@ import {
 import { CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { RotaryDirectionField } from './RotaryDirectionField'
-import { useRotaryPanelChrome, type RotaryPanelHostRefs } from './useRotaryPanelChrome'
+import { useRotaryPanelChrome, useRotaryPanelKeyboard, type RotaryPanelHostRefs } from './useRotaryPanelChrome'
 import { useRotaryPanelContextClose } from './rotaryPanelContext'
 
 /** UI caps, so a typo cannot ask the store for hundreds of lines. */
@@ -258,17 +258,6 @@ export function RotaryPatternPanel({ kind, featureId, onClose, ...hostRefs }: Ro
     activeRef.current = false
   }, [])
 
-  // The form owns the keyboard while it is open, exactly as the dialog did:
-  // Escape closes it even when a field has focus (the canvas's own handler does
-  // not see a keystroke typed into a panel field).
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') closePanel()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [closePanel])
-
   function handlePitchChange(value: string) {
     setPitchText(value)
     if (depthEdited) return
@@ -406,6 +395,16 @@ export function RotaryPatternPanel({ kind, featureId, onClose, ...hostRefs }: Ro
     commitPreview(canned, { z_top: span.zTop, z_bottom: span.zBottom })
     if (activeRef.current) closePanel()
   }
+
+  // The Create/Save action advertises Enter but is not a tab stop, so the form
+  // itself is the keyboard route to it (review finding 2). Declared after
+  // `handleApply` so the hook reads this render's validity, and before the
+  // early return below so the hook order stays fixed.
+  useRotaryPanelKeyboard({
+    onClose: closePanel,
+    onApply: handleApply,
+    canApply: problem === null && !untouched,
+  })
 
   const titleKey: MessageKey = kind === 'thread'
     ? (editing ? 'dialogs.rotary.thread.editTitle' : 'dialogs.rotary.thread.title')

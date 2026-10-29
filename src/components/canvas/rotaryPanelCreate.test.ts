@@ -52,6 +52,7 @@ const { I18nProvider } = await import('../../i18n/I18nProvider')
 const { RotarySolidPanel } = await import('./RotarySolidPanel')
 const { RotaryPatternPanel } = await import('./RotaryPatternPanel')
 const { CannedShapeEditPanel } = await import('./CannedShapeEditPanel')
+const { CanvasCreationPanel } = await import('./CanvasCreationPanel')
 const { createRoot } = await import('react-dom/client')
 const { defaultTool, getProfileBounds, newProject, roundStock } = await import('../../types/project')
 const { squareStock } = await import('../../types/barStock')
@@ -61,6 +62,7 @@ const { bundledMachines } = await import('../../machine/registry')
 const { validateMachineDefinition } = await import('../../engine/gcode/types')
 const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { switchWorkspaceFace } = await import('../../store/workspaceFace')
+const { getCannedShapeEditor } = await import('../../cannedShapes')
 
 const store = () => useProjectStore.getState()
 
@@ -101,6 +103,20 @@ function createButton(): HTMLButtonElement {
   return button
 }
 
+/** A key press as the browser reports it; returns whether the form consumed it. */
+function pressKey(target: EventTarget, key: string): boolean {
+  // linkedom's Event type omits `cancelable`, which a keydown needs for
+  // `preventDefault` to report as consumed.
+  const EventWithCancel = dom.Event as unknown as new (
+    type: string,
+    init: { bubbles?: boolean; cancelable?: boolean },
+  ) => { key?: string; defaultPrevented: boolean }
+  const event = new EventWithCancel('keydown', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'key', { value: key, configurable: true })
+  target.dispatchEvent(event as unknown as Event)
+  return event.defaultPrevented
+}
+
 /**
  * The canvas renderer for the open create session: the same shape
  * `CanvasCreationPanel` dispatches, so the panel is mounted exactly as the app
@@ -109,6 +125,12 @@ function createButton(): HTMLButtonElement {
 /** The panel only reads these for positioning; the harness has no canvas. */
 const NO_CONTAINER = { current: null } as React.RefObject<HTMLElement | null>
 const NO_CANVAS = { current: null } as React.RefObject<HTMLElement | null>
+/**
+ * `CanvasCreationPanel` only reads the shared creation workflow on the flat
+ * shapes; a rotary session returns before any of it is touched.
+ */
+const NO_CREATION = {} as unknown as import('./useCreationWorkflow').CreationWorkflow
+const NO_DIM_EDIT = {} as unknown as import('./useDimensionEditWorkflow').DimensionEditWorkflow
 
 function PanelHost() {
   const pendingAdd = useProjectStore((state) => state.pendingAdd)
@@ -135,11 +157,11 @@ function PanelHost() {
 
 let mounted: { root: ReturnType<typeof createRoot>; host: HTMLElement } | null = null
 
-function mountHost(): void {
+function mountHost(element: React.ReactElement = React.createElement(PanelHost)): void {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
-  root.render(React.createElement(I18nProvider, null, React.createElement(PanelHost)))
+  root.render(React.createElement(I18nProvider, null, element))
   mounted = { root, host }
 }
 
@@ -496,6 +518,16 @@ for (const editCase of EDIT_CASES) {
   })
 }
 
+// Properties enables its Edit action through the canned-shape editor registry,
+// by kind. A kind with no entry shows the action disabled ("This shape's editor
+// is not available yet") — which is how the four rotary kinds lost their Edit
+// route when they moved off the dialogs. The browser lane asserts the button;
+// this pins the registration it reads.
+await scenario('Properties has an editor for each of the four rotary kinds', async () => {
+  for (const kind of ['turn', 'polygon', 'thread', 'flutes'] as const) {
+    assert.ok(getCannedShapeEditor(kind) !== null, `${kind} has an editor Properties can open`)
+  }
+})
 
 // A store-level or panel-level test cannot see whether the canvas creation
 // panel actually renders these two panels for their pending sessions, and the
@@ -511,6 +543,166 @@ await scenario('the canvas creation panel renders both rotary panels for their s
   // itself and closing returns the keyboard to the canvas.
   assert.ok(source.includes('containerRef={containerRef}'), 'the panel is given the canvas container')
   assert.ok(source.includes('canvasRef={canvasRef}'), 'the panel is given the canvas')
+})
+
+// ---------------------------------------------------------------------------
+// Review finding 1: a new session is a new form.
+//
+// The creation drawer arms another tool without Cancel, so the panel is
+// re-rendered in place with a new session. Mounted through the real
+// `CanvasCreationPanel` — the app's only dispatch — an unkeyed panel keeps the
+// previous draft's field state, and Polygon opened on the Turn form's Start.
+// ---------------------------------------------------------------------------
+
+interface PanelHosts {
+  /** The pending session, exactly as `SketchCanvas` hands it down. */
+  pendingAdd: import('../../store/types').PendingAddTool | null
+  project: Project
+}
+
+function CanvasCreationPanelHost() {
+  const pendingAdd = useProjectStore((state) => state.pendingAdd)
+  const project = useProjectStore((state) => state.project)
+  const props: import('./CanvasCreationPanel').CanvasCreationPanelProps & PanelHosts = {
+    // The rotary sessions return before the shared creation fields are read, so
+    // the harness only needs to satisfy the prop types.
+    creation: NO_CREATION,
+    pendingAdd,
+    project,
+    creationTarget: 'feature',
+    dimEdit: NO_DIM_EDIT,
+    pendingDraftHasSelfIntersection: false,
+    pendingDraftExceedsStock: false,
+    setPendingGearParams: () => undefined,
+    setPendingNgonSides: () => undefined,
+    setPendingRectCorner: () => undefined,
+    containerRef: NO_CONTAINER,
+    canvasRef: NO_CANVAS,
+    clearTransientCanvasState: () => undefined,
+  }
+  return React.createElement(CanvasCreationPanel, props)
+}
+
+await scenario('switching tools without Cancel opens the new form fresh, not the old draft', async () => {
+  const fixture = fixtures()[0]!
+  const bar = barOf(fixture)
+  loadOn(fixture, 'around')
+  mountHost(React.createElement(CanvasCreationPanelHost))
+
+  // Turn typed into, then Polygon armed without Cancel: the Polygon form must
+  // open on its own defaults, not the Turn draft's numbers.
+  store().startAddRotarySolidPlacement('turn')
+  await waitFor(() => document.body.querySelector('#rotary-solid-start') !== null, 'the Turn panel opens')
+  setInputValue(field('rotary-solid-start'), '12')
+  setInputValue(field('rotary-solid-length'), '33')
+  await flush()
+  assert.equal(field('rotary-solid-start').value, '12', 'the typed Turn draft is in the form')
+
+  store().startAddRotarySolidPlacement('polygon')
+  await waitFor(() => document.body.querySelector('#rotary-solid-sides') !== null, 'the Polygon panel opens')
+  assert.equal(field('rotary-solid-start').value, '0', 'the new Polygon session starts at the default start')
+  assert.equal(field('rotary-solid-length').value, String(bar.length), 'the new Polygon session starts at the bar length')
+  assert.equal(field('rotary-solid-sides').value, '6', 'the new Polygon session starts at its own side count')
+
+  // The same for Thread -> Flutes: one panel component, two sessions.
+  store().startAddRotaryPatternPlacement('thread')
+  await waitFor(() => document.body.querySelector('#rotary-pitch') !== null, 'the Thread panel opens')
+  setInputValue(field('rotary-length'), '7')
+  await flush()
+  assert.equal(field('rotary-length').value, '7', 'the typed Thread draft is in the form')
+
+  store().startAddRotaryPatternPlacement('flutes')
+  await waitFor(() => document.body.querySelector('#rotary-count') !== null, 'the Flutes panel opens')
+  assert.equal(field('rotary-length').value, String(bar.length), 'the new Flutes session starts at the bar length')
+  assert.equal(field('rotary-count').value, '4', 'the new Flutes session starts at its own count')
+})
+
+// ---------------------------------------------------------------------------
+// Review finding 2: Enter is the Create/Save key the action advertises.
+// ---------------------------------------------------------------------------
+
+interface EnterCase {
+  name: string
+  kind: 'turn' | 'polygon' | 'thread' | 'flutes'
+  fields: Record<string, string>
+  /** Opens the session and the field the user would be typing in. */
+  fieldId: (name: string) => string
+}
+
+const ENTER_CASES: EnterCase[] = [
+  { name: 'Turn', kind: 'turn', fields: { start: '5', length: '30', diameter: '16' }, fieldId: (name) => `rotary-solid-${name}` },
+  { name: 'Polygon', kind: 'polygon', fields: { start: '5', length: '30', sides: '8', 'across-flats': '16', rotation: '22.5' }, fieldId: (name) => `rotary-solid-${name}` },
+  { name: 'Thread', kind: 'thread', fields: { start: '0', length: '100', pitch: '2', starts: '2', depth: '2' }, fieldId: (name) => `rotary-${name}` },
+  { name: 'Flutes', kind: 'flutes', fields: { start: '0', length: '100', count: '3', twist: '2', depth: '2' }, fieldId: (name) => `rotary-${name}` },
+]
+
+for (const enterCase of ENTER_CASES) {
+  await scenario(`${enterCase.name}: Enter creates the enabled panel form`, async () => {
+    const fixture = fixtures()[0]!
+    loadOn(fixture, 'around')
+    mountHost()
+    if (enterCase.kind === 'turn' || enterCase.kind === 'polygon') {
+      store().startAddRotarySolidPlacement(enterCase.kind)
+      await waitFor(() => document.body.querySelector('#rotary-solid-start') !== null, 'the solid panel opens')
+    } else {
+      store().startAddRotaryPatternPlacement(enterCase.kind)
+      await waitFor(() => document.body.querySelector('#rotary-start') !== null, 'the pattern panel opens')
+    }
+    for (const [name, value] of Object.entries(enterCase.fields)) {
+      setInputValue(field(enterCase.fieldId(name)), value)
+    }
+    await flush()
+    assert.equal(createButton().disabled, false, 'the filled form offers Create')
+
+    const before = featureIds()
+    // The panel's Create action advertises Enter but is not a tab stop, so the
+    // keystroke lands in a field: the form itself has to honour it.
+    pressKey(field(enterCase.fieldId('start')), 'Enter')
+    await waitFor(() => store().project.features.length === before.size + 1, 'Enter created one feature')
+    await waitFor(() => store().pendingAdd === null, 'Enter closed the form')
+  })
+}
+
+await scenario('Enter on the panel’s own Create action is left to the button', async () => {
+  const fixture = fixtures()[0]!
+  loadOn(fixture, 'around')
+  mountHost()
+  store().startAddRotarySolidPlacement('polygon')
+  await waitFor(() => document.body.querySelector('#rotary-solid-start') !== null, 'the panel opens')
+  setInputValue(field('rotary-solid-start'), '5')
+  setInputValue(field('rotary-solid-length'), '30')
+  setInputValue(field('rotary-solid-across-flats'), '16')
+  await flush()
+  assert.equal(createButton().disabled, false, 'the filled form offers Create')
+
+  // A focused button already turns Enter into its own activation; applying
+  // from the form as well would run Create twice for one keystroke.
+  const before = featureIds()
+  pressKey(createButton(), 'Enter')
+  await flush()
+  assert.equal(store().project.features.length, before.size, 'the form did not also apply the keystroke')
+  assert.notEqual(store().pendingAdd, null, 'the form stays open for the button to act on')
+})
+
+await scenario('Enter leaves a refused form alone and does not swallow the key', async () => {
+  const fixture = fixtures()[0]!
+  const bar = barOf(fixture)
+  loadOn(fixture, 'around')
+  mountHost()
+  store().startAddRotarySolidPlacement('polygon')
+  await waitFor(() => document.body.querySelector('#rotary-solid-start') !== null, 'the panel opens')
+  // A band longer than the bar is refused: the form shows the limit and the
+  // Create action is disabled.
+  setInputValue(field('rotary-solid-length'), String(bar.length + 10))
+  await flush()
+  assert.equal(createButton().disabled, true, 'the refused form has no enabled Create')
+
+  const before = featureIds()
+  const consumed = pressKey(field('rotary-solid-start'), 'Enter')
+  await flush()
+  assert.equal(store().project.features.length, before.size, 'a refused form creates nothing')
+  assert.notEqual(store().pendingAdd, null, 'the refused form stays open')
+  assert.equal(consumed, false, 'the form does not consume a key it cannot act on')
 })
 
 console.log(`\n${passCount} passed, ${failCount} failed`)

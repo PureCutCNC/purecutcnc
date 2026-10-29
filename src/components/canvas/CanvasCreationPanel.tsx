@@ -82,6 +82,10 @@ export function CanvasCreationPanel({
   if (pendingAdd?.shape === 'rotary-solid') {
     return (
       <RotarySolidPanel
+        // A new session is a new form: picking another tool in the creation
+        // drawer arms one without Cancel, and an unkeyed panel would keep the
+        // previous draft's field state (issue #1112 rt2-b review finding 1).
+        key={pendingAdd.session}
         kind={pendingAdd.kind}
         onClose={cancelPendingAdd}
         containerRef={containerRef}
@@ -93,6 +97,9 @@ export function CanvasCreationPanel({
   if (pendingAdd?.shape === 'rotary-pattern') {
     return (
       <RotaryPatternPanel
+        // Same rule for Thread/Flutes: switching between them is a new session
+        // and must not carry the previous form's numbers.
+        key={pendingAdd.session}
         kind={pendingAdd.kind}
         onClose={cancelPendingAdd}
         containerRef={containerRef}

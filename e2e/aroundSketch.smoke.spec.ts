@@ -2424,16 +2424,21 @@ async function expectPanelComplete(
 }
 
 /**
- * Where the panel's fields are taller than the panel, the body is the only
- * scroller: its own offset moves while the title and the actions keep the
- * rectangles they opened with. A panel that pushed its actions out instead
+ * Where the panel's fields are taller than the space it is given, the body is
+ * the only scroller: its own offset moves while the title and the actions keep
+ * the rectangles they opened with. A panel that pushed its actions out instead
  * would fail the chrome check above.
+ *
+ * `requireOverflow` is the short-window proof: it asserts the form really is
+ * taller than the body before checking that scrolling works, so a test cannot
+ * silently stop exercising the scroll path when the form gets shorter.
  */
 async function expectPanelBodyScrolls(
   page: Page,
   panel: Locator,
   controls: ChromeControl[],
   label: string,
+  options?: { requireOverflow?: boolean },
 ): Promise<void> {
   const before = await panel.evaluate((element) => {
     const body = element.querySelector('.canvas-workflow-panel__body') as HTMLElement | null
@@ -2445,6 +2450,10 @@ async function expectPanelBodyScrolls(
     }
   })
   expect(before.frameScrollTop, `${label} panel frame is not the scroller`).toBe(0)
+  const overflows = before.scrollHeight > before.clientHeight
+  if (options?.requireOverflow) {
+    expect(overflows, `${label} body is taller than the space it is given`).toBe(true)
+  }
   await panel.evaluate((element) => {
     const body = element.querySelector('.canvas-workflow-panel__body') as HTMLElement | null
     if (body !== null) body.scrollTop = body.scrollHeight
@@ -2457,12 +2466,60 @@ async function expectPanelBodyScrolls(
     }
   })
   expect(after.frameScrollTop, `${label} frame stays at scrollTop 0`).toBe(0)
-  if (before.scrollHeight > before.clientHeight) {
+  if (overflows) {
     expect(after.scrollTop, `${label} body owns the scroll`).toBeGreaterThan(0)
   } else {
     expect(after.scrollTop, `${label} a body that fits does not scroll`).toBe(0)
   }
   await expectPanelComplete(page, panel, controls, `${label} scrolled`)
+}
+
+/**
+ * The panel caps its own height to the space **below its own top edge**, not to
+ * the whole viewport (review finding 3). A page-level panel opens at the canvas
+ * container's top, so a viewport-sized cap would let a tall form run past the
+ * bottom of the window before its body began scrolling. The 12px is the same
+ * margin the stylesheet subtracts.
+ */
+async function expectPanelCappedBelowItsTop(panel: Locator, label: string): Promise<void> {
+  const geometry = await panel.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return {
+      top: rect.top,
+      bottom: rect.bottom,
+      height: rect.height,
+      maxHeight: Number.parseFloat(getComputedStyle(element).maxHeight),
+      windowHeight: window.innerHeight,
+    }
+  })
+  const available = geometry.windowHeight - geometry.top - 12
+  expect(geometry.maxHeight, `${label} caps its height to the space below its own top`).toBeCloseTo(available, 0)
+  expect(geometry.height, `${label} is never taller than that space`).toBeLessThanOrEqual(available + 1)
+  expect(geometry.bottom, `${label} ends inside the window`).toBeLessThanOrEqual(geometry.windowHeight)
+}
+
+/**
+ * Open a picker in the panel and prove the trigger and the open list are both
+ * complete inside the panel and the viewport, then choose an option. The
+ * trigger may legitimately be scrolled into the body first (it lives in the
+ * scrolling body); the list is never scrolled into view, so a list the panel
+ * cannot show in place fails instead of being rescued.
+ */
+async function expectPanelPickerComplete(
+  page: Page,
+  panel: Locator,
+  trigger: Locator,
+  option: Locator,
+  chosen: string,
+  label: string,
+): Promise<void> {
+  await trigger.scrollIntoViewIfNeeded()
+  await expectPanelComplete(page, panel, [{ label: `${label} trigger`, locator: trigger }], label)
+  await trigger.click()
+  await expect(option).toBeVisible()
+  await expectPanelComplete(page, panel, [{ label: `${label} option`, locator: option }], `${label} open`)
+  await option.click()
+  await expect(trigger).toContainText(chosen)
 }
 
 test.describe('tablet Thread and Flutes panels', () => {
@@ -2511,16 +2568,20 @@ test.describe('tablet Thread and Flutes panels', () => {
 
       const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
       await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      await expectPanelCappedBelowItsTop(panel, kind)
 
-      // The one picker left is Direction, and its open list must sit inside the
-      // viewport unaided (the panel has no dialog body to clip it).
-      await expect(ui.rotary.directionTrigger(page)).toBeVisible()
-      await expect(ui.rotary.directionTrigger(page)).toContainText('Right-hand')
-      await ui.rotary.directionTrigger(page).click()
-      await expect(ui.rotary.directionOption(page, 'Left-hand')).toBeVisible()
-      await expectUnoccluded(ui.rotary.directionOption(page, 'Left-hand'), `${kind} Direction option`)
-      await ui.rotary.directionOption(page, 'Left-hand').click()
-      await expect(ui.rotary.directionTrigger(page)).toContainText('Left-hand')
+      // The one picker left is Direction: its trigger and its open list must
+      // both be complete, and picking must leave the title and the actions
+      // where they were (the panel has no dialog footer to scroll away).
+      await expectPanelPickerComplete(
+        page,
+        panel,
+        ui.rotary.directionTrigger(page),
+        ui.rotary.directionOption(page, 'Left-hand'),
+        'Left-hand',
+        `${kind} Direction`,
+      )
+      await expectPanelComplete(page, panel, controls, `${kind} after pickers`)
 
       await expectPanelBodyScrolls(page, panel, controls, kind)
 
@@ -2571,7 +2632,7 @@ test.describe('tablet Thread and Flutes panels on a short viewport', () => {
   // supported on phones" screen with no canvas at all, so this stays at 520.
   test.use({ viewport: { width: 1180, height: 520 }, hasTouch: true })
 
-  test('both panels keep their actions reachable while their fields scroll', async ({ app, ui }) => {
+  test('both panels keep their actions and picker reachable at the tablet floor', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await switchToAround(page)
@@ -2583,10 +2644,59 @@ test.describe('tablet Thread and Flutes panels on a short viewport', () => {
 
       const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
       await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      // The panel opens at the canvas container's top, so its cap is the space
+      // below that top — the reason a tall form can never end off screen
+      // (review finding 3).
+      await expectPanelCappedBelowItsTop(panel, kind)
 
-      // Even with the fields taller than the panel, the body is the only
-      // scroller and the title and the actions keep their rectangles.
+      // Direction is the only picker left: its trigger and its open list must
+      // both be complete, and picking must leave the title and the actions
+      // where they were (review finding 4).
+      await expectPanelPickerComplete(
+        page,
+        panel,
+        ui.rotary.directionTrigger(page),
+        ui.rotary.directionOption(page, 'Left-hand'),
+        'Left-hand',
+        `${kind} Direction`,
+      )
+      await expectPanelComplete(page, panel, controls, `${kind} after pickers`)
+
+      // The body is the only scroller and the title and the actions keep their
+      // rectangles. At this height the form happens to fit inside the cap, so
+      // this case does not demand overflow; the short-window test below does,
+      // where the same form is genuinely taller than the space it is given.
       await expectPanelBodyScrolls(page, panel, controls, kind)
+
+      await page.keyboard.press('Escape')
+      await expect(panel).toBeHidden()
+    }
+  })
+})
+
+test.describe('Thread and Flutes panels on a short desktop window', () => {
+  // A fine-pointer window this short is a normal small/split-screen window, and
+  // it is where the rotary form is genuinely taller than the space below the
+  // panel's top: the body has to scroll (review finding 4). The panel used to
+  // be a dialog with a header and a footer, which needed the scroll already at
+  // 520; the panel's own chrome is one row, so the shorter window is what
+  // exercises the same path.
+  test.use({ viewport: { width: 1180, height: 420 } })
+
+  test('the body owns the scroll when the form is taller than the panel', async ({ app, ui }) => {
+    const { page } = app
+    await prepareMmRoundBarWithRotary(page)
+    await switchToAround(page)
+
+    for (const kind of ['thread', 'flutes'] as const) {
+      await openRotaryEntry(page, ui, kind)
+      const panel = ui.rotary.dialog(page)
+      await expect(panel).toBeVisible()
+
+      const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      await expectPanelCappedBelowItsTop(panel, kind)
+      await expectPanelBodyScrolls(page, panel, controls, kind, { requireOverflow: true })
 
       await page.keyboard.press('Escape')
       await expect(panel).toBeHidden()
@@ -2699,6 +2809,7 @@ test.describe('tablet solid panels on a short viewport', () => {
     await expect(panel).toBeVisible()
     const controls = panelChrome(panel, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
     await expectPanelComplete(page, panel, controls, 'polygon short')
+    await expectPanelCappedBelowItsTop(panel, 'polygon short')
     await expectPanelBodyScrolls(page, panel, controls, 'polygon short')
 
     await page.keyboard.press('Escape')

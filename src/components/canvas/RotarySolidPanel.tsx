@@ -75,7 +75,7 @@ import {
 } from '../../cannedShapes/generators/rotarySolidParams'
 import { CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
-import { useRotaryPanelChrome, type RotaryPanelHostRefs } from './useRotaryPanelChrome'
+import { useRotaryPanelChrome, useRotaryPanelKeyboard, type RotaryPanelHostRefs } from './useRotaryPanelChrome'
 import { useRotaryPanelContextClose } from './rotaryPanelContext'
 
 /** UI bounds for the polygon side count, matching `buildRotaryPolygonPrism`. */
@@ -245,18 +245,8 @@ export function RotarySolidPanel({ kind, featureId, onClose, ...hostRefs }: Rota
     activeRef.current = false
   }, [])
 
-  // The form owns the keyboard while it is open, exactly as the dialog did:
-  // Escape closes it even when a field has focus (the canvas's own handler does
-  // not see a keystroke typed into a panel field), and focus starts on the
-  // first field the user fills.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') closePanel()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [closePanel])
-
+  // Focus starts on the first field the user fills; the keyboard itself (Esc
+  // closes, Enter applies) is `useRotaryPanelKeyboard` below.
   useEffect(() => {
     startRef.current?.focus({ preventScroll: true })
   }, [])
@@ -420,6 +410,16 @@ export function RotarySolidPanel({ kind, featureId, onClose, ...hostRefs }: Rota
     }
     setRefusal(refusalText(result.reason))
   }
+
+  // The Create/Save action advertises Enter but is not a tab stop, so the form
+  // itself is the keyboard route to it (review finding 2). Declared after
+  // `handleApply` so the hook reads this render's validity, and before the
+  // early returns below so the hook order stays fixed.
+  useRotaryPanelKeyboard({
+    onClose: closePanel,
+    onApply: handleApply,
+    canApply: problem === null && !untouched,
+  })
 
   // The source name is live while the source exists: a rename must show the new
   // name, not the name copied when the profile was picked. Only a deleted (or

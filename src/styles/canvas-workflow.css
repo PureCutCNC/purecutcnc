@@ -619,10 +619,17 @@
  * instead of being pushed off screen. The dialog this replaced had the same
  * contract with a scrolling dialog body (issue #1016 C1 D2), and the e2e
  * short-viewport checks still assert it.
+ *
+ * The cap is the space **below the panel's own top edge**, not the whole
+ * viewport (review finding 3): a page-level panel starts at the canvas
+ * container's top, so a viewport-sized cap would let a tall form run past the
+ * bottom of the window before the body began scrolling. The top is the same
+ * `--canvas-workflow-panel-top` variable the panel sets from its position, the
+ * way `.canvas-workflow-panel--nest` already measures itself.
  */
 .canvas-workflow-panel--rotary {
   width: min(430px, calc(100% - 24px));
-  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - var(--canvas-workflow-panel-top, 0px) - 12px);
   display: flex;
   flex-direction: column;
 }
@@ -645,6 +652,15 @@
 /* The Direction picker shares the field grid; its Select fills the value column. */
 .rotary-panel__direction .ui-select {
   width: min(180px, 100%);
+}
+
+/* Direction is the last field of the scrolling body, so a list opening downward
+   would run past the panel's bottom edge and be clipped by it (the panel clips
+   its own body, #1112 rt2-b review finding 4). Opening it upward, over the
+   fields that precede it, keeps every option inside the panel and reachable. */
+.rotary-panel__direction .ui-select__dropdown {
+  top: auto;
+  bottom: calc(100% + 3px);
 }
 
 .rotary-panel__profile {

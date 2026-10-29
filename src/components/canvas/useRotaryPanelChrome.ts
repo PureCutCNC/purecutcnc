@@ -23,6 +23,10 @@
  * as they do for the gear and the flat shapes. The two panels differ only in
  * their fields and in which store action they call.
  *
+ * The keys the action row advertises (Esc/Enter) are shared here too
+ * (`useRotaryPanelKeyboard`), so the guard that keeps one keystroke from
+ * running two actions is written once.
+ *
  * `close` is deliberately stable: the panels use it in effect dependencies
  * (Escape, the context-change guard), and a hook return object in a React dep
  * array would fire those effects on every render.
@@ -98,4 +102,53 @@ export function useRotaryPanelChrome({
     actionRowProps: panel.actionRowProps,
     close,
   }
+}
+
+export interface RotaryPanelKeyboardOptions {
+  /** Leave the form: the panel's stable close action. */
+  onClose: () => void
+  /** Apply the form, exactly as the Create/Save action does. */
+  onApply: () => void
+  /** Whether that action would do anything: a refused or unchanged form must not apply. */
+  canApply: boolean
+}
+
+/**
+ * The keys the panel's action row advertises, honoured while the form is open
+ * (issue #1112 rt2-b review finding 2).
+ *
+ * `CanvasWorkflowConfirm` is labelled `Create (Enter)` and is deliberately not
+ * a tab stop, so without this the only keyboard route to Create/Save is the
+ * pointer. Escape closes the form even when a field has focus (the canvas's own
+ * handler does not see a keystroke typed into a panel field); Enter applies it
+ * only when the action is enabled and the key was not aimed at a control that
+ * already turns Enter into its own action — one keystroke must never run two
+ * things, and a button that has focus owns its own activation.
+ *
+ * The callbacks and the flag are read from a ref the render refreshes, so the
+ * listener subscribes once: the two functions are new every render, and listing
+ * them as effect dependencies would resubscribe on every keystroke.
+ */
+export function useRotaryPanelKeyboard({ onClose, onApply, canApply }: RotaryPanelKeyboardOptions): void {
+  const latest = useRef({ onClose, onApply, canApply })
+  useEffect(() => {
+    latest.current = { onClose, onApply, canApply }
+  })
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        latest.current.onClose()
+        return
+      }
+      if (event.key !== 'Enter' || event.defaultPrevented || !latest.current.canApply) return
+      const target = event.target
+      // A button (the panel's own Create/Save, a picker trigger) or an open
+      // list's option already maps Enter to itself.
+      if (target instanceof Element && target.closest('button, select, [role="option"]') !== null) return
+      event.preventDefault()
+      latest.current.onApply()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 }
