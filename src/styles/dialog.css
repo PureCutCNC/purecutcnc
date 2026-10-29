@@ -132,6 +132,24 @@
   padding: 8px 9px;
 }
 
+/* A template brings its own project type (issue #1112, item 24), so the tiles
+   show the type that will be used and stop taking clicks. The checked tile
+   keeps its full contrast; the two the template does not use dim. */
+.dialog--new-project .project-template-list--project-type .project-template-card:disabled {
+  cursor: default;
+}
+
+.dialog--new-project .project-template-list--project-type .project-template-card:disabled:not(.project-template-card--active) {
+  opacity: 0.5;
+}
+
+.dialog--new-project .new-project-type-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
 /* Below the tablet target the three tiles stack, one per row, rather than
    squeezing the labels and their meta lines into a narrow column. */
 @media (max-width: 1023px) {

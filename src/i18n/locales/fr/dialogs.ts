@@ -30,6 +30,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.newProject.projectTypeMillingMeta': 'Brut plat, dessus et dessous',
   'dialogs.newProject.projectTypePlasmaMeta': 'Découpe de tôle',
   'dialogs.newProject.projectTypeRotaryMeta': 'Barre sur un axe rotatif',
+  'dialogs.newProject.projectTypeLocked': 'Fixé au type de projet du modèle.',
   'dialogs.newProject.template': 'Modèle',
   'dialogs.newProject.templateBlankMetric': 'Métrique vierge',
   'dialogs.newProject.templateBlankMetricMeta': 'Projet vide en millimètres.',

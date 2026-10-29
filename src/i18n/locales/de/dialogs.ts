@@ -33,6 +33,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.newProject.projectTypeMillingMeta': 'Flachmaterial, oben und unten',
   'dialogs.newProject.projectTypePlasmaMeta': 'Blechschneiden',
   'dialogs.newProject.projectTypeRotaryMeta': 'Stange in einer Drehachse',
+  'dialogs.newProject.projectTypeLocked': 'An den Projekttyp der Vorlage gebunden.',
   'dialogs.newProject.template': 'Vorlage',
   'dialogs.newProject.templateBlankMetric': 'Leer metrisch',
   'dialogs.newProject.templateBlankMetricMeta': 'Leeres Projekt in Millimetern.',

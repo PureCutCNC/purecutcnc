@@ -39,6 +39,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.newProject.projectTypeMillingMeta': '平面毛坯，上下两面',
   'dialogs.newProject.projectTypePlasmaMeta': '板材切割',
   'dialogs.newProject.projectTypeRotaryMeta': '旋转轴上的棒料',
+  'dialogs.newProject.projectTypeLocked': '已锁定为模板的项目类型。',
   'dialogs.newProject.template': '模板',
   'dialogs.newProject.templateBlankMetric': '公制空白',
   'dialogs.newProject.templateBlankMetricMeta': '以毫米为单位的空白项目。',

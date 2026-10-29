@@ -212,6 +212,8 @@ export const newProjectDialog = {
   /** The project type tiles, chosen once here (issue #1046), first in the dialog since #1102. */
   typeTile: (page: Page, label: string) =>
     newProjectDialog.root(page).getByRole('radiogroup', { name: 'Project type' }).getByRole('radio', { name: label, exact: true }),
+  /** The note saying a template's own type is what the new project gets (issue #1112, item 24). */
+  typeLockNote: (page: Page) => newProjectDialog.root(page).locator('.new-project-type-note'),
   /** A rotary blank's Shape picker — Round bar or Square blank (issue #1046). */
   stockShapeTrigger: (page: Page) =>
     newProjectDialog.root(page).locator('.properties-field--stock-shape .ui-select__trigger'),

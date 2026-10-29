@@ -37,6 +37,7 @@ export const dialogsEn = {
   'dialogs.newProject.projectTypeMillingMeta': 'Flat stock, top and bottom',
   'dialogs.newProject.projectTypePlasmaMeta': 'Sheet cutting',
   'dialogs.newProject.projectTypeRotaryMeta': 'Bar in a rotary axis',
+  'dialogs.newProject.projectTypeLocked': "Locked to the template's project type.",
   'dialogs.newProject.template': 'Template',
   'dialogs.newProject.templateBlankMetric': 'Blank metric',
   'dialogs.newProject.templateBlankMetricMeta': 'Empty project in millimeters.',
