@@ -22,8 +22,7 @@ import { activeSetup } from '../../store/helpers/activeFace'
 import { formHasChanges } from '../common/formDraft'
 import { operationsDeletedWithSetup } from './setupSections'
 import { setupDialogSections } from './setupDialogSections'
-import { convertRegistration, setupFormValues } from './setupFormValues'
-import { lastUnitSwitchMode } from '../../store/helpers/unitSwitch'
+import { setupFormValues } from './setupFormValues'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
@@ -31,13 +30,9 @@ import { useI18n } from '../../i18n/i18nContext'
 export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup: MachiningSetup; onClose: () => void }) {
   const { t } = useI18n()
   const [setup] = useState(initialSetup)
-  // The saved values Save would overwrite, moved only by a unit conversion the
-  // dialog saw itself (never re-read from the store — see below).
-  const [baseline, setBaseline] = useState(initialSetup)
   const [deleteSnapshot, setDeleteSnapshot] = useState<Project | null>(null)
   const close = onClose
   const { project, updateSetup, deleteSetup } = useProjectStore()
-  const units = project.meta.units
   const [name, setName] = useState(setup.name)
   const [axis, setAxis] = useState(setup.orientation.axis)
   const [notes, setNotes] = useState(setup.notes)
@@ -46,37 +41,13 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const face = setupFace(setup)
   const sections = setupDialogSections(face)
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
-  // A unit switch happens under the dialog too: the store rescales every length
-  // with the project, this setup's registration points included (#1112 F4).
-  // Follow it without either of the two things that would be wrong (r5-4). The
-  // **draft** keeps the edits typed since the dialog opened, moved by the fixed
-  // mm/inch factor when the switch **converted** the stored lengths and left
-  // alone when it **reinterpreted** them — the mode the store recorded for the
-  // toggle, never a ratio inferred from project snapshots, because an
-  // intervening stock edit also moves a stored length and used to read as a
-  // conversion. The **baseline** keeps the values the dialog opened on, moved by
-  // that same fixed conversion (and only by a conversion); it is never re-read
-  // from the store, so an external edit to the setup since opening still differs
-  // from it and still blocks Save after the toggle. Both sides are compared in
-  // the project's current units, which those conversions keep true. Both writes
-  // are plain values derived from this render's state, so a repeated render
-  // queues the same result instead of converting twice.
-  const [unitsShown, setUnitsShown] = useState(units)
-  if (unitsShown !== units) {
-    const from = unitsShown
-    setUnitsShown(units)
-    if (lastUnitSwitchMode(from, units) === 'convert') {
-      setBaseline({ ...baseline, registration: convertRegistration(baseline.registration, from, units) })
-      setRegistration(convertRegistration(registration, from, units))
-    }
-  }
   // A dialog cannot save over an intervening undo/edit to the setup.
-  const storeUnchanged = Boolean(current) && JSON.stringify(current) === JSON.stringify(baseline)
+  const storeUnchanged = Boolean(current) && JSON.stringify(current) === JSON.stringify(setup)
   // Compare the draft with the saved setup through the values Save would write
   // (issue #1112 F4): a field this face does not store cannot enable it, and a
   // name typed back with different whitespace is not a change.
-  const draft: MachiningSetup = { ...baseline, name, notes, orientation: { ...baseline.orientation, axis }, registration }
-  const changed = formHasChanges(setupFormValues(baseline, face), setupFormValues(draft, face))
+  const draft: MachiningSetup = { ...setup, name, notes, orientation: { ...setup.orientation, axis }, registration }
+  const changed = formHasChanges(setupFormValues(setup, face), setupFormValues(draft, face))
   const canSave = storeUnchanged && changed && name.trim() !== ''
   const removed = operationsDeletedWithSetup(project, setup.id)
   function save() {

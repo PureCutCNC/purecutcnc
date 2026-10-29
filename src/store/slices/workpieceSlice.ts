@@ -33,7 +33,6 @@ import { projectWithStockShape, toBlockStock } from '../helpers/stockShape'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
-import { recordUnitSwitch } from '../helpers/unitSwitch'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import { sanitizeSelection } from './selectionSlice'
 
@@ -509,9 +508,6 @@ export function createWorkpieceSlice(
         if (projectsEqual(nextProject, s.project)) {
           return {}
         }
-        // Open dialogs follow the switch the user actually made: whether the
-        // stored lengths were rewritten or only reinterpreted (#1112 r5-4).
-        recordUnitSwitch(s.project.meta.units, units, mode)
         if (s.history.transactionStart) {
           // An open transaction holds the state a Cancel puts back — a live
           // canned-shape preview, a drag (#1112 F1). It converts with the
