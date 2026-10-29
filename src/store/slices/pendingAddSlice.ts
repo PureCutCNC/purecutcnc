@@ -27,6 +27,7 @@ import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOpera
 import {
   activeFace,
   aroundSketchAuthoringAvailable,
+  aroundSketchAuthoringRefused,
   aroundSheetTargetRefused,
   aroundUnavailableReason,
   faceArtworkTransform,
@@ -111,6 +112,21 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
  */
 function refusesSquareAroundSketch(state: Pick<ProjectStore, 'project' | 'creationTarget'>): boolean {
   return aroundSheetTargetRefused(state.project, activeFace(state.project), state.creationTarget)
+}
+
+/**
+ * True when a text run must be refused: the workspace is on a square blank's
+ * Around sheet. Text is the one creation tool that does not author the selected
+ * creation target — {@link createTextFeatureAt} stamps the run's own operation
+ * (`add`/`subtract`) on it, so a placed run always cuts the sheet — and the
+ * placement writes its row directly instead of going through `addFeature`,
+ * whose operation guard would otherwise catch it. Judging it by the creation
+ * target therefore let a region or construction target arm the tool and place a
+ * cutting run on the sheet (rt2-c review finding 1), so text keeps the sheet
+ * rule itself: {@link aroundSketchAuthoringRefused}, at arming and completion.
+ */
+function refusesSquareAroundText(state: Pick<ProjectStore, 'project'>): boolean {
+  return aroundSketchAuthoringRefused(state.project, activeFace(state.project))
 }
 
 function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
@@ -261,7 +277,7 @@ export function createPendingAddSlice(
       })),
 
     startAddTextPlacement: (config) =>
-      set((s) => refusesSquareAroundSketch(s) ? {} : ({
+      set((s) => refusesSquareAroundText(s) ? {} : ({
         pendingAdd: { shape: 'text', config, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -535,7 +551,9 @@ export function createPendingAddSlice(
       }
       // A run started on a round bar and completed after the blank became
       // square is refused here, before any project, history or selection write.
-      if (refusesSquareAroundSketch(state)) {
+      // The run's own operation cuts the sheet whatever target is selected, so
+      // this is the sheet rule and not the creation-target one.
+      if (refusesSquareAroundText(state)) {
         return []
       }
 

@@ -923,7 +923,9 @@ test('square to round generates inside the band and removes material', async ({ 
   // The Around Add menu offers only what Around can do (issue #1112 K): the
   // 3D surface strategies are not listed, and the wrapped sheet kinds stay in
   // place with the stock reason — disabled, not behind the "not available for
-  // this selection" disclosure, so this assertion needs no expand step.
+  // this selection" disclosure, so this assertion needs no expand step. Decision
+  // 17's wording is "Not available on a square bar yet": turning the blank
+  // works, the sheet work does not.
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   const aroundMenu = ui.setupCam.addMenu(page)
@@ -932,7 +934,7 @@ test('square to round generates inside the band and removes material', async ({ 
   }
   const aroundPocket = aroundMenu.locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
-  await expect(aroundPocket.locator('.cam-operation-hint__text')).toHaveText('Needs a round bar')
+  await expect(aroundPocket.locator('.cam-operation-hint__text')).toHaveText('Not available on a square bar yet')
   await expect(aroundPocket.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(ui.setupCam.addMenu(page)).toBeHidden()

@@ -561,14 +561,16 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   )
 
   // The stock-blocked rows are in the menu itself, disabled with the reason:
-  // "Needs a round bar" must not live behind an expand step (review of K).
+  // "Not available on a square bar yet" must not live behind an expand step
+  // (review of K). That is decision 17's wording — turning the blank works, it
+  // is the sheet work that is missing, so "Needs a round bar" was wrong here.
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   const squarePocketRow = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
   await expect(squarePocketRow).toBeVisible()
-  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Needs a round bar')
+  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Not available on a square bar yet')
   await expect(squarePocketRow.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(ui.setupCam.addMenu(page)).toBeHidden()
