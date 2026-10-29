@@ -316,6 +316,30 @@ export function buildPriorReplayItems(
     .filter((item): item is SimulationReplayItem => item !== null)
 }
 
+/**
+ * The playback starting stock as a whole result: the prior operations replayed
+ * into a fresh grid.
+ *
+ * A full result rather than a bare grid because the replay is the same work a
+ * selected cut of the last prior operation is (issue #1112 rt2-h): the panel's
+ * result cache keys both, so pressing play on the finish reuses the heightfield
+ * the rough already built instead of replaying 24k moves again (89 ms on Frank's
+ * project).
+ */
+export function priorReplayResult(
+  project: Project,
+  operations: readonly Operation[],
+  paths: ReadonlyMap<string, ToolpathResult>,
+  selectedOperationId: string,
+  options: SimulationBuildOptions,
+): SimulationResult {
+  return simulateReplayItemsHeightfield(
+    project,
+    buildPriorReplayItems(project, operations, paths, selectedOperationId),
+    options,
+  )
+}
+
 /** The playback starting stock: the prior operations replayed into a fresh grid. */
 export function priorReplayGrid(
   project: Project,
@@ -324,9 +348,5 @@ export function priorReplayGrid(
   selectedOperationId: string,
   options: SimulationBuildOptions,
 ): SimulationGrid {
-  return simulateReplayItemsHeightfield(
-    project,
-    buildPriorReplayItems(project, operations, paths, selectedOperationId),
-    options,
-  ).grid
+  return priorReplayResult(project, operations, paths, selectedOperationId, options).grid
 }

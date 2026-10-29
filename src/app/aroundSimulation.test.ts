@@ -318,6 +318,43 @@ function testListedSetupAndBrokenAround(): void {
   }
 }
 
+/**
+ * Opening the Simulation tab builds this setup input again on every switch, and
+ * unwrapping + folding a path is a fresh object per move: 11-13 ms of blocking
+ * render work for one 24k-move path on Frank's `turn-shape-test-01` (issue
+ * #1112 rt2-h). The turn is a pure function of the generated result and the
+ * frame's values, and nothing writes to a `ToolpathResult` afterwards, so it is
+ * kept — but only for the result it came from and the sheet it was turned for.
+ */
+function testTurningAPathIsReused(): void {
+  console.log('Testing a path turned once on one sheet is reused, and a new path or sheet turns again...')
+  const { project, setup, paths } = makeAroundProject()
+  const original = paths.get('opAround')!
+  const first = simulationInput(project, setup, paths).toolpaths.get('opAround')!
+  const second = simulationInput(project, setup, paths).toolpaths.get('opAround')!
+  assert(second === first, 'the same generated path on the same sheet is the same turned path')
+  assert(second !== original, 'the turned path is not the generated one')
+  assert(second.moves !== original.moves, 'and it holds its own moves')
+
+  // A regenerated result is a different object even when its content is
+  // identical (a backend switch clears and refills the generation cache). It
+  // must never read the older turn.
+  const regenerated = new Map([['opAround', { ...original, moves: original.moves.map((move) => ({ ...move })) }]])
+  const third = simulationInput(project, setup, regenerated).toolpaths.get('opAround')!
+  assert(third !== first, 'a regenerated path turns its own copy')
+  assertEqual(third.moves, first.moves, 'and the values are identical')
+
+  // Another sheet: the same generated path on a wider bar folds elsewhere, so
+  // the frame has to be part of what is remembered, not just the path.
+  const wider = makeAroundProject(roundStock(60, 200, 'x', { x: 10, y: 40 }))
+  const onWider = simulationInput(wider.project, wider.setup, paths).toolpaths.get('opAround')!
+  assert(onWider !== first, 'the same path on another sheet turns its own copy')
+  assert(
+    JSON.stringify(onWider.moves) !== JSON.stringify(first.moves),
+    'and folds to different points, because the sheet it lands on is a different one',
+  )
+}
+
 function testAroundClampBandsAreFlatBoxes(): void {
   console.log('Testing an Around input clips its chuck and tailstock to the sheet, as boxes...')
   const { project, setup, paths } = makeAroundProject()
@@ -439,6 +476,7 @@ testSecondTurnPocketAndBarData()
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
 testListedSetupAndBrokenAround()
+testTurningAPathIsReused()
 testFlatSetupDropsAroundFeatures()
 testAroundClampBandsAreFlatBoxes()
 testFlatSetupKeepsItsClampsAndBar()
