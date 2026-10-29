@@ -442,6 +442,28 @@ export function loadSTLTransformedGeometry(
   return data
 }
 
+/** The neutral colour a feature mesh is built in, before selection or hover. */
+function featureMeshBaseColor(feature: SketchFeature, isRegion: boolean, threePalette?: ThreeThemePalette): number {
+  return isRegion
+    ? (threePalette?.meshFeatureRegion ?? 0x9966cc) // theme-exempt: dark fallback
+    : feature.operation === 'subtract'
+      ? (threePalette?.meshFeatureSubtract ?? 0x3366cc) // theme-exempt: dark fallback
+      : (threePalette?.meshFeatureAdd ?? 0x33aa66) // theme-exempt: dark fallback
+}
+
+/**
+ * Materials remember the colour they were built with, so clearing a highlight
+ * restores the built appearance exactly instead of guessing it back from the
+ * feature (which cannot tell an imported mesh from an extrusion, issue #1112 F5).
+ */
+interface FeatureMaterialUserData {
+  featureBaseColor?: number
+}
+
+function markFeatureBaseColor(material: THREE.Material, color: number): void {
+  (material.userData as FeatureMaterialUserData).featureBaseColor = color
+}
+
 export function buildFeatureMesh(
   project: Project,
   feature: SketchFeature,
@@ -454,16 +476,18 @@ export function buildFeatureMesh(
   if (asset) {
     const stl = feature.stl
     const chunks = loadPersistedBufferGeometryChunks(asset, false)
+    const baseColor = threePalette?.meshFeatureDefault ?? 0xb7c2cf // theme-exempt: dark fallback
     const material = new THREE.MeshStandardMaterial({
       color: selected
         ? (threePalette?.meshFeatureSelected ?? 0xffaa00) // theme-exempt: dark fallback
         : hovered
           ? (threePalette?.meshFeatureHovered ?? 0x44aaff) // theme-exempt: dark fallback
-          : (threePalette?.meshFeatureDefault ?? 0xb7c2cf), // theme-exempt: dark fallback
+          : baseColor,
       roughness: 0.82,
       metalness: 0.05,
       side: THREE.DoubleSide,
     })
+    markFeatureBaseColor(material, baseColor)
     if (!chunks || chunks.length === 0) {
       return new THREE.Mesh(new THREE.BufferGeometry(), material)
     }
@@ -609,13 +633,11 @@ export function buildFeatureMesh(
   geometry.rotateX(-Math.PI / 2)
   geometry.translate(0, yStart, 0)
 
+  const baseColor = featureMeshBaseColor(feature, isRegion, threePalette)
   const color =
     selected ? (threePalette?.meshFeatureSelected ?? 0xffaa00) // theme-exempt: dark fallback
     : hovered ? (threePalette?.meshFeatureHovered ?? 0x44aaff) // theme-exempt: dark fallback
-    : isRegion ? (threePalette?.meshFeatureRegion ?? 0x9966cc) // theme-exempt: dark fallback
-    : feature.operation === 'subtract'
-      ? (threePalette?.meshFeatureSubtract ?? 0x3366cc) // theme-exempt: dark fallback
-      : (threePalette?.meshFeatureAdd ?? 0x33aa66) // theme-exempt: dark fallback
+    : baseColor
 
   const material = new THREE.MeshStandardMaterial({
     color,
@@ -631,6 +653,7 @@ export function buildFeatureMesh(
       polygonOffsetUnits: -1,
     }),
   })
+  markFeatureBaseColor(material, baseColor)
 
   const mesh = new THREE.Mesh(geometry, material)
   if (isRegion) mesh.renderOrder = 1
@@ -663,6 +686,62 @@ export function applyTabHighlight(mesh: THREE.Mesh, selected: boolean, threePale
   if (!(material instanceof THREE.MeshStandardMaterial)) return
   material.color.set(selected ? threePalette.tabSelected : threePalette.tabDefault)
   material.opacity = selected ? 0.72 : 0.56
+}
+
+/**
+ * True when a drawn mesh belongs to the feature `featureId`. `buildScene` keys
+ * the meshes it generates for text and canned shapes by their source row
+ * (`<id>:canned:0`, `<id>:text:2`), so a selected or hovered feature has to
+ * claim those too — the colon keeps one feature's id from matching another's.
+ */
+function drawnForFeature(drawnId: string, featureId: string | null): boolean {
+  if (!featureId) return false
+  return drawnId === featureId || drawnId.startsWith(`${featureId}:`)
+}
+
+/**
+ * Update one feature mesh's highlight to reflect selection or hover.
+ *
+ * Selection and hover change only the colour, never the geometry, so this
+ * recolors the material the mesh was already built with rather than rebuilding
+ * it (the same rule clamps and tabs follow, issue #261). A canned model — a
+ * Turn or a Polygon — is drawn from its own mesh (issue #1112 F5), so this is
+ * the only thing that can highlight it; the colour it was built in is recorded
+ * on the material, which is what clearing the highlight restores.
+ */
+export function applyFeatureHighlight(object: THREE.Object3D, selected: boolean, hovered: boolean, threePalette: ThreeThemePalette): void {
+  object.traverse((entry) => {
+    if (!(entry instanceof THREE.Mesh)) return
+    const materials = Array.isArray(entry.material) ? entry.material : [entry.material]
+    for (const material of materials) {
+      if (!(material instanceof THREE.MeshStandardMaterial)) continue
+      const baseColor = (material.userData as FeatureMaterialUserData).featureBaseColor
+      material.color.set(
+        selected
+          ? threePalette.meshFeatureSelected
+          : hovered
+            ? threePalette.meshFeatureHovered
+            : baseColor ?? threePalette.meshFeatureDefault,
+      )
+    }
+  })
+}
+
+/**
+ * Recolor every drawn feature mesh for the current selection and hover, in
+ * place. `buildScene` builds them unhighlighted — it takes no selection, so a
+ * selection change can never rebuild the CSG model — and the viewport calls
+ * this again whenever the selection or hover changes.
+ */
+export function applyFeatureHighlights(
+  featureMeshes: ReadonlyMap<string, THREE.Object3D>,
+  selection: { selectedFeatureIds: readonly string[]; hoveredFeatureId: string | null },
+  threePalette: ThreeThemePalette,
+): void {
+  for (const [drawnId, object] of featureMeshes) {
+    const selected = selection.selectedFeatureIds.some((featureId) => drawnForFeature(drawnId, featureId))
+    applyFeatureHighlight(object, selected, drawnForFeature(drawnId, selection.hoveredFeatureId), threePalette)
+  }
 }
 
 /**
@@ -1403,9 +1482,11 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // feature meshes, or open-feature lines (issue #199). Regions stay: they
   // render display-only walls below.
   //
-  // Fixtures are built unhighlighted: selection/collision only tint the clamp
-  // and tab meshes, which Viewport3D recolors via applyClampHighlight /
-  // applyTabHighlight without rebuilding this (expensive) CSG model (issue #261).
+  // Fixtures and feature meshes are built unhighlighted: selection and
+  // collision only tint them, which Viewport3D recolors via applyClampHighlight
+  // / applyTabHighlight / applyFeatureHighlights without rebuilding this
+  // (expensive) CSG model (issues #261, #1112 F5). A canned model is drawn from
+  // its own feature mesh, so that last one is what highlights a Turn/Polygon.
   // Around features are wrapped onto the bar (issue #395): a subtract cuts the
   // round solid, an add is an island standing inside a cut. Top and Bottom
   // features draw exactly as before, and a project with no visible Around
