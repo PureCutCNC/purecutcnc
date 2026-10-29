@@ -554,6 +554,85 @@ await scenario('a gear value the validator refuses keeps the last valid preview 
   }
 })
 
+// Clearing a field is a draft value like any other: the text the user typed is
+// kept and the validator sees it. Dropping unusable text used to leave the
+// previous number in the draft, so clearing a field drew nothing new, reported
+// nothing and left Save enabled (issue #1112 H1 review).
+await scenario('a cleared or unreadable gear field is kept as a draft and reported', async () => {
+  resetStore()
+  store().addGearFeature('Gear', { x: 40, y: 30 }, 30, {
+    ...defaultGearCreationParams(30),
+    crestForm: 'rounded',
+  }, 5)
+  const featureId = featureIdForKind('gear')
+  const storedDefinition = definitionJson(featureId)
+  const storedHistory = historyLength()
+  const mounted = await openPanel(featureId, 'gear')
+  const saveDisabled = (): boolean =>
+    (buttonByLabel('Save') as unknown as { disabled?: boolean }).disabled === true
+  try {
+    await waitFor(() => panelInputs().length === 7, 'the seven numeric gear fields render')
+    const [size, teeth] = panelInputs()
+    // Two draft paths: a parameter, and the outside radius the panel keeps as
+    // its own text. The restores differ so each resumption moves the preview.
+    const cases = [
+      { field: 'tooth count', input: teeth, text: '', restore: '20' },
+      { field: 'tooth count', input: teeth, text: 'two', restore: '22' },
+      { field: 'outside radius', input: size, text: '', restore: '34' },
+    ]
+    let lastValid = previewGeometry(featureId)
+    // What the last usable draft wrote: a preview is a real project write, so
+    // each case is compared against the definition as it stands, not the stored
+    // one that Cancel has to put back at the end.
+    let writable = definitionJson(featureId)
+    for (const { field, input, text, restore } of cases) {
+      setInputValue(input, text)
+      await flush()
+      assert(input.value === text, `the ${field} keeps "${text}" as typed (it reads "${input.value}")`)
+      assert(previewGeometry(featureId) === lastValid, `an unusable ${field} kept the last valid preview`)
+      assert(
+        document.body.querySelector('[role="alert"]') !== null,
+        `the panel reports the unusable ${field}`,
+      )
+      assert(saveDisabled(), `Save is refused while the ${field} reads "${text}"`)
+      assert(historyLength() === storedHistory, `an unusable ${field} is not an undo step`)
+      assert(definitionJson(featureId) === writable, `an unusable ${field} wrote nothing`)
+
+      // Leaving the field must not replace the text with a number nobody typed.
+      // React dispatches `onBlur` from `focusout`.
+      input.dispatchEvent(new dom.Event('focusout', { bubbles: true }) as unknown as Event)
+      await flush()
+      assert(
+        input.value === text,
+        `blurring the ${field} kept "${text}" as typed (it reads "${input.value}")`,
+      )
+      assert(saveDisabled(), 'the refusal survives leaving the field')
+      assert(
+        document.body.querySelector('[role="alert"]') !== null,
+        'the message survives leaving the field',
+      )
+
+      setInputValue(input, restore)
+      await flush()
+      const resumed = previewGeometry(featureId)
+      assert(resumed !== lastValid, `a usable ${field} resumes the preview`)
+      assert(!saveDisabled(), 'Save is offered again for a usable draft')
+      assert(
+        document.body.querySelector('[role="alert"]') === null,
+        'the message clears for a usable draft',
+      )
+      lastValid = resumed
+      writable = definitionJson(featureId)
+    }
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+  await flush()
+  assert(definitionJson(featureId) === storedDefinition, 'Cancel restored the stored gear definition')
+  assert(historyLength() === storedHistory, 'Cancel left the gear undo history alone')
+})
+
 // The gear's Save path goes through the same preview commit as the flats.
 await scenario('gear: Save is one undo step and one undo restores the stored gear', async () => {
   resetStore()

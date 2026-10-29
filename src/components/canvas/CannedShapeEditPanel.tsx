@@ -239,7 +239,11 @@ export function CannedShapeEditPanel({
             // validator and the preview ever see it (#1112 F1 review).
             onParams={(patch) => setGearParams((current) => ({ ...current, ...patch }))}
             size={gearSizeValue}
-            onSize={(value) => setGearSize(String(value))}
+            // `NaN` is the draft's "not a number" marker, so a cleared size is
+            // kept as empty text rather than the literal 'NaN'; the preview
+            // validator then reports it instead of the field quietly keeping
+            // its old value (issue #1112 H1 review).
+            onSize={(value) => setGearSize(Number.isFinite(value) ? String(value) : '')}
             live
           />
         </div>

@@ -82,27 +82,64 @@ function commitNumber(
   return String(next)
 }
 
+/** The number a gear field's text means, or `NaN` when the text is not usable. */
+function draftNumber(text: string): number {
+  const trimmed = text.trim()
+  return trimmed === '' ? Number.NaN : Number(trimmed)
+}
+
+/**
+ * An uncontrolled field's default text. `NaN` is the draft's "unusable" marker,
+ * not a number to hand the DOM, and React warns when one reaches an attribute.
+ */
+function fieldText(value: number): string | number {
+  return Number.isFinite(value) ? value : ''
+}
+
 /**
  * Edit gear follows the field while it is being typed in (issue #1112 F1).
  *
  * The blur commit still owns rounding and clamping, so the field text is
  * normalized when the user leaves it; this only feeds the raw number to the
- * draft, which is what the live preview renders. Text that is not a number is
- * ignored, and a value the generator refuses leaves the last valid preview in
- * place instead of drawing something else. Both panels share these fields, so
- * creation keeps its commit-on-blur behaviour and only Edit opts in.
+ * draft, which is what the live preview renders. A value the generator refuses
+ * leaves the last valid preview in place instead of drawing something else.
+ *
+ * Unusable text is kept as `NaN` in the draft rather than dropped. The field is
+ * uncontrolled, so the typed text stays on screen either way; dropping it would
+ * merely leave the previous number in the draft, and clearing a field would
+ * then draw nothing new, report nothing and still offer Save — a blank field is
+ * a draft value the validator has to see (issue #1112 H1 review). Both panels
+ * share these fields, so creation keeps its commit-on-blur behaviour and only
+ * Edit opts in.
  */
 function liveNumber(
   live: boolean,
   commit: (value: number) => void,
 ): ((event: FormEvent<HTMLInputElement>) => void) | undefined {
   if (!live) return undefined
-  return (event) => {
-    const text = event.currentTarget.value.trim()
-    if (text === '') return
-    const parsed = Number(text)
-    if (Number.isFinite(parsed)) commit(parsed)
+  return (event) => commit(draftNumber(event.currentTarget.value))
+}
+
+/**
+ * The blur commit: rounds and clamps the field, then rewrites its text.
+ *
+ * Edit gear leaves text it cannot read exactly as typed instead of substituting
+ * a number the user never entered. The draft keeps the refusal (`NaN`), so the
+ * validator's message and the disabled Save stay while the field is cleared
+ * (issue #1112 H1 review).
+ */
+function blurNumber(
+  live: boolean,
+  event: FormEvent<HTMLInputElement>,
+  fallback: number,
+  commit: (value: number) => void,
+  normalize: (value: number) => number = (next) => next,
+): void {
+  if (live && !Number.isFinite(draftNumber(event.currentTarget.value))) {
+    commit(Number.NaN)
+    return
   }
+  event.currentTarget.value = commitNumber(event.currentTarget.value, fallback, commit, normalize)
 }
 
 function GearField({ children, labelKey, params, reference }: GearFieldProps) {
@@ -284,15 +321,10 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
             type="text"
             inputMode="decimal"
-            defaultValue={size}
+            defaultValue={fieldText(size)}
             onInput={liveNumber(live, onSize)}
             onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
-                size,
-                onSize,
-                (value) => Math.max(0.0001, value),
-              )
+              blurNumber(live, event, size, onSize, (value) => Math.max(0.0001, value))
             }}
             onKeyDown={stopPanelKey}
             autoFocus
@@ -305,11 +337,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           className="canvas-workflow-panel__count-input"
           type="text"
           inputMode="numeric"
-          defaultValue={params.teeth}
+          defaultValue={fieldText(params.teeth)}
           onInput={liveNumber(live, (value) => onParams({ teeth: value }))}
           onBlur={(event) => {
-            event.currentTarget.value = commitNumber(
-              event.currentTarget.value,
+            blurNumber(
+              live,
+              event,
               params.teeth,
               (value) => onParams({ teeth: value }),
               (value) => Math.max(GEAR_MIN_TEETH, Math.min(GEAR_MAX_TEETH, Math.round(value))),
@@ -325,11 +358,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
           type="text"
           inputMode="decimal"
-          defaultValue={params.wholeDepth}
+          defaultValue={fieldText(params.wholeDepth)}
           onInput={liveNumber(live, (value) => onParams({ wholeDepth: value }))}
           onBlur={(event) => {
-            event.currentTarget.value = commitNumber(
-              event.currentTarget.value,
+            blurNumber(
+              live,
+              event,
               params.wholeDepth,
               (value) => onParams({ wholeDepth: value }),
               (value) => Math.max(0, value),
@@ -356,11 +390,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             className="canvas-workflow-panel__count-input"
             type="text"
             inputMode="decimal"
-            defaultValue={params.pressureAngleDeg}
+            defaultValue={fieldText(params.pressureAngleDeg)}
             onInput={liveNumber(live, (value) => onParams({ pressureAngleDeg: value }))}
             onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
+              blurNumber(
+                live,
+                event,
                 params.pressureAngleDeg,
                 (value) => onParams({ pressureAngleDeg: value }),
                 (value) => Math.max(10, Math.min(35, value)),
@@ -389,11 +424,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
             type="text"
             inputMode="decimal"
-            defaultValue={params.rootFilletRadius}
+            defaultValue={fieldText(params.rootFilletRadius)}
             onInput={liveNumber(live, (value) => onParams({ rootFilletRadius: value }))}
             onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
+              blurNumber(
+                live,
+                event,
                 params.rootFilletRadius,
                 (value) => onParams({ rootFilletRadius: value }),
                 (value) => Math.max(0, value),
@@ -421,11 +457,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
             className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
             type="text"
             inputMode="decimal"
-            defaultValue={params.crestRadius}
+            defaultValue={fieldText(params.crestRadius)}
             onInput={liveNumber(live, (value) => onParams({ crestRadius: value }))}
             onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
+              blurNumber(
+                live,
+                event,
                 params.crestRadius,
                 (value) => onParams({ crestRadius: value }),
                 (value) => Math.max(0, value),
@@ -441,11 +478,12 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
           type="text"
           inputMode="decimal"
-          defaultValue={params.boreDiameter === 0 ? '' : params.boreDiameter}
+          defaultValue={params.boreDiameter === 0 ? '' : fieldText(params.boreDiameter)}
           onInput={liveNumber(live, (value) => onParams({ boreDiameter: value }))}
           onBlur={(event) => {
-            event.currentTarget.value = commitNumber(
-              event.currentTarget.value,
+            blurNumber(
+              live,
+              event,
               params.boreDiameter,
               (value) => onParams({ boreDiameter: value }),
               (value) => Math.max(0, value),
