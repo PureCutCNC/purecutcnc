@@ -262,6 +262,23 @@ function panelElement(pending: Extract<PendingAddTool, { shape: 'canned-edit' }>
   })
 }
 
+/**
+ * The creation panel's gear fields as the canvas mounts them: subscribed to the
+ * live pending session, so a draft change re-renders the panel (and its warning)
+ * the way the real side panel does. The scenarios that read only the store can
+ * pass a snapshot instead; this one asserts what the user sees.
+ */
+function CreationGearPanel(): React.ReactElement | null {
+  const pendingAdd = useProjectStore((state) => state.pendingAdd)
+  const setPendingGearParams = useProjectStore((state) => state.setPendingGearParams)
+  if (!pendingAdd || pendingAdd.shape !== 'gear') return null
+  return React.createElement(GearParameterPanel, {
+    pendingAdd,
+    units: 'mm',
+    setPendingGearParams,
+  })
+}
+
 function buttonByLabel(label: string): HTMLButtonElement {
   const button = Array.from(document.body.querySelectorAll('button'))
     .find((candidate) => candidate.getAttribute('aria-label') === label)
@@ -865,6 +882,82 @@ await scenario('creating a gear: the first bore value reaches the draft as it is
     setInputValue(bore, '8')
     await flush()
     assert(draftBore() === 8, 'a later edit follows the field too')
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
+// Clearing a bore that had a value is a refusal, not a silent zero (issue #1112
+// R2 item 12, correction round 1). The creation panel committed the blank
+// through `Number('') === 0`, so the hole disappeared with nothing reported and
+// Create still made the gear; the store's creation clamp then turned even the
+// refusal back into a valid zero. A blank field means "no bore" only while the
+// draft already is zero — the untouched field the R3-1 review fixed — and over a
+// value it is the validator's refusal, exactly as the Edit panel answers.
+await scenario('creating a gear: clearing a bore that had a value is refused', async () => {
+  resetStore()
+  const store = () => useProjectStore.getState()
+  store().startAddGearPlacement()
+  store().setPendingAddAnchor({ x: 40, y: 30 })
+  store().setPendingGearRadiusAt({ x: 70, y: 30 })
+  const draftBore = (): number => {
+    const current = store().pendingAdd
+    assert(current?.shape === 'gear', 'the creation session is armed')
+    return current.params.boreDiameter
+  }
+  const creationInputs = (): HTMLInputElement[] =>
+    Array.from(document.body.querySelectorAll('input')) as unknown as HTMLInputElement[]
+  const bore = (): HTMLInputElement => creationInputs()[creationInputs().length - 1] as HTMLInputElement
+  const warning = (): string | null =>
+    document.body.querySelector('.sketch-banner-warning')?.textContent ?? null
+  const leaveBore = (): void => {
+    bore().dispatchEvent(new dom.Event('focusout', { bubbles: true }) as unknown as Event)
+  }
+  const mounted = mount(React.createElement(CreationGearPanel))
+  try {
+    await waitFor(() => creationInputs().length === 5, 'the five creation numeric fields render')
+    assert(bore().value === '', `a zero bore renders blank (it reads "${bore().value}")`)
+
+    // The untouched blank is how a zero bore renders, so leaving it must stay
+    // valid and stay blank (no "0" typed in, no error).
+    leaveBore()
+    await flush()
+    assert(draftBore() === 0, 'an untouched blank bore stays zero')
+    assert(bore().value === '', 'the untouched blank bore stays blank')
+    assert(warning() === null, 'the untouched blank bore reports nothing')
+
+    setInputValue(bore(), '6')
+    await flush()
+    leaveBore()
+    await flush()
+    assert(draftBore() === 6, 'a typed bore is kept')
+    assert(warning() === null, 'a valid bore reports nothing')
+
+    // The repro: clear the value and leave the field.
+    setInputValue(bore(), '')
+    await flush()
+    assert(draftBore() === 6, 'the blank field holds the last bore while it is typed in')
+    leaveBore()
+    await flush()
+    assert(Number.isNaN(draftBore()), `the cleared bore is refused (it reads ${String(draftBore())})`)
+    assert(bore().value === '', 'the refused field stays as the user left it')
+    const message = warning()
+    assert(message !== null && /bore/i.test(message), `the cleared bore is reported (it says ${String(message)})`)
+
+    // Refused means refused: Create writes nothing rather than a gear with no
+    // hole.
+    const featuresBefore = project().features.length
+    assert(store().completePendingGear().length === 0, 'Create refuses the cleared-bore gear')
+    assert(project().features.length === featuresBefore, 'the refused Create wrote nothing')
+
+    // The refusal belongs to the field, not to the session: typing a bore again
+    // clears it and Create works.
+    setInputValue(bore(), '8')
+    await flush()
+    assert(draftBore() === 8, 'a typed bore replaces the refusal')
+    assert(warning() === null, 'the warning goes when the bore is usable again')
+    assert(store().completePendingGear().length === 1, 'the recovered gear is created')
   } finally {
     store().cancelPendingAdd()
     mounted.unmount()

@@ -110,8 +110,8 @@ function fieldText(value: number): string | number {
  * then draw nothing new, report nothing and still offer Save — a blank field is
  * a draft value the validator has to see (issue #1112 H1 review). Both panels
  * share these fields, so creation keeps its commit-on-blur behaviour and only
- * Edit opts in — except the bore, whose blank field *is* a valid value (see
- * `boreNumberInput`).
+ * Edit opts in — except the bore, whose blank field means "no bore" and has its
+ * own input and blur rules (see `boreNumberInput` and `boreBlurNumber`).
  */
 function liveNumber(
   live: boolean,
@@ -128,9 +128,9 @@ function liveNumber(
  * A zero bore renders as a blank field, so unlike every other gear field the
  * first value typed there is the only sign the preview can get: with the
  * creation panel committing on blur it did not appear until the field was left.
- * Blank and half-typed text ("-", ".", "") keep the last value in creation,
- * where the blur commit is the one that settles them; Edit keeps its own draft
- * rule above, so a cleared field there is still the refusal the validator sees.
+ * Blank and half-typed text ("-", ".", "") keep the last value in creation, so
+ * selecting all and typing a replacement never drops the bore mid-keystroke;
+ * `boreBlurNumber` is what settles the field when it is left.
  */
 function boreNumberInput(
   live: boolean,
@@ -144,6 +144,43 @@ function boreNumberInput(
 }
 
 /**
+ * The bore's blur commit, in both panels (issue #1112 R2 item 12, correction
+ * round 1).
+ *
+ * A zero bore is *displayed* as a blank field, so leaving a blank field alone
+ * must not turn a valid draft invalid — that is why the bore cannot use
+ * `blurNumber`'s generic "unreadable text" rule. But the same blank means the
+ * opposite thing over a bore that had a number: the generic commit read it as
+ * `Number('') === 0`, so clearing a bore while creating silently removed the
+ * hole and reported nothing at all (the Edit panel already refused). The blank
+ * now becomes the validator's unusable `NaN` unless the draft is already zero:
+ * its message shows and creating/saving is refused, and typing a value again
+ * clears the refusal with no other step. A committed zero goes back to the
+ * blank the value renders as; creation keeps its commit-on-blur fallback for
+ * text that is neither blank nor a number, as every other creation field does.
+ */
+function boreBlurNumber(
+  live: boolean,
+  event: FormEvent<HTMLInputElement>,
+  current: number,
+  commit: (value: number) => void,
+): void {
+  const input = event.currentTarget
+  if (input.value.trim() === '') {
+    if (current !== 0) commit(Number.NaN)
+    return
+  }
+  if (live && !Number.isFinite(draftNumber(input.value))
+    && input.value !== String(input.defaultValue)) {
+    commit(Number.NaN)
+    return
+  }
+  const next = Math.max(0, parseNumber(input.value, current))
+  commit(next)
+  input.value = next === 0 ? '' : String(next)
+}
+
+/**
  * The blur commit: rounds and clamps the field, then rewrites its text.
  *
  * Edit gear leaves text it cannot read exactly as typed instead of substituting
@@ -152,10 +189,10 @@ function boreNumberInput(
  * (issue #1112 H1 review).
  *
  * A field that still shows exactly what its draft renders is not unreadable
- * text: a zero bore is *displayed* as a blank field, so clicking into it and
- * leaving it again used to replace the zero with `NaN` and disable Save on a
- * valid draft (#1112 R3-1 review). Only text that differs from what the draft
- * renders is unusable.
+ * text: clicking into it and leaving it again used to replace a valid draft
+ * with `NaN` and disable Save (#1112 R3-1 review). Only text that differs from
+ * what the draft renders is unusable. The bore renders a zero as a blank field
+ * and so keeps its own rule — see `boreBlurNumber`.
  */
 function blurNumber(
   live: boolean,
@@ -513,12 +550,11 @@ export function GearFields({ params, session, onParams, size, onSize, autoFocusT
           defaultValue={params.boreDiameter === 0 ? '' : fieldText(params.boreDiameter)}
           onInput={boreNumberInput(live, (value) => onParams({ boreDiameter: value }))}
           onBlur={(event) => {
-            blurNumber(
+            boreBlurNumber(
               live,
               event,
               params.boreDiameter,
               (value) => onParams({ boreDiameter: value }),
-              (value) => Math.max(0, value),
             )
           }}
           onKeyDown={stopPanelKey}

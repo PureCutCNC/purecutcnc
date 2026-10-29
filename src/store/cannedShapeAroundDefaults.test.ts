@@ -28,6 +28,12 @@
  * later, on both bar shapes and on a block, so "Top/Bottom unchanged" is proven
  * rather than assumed.
  *
+ * A square blank's Around sheet is round-only for authoring (#1016 C2-U1), so
+ * nothing is created there — rt2-c keeps those drawer entries disabled and
+ * #1128 owns sheet work. Its *default* is still pinned as Subtract: item 14
+ * names both bar shapes, and the classifier asks whether the bar is the
+ * material, not what shape its outline is.
+ *
  * Mutations checked one at a time against these assertions:
  * - dropping the `gearFace !== 'around'` condition in `gearFeature.ts` (i.e.
  *   the first gear on Around goes back to Add) → the Around gear assertions
@@ -35,12 +41,16 @@
  * - making that condition unconditional (every face subtract) → the Top and
  *   Bottom assertions fail;
  * - removing `inferManualFeatureOperation` from `buildShapeFeature`'s closed
- *   path (so a canned shape is always Add) → every Around assertion fails.
+ *   path (so a canned shape is always Add) → every Around assertion fails;
+ * - scoping the Around branch of `inferManualFeatureOperation` to a round bar
+ *   (so a square bar's sheet classifies like a block) → the square-bar default
+ *   assertions fail.
  *
  * Run with: npx tsx src/store/cannedShapeAroundDefaults.test.ts
  */
 
 import {
+  circleProfile,
   newProject,
   roundStock,
   type Project,
@@ -48,12 +58,14 @@ import {
   type Stock,
 } from '../types/project'
 import { squareStock } from '../types/barStock'
+import { buildGearProfile, defaultGearCreationParams } from '../sketch/gearProfile'
 import { bundledMachines } from '../machine/registry'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import { resolveCannedShapeShapes } from '../cannedShapes'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
 import { activeFace } from './helpers/activeFace'
+import { inferManualFeatureOperation } from './helpers/manualFeatureOperation'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 
@@ -223,10 +235,38 @@ function testTopAndBottomKeepTheirDefaults(): void {
   console.log('top/bottom defaults are unchanged: PASSED')
 }
 
-function testSquareAroundStaysRoundOnly(): void {
-  // A square blank's Around sheet is round-only (#1016 C2-U1): the canned kinds
-  // are refused before any project, selection or history write, so there is no
-  // default operation to pick there.
+function testSquareBarDefaultsAreSubtract(): void {
+  // Item 14 names both bar shapes, and the default is a property of the face,
+  // not of the bar's outline: `inferManualFeatureOperation` asks whether the bar
+  // is the material, which a square blank is as much as a round one. Authoring
+  // on a square blank's Around sheet is a *different* rule and stays refused
+  // (#1016 C2-U1): rt2-c keeps those drawer entries disabled with their own
+  // reason and #1128 owns sheet work on the turned section, so nothing is
+  // created here. The default the same draft would carry is pinned all the same
+  // — enabling that sheet later must not quietly bring the gear's Add back.
+  const squareAround = (): Project => {
+    onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
+    return useProjectStore.getState().project
+  }
+
+  assertEqual(
+    inferManualFeatureOperation(squareAround(), circleProfile(40, 30, 4)),
+    'subtract',
+    "a closed outline defaults to Subtract on a square bar's Around",
+  )
+  const gearProfile = buildGearProfile({
+    ...defaultGearCreationParams(8),
+    center: { x: 40, y: 30 },
+    outsideRadius: 8,
+  })
+  assertEqual(
+    inferManualFeatureOperation(squareAround(), gearProfile),
+    'subtract',
+    "a gear defaults to Subtract on a square bar's Around",
+  )
+
+  // The refusal is that policy, not the default: every kind still writes
+  // nothing on a square blank's Around sheet.
   for (const [kind, create] of CANNED_CREATORS) {
     onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
     const before = useProjectStore.getState().project
@@ -237,11 +277,11 @@ function testSquareAroundStaysRoundOnly(): void {
   const before = useProjectStore.getState().project
   assertEqual(createGear(), [], 'the gear is refused on a square blank')
   assertEqual(useProjectStore.getState().project, before, 'the refusal writes nothing')
-  console.log('square Around stays round-only: PASSED')
+  console.log('square Around: the default is Subtract, authoring stays refused: PASSED')
 }
 
 testEveryCannedKindOnAroundCutsIntoTheBar()
 testLaterShapesOnAroundStillNest()
 testGearBoreOnAroundIsAnAddIsland()
 testTopAndBottomKeepTheirDefaults()
-testSquareAroundStaysRoundOnly()
+testSquareBarDefaultsAreSubtract()

@@ -909,18 +909,24 @@ export function createPendingAddSlice(
       })),
 
     setPendingGearParams: (patch) =>
-      set((s) => ({
-        pendingAdd:
-          s.pendingAdd?.shape === 'gear'
-            ? {
-                ...s.pendingAdd,
-                params: normalizeGearCreationParams({
-                  ...s.pendingAdd.params,
-                  ...patch,
-                }),
-              }
-            : s.pendingAdd,
-      })),
+      set((s) => {
+        if (s.pendingAdd?.shape !== 'gear') return {}
+        const merged = { ...s.pendingAdd.params, ...patch }
+        const params = normalizeGearCreationParams(merged)
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            // A bore the user cleared over a value arrives as `NaN`: it is the
+            // draft-level refusal the gear validator reports (issue #1112 R2
+            // item 12), so the creation clamp must not turn it into a valid
+            // zero and hide the error. Every other value keeps its clamp, and a
+            // typed bore replaces the refusal in the same call.
+            params: Number.isFinite(merged.boreDiameter)
+              ? params
+              : { ...params, boreDiameter: Number.NaN },
+          },
+        }
+      }),
 
     setPendingGearRadiusAt: (point) =>
       set((s) => {
