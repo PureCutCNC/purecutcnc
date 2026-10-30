@@ -478,6 +478,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.surface.onTurn': 'en {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Sobre el modelo {model}: la profundidad se mide desde la superficie de la barra.',
   'dialogs.rotary.surface.twoDiameters': 'Este patrón cruza el extremo de {turn}, donde cambia el diámetro de la barra.',
+  'dialogs.rotary.surface.step': 'Este patrón cruza un cambio de diámetro en {turn}.',
   'dialogs.rotary.surface.taper': 'La profundidad se mide desde la superficie de la barra: este patrón cruza un cono.',
 
   // ── Sólidos de polígono y cuadrado a redondo en Around (issue #1016 C2-U2) ──

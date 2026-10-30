@@ -27,13 +27,17 @@
  *    diameter on a Turn is the named mutation.
  * 2. **Editing the Turn's diameter moves the thread with it**, in the same
  *    store write, and the moved span survives save → load.
- * 3. **Two diameters, a taper and an imported model are not guessed**: the
+ * 3. **A diameter change, a taper and an imported model are not guessed**: the
  *    depth falls back to the bar surface and the row carries a warning, in the
- *    same words the dialog uses. A warned band that crosses a Turn names it in
- *    the warning, and the sentence is the plain reworded one (#1112 rt3-c item
- *    30): "This pattern crosses the end of Turn, where the bar's diameter
- *    changes." — dropping the name, or keeping the old "more than one diameter"
- *    text, is the named mutation.
+ *    same words the dialog uses. The warning distinguishes **where** the change
+ *    is (#1112 rt3-c correction 1): a band crossing a Turn's **end** says so —
+ *    "This pattern crosses the end of Turn, where the bar's diameter changes."
+ *    (item 30) — while a groove or step **inside** one Turn says "This pattern
+ *    crosses a diameter change in Turn." Calling an internal groove an end
+ *    crossing is the named mutation, and the sentence is asserted as text, not
+ *    just as a key, so a shared sentence cannot pass by accident. Dropping the
+ *    Turn's name, or keeping the old "more than one diameter" text, is the
+ *    other mutation.
  * 4. **A Turn added after the thread moves it too**, so order of creation does
  *    not decide the surface.
  * 5. **The Thread's own placement places its band**: moving the row off a Turn
@@ -55,6 +59,8 @@
  *   fail;
  * - the warning map not filtering by canned kind → a plain line row warns too
  *   and the "no warning on the plain bar" assertion fails;
+ * - an internal step classified as an end crossing → the groove case asserts
+ *   the `step` kind and the "diameter change in Turn" sentence, so it fails.
  * - the band read from the stored parameters instead of the placement → the
  *   Thread move assertions fail;
  * - the sync overwriting every stored span → the override assertions fail;
@@ -269,8 +275,13 @@ assert.equal(
 
 // ── a narrow groove is not sampled past ─────────────────────
 //
-// The floor is 0.2 long over a 40 long Turn: any fixed sampling grid lands on
+// The floor is 0.2 long inside a 40 long Turn: any fixed sampling grid lands on
 // the radius-5 land on either side and calls the surface one diameter.
+//
+// The band (25–35) is wholly on the Turn (20–60) and crosses that internal
+// groove, not the Turn's end. This is the reviewed false-warning case (#1112
+// rt3-c correction 1): the row must warn about a diameter change *inside*
+// Turn, not claim it crosses the end of Turn.
 
 load()
 addTurn(20, 40, 20, {
@@ -287,16 +298,29 @@ addTurn(20, 40, 20, {
     ],
   }],
 })
-addThread(20, 40)
+addThread(25, 10)
 assert.deepEqual(
-  rotaryPatternSurface(store().project, { start: 20, length: 40 }).kind,
-  'twoDiameters',
-  'a narrow groove is classified from its segments, not from sample stations',
+  rotaryPatternSurface(store().project, { start: 25, length: 10 }).kind,
+  'step',
+  'an internal groove is classified from its segments, not from sample stations',
 )
+const grooveWarning = rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)
 assert.equal(
-  rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)?.key,
-  'dialogs.rotary.surface.twoDiameters',
+  grooveWarning?.key,
+  'dialogs.rotary.surface.step',
   'the groove warns instead of silently taking radius 5',
+)
+assert.deepEqual(grooveWarning?.values, { turn: 'Turn' }, 'the groove warning names the Turn it is inside')
+// The text itself, not just the key: the sentence must not claim an end
+// crossing, because the band never reaches the Turn's end.
+assert.equal(
+  interpolate(enMessages['dialogs.rotary.surface.step'], grooveWarning?.values),
+  'This pattern crosses a diameter change in Turn.',
+  'the internal groove names the Turn and the diameter change, not an end',
+)
+assert.ok(
+  !interpolate(enMessages['dialogs.rotary.surface.step'], grooveWarning?.values).includes('end of'),
+  'an internal groove does not claim to cross the Turn end',
 )
 assertNear(Number(threadFeature().z_top), BAR_DIAMETER, 'a grooved surface falls back to the bar')
 
@@ -497,13 +521,13 @@ store().completePendingMove({ x: 20, y: 5 })
 assertNear(threadZ(shiftedThread), BAR_DIAMETER, 'an off-centre Turn is not measured as the old diameter')
 assert.equal(
   rotaryPatternSurfaceOfFeature(store().project, shiftedThread)?.kind,
-  'twoDiameters',
+  'step',
   'the moved Turn spans a near and a far surface',
 )
 assert.equal(
   rotaryPatternSurfaceWarnings(store().project).get(shiftedThread)?.key,
-  'dialogs.rotary.surface.twoDiameters',
-  'the row warns instead of keeping a stale constant',
+  'dialogs.rotary.surface.step',
+  'the row warns about the diameter change instead of keeping a stale constant',
 )
 
 // ── a rotated Turn is tilted away from the bar axis ─────────
@@ -551,13 +575,13 @@ store().updateFeature(raisedTurn, {
 assertNear(threadZ(raisedThread), BAR_DIAMETER, 'a Turn raised in Z is not measured as the old diameter')
 assert.equal(
   rotaryPatternSurfaceOfFeature(store().project, raisedThread)?.kind,
-  'twoDiameters',
+  'step',
   'the raised body spans a near and a far surface',
 )
 assert.equal(
   rotaryPatternSurfaceWarnings(store().project).get(raisedThread)?.key,
-  'dialogs.rotary.surface.twoDiameters',
-  'the raised row warns instead of keeping a stale Z span',
+  'dialogs.rotary.surface.step',
+  'the raised row warns about the diameter change instead of keeping a stale Z span',
 )
 
 // ── a Properties Z override survives the sync and a reload ──

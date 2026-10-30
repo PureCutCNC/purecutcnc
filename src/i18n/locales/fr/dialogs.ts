@@ -476,6 +476,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.surface.onTurn': 'sur {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Sur le modèle {model} : la profondeur est mesurée depuis la surface de la barre.',
   'dialogs.rotary.surface.twoDiameters': 'Ce motif traverse l’extrémité de {turn}, là où le diamètre de la barre change.',
+  'dialogs.rotary.surface.step': 'Ce motif traverse un changement de diamètre dans {turn}.',
   'dialogs.rotary.surface.taper': 'La profondeur est mesurée depuis la surface de la barre : ce motif traverse un cône.',
 
   // ── Solides polygone et carré vers rond sur Around (issue #1016 C2-U2) ──

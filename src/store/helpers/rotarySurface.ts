@@ -23,8 +23,12 @@
  * surface, and the dialog shows it read-only. A band over the plain bar uses
  * the bar, exactly as before. An **imported model** never supplies a diameter
  * (a mesh is not known to be round), so the depth falls back to the bar surface
- * and the row says so. A band spanning two diameters or a taper is not guessed:
- * it is warned about and measured from the bar.
+ * and the row says so. A band whose diameter changes — crossing a Turn's end,
+ * crossing two Turns, a step inside one Turn — or a taper is not guessed: it is
+ * warned about and measured from the bar. The warning says which change it is:
+ * an **end** crossing vs a diameter change **inside** the Turn (#1112 rt3-c
+ * correction 1), because a groove in the middle of a Turn does not cross
+ * anything's end.
  *
  * Both halves of the question are read through the **placement transform**:
  * a band is where the user put the Thread, not where its stored parameters were
@@ -69,7 +73,13 @@ import { normalizeFlutesCannedParams, type FlutesCannedParams } from '../../cann
 /** Numeric slack for the band and diameter comparisons. */
 const TOLERANCE = 1e-6
 
-export type RotaryPatternSurfaceKind = 'bar' | 'turn' | 'model' | 'twoDiameters' | 'taper'
+/**
+ * `twoDiameters` is a band crossing a Turn's **end** (or two Turns meeting);
+ * `step` is a diameter change **inside** one Turn — a groove/step in its
+ * copied profile, or a placed Turn that no longer presents one diameter.
+ * `taper` is a varying surface. All three warn and measure from the bar.
+ */
+export type RotaryPatternSurfaceKind = 'bar' | 'turn' | 'model' | 'twoDiameters' | 'step' | 'taper'
 
 export interface RotaryPatternSurface {
   kind: RotaryPatternSurfaceKind
@@ -80,8 +90,8 @@ export interface RotaryPatternSurface {
   turnName?: string
   /**
    * The Turn rows a warned band crosses, in row order (`twoDiameters`,
-   * `taper`), so the warning can name the Turn whose diameter changes instead
-   * of saying only "more than one diameter" (#1112 rt3-c item 30).
+   * `step`, `taper`), so the warning can name the Turn whose diameter changes
+   * instead of saying only "more than one diameter" (#1112 rt3-c item 30).
    */
   turnNames?: string[]
   /** The model rows the band crosses (`kind === 'model'`). */
@@ -383,9 +393,9 @@ function buildSurfaceIndex(project: Project): SurfaceIndex | null {
 /**
  * The surface a Thread/Flutes depth is measured from. `bar` means the plain
  * bar (as before this decision); `turn` names the one Turn; `model`,
- * `twoDiameters` and `taper` are the warned cases and all measure from the bar.
- * Every warned case that crosses a Turn carries its row name(s) so the warning
- * can say which Turn's diameter changes.
+ * `twoDiameters`, `step` and `taper` are the warned cases and all measure from
+ * the bar. Every warned case that crosses a Turn carries its row name(s) so the
+ * warning can say which Turn's diameter changes.
  */
 export function rotaryPatternSurface(
   project: Project,
@@ -434,8 +444,12 @@ function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand)
       : { kind: 'twoDiameters', diameter: barDiameter, turnNames: [turn.name] }
   }
   if (!constant) {
+    // The band is wholly on this Turn, but the surface under it is not one
+    // diameter. A step is a change *inside* the Turn (a groove, or a placed
+    // body off the bar axis); calling that an end crossing is a false warning
+    // (#1112 rt3-c correction 1). A taper is a varying surface instead.
     return {
-      kind: turn.step ? 'twoDiameters' : 'taper',
+      kind: turn.step ? 'step' : 'taper',
       diameter: barDiameter,
       turnNames: [turn.name],
     }
@@ -502,6 +516,11 @@ export function rotaryPatternSurfaceWarning(
     case 'twoDiameters':
       return {
         key: 'dialogs.rotary.surface.twoDiameters',
+        values: { turn: surface.turnNames?.join(', ') ?? '' },
+      }
+    case 'step':
+      return {
+        key: 'dialogs.rotary.surface.step',
         values: { turn: surface.turnNames?.join(', ') ?? '' },
       }
     case 'taper':

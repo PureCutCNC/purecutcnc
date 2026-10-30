@@ -527,6 +527,7 @@ export const dialogsEn = {
   'dialogs.rotary.surface.onTurn': 'on {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Over model {model}: depth is measured from the bar surface.',
   'dialogs.rotary.surface.twoDiameters': "This pattern crosses the end of {turn}, where the bar's diameter changes.",
+  'dialogs.rotary.surface.step': 'This pattern crosses a diameter change in {turn}.',
   'dialogs.rotary.surface.taper': 'The depth is measured from the bar surface: this pattern crosses a taper.',
 
   // ── Turn and Polygon canned models on Around (issue #1112 G) ──

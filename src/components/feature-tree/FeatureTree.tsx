@@ -98,8 +98,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // the main thread after edits settle; this is the latest snapshot, never a
   // stale answer for an earlier edit.
   const noEffectWarnings = useFeatureEffectWarnings(project, features)
-  // A Thread/Flutes band over a model or across two diameters warns on its own
-  // row (issue #1112 H, decision 10); the dialog shows the same rule.
+  // A Thread/Flutes band over a model or across a diameter change warns on its
+  // own row (issue #1112 H, decision 10); the dialog shows the same rule.
   const rotaryWarnings = useMemo(
     () => rotaryPatternSurfaceWarnings(project, features.map((feature) => feature.id)),
     [project, features],

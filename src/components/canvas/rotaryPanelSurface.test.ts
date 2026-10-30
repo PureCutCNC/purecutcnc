@@ -24,6 +24,8 @@
  * another Turn must name that Turn and its diameter: the line resolves the
  * placed band, not the stored parameters. The same placement decides the span
  * an unchanged Apply writes, so the row is not pushed back onto the old Turn.
+ * A groove inside one Turn must warn about the internal diameter change, not
+ * claim the band crosses the Turn's end (#1112 rt3-c correction 1).
  *
  * Run with: npx tsx src/components/canvas/rotaryPanelSurface.test.ts
  */
@@ -243,6 +245,57 @@ await scenario('the Thread panel shows the Turn diameter read-only', async () =>
   const note = document.querySelector('.rotary-panel__surface-note')?.textContent ?? ''
   assert.match(note, /on Turn · Ø10 mm/, 'the read-only line names the Turn and its diameter')
   assert.equal(document.querySelector('.rotary-panel__surface-warning'), null, 'a Turn surface has no warning')
+  unmount()
+})
+
+await scenario('the Thread panel warns about an internal groove, not the Turn end', async () => {
+  // The reviewed false warning (#1112 rt3-c correction 1): in the bar frame the
+  // band (25–35) lies wholly on the Turn (20–60) and crosses a groove inside
+  // it. This test's bar starts at x=10, so the band is 15–25 from the chuck
+  // end. Nothing runs past the Turn's end, so the panel must not say that it
+  // does.
+  store().loadProject(projectWithSource())
+  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
+  const turn = store().addRotarySolid({
+    kind: 'turn',
+    start: 20,
+    length: 40,
+    diameter: 20,
+    profile: {
+      sourceFeatureId: 'no-source',
+      contours: [{
+        closed: false,
+        points: [
+          { along: 20, radius: 5 },
+          { along: 30.1, radius: 5 },
+          { along: 30.1, radius: 3 },
+          { along: 30.3, radius: 3 },
+          { along: 30.3, radius: 5 },
+          { along: 60, radius: 5 },
+        ],
+      }],
+    },
+  })
+  assert.ok(turn.ok, 'the grooved Turn is created')
+  const thread = store().addRotaryPattern({ kind: 'thread', start: 15, length: 10, pitch: 2, depth: 1 })
+  assert.ok(thread.ok, 'the thread is created')
+
+  const { unmount } = mount(React.createElement(RotaryPatternPanel, {
+    kind: 'thread',
+    featureId: thread.featureId,
+    onClose: () => undefined,
+  }))
+  await waitFor(
+    () => document.querySelector('.rotary-panel__surface-warning') !== null,
+    'the surface warning renders',
+  )
+  const warning = document.querySelector('.rotary-panel__surface-warning')?.textContent ?? ''
+  assert.equal(
+    warning,
+    'This pattern crosses a diameter change in Turn.',
+    'the panel names the Turn and the internal diameter change',
+  )
+  assert.doesNotMatch(warning, /end of/, 'an internal groove does not claim to cross the Turn end')
   unmount()
 })
 

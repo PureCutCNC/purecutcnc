@@ -523,6 +523,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.surface.onTurn': 'auf {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Über Modell {model}: Die Tiefe wird von der Stangenoberfläche gemessen.',
   'dialogs.rotary.surface.twoDiameters': 'Dieses Muster kreuzt das Ende von {turn}, wo sich der Durchmesser der Stange ändert.',
+  'dialogs.rotary.surface.step': 'Dieses Muster kreuzt eine Durchmesseränderung in {turn}.',
   'dialogs.rotary.surface.taper': 'Die Tiefe wird von der Stangenoberfläche gemessen: Dieses Muster kreuzt eine Verjüngung.',
 
   // ── Polygon- und Vierkant-auf-Rund-Körper auf Around (Issue #1016 C2-U2) ──

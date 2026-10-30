@@ -529,6 +529,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.surface.onTurn': '在 {name} 上 · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': '在模型 {model} 上：深度从棒料表面测量。',
   'dialogs.rotary.surface.twoDiameters': '此图案跨过 {turn} 的端部，此处棒料直径发生变化。',
+  'dialogs.rotary.surface.step': '此图案跨过 {turn} 中的直径变化。',
   'dialogs.rotary.surface.taper': '深度从棒料表面测量：此图案跨过锥面。',
 
   // ── Around 面上的多边形与方料车圆实体（issue #1016 C2-U2） ──
