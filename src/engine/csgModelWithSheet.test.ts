@@ -36,6 +36,13 @@
  * sheet pocket that keeps a boolean model in every scene, and one feature of
  * each sheet kind beside them.
  *
+ * A model is still drawn from its own mesh so its row can tint it, and that
+ * mesh is the model as authored: where a cut went through the model, the fold
+ * carried the cut and the mesh covered it. Section 7 is the correction-round
+ * guard for that (#1112 rt4-c fix 1): a pocket deep enough to cut below a
+ * model's crown, both tree orders, measured on everything the view draws rather
+ * than on `modelMesh` alone.
+ *
  * Mutations (each re-broke the fix on purpose and made this file fail, then the
  * file was restored from a `cp` backup):
  *   1. Skip the model rows when sheet work is visible — stage a canned model
@@ -50,8 +57,16 @@
  *   4. Add the model feature meshes only when `modelMesh` is null (the old
  *      `!modelMesh` guard around the `kind === 'stl'` meshes) and the model-mesh
  *      assertions fail in every sheet scene, while the surfaces stay right.
+ *   5. Draw the model's own mesh even when the fold cut it (drop the
+ *      `foldedModelMeshes` preference in `buildScene`) and every section-7
+ *      `featureHeight` / `renderedHeight` assertion fails at the model's crown
+ *      instead of the pocket's floor, while `modelMesh` alone stays correct.
+ *   6. Trim every model unconditionally (drop the volume comparison in
+ *      `buildFoldedModelMeshes`) and the untouched models stop drawing their
+ *      generated meshes: `assertModelMeshes` fails on the vertex counts.
  *
- * Run with: npx tsx src/engine/csgModelWithSheet.test.ts
+ * Run with: `NODE_OPTIONS=--no-experimental-global-navigator npx tsx
+ * src/engine/csgModelWithSheet.test.ts`
  */
 
 import * as THREE from 'three'
@@ -170,6 +185,12 @@ function sheetRect(along: number, alongLength: number, acrossLength: number): Sk
 
 const POCKET_FLOOR = 1.4
 const BASE_POCKET_FLOOR = 1.42
+/**
+ * A cut this deep reaches below both model crowns (the Turn's 1.25 and the
+ * Hex's 1.15), so the fold's floor lies under the model's own surface — which
+ * is exactly what a model's authored mesh used to cover (#1112 rt4-c fix 1).
+ */
+const OVERLAP_FLOOR = 1.05
 
 /** The sheet pocket every scene carries, so a boolean model always exists. */
 function basePocket(): SketchFeature {
@@ -178,6 +199,16 @@ function basePocket(): SketchFeature {
     operation: 'subtract',
     zTop: BAR_DIAMETER,
     zBottom: BASE_POCKET_FLOOR,
+  })
+}
+
+/** A pocket wide enough to cross the bar's crown, centred on `along`. */
+function overlapPocket(along: number): SketchFeature {
+  return draft('overlap-pocket', {
+    profile: sheetRect(along - 0.25, 0.5, 0.5),
+    operation: 'subtract',
+    zTop: BAR_DIAMETER,
+    zBottom: OVERLAP_FLOOR,
   })
 }
 
@@ -338,21 +369,49 @@ function meshVolume(mesh: THREE.Mesh): number {
 }
 
 /**
- * The height of the model's surface straight down at `along` on the bar's top
- * (the across centreline): 1.5 for the untouched Ø1.5 bar, 1.25 over the Ø1
- * Turn, 1.15 over the flat-topped Hex. Scene coordinates put the project along
- * axis in X, the height in Y and the project across axis in Z for an X bar.
+ * The height something drawn in the scene presents straight down at `along` on
+ * the bar's top (the across centreline): 1.5 for the untouched Ø1.5 bar, 1.25
+ * over the Ø1 Turn, 1.15 over the flat-topped Hex. Scene coordinates put the
+ * project along axis in X, the height in Y and the project across axis in Z for
+ * an X bar.
  */
-function surfaceHeight(scene: SceneObjects, along: number, axis: 'x' | 'y' = 'x'): number {
-  assert(scene.modelMesh, 'the scene has a boolean model mesh to measure')
-  scene.modelMesh.updateMatrixWorld(true)
+function topDownHeight(targets: THREE.Object3D[], along: number, axis: 'x' | 'y', label: string): number {
+  for (const target of targets) target.updateMatrixWorld(true)
   const origin = axis === 'x'
     ? new THREE.Vector3(along, 10, FRAME.centre)
     : new THREE.Vector3(FRAME.centre, 10, along)
   const raycaster = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0), 0, 100)
-  const hits = raycaster.intersectObject(scene.modelMesh, true)
-  assert(hits.length > 0, `a ray at along ${along} hits the model`)
+  const hits = raycaster.intersectObjects(targets, true)
+  assert(hits.length > 0, `${label}: a ray at along ${along} hits it`)
   return hits[0].point.y
+}
+
+/** The folded solid's own surface at `along`. */
+function surfaceHeight(scene: SceneObjects, along: number, axis: 'x' | 'y' = 'x'): number {
+  assert(scene.modelMesh, 'the scene has a boolean model mesh to measure')
+  return topDownHeight([scene.modelMesh], along, axis, 'the model')
+}
+
+/**
+ * What the 3D view actually presents at `along`: the highest surface of the
+ * bar mesh *and* every feature mesh drawn over it. A model's own mesh is drawn
+ * beside the bar, so a measurement of `modelMesh` alone cannot say what a user
+ * sees — the defect this file now guards (#1112 rt4-c fix 1) was exactly a
+ * model mesh covering a cut the bar carried.
+ */
+function renderedHeight(scene: SceneObjects, along: number, axis: 'x' | 'y' = 'x'): number {
+  const targets: THREE.Object3D[] = []
+  if (scene.modelMesh) targets.push(scene.modelMesh)
+  for (const object of scene.featureMeshes.values()) targets.push(object)
+  assert(targets.length > 0, 'the scene draws something to measure')
+  return topDownHeight(targets, along, axis, 'the drawn scene')
+}
+
+/** The surface one feature's own drawn object presents at `along`. */
+function featureHeight(scene: SceneObjects, featureId: string, along: number, axis: 'x' | 'y' = 'x'): number {
+  const object = scene.featureMeshes.get(featureId)
+  assert(object, `the scene draws the feature ${featureId}`)
+  return topDownHeight([object], along, axis, `the feature ${featureId}`)
 }
 
 /** Every mesh drawn inside one feature's object. */
@@ -408,6 +467,12 @@ function assertTurning(scene: SceneObjects, label: string): void {
   assertClose(surfaceHeight(scene, TURN_PROBE), TURN_CROWN, 1e-3, `${label}: the Turn's span is turned down`)
   assertClose(surfaceHeight(scene, POLYGON_PROBE), POLYGON_CROWN, 1e-3, `${label}: the Hex's span is turned down`)
   assertClose(surfaceHeight(scene, INTACT_PROBE), BAR_CROWN, 1e-3, `${label}: the intact bar keeps its diameter`)
+  // The models are drawn from their own meshes beside the bar, so the complete
+  // scene must present the same heights the fold built and not something over
+  // them.
+  assertClose(renderedHeight(scene, TURN_PROBE), TURN_CROWN, 1e-3, `${label}: the Turn's crown is what is drawn`)
+  assertClose(renderedHeight(scene, POLYGON_PROBE), POLYGON_CROWN, 1e-3, `${label}: the Hex's crown is what is drawn`)
+  assertClose(renderedHeight(scene, INTACT_PROBE), BAR_CROWN, 1e-3, `${label}: the intact bar is what is drawn`)
 }
 
 // ── 1. Every sheet kind beside the models ───────────────────────────────────
@@ -579,6 +644,108 @@ for (const kind of SHEET_KINDS) {
     'Y bar: the Hex span is turned down',
   )
   assertClose(surfaceHeight(scene, 1.5, 'y'), BAR_CROWN, 1e-3, 'Y bar: the intact bar keeps its diameter')
+}
+
+// ── 7. A cut that overlaps a model stays open in what the view draws ────────
+
+/**
+ * The correction round for #1112 rt4-c (fix 1). Section 1 places its sheet work
+ * beside the models, so a model's authored mesh never had anything to cover
+ * there — and `surfaceHeight` reads only the folded `modelMesh`, which was
+ * already right. A pocket through a model's crown is the case that failed: the
+ * fold cut the pocket, and the model's own mesh, drawn at the cut's depth,
+ * filled the opening back in. Every height below is measured on the scene the
+ * viewport draws — the bar and every feature mesh over it.
+ */
+const OVERLAPS: Array<{
+  label: string
+  probe: number
+  crown: number
+  model: (models: ModelFixture) => string
+}> = [
+  { label: 'Turn', probe: TURN_PROBE, crown: TURN_CROWN, model: (models) => models.turnId },
+  { label: 'Hex', probe: POLYGON_PROBE, crown: POLYGON_CROWN, model: (models) => models.polygonId },
+]
+
+for (const overlap of OVERLAPS) {
+  // Tree order is the order the fold applies material in, and a model turns the
+  // bar down over its whole span: the cut must survive in what is drawn either
+  // way round, so both orders are built.
+  for (const order of ['cut after the model', 'cut before the model'] as const) {
+    const models = withModels(barProject())
+    const pocket = overlapPocket(overlap.probe)
+    const project = projectWithFeatures(
+      models.project,
+      order === 'cut after the model'
+        ? [...models.project.features, basePocket(), pocket]
+        : [pocket, basePocket(), ...models.project.features],
+    )
+    const label = `${overlap.label}, ${order}`
+    const modelId = overlap.model(models)
+    const otherId = modelId === models.turnId ? models.polygonId : models.turnId
+    const scene = await buildScene(project, threePalette)
+    const hidden = await buildScene(hiding(project, pocket.id), threePalette)
+
+    // The fold cuts the pocket through the model…
+    assert(scene.modelMesh, `${label}: the bar is drawn`)
+    assertClose(surfaceHeight(scene, overlap.probe), OVERLAP_FLOOR, 1e-3, `${label}: the fold cuts through the model`)
+    // …and the model's own drawn mesh shows that cut instead of covering it…
+    assertClose(
+      featureHeight(scene, modelId, overlap.probe),
+      OVERLAP_FLOOR,
+      1e-3,
+      `${label}: the model's mesh presents the pocket's floor, not its crown`,
+    )
+    // …so the complete result the user sees is the pocket.
+    assertClose(
+      renderedHeight(scene, overlap.probe),
+      OVERLAP_FLOOR,
+      1e-3,
+      `${label}: the drawn scene presents the pocket's floor`,
+    )
+    // The span the pocket does not cross still shows the model at its own radius.
+    assertClose(
+      renderedHeight(scene, overlap.probe + 0.4),
+      overlap.crown,
+      1e-3,
+      `${label}: the model keeps its crown beside the cut`,
+    )
+    // Only the cut model is redrawn: its neighbour still uses its generated mesh.
+    const otherMesh = drawnMeshes(scene.featureMeshes.get(otherId)!)[0]
+    assert(
+      otherMesh.geometry.getAttribute('position').count === assetVertexCount(project, otherId),
+      `${label}: the untouched model still draws its generated mesh`,
+    )
+
+    // The drawn model geometry is the cut one, not merely lower at the probe.
+    const cutObject = scene.featureMeshes.get(modelId)!
+    const wholeObject = hidden.featureMeshes.get(modelId)!
+    cutObject.updateMatrixWorld(true)
+    wholeObject.updateMatrixWorld(true)
+    assert(
+      meshVolume(drawnMeshes(cutObject)[0]) < meshVolume(drawnMeshes(wholeObject)[0]) - 1e-3,
+      `${label}: the drawn model loses the material the pocket removed`,
+    )
+
+    // With the cut hidden the model is whole again and draws its own mesh, every
+    // vertex of it, at its own crown.
+    assertModelMeshes(hidden, models, project, `${label} hidden`)
+    assertClose(
+      renderedHeight(hidden, overlap.probe),
+      overlap.crown,
+      1e-3,
+      `${label}: hiding the pocket presents the model's crown again`,
+    )
+
+    // The cut is still the geometry selection and hover tint.
+    const cutMaterial = drawnMeshes(scene.featureMeshes.get(modelId)!)[0]
+      .material as THREE.MeshStandardMaterial
+    applyFeatureHighlights(scene.featureMeshes, { selectedFeatureIds: [modelId], hoveredFeatureId: null }, threePalette)
+    assert(
+      cutMaterial.color.getHex() === threePalette.meshFeatureSelected,
+      `${label}: the cut model still highlights`,
+    )
+  }
 }
 
 console.log('csgModelWithSheet: all assertions passed')

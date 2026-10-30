@@ -490,7 +490,9 @@ export function buildFeatureMesh(
       // turns the stock down to this very mesh (#1112 rt4-c item 36), so the two
       // are coincident and their faces would flicker against each other. Pull
       // the model's faces a hair forward, like an Around region's display-only
-      // slab, so the selection/hover tint this mesh carries stays visible.
+      // slab, so the selection/hover tint this mesh carries stays visible. This
+      // mesh is only the uncut model's drawing — once the fold cuts into the
+      // model, `buildFoldedModelMeshes` draws the cut from the fold instead.
       ...(cannedShapeIsModel(feature.canned)
         ? { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }
         : {}),
@@ -1488,6 +1490,100 @@ function solidToModelMesh(solid: ManifoldSolid, threePalette: ThreeThemePalette)
 }
 
 /**
+ * How much of a model's own volume the fold may remove before the model counts
+ * as cut, as a fraction. An untouched model comes back from
+ * `intersection(bar, model)` with its own volume to rounding; anything a user
+ * can see is orders of magnitude larger.
+ */
+const FOLDED_MODEL_VOLUME_EPSILON = 1e-6
+
+/**
+ * A canned model's own drawn mesh, built from the fold instead of from its mesh
+ * (#1112 rt4-c fix 1).
+ *
+ * A model is drawn from its generated mesh so selecting its row can tint it
+ * (`buildFeatureMesh`, issue #1112 F5). That mesh is the model as authored, so
+ * wherever a feature cut into the model — an Around pocket overlapping the
+ * Turn's span, or a turning model that follows it — the bar mesh carried the
+ * cut while this uncut mesh covered the opening: the pocket's 1.05 in floor was
+ * rendered shut at the Turn's 1.25 in crown. Drawing the fold's share of the
+ * model instead keeps the highlight on the geometry that respects every cut.
+ *
+ * The material records its base colour like every other feature mesh, because
+ * the viewport recolors model meshes in place on every selection change.
+ */
+function solidToModelFeatureMesh(solid: ManifoldSolid, threePalette: ThreeThemePalette): THREE.Mesh {
+  const geometry = manifoldMeshToGeometry(solid.getMesh())
+  const baseColor = threePalette.meshFeatureDefault
+  const material = new THREE.MeshStandardMaterial({
+    color: baseColor,
+    roughness: 0.82,
+    metalness: 0.05,
+    flatShading: true,
+    side: THREE.FrontSide,
+    // Where nothing cut the model its surface is the bar's own surface, so the
+    // two are coincident and would flicker against each other. Pull the model a
+    // hair forward, exactly as the mesh `buildFeatureMesh` draws does.
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  })
+  markFeatureBaseColor(material, baseColor)
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.scale.z = -1
+  return mesh
+}
+
+/**
+ * The canned models the bar fold cut, as drawn meshes (#1112 rt4-c fix 1).
+ *
+ * A model the fold cut is drawn from its share of the bar — `intersection(bar,
+ * model)` — so every cut through it stays open. A model nothing cut keeps
+ * `buildFeatureMesh` and its own generated mesh: that mesh carries the smooth
+ * normals of a revolved surface, which redrawing it from the fold's faceted
+ * geometry would lose for no visible gain.
+ */
+function buildFoldedModelMeshes(
+  module: ManifoldToplevel,
+  project: Project,
+  visibleFeatures: SketchFeature[],
+  barSolid: ManifoldSolid,
+  threePalette: ThreeThemePalette,
+): Map<string, THREE.Mesh> {
+  const meshes = new Map<string, THREE.Mesh>()
+  for (const feature of visibleFeatures) {
+    if (feature.kind !== 'stl' || !cannedShapeIsModel(feature.canned)) continue
+    if (!featureModelAsset(project, feature)) continue
+    const model = buildFeatureSolid(module, project, feature)
+    if (!model) continue
+    let cut: ManifoldSolid | null = null
+    try {
+      const volume = model.volume()
+      if (!(volume > 0)) continue
+      cut = module.Manifold.intersection(barSolid, model)
+      if (volume - cut.volume() <= volume * FOLDED_MODEL_VOLUME_EPSILON) continue
+      meshes.set(feature.id, solidToModelFeatureMesh(cut, threePalette))
+    } catch (error) {
+      // One model the fold cannot trim must not take the bar down with it: it
+      // stays on its own mesh, exactly as it would without this step.
+      console.error(`Failed to draw the folded model ${feature.id}, showing its own mesh.`, error)
+    } finally {
+      cut?.delete()
+      model.delete()
+    }
+  }
+  return meshes
+}
+
+/** What a boolean model build yields: the bar mesh and the model meshes cut from it. */
+interface BooleanModel {
+  modelMesh: THREE.Mesh | null
+  /** The canned models the bar fold cut, drawn from the fold (#1112 rt4-c fix 1). */
+  modelFeatureMeshes: Map<string, THREE.Mesh>
+}
+
+/**
  * The scene's one model mesh.
  *
  * In a rotary project the bar is the material on every face (#1054 slice 1), so
@@ -1496,18 +1592,24 @@ function solidToModelMesh(solid: ManifoldSolid, threePalette: ThreeThemePalette)
  * as it always did, with no bar seed, no clipping and no Around content
  * (issue #395's rule that only a rotary round bar models Around features still
  * holds).
+ *
+ * A bar fold also hands back the drawing of each canned model it cut, so the
+ * model's own highlight mesh cannot cover a cut the bar carries (#1112 rt4-c
+ * fix 1). Only the bar path can cut a model, so only it yields those meshes.
  */
 async function buildBooleanModel(
   project: Project,
   visibleFeatures: SketchFeature[],
   aroundFeatures: SketchFeature[],
   threePalette: ThreeThemePalette,
-): Promise<THREE.Mesh | null> {
+): Promise<BooleanModel> {
   const module = await getManifoldModule()
   let combined: ManifoldSolid | null
+  let barFolded = false
   if (barSeedsModel(project)) {
     try {
       combined = buildBarModelSolid(module, project, visibleFeatures, aroundFeatures)
+      barFolded = combined !== null
     } catch (error) {
       console.error('Failed to build the rotary 3D model from the bar, showing the flat model only.', error)
       combined = buildFlatModelSolid(module, project, visibleFeatures)
@@ -1516,9 +1618,14 @@ async function buildBooleanModel(
     combined = buildFlatModelSolid(module, project, visibleFeatures)
   }
 
-  if (!combined) return null
+  if (!combined) return { modelMesh: null, modelFeatureMeshes: new Map() }
   try {
-    return solidToModelMesh(combined, threePalette)
+    return {
+      modelMesh: solidToModelMesh(combined, threePalette),
+      modelFeatureMeshes: barFolded
+        ? buildFoldedModelMeshes(module, project, visibleFeatures, combined, threePalette)
+        : new Map(),
+    }
   } finally {
     combined.delete()
   }
@@ -1623,8 +1730,10 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // Fixtures and feature meshes are built unhighlighted: selection and
   // collision only tint them, which Viewport3D recolors via applyClampHighlight
   // / applyTabHighlight / applyFeatureHighlights without rebuilding this
-  // (expensive) CSG model (issues #261, #1112 F5). A canned model is drawn from
-  // its own feature mesh, so that last one is what highlights a Turn/Polygon.
+  // (expensive) CSG model (issues #261, #1112 F5). A canned model is drawn under
+  // its own feature id — from its authored mesh, or from its share of the fold
+  // when the fold cut it (`buildFoldedModelMeshes`) — so that last one is what
+  // highlights a Turn/Polygon.
   // Around features are wrapped onto the bar (issue #395): a subtract cuts the
   // round solid, an add is an island standing inside a cut. Top and Bottom
   // features draw exactly as before, and a project with no visible Around
@@ -1650,6 +1759,9 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   const clampMeshes = new Map<string, THREE.Mesh>()
   const clampClearanceBoxes: THREE.Object3D[] = []
   let modelMesh: THREE.Mesh | null = null
+  // The canned models the bar fold cut, drawn from the fold itself (#1112 rt4-c
+  // fix 1). Empty unless the fold both ran and cut into a model.
+  const foldedModelMeshes = new Map<string, THREE.Mesh>()
 
   if (visibleFeatures.length > 0 || aroundFeatures.length > 0) {
     const booleanFeatures = visibleFeatures.filter(
@@ -1660,7 +1772,9 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
         // Every visible feature, not only the Add/Subtract ones: a canned model
         // is part of the bar the fold builds (#1112 rt4-c item 36), so the model
         // rows have to reach `buildBarModelSolid`.
-        modelMesh = await buildBooleanModel(project, visibleFeatures, aroundFeatures, threePalette)
+        const booleanModel = await buildBooleanModel(project, visibleFeatures, aroundFeatures, threePalette)
+        modelMesh = booleanModel.modelMesh
+        for (const [id, mesh] of booleanModel.modelFeatureMeshes) foldedModelMeshes.set(id, mesh)
       } catch (error) {
         console.error('Failed to build boolean 3D preview, falling back to feature meshes.', error)
       }
@@ -1671,7 +1785,14 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
     // Region features also get their own mesh since they are visual-only (not part of boolean model).
     for (const feature of visibleFeatures) {
       if (feature.kind === 'stl' || feature.operation === 'region') {
-        featureMeshes.set(feature.id, buildFeatureMesh(project, feature, false, false, project.stock.thickness, threePalette))
+        // A canned model the bar fold cut is drawn from its share of the fold:
+        // its own authored mesh would cover the cut the bar carries (#1112 rt4-c
+        // fix 1). Every other STL keeps its real mesh for detail.
+        const folded = foldedModelMeshes.get(feature.id)
+        featureMeshes.set(
+          feature.id,
+          folded ?? buildFeatureMesh(project, feature, false, false, project.stock.thickness, threePalette),
+        )
       }
       
       // If buildBooleanModel failed, we need the rest of the meshes too.
