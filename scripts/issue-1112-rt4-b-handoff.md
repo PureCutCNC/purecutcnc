@@ -21,3 +21,6 @@ Off limits: everything else.
 - You cannot run a browser. Update any `e2e/` spec that asserts what you change (grep labels, selectors, test ids) without weakening assertions, and list it in RISKS.
 - Run and report with exit codes: `npm run build:gates`, each changed or new test file directly, `npm run check:i18n` if locales changed.
 - Report: changes per file; tests added; each mutation and whether it was caught; commands with exit codes; RISKS.
+
+## Manager note for the remaining correction round (2026-10-30)
+The review's open point is that the original failure is still unexplained. Reproduce it with Frank's actual file `/home/frankp/Projects/purecutcnc/work/thread-on-turn-test-01.camj` through the real export path (the code the Export dialog and its preview call, with the real toolpath service; no injected failing service), on `feat/issue-1112-wave4` before your fix and on HEAD after it. State the exact cause in the report (which function returned no machine and why), and make the regression test exercise that same path with the machine data from the file.
