@@ -385,8 +385,9 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
     // the missing rotary axis rather than calling the choice of machine wrong
     // (issue #1112, item 35).
     await expect(
-      ui.exportDialog.errors(page).filter({ hasText: 'has no rotary axis' }),
-    ).toContainText('E2E Around Router')
+      // The operation's own line repeats the reason, so pick the machine's line.
+      ui.exportDialog.errors(page).filter({ hasText: /^The selected machine/ }),
+    ).toContainText('"E2E Around Router" has no rotary axis')
     await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
   })
 
