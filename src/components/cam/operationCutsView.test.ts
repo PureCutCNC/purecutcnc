@@ -24,7 +24,12 @@
  * Mutations checked one at a time:
  *  - `onRemove` dropped from the × → the store target keeps both ids;
  *  - the list rendered from every project feature → the row count is 3;
- *  - the last row's × left enabled → the disabled assertion fails.
+ *  - the last row's × left enabled → the disabled assertion fails;
+ *  - the name dropped from a row → the name assertion fails, and the row's own
+ *    remove button is left as its only labelled content (issue #1112 rt3-a,
+ *    item 25: the panel drew a × with no name because the field rule stretched
+ *    the button over the name's whole column);
+ *  - the icon dropped from a row → the icon assertion fails.
  *
  * Run with: npx tsx src/components/cam/operationCutsView.test.ts
  */
@@ -93,7 +98,20 @@ const cuts = host.querySelector('[data-operation-cuts]')
 assert(cuts, 'the Cuts list renders')
 assert(cuts.textContent?.includes('Cuts'), 'it is labelled Cuts')
 assert(host.querySelectorAll('[data-cut-feature-id]').length === 2, 'only the operation targets are rows, not every feature')
-assert(host.querySelector('[data-cut-feature-id="a"]')?.textContent?.includes('A'), 'a row shows the target name')
+// A row is the target's icon, its name, and a small remove × — the name first,
+// so a row that only draws its × is caught here rather than in a screenshot
+// (issue #1112 rt3-a, item 25).
+const rowA = host.querySelector('[data-cut-feature-id="a"]')
+assert(rowA, 'target "A" has a row')
+const nameA = rowA.querySelector('.cam-cuts__name')
+assert(nameA?.textContent === 'A', `a row shows the target name (saw ${JSON.stringify(nameA?.textContent)})`)
+const iconA = rowA.querySelector('.cam-cuts__icon')
+assert(iconA, 'a row shows the target icon')
+assert(iconA.getAttribute('data-cut-icon') === 'rect', 'the icon is the shape the target is')
+const useA = iconA.querySelector('use')
+assert(useA?.getAttribute('href')?.endsWith('#rect'), `the icon references the rect sprite symbol (saw ${useA?.getAttribute('href')})`)
+const removeA = rowA.querySelector('.cam-cuts__remove')
+assert(removeA, 'the row has a remove control')
 
 // Remove "B": the store target keeps only "A" (the Cuts list is a writer, not a
 // second target store).

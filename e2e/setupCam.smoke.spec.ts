@@ -340,6 +340,13 @@ for (const machine of ['grbl','shopbot']) {
     const cuts = ui.setupCam.properties(page).locator('[data-operation-cuts]')
     await expect(cuts).toContainText('Bottom pocket')
     await expect(cuts).toContainText('Through hole')
+    // Each row's own name is visible, not squeezed out by its remove ×
+    // (issue #1112 rt3-a, item 25).
+    for (const id of ['bottom', 'through']) {
+      const row = cuts.locator(`[data-cut-feature-id="${id}"]`)
+      await expect(row.locator('.cam-cuts__name')).toBeVisible()
+      await expect(row.locator('.cam-cuts__icon')).toBeVisible()
+    }
     await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')

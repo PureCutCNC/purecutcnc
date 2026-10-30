@@ -51,9 +51,13 @@
  *   stock (issue #1016 C2);
  * - the rotary operation's properties carry the Cuts list (issue #1112 I):
  *   `[data-operation-cuts]`, one `[data-cut-feature-id]` row per current
- *   target, and a remove × that is disabled when removing the row would empty
- *   the operation. A selected model narrows the target and a selected Around
- *   region joins it as a filter through "Use current selection".
+ *   target, the target's own `.cam-cuts__icon` and `.cam-cuts__name` inside it,
+ *   and a remove × that is disabled when removing the row would empty the
+ *   operation. The name is asserted *visible*, not merely present: the panel's
+ *   field rule used to stretch the × over the row and squeeze the name to
+ *   nothing (issue #1112 rt3-a, item 25). A selected model narrows the target
+ *   and a selected Around region joins it as a filter through "Use current
+ *   selection".
  *
  * Run in the `test:e2e:workflow-ui` lane.
  */
@@ -297,6 +301,12 @@ test('the rotary operation lists the model it machines in Cuts, last target kept
   await expect(cuts.locator('[data-cut-feature-id]')).toHaveCount(1)
   const modelRow = cuts.locator('[data-cut-feature-id="model"]')
   await expect(modelRow).toContainText('Model')
+  // The row reads as what it cuts: a visible icon and a visible name, with the
+  // × a small control at the end of the row rather than the whole row
+  // (issue #1112 rt3-a, item 25).
+  await expect(modelRow.locator('.cam-cuts__name')).toBeVisible()
+  await expect(modelRow.locator('.cam-cuts__name')).toHaveText('Model')
+  await expect(modelRow.locator('.cam-cuts__icon')).toBeVisible()
   const remove = modelRow.locator('.cam-cuts__remove')
   await expect(remove).toBeDisabled()
   await expect(remove).toHaveAttribute('title', 'An operation must cut at least one target')

@@ -34,20 +34,75 @@
  * its ×.
  */
 
-import type { Operation, OperationTarget, Project } from '../../types/project'
+import type { FeatureKind, Operation, OperationTarget, Project } from '../../types/project'
 import { resolveProject } from '../../store/helpers/resolveFeatures'
-import type { ResolvedProject } from '../../store/helpers/resolveFeatures'
+import type { ResolvedProject, ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { isRegion } from '../../store/helpers/featureRoles'
 import { isOperationTargetValidResolved } from '../../store/helpers/operationDefaults'
+import { GEAR_CANNED_KIND } from '../../cannedShapes/generators/gear'
+import {
+  CHAMFER_RECT_CANNED_KIND,
+  ELLIPSE_CANNED_KIND,
+  FLUTES_CANNED_KIND,
+  NGON_CANNED_KIND,
+  POLYGON_CANNED_KIND,
+  ROUND_RECT_CANNED_KIND,
+  SLOT_CANNED_KIND,
+  THREAD_CANNED_KIND,
+  TURN_CANNED_KIND,
+} from '../../cannedShapes/generators/kinds'
 
 /** One target row: the name the list shows and whether its × may be used. */
 export interface OperationCutRow {
   featureId: string
   name: string
+  /** Icon id of the target's own shape, shown before the name. */
+  icon: string
   /** A closed Region mask, which filters the cut rather than being machined. */
   filter: boolean
   /** False when removing it would leave the operation with no valid target. */
   removable: boolean
+}
+
+/**
+ * Icons for the targets a Cuts row can name (issue #1112 rt3-a, item 25): a
+ * canned shape answers for its own kind, so a Turn reads as a turned solid and
+ * a slot as a slot; a plain feature answers for its `FeatureKind`.
+ */
+const CANNED_ICONS: Readonly<Record<string, string>> = {
+  [ELLIPSE_CANNED_KIND]: 'ellipse',
+  [SLOT_CANNED_KIND]: 'slot',
+  [NGON_CANNED_KIND]: 'ngon',
+  [ROUND_RECT_CANNED_KIND]: 'roundrect',
+  [CHAMFER_RECT_CANNED_KIND]: 'chamferrect',
+  [THREAD_CANNED_KIND]: 'spline',
+  [FLUTES_CANNED_KIND]: 'spline',
+  [TURN_CANNED_KIND]: 'turn',
+  [POLYGON_CANNED_KIND]: 'polygon',
+  [GEAR_CANNED_KIND]: 'gear',
+}
+
+const KIND_ICONS: Readonly<Record<FeatureKind, string>> = {
+  rect: 'rect',
+  circle: 'circle',
+  ellipse: 'ellipse',
+  polygon: 'polygon',
+  spline: 'spline',
+  composite: 'composite',
+  text: 'text',
+  stl: 'import',
+}
+
+/**
+ * The icon a row shows before its target's name, the way a list shows an item's
+ * type. An imported mesh has no canned parameters and reads as an import; a
+ * kind the sprite has no icon for falls back to `composite`, so a shape added
+ * later still gets a row icon rather than a blank space.
+ */
+export function cutRowIcon(feature: Pick<ResolvedSketchFeature, 'kind' | 'canned'>): string {
+  return (feature.canned ? CANNED_ICONS[feature.canned.kind] : undefined)
+    ?? KIND_ICONS[feature.kind]
+    ?? 'composite'
 }
 
 /** One rendered block of rows: a tree folder when long, or the ungrouped rows. */
@@ -82,6 +137,7 @@ export function operationCutRows(project: Project, operation: Operation): Operat
     return feature ? [{
       featureId: feature.id,
       name: feature.name,
+      icon: cutRowIcon(feature),
       filter: isRegion(feature),
       removable: cutRemovalTargetResolved(resolved, operation, feature.id) !== null,
     }] : []

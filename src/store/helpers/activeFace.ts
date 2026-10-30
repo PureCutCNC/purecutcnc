@@ -177,6 +177,26 @@ export function isModelFeature(
 }
 
 /**
+ * True for a **canned bar model**: a Turn or Polygon (issue #1112 G), whose
+ * geometry is a solid of revolution about the bar rather than a shape on a
+ * face. It is a model (`operation: 'model'`, kind `stl`) that draws itself from
+ * stored parameters, so an imported mesh — plain `kind: 'stl'`, no `canned` — is
+ * not one.
+ *
+ * Storage authors these rows on Top, because the persisted-model loader accepts
+ * only that face, so the authoring face says nothing about where the row
+ * belongs: it belongs to the bar. The feature tree therefore lists it once, in
+ * the Around section, whichever face is being worked on (issue #1112 rt3-a,
+ * item 27), and on a flat face the canvas shows its side view only (item 19).
+ */
+export function isBarModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  return isCannedModelFeature(project, feature) && featureOperation(project, feature) === 'model'
+}
+
+/**
  * True for a subtract that goes through the whole stock, so the other flat
  * face can target it too. The rule is `engine/setupTargets.ts`'s — the same one
  * `judgeTargetFromFace` applies — asked without a stock or dimensions it
@@ -778,11 +798,11 @@ export function aroundSketchAuthoringRefused(
  * about which of the two the caller happens to hold.
  */
 export function featureOperation(
-  project: Pick<Project, 'featureDefinitions'>,
+  project: { featureDefinitions?: Project['featureDefinitions'] },
   feature: { operation?: FeatureOperation; definitionId?: string },
 ): FeatureOperation | undefined {
   if (feature.operation) return feature.operation
-  return feature.definitionId === undefined ? undefined : project.featureDefinitions[feature.definitionId]?.operation
+  return feature.definitionId === undefined ? undefined : project.featureDefinitions?.[feature.definitionId]?.operation
 }
 
 /**

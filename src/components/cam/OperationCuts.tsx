@@ -16,14 +16,16 @@
 
 /**
  * An operation's "Cuts" list (issue #1112 slice I): its current targets only,
- * each a row with a remove ×, hovering a row highlights the target on the
+ * each a compact row — the target's own icon, its name and a small remove × at
+ * the end of the row — with hovering a row highlighting the target on the
  * canvas. It replaces the read-only Target line and the two target checklists
  * (`CrossFaceTargetPicker`, `RotaryTargetPicker`): every target those offered
  * is now selectable, so selecting it and using Add / Use current selection
  * reaches the same place, and removing a row is how a model is kept out.
  *
  * A long list groups by the tree's folders and each folder collapses. The
- * rows and the grouping are `operationCuts.ts`'s — this file only draws them.
+ * rows, their icons and the grouping are `operationCuts.ts`'s — this file only
+ * draws them.
  */
 
 import { useMemo } from 'react'
@@ -61,6 +63,9 @@ export function OperationCuts({ project, operation }: { project: Project; operat
         onMouseEnter={() => hoverFeature(row.featureId)}
         onMouseLeave={() => hoverFeature(null)}
       >
+        <span className="cam-cuts__icon" data-cut-icon={row.icon}>
+          <Icon id={row.icon} size={13} />
+        </span>
         <span className="cam-cuts__name" title={row.name}>{row.name}</span>
         {row.filter ? <span className="cam-cuts__filter">{camT('cam.operation.cutsFilter')}</span> : null}
         <button
@@ -85,6 +90,9 @@ export function OperationCuts({ project, operation }: { project: Project; operat
       <div className="cam-cuts__list">
         {operation.target.source === 'stock' ? (
           <div className="cam-cuts__row" data-cut-stock>
+            <span className="cam-cuts__icon" data-cut-icon="stock">
+              <Icon id="stock" size={13} />
+            </span>
             <span className="cam-cuts__name">{camT('cam.target.stock')}</span>
           </div>
         ) : rows.length === 0 ? (

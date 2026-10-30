@@ -1435,21 +1435,29 @@ test('a canned model is selectable on every face', async ({ app, ui }) => {
     return useProjectStore.getState().selection.selectedFeatureId
   })
   const row = page.locator(`[data-feature-id="${modelId}"]`)
+  // One row, in the Around section, on every face: a canned model is a solid
+  // about the bar, not a shape on a face (issue #1112 rt3-a, item 27). Storage
+  // authors it on Top for the persisted-model loader, so the authoring face is
+  // not where the row is looked up.
+  const aroundRow = page.locator(`.tree-face-group[data-face="around"] [data-feature-id="${modelId}"]`)
 
-  // Authored on Top for the persisted-model loader, but not a ghost anywhere:
-  // the row is in the current face layer and can be selected there.
-  await expect(row).toBeVisible()
-  await row.click()
+  await expect(row).toHaveCount(1)
+  await expect(aroundRow).toBeVisible()
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
 
   await switchToTop(page)
-  await expect(row).toBeVisible()
-  await row.click()
+  // On Top the model is the dashed side view on the canvas (item 19) and this
+  // one tree row in Around: no second row appears for the face in view.
+  await expect(row).toHaveCount(1)
+  await expect(aroundRow).toBeVisible()
+  await expect(page.locator(`.tree-face-group[data-face="top"] [data-feature-id="${modelId}"]`)).toHaveCount(0)
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
 
   await switchToAround(page)
-  await expect(row).toBeVisible()
-  await row.click()
+  await expect(aroundRow).toBeVisible()
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
 })
 

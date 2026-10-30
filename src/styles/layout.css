@@ -2274,10 +2274,13 @@
   grid-column: 2;
 }
 
+/* A field's control fills its column. The Cuts list's remove × is a row control,
+ * not a field: left in this rule it takes the whole row's width and squeezes the
+ * target's icon and name out of sight (issue #1112 rt3-a, item 25). */
 .properties-field input,
 .properties-field select,
 .properties-field textarea,
-.properties-field button:not(.tree-action-btn):not(.feat-btn):not(.properties-add-note) {
+.properties-field button:not(.tree-action-btn):not(.feat-btn):not(.properties-add-note):not(.cam-cuts__remove) {
   background-color: var(--surface-panel);
   border: 1px solid var(--line-strong);
   color: var(--text);

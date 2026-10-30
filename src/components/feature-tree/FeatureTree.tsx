@@ -26,7 +26,7 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, aroundUnavailableReason, isFaceEditInProgress, isGhostFeature, isModelFeature, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, aroundUnavailableReason, isBarModelFeature, isFaceEditInProgress, isGhostFeature, isModelFeature, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
@@ -105,9 +105,15 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     [project, features],
   )
   const { t } = useI18n()
+  // A canned Turn or Polygon belongs to the bar, not to a face (issue #1112
+  // rt3-a, item 27). Its row lives in the Around section only, so that section
+  // has to exist wherever the model does — its own presence is enough, even on
+  // Top with no other Around work and no Around setup of its own yet.
+  const barModels = features.filter((feature) => isMachinable(feature) && isBarModelFeature(project, feature))
   // Face layers, ghost rows and face chips exist only once the project uses
-  // both faces; a Top-only project renders the tree it always did (#945).
-  const bothFaces = projectUsesBothFaces(project)
+  // both faces; a Top-only project renders the tree it always did (#945). A bar
+  // model is one more reason to show them: its row is in the Around layer.
+  const bothFaces = projectUsesBothFaces(project) || barModels.length > 0
   const workspaceFace = activeFace(project)
   // A face section heading switches face exactly as the header control does,
   // and refuses the same way: an edit in progress belongs to its own face.
@@ -337,10 +343,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // project is valid with no warning. The store enforces this, but a loaded file
   // could be malformed.
   const machiningFeatures = features.filter(isMachinable)
-  // Around's layer appears when the project has Around content or the
-  // workspace is on it. A flat-only project keeps exactly the two layers it
-  // has today (issue #395).
-  const faceLayers: readonly SetupFace[] = workspaceFace === 'around' || machiningFeatures.some((feature) => feature.authoringFace === 'around')
+  // Around's layer appears when the project has Around content — a bar model
+  // counts — or the workspace is on it. A flat-only project keeps exactly the
+  // two layers it has today (issue #395).
+  const faceLayers: readonly SetupFace[] = workspaceFace === 'around'
+    || barModels.length > 0
+    || machiningFeatures.some((feature) => feature.authoringFace === 'around')
     ? ['top', 'bottom', 'around']
     : ['top', 'bottom']
   const solidFeatures = features.filter(isSolid)
@@ -510,11 +518,20 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     )
   }
 
-  // Which face layer a feature row belongs to. A model is not tied to a face
-  // (issue #1112 I), so it is listed once, in the layer being worked on; any
+  // Which face layer a feature row belongs to.
+  //
+  // A canned Turn or Polygon is a solid about the bar, not a shape on a face
+  // (issue #1112 rt3-a, item 27): it is listed once, in the Around section,
+  // whichever face it was created from and whichever face is being worked on.
+  // Storage authors it on Top for the persisted-model loader, so its authoring
+  // face cannot be the rule.
+  //
+  // Any other model — an imported mesh — is not tied to a face either
+  // (issue #1112 I), so it is listed once, in the layer being worked on; every
   // other feature belongs to the face it was drawn on. Listing a model under
   // its authoring face *and* the current one would duplicate one row.
   function inFaceLayer(feature: { authoringFace?: SetupFace; definitionId?: string; kind?: string; canned?: CannedShapeData | null }, face: SetupFace): boolean {
+    if (isBarModelFeature(project, feature)) return face === 'around'
     return isModelFeature(project, feature) ? face === workspaceFace : feature.authoringFace === face
   }
 

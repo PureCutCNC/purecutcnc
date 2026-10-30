@@ -507,12 +507,15 @@
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
 .cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
-/* The operation's Cuts list (issue #1112 I). A row is the target's name and a
- * remove ×; a long list folds its rows by the tree's folders. */
+/* The operation's Cuts list (issue #1112 I). A row is the target's icon, its
+ * name and a remove ×; a long list folds its rows by the tree's folders. The
+ * name takes the row's spare width, so a long one ellipsizes instead of pushing
+ * the × out, and the × stays a small row control (issue #1112 rt3-a, item 25). */
 .cam-cuts__list { display: grid; gap: 2px; min-width: 0; }
-.cam-cuts__row { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0; border-radius: 4px; }
+.cam-cuts__row { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 22px; padding: 2px 0; border-radius: 4px; }
 .cam-cuts__row:hover { background: var(--accent-soft); }
-.cam-cuts__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-cuts__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-dim); }
+.cam-cuts__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cam-cuts__filter { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .cam-cuts__remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
 .cam-cuts__remove:hover:not(:disabled) { background: var(--surface-input); color: var(--text); }

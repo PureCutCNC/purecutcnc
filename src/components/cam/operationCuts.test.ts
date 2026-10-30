@@ -27,7 +27,9 @@
  *  - every folder defaulting to one flat list → "a long list groups by the
  *    tree's folders" fails;
  *  - the last target removable → "the only target cannot be removed" fails;
- *  - a region filter treated as a machined shape → the filter assertion fails.
+ *  - a region filter treated as a machined shape → the filter assertion fails;
+ *  - every row given the same icon, or the canned shape's kind ignored → the
+ *    per-kind icon assertions fail (issue #1112 rt3-a, item 25).
  *
  * Run with: npx tsx src/components/cam/operationCuts.test.ts
  */
@@ -87,6 +89,49 @@ function operation(project: Project, target: Operation['target'], kind: Operatio
   const project = fixture(['a'])
   const op = operation(project, { source: 'features', featureIds: ['a', 'gone'] })
   assert.deepEqual(operationCutRows(project, op).map((row) => row.featureId), ['a'], 'a missing target is skipped')
+}
+
+// ── Every target kind brings its own icon (issue #1112 rt3-a, item 25) ──
+
+/**
+ * The icon is the shape's own, so a row reads as what it will cut without
+ * opening it: a plain feature by its kind, a canned shape by its kind, and an
+ * imported mesh — which has no canned parameters — as an import. A canned Turn
+ * or Polygon is what a rotary operation targets, so that pair is the one the
+ * panel shows on Around.
+ */
+{
+  const shaped = (id: string, patch: Partial<SketchFeature>): SketchFeature => ({ ...hole(id), ...patch })
+  const canned = (id: string, kind: string, operation: SketchFeature['operation'] = 'subtract'): SketchFeature => shaped(id, {
+    kind: 'stl',
+    operation,
+    canned: { kind, params: {} },
+    stl: null,
+  })
+  const project = projectWithFeatures(newProject('cuts icons', 'mm'), [
+    shaped('rect', {}),
+    shaped('circle', { kind: 'circle' }),
+    shaped('text', { kind: 'text' }),
+    shaped('imported', {
+      kind: 'stl',
+      operation: 'model',
+      stl: { format: 'stl', meshAssetId: 'a', scale: 1, axisSwap: 'none' },
+    }),
+    canned('turn', 'turn', 'model'),
+    canned('polygon', 'polygon', 'model'),
+    canned('slot', 'slot'),
+  ])
+  const ids = ['rect', 'circle', 'text', 'imported', 'turn', 'polygon', 'slot']
+  const rows = operationCutRows(project, operation(project, { source: 'features', featureIds: ids }))
+  const iconOf = (id: string): string | undefined => rows.find((row) => row.featureId === id)?.icon
+  assert.equal(iconOf('rect'), 'rect', 'a plain rectangle row shows the rect icon')
+  assert.equal(iconOf('circle'), 'circle', 'a circle row shows the circle icon')
+  assert.equal(iconOf('text'), 'text', 'a text row shows the text icon')
+  assert.equal(iconOf('imported'), 'import', 'an imported mesh row shows the import icon')
+  assert.equal(iconOf('turn'), 'turn', 'a canned Turn shows the turn icon')
+  assert.equal(iconOf('polygon'), 'polygon', 'a canned Polygon shows the polygon icon')
+  assert.equal(iconOf('slot'), 'slot', 'a canned Slot shows its own icon, not a model one')
+  assert.equal(rows.length, ids.length, 'every target kind gets a row')
 }
 
 // A closed Region mask is a filter, and says so.
