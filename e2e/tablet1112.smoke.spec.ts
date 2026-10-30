@@ -29,18 +29,20 @@
  *    scrolls rather than being clipped when the form is taller than the space
  *    (a drawer's own scrolling counts — see `expectReachable`, which checks the
  *    two axes separately so vertical scrolling never excuses a surface clipped
- *    at the side).
+ *    at the side). The page-side measurement lives in `tabletFit.ts`: it walks
+ *    the clipping ancestors even when the surface's own box fits, and refuses a
+ *    surface wider than the scroller that is meant to show it.
  *  - (c) the surface's main action works by tap alone (`tap()`, never hover).
  *
  * A screenshot of each surface is written to `work/tablet-shots/`. `work/` is
  * gitignored, so nothing is committed from it.
  *
  * The handoff's surface list applies to a round bar **and** a square blank, so
- * the fixtures come in both shapes: the round-bar tests cover every surface,
- * and the square-blank tests re-run the parts whose DOM or geometry actually
- * depends on the blank (the Turn/Polygon forms and the side views drawn on
- * Top). Context menu, Cuts list, header face control, simulation info and chuck
- * properties render the same controls on either blank and are covered once.
+ * every surface runs on both blanks: the Turn/Polygon creation and edit forms,
+ * the feature context menu, the Cuts list, the header face control, the
+ * simulation info button, chuck properties and the side views drawn on Top.
+ * Screenshots name the blank so the two runs of a surface cannot be mistaken
+ * for each other (#1112 rt4-a fix2 review F2).
  *
  * Portrait is a **different answer**: the shell refuses a portrait tablet —
  * `src/styles/tablet.css` shows `.tablet-rotate-overlay` over the whole app for
@@ -70,6 +72,7 @@ import {
 } from './helpers'
 import { squareStock } from '../src/types/barStock'
 import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
+import { tabletFitReport } from './tabletFit'
 import {
   defaultTool,
   newProject,
@@ -138,6 +141,18 @@ function barProject(shape: 'round' | 'square' = 'round'): Project {
   }
   base.clamps = [chuck]
   return base
+}
+
+/**
+ * Seed `barProject(shape)` and prove the blank really is the one under test.
+ * Every surface below runs once per blank, and this assertion is what makes the
+ * square run **bite**: seeding the round fixture for a "square blank" test fails
+ * here instead of passing quietly (#1112 rt4-a fix2 review F2).
+ */
+async function seedBar(page: Page, shape: 'round' | 'square'): Promise<void> {
+  await seedProject(page, JSON.stringify(barProject(shape)))
+  const seeded = await getProject(page) as unknown as Project
+  expect(seeded.stock.shape, `the ${shape} blank under test`).toBe(shape)
 }
 
 // ── Touch-target and fit assertions ────────────────────────────────────
@@ -221,127 +236,29 @@ async function expectInsideViewport(page: Page, locator: Locator, label: string)
 }
 
 /**
- * One scrollable ancestor on one axis, and whether it can bring `element` into
- * view on that axis.
- */
-interface ScrollPath {
-  axis: 'x' | 'y'
-  /** The container itself lies inside the viewport on that axis. */
-  inside: boolean
-  /** Scrolling it as far as it goes brings the surface fully inside it. */
-  reachable: boolean
-  /** Pixels of scrolling needed from where it is now (negative = scroll back). */
-  needed: number
-  /** The furthest it can scroll. */
-  maxScroll: number
-  rect: { left: number; right: number; top: number; bottom: number }
-}
-
-/**
- * The nearest ancestor that scrolls `element` back into view on each axis,
- * answered **separately**. A vertical scroller must never make a surface
- * clipped at the side look reachable: that was the hole in the first version
- * of {@link expectReachable} (#1112 rt4-a review F3).
- */
-async function scrollPaths(
-  page: Page,
-  locator: Locator,
-): Promise<{ horizontal: ScrollPath | null; vertical: ScrollPath | null }> {
-  return locator.evaluate((element) => {
-    function path(axis: 'x' | 'y'): ScrollPath | null {
-      const box = element.getBoundingClientRect()
-      let node: HTMLElement | null = (element as HTMLElement).parentElement
-      while (node) {
-        const style = getComputedStyle(node)
-        const overflow = axis === 'x' ? style.overflowX : style.overflowY
-        const scrollSize = axis === 'x' ? node.scrollWidth : node.scrollHeight
-        const clientSize = axis === 'x' ? node.clientWidth : node.clientHeight
-        if (scrollSize > clientSize + 1 && (overflow === 'auto' || overflow === 'scroll')) {
-          const rect = node.getBoundingClientRect()
-          const start = axis === 'x' ? rect.left : rect.top
-          const end = axis === 'x' ? rect.right : rect.bottom
-          const elementStart = axis === 'x' ? box.left : box.top
-          const elementEnd = axis === 'x' ? box.right : box.bottom
-          const scroll = axis === 'x' ? node.scrollLeft : node.scrollTop
-          const maxScroll = scrollSize - clientSize
-          const needed = elementEnd > end
-            ? elementEnd - end + scroll
-            : elementStart < start
-              ? elementStart - start + scroll
-              : 0
-          return {
-            axis,
-            inside: axis === 'x'
-              ? rect.left >= -0.5 && rect.right <= window.innerWidth + 0.5
-              : rect.top >= -0.5 && rect.bottom <= window.innerHeight + 0.5,
-            // A surface wider (or taller) than the scroll port can never be
-            // brought fully into view, however far the container scrolls.
-            reachable: needed >= -0.5 && needed <= maxScroll + 0.5,
-            needed: Math.round(needed),
-            maxScroll: Math.round(maxScroll),
-            rect: {
-              left: Math.round(rect.left),
-              right: Math.round(rect.right),
-              top: Math.round(rect.top),
-              bottom: Math.round(rect.bottom),
-            },
-          }
-        }
-        node = node.parentElement
-      }
-      return null
-    }
-    return { horizontal: path('x'), vertical: path('y') }
-  })
-}
-
-/**
  * (b) For a surface that lives inside a drawer: it must be reachable — fully
  * inside the viewport, or cut off only inside a scrollable container that is
  * itself inside the viewport ("scrolling inside the panel is fine if it
  * scrolls", per the handoff). Each axis is checked on its own: a surface cut
  * off at the right edge needs something that scrolls **sideways**, however
- * much the drawer scrolls up and down. A surface painted past the window edge
- * with nothing to scroll, on either axis, is the failure this catches.
+ * much the drawer scrolls up and down.
+ *
+ * The ancestor walk itself lives in {@link tabletFitReport}, which runs in the
+ * page: an ancestor clipping the surface is reported even when the surface's
+ * own box fits the viewport, and a surface wider than the scroller meant to
+ * show it is refused rather than accepted because the scroller can move it
+ * (#1112 rt4-a fix2 review F1).
  */
 async function expectReachable(page: Page, locator: Locator, label: string): Promise<void> {
-  const box = await locator.boundingBox()
-  expect(box, `${label} has no box`).not.toBeNull()
-  const viewport = page.viewportSize()!
-  const withinX = box!.x >= -0.5 && box!.x + box!.width <= viewport.width + 0.5
-  const withinY = box!.y >= -0.5 && box!.y + box!.height <= viewport.height + 0.5
-  if (withinX && withinY) return
-  const paths = await scrollPaths(page, locator)
-  if (!withinX) {
-    expect(
-      paths.horizontal,
-      `${label} runs past the ${viewport.width}px viewport width with nothing to scroll sideways`,
-    ).not.toBeNull()
-    expect(
-      paths.horizontal!.inside,
-      `${label}'s horizontal scroll container is itself off-screen: ${JSON.stringify(paths.horizontal!.rect)}`,
-    ).toBe(true)
-    expect(
-      paths.horizontal!.reachable,
-      `${label} cannot be scrolled into view sideways: `
-        + `needs ${paths.horizontal!.needed}px, ${paths.horizontal!.maxScroll}px available`,
-    ).toBe(true)
-  }
-  if (!withinY) {
-    expect(
-      paths.vertical,
-      `${label} runs past the ${viewport.height}px viewport height with nothing to scroll`,
-    ).not.toBeNull()
-    expect(
-      paths.vertical!.inside,
-      `${label}'s scroll container is itself off-screen: ${JSON.stringify(paths.vertical!.rect)}`,
-    ).toBe(true)
-    expect(
-      paths.vertical!.reachable,
-      `${label} cannot be scrolled into view: `
-        + `needs ${paths.vertical!.needed}px, ${paths.vertical!.maxScroll}px available`,
-    ).toBe(true)
-  }
+  const viewport = page.viewportSize()
+  expect(viewport, `${label} needs a viewport to measure against`).not.toBeNull()
+  const report = await locator.evaluate(tabletFitReport, viewport!)
+  const issues = [...report.horizontal.issues, ...report.vertical.issues]
+  expect(
+    issues,
+    `${label} is not fully reachable on ${viewport!.width}×${viewport!.height}: `
+      + issues.map((issue) => issue.detail).join('; '),
+  ).toEqual([])
 }
 
 /**
@@ -641,42 +558,50 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     await expect(threadPanel).toHaveCount(0)
   })
 
-  test('the Turn edit panel opens from Properties and saves by tap', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
-    await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
-    const created = await getProject(page) as unknown as Project
-    const turnId = created.features[0].id
+  /**
+   * The Turn editor runs on both blanks: the form is the same, but its stored
+   * numbers and its fit are measured against the blank the test is named for.
+   * The first pass only ran it round (#1112 rt4-a fix2 review F2).
+   */
+  for (const shape of ['round', 'square'] as const) {
+    test(`the Turn edit panel opens from Properties and saves by tap (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
+      await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
+      const created = await getProject(page) as unknown as Project
+      const turnId = created.features[0].id
 
-    // The model is authored on Top (a bar model belongs to no face), so Top is
-    // where Properties offers its editor.
-    await tapFace(page, 'Top')
-    await openProjectDrawer(page)
-    await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).tap()
-    await openShapeDisclosure(page)
-    const editTurn = page.getByRole('button', { name: /^Edit turn/ })
-    await expect(editTurn).toBeVisible()
-    const editBox = await editTurn.boundingBox()
-    expect(editBox!.height).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      // The model is authored on Top (a bar model belongs to no face), so Top is
+      // where Properties offers its editor.
+      await tapFace(page, 'Top')
+      await openProjectDrawer(page)
+      await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).tap()
+      await openShapeDisclosure(page)
+      const editTurn = page.getByRole('button', { name: /^Edit turn/ })
+      await expect(editTurn).toBeVisible()
+      const editBox = await editTurn.boundingBox()
+      expect(editBox!.height, 'the turn editor entry').toBeGreaterThanOrEqual(TOUCH_TARGET)
 
-    await editTurn.tap()
-    const panel = ui.rotarySolid.dialog(page)
-    await expect(panel).toBeVisible()
-    // The stored numbers are what the form opened with.
-    await expect(page.locator('#rotary-solid-length')).toHaveValue('40')
-    await expect(page.locator('#rotary-solid-diameter')).toHaveValue('10')
-    await expectTouchTargets(page, '.rotary-solid-panel')
-    await expectInsideViewport(page, panel, 'Turn edit panel')
-    await shoot(page, 'turn-edit-landscape')
+      await editTurn.tap()
+      const panel = ui.rotarySolid.dialog(page)
+      await expect(panel).toBeVisible()
+      // The stored numbers are what the form opened with.
+      await expect(page.locator('#rotary-solid-length')).toHaveValue('40')
+      await expect(page.locator('#rotary-solid-diameter')).toHaveValue('10')
+      await expectTouchTargets(page, '.rotary-solid-panel')
+      await expectInsideViewport(page, panel, `Turn edit panel (${shape} blank)`)
+      await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
+      await shoot(page, `turn-edit-${shape}-landscape`)
 
-    // A change is saved with the panel's own action, by tap.
-    await page.locator('#rotary-solid-length').fill('30')
-    await ui.rotarySolid.createButton(page).tap()
-    await expect(panel).toHaveCount(0)
-    const edited = await getProject(page) as unknown as Project
-    const stored = edited.featureDefinitions[edited.features[0].definitionId].canned
-    expect((stored!.params as Record<string, unknown>).length).toBe(30)
-  })
+      // A change is saved with the panel's own action, by tap.
+      await page.locator('#rotary-solid-length').fill('30')
+      await ui.rotarySolid.createButton(page).tap()
+      await expect(panel).toHaveCount(0)
+      const edited = await getProject(page) as unknown as Project
+      const stored = edited.featureDefinitions[edited.features[0].definitionId].canned
+      expect((stored!.params as Record<string, unknown>).length).toBe(30)
+    })
+  }
 
   /**
    * The Polygon editor was missing from the first tablet pass entirely —
@@ -688,7 +613,7 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   for (const shape of ['round', 'square'] as const) {
     test(`the Polygon edit panel opens from Properties and saves by tap (${shape} blank)`, async ({ app, ui }) => {
       const { page } = app
-      await seedProject(page, JSON.stringify(barProject(shape)))
+      await seedBar(page, shape)
       await createRotarySolid(page, 'polygon', {
         start: '70', length: '30', sides: '6', 'across-flats': '12',
       })
@@ -794,213 +719,223 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     expect(afterPolygon.stock).toMatchObject({ shape: 'square', thickness: 25 })
   })
 
-  test('the feature context menu is touch-sized on a canned shape and names the other face', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
-    await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
-    await tapFace(page, 'Top')
-    await addEllipseFeature(page, 20, 4, 10, 6)
-    const project = await getProject(page) as unknown as Project
-    const ellipse = project.features.find((feature) => feature.name.startsWith('Ellipse'))!
-    const turn = project.features.find((feature) => feature.name === 'Turn')!
+  for (const shape of ['round', 'square'] as const) {
+    test(`the feature context menu is touch-sized on a canned shape and names the other face (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
+      await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
+      await tapFace(page, 'Top')
+      await addEllipseFeature(page, 20, 4, 10, 6)
+      const project = await getProject(page) as unknown as Project
+      const ellipse = project.features.find((feature) => feature.name.startsWith('Ellipse'))!
+      const turn = project.features.find((feature) => feature.name === 'Turn')!
 
-    // ── The canned (expandable) shape: Edit, Expand and a wrapped reason ──
-    await openProjectDrawer(page)
-    // The ⋮ on the row is the touch route to the menu: right-click has no
-    // touch equivalent, and the button used to shrink to 32px in the drawer.
-    const more = page.locator(`.tree-row--feature[data-feature-id="${ellipse.id}"] .tree-action-btn--more`)
-    const moreBox = await more.boundingBox()
-    expect(moreBox!.height, 'the menu’s touch entry point').toBeGreaterThanOrEqual(TOUCH_TARGET)
-    expect(moreBox!.width, 'the menu’s touch entry point').toBeGreaterThanOrEqual(TOUCH_TARGET)
-    await more.tap()
-    const menu = ui.contextMenu.container(page)
-    await expect(menu).toBeVisible()
-    await expect(ui.contextMenu.itemExact(menu, 'Edit ellipse…')).toBeEnabled()
-    await expect(ui.contextMenu.itemExact(menu, 'Expand to features')).toBeEnabled()
-    // "Edit sketch" refuses a generated shape, and the refusal is visible text
-    // under the label — the row a finger has to read, and the one that used to
-    // stay under 44px (issue #1112 F2).
-    const refused = menu.locator('.feature-context-menu__item--reason').filter({ hasText: 'Edit sketch' })
-    await expect(refused).toContainText(/generated|Expand to features/i)
-    await expectTouchTargets(page, '.feature-context-menu')
-    await expectInsideViewport(page, menu, 'context menu (canned shape)')
-    await shoot(page, 'context-menu-canned-landscape')
+      // ── The canned (expandable) shape: Edit, Expand and a wrapped reason ──
+      await openProjectDrawer(page)
+      // The ⋮ on the row is the touch route to the menu: right-click has no
+      // touch equivalent, and the button used to shrink to 32px in the drawer.
+      const more = page.locator(`.tree-row--feature[data-feature-id="${ellipse.id}"] .tree-action-btn--more`)
+      const moreBox = await more.boundingBox()
+      expect(moreBox!.height, 'the menu’s touch entry point').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(moreBox!.width, 'the menu’s touch entry point').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      await more.tap()
+      const menu = ui.contextMenu.container(page)
+      await expect(menu).toBeVisible()
+      await expect(ui.contextMenu.itemExact(menu, 'Edit ellipse…')).toBeEnabled()
+      await expect(ui.contextMenu.itemExact(menu, 'Expand to features')).toBeEnabled()
+      // "Edit sketch" refuses a generated shape, and the refusal is visible text
+      // under the label — the row a finger has to read, and the one that used to
+      // stay under 44px (issue #1112 F2).
+      const refused = menu.locator('.feature-context-menu__item--reason').filter({ hasText: 'Edit sketch' })
+      await expect(refused).toContainText(/generated|Expand to features/i)
+      await expectTouchTargets(page, '.feature-context-menu')
+      await expectInsideViewport(page, menu, `context menu (canned shape, ${shape} blank)`)
+      await shoot(page, `context-menu-canned-${shape}-landscape`)
 
-    // Tapping Edit opens the same canvas panel the Properties button does.
-    await ui.contextMenu.itemExact(menu, 'Edit ellipse…').tap()
-    const editPanel = page.locator('.canvas-workflow-panel--creation')
-    await expect(editPanel).toBeVisible()
-    await editPanel.getByRole('button', { name: 'Cancel' }).tap()
-    await expect(editPanel).toHaveCount(0)
+      // Tapping Edit opens the same canvas panel the Properties button does.
+      await ui.contextMenu.itemExact(menu, 'Edit ellipse…').tap()
+      const editPanel = page.locator('.canvas-workflow-panel--creation')
+      await expect(editPanel).toBeVisible()
+      await editPanel.getByRole('button', { name: 'Cancel' }).tap()
+      await expect(editPanel).toHaveCount(0)
 
-    // ── The other-face model: the menu names the way to its own face ──
-    // The drawer has to close first: its scrim covers the header control.
-    await closeProjectDrawer(page)
-    await tapFace(page, 'Bottom')
-    await openProjectDrawer(page)
-    await page.locator(`.tree-row--feature[data-feature-id="${turn.id}"] .tree-action-btn--more`).tap()
-    const ghostMenu = ui.contextMenu.container(page)
-    await expect(ghostMenu).toBeVisible()
-    await expect(ui.contextMenu.itemExact(ghostMenu, 'Switch to top face to edit')).toBeVisible()
-    // Nothing here edits a model authored on the other face.
-    await expect(ui.contextMenu.itemExact(ghostMenu, 'Edit turn…')).toHaveCount(0)
-    await expectTouchTargets(page, '.feature-context-menu')
-    await expectInsideViewport(page, ghostMenu, 'context menu (other face)')
-    await shoot(page, 'context-menu-other-face-landscape')
-    await page.keyboard.press('Escape')
-  })
+      // ── The other-face model: the menu names the way to its own face ──
+      // The drawer has to close first: its scrim covers the header control.
+      await closeProjectDrawer(page)
+      await tapFace(page, 'Bottom')
+      await openProjectDrawer(page)
+      await page.locator(`.tree-row--feature[data-feature-id="${turn.id}"] .tree-action-btn--more`).tap()
+      const ghostMenu = ui.contextMenu.container(page)
+      await expect(ghostMenu).toBeVisible()
+      await expect(ui.contextMenu.itemExact(ghostMenu, 'Switch to top face to edit')).toBeVisible()
+      // Nothing here edits a model authored on the other face.
+      await expect(ui.contextMenu.itemExact(ghostMenu, 'Edit turn…')).toHaveCount(0)
+      await expectTouchTargets(page, '.feature-context-menu')
+      await expectInsideViewport(page, ghostMenu, `context menu (other face, ${shape} blank)`)
+      await shoot(page, `context-menu-other-face-${shape}-landscape`)
+      await page.keyboard.press('Escape')
+    })
+  }
 
-  test('the operation Cuts list is touch-sized and removes a target by tap', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
-    // Two cuttable features on Top, so the Cuts list has a removable row (the
-    // last target's × is deliberately disabled).
-    await drawRect(page, 10, 4, 30, 12)
-    await drawRect(page, 40, 4, 70, 12)
-    const drawn = await getProject(page) as unknown as Project
-    expect(drawn.features).toHaveLength(2)
-    await selectFeatures(page, drawn.features.map((feature) => feature.id))
-    await openOperationsDrawer(page)
-    await ui.setupCam.addAction(page).tap()
-    await expect(ui.setupCam.addMenu(page)).toBeVisible()
-    await ui.setupCam.addMenu(page)
-      .locator('.cam-operation-item')
-      .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
-      .getByRole('button', { name: 'Rough', exact: true })
-      .tap()
+  for (const shape of ['round', 'square'] as const) {
+    test(`the operation Cuts list is touch-sized and removes a target by tap (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
+      // Two cuttable features on Top, so the Cuts list has a removable row (the
+      // last target's × is deliberately disabled).
+      await drawRect(page, 10, 4, 30, 12)
+      await drawRect(page, 40, 4, 70, 12)
+      const drawn = await getProject(page) as unknown as Project
+      expect(drawn.features).toHaveLength(2)
+      await selectFeatures(page, drawn.features.map((feature) => feature.id))
+      await openOperationsDrawer(page)
+      await ui.setupCam.addAction(page).tap()
+      await expect(ui.setupCam.addMenu(page)).toBeVisible()
+      await ui.setupCam.addMenu(page)
+        .locator('.cam-operation-item')
+        .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+        .getByRole('button', { name: 'Rough', exact: true })
+        .tap()
 
-    const cuts = page.locator('[data-operation-cuts]')
-    await expect(cuts).toBeVisible()
-    const rows = cuts.locator('.cam-cuts__row')
-    await expect(rows).toHaveCount(2)
-    // Every row carries the target's icon, its name (visible, not squeezed to
-    // nothing by the ×) and a remove ×.
-    for (const row of await rows.all()) {
-      await expect(row.locator('.cam-cuts__icon')).toBeVisible()
-      await expect(row.locator('.cam-cuts__name')).toBeVisible()
-      await expect(row.locator('.cam-cuts__remove')).toBeEnabled()
-    }
-    await expectTouchTargets(page, '.cam-cuts')
-    await expectReachable(page, cuts, 'Cuts list')
-    await cuts.scrollIntoViewIfNeeded()
-    await shoot(page, 'operation-cuts-landscape')
+      const cuts = page.locator('[data-operation-cuts]')
+      await expect(cuts).toBeVisible()
+      const rows = cuts.locator('.cam-cuts__row')
+      await expect(rows).toHaveCount(2)
+      // Every row carries the target's icon, its name (visible, not squeezed to
+      // nothing by the ×) and a remove ×.
+      for (const row of await rows.all()) {
+        await expect(row.locator('.cam-cuts__icon')).toBeVisible()
+        await expect(row.locator('.cam-cuts__name')).toBeVisible()
+        await expect(row.locator('.cam-cuts__remove')).toBeEnabled()
+      }
+      await expectTouchTargets(page, '.cam-cuts')
+      await expectReachable(page, cuts, `Cuts list (${shape} blank)`)
+      await cuts.scrollIntoViewIfNeeded()
+      await shoot(page, `operation-cuts-${shape}-landscape`)
 
-    const removedName = (await rows.first().locator('.cam-cuts__name').textContent())!.trim()
-    await rows.first().locator('.cam-cuts__remove').tap()
-    await expect(rows).toHaveCount(1)
-    await expect(rows.first().locator('.cam-cuts__name')).not.toHaveText(removedName)
-    // The last target cannot be removed: its × is disabled, with the reason as
-    // its title.
-    await expect(rows.first().locator('.cam-cuts__remove')).toBeDisabled()
-    const afterRemoval = await getProject(page) as unknown as Project
-    expect(afterRemoval.operations[0].target.source).toBe('features')
-    expect((afterRemoval.operations[0].target as { featureIds: string[] }).featureIds).toHaveLength(1)
-  })
+      const removedName = (await rows.first().locator('.cam-cuts__name').textContent())!.trim()
+      await rows.first().locator('.cam-cuts__remove').tap()
+      await expect(rows).toHaveCount(1)
+      await expect(rows.first().locator('.cam-cuts__name')).not.toHaveText(removedName)
+      // The last target cannot be removed: its × is disabled, with the reason as
+      // its title.
+      await expect(rows.first().locator('.cam-cuts__remove')).toBeDisabled()
+      const afterRemoval = await getProject(page) as unknown as Project
+      expect(afterRemoval.operations[0].target.source).toBe('features')
+      expect((afterRemoval.operations[0].target as { featureIds: string[] }).featureIds).toHaveLength(1)
+    })
+  }
 
-  test('the header face control is touch-sized and the CAM panel opens from its own button', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
+  for (const shape of ['round', 'square'] as const) {
+    test(`the header face control is touch-sized and the CAM panel opens from its own button (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
 
-    // The one face control sits at the right end of the tab row.
-    const control = ui.face.current(page)
-    await expect(ui.face.tabBarControl(page)).toBeVisible()
-    await expect(control).toBeVisible()
-    const box = await control.boundingBox()
-    expect(box!.height, 'face control height').toBeGreaterThanOrEqual(TOUCH_TARGET)
-    expect(box!.width, 'face control width').toBeGreaterThanOrEqual(TOUCH_TARGET)
-    await expectInsideViewport(page, control, 'face control')
-    await shoot(page, 'face-control-landscape')
+      // The one face control sits at the right end of the tab row.
+      const control = ui.face.current(page)
+      await expect(ui.face.tabBarControl(page)).toBeVisible()
+      await expect(control).toBeVisible()
+      const box = await control.boundingBox()
+      expect(box!.height, 'face control height').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(box!.width, 'face control width').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      await expectInsideViewport(page, control, `face control (${shape} blank)`)
+      await shoot(page, `face-control-${shape}-landscape`)
 
-    // Opening it is a tap, and its entries are touch-sized on the tablet shell.
-    await control.tap()
-    await expect(ui.face.menu(page)).toBeVisible()
-    await expectTouchTargets(page, '.face-switch__menu')
-    await expectInsideViewport(page, ui.face.menu(page), 'face menu')
-    await ui.face.item(page, 'Bottom').tap()
-    await expect(control).toHaveAttribute('data-face', 'bottom')
+      // Opening it is a tap, and its entries are touch-sized on the tablet shell.
+      await control.tap()
+      await expect(ui.face.menu(page)).toBeVisible()
+      await expectTouchTargets(page, '.face-switch__menu')
+      await expectInsideViewport(page, ui.face.menu(page), 'face menu')
+      await ui.face.item(page, 'Bottom').tap()
+      await expect(control).toHaveAttribute('data-face', 'bottom')
 
-    // A tablet has no `»` pull-out handle: the CAM panel is a drawer, opened by
-    // the command bar's Operations button, which is its stand-in here. The
-    // button used to inherit the command bar's 40px control height, so it is
-    // held to the same 44px minimum as the handle it replaces
-    // (`.top-cmd-btn--operations` in `src/styles/tablet.css`, #1112 rt4-a
-    // review F2).
-    await expect(page.locator('#panel-handle-right')).toHaveCount(0)
-    const operationsButton = ui.operations.openPanelButton(page)
-    const operationsBox = await operationsButton.boundingBox()
-    expect(operationsBox!.height, 'the Operations entry that replaces the » handle')
-      .toBeGreaterThanOrEqual(TOUCH_TARGET)
-    expect(operationsBox!.width, 'the Operations entry that replaces the » handle')
-      .toBeGreaterThanOrEqual(TOUCH_TARGET)
-    await openOperationsDrawer(page)
-    await expectInsideViewport(page, page.locator('#panel-right'), 'operations drawer')
-  })
+      // A tablet has no `»` pull-out handle: the CAM panel is a drawer, opened by
+      // the command bar's Operations button, which is its stand-in here. The
+      // button used to inherit the command bar's 40px control height, so it is
+      // held to the same 44px minimum as the handle it replaces
+      // (`.top-cmd-btn--operations` in `src/styles/tablet.css`, #1112 rt4-a
+      // review F2).
+      await expect(page.locator('#panel-handle-right')).toHaveCount(0)
+      const operationsButton = ui.operations.openPanelButton(page)
+      const operationsBox = await operationsButton.boundingBox()
+      expect(operationsBox!.height, 'the Operations entry that replaces the » handle')
+        .toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(operationsBox!.width, 'the Operations entry that replaces the » handle')
+        .toBeGreaterThanOrEqual(TOUCH_TARGET)
+      await openOperationsDrawer(page)
+      await expectInsideViewport(page, page.locator('#panel-right'), 'operations drawer')
+    })
+  }
 
-  test('the simulation toolbar explains fresh stock behind a 44px info button', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
+  for (const shape of ['round', 'square'] as const) {
+    test(`the simulation toolbar explains fresh stock behind a 44px info button (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
 
-    // One setup only: nothing to explain, so no button.
-    await page.getByRole('button', { name: 'Sim', exact: true }).tap()
-    await expect(ui.simSetup.viewport(page)).toBeVisible()
-    await expect(ui.simSetup.info(page)).toHaveCount(0)
+      // One setup only: nothing to explain, so no button.
+      await page.getByRole('button', { name: 'Sim', exact: true }).tap()
+      await expect(ui.simSetup.viewport(page)).toBeVisible()
+      await expect(ui.simSetup.info(page)).toHaveCount(0)
 
-    // A second face's work makes a second setup, and the sentence appears.
-    await tapFace(page, 'Bottom')
-    await drawRect(page, 20, 8, 60, 16)
-    const twoSided = await getProject(page) as unknown as Project
-    expect(twoSided.setups.length).toBeGreaterThan(1)
-    await expect(ui.simSetup.info(page)).toBeVisible()
-    const note = 'Bottom is simulated on fresh stock: material removed by other setups is not shown.'
-    await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', note)
+      // A second face's work makes a second setup, and the sentence appears.
+      await tapFace(page, 'Bottom')
+      await drawRect(page, 20, 8, 60, 16)
+      const twoSided = await getProject(page) as unknown as Project
+      expect(twoSided.setups.length).toBeGreaterThan(1)
+      await expect(ui.simSetup.info(page)).toBeVisible()
+      const note = 'Bottom is simulated on fresh stock: material removed by other setups is not shown.'
+      await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', note)
 
-    const infoBox = await ui.simSetup.info(page).boundingBox()
-    expect(infoBox!.height).toBeGreaterThanOrEqual(TOUCH_TARGET)
-    expect(infoBox!.width).toBeGreaterThanOrEqual(TOUCH_TARGET)
-    // A tap opens the sentence: a `title` alone never shows on a touch screen.
-    await expect(ui.simSetup.note(page)).toHaveCount(0)
-    await ui.simSetup.info(page).tap()
-    await expect(ui.simSetup.note(page)).toBeVisible()
-    await expect(ui.simSetup.note(page)).toHaveText(note)
-    await expectInsideViewport(page, ui.simSetup.note(page), 'fresh-stock sentence')
-    await expectTouchTargets(page, '#workspace-panel-simulation .viewport-presets')
-    await shoot(page, 'simulation-info-landscape')
-  })
+      const infoBox = await ui.simSetup.info(page).boundingBox()
+      expect(infoBox!.height).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(infoBox!.width).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      // A tap opens the sentence: a `title` alone never shows on a touch screen.
+      await expect(ui.simSetup.note(page)).toHaveCount(0)
+      await ui.simSetup.info(page).tap()
+      await expect(ui.simSetup.note(page)).toBeVisible()
+      await expect(ui.simSetup.note(page)).toHaveText(note)
+      await expectInsideViewport(page, ui.simSetup.note(page), 'fresh-stock sentence')
+      await expectTouchTargets(page, '#workspace-panel-simulation .viewport-presets')
+      await shoot(page, `simulation-info-${shape}-landscape`)
+    })
+  }
 
-  test('chuck properties on a bar are touch-sized', async ({ app, ui }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
-    await openProjectDrawer(page)
-    await page.locator('.tree-row--clamp').first().tap()
+  for (const shape of ['round', 'square'] as const) {
+    test(`chuck properties are touch-sized (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedBar(page, shape)
+      await openProjectDrawer(page)
+      await page.locator('.tree-row--clamp').first().tap()
 
-    const size = ui.properties.chuckSize(page)
-    await expect(size).toBeVisible()
-    await expect(page.getByTestId('chuck-jaws')).toBeVisible()
-    // Size, jaws and both ends of the clamping range are all real controls.
-    await expectTouchTargets(page, '.properties-panel')
-    await expectReachable(page, page.locator('.properties-panel'), 'chuck properties')
-    await page.locator('[data-testid="chuck-size"]').scrollIntoViewIfNeeded()
-    await shoot(page, 'chuck-properties-landscape')
+      const size = ui.properties.chuckSize(page)
+      await expect(size).toBeVisible()
+      await expect(page.getByTestId('chuck-jaws')).toBeVisible()
+      // Size, jaws and both ends of the clamping range are all real controls.
+      await expectTouchTargets(page, '.properties-panel')
+      await expectReachable(page, page.locator('.properties-panel'), `chuck properties (${shape} blank)`)
+      await page.locator('[data-testid="chuck-size"]').scrollIntoViewIfNeeded()
+      await shoot(page, `chuck-properties-${shape}-landscape`)
 
-    // The picker's rows are targets of their own (they were 24px tall).
-    await size.locator('.ui-select__trigger').tap()
-    const options = size.getByRole('option')
-    await expect(options.first()).toBeVisible()
-    for (const option of await options.all()) {
-      const optionBox = await option.boundingBox()
-      expect(optionBox!.height, `chuck size option ${await option.textContent()}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
-    }
-    // Closed by tapping the trigger again (a tap on an option is the defect the
-    // fixme below covers). Closing must leave the clamp alone.
-    await size.locator('.ui-select__trigger').tap()
-    await expect(options).toHaveCount(0)
-    const stillThere = await getProject(page) as unknown as Project
-    expect(stillThere.clamps).toHaveLength(1)
+      // The picker's rows are targets of their own (they were 24px tall).
+      await size.locator('.ui-select__trigger').tap()
+      const options = size.getByRole('option')
+      await expect(options.first()).toBeVisible()
+      for (const option of await options.all()) {
+        const optionBox = await option.boundingBox()
+        expect(optionBox!.height, `chuck size option ${await option.textContent()}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      }
+      // Closed by tapping the trigger again (a tap on an option is the defect the
+      // fixme below covers). Closing must leave the clamp alone.
+      await size.locator('.ui-select__trigger').tap()
+      await expect(options).toHaveCount(0)
+      const stillThere = await getProject(page) as unknown as Project
+      expect(stillThere.clamps).toHaveLength(1)
 
-    // The range the body was clamped between is readable and editable.
-    await expect(page.getByText('Minimum grip diameter')).toBeVisible()
-    await expect(page.getByText('Maximum grip diameter')).toBeVisible()
-  })
+      // The range the body was clamped between is readable and editable.
+      await expect(page.getByText('Minimum grip diameter')).toBeVisible()
+      await expect(page.getByText('Maximum grip diameter')).toBeVisible()
+    })
+  }
 
   /**
    * Known tablet defect found by this pass, not fixed here (feature behaviour
@@ -1012,7 +947,9 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
    * click lands before the list closes, which is why only touch shows it.
    *
    * The fix belongs to `src/components/Select.tsx` (commit on click, or
-   * suppress the tap's compatibility click); un-fixme once that lands.
+   * suppress the tap's compatibility click); un-fixme once that lands. It is
+   * blank-independent, so it stays on the round fixture (#1112 rt4-a fix2
+   * review F2 covers the surfaces that differ, not this defect).
    */
   test.fixme('picking a chuck size by tap applies it to the clamp (#1112 rt4-a)', async ({ app, ui }) => {
     const { page } = app
@@ -1037,7 +974,7 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   for (const shape of ['round', 'square'] as const) {
     test(`Turn and Polygon side views draw dashed on Top and select by tap (${shape} blank)`, async ({ app }) => {
       const { page } = app
-      await seedProject(page, JSON.stringify(barProject(shape)))
+      await seedBar(page, shape)
       await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
       await createRotarySolid(page, 'polygon', { start: '70', length: '30', sides: '6', 'across-flats': '12' })
       await tapFace(page, 'Top')
@@ -1089,6 +1026,53 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   }
 
   /**
+   * A fixed-position clipping fixture: `container` is the box around the
+   * surface, `content` the surface's own style, `wrap` an optional intermediate
+   * element (used to give a scroller more content than the surface). The surface
+   * keeps the id, so the locator is stable. Returns the surface locator.
+   */
+  async function clipFixture(
+    page: Page,
+    fixture: {
+      id: string
+      container: string
+      content: string
+      wrap?: string
+      scrollLeft?: number
+    },
+  ): Promise<Locator> {
+    await page.evaluate((spec) => {
+      document.querySelector(`#${spec.id}`)?.parentElement?.remove()
+      const container = document.createElement('div')
+      container.id = `${spec.id}-box`
+      container.style.cssText = spec.container
+      const surface = document.createElement('div')
+      surface.id = spec.id
+      surface.style.cssText = spec.content
+      if (spec.wrap) {
+        const wrap = document.createElement('div')
+        wrap.style.cssText = spec.wrap
+        wrap.appendChild(surface)
+        container.appendChild(wrap)
+      } else {
+        container.appendChild(surface)
+      }
+      document.body.appendChild(container)
+      if (spec.scrollLeft) container.scrollLeft = spec.scrollLeft
+    }, fixture)
+    const surface = page.locator(`#${fixture.id}`)
+    await expect(surface).toHaveCount(1)
+    return surface
+  }
+
+  /** Remove a fixture built by {@link clipFixture}. */
+  async function removeClipFixture(page: Page, id: string): Promise<void> {
+    await page.evaluate((fixtureId) => {
+      document.querySelector(`#${fixtureId}`)?.parentElement?.remove()
+    }, id)
+  }
+
+  /**
    * Pins the fit helper's contract (#1112 rt4-a review F3): a surface cut off
    * at the side must not be excused by a vertically scrolling ancestor. The
    * fixture is exactly the shape the old helper accepted — a 900px-wide block
@@ -1099,29 +1083,106 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   test('the fit helper refuses a surface clipped sideways inside a vertical scroller', async ({ app }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(barProject()))
-    const clipped = page.locator('#e2e-horizontal-clip')
-    await page.evaluate(() => {
-      const scroller = document.createElement('div')
-      scroller.id = 'e2e-vertical-scroller'
+    const clipped = await clipFixture(page, {
+      id: 'e2e-horizontal-clip',
       // Fixed near the right edge: the child's layout box runs past the window
       // while the scroller itself fits, which is what the old helper saw.
-      scroller.style.cssText = 'position:fixed;left:700px;top:20px;width:200px;height:120px;'
-        + 'overflow-x:hidden;overflow-y:auto;z-index:2147483647'
-      const content = document.createElement('div')
-      content.id = 'e2e-horizontal-clip'
-      content.style.cssText = 'width:900px;height:400px;background:#333'
-      scroller.appendChild(content)
-      document.body.appendChild(scroller)
+      container: 'position:fixed;left:700px;top:20px;width:200px;height:120px;'
+        + 'overflow-x:hidden;overflow-y:auto;z-index:2147483647',
+      content: 'width:900px;height:400px;background:#333',
     })
-    await expect(clipped).toHaveCount(1)
     // Vertical scrolling exists and its container fits the window: only the
     // sideways clipping is wrong, and that alone must be reported.
+    const report = await clipped.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.vertical.issues, 'a vertical scroller alone is fine').toEqual([])
+    expect(report.horizontal.issues.length, 'the sideways clip').toBeGreaterThan(0)
     await assert.rejects(
       expectReachable(page, clipped, 'clipped fixture'),
       /sideways/,
     )
-    await page.evaluate(() => document.querySelector('#e2e-vertical-scroller')?.remove())
+    await removeClipFixture(page, 'e2e-horizontal-clip')
   })
+
+  /**
+   * F1a (#1112 rt4-a fix2 review): a surface can pass the old check by having
+   * its own box inside the window while an `overflow: hidden` ancestor cuts a
+   * third of it away. The early "inside the viewport" return skipped the
+   * ancestor walk, so this 400px surface inside a 200px hidden box was accepted
+   * although half of it can never be seen. Removing the ancestor walk makes the
+   * two assertions below disagree and the test fail.
+   */
+  test('the fit helper refuses a surface its own box fits but an ancestor clips', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const clipped = await clipFixture(page, {
+      id: 'e2e-hidden-clip',
+      container: 'position:fixed;left:100px;top:20px;width:200px;height:120px;'
+        + 'overflow:hidden;z-index:2147483647',
+      content: 'width:400px;height:100px;background:#333',
+    })
+    // The false pass: the surface's own box is comfortably inside 1180 × 820.
+    await expectInsideViewport(page, clipped, 'hidden-clipped fixture')
+    const report = await clipped.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.vertical.issues, 'nothing vertical is wrong with the fixture').toEqual([])
+    expect(report.horizontal.issues.length, 'the hidden ancestor still clips it').toBeGreaterThan(0)
+    await assert.rejects(
+      expectReachable(page, clipped, 'hidden-clipped fixture'),
+      /sideways/,
+    )
+    await removeClipFixture(page, 'e2e-hidden-clip')
+  })
+
+  /**
+   * F1b (#1112 rt4-a fix2 review): the old `reachable` test compared the scroll
+   * distance with the scroll range and so accepted any surface a scroller could
+   * move, even one wider than the port itself. A 900px surface in a 200px
+   * horizontal scroller needs 700px of a 700px range — and can still never be
+   * seen whole. Horizontal containment is what refuses it.
+   */
+  test('the fit helper refuses a surface wider than the horizontal scroller meant to show it', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const clipped = await clipFixture(page, {
+      id: 'e2e-narrow-scroller',
+      container: 'position:fixed;left:700px;top:20px;width:200px;height:120px;'
+        + 'overflow-x:auto;overflow-y:hidden;z-index:2147483647',
+      content: 'width:900px;height:100px;background:#333',
+    })
+    const box = (await clipped.boundingBox())!
+    expect(box.width, 'the surface is wider than the port').toBeGreaterThan(200)
+    const report = await clipped.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.horizontal.issues.length, 'containment, not scroll range, decides').toBeGreaterThan(0)
+    await assert.rejects(
+      expectReachable(page, clipped, 'narrow-scroller fixture'),
+      /sideways/,
+    )
+    await removeClipFixture(page, 'e2e-narrow-scroller')
+  })
+
+  /**
+   * The other half of F1: refusing a scroller that cannot show the surface whole
+   * must not refuse one that can. Here 300px sits in a 400px horizontal port
+   * with 100px of range and 50px to scroll, so the whole surface is reachable —
+   * and the ancestor walk (which no longer returns early on a fitting box) has
+   * to leave it alone.
+   */
+  test('the fit helper accepts a surface its horizontal scroller can show in full', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const surface = await clipFixture(page, {
+      id: 'e2e-reachable-scroller',
+      container: 'position:fixed;left:100px;top:20px;width:400px;height:120px;'
+        + 'overflow-x:auto;overflow-y:hidden;z-index:2147483647',
+      wrap: 'width:500px;height:100px',
+      content: 'width:300px;height:80px;margin-left:150px;background:#333',
+    })
+    const report = await surface.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.horizontal.issues, 'a scroller that can show it whole is fine').toEqual([])
+    expect(report.vertical.issues, 'nothing vertical is wrong with the fixture').toEqual([])
+    await expectReachable(page, surface, 'reachable-scroller fixture')
+    await removeClipFixture(page, 'e2e-reachable-scroller')
+  })
+
 })
 
 // ── Portrait tablet ───────────────────────────────────────────────────
@@ -1160,39 +1221,47 @@ test.describe('portrait tablet (820 × 1180, touch)', () => {
     await shoot(page, 'rotate-prompt-portrait')
   })
 
-  test('the Turn and Polygon panels still fit a portrait viewport', async ({ app }) => {
-    const { page } = app
-    await seedProject(page, JSON.stringify(barProject()))
+  /**
+   * Both blanks run here too: a square blank's Turn/Polygon form asks the same
+   * questions but is measured against a different side, and "does it fit 820px"
+   * is a question about the form, not about the blank (#1112 rt4-a fix2 review
+   * F2).
+   */
+  for (const shape of ['round', 'square'] as const) {
+    test(`the Turn and Polygon panels still fit a portrait viewport (${shape} blank)`, async ({ app }) => {
+      const { page } = app
+      await seedBar(page, shape)
 
-    // Opened through the store: a pointer cannot reach the rail behind the
-    // prompt, but the form's own layout is exactly what turning the device
-    // would show, so its size and fit are worth asserting.
-    for (const kind of ['turn', 'polygon'] as const) {
-      await page.evaluate(async (next: 'turn' | 'polygon') => {
-        const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
-        useProjectStore.getState().startAddRotarySolidPlacement(next)
-      }, kind)
-      const panel = page.locator('.rotary-solid-panel')
-      await expect(panel).toBeVisible()
-      await expectTouchTargets(page, '.rotary-solid-panel')
-      await expectInsideViewport(page, panel, `${kind} panel (portrait)`)
-      await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
-      // Screenshot only: a portrait tablet shows the prompt, so the overlay is
-      // lifted for this shot to show the layout the manager asked to see.
-      await page.evaluate(() => {
-        document.querySelector('.tablet-rotate-overlay')?.setAttribute('style', 'display: none')
-      })
-      await shoot(page, `${kind}-create-portrait`)
-      await page.evaluate(() => {
-        document.querySelector('.tablet-rotate-overlay')?.removeAttribute('style')
-      })
-      await page.evaluate(async () => {
-        const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
-        useProjectStore.getState().cancelPendingAdd()
-      })
-      await expect(panel).toHaveCount(0)
-    }
-  })
+      // Opened through the store: a pointer cannot reach the rail behind the
+      // prompt, but the form's own layout is exactly what turning the device
+      // would show, so its size and fit are worth asserting.
+      for (const kind of ['turn', 'polygon'] as const) {
+        await page.evaluate(async (next: 'turn' | 'polygon') => {
+          const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+          useProjectStore.getState().startAddRotarySolidPlacement(next)
+        }, kind)
+        const panel = page.locator('.rotary-solid-panel')
+        await expect(panel).toBeVisible()
+        await expectTouchTargets(page, '.rotary-solid-panel')
+        await expectInsideViewport(page, panel, `${kind} panel (portrait, ${shape} blank)`)
+        await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
+        // Screenshot only: a portrait tablet shows the prompt, so the overlay is
+        // lifted for this shot to show the layout the manager asked to see.
+        await page.evaluate(() => {
+          document.querySelector('.tablet-rotate-overlay')?.setAttribute('style', 'display: none')
+        })
+        await shoot(page, `${kind}-create-${shape}-portrait`)
+        await page.evaluate(() => {
+          document.querySelector('.tablet-rotate-overlay')?.removeAttribute('style')
+        })
+        await page.evaluate(async () => {
+          const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+          useProjectStore.getState().cancelPendingAdd()
+        })
+        await expect(panel).toHaveCount(0)
+      }
+    })
+  }
 
   test('the header face control stays inside a portrait viewport', async ({ app, ui }) => {
     const { page } = app
