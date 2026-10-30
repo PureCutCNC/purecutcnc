@@ -64,11 +64,17 @@ import { convertLength } from '../../utils/units'
  *
  * The inch and the metric range are both **as published**, in their own
  * columns: the catalogue rounds the two independently (2.80 in / 71 mm), so
- * neither is derived from the other. `minIn`/`maxIn` judge whether a bar fits a
- * preset (and are compared as inches); `minMm`/`maxMm` are what a project's
- * `clampingRangeMm` stores. The 10"/12" rows are the exception: the d3 step was
- * not published for them in the handed-over table, so they still carry the `d1`
- * maximum, with the metric value derived from it.
+ * neither is derived from the other. `minIn`/`maxIn` are the inch column;
+ * `minMm`/`maxMm` are the metric one, and are what a project's
+ * `clampingRangeMm` stores. Judging a bar by one column while the warning
+ * judged the other made a 6.30" bar take the 6" preset and immediately report
+ * out of range (160.02 mm past the metric 160 mm — Codex review of #1112
+ * rt3-e). So a listed size holds a bar when *either* published column holds it:
+ * `presetHoldsBar` is that one rule, used by the defaults and by
+ * `chuckOutOfRange` whenever the stored capacity is still a preset's published
+ * one. The 10"/12" rows are the exception: the d3 step was not published for
+ * them in the handed-over table, so they still carry the `d1` maximum, with the
+ * metric value derived from it.
  *
  * Four jaws use the same ranges: BISON 3604 self-centering 4-jaw publishes
  * identical ranges at 5-8", while the 3"/4" 4-jaw ranges are not published
@@ -97,6 +103,36 @@ export const STANDARD_CHUCKS = [
 export type ChuckPreset = (typeof STANDARD_CHUCKS)[number]
 
 /**
+ * Numeric slack for comparing a bar against the catalogue's rounded columns.
+ * The two columns describe the same capacity in different units, but 6.30 in is
+ * 160.01999999999998 mm in IEEE arithmetic, so an exact `<=` would reject the
+ * equivalent value typed in the other unit — the same published boundary the
+ * review found disagreeing.
+ */
+const RANGE_EPSILON = 1e-9
+
+/**
+ * Whether a listed size's published capacity holds a bar of `gripDiameter`.
+ *
+ * The catalogue prints one capacity in two independently rounded columns, so a
+ * bar can sit inside one and just outside the other. Either column holding it
+ * means the jaw set grips it — the same rule for picking a default and for the
+ * out-of-range warning, so equipment a default picks is never immediately
+ * reported past its capacity (Codex review of #1112 rt3-e: 6.30 in is the inch
+ * column's maximum, and 160.02 mm is past the metric column's 160 mm).
+ */
+export function presetHoldsBar(
+  size: ChuckPreset,
+  gripDiameter: number,
+  units: ProjectMeta['units'],
+): boolean {
+  const diameterIn = convertLength(gripDiameter, units, 'inch')
+  const diameterMm = convertLength(gripDiameter, units, 'mm')
+  return (diameterIn >= size.minIn - RANGE_EPSILON && diameterIn <= size.maxIn + RANGE_EPSILON)
+    || (diameterMm >= size.minMm - RANGE_EPSILON && diameterMm <= size.maxMm + RANGE_EPSILON)
+}
+
+/**
  * The preset a new chuck takes whenever the bar fits it (#1112 R2 item 23):
  * Frank's 4 inch starter, a 100 mm body. A bar outside its capacity falls back
  * to the smallest preset whose range holds it.
@@ -116,25 +152,40 @@ export function chuckGripDiameter(stock: BarStock, jaws: 3 | 4 | 6): number {
   return isSquareStock(stock) && jaws === 4 ? stock.thickness : 2 * barMaxRadius(stock)
 }
 
+/**
+ * The smallest listed size whose published capacity holds `stock`, skipping
+ * sizes the caller's `accept` filter rejects (the square blank's corner
+ * clearance, when called from `defaultChuckSize`).
+ *
+ * A candidate must also have a body wider than the bar it grips: the
+ * catalogue's metric maximum can exceed the body by its independent rounding
+ * (125 mm against a 4.92 in / 124.97 mm body), and a body narrower than the
+ * stock would sit inside the material. Every inch maximum is at or inside its
+ * body, so this only rules out that metric-column rounding fringe.
+ */
 export function smallestFittingChuck(
   stock: BarStock,
   units: ProjectMeta['units'],
   jaws: 3 | 4 | 6 = 3,
+  accept: (size: ChuckPreset) => boolean = () => true,
 ): ChuckPreset | null {
-  const diameterIn = convertLength(chuckGripDiameter(stock, jaws), units, 'inch')
-  const fitting = STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
+  const gripDiameter = chuckGripDiameter(stock, jaws)
+  const diameterIn = convertLength(gripDiameter, units, 'inch')
+  const fitting = STANDARD_CHUCKS.find((size) => accept(size)
+    && presetHoldsBar(size, gripDiameter, units)
+    && size.diameterIn >= diameterIn - RANGE_EPSILON)
   if (fitting) return fitting
   // Outside every listed jaw range: the nearest end preset, so the panel can
   // say the bar is out of its capacity — but only while that preset's own
-  // *body* still reaches past the bar. A body narrower than the stock it grips
-  // would sit inside the material; on a square blank the corner guard then
-  // refuses the whole setup, so the default must never be that. Such a bar
-  // gets the stock-derived body instead: no preset is claimed, and the caller
-  // still reports it past the largest listed capacity.
+  // *body* still reaches past the bar and the caller accepts it. A body
+  // narrower than the stock it grips would sit inside the material; on a square
+  // blank the corner guard then refuses the whole setup, so the default must
+  // never be that. Such a bar gets the stock-derived body instead: no preset is
+  // claimed, and the caller still reports it past the largest listed capacity.
   const nearest = diameterIn < STANDARD_CHUCKS[0].minIn
     ? STANDARD_CHUCKS[0]
     : STANDARD_CHUCKS[STANDARD_CHUCKS.length - 1]
-  return nearest.diameterIn >= diameterIn ? nearest : null
+  return accept(nearest) && nearest.diameterIn >= diameterIn - RANGE_EPSILON ? nearest : null
 }
 
 /**
@@ -143,36 +194,50 @@ export function smallestFittingChuck(
  * whose range holds the bar. `jaws` decides which grip diameter the capacity is
  * measured against — the matching rule of `chuckGripDiameter` — so a square
  * blank held in four jaws is judged across flats, not by its corner circle.
- * Null when no listed preset holds the bar; the stock-derived fallback and its
- * warning then stand.
+ *
+ * A square blank's corners reach further than its flats, so a candidate body
+ * must also clear the corner envelope: a body narrower than the corners would
+ * sit inside the material, and the square guard refuses that setup outright.
+ * That is a filter on the search, not a verdict on the first candidate — the
+ * next listed range may still hold the flats with a body that clears them (a
+ * 75 mm blank: the 4 inch holds its flats but not its 100.1 mm corner
+ * envelope, while the 5 inch holds both). Null only when no listed preset can
+ * do both; the stock-derived fallback and its warning then stand.
  */
 export function defaultChuckSize(
   stock: BarStock,
   units: ProjectMeta['units'],
   jaws: 3 | 4 | 6 = defaultJawCount(stock),
 ): ChuckPreset | null {
-  const diameterIn = convertLength(chuckGripDiameter(stock, jaws), units, 'inch')
+  const gripDiameter = chuckGripDiameter(stock, jaws)
+  const diameterIn = convertLength(gripDiameter, units, 'inch')
+  const clearsCorners = (size: ChuckPreset): boolean =>
+    !isSquareStock(stock)
+    || convertLength(size.diameterIn, 'inch', units) >= 2 * barMaxRadius(stock) - RANGE_EPSILON
   const preferred = STANDARD_CHUCKS.find((size) => size.id === DEFAULT_CHUCK_ID)
-  const candidate = preferred && diameterIn >= preferred.minIn && diameterIn <= preferred.maxIn
-    ? preferred
-    : smallestFittingChuck(stock, units, jaws)
-  if (!candidate) return null
-  // A square blank's corners turn further than its flats: a body narrower than
-  // the corner envelope would sit inside the material, and the square guard
-  // refuses that setup outright. Such a bar gets the stock-derived body
-  // instead — no preset claimed, still reported past the largest capacity —
-  // exactly as a bar no preset's *body* can reach does (see
-  // `smallestFittingChuck`).
-  if (isSquareStock(stock) && convertLength(candidate.diameterIn, 'inch', units) < 2 * barMaxRadius(stock)) {
-    return null
+  if (preferred && presetHoldsBar(preferred, gripDiameter, units)
+    && preferred.diameterIn >= diameterIn - RANGE_EPSILON && clearsCorners(preferred)) {
+    return preferred
   }
-  return candidate
+  // Continue past a body the blank's corners reject: the next listed range may
+  // still hold the bar with a body that clears them.
+  return smallestFittingChuck(stock, units, jaws, clearsCorners)
 }
 
 export function chuckOutOfRange(clamp: Clamp, stock: Stock, units: ProjectMeta['units']): boolean {
-  if (clamp.type !== 'chuck' || !isBarStock(stock) || !clamp.chuck?.clampingRangeMm) return false
-  const diameter = convertLength(chuckGripDiameter(stock, clamp.chuck.jawCount ?? 3), units, 'mm')
-  const range = clamp.chuck.clampingRangeMm
+  const data = clamp.chuck
+  if (clamp.type !== 'chuck' || !isBarStock(stock) || !data?.clampingRangeMm) return false
+  const gripDiameter = chuckGripDiameter(stock, data.jawCount ?? 3)
+  const range = data.clampingRangeMm
+  // Listed equipment still carrying its published capacity is judged by the
+  // same rule the default used, so no column's rounding can warn against the
+  // size the pick itself accepted. A capacity the operator typed — or one a
+  // saved project kept from an older build — keeps its own strict limits.
+  const listed = STANDARD_CHUCKS.find((size) => size.id === data.size)
+  if (listed && range.min === listed.minMm && range.max === listed.maxMm) {
+    return !presetHoldsBar(listed, gripDiameter, units)
+  }
+  const diameter = convertLength(gripDiameter, units, 'mm')
   return diameter < range.min || diameter > range.max
 }
 

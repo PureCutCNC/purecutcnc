@@ -44,22 +44,94 @@ test('new project takes the 4 inch starter, or the smallest fitting actual equip
   const starter = STANDARD_CHUCKS.find((size) => size.id === DEFAULT_CHUCK_ID)!
   // #1112 R2 item 23 names the size: 4 inch (100 mm), not merely "the default".
   assert.equal(starter.id, 'bison-3204-4', 'the starter is the 4 inch preset')
+  // Each published range boundary, just inside and just past it (#1112 rt3-e
+  // item 28: the maximum is the jaw set's full external `d3` step, not `d1`).
+  // The catalogue rounds its inch and metric columns independently, so a bar
+  // can be past one column and inside the other; either printed column holding
+  // it keeps the size (the warning uses the same rule), and only a bar past
+  // both moves up. A body narrower than the bar is never selected even when the
+  // metric column claims it: the 5 inch body is 4.92 in, so 4.921 in takes the
+  // 6 inch one.
+  const cases: Array<[diameterIn: number, expected: string]> = [
+    [0.08, 'bison-3204-3'],
+    [0.081, 'bison-3204-3'],
+    [2.8, 'bison-3204-4'],
+    [2.801, 'bison-3204-4'],
+    [3.66, 'bison-3204-4'],
+    [3.661, 'bison-3204-4'],
+    [4.92, 'bison-3204-5'],
+    [4.921, 'bison-3204-6'],
+    [6.3, 'bison-3204-6'],
+    [6.301, 'bison-3204-8'],
+    [7.87, 'bison-3204-8'],
+  ]
   for (const units of ['mm', 'inch'] as const) for (const axis of ['x', 'y'] as const) {
-    // Each published range boundary, just inside and just past it (#1112 rt3-e
-    // item 28: the maximum is the jaw set's full external `d3` step, not `d1`).
-    for (const diameterIn of [0.08, 0.081, 2.8, 2.801, 3.66, 3.661, 4.92, 4.921, 6.3, 6.301, 7.87]) {
+    for (const [diameterIn, expectedId] of cases) {
       const project = fixture(convertLength(diameterIn, 'inch', units), units, axis)
       useProjectStore.getState().createNewProject(project, 'New rotary project')
       const chuck = useProjectStore.getState().project.clamps[0]
+      const expected = STANDARD_CHUCKS.find((size) => size.id === expectedId)!
       // #1112 R2 item 23: the 4 inch starter unless the bar is outside its
       // gripping range; then the smallest preset whose range holds the bar.
-      const expected = diameterIn >= starter.minIn && diameterIn <= starter.maxIn
-        ? starter
-        : STANDARD_CHUCKS.find((size) => diameterIn >= size.minIn && diameterIn <= size.maxIn)
-      assert.equal(chuck.chuck?.size, expected?.id)
-      assert.equal(axis === 'x' ? chuck.h : chuck.w, convertLength(expected!.diameterIn, 'inch', units))
+      assert.equal(chuck.chuck?.size, expected.id)
+      assert.equal(axis === 'x' ? chuck.h : chuck.w, convertLength(expected.diameterIn, 'inch', units))
       assert.equal(chuck.chuck?.jawCount, 3, 'a round bar starts with three jaws')
       assert.equal(chuck.chuck?.manual, undefined, 'a minted default is not hand-set')
+    }
+  }
+})
+
+test('a bar on either published boundary keeps its size and never reports out of range', () => {
+  // Codex review of rt3-e: selection judged the inch column while the stored
+  // capacity and the warning judged the independently rounded metric one, so a
+  // 6.30" bar (the 6 inch inch-column maximum) took the 6 inch preset and
+  // immediately reported 160.02 mm as past the metric 160 mm. Both now use the
+  // catalogue's two columns as one rule: either one holds the bar.
+  for (const units of ['mm', 'inch'] as const) {
+    for (const [diameterIn, expectedId] of [
+      [6.3, 'bison-3204-6'], // the 6 inch inch-column maximum
+      [convertLength(160, 'mm', 'inch'), 'bison-3204-6'], // and the metric one
+      [6.301, 'bison-3204-8'], // past both columns, so the next size up
+      [3.661, 'bison-3204-4'], // past the 4 inch inch column, inside its 93 mm
+      [convertLength(92.99, 'mm', 'inch'), 'bison-3204-4'], // and from the metric side
+    ] as const) {
+      const stock = roundStock(convertLength(diameterIn, 'inch', units), convertLength(8, 'inch', units), 'x')
+      const defaults = defaultRoundWorkholding('chuck', stock, units)
+      assert.equal(defaults.chuck?.size, expectedId,
+        `${units}/${diameterIn} in: the size whose published column holds it`)
+      const clamp: Clamp = { id: 'cl-chuck', name: 'Chuck', visible: true, ...defaults }
+      assert.equal(chuckOutOfRange(clamp, stock, units), false,
+        `${units}/${diameterIn} in: the minted equipment never warns`)
+    }
+  }
+  // The same inch-column maximum typed in millimetres — 6.30 in is exactly
+  // 160.02 mm — must agree rather than disagree by the binary product's ulp.
+  {
+    const stock = roundStock(160.02, 300, 'x')
+    const defaults = defaultRoundWorkholding('chuck', stock, 'mm')
+    assert.equal(defaults.chuck?.size, 'bison-3204-6', '160.02 mm is the inch column\'s maximum too')
+    const clamp: Clamp = { id: 'cl-chuck', name: 'Chuck', visible: true, ...defaults }
+    assert.equal(chuckOutOfRange(clamp, stock, 'mm'), false, 'and it never warns')
+  }
+  // Every listed size holds both of its own published maxima, so no picker
+  // entry can warn against the size the picker itself offered...
+  for (const units of ['mm', 'inch'] as const) {
+    for (const size of STANDARD_CHUCKS) {
+      const clampForSize: Clamp = {
+        id: 'cl-chuck', name: 'Chuck', visible: true, type: 'chuck',
+        x: 0, y: 0, w: 10, h: 10, height: 10,
+        chuck: { size: size.id, clampingRangeMm: { min: size.minMm, max: size.maxMm }, jawCount: 3 },
+      }
+      for (const maximum of [convertLength(size.maxIn, 'inch', units), convertLength(size.maxMm, 'mm', units)]) {
+        const stock = roundStock(maximum, convertLength(8, 'inch', units), 'x')
+        assert.equal(chuckOutOfRange(clampForSize, stock, units), false,
+          `${size.id}: its published maximum is inside its capacity`)
+      }
+      // ...and a bar past both columns is still reported.
+      const pastBoth = Math.max(convertLength(size.maxIn, 'inch', 'mm'), size.maxMm) + 0.1
+      const wide = roundStock(convertLength(pastBoth, 'mm', units), convertLength(8, 'inch', units), 'x')
+      assert.ok(chuckOutOfRange(clampForSize, wide, units),
+        `${size.id}: a bar past both published columns is reported`)
     }
   }
 })

@@ -48,6 +48,7 @@ import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { useProjectStore } from '../projectStore'
 import { projectWithStockShape } from './stockShape'
 import {
+  chuckOutOfRange,
   defaultRoundWorkholding,
   roundWorkholdingDiameter,
   syncRoundWorkholding,
@@ -148,6 +149,29 @@ test('a small square takes the 4 inch starter too, held across flats', () => {
   // in), so the square keeps the starter rather than a smaller body.
   assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), 'the 4 inch preset holds this blank')
   assert.equal(chuck.height, 5 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows the body and the pivot')
+})
+
+test('a blank whose starter body cannot clear its corners takes the next preset that can', () => {
+  // Codex review of rt3-e: the expanded 4 inch range holds a 75 mm blank's
+  // flats, but its 100.1 mm body is narrower than the 106.1 mm corner
+  // envelope. Returning no size there left an unnamed 212 mm stock-derived body
+  // even though the 5 inch preset holds the flats and clears the corners. The
+  // search must continue past a rejected body — and past two of them for 90 mm,
+  // whose corner envelope also outgrows the 5 inch body.
+  for (const [side, expectedId, bodyIn] of [
+    [75, 'bison-3204-5', 4.92],
+    [90, 'bison-3204-6', 6.3],
+  ] as const) {
+    const stock = squareStock(side, side * 4, 'x')
+    const defaults = defaultRoundWorkholding('chuck', stock, 'mm')
+    assert.equal(defaults.chuck?.size, expectedId,
+      `side ${side}: the preset whose range holds the flats and whose body clears the corners`)
+    assert.equal(defaults.chuck?.jawCount, 4, `side ${side}: a square blank keeps four jaws`)
+    assert.equal(defaults.h, convertLength(bodyIn, 'inch', 'mm'), `side ${side}: its published body`)
+    assert.ok(defaults.h / 2 >= barMaxRadius(stock), `side ${side}: the body clears the corner envelope`)
+    const clamp: Clamp = { id: 'cl-chuck', name: 'Chuck', visible: true, ...defaults }
+    assert.equal(chuckOutOfRange(clamp, stock, 'mm'), false, `side ${side}: the blank is inside its capacity`)
+  }
 })
 
 test('the defaults are converted for an inch blank', () => {
