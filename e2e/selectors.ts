@@ -341,6 +341,15 @@ export const contextMenu = {
   item: (menu: Locator, label: string) =>
     menu.locator('.feature-context-menu__item', { hasText: label }),
 
+  /**
+   * A menu item whose accessible name is exactly `label`. `item()` matches a
+   * substring, so it also reaches every refused row whose visible reason
+   * happens to contain the same words ("Expand to features first"); use this
+   * when the row itself is what is wanted (#1112 rt4-a).
+   */
+  itemExact: (menu: Locator, label: string) =>
+    menu.getByRole('button', { name: label, exact: true }),
+
   /** Non-interactive group headings (the quick-op 2D/3D split). */
   groupLabels: (menu: Locator) => menu.locator('.feature-context-menu__group-label'),
 }
@@ -939,6 +948,13 @@ export const setupCam = {
   section: (page: Page, face: 'top' | 'bottom' | 'around') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),
   properties: (page: Page) => page.locator('.cam-section--properties'),
   add: (page: Page) => page.getByRole('button', { name: /^Add to (Top|Bottom|Around)$/ }),
+  /**
+   * The Add-operation header action itself, whatever it is called: the button
+   * names the setup ("Add to Top") only when the project groups setups, and is
+   * the bare "Add" for a single-setup project (#1112 rt4-a).
+   */
+  addAction: (page: Page) =>
+    page.locator('.cam-panel .cam-operations-toolbar .cam-header-action--primary'),
   addMenu: (page: Page) => page.locator('.cam-add-menu'),
   dialog: (page: Page) => page.locator('.dialog--setup'),
   /** The "Plan" (automatic CAM plan) header action. */

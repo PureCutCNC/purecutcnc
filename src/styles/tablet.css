@@ -269,6 +269,111 @@
   .feature-context-menu__group-label {
     font-size: 12px;
   }
+
+  /* A refused item's reason is a second line inside the item, so the item's
+     own 44px floor is not enough: `layout.css` gives `--reason` a 26px
+     min-height of its own, and that rule is later in the cascade (the sheet is
+     imported twice — once from `index.css`, once by `AppShell.tsx`), so the
+     reason rows landed at 39px. These rows are the ones a finger has to read
+     (#1112 F2), and the extra class carries the specificity to win. */
+  .feature-context-menu .feature-context-menu__item--reason {
+    min-height: var(--touch-target, 44px);
+  }
+
+  /* The tree's ⋮ is the touch route to that menu (right-click has no touch
+     equivalent). `.app-shell .tree-action-btn` floors it at 32px, which is
+     also the width it shrank to in a narrow drawer row. */
+  .app-shell .tree-row .tree-action-btn--more {
+    width: var(--touch-target, 44px);
+    min-width: var(--touch-target, 44px);
+    height: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+  }
+}
+
+/* ── Touch targets: canvas workflow panels ──────────────────
+   A page-level workflow panel (every canned shape's creation and edit form,
+   the Turn/Polygon one included) is portalled to <body>, outside `.app-shell`,
+   so the shell's `.app-shell button/input` touch floor never reaches it and
+   every control keeps its desktop size. The rotary forms are the tallest of
+   these and the ones a tablet user fills in field by field (#1112 rt4-a). */
+
+@media (pointer: coarse) {
+  .canvas-workflow-panel__actions .tablet-cmd-btn {
+    height: var(--touch-target, 44px);
+  }
+
+  /* Icon-only actions (the Cancel ✕ / Create ✓ pair) stay square. */
+  .canvas-workflow-panel__actions .tablet-cmd-btn--icon {
+    width: var(--touch-target, 44px);
+  }
+
+  .canvas-workflow-panel--rotary .canvas-workflow-panel__field input,
+  .canvas-workflow-panel--rotary .ui-select__trigger,
+  .rotary-panel__profile-refresh {
+    height: var(--touch-target, 44px);
+  }
+}
+
+/* ── Touch targets: custom-select rows ──────────────────────
+   A picker's options are the list a finger picks from, so they are targets in
+   their own right: at the desktop 5px padding a one-line option is 24px. The
+   plain dropdown clips its overflow, so the taller rows also need the scroll
+   cap the detailed variant already has, or a long list (the chuck sizes) runs
+   past the bottom of the screen. */
+
+@media (pointer: coarse) {
+  .ui-select__dropdown {
+    max-height: min(48vh, 520px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .ui-select__option {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: var(--touch-target, 44px);
+  }
+}
+
+/* ── Touch targets: Properties and the simulation toolbar ──
+   These are shell chrome rather than a portalled panel, so their size comes
+   from `.app-shell button/input`'s `--control-hit-target` floor — which the
+   tablet override of that variable is meant to raise to 44px. It does not: the
+   same later `layout.css` import that costs the context menu its min-height
+   re-sets the variable to 40px at an equal specificity, so on a tablet these
+   controls are 40px, not 44. Setting the sizes here is the narrow fix; the
+   cascade itself is left alone (#1112 rt4-a). */
+
+@media (pointer: coarse) {
+  .properties-panel .properties-field input,
+  .properties-panel .properties-field .ui-select__trigger {
+    height: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+  }
+
+  /* The Properties actions ("Edit turn…", "Edit sketch", "Delete clamp") are
+     40px: `.feat-btn` declares 28px and the shell floor lifts them to 40. */
+  .properties-panel .properties-actions .feat-btn,
+  .properties-panel .feat-btn {
+    height: auto;
+    min-height: var(--touch-target, 44px);
+  }
+
+  /* The simulation toolbar: its mode buttons and view-preset trigger are 40px
+     (and 34px inside the toggle), so they follow the token too. */
+  .viewport-presets .simulation-mode-toggle {
+    height: auto;
+    min-height: var(--touch-target, 44px);
+  }
+
+  .viewport-presets .simulation-mode-toggle__btn,
+  .viewport-presets .preset-btn {
+    height: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+    min-width: var(--touch-target, 44px);
+  }
 }
 
 /* ── Split divider: larger hit area ─────────────────────── */
