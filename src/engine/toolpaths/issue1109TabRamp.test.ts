@@ -20,9 +20,12 @@
  *
  * The reporter's project (`issue-1109-tab-ramp.camj`, reduced from
  * `sm_wall_0.5.2.camj`) cuts a 1/4 in part with three 0.1883 in levels and a 5
- * degree ramp. Its 3.2-era machine snapshot is kept loadable under the current
- * template restrictions (no motion word in the header, spaced tool-change
- * words); the program lines this test asserts are unchanged. The first two
+ * degree ramp. Its 3.2-era machine snapshot is kept exactly as saved: #1119
+ * relaxed the #1057 template rules, so the header's `G00`/`G91.1` and the
+ * joined `T{toolNumber}M6` / `G43Z0.8000H{toolNumber}` tool change now load
+ * unchanged, and the program lines this test asserts are unchanged. The
+ * original bytes are also kept as the separate migration fixture
+ * `issue-1109-tab-ramp-original.camj` (#1119). The first two
  * levels ramp; the third plunged from safe Z because the 0.75 in (3D) run is
  * one straight segment and Tab 6's keep-out crossed it at 0.451 in. Every whole
  * segment before the tab was rejected, so the useful 1.8-diameter prefix was

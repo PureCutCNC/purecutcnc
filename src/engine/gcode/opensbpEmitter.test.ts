@@ -1044,7 +1044,7 @@ function testSafeZSplitOfRapids(): void {
 // ── Builds that predate the dialect ───────────────────────────
 
 function testOlderBuildWritesNoMotion(): void {
-  console.log('Testing a build that ignores outputDialect writes comments, not G-code...')
+  console.log('Testing a pre-dialect ShopBot snapshot is retained structurally, refused at export...')
   // What such a build keeps of the definition: everything but the field it
   // does not know. It then takes the G-code path with these command words.
   const { outputDialect: _dropped, ...legacyView } = bundled('shopbot')
@@ -1061,26 +1061,25 @@ function testOlderBuildWritesNoMotion(): void {
   const legacy = legacyView as MachineDefinition
   assert(resolveOutputDialect(legacy) === 'gcode', 'fixture: the legacy view takes the G-code path')
 
-  const program = run({
+  // #1119 changed what happens to this snapshot. Before, the strict reader
+  // dropped the machine on load. Now the structural reader keeps it, and the
+  // export guard refuses it before either dialect emitter — because its
+  // templates are judged under the G-code dialect it declares by omission, and
+  // the apostrophe prefix is not a G-code comment form. The machine is never
+  // silently lost, and it never produces a misleading program either.
+  const result = run({
     definition: legacy,
     toolCount: 2,
     operations: [
       { toolRef: 't1', moves: mixedMoves() },
       { toolRef: 't2', moves: simplePocketMoves() },
     ],
-  }).gcode
-  const lines = program.split('\n')
-  assert(lines.length > 20, 'fixture should produce a real program')
-  // The restart block's modal baseline (#1057 slice F) is emitter-owned G-code
-  // and is written whatever the definition's templates are; it carries no
-  // motion and no axis word. Everything else, motion included, stays a
-  // comment, because every template and command word in this definition is
-  // one.
-  const MODAL_BASELINE = 'G90 G94 G17'
-  for (const line of lines) {
-    assert(line.startsWith("'") || line === 'END' || line === MODAL_BASELINE,
-      `an older build would write "${line}" into a .sbp: every line must be a comment, the modal baseline or END`)
-  }
+  })
+  assert(result.gcode === '', 'an invalid machine produces no program')
+  assert(
+    result.warnings.some((warning) => warning.code === 'exportMachineTemplateInvalid'),
+    'the refusal names the machine template rule',
+  )
 }
 
 testDialectDefaultsToGcode()

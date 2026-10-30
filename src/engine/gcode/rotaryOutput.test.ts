@@ -1410,8 +1410,9 @@ const NINETY = Math.PI / 2
   )
   const rendered = runPostProcessor({
     project,
-    // The emitter is the last line of defence and does not validate; a
-    // definition loaded from an old project snapshot predates the schema rule.
+    // #1119 retains this old snapshot structurally but refuses it at export,
+    // so the emitter never sees it: the template-rule diagnostics are the
+    // refusal, and no program is produced.
     definition: {
       ...structuredClone(GRBL),
       rotary: BORROWED_Y,
@@ -1424,10 +1425,11 @@ const NINETY = Math.PI / 2
     }],
     options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
   })
-  assert.deepEqual(rendered.warnings, [{
-    code: 'postRotaryTemplateUsesBorrowedAxis',
-    params: { axis: 'Y' },
-  }], 'a template rendered to a real Y word refuses the program')
+  assert.equal(rendered.gcode, '', 'an invalid machine produces no program')
+  assert.ok(
+    rendered.warnings.some((warning) => warning.code === 'exportMachineTemplateInvalid'),
+    'the template-rule refusal replaces the emitter-level refusal',
+  )
 
   const spaced = exportProgram(project, withFooter(['Y 0']), [{ operation: operation('One'), moves }])
   assert.deepEqual(spaced.warnings, [{

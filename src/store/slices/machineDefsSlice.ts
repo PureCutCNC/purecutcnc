@@ -27,20 +27,26 @@
 
 import type { StateCreator } from 'zustand'
 import type { ProjectStore } from '../types'
-import { validateMachineDefinition } from '../../engine/gcode/types'
+import { readMachineDefinitionStructure } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { Project } from '../../types/project'
+import { rescueMachinesToLibrary } from '../../machine/store'
 import { cloneProject } from '../helpers/normalize'
+import { projectWithMachineDefinitions } from '../helpers/machineDefinitions'
 
 export type MachineDefsSlice = Pick<ProjectStore, 'setProjectMachine'>
 
 /**
- * The snapshot a definition becomes in a project: validated and copied by
- * value, so a later library edit cannot reach back into the project and the
- * embedded copy stays authoritative for export.
+ * The snapshot a definition becomes in a project: read structurally and
+ * copied by value, so a later library edit cannot reach back into the project
+ * and the embedded copy stays authoritative for export.
+ *
+ * Structural rather than strict (#1119): selecting a machine whose templates
+ * still break a rule must not throw or silently clear the selection. The
+ * machine is embedded unchanged; the export guard reads its diagnostics.
  */
 export function machineSnapshot(definition: MachineDefinition | null): MachineDefinition | null {
-  return definition ? validateMachineDefinition(structuredClone(definition)) : null
+  return definition ? readMachineDefinitionStructure(structuredClone(definition)) : null
 }
 
 /**
@@ -48,16 +54,37 @@ export function machineSnapshot(definition: MachineDefinition | null): MachineDe
  * touching undo history. Used by the New Project dialog through
  * `projectWithProjectType`, which selects a machine while the project is
  * created (issue #1028).
+ *
+ * Selection is not deletion: every definition the project already carries is
+ * rescued into My Machines before it can leave, and stays in the project when
+ * the library cannot make the rescue durable (#1119).
  */
 export function projectWithMachine(project: Project, snapshot: MachineDefinition | null): Project {
-  return {
-    ...project,
-    meta: {
-      ...project.meta,
+  const result = projectWithMachineDefinitions(
+    project,
+    {
       machineDefinitions: snapshot ? [snapshot] : [],
       selectedMachineId: snapshot?.id ?? null,
-      modified: new Date().toISOString(),
     },
+    {
+      rescue: rescueMachinesToLibrary,
+      // Replacing the currently selected copy with a newer version of the same
+      // machine is the explicit "update project copy" action. A same-ID write
+      // that does not update the selected machine (e.g. selecting a changed
+      // copy of a retained one) must preserve the retained content (#1119).
+      authorizedUpdates: snapshot && snapshot.id === project.meta.selectedMachineId
+        ? new Set([snapshot.id])
+        : undefined,
+      // Clearing through this helper is an explicit user delete of the selected
+      // machine, exactly like clearing it through the store action.
+      explicitlyRemoved: snapshot || !project.meta.selectedMachineId
+        ? undefined
+        : new Set([project.meta.selectedMachineId]),
+    },
+  ).project
+  return {
+    ...result,
+    meta: { ...result.meta, modified: new Date().toISOString() },
   }
 }
 
@@ -78,9 +105,36 @@ export function createMachineDefsSlice(
           return {}
         }
 
-        const nextProject = projectWithMachine(s.project, snapshot)
+        // Clearing the selection is the one explicit user delete here: the
+        // chosen machine may leave without a rescue. Retained definitions that
+        // are not selected still get the rescue-or-keep treatment.
+        const result = projectWithMachineDefinitions(
+          s.project,
+          {
+            machineDefinitions: snapshot ? [snapshot] : [],
+            selectedMachineId: snapshot?.id ?? null,
+          },
+          {
+            rescue: rescueMachinesToLibrary,
+            // Only updating the selected copy is an authorized in-place
+            // replacement; a changed copy of a retained machine keeps the
+            // original content instead of overwriting it (#1119).
+            authorizedUpdates: snapshot && snapshot.id === s.project.meta.selectedMachineId
+              ? new Set([snapshot.id])
+              : undefined,
+            explicitlyRemoved: snapshot || !s.project.meta.selectedMachineId
+              ? undefined
+              : new Set([s.project.meta.selectedMachineId]),
+          },
+        )
         return {
-          project: nextProject,
+          project: {
+            ...result.project,
+            meta: { ...result.project.meta, modified: new Date().toISOString() },
+          },
+          ...(result.diagnostics.length > 0
+            ? { machineLoadDiagnostics: [...s.machineLoadDiagnostics, ...result.diagnostics] }
+            : {}),
           history: {
             past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],

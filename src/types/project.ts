@@ -1172,14 +1172,21 @@ export interface ProjectMeta {
   clampClearanceXY: number
   clampClearanceZ: number
   /**
-   * The project's embedded machine snapshot — **zero or one** entry, never a
+   * The project's embedded machine snapshot — normally one entry, and never a
    * library. The machine library lives in `src/machine/` as an application
    * preference; only the definition selected for this project travels with
    * the `.camj` file, so export stays deterministic for whoever opens it.
    * The array field is retained so older builds can still read the file.
    *
-   * Invariant (enforced on decode and by `setProjectMachine`):
-   * `selectedMachineId === machineDefinitions[0]?.id ?? null`.
+   * When the machine library cannot durably rescue an unselected definition,
+   * it stays here instead of being compacted away (#1119). Such a retained
+   * definition follows the selected one, and `selectedMachineId` may be null
+   * while retained definitions remain after the user clears the selection.
+   *
+   * Invariant: every write goes through
+   * `store/helpers/machineDefinitions.ts`, which only lets an entry leave
+   * through an explicit user delete, an unmodified bundled copy, or a durable
+   * rescue. The selected definition, when present, is `machineDefinitions[0]`.
    */
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null

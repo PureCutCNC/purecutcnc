@@ -19,7 +19,8 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { Project, Operation } from '../../types/project'
 import type { ToolpathResult, NormalizedTool, ToolpathMove } from '../toolpaths/types'
 import type { FittedMoveDescriptor } from './arcFitting'
-import { templateRuleViolations } from './templateRules'
+import { machineTemplateDiagnostics, templateRuleViolations } from './templateRules'
+import type { MachineTemplateDiagnostic, TemplateRuleDefinition } from './templateRules'
 
 /**
  * Per-operation machine-coordinate motion trace captured by the postprocessor
@@ -153,7 +154,20 @@ export const RotaryDefinitionSchema = z.object({
 })
 export type RotaryDefinition = z.infer<typeof RotaryDefinitionSchema>
 
-export const MachineDefinitionSchema = z.object({
+/**
+ * The schema every persisted definition must satisfy, minus the #1057 template
+ * rules (#1119).
+ *
+ * A 0.5.x project can carry a machine whose templates break a rule the current
+ * build enforces. Refusing it structurally would drop the user's machine the
+ * moment they open the file, so the structural reader — capability checks and
+ * defaults only — is what project snapshots and the custom-machine library are
+ * read through. Template rules are still enforced at the schema boundary for
+ * anything the application *writes* (`MachineDefinitionSchema`), and export
+ * eligibility is derived from `machineTemplateDiagnostics`, never persisted as
+ * a flag on the definition.
+ */
+const MachineDefinitionBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
@@ -263,7 +277,16 @@ export const MachineDefinitionSchema = z.object({
   stop: z.object({
     programEndCommand: z.string(),
   }),
-}).superRefine((definition, context) => {
+})
+
+/**
+ * Capability checks only: a plasma block requires the plasma kind, a rotary
+ * axis cannot ride an `opensbp` dialect or a plasma table, and a borrowed
+ * motor cannot be Z. These are structural — the emitter would have no way to
+ * post such a definition at all — so they stay part of the reader that loads
+ * persisted snapshots and library entries.
+ */
+export const MachineDefinitionStructureSchema = MachineDefinitionBaseSchema.superRefine((definition, context) => {
   if (definition.plasma && definition.machineKind !== 'plasma') {
     context.addIssue({ code: 'custom', path: ['machineKind'], message: 'A plasma block requires machineKind: plasma.' })
   }
@@ -289,12 +312,18 @@ export const MachineDefinitionSchema = z.object({
       }
     }
   }
-  // Machine templates are restricted by class (#1057 slice F): a program
-  // header may only set up modals, the tool change and the footer may do
-  // anything, and every template that runs inside the program is inert. The
-  // emitter no longer recovers from a template that moves, so a definition
-  // that could break that promise is refused here, naming the field and the
-  // offending word.
+})
+
+/**
+ * The strict schema: structure plus the #1057 template rules. Every definition
+ * the application creates, imports or writes must pass this. Machine templates
+ * are restricted by class (#1057 slice F): a program header may only set up
+ * modals, the tool change and the footer may do anything, and every template
+ * that runs inside the program is inert. The emitter no longer recovers from a
+ * template that moves, so a definition that could break that promise is
+ * refused here, naming the field, the line and the offending word.
+ */
+export const MachineDefinitionSchema = MachineDefinitionStructureSchema.superRefine((definition, context) => {
   for (const violation of templateRuleViolations(definition)) {
     context.addIssue({ code: 'custom', path: violation.path, message: violation.message })
   }
@@ -302,8 +331,29 @@ export const MachineDefinitionSchema = z.object({
 
 export type MachineDefinition = z.infer<typeof MachineDefinitionSchema>
 
+/** Strict parse: structure and the template rules. */
 export function validateMachineDefinition(data: unknown): MachineDefinition {
   return MachineDefinitionSchema.parse(data)
+}
+
+/**
+ * Structural parse: capability checks and defaults, no template rules. Used for
+ * persisted project snapshots and the custom-machine library so a definition
+ * that still breaks a #1057 rule is kept unchanged instead of being dropped on
+ * load (#1119). Export eligibility is decided separately by
+ * `machineTemplateDiagnostics`.
+ */
+export function readMachineDefinitionStructure(data: unknown): MachineDefinition {
+  return MachineDefinitionStructureSchema.parse(data)
+}
+
+/**
+ * The template-rule diagnostics that keep this definition from being exported.
+ * A pure function of the definition: no persisted "invalid" flag, and the same
+ * list is what the editor, the load warning and the export guard show.
+ */
+export function machineExportDiagnostics(definition: TemplateRuleDefinition): MachineTemplateDiagnostic[] {
+  return machineTemplateDiagnostics(definition)
 }
 
 /** An absent kind means router without adding a field to old snapshots. */

@@ -33,6 +33,7 @@ export type ExportBlockMessageKey =
   | 'dialogs.export.error.generationInterrupted'
   | 'dialogs.export.error.missingTool'
   | 'dialogs.export.error.stale'
+  | 'dialogs.export.error.machineInvalid'
 
 export interface ExportBlockMessage {
   key: ExportBlockMessageKey
@@ -60,6 +61,16 @@ export function exportBlockReasonMessage(
     case 'no-machine':
     case 'no-operations':
       return null
+
+    case 'machine-invalid':
+      return {
+        key: 'dialogs.export.error.machineInvalid',
+        params: {
+          detail: reason.diagnostics
+            .map((diagnostic) => `${diagnostic.field}: line ${diagnostic.line}: ${diagnostic.word}`)
+            .join('; '),
+        },
+      }
 
     case 'generation-failed':
       return {
