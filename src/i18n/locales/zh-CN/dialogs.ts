@@ -230,6 +230,10 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.preview': '预览（前 30 行）',
   'dialogs.export.previewPlaceholder': '在项目设置中选择机床以生成 G 代码预览。',
   'dialogs.export.previewTruncated': '...',
+  'dialogs.export.previewPreparing': '正在生成导出预览…',
+  'dialogs.export.previewBlocked': '没有预览：此导出已被阻止。原因见上方的“错误”。',
+  'dialogs.export.previewNoOperations': '没有预览：没有勾选要导出的加工操作。',
+  'dialogs.export.previewMachineMissing': '没有预览：此项目所选的机床不在项目中。请在项目设置中重新选择。',
   'dialogs.export.movesLines': '{moves} 次移动，共 {lines} 行',
   'dialogs.export.error.generationFailed': '“{operation}”的生成失败：{detail}',
   'dialogs.export.error.generationInterrupted': '“{operation}”的生成已取消或被取代。请更改选择或某个选项，然后重新导出。',
@@ -237,6 +241,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.error.stale': '导出预览已过期。请重新打开对话框并重试。',
   'dialogs.export.warning.noOperations': '未选择加工操作。请至少勾选一个要导出的操作。',
   'dialogs.export.warning.noMachine': '未选择机床。请在导出前在项目设置中选择一个。',
+  'dialogs.export.warning.machineMissing': '此项目选中的机床不在项目中，因此无法导出 G 代码。请在项目设置中重新选择该机床。',
   'dialogs.export.export': '导出 {ext}',
 
   // ── Export: operation reasons ──

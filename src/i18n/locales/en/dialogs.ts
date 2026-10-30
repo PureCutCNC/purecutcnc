@@ -228,6 +228,10 @@ export const dialogsEn = {
   'dialogs.export.preview': 'Preview (first 30 lines)',
   'dialogs.export.previewPlaceholder': 'Select a machine in project settings to generate G-code preview.',
   'dialogs.export.previewTruncated': '...',
+  'dialogs.export.previewPreparing': 'Preparing the export preview…',
+  'dialogs.export.previewBlocked': 'No preview: this export is blocked. See the errors above for the reason.',
+  'dialogs.export.previewNoOperations': 'No preview: no operation is ticked for export.',
+  'dialogs.export.previewMachineMissing': "No preview: this project's selected machine is not in the project. Choose it again in project settings.",
   'dialogs.export.movesLines': '{moves} moves, {lines} lines total',
   'dialogs.export.error.generationFailed': 'Generation failed for "{operation}": {detail}',
   'dialogs.export.error.generationInterrupted': 'Generation for "{operation}" was cancelled or superseded. Change the selection or an option, then export again.',
@@ -235,6 +239,7 @@ export const dialogsEn = {
   'dialogs.export.error.stale': 'The export preview is out of date. Reopen the dialog and try again.',
   'dialogs.export.warning.noOperations': 'No operations selected. Check at least one operation to export.',
   'dialogs.export.warning.noMachine': 'No machine selected. Select one in project settings before exporting.',
+  'dialogs.export.warning.machineMissing': 'This project selects a machine that is not in it, so no G-code can be exported. Choose the machine again in project settings.',
   'dialogs.export.export': 'Export {ext}',
 
   // ── Export: operation reasons (from exportOperationSelection.ts) ──

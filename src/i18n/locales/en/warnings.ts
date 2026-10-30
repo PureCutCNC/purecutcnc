@@ -256,6 +256,7 @@ export const warningsEn = {
   'warnings.ordinaryClampOverlap': '{operation}: the {clamp} reaches into the corners the square blank sweeps as it turns; move it clear of the blank before machining.',
   'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
   'warnings.exportMachineTypeMismatch': 'The selected machine "{machine}" does not match this {expected} project. Choose a machine that does, or change the project type, before exporting.',
+  'warnings.exportMachineMissingRotaryAxis': 'The selected machine "{machine}" has no rotary axis, so it cannot turn the bar this project machines around. Add a rotary axis to that machine (or choose one that has it) before exporting.',
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
   'warnings.postToolChangesDisabled': 'Operation "{operation}" needs tool "{tool}", but tool changes are disabled: the program keeps cutting with the previous tool. Turn tool changes on, or export one operation at a time.',
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',

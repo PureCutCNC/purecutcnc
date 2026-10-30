@@ -612,6 +612,13 @@ export const exportDialog = {
   /** The dialog title. */
   title: (page: Page) => exportDialog.root(page).locator('.dialog-title'),
 
+  /**
+   * The machine the export will use, exactly as the dialog names it. It is read
+   * from the project's own embedded snapshot, so asserting it is how a test
+   * proves the header and the export agree (issue #1112, item 35).
+   */
+  machineName: (page: Page) => exportDialog.root(page).getByTestId('export-machine-name'),
+
   /** All rows of the operation checklist. */
   operationOptions: (page: Page) =>
     exportDialog.root(page).locator('.export-operation-list .export-option'),

@@ -326,6 +326,29 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
     await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
   })
 
+  // The reported failure of issue #1112 item 35: a custom machine (a Grbl copy
+  // with its own rotary axis) selected in a rotary project could not export,
+  // while the dialog named a machine. The machine here is the project's own
+  // embedded snapshot — `builtin: false`, its own id — so this is exactly the
+  // state a saved `.camj` file is in.
+  test('a custom rotary machine in a rotary project exports, and the dialog names it', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
+    await ui.face.switchTo(page, 'Around')
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    // The header names the project's own machine, not a bundled one.
+    await expect(ui.exportDialog.machineName(page)).toHaveText('E2E Around Rotary X')
+    // Nothing refuses the export, the preview is real G-code, and Save is
+    // offered — the three things the report said were missing.
+    await expect(ui.exportDialog.errors(page)).toHaveCount(0)
+    await expect(ui.exportPreview.body(page)).toContainText(/A-?\d/)
+    await expect(ui.exportDialog.exportButton(page)).toBeEnabled()
+  })
+
   test('a plain router on a rotary project blocks the export in the dialog', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'plain' })))
@@ -335,8 +358,11 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
 
     await ui.operations.headerExportButton(page).click()
     await expect(ui.exportDialog.root(page)).toBeVisible()
+    // The machine is the right family and short one axis, so the refusal names
+    // the missing rotary axis rather than calling the choice of machine wrong
+    // (issue #1112, item 35).
     await expect(
-      ui.exportDialog.errors(page).filter({ hasText: 'does not match this rotary project' }),
+      ui.exportDialog.errors(page).filter({ hasText: 'has no rotary axis' }),
     ).toContainText('E2E Around Router')
     await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
   })

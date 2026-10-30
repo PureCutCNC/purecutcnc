@@ -563,8 +563,21 @@ async function main(): Promise<void> {
     const milling = projectOfType('milling', QTPLASMAC)
     assertEqual(
       projectMachineMismatch(milling),
-      { expected: 'milling', machineName: QTPLASMAC.name },
+      { reason: 'wrong-kind', expected: 'milling', machineName: QTPLASMAC.name },
       'a plasma machine does not suit a milling project',
+    )
+    // A router on a rotary project is the right family of machine and short its
+    // rotary axis, which is a different repair from "choose another machine"
+    // (issue #1112, item 35).
+    assertEqual(
+      projectMachineMismatch(projectOfType('rotary', PLAIN_ROUTER)),
+      { reason: 'missing-rotary', expected: 'rotary', machineName: PLAIN_ROUTER.name },
+      'and a router with no rotary block is missing an axis, not the wrong kind',
+    )
+    assertEqual(
+      projectMachineMismatch(projectOfType('rotary', QTPLASMAC)),
+      { reason: 'wrong-kind', expected: 'rotary', machineName: QTPLASMAC.name },
+      'a plasma table on a rotary project is still the wrong kind',
     )
 
     const rotaryCapable = projectOfType('milling', rotaryRouter())

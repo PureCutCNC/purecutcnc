@@ -224,6 +224,10 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.preview': 'Vorschau (erste 30 Zeilen)',
   'dialogs.export.previewPlaceholder': 'Wählen Sie in den Projekteinstellungen eine Maschine, um eine G-Code-Vorschau zu erzeugen.',
   'dialogs.export.previewTruncated': '…',
+  'dialogs.export.previewPreparing': 'Die Exportvorschau wird vorbereitet…',
+  'dialogs.export.previewBlocked': 'Keine Vorschau: Dieser Export ist blockiert. Der Grund steht oben unter „Fehler".',
+  'dialogs.export.previewNoOperations': 'Keine Vorschau: Es ist keine Operation für den Export angehakt.',
+  'dialogs.export.previewMachineMissing': 'Keine Vorschau: Die in diesem Projekt gewählte Maschine ist nicht im Projekt enthalten. Wählen Sie sie in den Projekteinstellungen erneut.',
   'dialogs.export.movesLines': '{moves} Bewegungen, {lines} Zeilen insgesamt',
   'dialogs.export.error.generationFailed': 'Generierung für „{operation}" fehlgeschlagen: {detail}',
   'dialogs.export.error.generationInterrupted': 'Die Generierung für „{operation}" wurde abgebrochen oder ersetzt. Ändern Sie die Auswahl oder eine Option und exportieren Sie erneut.',
@@ -231,6 +235,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.error.stale': 'Die Exportvorschau ist veraltet. Öffnen Sie den Dialog erneut und versuchen Sie es noch einmal.',
   'dialogs.export.warning.noOperations': 'Keine Operationen ausgewählt. Wählen Sie mindestens eine Operation zum Exportieren.',
   'dialogs.export.warning.noMachine': 'Keine Maschine ausgewählt. Wählen Sie vor dem Export eine in den Projekteinstellungen.',
+  'dialogs.export.warning.machineMissing': 'Dieses Projekt verweist auf eine Maschine, die nicht darin enthalten ist, daher kann kein G-Code exportiert werden. Wählen Sie die Maschine in den Projekteinstellungen erneut.',
   'dialogs.export.export': '{ext} exportieren',
 
   // ── Export: operation reasons (from exportOperationSelection.ts) ──
