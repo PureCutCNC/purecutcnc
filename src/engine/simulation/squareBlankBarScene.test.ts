@@ -31,8 +31,9 @@
  *
  * These assertions run the shader's own `squareBlankSilhouetteRadius` text (via
  * `glslScalar.testSupport`) against the real seeded grid for both bar axes and
- * both units, pin the scene builder to exactly the stock meshes it mounts, and
- * guard that a block, a flat setup and a round bar compile the shader they had.
+ * both units, pin the scene builder to exactly the stock meshes it mounts and
+ * to the materials it wires the blank side into, and guard that a block, a flat
+ * setup and a round bar compile the shader they had.
  *
  * Mutations these assertions were checked against, each applied on its own from
  * a `cp` backup and reverted:
@@ -44,12 +45,20 @@
  * - removing it from the wall vertex shader → `the square bar's walls clamp to
  *   the tested silhouette`;
  * - mounting the flat-round-bar lower half for a square blank → `the square
- *   bar's scene mounts only the stock meshes`.
+ *   bar's scene mounts only the stock meshes`;
+ * - dropping `squareBlankSide` from the builder's `createHeightfieldMaterial`
+ *   call → `the scene builder wires the blank side into every material it
+ *   mounts`;
+ * - dropping it from the builder's `createInstancedBoundaryGroup` call → the
+ *   same test, on the wall strips;
+ * - dropping it from either of the viewport's two `buildSimulationStockScene`
+ *   calls → `the viewport hands the blank side to both scene builders`.
  *
  * Run with: npx tsx src/engine/simulation/squareBlankBarScene.test.ts
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import * as THREE from 'three'
 import { createSimulationGrid } from './grid'
 import { createHeightfieldTexture } from './gpuMesh'
@@ -315,9 +324,90 @@ function testOnlyTheWrappedSquareBarClamps(): void {
   console.log('compile-time variants: PASSED')
 }
 
+/**
+ * The viewport only ever mounts a scene through `buildSimulationStockScene`, so
+ * the builder is where the blank side has to arrive: a builder that accepts the
+ * side and drops it leaves the slab on screen while every material-level
+ * assertion above still passes (Codex review of rt3-b, correction round 1).
+ */
+function testSceneWiresTheClampIntoItsMaterials(): void {
+  console.log('Testing the scene builder wires the blank side into every material it mounts...')
+  const entry = sheet(20, 'x', 'mm', 80)
+  const grid = squareGrid(entry)
+
+  const built = buildSimulationStockScene(grid, COLOR, entry.frame, undefined, entry.side)
+  try {
+    const surfaceMaterial = (built.surface as THREE.Mesh).material as THREE.ShaderMaterial
+    assert(
+      surfaceMaterial.vertexShader.includes('squareBlankSilhouetteRadius(uBlankSide'),
+      'the mounted surface clamps to the tested silhouette',
+    )
+    approx(
+      surfaceMaterial.uniforms.uBlankSide.value as number,
+      entry.side,
+      'the mounted surface carries the blank side',
+    )
+
+    const walls = (built.boundary as THREE.Group).children.slice(0, 2)
+    for (const [index, part] of walls.entries()) {
+      const material = (part as THREE.Mesh).material as THREE.ShaderMaterial
+      assert(
+        material.vertexShader.includes('squareBlankSilhouetteRadius(uBlankSide'),
+        `mounted wall strip ${index} clamps to the tested silhouette`,
+      )
+      approx(
+        material.uniforms.uBlankSide.value as number,
+        entry.side,
+        `mounted wall strip ${index} carries the blank side`,
+      )
+    }
+  } finally {
+    built.heightfieldTexture.dispose()
+  }
+
+  // The same builder with no side (a block scene) must not gain the clamp.
+  const block = buildSimulationStockScene(grid, COLOR)
+  try {
+    const surfaceMaterial = (block.surface as THREE.Mesh).material as THREE.ShaderMaterial
+    const wallMaterials = (block.boundary as THREE.Group).children.slice(0, 2)
+      .map((part) => (part as THREE.Mesh).material as THREE.ShaderMaterial)
+    for (const material of [surfaceMaterial, ...wallMaterials]) {
+      assert(!('uBlankSide' in material.uniforms), 'a scene built without a blank side gains no blank uniform')
+      assert(!material.vertexShader.includes('uBlankSide'), 'a scene built without a blank side gains no silhouette clamp')
+    }
+  } finally {
+    block.heightfieldTexture.dispose()
+  }
+  console.log('scene wiring: PASSED')
+}
+
+/**
+ * The viewport is the builder's only caller, and it reads the blank's side from
+ * the real bar. Pinning the builder alone leaves this hop unguarded: dropping
+ * the side from either mount — the static scene or the playback scene —
+ * restores the reported defect with every other assertion here green.
+ */
+function testViewportForwardsTheBlankSide(): void {
+  console.log('Testing the viewport hands the blank side to both scene builders...')
+  const source = readFileSync(
+    new URL('../../components/simulation/SimulationViewport.tsx', import.meta.url),
+    'utf8',
+  ).replace(/\s+/g, ' ')
+  const calls = source.match(/buildSimulationStockScene\([^)]*\)/g) ?? []
+  assert(calls.length === 2, `the viewport mounts a static and a playback scene, got ${calls.length} builder call(s)`)
+  for (const call of calls) {
+    assert(call.includes('squareBlankSide'), `a viewport scene mount drops the blank side: ${call}`)
+  }
+  assert(source.includes('isSquareStock(bar.stock)'), 'the viewport takes the blank side from a square solid stock')
+  assert(source.includes('bar.stock.thickness'), 'the blank side is the stock thickness the grid is seeded from')
+  console.log('viewport wiring: PASSED')
+}
+
 testSilhouetteClampsEveryRenderedRadius()
 testSceneMountsOnlyTheStockMeshes()
 testSceneKeepsTheHeightfield()
 testOnlyTheWrappedSquareBarClamps()
+testSceneWiresTheClampIntoItsMaterials()
+testViewportForwardsTheBlankSide()
 
 console.log('\nAll square-blank bar-scene tests PASSED.')
