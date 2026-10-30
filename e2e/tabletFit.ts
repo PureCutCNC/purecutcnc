@@ -23,14 +23,19 @@
  * separately, because a vertical drawer that scrolls must never excuse a panel
  * clipped at the side.
  *
- * Two false passes it exists to refuse (Codex review of #1112 rt4-a fix1):
+ * The false passes it exists to refuse (Codex review of #1112 rt4-a fix1 and
+ * fix2):
  *
  *  - a surface whose own box fits the viewport but is cut by an
  *    `overflow: hidden` ancestor — the early "inside the viewport" return used
  *    to skip the ancestor walk entirely;
  *  - a surface wider than the scroller that is supposed to show it — scrolling
  *    a 900px surface inside a 200px port can never show it whole, however far
- *    the port scrolls.
+ *    the port scrolls;
+ *  - a surface painted past the edge of the window with nothing left to scroll
+ *    it back — the ancestor walk can end with no clipping ancestor at all (a
+ *    shadow host, a plain document), and ending the walk is not proof the
+ *    surface is visible (#1112 rt4-a fix3 review F1).
  *
  * It stays dependency-free and self-contained: Playwright serialises the
  * function source into the page, so it may not reference module scope.
@@ -53,12 +58,15 @@ export type FitAxis = 'x' | 'y'
  *    its scroll port, so no scroll position shows it whole.
  *  - `outside-scroll-range`: the nearest scroller cannot reach far enough.
  *  - `scroller-off-screen`: the scroller itself lies outside the viewport.
+ *  - `outside-viewport`: after every clipping ancestor, what can be shown is
+ *    still painted past the window edge, and no scrolling ancestor is left.
  */
 export type FitReason =
   | 'clipped-hidden'
   | 'too-wide-for-scroller'
   | 'outside-scroll-range'
   | 'scroller-off-screen'
+  | 'outside-viewport'
 
 /** One reason an axis cannot fully show the surface. */
 export interface FitIssue {
@@ -86,7 +94,9 @@ export interface TabletFitReport {
 /**
  * Measure `element` against `viewport` and report anything that stops the whole
  * surface being seen: an ancestor clipping it, a scroll port that cannot show it
- * in full sideways, or a scroller that cannot reach it.
+ * in full sideways, a scroller that cannot reach it, or — when the ancestor walk
+ * finds no clipping ancestor at all — a surface simply painted past the window
+ * edge.
  *
  * A vertical scroller is allowed to be shorter than the surface — "scrolling
  * inside the panel is fine if it scrolls", per the handoff — but it must be
@@ -190,6 +200,22 @@ export function tabletFitReport(element: Element, viewport: TabletViewport): Tab
       subjectStart = Math.max(subjectStart, clipStart)
       subjectEnd = Math.min(subjectEnd, clipEnd)
       node = node.parentElement
+    }
+    // Nothing above can move it any further: whatever is still outside the
+    // window is unreachable, so the walk ending is not a pass. This is the
+    // check the ancestor walk must not replace: with no clipping ancestor (a
+    // shadow host, a plain document) an off-screen surface used to come back
+    // with an empty `issues` array and pass the assertion (#1112 rt4-a fix3
+    // review F1).
+    if (subjectStart < -EPSILON || subjectEnd > limit + EPSILON) {
+      issues.push({
+        axis,
+        reason: 'outside-viewport',
+        detail: `${axis === 'x' ? 'sideways' : 'vertically'}: what can be shown spans `
+          + `${round(subjectStart)}–${round(subjectEnd)} in a ${round(limit)}px `
+          + `${axis === 'x' ? 'viewport width' : 'viewport height'}, `
+          + 'with no scrolling ancestor left to bring it in',
+      })
     }
     return { axis, withinViewport, issues }
   }

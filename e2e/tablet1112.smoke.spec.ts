@@ -30,8 +30,9 @@
  *    (a drawer's own scrolling counts — see `expectReachable`, which checks the
  *    two axes separately so vertical scrolling never excuses a surface clipped
  *    at the side). The page-side measurement lives in `tabletFit.ts`: it walks
- *    the clipping ancestors even when the surface's own box fits, and refuses a
- *    surface wider than the scroller that is meant to show it.
+ *    the clipping ancestors even when the surface's own box fits, refuses a
+ *    surface wider than the scroller that is meant to show it, and refuses one
+ *    painted past the window edge with no scroller left to bring it in.
  *  - (c) the surface's main action works by tap alone (`tap()`, never hover).
  *
  * A screenshot of each surface is written to `work/tablet-shots/`. `work/` is
@@ -245,9 +246,11 @@ async function expectInsideViewport(page: Page, locator: Locator, label: string)
  *
  * The ancestor walk itself lives in {@link tabletFitReport}, which runs in the
  * page: an ancestor clipping the surface is reported even when the surface's
- * own box fits the viewport, and a surface wider than the scroller meant to
- * show it is refused rather than accepted because the scroller can move it
- * (#1112 rt4-a fix2 review F1).
+ * own box fits the viewport, a surface wider than the scroller meant to show it
+ * is refused rather than accepted because the scroller can move it, and a
+ * surface still painted past the window edge when the walk ends is refused —
+ * no clipping ancestor is not a pass (#1112 rt4-a fix2 review F1, fix3 review
+ * F1). `issues` is therefore the whole answer for this assertion.
  */
 async function expectReachable(page: Page, locator: Locator, label: string): Promise<void> {
   const viewport = page.viewportSize()
@@ -1073,6 +1076,41 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   }
 
   /**
+   * An off-screen fixture with **no clipping ancestor**: the surface lives in an
+   * open shadow root, so {@link tabletFitReport}'s `parentElement` walk ends at
+   * the root and never reaches the page's own `overflow: hidden` body. That is
+   * the point — on a body-attached fixture the page would report
+   * `clipped-hidden` and the missing viewport check would never be exercised
+   * (#1112 rt4-a fix3 review F1). Playwright's CSS engine pierces open shadow
+   * roots, so the returned locator is the real surface.
+   */
+  async function shadowFixture(
+    page: Page,
+    fixture: { id: string; content: string },
+  ): Promise<Locator> {
+    await page.evaluate((spec) => {
+      document.querySelector(`#${spec.id}-host`)?.remove()
+      const host = document.createElement('div')
+      host.id = `${spec.id}-host`
+      document.body.appendChild(host)
+      const surface = document.createElement('div')
+      surface.id = spec.id
+      surface.style.cssText = `position: fixed; ${spec.content}`
+      host.attachShadow({ mode: 'open' }).appendChild(surface)
+    }, fixture)
+    const surface = page.locator(`#${fixture.id}`)
+    await expect(surface).toHaveCount(1)
+    return surface
+  }
+
+  /** Remove a fixture built by {@link shadowFixture}. */
+  async function removeShadowFixture(page: Page, id: string): Promise<void> {
+    await page.evaluate((fixtureId) => {
+      document.querySelector(`#${fixtureId}-host`)?.remove()
+    }, id)
+  }
+
+  /**
    * Pins the fit helper's contract (#1112 rt4-a review F3): a surface cut off
    * at the side must not be excused by a vertically scrolling ancestor. The
    * fixture is exactly the shape the old helper accepted — a 900px-wide block
@@ -1181,6 +1219,127 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     expect(report.vertical.issues, 'nothing vertical is wrong with the fixture').toEqual([])
     await expectReachable(page, surface, 'reachable-scroller fixture')
     await removeClipFixture(page, 'e2e-reachable-scroller')
+  })
+
+  /**
+   * The line the new viewport check must not cross: a surface below the fold is
+   * fine when its own scroller is inside the window and can carry it up — that
+   * is the handoff's "scrolling inside the panel is fine if it scrolls". The
+   * surface itself spans y = 700–900 in an 820px window, so a check against the
+   * surface's own box (rather than the part its scroller can show) would refuse
+   * a legitimate panel; the 400px needed is inside the 600px range.
+   */
+  test('the fit helper accepts a below-the-fold surface its vertical scroller can reach', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const surface = await clipFixture(page, {
+      id: 'e2e-below-fold-reachable',
+      container: 'position:fixed;left:100px;top:100px;width:300px;height:400px;'
+        + 'overflow-x:hidden;overflow-y:auto;z-index:2147483647',
+      wrap: 'width:300px;height:1000px;padding-top:600px;box-sizing:border-box',
+      content: 'width:300px;height:200px;background:#333',
+    })
+    const box = (await surface.boundingBox())!
+    expect(box.y, 'the surface starts below the scroller port').toBeGreaterThan(500)
+    expect(box.y + box.height, 'the surface itself runs past the window').toBeGreaterThan(LANDSCAPE.height)
+    const report = await surface.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.vertical.issues, 'its scroller can carry it into the window').toEqual([])
+    expect(report.horizontal.issues, 'nothing sideways is wrong with the fixture').toEqual([])
+    await expectReachable(page, surface, 'below-fold-reachable fixture')
+    await removeClipFixture(page, 'e2e-below-fold-reachable')
+  })
+
+  /**
+   * F1 (#1112 rt4-a fix3 review): ending the ancestor walk used to mean
+   * "nothing is wrong", so a surface painted entirely past the right edge of
+   * the window passed. Nothing can scroll it back in: there is no scroller on
+   * that axis at all. The fixture is the exact reproduction from the review —
+   * a 400px surface starting at x = 1100 in a 1180px viewport — and the numbers
+   * are asserted on the box first, so a fixture that stopped being off-screen
+   * fails before it can pass vacuously. Removing the post-walk viewport check
+   * leaves `issues` empty and fails the reason assertion.
+   */
+  test('the fit helper refuses a surface painted past the right edge with no scroller', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const offscreen = await shadowFixture(page, {
+      id: 'e2e-offscreen-x',
+      content: 'left: 1100px; top: 20px; width: 400px; height: 100px; background: #333',
+    })
+    const box = (await offscreen.boundingBox())!
+    expect(box.x, 'the fixture starts inside the window').toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, 'the fixture really runs past the right edge').toBeGreaterThan(LANDSCAPE.width)
+
+    const report = await offscreen.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.horizontal.withinViewport, 'the surface itself is off-screen').toBe(false)
+    expect(report.vertical.issues, 'nothing vertical is wrong with the fixture').toEqual([])
+    expect(
+      report.horizontal.issues.map((issue) => issue.reason),
+      'an off-screen surface is unreachable without a scroller',
+    ).toEqual(['outside-viewport'])
+    expect(report.horizontal.issues[0].detail, 'the finding names the axis').toMatch(/sideways/)
+    // The assertion the spec uses (`expectReachable`) checks exactly this list.
+    await assert.rejects(expectReachable(page, offscreen, 'off-screen fixture'), /sideways/)
+    await removeShadowFixture(page, 'e2e-offscreen-x')
+
+    // The same hole on the other side: a surface painted past the left edge.
+    const offLeft = await shadowFixture(page, {
+      id: 'e2e-offscreen-x-negative',
+      content: 'left: -200px; top: 20px; width: 400px; height: 100px; background: #333',
+    })
+    const leftReport = await offLeft.evaluate(tabletFitReport, LANDSCAPE)
+    expect(leftReport.horizontal.withinViewport, 'the surface itself is off-screen').toBe(false)
+    expect(
+      leftReport.horizontal.issues.map((issue) => issue.reason),
+      'a surface past the left edge is unreachable too',
+    ).toEqual(['outside-viewport'])
+    expect(leftReport.horizontal.issues[0].detail).toMatch(/sideways/)
+    await assert.rejects(expectReachable(page, offLeft, 'left-off-screen fixture'), /sideways/)
+    await removeShadowFixture(page, 'e2e-offscreen-x-negative')
+  })
+
+  /**
+   * The vertical half of F1: the same hole below the bottom edge. The surface
+   * spans y = 760–960 in an 820px window and no ancestor clips it, so only the
+   * viewport itself can refuse it. Without the post-walk check this reports no
+   * issue on either axis and the surface passes as "reachable".
+   */
+  test('the fit helper refuses a surface painted below the bottom edge with no scroller', async ({ app }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject()))
+    const offscreen = await shadowFixture(page, {
+      id: 'e2e-offscreen-y',
+      content: 'left: 20px; top: 760px; width: 100px; height: 200px; background: #333',
+    })
+    const box = (await offscreen.boundingBox())!
+    expect(box.y, 'the fixture starts inside the window').toBeGreaterThanOrEqual(0)
+    expect(box.y + box.height, 'the fixture really runs past the bottom edge').toBeGreaterThan(LANDSCAPE.height)
+
+    const report = await offscreen.evaluate(tabletFitReport, LANDSCAPE)
+    expect(report.vertical.withinViewport, 'the surface itself is off-screen').toBe(false)
+    expect(report.horizontal.issues, 'nothing sideways is wrong with the fixture').toEqual([])
+    expect(
+      report.vertical.issues.map((issue) => issue.reason),
+      'an off-screen surface is unreachable without a scroller',
+    ).toEqual(['outside-viewport'])
+    expect(report.vertical.issues[0].detail, 'the finding names the axis').toMatch(/vertically/)
+    await assert.rejects(expectReachable(page, offscreen, 'off-screen fixture'), /vertically/)
+    await removeShadowFixture(page, 'e2e-offscreen-y')
+
+    // The same hole above the top edge.
+    const offTop = await shadowFixture(page, {
+      id: 'e2e-offscreen-y-negative',
+      content: 'left: 20px; top: -200px; width: 100px; height: 400px; background: #333',
+    })
+    const topReport = await offTop.evaluate(tabletFitReport, LANDSCAPE)
+    expect(topReport.vertical.withinViewport, 'the surface itself is off-screen').toBe(false)
+    expect(
+      topReport.vertical.issues.map((issue) => issue.reason),
+      'a surface past the top edge is unreachable too',
+    ).toEqual(['outside-viewport'])
+    expect(topReport.vertical.issues[0].detail).toMatch(/vertically/)
+    await assert.rejects(expectReachable(page, offTop, 'top-off-screen fixture'), /vertically/)
+    await removeShadowFixture(page, 'e2e-offscreen-y-negative')
   })
 
 })

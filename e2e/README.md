@@ -55,7 +55,7 @@ remains the full local-suite command.
 | `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
 | `gcodeExport.helpers.ts` | Export-dialog fixture: tool + two toolpath-producing operations + bundled GRBL machine selected. |
 | `machineLibrary.helpers.ts` | Machine-library fixture: a minimal project with a configurable machine section, a complete stand-in `MachineDefinition`, and an `embeddedMachine` store reader. |
-| `tabletFit.ts` | Page-side fit diagnostic for the tablet pass: walks the clipping ancestors even when the surface's own box fits, and refuses a surface wider than the scroller that is meant to show it. Used by `tablet1112.smoke.spec.ts`. |
+| `tabletFit.ts` | Page-side fit diagnostic for the tablet pass: walks the clipping ancestors even when the surface's own box fits, refuses a surface wider than the scroller that is meant to show it, and refuses a surface still painted past the viewport when the walk ends with no scroller left. Used by `tablet1112.smoke.spec.ts`. |
 
 Current smoke targets:
 
