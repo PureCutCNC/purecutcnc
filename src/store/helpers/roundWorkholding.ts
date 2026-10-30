@@ -50,12 +50,33 @@ import {
 import { convertLength } from '../../utils/units'
 
 /**
- * BISON 3204 hard solid jaws, d1 (external gripping with the first jaw step).
+ * BISON 3204 hard solid jaws, external gripping with the OD jaw set. The range
+ * is the jaw set's *full* external one — `d1` (the first step) is the minimum,
+ * `d3` (the larger step) the maximum. Taking `d1` as the maximum made a 4"
+ * claim 1.30" of capacity and pushed a Ø40 mm bar up to the 5" body (issue
+ * #1112 rt3-e item 28).
+ *
  * Body A and body length B: https://www.bison-america.com/pdf/Chapter_1/1_9.pdf p9.
- * d1 capacities: https://www.bison-america.com/pdf/Chapter_1/Specs_1_1.pdf p142.
- * Values below are the published INCH dimensions, converted without rounding.
+ * d1..d3 capacities, inch table p142:
+ * https://www.bison-america.com/pdf/Chapter_1/Specs_1_1.pdf
+ * metric table p132:
+ * https://store.bison-chuck.com/uk/en/amfile/file/download/file/1272/product/3115/
+ *
+ * The inch and the metric range are both **as published**, in their own
+ * columns: the catalogue rounds the two independently (2.80 in / 71 mm), so
+ * neither is derived from the other. `minIn`/`maxIn` judge whether a bar fits a
+ * preset (and are compared as inches); `minMm`/`maxMm` are what a project's
+ * `clampingRangeMm` stores. The 10"/12" rows are the exception: the d3 step was
+ * not published for them in the handed-over table, so they still carry the `d1`
+ * maximum, with the metric value derived from it.
+ *
+ * Four jaws use the same ranges: BISON 3604 self-centering 4-jaw publishes
+ * identical ranges at 5-8", while the 3"/4" 4-jaw ranges are not published
+ * reliably, so those two sizes use the 3-jaw values (manager's decision,
+ * 2026-10-29).
+ *
  * These are starter equipment presets, not a claim that other jaw sets share
- * this capacity. In particular we do not merge the distinct d2/d3 jaw steps.
+ * this capacity.
  *
  * The label is the size alone — `4"`, not `BISON 3204 · 4"` (issue #1112 R2
  * item 13): the picked field is a *size*, and the catalogue entry behind it
@@ -63,13 +84,13 @@ import { convertLength } from '../../utils/units'
  * picker's text.
  */
 export const STANDARD_CHUCKS = [
-  { id: 'bison-3204-3', label: '3"', diameterIn: 3.15, bodyIn: 1.73, minIn: 0.08, maxIn: 1.06 },
-  { id: 'bison-3204-4', label: '4"', diameterIn: 3.94, bodyIn: 1.97, minIn: 0.12, maxIn: 1.3 },
-  { id: 'bison-3204-5', label: '5"', diameterIn: 4.92, bodyIn: 2.2, minIn: 0.12, maxIn: 1.97 },
-  { id: 'bison-3204-6', label: '6"', diameterIn: 6.3, bodyIn: 2.54, minIn: 0.12, maxIn: 2.52 },
-  { id: 'bison-3204-8', label: '8"', diameterIn: 7.87, bodyIn: 2.95, minIn: 0.16, maxIn: 3.54 },
-  { id: 'bison-3204-10', label: '10"', diameterIn: 9.84, bodyIn: 3.35, minIn: 0.2, maxIn: 4.6 },
-  { id: 'bison-3204-12', label: '12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2 },
+  { id: 'bison-3204-3', label: '3"', diameterIn: 3.15, bodyIn: 1.73, minIn: 0.08, maxIn: 2.8, minMm: 2, maxMm: 71 },
+  { id: 'bison-3204-4', label: '4"', diameterIn: 3.94, bodyIn: 1.97, minIn: 0.12, maxIn: 3.66, minMm: 3, maxMm: 93 },
+  { id: 'bison-3204-5', label: '5"', diameterIn: 4.92, bodyIn: 2.2, minIn: 0.12, maxIn: 4.92, minMm: 3, maxMm: 125 },
+  { id: 'bison-3204-6', label: '6"', diameterIn: 6.3, bodyIn: 2.54, minIn: 0.12, maxIn: 6.3, minMm: 3, maxMm: 160 },
+  { id: 'bison-3204-8', label: '8"', diameterIn: 7.87, bodyIn: 2.95, minIn: 0.16, maxIn: 7.87, minMm: 4, maxMm: 200 },
+  { id: 'bison-3204-10', label: '10"', diameterIn: 9.84, bodyIn: 3.35, minIn: 0.2, maxIn: 4.6, minMm: 5.08, maxMm: 116.84 },
+  { id: 'bison-3204-12', label: '12"', diameterIn: 12.4, bodyIn: 3.7, minIn: 0.4, maxIn: 5.2, minMm: 10.16, maxMm: 132.08 },
 ] as const
 
 /** One listed chuck: its catalogue id, its size label and its published dimensions. */
@@ -212,7 +233,8 @@ export function chuckSizePatch(
     ...chuckPlacement(stock, units, diameter, body),
     chuck: {
       size: size.id,
-      clampingRangeMm: { min: convertLength(size.minIn, 'inch', 'mm'), max: convertLength(size.maxIn, 'inch', 'mm') },
+      // The catalogue's own metric range, not the inch range converted.
+      clampingRangeMm: { min: size.minMm, max: size.maxMm },
       jawCount: options.jawCount ?? defaultJawCount(stock),
       ...(options.manual ? { manual: true } : {}),
     },
@@ -261,7 +283,7 @@ export function defaultRoundWorkholding(
   const capacity: Pick<Clamp, 'chuck'> = type === 'chuck'
     ? {
       chuck: {
-        clampingRangeMm: { min: convertLength(largest.minIn, 'inch', 'mm'), max: convertLength(largest.maxIn, 'inch', 'mm') },
+        clampingRangeMm: { min: largest.minMm, max: largest.maxMm },
         jawCount: defaultJawCount(stock),
       },
     }

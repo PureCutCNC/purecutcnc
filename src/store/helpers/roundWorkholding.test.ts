@@ -170,10 +170,13 @@ test('a 20 × 100 mm bar on X gets the 4 inch starter with a 15 mm grip', () => 
   assert.equal(tailstock.height, 10 + 25, 'the same height rule')
 })
 
-test('a 40 mm bar needs the 5 inch standard chuck', () => {
+test('a 40 mm bar fits the 4 inch starter, not the 5 inch body', () => {
+  // Issue #1112 rt3-e item 28: with the full external gripping range the 4 inch
+  // preset holds 3..93 mm, so the default Ø40 mm bar no longer moves up to 5".
   const bar = roundStock(40, 100, 'x', { x: 0, y: 0 })
-  assert.equal(defaultRoundWorkholding('chuck', bar, 'mm').h, convertLength(4.92, 'inch', 'mm'), '5 inch body A')
-  assert.equal(defaultRoundWorkholding('chuck', bar, 'mm').height, 20 + convertLength(4.92, 'inch', 'mm') / 2, 'the height follows it')
+  const chuck = defaultRoundWorkholding('chuck', bar, 'mm')
+  assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), '4 inch body A')
+  assert.equal(chuck.height, 20 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows it')
 })
 
 test('a 30 mm long bar grips 7.5', () => {
@@ -229,6 +232,33 @@ test('a preset label is the size alone, so the picker reads as sizes not catalog
   for (const size of STANDARD_CHUCKS) {
     assert.match(size.label, /^\d+"$/, `${size.id}: the label is an inch size and nothing else`)
     assert.equal(size.label, `${size.id.slice('bison-3204-'.length)}"`, `${size.id}: the label is its own size`)
+  }
+})
+
+test('each preset carries the full external gripping range, published in both units', () => {
+  // #1112 rt3-e item 28: `d1` is the minimum and `d3` the maximum of the jaw
+  // set's full external range, and the catalogue prints an inch and a metric
+  // column it rounds independently — so both are kept as published rather than
+  // one being converted into the other.
+  const published: Record<string, { minIn: number; maxIn: number; minMm: number; maxMm: number }> = {
+    'bison-3204-3': { minIn: 0.08, maxIn: 2.8, minMm: 2, maxMm: 71 },
+    'bison-3204-4': { minIn: 0.12, maxIn: 3.66, minMm: 3, maxMm: 93 },
+    'bison-3204-5': { minIn: 0.12, maxIn: 4.92, minMm: 3, maxMm: 125 },
+    'bison-3204-6': { minIn: 0.12, maxIn: 6.3, minMm: 3, maxMm: 160 },
+    'bison-3204-8': { minIn: 0.16, maxIn: 7.87, minMm: 4, maxMm: 200 },
+  }
+  const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
+  for (const [id, range] of Object.entries(published)) {
+    const size = STANDARD_CHUCKS.find((entry) => entry.id === id)
+    assert.ok(size, `${id}: the preset is listed`)
+    assert.equal(size.minIn, range.minIn, `${id}: the d1 minimum in inches, as published`)
+    assert.equal(size.maxIn, range.maxIn, `${id}: the d3 maximum in inches, as published`)
+    assert.equal(size.minMm, range.minMm, `${id}: the d1 minimum in mm, as published`)
+    assert.equal(size.maxMm, range.maxMm, `${id}: the d3 maximum in mm, as published`)
+    // The capacity a project stores is the metric column, not the inch column
+    // converted (the catalogue prints 71 mm, not 2.80 in × 25.4 = 71.12 mm).
+    assert.deepEqual(chuckSizePatch(id, bar, 'mm').chuck?.clampingRangeMm, { min: range.minMm, max: range.maxMm },
+      `${id}: the stored capacity is the published metric range`)
   }
 })
 

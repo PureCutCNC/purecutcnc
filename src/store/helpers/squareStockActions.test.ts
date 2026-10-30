@@ -62,7 +62,7 @@ import {
   toRoundStock,
   toSquareStock,
 } from './stockShape'
-import { STANDARD_CHUCKS, chuckOutOfRange, syncRoundWorkholding } from './roundWorkholding'
+import { chuckOutOfRange, syncRoundWorkholding } from './roundWorkholding'
 
 let passed = 0
 let failed = 0
@@ -323,23 +323,18 @@ test('round → square keeps a too-small chuck and reports the bar as out of ran
   assert.ok(isRoundStock(bar), 'the project holds a round bar')
   const chuck = roundProject.clamps[0]
   assert.equal(chuck.type, 'chuck', 'the round project gained a chuck')
-  // The 4 inch round default's capacity (0.12–1.3 in, i.e. 33 mm) already
-  // covers a 20 mm square's 28.284 mm corner envelope, so make a support
-  // genuinely outside it: a 3 inch chuck whose 1.06 in (26.9 mm) maximum is
-  // below that corner circle, with a 25 mm body. The capacity is what the
-  // warning judges, and it is the equipment the operator would have chosen.
-  const three = STANDARD_CHUCKS.find((size) => size.id === 'bison-3204-3')!
+  // The 4 inch round default's full external range (3–93 mm) covers a 20 mm
+  // square's 28.284 mm corner envelope, as does every listed preset (issue
+  // #1112 rt3-e item 28), so the support outside it has to be hand-typed: a
+  // 25 mm body whose stated maximum, 26 mm, is below that corner circle. The
+  // capacity is what the warning judges, and it is the equipment the operator
+  // would have brought.
   const small: Clamp = {
     ...chuck,
     h: 25,
     y: barCentre(bar) - 12.5,
     height: barPivotZ(bar) + 12.5,
-    chuck: {
-      size: three.id,
-      clampingRangeMm: { min: three.minIn * 25.4, max: three.maxIn * 25.4 },
-      jawCount: 3,
-      manual: true,
-    },
+    chuck: { clampingRangeMm: { min: 3, max: 26 }, jawCount: 3, manual: true },
   }
   // #1112 M decision 9: changing the stock keeps the chosen chuck and only
   // re-centres it. It is never silently resized, even when the new blank's

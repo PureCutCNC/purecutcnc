@@ -175,11 +175,12 @@ test('selecting the chuck shows Type and its diameter and no Z control', async (
 
   await expect(ui.properties.clampType(page)).toBeVisible()
   await expect(ui.properties.clampType(page).locator('.ui-select__label')).toHaveText('Chuck')
-  // A chuck's diameter is its standard size (#1112 M): the Ø40 mm bar picks
-  // the 5 inch body, and the label names only that size (issue #1112 R2
+  // A chuck's diameter is its standard size (#1112 M): the Ø40 mm bar stays on
+  // the 4 inch starter, whose full external gripping range holds 3–93 mm
+  // (#1112 rt3-e item 28), and the label names only that size (issue #1112 R2
   // item 13) — the catalogue the preset comes from is not in the picker.
   await expect(ui.properties.chuckSize(page)).toBeVisible()
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('5"')
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('4"')
   // The height is derived from the bar, so there is no Z control to set it.
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 })
@@ -209,9 +210,10 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   await expect(ui.properties.chuckSize(page)).toBeVisible()
   // A 40 mm square starts with four jaws, which grip across flats — 40 mm,
   // 1.575 in — so its capacity is judged on that, not on the 56.6 mm corner
-  // circle a 3-jaw set would have to clear (#1112 R2 item 23). The 4 inch
-  // starter stops at 1.3 in, so this blank takes the 5 inch body.
-  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('5"')
+  // circle a 3-jaw set would have to clear (#1112 R2 item 23). The starter's
+  // full external range holds 3–93 mm and its 4 inch body clears the corner
+  // envelope, so this blank keeps the 4 inch body (#1112 rt3-e item 28).
+  await expect(ui.properties.chuckSize(page).locator('.ui-select__label')).toHaveText('4"')
   await expect(ui.properties.zRangeSlider(page)).toHaveCount(0)
 
   // A plain clamp gives up the chuck size, and choosing Chuck mints one sized
