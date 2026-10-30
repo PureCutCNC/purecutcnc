@@ -374,6 +374,16 @@
     min-height: var(--touch-target, 44px);
     min-width: var(--touch-target, 44px);
   }
+
+  /* The command bar's Operations entry is a tablet's stand-in for the desktop
+     `»` panel handle — the tablet shell draws no panel handle at all — so it
+     is a surface control in its own right and follows the touch token instead
+     of the bar's 40px `.top-cmd-btn` height. The label already keeps its width
+     above the token; only the height had to be raised (#1112 rt4-a review F2). */
+  .top-command-bar .top-cmd-btn--operations {
+    height: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+  }
 }
 
 /* ── Split divider: larger hit area ─────────────────────── */

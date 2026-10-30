@@ -27,11 +27,20 @@
  *    target, and this app never sizes a slider to the touch minimum.
  *  - (b) the panel/menu/dialog lies fully inside the viewport, and its body
  *    scrolls rather than being clipped when the form is taller than the space
- *    (a drawer's own scrolling counts — see `expectReachable`).
+ *    (a drawer's own scrolling counts — see `expectReachable`, which checks the
+ *    two axes separately so vertical scrolling never excuses a surface clipped
+ *    at the side).
  *  - (c) the surface's main action works by tap alone (`tap()`, never hover).
  *
  * A screenshot of each surface is written to `work/tablet-shots/`. `work/` is
  * gitignored, so nothing is committed from it.
+ *
+ * The handoff's surface list applies to a round bar **and** a square blank, so
+ * the fixtures come in both shapes: the round-bar tests cover every surface,
+ * and the square-blank tests re-run the parts whose DOM or geometry actually
+ * depends on the blank (the Turn/Polygon forms and the side views drawn on
+ * Top). Context menu, Cuts list, header face control, simulation info and chuck
+ * properties render the same controls on either blank and are covered once.
  *
  * Portrait is a **different answer**: the shell refuses a portrait tablet —
  * `src/styles/tablet.css` shows `.tablet-rotate-overlay` over the whole app for
@@ -46,6 +55,7 @@
  * Run in the `test:e2e:workflow-ui` lane (see `package.json`).
  */
 
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import type { Locator, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
@@ -58,6 +68,7 @@ import {
   setPendingAddAnchor,
   startAddRectPlacement,
 } from './helpers'
+import { squareStock } from '../src/types/barStock'
 import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 import {
   defaultTool,
@@ -97,11 +108,13 @@ const GRBL = JSON.parse(
 ) as Project['meta']['machineDefinitions'][number]
 
 /**
- * A rotary project on a round bar with a rotary machine and one chuck — the
- * fixture every surface here needs (a Turn or Polygon needs the bar, chuck
- * properties need the chuck).
+ * A rotary project on a bar with a rotary machine and one chuck — the fixture
+ * every surface here needs (a Turn or Polygon needs the bar, chuck properties
+ * need the chuck). `shape` picks the physical blank: the handoff asks for both
+ * a round bar and a square blank, and the panels, defaults and drawn outlines
+ * differ between them (#1112 rt4-a review F1).
  */
-function barProject(): Project {
+function barProject(shape: 'round' | 'square' = 'round'): Project {
   const base = newProject('Tablet #1112', 'mm')
   const machine = {
     ...GRBL,
@@ -110,7 +123,7 @@ function barProject(): Project {
     builtin: false,
     rotary: { about: 'x' as const, drive: 'own' as const, reversed: false, inverseTimeFeed: { on: 'G93' as const, off: 'G94' as const } },
   }
-  base.stock = roundStock(25, 120, 'x')
+  base.stock = shape === 'square' ? squareStock(25, 120, 'x') : roundStock(25, 120, 'x')
   base.meta = {
     ...base.meta,
     projectType: 'rotary',
@@ -208,42 +221,127 @@ async function expectInsideViewport(page: Page, locator: Locator, label: string)
 }
 
 /**
+ * One scrollable ancestor on one axis, and whether it can bring `element` into
+ * view on that axis.
+ */
+interface ScrollPath {
+  axis: 'x' | 'y'
+  /** The container itself lies inside the viewport on that axis. */
+  inside: boolean
+  /** Scrolling it as far as it goes brings the surface fully inside it. */
+  reachable: boolean
+  /** Pixels of scrolling needed from where it is now (negative = scroll back). */
+  needed: number
+  /** The furthest it can scroll. */
+  maxScroll: number
+  rect: { left: number; right: number; top: number; bottom: number }
+}
+
+/**
+ * The nearest ancestor that scrolls `element` back into view on each axis,
+ * answered **separately**. A vertical scroller must never make a surface
+ * clipped at the side look reachable: that was the hole in the first version
+ * of {@link expectReachable} (#1112 rt4-a review F3).
+ */
+async function scrollPaths(
+  page: Page,
+  locator: Locator,
+): Promise<{ horizontal: ScrollPath | null; vertical: ScrollPath | null }> {
+  return locator.evaluate((element) => {
+    function path(axis: 'x' | 'y'): ScrollPath | null {
+      const box = element.getBoundingClientRect()
+      let node: HTMLElement | null = (element as HTMLElement).parentElement
+      while (node) {
+        const style = getComputedStyle(node)
+        const overflow = axis === 'x' ? style.overflowX : style.overflowY
+        const scrollSize = axis === 'x' ? node.scrollWidth : node.scrollHeight
+        const clientSize = axis === 'x' ? node.clientWidth : node.clientHeight
+        if (scrollSize > clientSize + 1 && (overflow === 'auto' || overflow === 'scroll')) {
+          const rect = node.getBoundingClientRect()
+          const start = axis === 'x' ? rect.left : rect.top
+          const end = axis === 'x' ? rect.right : rect.bottom
+          const elementStart = axis === 'x' ? box.left : box.top
+          const elementEnd = axis === 'x' ? box.right : box.bottom
+          const scroll = axis === 'x' ? node.scrollLeft : node.scrollTop
+          const maxScroll = scrollSize - clientSize
+          const needed = elementEnd > end
+            ? elementEnd - end + scroll
+            : elementStart < start
+              ? elementStart - start + scroll
+              : 0
+          return {
+            axis,
+            inside: axis === 'x'
+              ? rect.left >= -0.5 && rect.right <= window.innerWidth + 0.5
+              : rect.top >= -0.5 && rect.bottom <= window.innerHeight + 0.5,
+            // A surface wider (or taller) than the scroll port can never be
+            // brought fully into view, however far the container scrolls.
+            reachable: needed >= -0.5 && needed <= maxScroll + 0.5,
+            needed: Math.round(needed),
+            maxScroll: Math.round(maxScroll),
+            rect: {
+              left: Math.round(rect.left),
+              right: Math.round(rect.right),
+              top: Math.round(rect.top),
+              bottom: Math.round(rect.bottom),
+            },
+          }
+        }
+        node = node.parentElement
+      }
+      return null
+    }
+    return { horizontal: path('x'), vertical: path('y') }
+  })
+}
+
+/**
  * (b) For a surface that lives inside a drawer: it must be reachable — fully
  * inside the viewport, or cut off only inside a scrollable container that is
  * itself inside the viewport ("scrolling inside the panel is fine if it
- * scrolls", per the handoff). A surface painted past the window edge with
- * nothing to scroll is the failure this catches.
+ * scrolls", per the handoff). Each axis is checked on its own: a surface cut
+ * off at the right edge needs something that scrolls **sideways**, however
+ * much the drawer scrolls up and down. A surface painted past the window edge
+ * with nothing to scroll, on either axis, is the failure this catches.
  */
 async function expectReachable(page: Page, locator: Locator, label: string): Promise<void> {
   const box = await locator.boundingBox()
   expect(box, `${label} has no box`).not.toBeNull()
   const viewport = page.viewportSize()!
-  const inside = box!.x >= -0.5 && box!.y >= -0.5
-    && box!.x + box!.width <= viewport.width + 0.5
-    && box!.y + box!.height <= viewport.height + 0.5
-  if (inside) return
-  const container = await locator.evaluate((element) => {
-    let node: HTMLElement | null = element.parentElement
-    while (node) {
-      const style = getComputedStyle(node)
-      if (['auto', 'scroll'].includes(style.overflowY) && node.scrollHeight > node.clientHeight + 1) {
-        const rect = node.getBoundingClientRect()
-        return {
-          scrolls: true,
-          inside: rect.top >= -0.5 && rect.left >= -0.5
-            && rect.bottom <= window.innerHeight + 0.5 && rect.right <= window.innerWidth + 0.5,
-          rect: { top: Math.round(rect.top), bottom: Math.round(rect.bottom), left: Math.round(rect.left), right: Math.round(rect.right) },
-        }
-      }
-      node = node.parentElement
-    }
-    return null
-  })
-  expect(
-    container,
-    `${label} runs past the ${viewport.width}×${viewport.height} viewport with nothing to scroll`,
-  ).not.toBeNull()
-  expect(container!.inside, `${label}'s scroll container is itself off-screen: ${JSON.stringify(container!.rect)}`).toBe(true)
+  const withinX = box!.x >= -0.5 && box!.x + box!.width <= viewport.width + 0.5
+  const withinY = box!.y >= -0.5 && box!.y + box!.height <= viewport.height + 0.5
+  if (withinX && withinY) return
+  const paths = await scrollPaths(page, locator)
+  if (!withinX) {
+    expect(
+      paths.horizontal,
+      `${label} runs past the ${viewport.width}px viewport width with nothing to scroll sideways`,
+    ).not.toBeNull()
+    expect(
+      paths.horizontal!.inside,
+      `${label}'s horizontal scroll container is itself off-screen: ${JSON.stringify(paths.horizontal!.rect)}`,
+    ).toBe(true)
+    expect(
+      paths.horizontal!.reachable,
+      `${label} cannot be scrolled into view sideways: `
+        + `needs ${paths.horizontal!.needed}px, ${paths.horizontal!.maxScroll}px available`,
+    ).toBe(true)
+  }
+  if (!withinY) {
+    expect(
+      paths.vertical,
+      `${label} runs past the ${viewport.height}px viewport height with nothing to scroll`,
+    ).not.toBeNull()
+    expect(
+      paths.vertical!.inside,
+      `${label}'s scroll container is itself off-screen: ${JSON.stringify(paths.vertical!.rect)}`,
+    ).toBe(true)
+    expect(
+      paths.vertical!.reachable,
+      `${label} cannot be scrolled into view: `
+        + `needs ${paths.vertical!.needed}px, ${paths.vertical!.maxScroll}px available`,
+    ).toBe(true)
+  }
 }
 
 /**
@@ -500,7 +598,7 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     expect(afterTurn.features).toHaveLength(1)
     expect(afterTurn.features[0].name).toBe('Turn')
 
-    // ── Polygon: same panel, its own fields ──
+    // ── Polygon: same panel, its own fields, and its own Save ──
     await page.locator('[data-command="rotary-polygon"]').first().tap()
     const polygonPanel = ui.rotarySolid.dialog(page)
     await expect(polygonPanel).toBeVisible()
@@ -511,9 +609,25 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     await expectInsideViewport(page, polygonPanel, 'Polygon panel')
     await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
     await shoot(page, 'polygon-create-landscape')
-    await ui.rotarySolid.cancelButton(page).tap()
+    // The panel's main action is Create, not Cancel: it must write the model,
+    // not just close the form (issue #1112 rt4-a review F1 — the first pass
+    // only ever cancelled here).
+    await page.locator('#rotary-solid-start').fill('70')
+    await page.locator('#rotary-solid-length').fill('30')
+    await page.locator('#rotary-solid-sides').fill('6')
+    await page.locator('#rotary-solid-across-flats').fill('12')
+    await ui.rotarySolid.createButton(page).tap()
     await expect(polygonPanel).toHaveCount(0)
-    expect((await getProject(page) as unknown as Project).features).toHaveLength(1)
+    const afterPolygon = await getProject(page) as unknown as Project
+    expect(afterPolygon.features).toHaveLength(2)
+    const polygonFeature = afterPolygon.features.find(
+      (feature) => afterPolygon.featureDefinitions[feature.definitionId]?.canned?.kind === 'polygon',
+    )!
+    expect(polygonFeature, 'the polygon the panel created').toBeDefined()
+    const polygonCanned = afterPolygon.featureDefinitions[polygonFeature.definitionId].canned!
+    expect(polygonCanned.params).toMatchObject({
+      start: 70, length: 30, sides: 6, acrossFlats: 12,
+    })
 
     // ── Thread and Flutes share the layout: only the fit check was missing ──
     await page.locator('[data-command="rotary-thread"]').first().tap()
@@ -562,6 +676,122 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     const edited = await getProject(page) as unknown as Project
     const stored = edited.featureDefinitions[edited.features[0].definitionId].canned
     expect((stored!.params as Record<string, unknown>).length).toBe(30)
+  })
+
+  /**
+   * The Polygon editor was missing from the first tablet pass entirely —
+   * Polygon creation only ever cancelled, so no polygon form had ever been
+   * filled in, created or saved (#1112 rt4-a review F1). Both blank shapes run
+   * it because the handoff's panel surface covers a round bar and a square
+   * blank, and a square blank's polygon is measured against its side.
+   */
+  for (const shape of ['round', 'square'] as const) {
+    test(`the Polygon edit panel opens from Properties and saves by tap (${shape} blank)`, async ({ app, ui }) => {
+      const { page } = app
+      await seedProject(page, JSON.stringify(barProject(shape)))
+      await createRotarySolid(page, 'polygon', {
+        start: '70', length: '30', sides: '6', 'across-flats': '12',
+      })
+      const created = await getProject(page) as unknown as Project
+      const polygon = created.features[0]
+      expect(polygon, 'the polygon the panel created').toBeDefined()
+      expect(created.featureDefinitions[polygon.definitionId].canned?.kind).toBe('polygon')
+
+      // The model is authored on Top (a bar model belongs to no face), so Top
+      // is where Properties offers its editor.
+      await tapFace(page, 'Top')
+      await openProjectDrawer(page)
+      await page.locator(`.tree-row--feature[data-feature-id="${polygon.id}"]`).tap()
+      await openShapeDisclosure(page)
+      const editPolygon = page.getByRole('button', { name: /^Edit polygon/ })
+      await expect(editPolygon).toBeVisible()
+      const editBox = await editPolygon.boundingBox()
+      expect(editBox!.height, 'the polygon editor entry').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(editBox!.width, 'the polygon editor entry').toBeGreaterThanOrEqual(TOUCH_TARGET)
+
+      await editPolygon.tap()
+      const panel = ui.rotarySolid.dialog(page)
+      await expect(panel).toBeVisible()
+      await expect(panel).toContainText('Edit polygon')
+      // The stored numbers are what the form opened with.
+      await expect(page.locator('#rotary-solid-length')).toHaveValue('30')
+      await expect(page.locator('#rotary-solid-sides')).toHaveValue('6')
+      await expect(page.locator('#rotary-solid-across-flats')).toHaveValue('12')
+      await expectTouchTargets(page, '.rotary-solid-panel')
+      await expectInsideViewport(page, panel, 'Polygon edit panel')
+      await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
+      await shoot(page, `polygon-edit-${shape}-landscape`)
+
+      // A change is saved with the panel's own action, by tap.
+      await page.locator('#rotary-solid-across-flats').fill('14')
+      await ui.rotarySolid.createButton(page).tap()
+      await expect(panel).toHaveCount(0)
+      const edited = await getProject(page) as unknown as Project
+      expect(edited.features).toHaveLength(1)
+      expect(edited.features[0].id).toBe(polygon.id)
+      expect(edited.featureDefinitions[polygon.definitionId].canned!.params).toMatchObject({
+        sides: 6, acrossFlats: 14, length: 30,
+      })
+    })
+  }
+
+  /**
+   * The handoff's panel surface applies to a square blank as well as a round
+   * bar. The other square-blank tests elsewhere only assert that the panels
+   * fit; here they are measured against the tablet touch minimum and driven by
+   * tap alone, which is what this pass is for (#1112 rt4-a review F1).
+   */
+  test('a square blank creates Turn and Polygon models by tap', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(barProject('square')))
+    await tapFace(page, 'Around')
+
+    // ── Turn inside the square blank ──
+    await page.locator('[data-command="rotary-turn"]').first().tap()
+    const turnPanel = ui.rotarySolid.dialog(page)
+    await expect(turnPanel).toBeVisible()
+    // A square blank's finished target defaults to its side — the largest
+    // round the blank holds — so the form proves which blank it is measured
+    // against before anything is typed.
+    await expect(page.locator('#rotary-solid-diameter')).toHaveValue('25')
+    await expectTouchTargets(page, '.rotary-solid-panel')
+    await expectInsideViewport(page, turnPanel, 'Turn panel (square blank)')
+    await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
+    await shoot(page, 'turn-create-square-landscape')
+    await page.locator('#rotary-solid-start').fill('10')
+    await page.locator('#rotary-solid-length').fill('30')
+    await page.locator('#rotary-solid-diameter').fill('20')
+    await ui.rotarySolid.createButton(page).tap()
+    await expect(turnPanel).toHaveCount(0)
+    const afterTurn = await getProject(page) as unknown as Project
+    expect(afterTurn.features).toHaveLength(1)
+    expect(afterTurn.featureDefinitions[afterTurn.features[0].definitionId].canned?.kind).toBe('turn')
+
+    // ── Polygon, created by tap as well ──
+    await page.locator('[data-command="rotary-polygon"]').first().tap()
+    const polygonPanel = ui.rotarySolid.dialog(page)
+    await expect(polygonPanel).toBeVisible()
+    await expectTouchTargets(page, '.rotary-solid-panel')
+    await expectInsideViewport(page, polygonPanel, 'Polygon panel (square blank)')
+    await expectBodyScrollsWhenTall(page, '.rotary-solid-panel')
+    await shoot(page, 'polygon-create-square-landscape')
+    await page.locator('#rotary-solid-start').fill('50')
+    await page.locator('#rotary-solid-length').fill('30')
+    await page.locator('#rotary-solid-sides').fill('6')
+    await page.locator('#rotary-solid-across-flats').fill('18')
+    await ui.rotarySolid.createButton(page).tap()
+    await expect(polygonPanel).toHaveCount(0)
+    const afterPolygon = await getProject(page) as unknown as Project
+    expect(afterPolygon.features).toHaveLength(2)
+    const polygon = afterPolygon.features.find(
+      (feature) => afterPolygon.featureDefinitions[feature.definitionId]?.canned?.kind === 'polygon',
+    )!
+    expect(polygon, 'the polygon the panel created').toBeDefined()
+    expect(afterPolygon.featureDefinitions[polygon.definitionId].canned!.params).toMatchObject({
+      start: 50, length: 30, sides: 6, acrossFlats: 18,
+    })
+    // Both models live inside the real blank, which is never rewritten.
+    expect(afterPolygon.stock).toMatchObject({ shape: 'square', thickness: 25 })
   })
 
   test('the feature context menu is touch-sized on a canned shape and names the other face', async ({ app, ui }) => {
@@ -690,15 +920,18 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     await expect(control).toHaveAttribute('data-face', 'bottom')
 
     // A tablet has no `»` pull-out handle: the CAM panel is a drawer, opened by
-    // the command bar's Operations button, which carries the same job. That
-    // button keeps the shell's own command-bar height (40px, not 44): the whole
-    // tablet bar is 40px, a pre-existing gap reported as a risk rather than
-    // widened here, because at 1024px the bar is already at its width limit.
+    // the command bar's Operations button, which is its stand-in here. The
+    // button used to inherit the command bar's 40px control height, so it is
+    // held to the same 44px minimum as the handle it replaces
+    // (`.top-cmd-btn--operations` in `src/styles/tablet.css`, #1112 rt4-a
+    // review F2).
     await expect(page.locator('#panel-handle-right')).toHaveCount(0)
     const operationsButton = ui.operations.openPanelButton(page)
     const operationsBox = await operationsButton.boundingBox()
-    expect(operationsBox!.height).toBeGreaterThanOrEqual(40)
-    expect(operationsBox!.width).toBeGreaterThanOrEqual(TOUCH_TARGET)
+    expect(operationsBox!.height, 'the Operations entry that replaces the » handle')
+      .toBeGreaterThanOrEqual(TOUCH_TARGET)
+    expect(operationsBox!.width, 'the Operations entry that replaces the » handle')
+      .toBeGreaterThanOrEqual(TOUCH_TARGET)
     await openOperationsDrawer(page)
     await expectInsideViewport(page, page.locator('#panel-right'), 'operations drawer')
   })
@@ -795,54 +1028,99 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
     expect(after.clamps[0].chuck?.size).not.toBe(before.clamps[0].chuck?.size)
   })
 
-  test('Turn and Polygon side views draw dashed on Top and select by tap', async ({ app }) => {
+  /**
+   * The handoff asks for round **and** square bar rotary projects, and a square
+   * blank is a different drawing target: its side view sits on its own blank,
+   * so the dashed outline and the tap target are checked on both shapes with
+   * only the fixture changing (#1112 rt4-a review F1).
+   */
+  for (const shape of ['round', 'square'] as const) {
+    test(`Turn and Polygon side views draw dashed on Top and select by tap (${shape} blank)`, async ({ app }) => {
+      const { page } = app
+      await seedProject(page, JSON.stringify(barProject(shape)))
+      await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
+      await createRotarySolid(page, 'polygon', { start: '70', length: '30', sides: '6', 'across-flats': '12' })
+      await tapFace(page, 'Top')
+      const project = await getProject(page) as unknown as Project
+      const cannedKindOf = (feature: Project['features'][number]) =>
+        project.featureDefinitions[feature.definitionId]?.canned?.kind
+      const turn = project.features.find((feature) => cannedKindOf(feature) === 'turn')!
+      // A six-sided polygon is named "Hex" — its own kind is what identifies it.
+      const polygon = project.features.find((feature) => cannedKindOf(feature) === 'polygon')!
+      expect(turn, 'the Turn feature').toBeDefined()
+      expect(polygon, 'the Polygon feature').toBeDefined()
+
+      // ── Both are drawn, and dashed: the side view's outline is a ghost stroke
+      // over the bar's fill, half covered by the dash gaps (#1112 rt2-d item 19) ──
+      const turnBox = await sideViewBox(page, turn.id)
+      const polygonBox = await sideViewBox(page, polygon.id)
+      for (const [label, box] of [['Turn', turnBox], ['Polygon', polygonBox]] as const) {
+        const coverage = await edgeCoverage(
+          page,
+          { x: box.minX + 1, y: box.minY },
+          { x: box.maxX - 1, y: box.minY },
+        )
+        expect(coverage.samples, `${label} edge samples`).toBeGreaterThan(20)
+        expect(coverage.painted, `${label} outline is not drawn`).toBeGreaterThan(coverage.samples * 0.2)
+        expect(
+          coverage.gaps,
+          `${label} outline is solid, not dashed (${coverage.painted}/${coverage.samples} painted)`,
+        ).toBeGreaterThan(coverage.samples * 0.2)
+      }
+      // The round shot keeps the handoff's plain surface name; the square one
+      // names its blank so the two are not mistaken for each other.
+      await shoot(page, shape === 'round' ? 'top-side-views-landscape' : `top-side-views-${shape}-landscape`)
+
+      // ── Tapping the side view selects the model: the outline is a real target ──
+      const canvas = page.locator('canvas.sketch-canvas')
+      for (const [label, box, feature] of [
+        ['Turn', turnBox, turn],
+        ['Polygon', polygonBox, polygon],
+      ] as const) {
+        const screen = await stockPoint(page, (box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2)
+        const canvasBox = (await canvas.boundingBox())!
+        await canvas.tap({ position: { x: screen.x - canvasBox.x, y: screen.y - canvasBox.y } })
+        await expect(
+          page.locator(`.tree-row--feature[data-feature-id="${feature.id}"].tree-row--selected`),
+          `${label} side view did not select by tap`,
+        ).toHaveCount(1)
+      }
+    })
+  }
+
+  /**
+   * Pins the fit helper's contract (#1112 rt4-a review F3): a surface cut off
+   * at the side must not be excused by a vertically scrolling ancestor. The
+   * fixture is exactly the shape the old helper accepted — a 900px-wide block
+   * inside a 200px-wide, vertically scrolling, horizontally hidden box at the
+   * right edge of the window — so restoring "any scrolling ancestor counts"
+   * makes this test fail.
+   */
+  test('the fit helper refuses a surface clipped sideways inside a vertical scroller', async ({ app }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(barProject()))
-    await createRotarySolid(page, 'turn', { start: '20', length: '40', diameter: '10' })
-    await createRotarySolid(page, 'polygon', { start: '70', length: '30', sides: '6', 'across-flats': '12' })
-    await tapFace(page, 'Top')
-    const project = await getProject(page) as unknown as Project
-    const cannedKindOf = (feature: Project['features'][number]) =>
-      project.featureDefinitions[feature.definitionId]?.canned?.kind
-    const turn = project.features.find((feature) => cannedKindOf(feature) === 'turn')!
-    // A six-sided polygon is named "Hex" — its own kind is what identifies it.
-    const polygon = project.features.find((feature) => cannedKindOf(feature) === 'polygon')!
-    expect(turn, 'the Turn feature').toBeDefined()
-    expect(polygon, 'the Polygon feature').toBeDefined()
-
-    // ── Both are drawn, and dashed: the side view's outline is a ghost stroke
-    // over the bar's fill, half covered by the dash gaps (#1112 rt2-d item 19) ──
-    const turnBox = await sideViewBox(page, turn.id)
-    const polygonBox = await sideViewBox(page, polygon.id)
-    for (const [label, box] of [['Turn', turnBox], ['Polygon', polygonBox]] as const) {
-      const coverage = await edgeCoverage(
-        page,
-        { x: box.minX + 1, y: box.minY },
-        { x: box.maxX - 1, y: box.minY },
-      )
-      expect(coverage.samples, `${label} edge samples`).toBeGreaterThan(20)
-      expect(coverage.painted, `${label} outline is not drawn`).toBeGreaterThan(coverage.samples * 0.2)
-      expect(
-        coverage.gaps,
-        `${label} outline is solid, not dashed (${coverage.painted}/${coverage.samples} painted)`,
-      ).toBeGreaterThan(coverage.samples * 0.2)
-    }
-    await shoot(page, 'top-side-views-landscape')
-
-    // ── Tapping the side view selects the model: the outline is a real target ──
-    const canvas = page.locator('canvas.sketch-canvas')
-    for (const [label, box, feature] of [
-      ['Turn', turnBox, turn],
-      ['Polygon', polygonBox, polygon],
-    ] as const) {
-      const screen = await stockPoint(page, (box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2)
-      const canvasBox = (await canvas.boundingBox())!
-      await canvas.tap({ position: { x: screen.x - canvasBox.x, y: screen.y - canvasBox.y } })
-      await expect(
-        page.locator(`.tree-row--feature[data-feature-id="${feature.id}"].tree-row--selected`),
-        `${label} side view did not select by tap`,
-      ).toHaveCount(1)
-    }
+    const clipped = page.locator('#e2e-horizontal-clip')
+    await page.evaluate(() => {
+      const scroller = document.createElement('div')
+      scroller.id = 'e2e-vertical-scroller'
+      // Fixed near the right edge: the child's layout box runs past the window
+      // while the scroller itself fits, which is what the old helper saw.
+      scroller.style.cssText = 'position:fixed;left:700px;top:20px;width:200px;height:120px;'
+        + 'overflow-x:hidden;overflow-y:auto;z-index:2147483647'
+      const content = document.createElement('div')
+      content.id = 'e2e-horizontal-clip'
+      content.style.cssText = 'width:900px;height:400px;background:#333'
+      scroller.appendChild(content)
+      document.body.appendChild(scroller)
+    })
+    await expect(clipped).toHaveCount(1)
+    // Vertical scrolling exists and its container fits the window: only the
+    // sideways clipping is wrong, and that alone must be reported.
+    await assert.rejects(
+      expectReachable(page, clipped, 'clipped fixture'),
+      /sideways/,
+    )
+    await page.evaluate(() => document.querySelector('#e2e-vertical-scroller')?.remove())
   })
 })
 
@@ -862,17 +1140,23 @@ test.describe('portrait tablet (820 × 1180, touch)', () => {
     await expectInsideViewport(page, overlay, 'rotate prompt')
     await expect(page.locator('.app-shell')).toHaveAttribute('data-shell-mode', 'tablet-compact')
     expect(await page.evaluate(() => matchMedia('(orientation: portrait)').matches)).toBe(true)
-    // The shell is a landscape layout: its own content is wider than the 820px
-    // it is given (the command bar's buttons do not reflow), so the prompt is
-    // what stands between a portrait user and a workspace whose right edge —
-    // the face control included — is off-screen. This is asserted rather than
-    // fixed: portrait is refused by design, and a layout that suddenly fits is
-    // a decision to bring back here, not a silent change (#1112 rt4-a).
-    const shell = await page.evaluate(() => {
-      const element = document.querySelector('.app-shell') as HTMLElement
-      return { clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }
+    // What the prompt promises is that nothing behind it is reachable: it is
+    // the topmost element across the viewport. Whether the landscape shell
+    // underneath happens to overflow 820px is deliberately **not** asserted —
+    // pinning that would make a future layout fix fail, and the refusal is the
+    // overlay's job, not the width's (#1112 rt4-a review F4).
+    const probes = await page.evaluate(() => {
+      const points: [number, number][] = [[410, 590], [40, 40], [780, 1140]]
+      return points.map(([x, y]) => ({
+        x,
+        y,
+        covered: Boolean(document.elementFromPoint(x, y)?.closest('.tablet-rotate-overlay')),
+      }))
     })
-    expect(shell.scrollWidth, 'portrait workspace fits — portrait could be supported now').toBeGreaterThan(shell.clientWidth)
+    expect(
+      probes.every((probe) => probe.covered),
+      `the portrait prompt does not cover the shell: ${JSON.stringify(probes)}`,
+    ).toBe(true)
     await shoot(page, 'rotate-prompt-portrait')
   })
 
@@ -913,11 +1197,13 @@ test.describe('portrait tablet (820 × 1180, touch)', () => {
   test('the header face control stays inside a portrait viewport', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(barProject()))
-    // A landscape shell in an 820px portrait window: the face control is drawn
-    // at the right end of the row and is therefore off-screen, behind the
-    // prompt (see the shell-overflow assertion in the prompt test). What is
-    // worth pinning is that it is refused before it can be reached, so the
-    // prompt covers it and the document itself never scrolls sideways.
+    // The portrait shell is a landscape layout in an 820px window, and the face
+    // control sits at the right end of its row. What is worth pinning is that a
+    // tablet pointer target keeps its size there and that the *document* never
+    // scrolls sideways (the rotate prompt, not a horizontal scrollbar, is the
+    // portrait answer). Whether the control happens to be off-screen behind the
+    // prompt is not asserted: a future portrait layout that fits must not fail
+    // this test (#1112 rt4-a review F4).
     const control = ui.face.current(page)
     await expect(control).toBeVisible()
     const box = await control.boundingBox()
