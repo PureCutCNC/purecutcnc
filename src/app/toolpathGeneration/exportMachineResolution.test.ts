@@ -25,36 +25,42 @@
  * generate G-code preview", and nothing exports for any operation even though
  * the move counts are computed.
  *
- * ## What the artifact proves, and what it cannot
+ * ## Why the report's sentence did not mean what it said
  *
- * The project file was saved again after the report. That saved state — the two
- * operations it holds with the toolpath display on, which is exactly what the
- * dialog ticks on open — resolves its machine and posts a program, both with its
- * own Grbl copy and with the reporter's library Mach3 copy embedded instead.
- * (That was established by running the real file through the same export path;
- * this suite carries the minimum of it, as the handoff asks: the two machine
- * definitions and a minimal inch rotary project.) The report's *refusing reason*
- * is therefore not recoverable from the artifact, and no test here claims to
- * have reproduced the historical failure. What is recoverable and decisive is
- * held below:
+ * The artifact was saved again after the report, and it does not reproduce the
+ * report: as it stands it selects its own Grbl copy, and running it through the
+ * real export path (real service, the dialog's own default selection) posts a
+ * program on `feat/issue-1112-wave4` and on this branch alike. The handoff's
+ * description of the file does not match the saved file either — so the report's
+ * *refusing reason* is not recoverable from the artifact.
+ *
+ * What is decisive is that it never was a machine-resolution answer. The Export
+ * dialog's machine row and the export both read `getActiveMachineDefinition`,
+ * so a dialog that *named* a machine is proof the resolver returned a
+ * definition: no function returned "no machine". The sentence came from the
+ * pane's single fallback, which was rendered for every state without a program
+ * — the 300 ms debounce and the whole of generation on open, and every blocked
+ * preparation after it. `exportDialogMachinePreview.test.ts` pins that: the
+ * real dialog, opened on the reporter's machine data, must never show the
+ * "select a machine" sentence while its header names one.
+ *
+ * ## What is held here
  *
  * 1. **The reported machine data, in an inch project, with operations
- *    selected.** The snapshots are copied verbatim from the reporter's machine
- *    library and project (see the constant comments) rather than rebuilt from
- *    today's bundled templates, the fixture is a real inch project, and the
- *    default selection has the same two displayed operations the saved project
- *    has. That fails if export resolves the bundled registry instead of the
- *    project's snapshot, or drops the selected id.
- * 2. **The reported symptom, with an operation selected.** The pane's sentence
- *    used to be one fallback for *every* state without a program — so a
- *    machine that is named in the header, an operation that is ticked, and a
- *    refusal for another reason all read as "select a machine" (the report's
- *    pair of observations, which cannot both be true of a resolved machine).
- *    One such state is reproduced end to end here: a failing member blocks the
- *    whole export, and the pane must name that failure. The empty selection
- *    the earlier revision of this file offered as "the reported triad" was not
- *    the reported state (the saved project has two displayed operations), so
- *    it is now a checklist test in its own right, not a claim about the report.
+ *    selected.** Both definitions are copied verbatim from the reporter's
+ *    machine library and project (see `src/test/reportedRotaryMachines.ts`)
+ *    rather than rebuilt from today's bundled templates, the fixture is a real
+ *    inch project, and the default selection has the same two displayed
+ *    operations the saved project has. That fails if export resolves the
+ *    bundled registry instead of the project's snapshot, or drops the selected
+ *    id.
+ * 2. **The permanent state the pane used to lie about.** Hiding every toolpath
+ *    empties the default selection (the tick follows the display toggle), so
+ *    the preparation blocks on `no-operations` while the header names the
+ *    machine — the report's pair of observations, one toggle away in the saved
+ *    file, where four of its six operations have the display off. The pane must
+ *    name the selection. The transient form of the same lie is the dialog's
+ *    first frame, and the component suite holds that.
  *
  * The resolver itself is unchanged from `feat/issue-1112-wave3`: no #1126 slice
  * changed how a project's machine is resolved. What was wrong was the sentence
@@ -68,11 +74,16 @@ import { validateMachineDefinition, type MachineDefinition } from '../../engine/
 import { BUNDLED_DEFINITIONS, getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import {
+  REPORTED_GRBL_COPY,
+  reportedGrblCopy,
+  reportedMach3Copy,
+  reportedRotaryProject,
+} from '../../test/reportedRotaryMachines'
 import { projectMachineMismatch } from '../../store/helpers/projectType'
 import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
 import type { Project } from '../../types/project'
 import { exportPreviewMessageKey } from '../../components/export/exportPreviewText'
-import { exportBlockReasonMessage } from '../../components/export/exportBlockReason'
 import { listExportOperationOptions } from '../../components/export/exportOperationSelection'
 import {
   createExportToken,
@@ -81,8 +92,6 @@ import {
   type ExportPostOptions,
 } from './exportPreparation'
 import { makeCountingService } from './testSupport'
-import { createToolpathGenerationService, type GenerationContext } from './service'
-import type { ExecutorRequest, GenerationExecutor } from './executor'
 
 let passed = 0
 let failed = 0
@@ -101,180 +110,6 @@ function bundled(id: string): MachineDefinition {
   const found = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
   assert.ok(found, `bundled definition ${id} exists`)
   return validateMachineDefinition(structuredClone(found))
-}
-
-/**
- * The machine the report names, **verbatim** from the reporter's machine
- * library (`purecutcnc.machines.customMachines`, My Machines): id `mach3-copy`,
- * display name "Mach3 (w/rotary)", `builtin: false`, rotary about X with its
- * own drive. It is a copy of the bundled Mach3 with a rotary axis added, and it
- * is the definition the project embedded when the report was written.
- *
- * Untyped on purpose — it is the stored JSON as it was read, and the tests run
- * it through the same `validateMachineDefinition` the loader does.
- */
-const REPORTED_MACH3_COPY: unknown = {
-  id: 'mach3-copy',
-  name: 'Mach3 (w/rotary)',
-  description: 'Mach3 \u2014 Windows-based CNC controller',
-  builtin: false,
-  fileExtension: 'tap',
-  rotary: {
-    about: 'x',
-    drive: 'own',
-    reversed: false,
-    inverseTimeFeed: { on: 'G93', off: 'G94' },
-  },
-  coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
-  numberFormat: {
-    decimalPlaces: { mm: 3, inch: 4 },
-    trailingZeros: true,
-    leadingZero: true,
-  },
-  units: { mmCommand: 'G21', inchCommand: 'G20' },
-  program: {
-    header: [
-      '%',
-      'O0001 ({programName})',
-      'G90 G94 G17 G40 G49 G80',
-      '{unitsCommand}',
-      '{wcsCommand}',
-    ],
-    operationHeader: [
-      '( Operation {operationIndex}: {operationName} )',
-      '( Description: {operationDescription} )',
-      '( Tool {toolNumber}: {toolName} )',
-    ],
-    footer: [],
-    commentPrefix: '(',
-    commentSuffix: ')',
-    lineNumbers: true,
-    lineNumberIncrement: 10,
-  },
-  workCoordinates: { selectCommand: 'G54' },
-  motion: {
-    rapidCommand: 'G0',
-    linearCommand: 'G1',
-    cwArcCommand: 'G2',
-    ccwArcCommand: 'G3',
-    arcFormat: 'ij',
-    modalMotion: true,
-    arcInterpolation: true,
-    machineSafeZ: 0,
-  },
-  feedSpeed: {
-    feedCommand: 'F',
-    rpmCommand: 'S',
-    spindleOnCW: 'M3',
-    spindleOnCCW: 'M4',
-    spindleOff: 'M5',
-    inlineWithMotion: true,
-    modalFeedSpeed: true,
-  },
-  toolChange: {
-    commands: ['M5', 'M6 T{toolNumber}', 'G43 H{toolNumber}'],
-    stopSpindleFirst: true,
-    pauseAfterChange: false,
-    pauseCommand: 'M1',
-  },
-  cannedCycles: {
-    drillCommand: 'G81',
-    drillWithDwellCommand: 'G82',
-    peckDrillCommand: 'G83',
-    chipBreakDrillCommand: 'G73',
-    peckStepWord: 'Q',
-    retractMode: 'G98',
-    cancelCommand: 'G80',
-  },
-  coolant: {
-    floodOnCommand: 'M8',
-    mistOnCommand: 'M7',
-    coolantOffCommand: 'M9',
-  },
-  stop: { programEndCommand: 'M30' },
-}
-
-/**
- * The second machine the report names: the Grbl copy now saved inside the
- * project (`meta.machineDefinitions[0]` of the reported `.camj`, format 3.3),
- * also with a rotary axis of its own. It is what the saved file selects, so a
- * regression here is a regression in the state the operator will open next.
- */
-const REPORTED_GRBL_COPY: unknown = {
-  id: 'grbl-1-1-copy',
-  name: 'GRBL 1.1 (copy)',
-  description: 'GRBL 1.1 \u2014 common hobby CNC controller (Arduino-based)',
-  builtin: false,
-  fileExtension: 'nc',
-  rotary: {
-    about: 'x',
-    drive: 'own',
-    reversed: false,
-    inverseTimeFeed: { on: 'G93', off: 'G94' },
-  },
-  coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
-  numberFormat: {
-    decimalPlaces: { mm: 3, inch: 4 },
-    trailingZeros: true,
-    leadingZero: true,
-  },
-  units: { mmCommand: 'G21', inchCommand: 'G20' },
-  program: {
-    header: [
-      '; {programName}',
-      '; Generated by PureCutCNC on {date}',
-      'G90',
-      'G17',
-      '{unitsCommand}',
-    ],
-    operationHeader: [
-      '; Operation {operationIndex}: {operationName}',
-      '; Description: {operationDescription}',
-      '; Tool {toolNumber}: {toolName}',
-    ],
-    footer: [],
-    commentPrefix: ';',
-    commentSuffix: '',
-    lineNumbers: false,
-    lineNumberIncrement: 10,
-  },
-  workCoordinates: { selectCommand: null },
-  motion: {
-    rapidCommand: 'G0',
-    linearCommand: 'G1',
-    cwArcCommand: 'G2',
-    ccwArcCommand: 'G3',
-    arcFormat: 'ij',
-    modalMotion: true,
-    arcInterpolation: true,
-    machineSafeZ: 0,
-  },
-  feedSpeed: {
-    feedCommand: 'F',
-    rpmCommand: 'S',
-    spindleOnCW: 'M3',
-    spindleOnCCW: 'M4',
-    spindleOff: 'M5',
-    inlineWithMotion: true,
-    modalFeedSpeed: true,
-  },
-  toolChange: {
-    commands: ['M5', 'M0 ; Tool change: {toolName}'],
-    stopSpindleFirst: true,
-    pauseAfterChange: false,
-    pauseCommand: 'M0',
-  },
-  cannedCycles: null,
-  coolant: null,
-  stop: { programEndCommand: 'M30' },
-}
-
-function reportedMach3Copy(): MachineDefinition {
-  return validateMachineDefinition(REPORTED_MACH3_COPY)
-}
-
-function reportedGrblCopy(): MachineDefinition {
-  return validateMachineDefinition(REPORTED_GRBL_COPY)
 }
 
 /**
@@ -325,38 +160,6 @@ const OPTIONS: ExportPostOptions = {
   captureMotionTrace: false,
 }
 
-/**
- * The rotary fixture as an **inch** project — the units of the reported project
- * — with `machine` as the project's own snapshot. `selection` is what
- * `meta.selectedMachineId` says, so a project whose selection names nothing can
- * be built too.
- *
- * `displayedOperations` matches the saved project's two operations with the
- * toolpath display on: they are the dialog's default export selection, so the
- * regression runs with operations selected, not with an empty checklist.
- */
-function reportedRotaryProject(
-  machine: MachineDefinition | null,
-  selection: string | null = machine?.id ?? null,
-  displayedOperations = 1,
-): Project {
-  const bar = rotaryOperationFixture('x', 'rotary_rough', 'inch')
-  const first = bar.operations[0]
-  const operations = displayedOperations > 1
-    ? [first, { ...first, id: 'op-second', name: 'Rotary rough 2' }]
-    : [first]
-  return {
-    ...bar,
-    operations: operations.map((operation) => ({ ...operation, showToolpath: true })),
-    meta: {
-      ...bar.meta,
-      projectType: 'rotary',
-      machineDefinitions: machine ? [machine] : [],
-      selectedMachineId: selection,
-    },
-  }
-}
-
 function realService(project: Project): ReturnType<typeof makeCountingService> {
   return makeCountingService({ project, documentKey: 1 }, (operationId) => {
     const operation = project.operations.find((candidate) => candidate.id === operationId)
@@ -365,48 +168,6 @@ function realService(project: Project): ReturnType<typeof makeCountingService> {
     assert.ok(envelope, `operation ${operationId} generates`)
     return envelope.result
   })
-}
-
-/**
- * A service where one operation's generation fails and every other completes.
- *
- * This is the state that produces the reported *symptom* with an operation
- * selected: the machine is resolved, the checklist has ticks, and the export
- * still produces no program. A member that fails blocks the whole export, so
- * the pane has to say which one.
- */
-function failingService(project: Project, failingOperationId: string): {
-  service: ReturnType<typeof createToolpathGenerationService>
-  context: GenerationContext
-} {
-  const context: GenerationContext = { project, documentKey: 1 }
-  const service = createToolpathGenerationService({
-    getCurrentContext: () => context,
-    createExecutor: (_kind, epoch): GenerationExecutor => ({
-      kind: 'inline',
-      epoch,
-      supportsHardCancellation: false,
-      run: (request: ExecutorRequest) => {
-        if (request.identity.operationId === failingOperationId) {
-          return Promise.resolve({
-            status: 'failed' as const,
-            failure: { category: 'computation' as const, message: 'the cutter does not fit this pass' },
-          })
-        }
-        const operation = project.operations.find((candidate) => candidate.id === request.identity.operationId)
-        const envelope = operation ? computeOperationToolpath(project, operation) : null
-        return Promise.resolve(envelope
-          ? { status: 'completed' as const, result: envelope.result, raw: null }
-          : {
-            status: 'failed' as const,
-            failure: { category: 'computation' as const, message: `operation ${request.identity.operationId} does not generate` },
-          })
-      },
-      terminate: () => {},
-      dispose: () => {},
-    }),
-  })
-  return { service, context }
 }
 
 /** The operations the dialog opens with ticked — its own default set. */
@@ -607,57 +368,12 @@ async function main(): Promise<void> {
     )
   })
 
-  await test('an export blocked with operations selected names that reason, never the machine', async () => {
-    // The reported symptom, with the operation selected: the header names the
-    // machine, the preparation produces no program, and the old pane said
-    // "Select a machine in project settings" for all of it. A failing member
-    // blocks the whole export — one such state, reproduced end to end — and the
-    // pane must point at the failure instead.
-    const machine = reportedMach3Copy()
-    const project = reportedRotaryProject(machine, machine.id, 2)
-    const selected = defaultSelection(project)
-    assert.equal(selected.length, 2, 'the dialog opens with operations ticked')
-    const failingId = selected[1]
-
-    const { service, context } = failingService(project, failingId)
-    assert.ok(getActiveMachineDefinition(project), 'the machine is resolved in the header all along')
-
-    const token = createExportToken(1, context, selected, machine, OPTIONS)
-    const prepared = await prepareExport(service, context, token, machine, OPTIONS)
-    assert.equal(prepared.status, 'blocked', 'the export cannot run')
-    if (prepared.status !== 'blocked') return
-    assert.equal(prepared.reason.kind, 'generation-failed', 'because one selected operation failed')
-    if (prepared.reason.kind !== 'generation-failed') return
-    assert.equal(prepared.reason.operationId, failingId, 'the failing member is named')
-
-    assert.equal(
-      exportPreviewMessageKey({ hasPreview: false, machine: 'resolved', blockReason: prepared.reason.kind }),
-      'dialogs.export.previewBlocked',
-      'the pane points at the Errors list',
-    )
-    assert.notEqual(
-      exportPreviewMessageKey({ hasPreview: false, machine: 'resolved', blockReason: prepared.reason.kind }),
-      'dialogs.export.previewPlaceholder',
-      'and never tells a resolved machine to select a machine',
-    )
-
-    // The Errors list is what the pane points at, and it carries the operation
-    // and the engine's own message.
-    const message = exportBlockReasonMessage(
-      prepared.reason,
-      (operationId) => project.operations.find((operation) => operation.id === operationId)?.name ?? null,
-    )
-    assert.equal(message?.key, 'dialogs.export.error.generationFailed', 'the refusal has words')
-    assert.equal(message?.params?.operation, 'Rotary rough 2', 'naming the operation that stopped it')
-    assert.equal(message?.params?.detail, 'the cutter does not fit this pass', 'and the engine\'s detail')
-  })
-
-  await test('a checklist whose default is empty is named as that, and is not the report', async () => {
-    // Hiding every toolpath is a real state and it does empty the default
-    // export set (the tick follows the display toggle). It is covered here as
-    // the checklist behaviour it is: the earlier revision of this file offered
-    // it as the reported state, which it is not — the reported project has two
-    // displayed operations.
+  await test('an empty default checklist is the state the pane used to call "no machine"', async () => {
+    // Hiding every toolpath empties the default export set (the tick follows
+    // the display toggle), and the preparation then blocks on `no-operations`
+    // while the header still names the machine. That is the report's pair of
+    // observations made permanent — and it is one toggle away in the saved
+    // file, where four of the six operations have the display off.
     const machine = reportedMach3Copy()
     const displayedProject = reportedRotaryProject(machine, machine.id, 2)
     const project: Project = {
