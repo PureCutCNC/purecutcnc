@@ -279,6 +279,12 @@ export type ToolpathWarningCode =
   | 'carveWrongKind'
   | 'carveNoValidTargets'
   | 'targetsMissing'
+  /** A selected target resolved to a feature that exists, but that feature
+   *  expands into no geometry (a canned shape or a text feature whose
+   *  parameters yield nothing). Distinct from `targetsMissing`: the feature is
+   *  there, and saying it is gone sends the user looking for something they
+   *  can see in the tree. */
+  | 'targetsNoGeometry'
   // rest regions
   | 'restOnlyEdgeRoute'
   | 'restOnlyPocket'

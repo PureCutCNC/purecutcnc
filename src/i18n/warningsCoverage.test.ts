@@ -42,7 +42,7 @@ const ALL_CODES = [
   'entryStrategyFallback', 'entryHelixDiameterClamped', 'debug',
   'xyLeadUnsupported', 'xyLeadRegionMask', 'xyLeadNoViablePath', 'xyLeadNeedsRampedEntry',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
-  'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
+  'targetsNotFound', 'targetsMissing', 'targetsNoGeometry', 'stepoverRatioRange', 'operationStepoverRatioRange',
   'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded', 'rotaryFinishWithoutRough',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',

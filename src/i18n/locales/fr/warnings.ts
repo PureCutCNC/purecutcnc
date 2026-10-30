@@ -60,6 +60,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.stepdownPositive': 'La profondeur de passe doit être supérieure à zéro',
   'warnings.targetsNotFound': 'Une ou plusieurs entités cibles sont introuvables',
   'warnings.targetsMissing': 'Certaines entités cibles sélectionnées sont absentes',
+  'warnings.targetsNoGeometry': "Certaines entités cibles sélectionnées n'ont pas de géométrie",
   'warnings.stepoverRatioRange': 'Le ratio de recouvrement doit être compris entre 0 et 1',
   'warnings.operationStepoverRatioRange': 'Le ratio de recouvrement de l’opération doit être compris entre 0 et 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}\u00A0: la profondeur de passe est inférieure à 0,01 mm\u00A0; augmentez-la',

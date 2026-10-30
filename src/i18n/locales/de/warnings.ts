@@ -67,6 +67,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.stepdownPositive': 'Operations-Zustellung muss größer als null sein',
   'warnings.targetsNotFound': 'Ein oder mehrere Ziel-Features nicht gefunden',
   'warnings.targetsMissing': 'Einige ausgewählte Ziel-Features fehlen',
+  'warnings.targetsNoGeometry': 'Einige ausgewählte Ziel-Features haben keine Geometrie',
   'warnings.stepoverRatioRange': 'Bahnabstand-Verhältnis muss zwischen 0 und 1 liegen',
   'warnings.operationStepoverRatioRange': 'Operations-Bahnabstand-Verhältnis muss zwischen 0 und 1 liegen',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: Die Zustellung liegt unter 0,01 mm; erhöhen Sie sie',

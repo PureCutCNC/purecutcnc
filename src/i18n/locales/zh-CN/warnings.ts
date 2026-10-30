@@ -64,6 +64,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.stepdownPositive': '加工操作每层切深必须大于零',
   'warnings.targetsNotFound': '一个或多个目标特征未找到',
   'warnings.targetsMissing': '部分选定的目标特征缺失',
+  'warnings.targetsNoGeometry': '部分选定的目标特征没有几何图形',
   'warnings.stepoverRatioRange': '步距比例必须在 0 和 1 之间',
   'warnings.operationStepoverRatioRange': '加工操作步距比例必须在 0 和 1 之间',
   'warnings.rotaryStepdownBelowMinimum': '{operation}：每层切深低于 0.01 mm；请增大切深',

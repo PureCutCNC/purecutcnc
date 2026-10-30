@@ -67,6 +67,7 @@ export const warningsEn = {
   'warnings.stepdownPositive': 'Operation stepdown must be greater than zero',
   'warnings.targetsNotFound': 'One or more target features not found',
   'warnings.targetsMissing': 'Some selected target features are missing',
+  'warnings.targetsNoGeometry': 'Some selected target features have no geometry',
   'warnings.stepoverRatioRange': 'Stepover ratio must be between 0 and 1',
   'warnings.operationStepoverRatioRange': 'Operation stepover ratio must be between 0 and 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: the stepdown is below 0.01 mm; increase it',

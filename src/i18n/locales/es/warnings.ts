@@ -60,6 +60,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.stepdownPositive': 'El paso de operación debe ser mayor que cero',
   'warnings.targetsNotFound': 'No se encontró uno o más elementos objetivo',
   'warnings.targetsMissing': 'Faltan algunos elementos objetivo seleccionados',
+  'warnings.targetsNoGeometry': 'Algunos elementos objetivo seleccionados no tienen geometría',
   'warnings.stepoverRatioRange': 'La relación de paso debe estar entre 0 y 1',
   'warnings.operationStepoverRatioRange': 'La relación de paso de la operación debe estar entre 0 y 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: el paso es inferior a 0,01 mm; auméntelo',
