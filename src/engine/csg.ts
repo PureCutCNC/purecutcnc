@@ -486,6 +486,14 @@ export function buildFeatureMesh(
       roughness: 0.82,
       metalness: 0.05,
       side: THREE.DoubleSide,
+      // A canned model's surface is also the bar model's surface: the bar fold
+      // turns the stock down to this very mesh (#1112 rt4-c item 36), so the two
+      // are coincident and their faces would flicker against each other. Pull
+      // the model's faces a hair forward, like an Around region's display-only
+      // slab, so the selection/hover tint this mesh carries stays visible.
+      ...(cannedShapeIsModel(feature.canned)
+        ? { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }
+        : {}),
     })
     markFeatureBaseColor(material, baseColor)
     if (!chunks || chunks.length === 0) {
@@ -1136,6 +1144,53 @@ function unionClippedToBar(
 }
 
 /**
+ * The material the raw bar loses to one turning model (#1112 rt4-c item 36).
+ *
+ * A canned model on a bar is the finished surface of the stock over its own
+ * length: turning the blank down leaves the model and takes away the rest of
+ * the cross-section there. That "rest" is this solid — a box over the bar's own
+ * bounding cross-section, as long as the model's axial span, minus the model —
+ * so the fold's `difference(current, removal)` leaves the turned surface itself
+ * and nothing around it. Material before and after the model keeps the bar's
+ * diameter, which is what a partially turned bar looks like.
+ *
+ * The box comes from the bar's bounding box rather than its surface, so it
+ * covers every vertex of a round bar and the square blank's own corners, and
+ * the model's bounding box gives the length on either bar axis. The model's
+ * ends are coplanar with the box's end faces, which is deliberate: a longer box
+ * would leave a hairline gap between the bar and the turned section.
+ */
+function barTurningRemoval(
+  module: ManifoldToplevel,
+  bar: ManifoldSolid,
+  model: ManifoldSolid,
+  axis: 'x' | 'y',
+): ManifoldSolid {
+  const barBox = bar.boundingBox()
+  const modelBox = model.boundingBox()
+  const along = axis === 'x' ? 0 : 1
+  const min = [barBox.min[0], barBox.min[1], barBox.min[2]]
+  const max = [barBox.max[0], barBox.max[1], barBox.max[2]]
+  min[along] = modelBox.min[along]
+  max[along] = modelBox.max[along]
+  const size: [number, number, number] = [max[0] - min[0], max[1] - min[1], max[2] - min[2]]
+  const centre: [number, number, number] = [
+    (min[0] + max[0]) / 2,
+    (min[1] + max[1]) / 2,
+    (min[2] + max[2]) / 2,
+  ]
+  const cube = module.Manifold.cube(size, true)
+  let window: ManifoldSolid | null = null
+  try {
+    window = cube.translate(centre)
+    return module.Manifold.difference(window, model)
+  } finally {
+    window?.delete()
+    cube.delete()
+  }
+}
+
+/**
  * The part's solid in a rotary project (#1054 slice 1): the bar each face cuts
  * into.
  *
@@ -1165,11 +1220,19 @@ function unionClippedToBar(
  * hid the Turn and the Hex it ran over, and hiding the Thread brought them
  * back (#1112 rt3-c item 29). A models-only project already builds no boolean
  * mesh (issue #1112 F5); this is the same rule for a fold that changes nothing.
+ *
+ * A canned model (Turn, Polygon) is part of the bar, not an overlay on it
+ * (#1112 rt4-c item 36): the stock is turned down to that model over the
+ * model's own length, so the fold applies it in tree order — before or after a
+ * sheet cut, wherever the user put the row. Folding the models is what makes
+ * them visible beside sheet work: while they were left out, an opaque bar was
+ * drawn over them and both Turns in Frank's file disappeared the moment the
+ * Around pocket was shown.
  */
 export function buildBarModelSolid(
   module: ManifoldToplevel,
   project: Project,
-  visibleFlatFeatures: SketchFeature[],
+  visibleFeatures: SketchFeature[],
   visibleAroundFeatures: SketchFeature[],
   arcStepRadians: number = DEFAULT_ARC_STEP_RADIANS,
 ): ManifoldSolid | null {
@@ -1185,20 +1248,50 @@ export function buildBarModelSolid(
     current = next
   }
 
-  // One ordered list of the boolean features, flat and Around alike. A row's
-  // position comes from the project's own feature list; its expanded shapes
-  // stay together, in their own order, because the sort is stable.
+  // One ordered list of the boolean and model features, flat and Around alike.
+  // A row's position comes from the project's own feature list; its expanded
+  // shapes stay together, in their own order, because the sort is stable.
+  interface BarStage {
+    index: number
+    around: boolean
+    feature: SketchFeature
+    /** A canned model that shapes the bar's surface rather than cutting it. */
+    turningModel: boolean
+  }
   const rowIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
-  const stages: Array<{ index: number; around: boolean; feature: SketchFeature }> = []
+  const stages: BarStage[] = []
   for (const around of [false, true] as const) {
-    for (const source of around ? visibleAroundFeatures : visibleFlatFeatures) {
+    for (const source of around ? visibleAroundFeatures : visibleFeatures) {
       const index = rowIndex.get(source.id) ?? Number.MAX_SAFE_INTEGER
+      // A Turn or Polygon is folded as the model feature itself, not as the
+      // shapes `expandFeatureGeometry` yields for it: those are only its
+      // placement frame (issue #1112 F5), while the feature owns the generated
+      // mesh that is the bar's finished surface. A model whose mesh asset is
+      // missing draws nothing rather than its frame, so it shapes nothing.
+      if (!around && source.operation === 'model' && cannedShapeIsModel(source.canned)) {
+        if (featureModelAsset(project, source)) {
+          stages.push({ index, around, feature: source, turningModel: true })
+        }
+        continue
+      }
       for (const feature of expandFeatureGeometry(source, false)) {
-        stages.push({ index, around, feature })
+        stages.push({ index, around, feature, turningModel: false })
       }
     }
   }
   stages.sort((a, b) => a.index - b.index)
+
+  // With no Add or Subtract stage there is no model mesh at all (#1112 F5,
+  // rt3-c): the stock mesh already draws the bar, translucently, so the model
+  // meshes and wrapped lines inside it stay visible. A turning model alone does
+  // not need a bar: it is drawn as its own mesh, exactly as before.
+  const hasBooleanStage = stages.some(
+    (stage) => !stage.turningModel && (stage.feature.operation === 'add' || stage.feature.operation === 'subtract'),
+  )
+  if (!hasBooleanStage) {
+    bar.delete()
+    return null
+  }
 
   // The Around sheet's slabs are wrapped up front. A failure here is caught so
   // it cannot take the flat faces down with it.
@@ -1220,8 +1313,28 @@ export function buildBarModelSolid(
 
   try {
     for (const stage of stages) {
-      const { feature, around } = stage
+      const { feature, around, turningModel } = stage
       if (around && aroundFailed) continue
+
+      // A turning model replaces the bar's cross-section with the finished
+      // surface it generated, over its own length (#1112 rt4-c item 36). The
+      // removal is built from the whole bar, not from `current`, so a later
+      // model wins its span and an earlier sheet cut inside that span is still
+      // under the model it cut before.
+      if (turningModel) {
+        const model = buildFeatureSolid(module, project, feature)
+        if (!model) continue
+        let removal: ManifoldSolid | null = null
+        try {
+          removal = barTurningRemoval(module, bar, model, project.stock.axis)
+          replace(module.Manifold.difference(current, removal))
+        } finally {
+          removal?.delete()
+          model.delete()
+        }
+        continue
+      }
+
       if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
       // A wrapped slab is owned by `slabs`; a flat solid is built and released
       // here. Neither is deleted before the boolean that consumes it returns.
@@ -1544,7 +1657,10 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
     )
     if (booleanFeatures.length > 0 || aroundFeatures.length > 0) {
       try {
-        modelMesh = await buildBooleanModel(project, booleanFeatures, aroundFeatures, threePalette)
+        // Every visible feature, not only the Add/Subtract ones: a canned model
+        // is part of the bar the fold builds (#1112 rt4-c item 36), so the model
+        // rows have to reach `buildBarModelSolid`.
+        modelMesh = await buildBooleanModel(project, visibleFeatures, aroundFeatures, threePalette)
       } catch (error) {
         console.error('Failed to build boolean 3D preview, falling back to feature meshes.', error)
       }
