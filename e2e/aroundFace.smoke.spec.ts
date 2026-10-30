@@ -349,6 +349,29 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
     await expect(ui.exportDialog.exportButton(page)).toBeEnabled()
   })
 
+  // The other half of the same report: the pane used to say "Select a machine
+  // in project settings" for every state without a program, so a project whose
+  // machine *is* selected — the header names it — told the operator to select
+  // one. The export checklist opens with its operations ticked; deselecting them
+  // is a no-preview state that names itself, and the machine is still resolved
+  // throughout (issue #1112, item 35).
+  test('a resolved machine with nothing ticked names the selection, not a missing machine', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
+    await ui.face.switchTo(page, 'Around')
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    await expect(ui.exportDialog.machineName(page)).toHaveText('E2E Around Rotary X')
+    await ui.exportDialog.selectionToggle(page).click()
+
+    await expect(ui.exportPreview.body(page)).toContainText('no operation is ticked for export')
+    await expect(ui.exportPreview.body(page)).not.toContainText('Select a machine in project settings')
+    await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+  })
+
   test('a plain router on a rotary project blocks the export in the dialog', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'plain' })))
