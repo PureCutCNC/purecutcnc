@@ -15,17 +15,19 @@
  */
 
 /**
- * The operation a new canned outline shape defaults to, per face (issue #1112
- * R2 item 14).
+ * The operation a new canned outline shape defaults to, per face and stock
+ * (issue #1112 R2 item 14, completed by rt3-d item 33).
  *
- * Frank: "a gear created on the Around face came out as Add." On the unrolled
- * Around sheet the bar is already the material (#395, #1108), so a shape drawn
- * there is a cut into the bar — exactly the rule a hand-drawn outline follows
- * (`inferManualFeatureOperation`). A gear is one canned feature like the rest,
- * but the gear action had its own "the first machining feature is Add" rule,
- * which is right on Top/Bottom (a block's base solid) and wrong on Around.
- * These tests pin each canned kind by the real store action, first-feature and
- * later, on both bar shapes and on a block, so "Top/Bottom unchanged" is proven
+ * Frank: "a gear created on the Around face came out as Add" (item 14), and
+ * then "a gear added as the first feature on a square bar's Top face came out
+ * as Add" (item 33). Both are one rule: on a bar — round or square — the bar is
+ * already the material on **every** face (#1054), so a new closed feature is a
+ * cut into it, hand-drawn or canned, exactly as `inferManualFeatureOperation`
+ * classifies a hand-drawn one. A canned shape reaches the same rule through
+ * `buildShapeFeature`; the gear action was the one creator with its own "the
+ * first machining feature is Add" default, which is right only where there is a
+ * base solid to make — a block. These tests pin each canned kind, first-feature
+ * and later, on both bar shapes and on a block, so "block unchanged" is proven
  * rather than assumed.
  *
  * A square blank's Around sheet is round-only for authoring (#1016 C2-U1): its
@@ -33,8 +35,8 @@
  * that every Around authoring path — `addFeature`, the drawing tools, imports,
  * paste, and both gear branches — writes nothing on it, and rt2-c keeps those
  * drawer entries visible-but-disabled while #1128 owns sheet work. That
- * refusal is therefore *not* item 14's default and must not be lifted here: a
- * square blank authors Top and Bottom, so its coverage is two-fold.
+ * refusal is therefore *not* these items' default and must not be lifted here:
+ * a square blank authors Top and Bottom, so its coverage is two-fold.
  *  1. Real creation of every named kind on the square blank's authorable
  *     faces (Top and Bottom) is a cut into the bar, proving the bar-is-material
  *     rule through the store actions rather than a draft;
@@ -45,13 +47,15 @@
  *     later (#1128) cannot quietly bring the gear's Add back.
  *
  * Mutations checked one at a time against these assertions:
- * - dropping the `face !== 'around'` condition in `gearCreationOperation`
- *   (i.e. the first gear on Around goes back to Add) → the Around gear
- *   assertions fail, on the round bar and on the square blank's draft;
- * - making that condition unconditional (every face subtract) → the Top and
- *   Bottom assertions fail;
+ * - dropping the `barSeedsModel` branch in `gearCreationOperation` (i.e. the
+ *   first gear on a bar goes back to Add on Top/Bottom) → the bar gear
+ *   assertions fail, on both bar shapes and every face;
+ * - making that branch unconditional (every project subtract) → the block
+ *   assertions fail;
+ * - scoping the bar branch to a round bar → the square blank's real-creation
+ *   gear assertions fail;
  * - removing `inferManualFeatureOperation` from `buildShapeFeature`'s closed
- *   path (so a canned shape is always Add) → every Around assertion fails;
+ *   path (so a canned shape is always Add) → every canned assertion fails;
  * - scoping the bar-is-material branch of `inferManualFeatureOperation` to a
  *   round bar (`barSeedsModel` && round stock) (so a square bar classifies like
  *   a block) → the square-blank real-creation assertions on Top and Bottom
@@ -249,8 +253,9 @@ function testGearBoreOnAroundIsAnAddIsland(): void {
   console.log('around: gear bore nests as an Add island: PASSED')
 }
 
-function testTopAndBottomKeepTheirDefaults(): void {
-  // A block's first closed shape is its base solid, so every kind is Add.
+function testBlockKeepsItsBaseSolidDefault(): void {
+  // A block's first closed shape is its base solid, so every kind is Add. This
+  // is the historical rule item 33 leaves alone.
   for (const face of ['top', 'bottom'] as const) {
     for (const [kind, create] of CANNED_CREATORS) {
       onFace(projectWith(newProject('Block', 'mm').stock, 'milling'), face)
@@ -261,20 +266,76 @@ function testTopAndBottomKeepTheirDefaults(): void {
     assertEqual(createGear().length, 1, `the gear is created on ${face}`)
     assertEqual(operations(), ['add'], `a first gear on a block's ${face} is the base solid`)
   }
+  console.log('block: the base-solid default is unchanged: PASSED')
+}
 
-  // On a bar the bar is the material on every face, so a hand-drawn or canned
-  // outline is a cut there too. The gear action's historical first-gear Add is
-  // kept on Top/Bottom on purpose (issue #1112 R2 item 14 scopes the change to
-  // Around), so it is pinned here rather than quietly aligned.
-  for (const face of ['top', 'bottom'] as const) {
+function testEveryBarFaceIsACut(): void {
+  // Item 33: a bar is already solid, so a new closed feature on **any** face of
+  // bar stock, round or square, defaults to Subtract — hand-drawn or canned.
+  // Real creation through the same actions the drawer calls, one kind per
+  // assertion, plus the gear (the creator that had its own Add rule).
+  for (const face of ['top', 'bottom', 'around'] as const) {
     onFace(projectWith(ROUND_BAR, 'rotary'), face)
     useProjectStore.getState().addEllipseFeature('Ellipse', 10, 10, 4, 3, 5)
-    assertEqual(operations(), ['subtract'], `a first ellipse on a bar's ${face} cuts into the bar`)
+    assertEqual(operations(), ['subtract'], `a hand-drawn shape on a round bar's ${face} cuts into the bar`)
     onFace(projectWith(ROUND_BAR, 'rotary'), face)
-    assertEqual(createGear().length, 1, `the gear is created on a bar's ${face}`)
-    assertEqual(operations(), ['add'], `the historical first-gear Add on a bar's ${face} is unchanged`)
+    assertEqual(createGear().length, 1, `the gear is created on a round bar's ${face}`)
+    assertEqual(operations(), ['subtract'], `a first gear on a round bar's ${face} cuts into the bar`)
   }
-  console.log('top/bottom defaults are unchanged: PASSED')
+  for (const face of ['top', 'bottom'] as const) {
+    // The square blank's Around sheet is round-only for authoring (#1016 C2-U1),
+    // so its real creation covers the two faces it authors; the Around default
+    // is pinned per draft in `testSquareBarDefaultsAreSubtract` below.
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    useProjectStore.getState().addEllipseFeature('Ellipse', 10, 10, 4, 3, 5)
+    assertEqual(operations(), ['subtract'], `a hand-drawn shape on a square bar's ${face} cuts into the bar`)
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    assertEqual(createGear().length, 1, `the gear is created on a square bar's ${face}`)
+    assertEqual(operations(), ['subtract'], `a first gear on a square bar's ${face} cuts into the bar`)
+  }
+  console.log('every face of every bar shape: a new feature is a cut: PASSED')
+}
+
+function testGearDefaultPerFaceAndBarShape(): void {
+  // The gear action's own rule, pinned at the call that decides it, so the
+  // matrix is complete even where real creation is refused (a square blank's
+  // Around sheet) — and so a later change to the store's guards cannot hide a
+  // regression in the default.
+  for (const [shape, stock] of [['round', ROUND_BAR], ['square', SQUARE_BAR]] as const) {
+    for (const face of ['top', 'bottom', 'around'] as const) {
+      const project = projectWith(stock, 'rotary')
+      const draft = buildShapeFeature(project, 'feature', 'composite', gearProfile(), 'Gear', 5)
+      assertEqual(
+        gearCreationOperation(project, draft, face),
+        'subtract',
+        `a first gear on a ${shape} bar's ${face} is a cut into the bar`,
+      )
+    }
+  }
+
+  // A block keeps the base-solid rule, and a rotary project whose stock is a
+  // block has no bar to seed from, so it follows the block rule too.
+  for (const face of ['top', 'bottom'] as const) {
+    for (const project of [
+      projectWith(newProject('Block', 'mm').stock, 'milling'),
+      projectWith(newProject('Block', 'mm').stock, 'rotary'),
+    ]) {
+      const draft = buildShapeFeature(project, 'feature', 'composite', gearProfile(), 'Gear', 5)
+      assertEqual(
+        gearCreationOperation(project, draft, face),
+        'add',
+        `a first gear on block stock (${project.meta.projectType}) on ${face} is the base solid`,
+      )
+    }
+  }
+
+  // The rule is a default, not a switch: a second shape inside the bar cut still
+  // nests as an island, because `inferManualFeatureOperation` keeps classifying.
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'top')
+  assertEqual(createGear({ x: 40, y: 30 }, 15).length, 1, 'the outer gear is created')
+  useProjectStore.getState().addEllipseFeature('Ellipse', 40, 30, 3, 3, 5)
+  assertEqual(operations(), ['subtract', 'add'], 'a shape inside the bar cut is an island')
+  console.log('gear default per face and bar shape: PASSED')
 }
 
 function testSquareBarDefaultsAreSubtract(): void {
@@ -303,17 +364,6 @@ function testSquareBarDefaultsAreSubtract(): void {
     'subtract',
     "the first-gear Add rule does not override it on Around",
   )
-
-  // The same gear draft on Top keeps the historical first-gear Add, so the
-  // square-bar pin above cannot pass by weakening that rule everywhere.
-  onFace(projectWith(SQUARE_BAR, 'rotary'), 'top')
-  const top = useProjectStore.getState().project
-  const topGear = buildShapeFeature(top, 'feature', 'composite', gearProfile(), 'Gear', 5)
-  assertEqual(
-    gearCreationOperation(top, topGear, 'top'),
-    'add',
-    "a first gear on a bar's Top is still the historical Add",
-  )
   console.log('square Around: every canned creation draft is a cut: PASSED')
 }
 
@@ -336,12 +386,12 @@ function testSquareBarCreationIsACut(): void {
       assertEqual(operations(), ['subtract'], `a first ${kind} created on a square bar's ${face} cuts into the bar`)
     }
 
-    // The gear keeps its historical first-gear Add on a flat face (item 14
-    // scopes the change to Around), and that stays pinned on the square bar too,
-    // so the assertions above cannot pass by making every square-bar shape a cut.
+    // The gear was the creator with its own first-feature Add rule, so it is the
+    // one that item 33 changes; it is asserted here too, so the kinds above
+    // cannot pass by making only the outline creators a cut.
     onFace(projectWith(SQUARE_BAR, 'rotary'), face)
     assertEqual(createGear().length, 1, `the gear is created on a square bar's ${face}`)
-    assertEqual(operations(), ['add'], `the historical first-gear Add on a square bar's ${face} is unchanged`)
+    assertEqual(operations(), ['subtract'], `a first gear on a square bar's ${face} cuts into the bar`)
   }
   console.log('square bar: every canned outline created on Top/Bottom is a cut: PASSED')
 }
@@ -374,7 +424,9 @@ function testSquareAroundAuthoringStaysRefused(): void {
 testEveryCannedKindOnAroundCutsIntoTheBar()
 testLaterShapesOnAroundStillNest()
 testGearBoreOnAroundIsAnAddIsland()
-testTopAndBottomKeepTheirDefaults()
+testBlockKeepsItsBaseSolidDefault()
+testEveryBarFaceIsACut()
+testGearDefaultPerFaceAndBarShape()
 testSquareBarDefaultsAreSubtract()
 testSquareBarCreationIsACut()
 testSquareAroundAuthoringStaysRefused()

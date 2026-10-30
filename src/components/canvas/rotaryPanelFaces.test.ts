@@ -61,6 +61,7 @@ const { validateMachineDefinition } = await import('../../engine/gcode/types')
 const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { switchWorkspaceFace } = await import('../../store/workspaceFace')
 const { planRotarySolid } = await import('../../store/helpers/rotarySolids')
+const { enMessages } = await import('../../i18n/locales/en')
 
 const store = () => useProjectStore.getState()
 
@@ -316,11 +317,20 @@ await scenario('the Turn/Polygon entries are offered on every face of a bar proj
   await flush()
   assert.equal(count(), 2, 'Bottom offers Turn and Polygon too')
 
-  // A block is not a bar: the entries are absent and the store arms nothing.
+  // A block is not a bar: the entries stay listed and say why, and the store
+  // arms nothing (issue #1112 rt3-d item 31 — a refusal is never a hidden row).
   const block = rotaryProject(fixtures()[0]!)
   store().loadProject({ ...block, stock: defaultStock(60, 40, 20, 'mm') })
   await flush()
-  assert.equal(count(), 0, 'a block offers neither entry')
+  assert.equal(count(), 2, 'a block keeps both entries, disabled with the reason')
+  for (const button of document.body.querySelectorAll<HTMLButtonElement>('[data-command^="rotary-"]')) {
+    assert.equal(button.disabled, true, `a block disables ${button.dataset.command}`)
+    assert.equal(
+      button.getAttribute('title'),
+      enMessages['sketch.creation.rotaryBarUnavailable'],
+      `a block states why ${button.dataset.command} cannot be used`,
+    )
+  }
   assert.equal(store().startAddRotarySolidPlacement('turn'), undefined, 'arming is a no-op')
   assert.equal(store().pendingAdd, null, 'a block arms no rotary session')
   root.unmount()

@@ -600,24 +600,43 @@ async function openRotarySolidEntry(page: Page, ui: Ui, kind: 'turn' | 'polygon'
   await (kind === 'turn' ? ui.rotarySolid.turnButton(page) : ui.rotarySolid.polygonButton(page)).click()
 }
 
-test('Thread and Flutes are offered only on an available, active Around face', async ({ app, ui }) => {
+test('Thread and Flutes are Around-only, listed with the reason everywhere else', async ({ app, ui }) => {
   const { page } = app
-  // A milling block has no Around face at all.
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  const aroundOnly = 'Only available on the around face'
+  const needsABar = 'Needs a bar in a rotary project'
+
+  // A milling block has no Around face and no bar: the entries stay listed in
+  // the drawer, disabled with the reason (issue #1112 rt3-d item 31).
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', needsABar)
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', needsABar)
 
   await prepareMmRoundBarWithRotary(page)
-  // A rotary bar still shows nothing while the workspace is on Top.
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
+  // A rotary bar has the bar but the workspace is on Top: the reason changes.
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', aroundOnly)
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', aroundOnly)
 
   await switchToAround(page)
   await openCreationDrawer(page)
   await expect(ui.rotary.threadButton(page)).toBeVisible()
   await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeEnabled()
+  await expect(ui.rotary.flutesButton(page)).toBeEnabled()
 
   await switchToTop(page)
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', aroundOnly)
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', aroundOnly)
 })
 
 test('a mm thread creates one canned feature in a single undo step, with no operation', async ({ app, ui }) => {
@@ -1321,14 +1340,18 @@ test('the rotary group offers Turn and Polygon on every face of a round or squar
 
   // A Turn or Polygon belongs to the bar, not to the face it is drawn on, so
   // Top and Bottom offer them too (issue #1112 rt2-b item 20). Thread and
-  // Flutes stay Around-only: their unrolled sheet describes a round bar.
+  // Flutes stay Around-only — their unrolled sheet describes a round bar — and
+  // they say so rather than vanishing (issue #1112 rt3-d item 31).
   for (const visit of ['top', 'bottom'] as const) {
     await (visit === 'top' ? switchToTop(page) : switchToBottom(page))
     await openCreationDrawer(page)
     await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
     await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
-    await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-    await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+    await expect(ui.rotary.threadButton(page)).toBeVisible()
+    await expect(ui.rotary.threadButton(page)).toBeDisabled()
+    await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Only available on the around face')
+    await expect(ui.rotary.flutesButton(page)).toBeVisible()
+    await expect(ui.rotary.flutesButton(page)).toBeDisabled()
   }
   await switchToAround(page)
 

@@ -23,11 +23,12 @@
  * same page-level panel the other canned shapes use — so the drawer closing
  * cannot unmount an open form, and no modal is involved.
  *
- * The entries exist while the bar workflow is available: a rotary project with
+ * The entries work while the bar workflow is available: a rotary project with
  * round or square bar stock, on **any** face. A Turn or Polygon belongs to the
  * bar, not to the face it was drawn on, so Top and Bottom offer them too
- * (issue #1112 rt2-b item 20); a block is not offered because there is no bar
- * to turn.
+ * (issue #1112 rt2-b item 20). A block has no bar to turn, and the entries stay
+ * listed there, disabled with the reason, rather than vanishing (issue #1112
+ * rt3-d item 31).
  */
 
 import { useProjectStore } from '../../../store/projectStore'
@@ -47,7 +48,10 @@ interface RotarySolidCommand {
 
 const ROTARY_SOLID_COMMANDS: readonly RotarySolidCommand[] = [
   { kind: 'turn', command: 'rotary-turn', icon: 'turn', labelKey: 'dialogs.rotarySolid.turn.button' },
-  { kind: 'polygon', command: 'rotary-polygon', icon: 'ngon', labelKey: 'dialogs.rotarySolid.polygon.button' },
+  // Polygon (the Hex model) has its own icon since rt3-d item 32: a hexagonal
+  // bar section on the centreline, not the regular-polygon outline it used to
+  // borrow ('ngon').
+  { kind: 'polygon', command: 'rotary-polygon', icon: 'hex', labelKey: 'dialogs.rotarySolid.polygon.button' },
 ]
 
 interface RotarySolidActionsProps {
@@ -59,7 +63,12 @@ function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: Rota
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
   const start = useProjectStore((state) => state.startAddRotarySolidPlacement)
-  if (aroundUnavailableReason(project) !== null) return null
+  // Turn and Polygon turn the bar, so a block project — milling or plasma —
+  // cannot create them. The entries keep their place and say why instead of
+  // disappearing (issue #1112 rt3-d item 31).
+  const blockedReason = aroundUnavailableReason(project) === null
+    ? undefined
+    : t('sketch.creation.rotaryBarUnavailable')
 
   if (variant === 'rail') {
     return (
@@ -73,11 +82,15 @@ function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: Rota
                 type="button"
                 data-command={entry.command}
                 aria-label={label}
+                disabled={blockedReason !== undefined}
+                title={blockedReason}
                 onClick={() => start(entry.kind)}
               >
                 <Icon id={entry.icon} />
               </button>
-              <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+              <span className="tool-rail__tooltip" role="tooltip">
+                {blockedReason ? `${label} — ${blockedReason}` : label}
+              </span>
             </div>
           )
         })}
@@ -96,6 +109,8 @@ function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: Rota
           icon={entry.icon}
           label={t(entry.labelKey)}
           command={entry.command}
+          disabled={blockedReason !== undefined}
+          disabledReason={blockedReason}
           tooltipSide={tooltipSide}
           onClick={() => start(entry.kind)}
         />

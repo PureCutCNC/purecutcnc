@@ -49,6 +49,7 @@ import type { ProjectStore } from '../types'
 import { buildShapeFeature } from './buildShapeFeature'
 import { createDefinitionForFeature } from './featureDefinitions'
 import { isMachinable, sectionForOperation } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import { activeFace, aroundSheetAuthoringRefused, featureOperation } from './activeFace'
 
@@ -117,30 +118,33 @@ function referencedCannedDraft(
 }
 
 /**
- * The operation a new gear is created with (issue #1112 R2 item 14).
+ * The operation a new gear is created with (issue #1112 R2 item 14, generalised
+ * by rt3-d item 33).
  *
- * Preserve the original creation rule exactly: the first *machining* feature is
- * Add, not "the first solid on a block project". In particular a rotary bar
- * needs no base add (`barSeedsModel`), but the old command still created its
- * first gear as Add, which is what gives the first gear+bore the Add/Subtract
- * pair it has always had (issue #1112 DE2 review). `addFeature`'s base-solid
- * rule then agrees with this operation.
+ * On **bar stock** — round or square, on Top, Bottom or Around — the bar is
+ * already the material, so a new closed feature is a cut into it and the
+ * classifier's Subtract stands. That is the same rule a hand-drawn outline
+ * follows (`inferManualFeatureOperation` via `barSeedsModel`), and the same one
+ * `addFeature`'s base-solid rule already applies; only the gear action's own
+ * "the first machining feature is Add" default was getting in the way. Item 14
+ * took the Around face of a round bar first; item 33 completes it, because a
+ * bar is solid on every face.
  *
- * Around is the one face where that Add is wrong: the bar is already the
- * material there (#395, #1108), exactly as it is for a hand-drawn outline, so a
- * gear drawn on the unrolled sheet is a cut into the bar and the classifier's
- * Subtract stands. Top and Bottom keep the historical first-gear Add. `face` is
- * passed in rather than read here so the rule can be pinned for a square
- * blank's Around sheet, which is round-only for authoring and so cannot reach
- * this action (see `cannedShapeAroundDefaults.test.ts`).
+ * A **block** project keeps the historical rule exactly: the first *machining*
+ * feature is Add, not "the first solid". A rotary project whose stock is a block
+ * has no bar to seed from, so it follows the block rule too. `face` is passed in
+ * rather than read here so the rule can be pinned per face; Around never earns
+ * the base-solid Add, because a project that can author on that sheet is a bar
+ * project and takes the branch above.
  */
 export function gearCreationOperation(
   project: Project,
   draft: SketchFeature,
   face: SetupFace,
 ): FeatureOperation {
+  if (!isMachinable(draft)) return draft.operation
+  if (barSeedsModel(project)) return draft.operation
   const isFirstMachiningFeature = face !== 'around'
-    && isMachinable(draft)
     && !resolvedProjectFeatures(project).some(isMachinable)
   return isFirstMachiningFeature ? 'add' : draft.operation
 }

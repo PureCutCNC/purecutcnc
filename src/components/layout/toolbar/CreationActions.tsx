@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../../Icon'
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace, aroundSheetTargetRefused, aroundUnavailableReason } from '../../../store/helpers/activeFace'
+import { activeFace, aroundSheetTargetRefused } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { useOutsideDismiss } from '../../../hooks/useOutsideDismiss'
@@ -49,16 +49,23 @@ const CREATION_TARGET_NOUN_KEYS: Record<CreationTarget, MessageKey> = {
 }
 
 /**
+ * The shape entries that are features: text and gear. They exist on the
+ * feature target only, and off it they stay in the drawer disabled with the
+ * reason instead of disappearing (issue #1112 rt3-d item 31).
+ */
+const FEATURE_ONLY_SHAPES: ReadonlySet<CreationShape> = new Set<CreationShape>(['text', 'gear'])
+
+/**
  * The drawer's rotary group: Thread/Flutes and Turn/Polygon in one row.
  *
  * The group follows the bar workflow, not the Around face alone (issue #1112
  * rt2-b item 20): Turn and Polygon belong to the bar, so they are offered from
- * Top and Bottom as well, while Thread and Flutes still hide themselves off
- * Around. A block keeps the group out entirely — there is no bar to turn.
+ * Top and Bottom as well, while Thread and Flutes need the Around face. It is
+ * always listed — a block project has no bar to turn, and every entry then
+ * stays in place disabled with its reason instead of disappearing (issue #1112
+ * rt3-d item 31).
  */
 function RotaryCreationGroup({ tooltipSide }: { tooltipSide: 'bottom' | 'right' }) {
-  const project = useProjectStore((state) => state.project)
-  if (aroundUnavailableReason(project) !== null) return null
   return (
     <>
       <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
@@ -113,7 +120,11 @@ function CreationActions({
   // vanishing (#1016 hid them).
   const face = activeFace(project)
   const sheetRefusal = t('sketch.creation.squareBarUnavailable')
-  const shapeBlockedReason = aroundSheetTargetRefused(project, face, creationTarget) ? sheetRefusal : undefined
+  const sheetShapeRefusal = aroundSheetTargetRefused(project, face, creationTarget) ? sheetRefusal : undefined
+  // Text and Gear are features: a line, region or construction target cannot
+  // create them, and the row says so rather than being filtered out (issue
+  // #1112 rt3-d item 31).
+  const featureTargetRefusal = creationTarget === 'feature' ? undefined : t('sketch.creation.featureTargetOnly')
   const [lastShape, setLastShape] = useState<CreationShape>('rect')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement | null>(null)
@@ -122,12 +133,22 @@ function CreationActions({
   const closeTimerRef = useRef<number | null>(null)
   const openModeRef = useRef<PopoverOpenMode | null>(null)
   const side = tooltipSide ?? 'bottom'
-  const availableShapeOptions = creationTarget !== 'feature'
-    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text' && option.value !== 'gear')
-    : CREATION_SHAPE_OPTIONS
-  const lastShapeOption = availableShapeOptions.find((option) => option.value === lastShape) ?? availableShapeOptions[0]
-  const primaryOptions = availableShapeOptions.filter((o) => o.tier === 'primary')
-  const secondaryOptions = availableShapeOptions.filter((o) => o.tier === 'secondary')
+  /** Why this shape entry cannot be used here, or `undefined` when it can. */
+  function shapeRefusal(shape: CreationShape): string | undefined {
+    return sheetShapeRefusal ?? (FEATURE_ONLY_SHAPES.has(shape) ? featureTargetRefusal : undefined)
+  }
+  // The last-shape button runs the tool immediately, so it only ever reads a
+  // shape this target can create: the refused rows stay in the drawer, but they
+  // are never what the drawer button offers as the default. The sheet refusal
+  // is not part of this choice — on a square blank's sheet the offered shape is
+  // the one that would be used elsewhere, disabled with the reason, rather than
+  // some other shape taking its place.
+  const targetShapeOptions = CREATION_SHAPE_OPTIONS.filter((option) => (
+    !FEATURE_ONLY_SHAPES.has(option.value) || creationTarget === 'feature'
+  ))
+  const lastShapeOption = targetShapeOptions.find((option) => option.value === lastShape) ?? targetShapeOptions[0]
+  const primaryOptions = CREATION_SHAPE_OPTIONS.filter((o) => o.tier === 'primary')
+  const secondaryOptions = CREATION_SHAPE_OPTIONS.filter((o) => o.tier === 'secondary')
   const targetNoun = t(CREATION_TARGET_NOUN_KEYS[creationTarget])
 
   function clearDrawerTimers() {
@@ -311,8 +332,8 @@ function CreationActions({
                 ? t('sketch.creation.cancelTool', { shape: t(lastShapeOption.nounKey) })
                 : t('sketch.creation.addShape', { target: targetNoun, shape: t(lastShapeOption.nounKey) })}
               active={pendingShape === lastShapeOption.value}
-              disabled={shapeBlockedReason !== undefined}
-              disabledReason={shapeBlockedReason}
+              disabled={shapeRefusal(lastShapeOption.value) !== undefined}
+              disabledReason={shapeRefusal(lastShapeOption.value)}
               tooltipSide={tooltipSide}
               onClick={() => runShapeTool(lastShapeOption.value)}
             />
@@ -348,8 +369,8 @@ function CreationActions({
                           icon={option.icon}
                           label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
                           active={lastShapeOption.value === option.value}
-                          disabled={shapeBlockedReason !== undefined}
-                          disabledReason={shapeBlockedReason}
+                          disabled={shapeRefusal(option.value) !== undefined}
+                          disabledReason={shapeRefusal(option.value)}
                           tooltipSide="bottom"
                           onClick={() => { selectShape(option.value) }}
                         />
@@ -365,8 +386,8 @@ function CreationActions({
                               icon={option.icon}
                               label={t('sketch.creation.addShape', { target: targetNoun, shape: t(option.nounKey) })}
                               active={lastShapeOption.value === option.value}
-                              disabled={shapeBlockedReason !== undefined}
-                              disabledReason={shapeBlockedReason}
+                              disabled={shapeRefusal(option.value) !== undefined}
+                              disabledReason={shapeRefusal(option.value)}
                               tooltipSide="bottom"
                               onClick={() => { selectShape(option.value) }}
                             />
