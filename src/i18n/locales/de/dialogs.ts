@@ -522,7 +522,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.around.machineAxisMismatch': 'Die Drehachse der Maschine verläuft nicht entlang der Stange.',
   'dialogs.rotary.surface.onTurn': 'auf {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Über Modell {model}: Die Tiefe wird von der Stangenoberfläche gemessen.',
-  'dialogs.rotary.surface.twoDiameters': 'Die Tiefe wird von der Stangenoberfläche gemessen: Dieses Muster kreuzt mehr als einen Durchmesser.',
+  'dialogs.rotary.surface.twoDiameters': 'Dieses Muster kreuzt das Ende von {turn}, wo sich der Durchmesser der Stange ändert.',
   'dialogs.rotary.surface.taper': 'Die Tiefe wird von der Stangenoberfläche gemessen: Dieses Muster kreuzt eine Verjüngung.',
 
   // ── Polygon- und Vierkant-auf-Rund-Körper auf Around (Issue #1016 C2-U2) ──

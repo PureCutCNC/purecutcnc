@@ -526,7 +526,7 @@ export const dialogsEn = {
   'dialogs.rotary.around.machineAxisMismatch': 'The machine rotary axis does not lie along the bar.',
   'dialogs.rotary.surface.onTurn': 'on {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Over model {model}: depth is measured from the bar surface.',
-  'dialogs.rotary.surface.twoDiameters': 'The depth is measured from the bar surface: this pattern crosses more than one diameter.',
+  'dialogs.rotary.surface.twoDiameters': "This pattern crosses the end of {turn}, where the bar's diameter changes.",
   'dialogs.rotary.surface.taper': 'The depth is measured from the bar surface: this pattern crosses a taper.',
 
   // ── Turn and Polygon canned models on Around (issue #1112 G) ──

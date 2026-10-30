@@ -78,6 +78,12 @@ export interface RotaryPatternSurface {
   /** The one Turn the band lies wholly on (`kind === 'turn'`). */
   turnFeatureId?: string
   turnName?: string
+  /**
+   * The Turn rows a warned band crosses, in row order (`twoDiameters`,
+   * `taper`), so the warning can name the Turn whose diameter changes instead
+   * of saying only "more than one diameter" (#1112 rt3-c item 30).
+   */
+  turnNames?: string[]
   /** The model rows the band crosses (`kind === 'model'`). */
   modelNames?: string[]
 }
@@ -378,6 +384,8 @@ function buildSurfaceIndex(project: Project): SurfaceIndex | null {
  * The surface a Thread/Flutes depth is measured from. `bar` means the plain
  * bar (as before this decision); `turn` names the one Turn; `model`,
  * `twoDiameters` and `taper` are the warned cases and all measure from the bar.
+ * Every warned case that crosses a Turn carries its row name(s) so the warning
+ * can say which Turn's diameter changes.
  */
 export function rotaryPatternSurface(
   project: Project,
@@ -405,7 +413,13 @@ function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand)
 
   const turns = turnOverlaps(index, range)
   if (turns.length === 0) return { kind: 'bar', diameter: barDiameter }
-  if (turns.length > 1) return { kind: 'twoDiameters', diameter: barDiameter }
+  if (turns.length > 1) {
+    return {
+      kind: 'twoDiameters',
+      diameter: barDiameter,
+      turnNames: turns.map((crossed) => crossed.name),
+    }
+  }
 
   const turn = turns[0]
   if (!turn) return { kind: 'bar', diameter: barDiameter }
@@ -417,12 +431,13 @@ function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand)
     const sameAsBar = constant && Math.abs(turn.radiusMax - barDiameter / 2) <= TOLERANCE
     return sameAsBar
       ? { kind: 'bar', diameter: barDiameter }
-      : { kind: 'twoDiameters', diameter: barDiameter }
+      : { kind: 'twoDiameters', diameter: barDiameter, turnNames: [turn.name] }
   }
   if (!constant) {
     return {
       kind: turn.step ? 'twoDiameters' : 'taper',
       diameter: barDiameter,
+      turnNames: [turn.name],
     }
   }
   return {
@@ -485,7 +500,10 @@ export function rotaryPatternSurfaceWarning(
         values: { model: surface.modelNames?.join(', ') ?? '' },
       }
     case 'twoDiameters':
-      return { key: 'dialogs.rotary.surface.twoDiameters' }
+      return {
+        key: 'dialogs.rotary.surface.twoDiameters',
+        values: { turn: surface.turnNames?.join(', ') ?? '' },
+      }
     case 'taper':
       return { key: 'dialogs.rotary.surface.taper' }
     case 'bar':

@@ -29,7 +29,11 @@
  *    store write, and the moved span survives save → load.
  * 3. **Two diameters, a taper and an imported model are not guessed**: the
  *    depth falls back to the bar surface and the row carries a warning, in the
- *    same words the dialog uses.
+ *    same words the dialog uses. A warned band that crosses a Turn names it in
+ *    the warning, and the sentence is the plain reworded one (#1112 rt3-c item
+ *    30): "This pattern crosses the end of Turn, where the bar's diameter
+ *    changes." — dropping the name, or keeping the old "more than one diameter"
+ *    text, is the named mutation.
  * 4. **A Turn added after the thread moves it too**, so order of creation does
  *    not decide the surface.
  * 5. **The Thread's own placement places its band**: moving the row off a Turn
@@ -69,6 +73,8 @@ import {
   type Tool,
 } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
+import { enMessages } from '../i18n/locales/en'
+import { interpolate } from '../i18n/catalog'
 import { bundledMachines } from '../machine/registry'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
@@ -212,6 +218,32 @@ assert.deepEqual(
 )
 const twoDiametersWarning = rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)
 assert.equal(twoDiametersWarning?.key, 'dialogs.rotary.surface.twoDiameters', 'the row warns about two diameters')
+assert.deepEqual(twoDiametersWarning?.values, { turn: 'Turn, Turn 2' }, 'the warning names both Turns it crosses')
+
+// ── a band crossing a Turn's end ─────────────────────────────
+//
+// The item-30 wording: plain words naming the Turn whose end the band runs
+// past, instead of "this pattern crosses more than one diameter".
+
+load()
+addTurn(20, 40, 10)
+addThread(10, 20)
+assert.equal(
+  rotaryPatternSurface(store().project, { start: 10, length: 20 }).kind,
+  'twoDiameters',
+  'a band running past one Turn end is a warned kind',
+)
+const turnEndWarning = rotaryPatternSurfaceWarnings(store().project).get(threadFeature().id)
+assert.equal(turnEndWarning?.key, 'dialogs.rotary.surface.twoDiameters', 'a Turn-end crossing warns')
+assert.deepEqual(turnEndWarning?.values, { turn: 'Turn' }, 'the warning names the Turn it crosses')
+
+// The sentence itself: it names the Turn and no longer talks about measuring
+// from the bar surface. The tree and the dialog both interpolate this key.
+assert.equal(
+  interpolate(enMessages['dialogs.rotary.surface.twoDiameters'], turnEndWarning?.values),
+  'This pattern crosses the end of Turn, where the bar\'s diameter changes.',
+  'the row and dialog show the reworded sentence with the Turn in it',
+)
 
 // ── a taper ─────────────────────────────────────────────────
 

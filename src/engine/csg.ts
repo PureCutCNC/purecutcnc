@@ -1156,6 +1156,15 @@ function unionClippedToBar(
  *
  * Returns `null` for a non-bar stock. Block projects never call this: their
  * flat model is built exactly as it always was.
+ *
+ * Also returns `null` when no Add or Subtract solid applies: a band of sheet
+ * work that only draws something (a Thread/Flutes line, an Around region) or
+ * only holds models leaves the bar exactly as the stock. The bar solid is
+ * opaque and the stock mesh is translucent, so handing the unchanged bar back
+ * as the model painted over every model and line inside it — a visible Thread
+ * hid the Turn and the Hex it ran over, and hiding the Thread brought them
+ * back (#1112 rt3-c item 29). A models-only project already builds no boolean
+ * mesh (issue #1112 F5); this is the same rule for a fold that changes nothing.
  */
 export function buildBarModelSolid(
   module: ManifoldToplevel,
@@ -1168,6 +1177,7 @@ export function buildBarModelSolid(
   const bar = barStockSolid(module, project.stock)
   let current: ManifoldSolid = bar
   let handedOver = false
+  let applied = false
   // Replacing `current` releases the previous solid, unless it is still the
   // bar: that stays whole for every add's intersection until the end.
   const replace = (next: ManifoldSolid): void => {
@@ -1222,10 +1232,16 @@ export function buildBarModelSolid(
           ? module.Manifold.difference(current, solid)
           : unionClippedToBar(module, current, solid, bar)
         replace(next)
+        applied = true
       } finally {
         if (!around) solid.delete()
       }
     }
+
+    // Nothing cut or added: the fold's result is the bare bar, which the stock
+    // mesh already draws (translucently, so the models and lines inside it stay
+    // visible). Returning it would draw an opaque bar over them.
+    if (!applied) return null
 
     handedOver = true
     return current

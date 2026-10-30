@@ -477,7 +477,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.around.machineAxisMismatch': 'El eje rotativo de la máquina no coincide con la barra.',
   'dialogs.rotary.surface.onTurn': 'en {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Sobre el modelo {model}: la profundidad se mide desde la superficie de la barra.',
-  'dialogs.rotary.surface.twoDiameters': 'La profundidad se mide desde la superficie de la barra: este patrón cruza más de un diámetro.',
+  'dialogs.rotary.surface.twoDiameters': 'Este patrón cruza el extremo de {turn}, donde cambia el diámetro de la barra.',
   'dialogs.rotary.surface.taper': 'La profundidad se mide desde la superficie de la barra: este patrón cruza un cono.',
 
   // ── Sólidos de polígono y cuadrado a redondo en Around (issue #1016 C2-U2) ──

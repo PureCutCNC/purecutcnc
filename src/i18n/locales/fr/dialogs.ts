@@ -475,7 +475,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.rotary.around.machineAxisMismatch': 'L’axe rotatif de la machine n’est pas aligné sur la barre.',
   'dialogs.rotary.surface.onTurn': 'sur {name} · Ø{diameter} {units}',
   'dialogs.rotary.surface.model': 'Sur le modèle {model} : la profondeur est mesurée depuis la surface de la barre.',
-  'dialogs.rotary.surface.twoDiameters': 'La profondeur est mesurée depuis la surface de la barre : ce motif traverse plus d’un diamètre.',
+  'dialogs.rotary.surface.twoDiameters': 'Ce motif traverse l’extrémité de {turn}, là où le diamètre de la barre change.',
   'dialogs.rotary.surface.taper': 'La profondeur est mesurée depuis la surface de la barre : ce motif traverse un cône.',
 
   // ── Solides polygone et carré vers rond sur Around (issue #1016 C2-U2) ──
