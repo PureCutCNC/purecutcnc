@@ -34,6 +34,7 @@ import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
+import { isSquareStock } from '../../types/barStock'
 import type { Clamp, MachineOrigin, Operation, Stock, ToolType } from '../../types/project'
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
@@ -337,6 +338,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     : ''
   const flatRoundBarRef = useRef<FlatRoundBarDescriptor | undefined>(undefined)
   flatRoundBarRef.current = flatRoundBar
+  // A square blank's side, so the wrapped bar view can clamp its own surface
+  // onto the blank and never draw outside it (issue #1112 rt3-b). The blank's
+  // side is the stock's thickness, the same number that seeds the grid, and it
+  // is read from the real bar rather than from a grid value because the bar is
+  // what the view draws. A block, a round bar and a flat setup have none.
+  const squareBlankSide = bar && isSquareStock(bar.stock) ? bar.stock.thickness : undefined
+  const squareBlankSideRef = useRef<number | undefined>(undefined)
+  squareBlankSideRef.current = squareBlankSide
   const barTurnRef = useRef<ReturnType<typeof createBarTurnGroup> | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
@@ -741,7 +750,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // — for a flat round bar — the static lower half the top-down heightfield
     // cannot represent. The static and playback views share it, so neither can
     // mount a bar without the half below its equator (issue #1049).
-    const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current)
+    const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current)
     parent.add(built.group)
     // The viewport attributes report what is actually in the scene, not only
     // what the builder returned, so a dropped mount cannot read as mounted.
@@ -766,7 +775,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     }
     return () => built.heightfieldTexture.dispose()
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs, so a rebuilt identical input does not rebuild the mesh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs (`squareBlankSideRef` is the bar's own side, so it can only change with `frameKey`), so a rebuilt identical input does not rebuild the mesh.
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey, flatRoundBarKey])
 
   // The playback boundary mesh is static — walls track the heightfield texture
@@ -916,7 +925,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // The same complete scene the static view mounts, including the fixed
       // lower half of a flat round bar; only the upper heightfield changes
       // during playback (issue #1049).
-      const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current)
+      const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current)
       parent.add(built.group)
       // Same mounted-scene truth as the static view (issue #1049): the
       // playback attributes follow the group's real parent.
@@ -970,7 +979,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs; `barRef` is read at build time. `disposePlaybackScene` is stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs; `barRef` and `squareBlankSideRef` are read at build time. `disposePlaybackScene` is stable.
   }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey, flatRoundBarKey])
 
   useEffect(() => {
