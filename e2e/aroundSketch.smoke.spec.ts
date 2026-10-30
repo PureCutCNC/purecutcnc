@@ -2307,10 +2307,16 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
   // The loaded file retains its bar and its Around setup as the workspace face…
   expect(await activeFaceOf(page)).toBe('around')
-  // …but the Around workflow is unavailable, so the command is absent instead
-  // of offered and then refused by the store.
-  await expect(ui.rotarySolid.polygonButton(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.turnButton(page)).toHaveCount(0)
+  // …but the bar workflow is unavailable, so both entries keep their place in
+  // the drawer and say what is missing instead of vanishing (issue #1112 rt3-d
+  // item 31). Nothing is created or offered by them: they are disabled, so the
+  // no-mutation assertions below still hold.
+  await openCreationDrawer(page)
+  for (const entry of [ui.rotarySolid.polygonButton(page), ui.rotarySolid.turnButton(page)]) {
+    await expect(entry).toBeVisible()
+    await expect(entry).toBeDisabled()
+    await expect(entry).toHaveAttribute('title', 'Needs a bar in a rotary project')
+  }
   expect(await solidSnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
     featureCount: baseline.featureCount,
@@ -2322,7 +2328,11 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   // fresh closed form — never the one that was open before the change.
   await seedProject(page, JSON.stringify(aroundProject))
   await openCreationDrawer(page)
-  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
+  for (const entry of [ui.rotarySolid.polygonButton(page), ui.rotarySolid.turnButton(page)]) {
+    await expect(entry).toBeVisible()
+    await expect(entry).toBeEnabled()
+    await expect(entry).not.toHaveAttribute('title', 'Needs a bar in a rotary project')
+  }
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
 })
 
