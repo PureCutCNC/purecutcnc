@@ -36,6 +36,19 @@ export type ClampsSlice = Pick<
   | 'moveClampControl'
 >
 
+/**
+ * A chuck body resized by hand is the operator's chuck (#1112 R2 item 23): it
+ * carries `manual`, so a later stock size or shape change leaves its equipment
+ * where it is instead of re-defaulting it. The drag is the only hand edit that
+ * bypasses the Properties panel, where the same flag is set directly.
+ */
+function withHandSizedChuck(next: Clamp, before: Clamp): Clamp {
+  if (next.type !== 'chuck' || !next.chuck) return next
+  if (next.w === before.w && next.h === before.h) return next
+  if (next.chuck.manual) return next
+  return { ...next, chuck: { ...next.chuck, manual: true } }
+}
+
 export function createClampsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -130,7 +143,7 @@ export function createClampsSlice(
           if (hasHeight && patch.h !== undefined) {
             next.y = clamp.y + clamp.h / 2 - patch.h / 2
           }
-          return next
+          return withHandSizedChuck(next, clamp)
         })
         // No-op when the patch produces no entity change.
         if (JSON.stringify(nextClamps) === JSON.stringify(s.project.clamps)) return {}
@@ -321,13 +334,13 @@ export function createClampsSlice(
             const minY = Math.min(point.y, opposite.y)
             const maxY = Math.max(point.y, opposite.y)
 
-            return {
+            return withHandSizedChuck({
               ...clamp,
               x: minX,
               y: minY,
               w: Math.max(maxX - minX, minSize),
               h: Math.max(maxY - minY, minSize),
-            }
+            }, clamp)
           }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

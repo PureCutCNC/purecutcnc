@@ -56,6 +56,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ Erstes 2.5D-Feature muss ',
   'featureTree.tree.warning.firstFeatureSuffix': ' sein. Das 3D-Modell wird erst erstellt, wenn dies behoben ist.',
+  'featureTree.treeRow.warning.noEffect': 'Keine Wirkung auf die endgültige Form: spätere Features überdecken sie.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Ordner ausklappen',
@@ -431,6 +432,14 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Properties: clamp type (#392) ──
   'featureTree.properties.clampType': 'Typ',
   'featureTree.properties.clampType.clamp': 'Spannzwinge',
+  'featureTree.properties.chuckSize': 'Futtergröße',
+  'featureTree.properties.chuckExisting': 'Vorhandene Größe',
+  'featureTree.properties.chuckMin': 'Kleinster Spanndurchmesser',
+  'featureTree.properties.chuckMax': 'Größter Spanndurchmesser',
+  'featureTree.properties.chuckJaws': 'Backen',
+  'featureTree.properties.chuckUnknownRange': 'Spannbereich unbekannt. Grenzen eingeben oder eine Größe wählen.',
+  'featureTree.properties.chuckSquareRange': 'Vierkant: Schlüsselweite bei 4 Backen; Umkreis bei 3 oder 6.',
+  'featureTree.properties.chuckOutOfRange': 'Der Stab liegt außerhalb des Spannbereichs des Futters.',
   'featureTree.properties.clampType.chuck': 'Spannfutter',
   'featureTree.properties.clampType.tailstock': 'Reitstock',
 

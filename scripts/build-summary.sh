@@ -22,7 +22,7 @@ if [[ "${1:-}" == "--from-log" ]]; then
   [[ -r "$log" ]] || { echo "build-summary: cannot read log: $log" >&2; exit 2; }
   status=0
 else
-  log="${BUILD_SUMMARY_LOG:-$(mktemp -t purecutcnc-build).log}"
+  log="${BUILD_SUMMARY_LOG:-$(mktemp "${TMPDIR:-/tmp}/purecutcnc-build.XXXXXX").log}"
   ran_build=1
   npm run build >"$log" 2>&1
   status=$?

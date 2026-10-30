@@ -293,8 +293,13 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
 
   const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
   const regionMask = buildRegionMask(splitTargets.regionFeatures)
-  const targetFeatures = splitTargets.machiningFeatures
-    .flatMap((feature) => expandFeatureGeometry(feature))
+  // Resolve each target the way the cut does, one feature at a time. A canned
+  // shape (Flutes, Thread) or a text feature expands into one geometry per
+  // child, so comparing the expanded geometry count against the target count
+  // reported every multi-shape target as missing (issue #1112, slice rt4-d).
+  const targetGeometries = splitTargets.machiningFeatures
+    .map((feature) => expandFeatureGeometry(feature))
+  const targetFeatures = targetGeometries.flat()
 
   const warnings: ToolpathWarning[] = []
   const depthWarning = checkMaxCutDepthWarning(tool, operation.carveDepth)
@@ -302,8 +307,14 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     warnings.push(depthWarning)
   }
 
-  if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
+  if (splitTargets.missingFeatureIds.length > 0) {
     warnings.push({ code: 'targetsMissing' })
+  }
+
+  // A target that resolved but expanded into no geometry is still there, so
+  // saying it is missing sends the user looking for a feature they can see.
+  if (targetGeometries.some((geometries) => geometries.length === 0)) {
+    warnings.push({ code: 'targetsNoGeometry' })
   }
 
   if (targetFeatures.length === 0) {

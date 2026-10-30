@@ -19,7 +19,9 @@ import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject, seedProject, rowByName } from './helpers'
-import { rectProfile, type Project } from '../src/types/project'
+import { defaultTool, rectProfile, roundStock, type Project, type Tool } from '../src/types/project'
+
+const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 async function seed(page: Page, bottomFeature = true, machineId = 'grbl') {
   await seedGcodeExportProject(page, { machineId })
@@ -47,6 +49,132 @@ async function seed(page: Page, bottomFeature = true, machineId = 'grbl') {
   project.setups = [project.setups[0]]
   project.activeSetupId = project.setups[0].id
   await seedProject(page,JSON.stringify(project))
+}
+
+function e2eTool(id: string, name: string, type: Tool['type'], diameter: number, maxCutDepth: number): Tool {
+  return {
+    ...defaultTool('mm', 1),
+    id,
+    name,
+    type,
+    diameter,
+    maxCutDepth,
+    vBitAngle: type === 'v_bit' ? 60 : null,
+    defaultStepdown: 0.4,
+    defaultStepover: 0.4,
+  }
+}
+
+/**
+ * The bolt's starting bar: a 20 mm round bar in a rotary project with the
+ * cutters CAM Plan may choose. The Polygon/Turn/Thread rows themselves are
+ * created through the drawer's own store actions after the face is switched.
+ */
+async function seedAroundBar(page: Page): Promise<void> {
+  await seedGcodeExportProject(page)
+  const project = await getProject(page) as unknown as Project
+  project.meta.name = 'Around bolt'
+  project.meta.units = 'mm'
+  project.meta.projectType = 'rotary'
+  project.meta.maxTravelZ = 30
+  project.stock = roundStock(20, 120, 'x')
+  project.origin = { ...project.origin, x: 0, y: 0, z: 20 }
+  project.features = []
+  project.featureDefinitions = {}
+  project.featureTree = []
+  project.featureFolders = []
+  project.operations = []
+  project.tabs = []
+  project.clamps = []
+  project.tools = [
+    e2eTool('t-ball', 'Ball 2mm', 'ball_endmill', 2, 30),
+    e2eTool('t-flat', 'Flat 2mm', 'flat_endmill', 2, 30),
+    e2eTool('t-vbit', 'V-bit 3mm', 'v_bit', 3, 10),
+  ]
+  await seedProject(page, JSON.stringify(project))
+}
+
+/** Open the creation drawer on desktop; the tablet rail already shows the entries. */
+async function openCreationDrawer(page: Page): Promise<void> {
+  const drawerButton = page.locator('.toolbar-creation-picker__drawer-btn')
+  if (await drawerButton.count() === 0) return
+  const drawer = page.locator('.toolbar-creation-picker__drawer')
+  if ((await drawer.count()) === 0 || !(await drawer.isVisible())) {
+    await drawerButton.click()
+  }
+}
+
+/**
+ * Polygon head, turned shank and one thread through the drawer's rotary group,
+ * as a user creates them — not through store calls. The dialog writes one
+ * canned feature each; the ids are read back from the saved project afterwards.
+ */
+async function createAroundBolt(page: Page, ui: typeof import('./selectors')): Promise<{ polygonId: string; turnId: string; threadId: string }> {
+  await openCreationDrawer(page)
+  await ui.rotarySolid.polygonButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('10')
+  await ui.rotarySolid.field(page, 'length').fill('12')
+  await ui.rotarySolid.field(page, 'sides').fill('6')
+  await ui.rotarySolid.field(page, 'across-flats').fill('15')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('22')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('14')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openCreationDrawer(page)
+  await ui.rotary.threadButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeVisible()
+  await ui.rotary.field(page, 'start').fill('25')
+  await ui.rotary.field(page, 'length').fill('20')
+  await ui.rotary.field(page, 'pitch').fill('1.5')
+  await ui.rotary.field(page, 'starts').fill('1')
+  await ui.rotary.field(page, 'depth').fill('0.9')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  const project = await getProject(page) as unknown as Project
+  const cannedKind = (featureId: string) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    return feature ? project.featureDefinitions[feature.definitionId]?.canned?.kind : null
+  }
+  const polygon = project.features.find((feature) => cannedKind(feature.id) === 'polygon')
+  const turn = project.features.find((feature) => cannedKind(feature.id) === 'turn')
+  const thread = project.features.find((feature) => cannedKind(feature.id) === 'thread')
+  if (!polygon || !turn || !thread) throw new Error('e2e: the rotary dialogs did not create all three features')
+  return { polygonId: polygon.id, turnId: turn.id, threadId: thread.id }
+}
+
+interface GeneratedOperationReadout {
+  moveCount: number
+  errorCount: number
+  warnings: string[]
+}
+
+/** Compute one operation in the page: "up to date" is not proof of motion. */
+async function generatedOperation(page: Page, operationId: string): Promise<GeneratedOperationReadout> {
+  return page.evaluate(async (id) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const { computeOperationToolpath } = await import('/src/engine/toolpaths/generateOperation.ts') as typeof import('../src/engine/toolpaths/generateOperation')
+    const { warningSeverity } = await import('/src/engine/toolpaths/warningCodes.ts') as typeof import('../src/engine/toolpaths/warningCodes')
+    const project = useProjectStore.getState().project
+    const operation = project.operations.find((candidate) => candidate.id === id)
+    if (!operation) throw new Error(`e2e: the project has no operation ${id}`)
+    const envelope = computeOperationToolpath(project, operation)
+    if (!envelope) throw new Error(`e2e: ${id} did not generate`)
+    return {
+      moveCount: envelope.result.moves.length,
+      errorCount: envelope.result.warnings.filter((warning) => warningSeverity(warning.code) === 'error').length,
+      warnings: envelope.result.warnings.map((warning) => warning.code),
+    }
+  }, operationId)
 }
 
 test('CAM Plan on Bottom proposes its pocket and explains Top-covered through work (#1106)', async ({ app, ui }, testInfo) => {
@@ -86,16 +214,96 @@ test('CAM Plan on Bottom proposes its pocket and explains Top-covered through wo
   expect(after.operations.find(operation => operation.id === before.operations[0].id)).toEqual(before.operations[0])
 })
 
-test('CAM Plan stays disabled on Around with its reason (#1106)', async ({ app, ui }) => {
+/**
+ * CAM Plan on Around (#1112 slice J, decision 3).
+ *
+ * The acceptance bolt — Polygon head + turned shank + Thread — is created
+ * through the drawer's rotary group dialogs (Turn/Polygon and Thread), then
+ * planned on Around. It asserts:
+ * - the Plan button is enabled on Around and carries no "not available" reason;
+ * - the dialog proposes two Rotary rough and two Rotary finish rows (one pair
+ *   per model) plus one Engrave for the Thread, with the model names and the
+ *   V-bit/ball-endmill choices;
+ * - the Engrave's editable Carve depth is the pattern's 0.9 mm, not 1 mm;
+ * - nothing is created before Create is pressed;
+ * - applying creates exactly five Around operations;
+ * - every one of the five generates motion with no blocking warning;
+ * - one undo removes the five operations and keeps the three features.
+ */
+test('CAM Plan on Around plans the bolt: rotary rough/finish and a V-bit engraving (#1112 J)', async ({ app, ui }, testInfo) => {
+  test.setTimeout(120_000)
   const { page } = app
-  await seed(page)
-  const project = await getProject(page) as unknown as Project
-  project.meta.projectType = 'rotary'
-  project.stock = { ...project.stock, shape: 'round', diameter: 2, axis: 'x' }
-  await seedProject(page, JSON.stringify(project))
+  await seedAroundBar(page)
   await ui.face.switchTo(page, 'Around')
-  await expect(ui.setupCam.planButton(page)).toBeDisabled()
-  await expect(ui.setupCam.planButton(page)).toHaveAttribute('title', 'The automatic plan is not available on the around face')
+  const ids = await createAroundBolt(page, ui)
+
+  const planButton = ui.setupCam.planButton(page)
+  await expect(planButton).toBeEnabled()
+  await expect(planButton).not.toHaveAttribute('title', /not available/i)
+  await planButton.click()
+  const dialog = page.getByRole('dialog', { name: 'CAM Plan', exact: true })
+  await expect(dialog).toBeVisible()
+
+  const rough = dialog.locator('.cam-plan-row').filter({ hasText: 'Rotary rough · Rough' })
+  const finish = dialog.locator('.cam-plan-row').filter({ hasText: 'Rotary finish · Finish' })
+  const engrave = dialog.locator('.cam-plan-row').filter({ hasText: 'Engrave · Rough' })
+  await expect(rough).toHaveCount(2)
+  await expect(finish).toHaveCount(2)
+  await expect(engrave).toHaveCount(1)
+  await expect(rough.filter({ hasText: 'Hex' })).toHaveCount(1)
+  await expect(rough.filter({ hasText: 'Turn' })).toHaveCount(1)
+  await expect(engrave).toContainText('Thread')
+  await expect(engrave).toContainText('V-bit 3mm')
+  await expect(rough.first()).toContainText('Ball 2mm')
+  await expect(finish.first()).toContainText('Ball 2mm')
+
+  // The plan is a proposal: nothing exists until it is applied.
+  const before = await getProject(page) as unknown as Project
+  expect(before.operations).toEqual([])
+
+  await engrave.click()
+  const carveDepth = dialog.locator('.cam-plan-field').filter({ hasText: 'Carve depth' }).locator('input')
+  await expect(carveDepth).toHaveValue('0.9')
+  await dialog.screenshot({ path: testInfo.outputPath('around-cam-plan.png') })
+
+  const create = dialog.getByRole('button', { name: /^Create \d+ operations$/ })
+  await expect(create).toBeEnabled()
+  await expect(create).toHaveText('Create 5 operations')
+  await create.click()
+  await expect(dialog).not.toBeVisible()
+
+  const after = await getProject(page) as unknown as Project
+  expect(after.operations).toHaveLength(5)
+  const around = after.setups.find((setup) => setup.kind === 'around')
+  expect(around).toBeDefined()
+  expect(after.operations.every((operation) => operation.setupId === around!.id)).toBe(true)
+  expect(after.operations.filter((operation) => operation.kind === 'rotary_rough')).toHaveLength(2)
+  expect(after.operations.filter((operation) => operation.kind === 'rotary_finish')).toHaveLength(2)
+  expect(after.operations.find((operation) => operation.kind === 'follow_line')).toBeDefined()
+  const engraveOperation = after.operations.find((operation) => operation.kind === 'follow_line')!
+  expect(engraveOperation.carveDepth).toBeCloseTo(0.9, 9)
+  expect(engraveOperation.target.source).toBe('features')
+  if (engraveOperation.target.source === 'features') {
+    expect(engraveOperation.target.featureIds).toEqual([ids.threadId])
+  }
+  expect(after.tools.find((tool) => tool.id === engraveOperation.toolRef)?.type).toBe('v_bit')
+
+  // Generation: all five operations really produce motion, with no warning
+  // that blocks them. The gear settling is the app's own queue; the compute
+  // below is the same generator the preview and export run.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  for (const operation of after.operations) {
+    const generated = await generatedOperation(page, operation.id)
+    expect(generated.moveCount, `${operation.name} generated no motion`).toBeGreaterThan(0)
+    expect(generated.errorCount, `${operation.name} blocked: ${generated.warnings.join(', ')}`).toBe(0)
+  }
+
+  // The whole plan is one history step: one undo removes the five operations
+  // and leaves the three features the dialogs created.
+  await page.keyboard.press(`${modKey}+z`)
+  const undone = await getProject(page) as unknown as Project
+  expect(undone.operations).toEqual([])
+  expect(undone.features).toHaveLength(3)
 })
 
 for (const machine of ['grbl','shopbot']) {
@@ -106,7 +314,11 @@ for (const machine of ['grbl','shopbot']) {
     await ui.face.switchTo(page, 'Bottom')
     await expect(ui.setupCam.planButton(page)).toBeEnabled()
     await expect(ui.setupCam.planButton(page)).not.toHaveAttribute('title',/top face only/)
+    // Select both targets before Add: a through feature is an ordinary
+    // selectable row on Bottom now, so plain selection expresses the cross-face
+    // target the checklist used to add (issue #1112 I).
     await rowByName(page,'Bottom pocket').click()
+    await rowByName(page,'Through hole').click({ modifiers:['Shift'] })
     await ui.setupCam.add(page).click()
     await ui.setupCam.addMenu(page).getByText('Pocket',{ exact:true }).first().click()
     // Pass controls operate on the Bottom sketch selection.
@@ -123,11 +335,18 @@ for (const machine of ['grbl','shopbot']) {
       const box = await control.boundingBox()
       expect(box!.x+box!.width).toBeLessThanOrEqual(panel!.x+panel!.width+1)
     }
-    // Other-face targets start folded away (issue #1102).
-    await ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary').click()
-    const checkbox = ui.setupCam.properties(page).getByRole('checkbox',{ name:/Through hole/ })
-    await checkbox.check()
-    await expect(ui.setupCam.properties(page).locator('.cam-cross-face-picker > summary')).toContainText('Through hole ⇄')
+    // The Cuts list names both targets, and the through one is marked
+    // cross-face on the setup card (issue #1112 I).
+    const cuts = ui.setupCam.properties(page).locator('[data-operation-cuts]')
+    await expect(cuts).toContainText('Bottom pocket')
+    await expect(cuts).toContainText('Through hole')
+    // Each row's own name is visible, not squeezed out by its remove ×
+    // (issue #1112 rt3-a, item 25).
+    for (const id of ['bottom', 'through']) {
+      const row = cuts.locator(`[data-cut-feature-id="${id}"]`)
+      await expect(row.locator('.cam-cuts__name')).toBeVisible()
+      await expect(row.locator('.cam-cuts__icon')).toBeVisible()
+    }
     await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
@@ -152,18 +371,22 @@ for (const machine of ['grbl','shopbot']) {
   })
 }
 
-test('provisional Bottom cross-face Add does not select a ghost', async ({ app, ui }) => {
+test('provisional Bottom Add reaches a through feature as a normal row', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
   await ui.face.switchTo(page, 'Bottom')
   await expect(ui.setupCam.section(page,'bottom')).toContainText('No operations')
+  // A through cut belongs to both flat faces: its row is selectable on Bottom,
+  // never a ghost, and selecting it is how the cross-face target is expressed
+  // now that the other-face checklist is gone (issue #1112 I).
+  await rowByName(page,'Through hole').click()
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id','through')
+  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
-  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   const project = await getProject(page) as unknown as Project
+  expect(project.operations.at(-1)?.target).toEqual({ source:'features',featureIds:['through'] })
   const bottom = project.setups.find(setup => setup.orientation.angleDeg === 180)!
   expect(project.operations.at(-1)?.setupId).toBe(bottom.id)
   expect(bottom.id).not.toBe('provisional-bottom')
@@ -176,14 +399,14 @@ test('Move lists removed targets and setup deletion lists its operations', async
   // only real setups from there: give Bottom its setup first by adding an
   // operation to it, then pick Top pass on Top.
   await ui.face.switchTo(page, 'Bottom')
+  await rowByName(page,'Through hole').click()
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).getByRole('checkbox',{ name:/Through hole/ }).check()
   await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
   await ui.face.switchTo(page, 'Top')
-  // From Top, the Bottom operation is a ghost row: listed, never selected.
-  // The inactive setup's card starts collapsed.
+  // From Top, the Bottom operation is a ghost row: listed, dimmed, and
+  // selectable (the click turns the workspace over to its face, issue #1112
+  // F3). The inactive setup's card starts collapsed.
   await ui.setupCam.section(page,'bottom').getByRole('button',{ name:/Bottom operations/ }).click()
   await expect(ui.setupCam.section(page,'bottom').locator('.tree-row--ghost')).toHaveCount(1)
   await ui.operations.rowByName(page,'Top pass').click()
@@ -208,7 +431,7 @@ test('Move lists removed targets and setup deletion lists its operations', async
   await expect(ui.operations.rowByName(page,'Top pass')).toHaveCount(0)
 })
 
-test('Bottom Add explicitly targets an imported model without selecting its ghost', async ({ app, ui }) => {
+test('Bottom Add targets an imported model as a normal selectable row', async ({ app, ui }) => {
   const { page } = app
   const imported = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj',import.meta.url),'utf8')) as Project
   imported.operations = []
@@ -216,9 +439,12 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   const loaded = await getProject(page) as unknown as Project
   const model = loaded.features.find((feature) => loaded.featureDefinitions[feature.definitionId].kind === 'stl')!
   await ui.face.switchTo(page, 'Bottom')
+  // An imported model is not tied to a face: its row is selectable on Bottom,
+  // never a ghost, and selection is the only target route now (issue #1112 I).
+  await rowByName(page,model.name).click()
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id',model.id)
+  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
   await ui.setupCam.add(page).click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker > summary').click()
-  await ui.setupCam.addMenu(page).locator('.cam-cross-face-picker label').filter({ hasText:model.name }).locator('input').check()
   const row = ui.setupCam.addMenu(page).locator('.cam-operation-item').filter({ has:page.getByRole('button',{ name:'3D surface rough',exact:true }) })
   await row.getByRole('button',{ name:'Add',exact:true }).click()
   await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
@@ -226,7 +452,6 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
   expect(after.operations[0].kind).toBe('rough_surface')
   expect(after.operations[0].target).toEqual({ source:'features',featureIds:[model.id] })
   expect(after.operations[0].setupId).toBe(after.setups.find((setup) => setup.orientation.angleDeg === 180)!.id)
-  await expect(page.locator('.tree-row--feature[data-ghost="true"].tree-row--selected')).toHaveCount(0)
 })
 
 test.describe('landscape touch tablet', () => {

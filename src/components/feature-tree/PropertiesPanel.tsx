@@ -24,6 +24,7 @@ import { clampDomainMax, validateZEdits } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
 import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
+import { ChuckProperties } from './ChuckProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
@@ -1197,7 +1198,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </label>
           ) : null}
-          {barWorkholding ? (
+          {barWorkholding && selectedClamp.type === 'chuck' ? (
+            <ChuckProperties clamp={selectedClamp} stock={barWorkholding} units={units} onChange={(patch) => updateClamp(selectedClamp.id, patch)} />
+          ) : barWorkholding ? (
             <label className="properties-field">
               <span>{t('featureTree.properties.diameter')}</span>
               <div data-testid="clamp-diameter">

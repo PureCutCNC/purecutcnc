@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { drawAroundChuck } from './aroundChuck'
 import { PlasmaStartPointPicker } from './PlasmaStartPointPicker'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SketchToolpathControls } from './SketchToolpathControls'
@@ -88,6 +89,7 @@ import {
   drawPreviewProfile,
   translateProfile,
 } from './previewPrimitives'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
 import {
   canvasToWorld,
   computeFitViewState,
@@ -167,7 +169,7 @@ import {
 } from '../../platform/featureClipboard'
 import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMirror } from '../../store/helpers/activeFace'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { drawOtherFace } from './faceOverlay'
+import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -1016,15 +1018,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     // The imported models inside the bar, as reference under everything else
     // on the sheet (issue #1015 slice K). Only the sheet has them.
-    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }))
+    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }), selection)
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
+    // A Turn or Polygon is a solid about the bar, so a flat face draws its
+    // side view — dashed and read-only, but still selectable (#1112 rt2-d).
+    const sideViewIds = drawRotarySolidSideViews(ctx, project, features, vt, selection, operationHighlightIds)
     if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
+      if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || sideViewIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
@@ -1040,25 +1045,31 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (batchLine) {
         batchedLineFeatures.push(feature)
       } else {
-        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
+        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness, sheet)
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
+      // The ring follows the same display outlines as the feature itself: on the
+      // Around sheet a canned thread is drawn as folded stripes, so the armed
+      // highlight must ring those rather than its stored placement frame, which
+      // would run off the sheet (issue #1112 L2).
       if (operationHighlightIds) {
-        traceProfilePath(ctx, feature.sketch.profile, vt)
-        ctx.save()
-        if (operationHighlightIds.has(feature.id)) {
-          ctx.lineWidth = 3
-          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
-          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
-          ctx.shadowBlur = 8
-          ctx.stroke()
-        } else if (feature.sketch.profile.closed) {
-          ctx.fillStyle = canvasPalette.veil
-          ctx.fill()
+        for (const profile of featureDisplayProfiles(feature, sheet)) {
+          traceProfilePath(ctx, profile, vt)
+          ctx.save()
+          if (operationHighlightIds.has(feature.id)) {
+            ctx.lineWidth = 3
+            ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+            ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
+            ctx.shadowBlur = 8
+            ctx.stroke()
+          } else if (profile.closed) {
+            ctx.fillStyle = canvasPalette.veil
+            ctx.fill()
+          }
+          ctx.restore()
         }
-        ctx.restore()
       }
 
       const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null
@@ -1114,7 +1125,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.restore()
       }
     }
-    drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
+    drawLineFeatureBatch(ctx, batchedLineFeatures, vt, sheet)
     if (project.meta.showFeatureInfo) {
       for (const feature of batchedLineFeatures) {
         drawFeatureInfo(ctx, feature, vt, project.meta.units, project.stock.thickness)
@@ -1176,7 +1187,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Reset label rects before rebuilding
     constraintLabelRectsRef.current = []
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id)) continue
+      if (!feature.visible || ghostIds.has(feature.id) || sideViewIds.has(feature.id)) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid
@@ -1240,6 +1251,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (const clamp of sheet ? sheet.clampBands : project.clamps) {
       if (!clamp.visible) continue
       const selected = selection.selectedClampIds.includes(clamp.id)
+      if (sheet && drawAroundChuck(ctx, clamp, sheet, vt, selected, collidingClampIdSet.has(clamp.id))) continue
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (!sheet && selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)
@@ -2352,9 +2364,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         scheduleDraw()
         return
       }
-      // A canned-shape edit borrows `pendingAdd` only to open its side panel;
-      // the canvas is not placing anything, so there is no preview point.
-      if (pendingAdd.shape === 'canned-edit') {
+      // A canned-shape edit and a rotary create session borrow `pendingAdd` only
+      // to open their side panel; the canvas is not placing anything, so there
+      // is no preview point (issue #1112 rt2-b).
+      if (pendingAdd.shape === 'canned-edit'
+        || pendingAdd.shape === 'rotary-solid'
+        || pendingAdd.shape === 'rotary-pattern') {
         setPendingPreviewPointRef(null)
         return
       }
@@ -3242,6 +3257,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         setPendingGearParams={setPendingGearParams}
         setPendingNgonSides={setPendingNgonSides}
         setPendingRectCorner={setPendingRectCorner}
+        containerRef={containerRef}
+        canvasRef={canvasRef}
+        clearTransientCanvasState={clearTransientCanvasState}
       />
       {pendingAdd?.shape === 'canned-edit' && (
         <CannedShapeEditPanel

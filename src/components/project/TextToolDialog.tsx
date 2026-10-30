@@ -20,6 +20,7 @@ import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type TextToolConfig } from '../../text'
 import { useProjectStore } from '../../store/projectStore'
 import { Select } from '../Select'
+import { formHasChanges } from '../common/formDraft'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -35,6 +36,11 @@ interface TextToolDialogProps {
   mode?: 'create' | 'edit'
 }
 
+/** The text a save stores: one line, with no surrounding whitespace. */
+function normalisedText(raw: string): string {
+  return raw.replace(/\s*\n+\s*/g, ' ').trim()
+}
+
 export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }: TextToolDialogProps) {
   useRestoreCanvasFocus()
   const units = useProjectStore((state) => state.project.meta.units)
@@ -47,6 +53,24 @@ export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }:
   const fontOptions = getTextFontOptions(style)
   const { t } = useI18n()
   const isEdit = mode === 'edit'
+
+  // What this save would store, compared with the run the dialog opened on
+  // (issue #1112 F4). Reopening an existing run and applying without an edit
+  // used to rewrite identical text as an empty undo step; the button says so
+  // instead. Both sides are normalised the way a save stores them, so a height
+  // typed as "12.0" or a line break between the same words is not an edit.
+  // Only the fields this dialog edits are compared; a run's layout is not one.
+  const parsedSize = Number(size)
+  const valid = text.trim() !== '' && Number.isFinite(parsedSize) && parsedSize > 0
+  const draft = { text: normalisedText(text), style, fontId, size: parsedSize, operation }
+  const saved = {
+    text: defaults.text,
+    style: defaults.style,
+    fontId: defaults.fontId,
+    size: defaults.size,
+    operation: defaults.operation,
+  }
+  const canApply = valid && (!isEdit || formHasChanges(saved, draft))
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
     return t(key, params)
@@ -75,13 +99,9 @@ export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }:
   }, [onClose])
 
   function handleCreate() {
-    const parsedSize = Number(size)
-    if (!text.trim() || !Number.isFinite(parsedSize) || parsedSize <= 0) {
-      return
-    }
-
+    if (!canApply) return
     onConfirm({
-      text: text.replace(/\s*\n+\s*/g, ' ').trim(),
+      text: normalisedText(text),
       style,
       fontId,
       size: parsedSize,
@@ -175,7 +195,10 @@ export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }:
           <button className="feat-btn" type="button" onClick={onClose}>
             {td('dialogs.common.cancel')}
           </button>
-          <button className="feat-btn" type="button" onClick={handleCreate}>
+          {/* Creation has no saved state to compare against, so its button keeps
+              its own behaviour; reopening an existing run greys out an Apply
+              that would write nothing (issue #1112 F4). */}
+          <button className="feat-btn" type="button" onClick={handleCreate} disabled={isEdit && !canApply}>
             {td(isEdit ? 'dialogs.common.apply' : 'dialogs.textTool.placeText')}
           </button>
         </div>

@@ -17,8 +17,11 @@
 /**
  * Which CAM operation is on the face the workspace is on (issue #1102). The
  * operations list shows every setup, but only the active setup's operations
- * may be selected: an operation from the other face is a ghost row, and
- * switching face drops it from the selection without forgetting it.
+ * count as selected from the face in view: an operation from the other face is
+ * a ghost row, and switching face drops it from the selection without
+ * forgetting it. Selecting a ghost row is still the supported route — it turns
+ * the workspace over to its face (issue #1112 F3, pinned by
+ * `camGhostRowSelection.test.ts`).
  *
  * The rule lives in `setupSections.ts` next to the grouping it follows, so it
  * is testable without rendering the panel. Two projects are used: one with a

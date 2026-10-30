@@ -279,6 +279,12 @@ export type ToolpathWarningCode =
   | 'carveWrongKind'
   | 'carveNoValidTargets'
   | 'targetsMissing'
+  /** A selected target resolved to a feature that exists, but that feature
+   *  expands into no geometry (a canned shape or a text feature whose
+   *  parameters yield nothing). Distinct from `targetsMissing`: the feature is
+   *  there, and saying it is gone sends the user looking for something they
+   *  can see in the tree. */
+  | 'targetsNoGeometry'
   // rest regions
   | 'restOnlyEdgeRoute'
   | 'restOnlyPocket'
@@ -413,6 +419,12 @@ export type ToolpathWarningCode =
    *  so the export is refused rather than written. Params: the machine's name
    *  and the project type it does not suit. */
   | 'exportMachineTypeMismatch'
+  /** The project is rotary and the machine it selected is a router with no
+   *  rotary block, so the Around setup's turning motion does not exist on it
+   *  (issue #1112, item 35). Kept apart from `exportMachineTypeMismatch` so the
+   *  message names the missing axis instead of telling a router owner their
+   *  machine is the wrong kind. Params: the machine's name. */
+  | 'exportMachineMissingRotaryAxis'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'
@@ -540,9 +552,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * #755).
  *
  * - `exportMachineTypeMismatch` — the machine selected for the project cannot
- *   run the job it holds: a plasma machine on a milling project, or a machine
- *   with no rotary on a rotary one. Publishing the program would invite a cut
- *   on the wrong machine (issue #1028).
+ *   run the job it holds: a plasma machine on a milling project. Publishing the
+ *   program would invite a cut on the wrong machine (issue #1028).
+ * - `exportMachineMissingRotaryAxis` — a router with no rotary block on a
+ *   rotary project. The same reasoning as the code above, but the machine is
+ *   the right family and short one axis, so the message says what is missing
+ *   instead of calling the choice wrong (issue #1112, item 35).
  * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
  *   with the first operation's tool. Nothing in the program pauses the machine
  *   for a change, so the part is machined with the wrong cutter.
@@ -589,6 +604,7 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
+  'exportMachineMissingRotaryAxis',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',

@@ -22,6 +22,7 @@ import { defaultRetractOffset, defaultTool, isRotaryOperationKind } from '../../
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
+import type { ResolvedProject } from './resolveFeatures'
 import { samePlasmaParameters } from '../../toolPolicy'
 import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { normalizeFlutesCannedParams } from '../../cannedShapes/generators/flutes'
@@ -109,7 +110,15 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function isOperationTargetValid(authoritativeProject: Project, kind: OperationKind, target: OperationTarget): boolean {
-  const project = resolveProject(authoritativeProject)
+  return isOperationTargetValidResolved(resolveProject(authoritativeProject), kind, target)
+}
+
+/**
+ * The target rule against an already-resolved project. Callers that ask the
+ * same question for several targets of one project — the Cuts list's remove ×
+ * is one per row — resolve the features once instead of once per row.
+ */
+export function isOperationTargetValidResolved(project: ResolvedProject, kind: OperationKind, target: OperationTarget): boolean {
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target (issue #199). One guard covers every kind below.
   if (target.source === 'features' && target.featureIds.some((featureId) => {

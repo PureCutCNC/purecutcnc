@@ -15,7 +15,7 @@
  */
 
 import type { RestRegionDraft } from '../../toolpaths/restRegions'
-import type { Operation, Tab, Tool } from '../../../types/project'
+import type { Operation, Tab, Tool, ToolType } from '../../../types/project'
 
 export type CamPlanCoverageStatus = 'existing' | 'planned' | 'not_needed' | 'unresolved' | 'unsupported'
 
@@ -54,6 +54,11 @@ export interface CamPlanOperationDraft {
   maximumToolDiameter?: number | null
   /** Why this draft uses its transient cutter limit. */
   toolLimitSource?: 'feature-span' | 'model-footprint'
+  /**
+   * A narrower tool list than the kind's default (Thread/Flutes want a V-bit).
+   * Carried so a downstream re-rank keeps the same cutter family.
+   */
+  preferredToolTypes?: readonly ToolType[]
   /** Reach requirement derived by the planner, in project units. */
   requiredCutDepth?: number
   coveredFeatureIds: string[]

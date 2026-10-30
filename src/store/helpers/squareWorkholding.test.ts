@@ -21,12 +21,9 @@
  * recentres without ever enlarging a diameter the user set by hand. The round
  * numbers and the existing round tests are unchanged.
  *
- * The round ↔ square switch (#1016 C2 F3b) re-mints only a support that does
- * not clear the new bar by the safety guard's own rule — the corner envelope or
- * the round bar's diameter, within the export tolerance — so a 30 mm chuck that
- * holds a 20 mm square's 28.284 mm envelope is kept at 30 mm, on both axes.
- *
- * Run with: npx tsx src/store/helpers/squareWorkholding.test.ts
+ * The round ↔ square switch keeps the selected chuck even below the new
+ * envelope (#1112 M). The existing physical safety guard still refuses that
+ * setup; a stock change never chooses different equipment for the operator.
  */
 
 import assert from 'node:assert/strict'
@@ -51,6 +48,7 @@ import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { useProjectStore } from '../projectStore'
 import { projectWithStockShape } from './stockShape'
 import {
+  chuckOutOfRange,
   defaultRoundWorkholding,
   roundWorkholdingDiameter,
   syncRoundWorkholding,
@@ -118,15 +116,14 @@ function projectOnStock(
 
 console.log('\nDefault workholding on a square blank')
 
-test('a 20 mm square on X gets a 56.5685 across chuck, gripped 15 inside, centred and raised to the true pivot', () => {
+test('a 20 mm square on X gets the smallest fitting standard chuck, gripped 15 inside, centred on the true pivot', () => {
   const stock = squareStock(20, 100, 'x', { x: 5, y: 7 })
-  const own = 4 * barMaxRadius(stock)
-  closeTo(own, 56.568542494923804, 'the default diameter is twice the corner envelope diameter')
+  const own = convertLength(3.94, 'inch', 'mm')
 
   const chuck = defaultRoundWorkholding('chuck', stock, 'mm')
   assert.equal(chuck.type, 'chuck', 'it is a chuck')
   closeTo(chuck.h, own, 'the across-size is the corner-clearing diameter')
-  assert.equal(chuck.x, 5 - 40, 'the body reaches 40 past the blank end')
+  assert.equal(chuck.x, 5 - convertLength(1.97, 'inch', 'mm'), 'the documented body reaches past the blank end')
   assert.equal(chuck.x + chuck.w, 5 + 15, 'the grip reaches 15 into the blank')
   closeTo(chuck.y + chuck.h / 2, barCentre(stock), 'centred on the centreline')
   closeTo(chuck.height, barPivotZ(stock) + own / 2, 'the height is the true pivot plus its own radius')
@@ -145,17 +142,42 @@ test('the default clears the corner envelope and is never raised to the corner r
   }
 })
 
-test('a small square takes the 50 mm floor', () => {
+test('a small square takes the 4 inch starter too, held across flats', () => {
   const stock = squareStock(10, 100, 'x', { x: 0, y: 0 })
   const chuck = defaultRoundWorkholding('chuck', stock, 'mm')
-  assert.equal(chuck.h, 50, 'twice the corner envelope is under the floor, so 50 wins')
-  assert.equal(chuck.height, 5 + 25, 'the height follows the floor and the pivot')
+  // #1112 R2 item 23: 10 mm across flats is inside the 4 inch range (0.12–1.3
+  // in), so the square keeps the starter rather than a smaller body.
+  assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), 'the 4 inch preset holds this blank')
+  assert.equal(chuck.height, 5 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows the body and the pivot')
+})
+
+test('a blank whose starter body cannot clear its corners takes the next preset that can', () => {
+  // Codex review of rt3-e: the expanded 4 inch range holds a 75 mm blank's
+  // flats, but its 100.1 mm body is narrower than the 106.1 mm corner
+  // envelope. Returning no size there left an unnamed 212 mm stock-derived body
+  // even though the 5 inch preset holds the flats and clears the corners. The
+  // search must continue past a rejected body — and past two of them for 90 mm,
+  // whose corner envelope also outgrows the 5 inch body.
+  for (const [side, expectedId, bodyIn] of [
+    [75, 'bison-3204-5', 4.92],
+    [90, 'bison-3204-6', 6.3],
+  ] as const) {
+    const stock = squareStock(side, side * 4, 'x')
+    const defaults = defaultRoundWorkholding('chuck', stock, 'mm')
+    assert.equal(defaults.chuck?.size, expectedId,
+      `side ${side}: the preset whose range holds the flats and whose body clears the corners`)
+    assert.equal(defaults.chuck?.jawCount, 4, `side ${side}: a square blank keeps four jaws`)
+    assert.equal(defaults.h, convertLength(bodyIn, 'inch', 'mm'), `side ${side}: its published body`)
+    assert.ok(defaults.h / 2 >= barMaxRadius(stock), `side ${side}: the body clears the corner envelope`)
+    const clamp: Clamp = { id: 'cl-chuck', name: 'Chuck', visible: true, ...defaults }
+    assert.equal(chuckOutOfRange(clamp, stock, 'mm'), false, `side ${side}: the blank is inside its capacity`)
+  }
 })
 
 test('the defaults are converted for an inch blank', () => {
   const stock = squareStock(0.75, 4, 'x', { x: 0.5, y: 1 })
-  const own = 4 * barMaxRadius(stock)
-  const body = convertLength(40, 'mm', 'inch')
+  const own = 3.94
+  const body = 1.97
   const grip = Math.min(convertLength(15, 'mm', 'inch'), 1)
   const chuck = defaultRoundWorkholding('chuck', stock, 'inch')
   closeTo(chuck.h, own, 'the corner-clearing diameter in inches')
@@ -166,17 +188,17 @@ test('the defaults are converted for an inch blank', () => {
 
   const tailstock = defaultRoundWorkholding('tailstock', stock, 'inch')
   assert.equal(tailstock.x, 4.5, 'it touches the far end face')
-  closeTo(tailstock.w, body, 'body beyond it')
-  closeTo(tailstock.h, own, 'the corner-clearing diameter')
+  closeTo(tailstock.w, convertLength(40, 'mm', 'inch'), 'body beyond it')
+  closeTo(tailstock.h, 4 * barMaxRadius(stock), 'the corner-clearing diameter')
 })
 
 test('a square on Y starts at maxY and sits across X', () => {
   const stock = squareStock(20, 100, 'y', { x: 5, y: 7 })
-  const own = 4 * barMaxRadius(stock)
+  const own = convertLength(3.94, 'inch', 'mm')
   assert.equal(barCentre(stock), 15, 'the centreline is an X value of 15')
   const chuck = defaultRoundWorkholding('chuck', stock, 'mm')
   assert.equal(chuck.y, 107 - 15, 'the grip starts at the start end (maxY)')
-  assert.equal(chuck.y + chuck.h, 107 + 40, 'the body reaches past it')
+  assert.equal(chuck.y + chuck.h, 107 + convertLength(1.97, 'inch', 'mm'), 'the body reaches past it')
   closeTo(chuck.x, 15 - own / 2, 'centred across X')
   closeTo(chuck.w, own, 'the across-size on a Y blank is the width')
 
@@ -186,13 +208,18 @@ test('a square on Y starts at maxY and sits across X', () => {
   closeTo(tailstock.x + tailstock.w / 2, 15, 'centred across X')
 })
 
-test('the square default is larger than the round default on the same nominal bar', () => {
+test('the square default clears the corner envelope the round one need not', () => {
   const square = squareStock(20, 100, 'x', { x: 0, y: 0 })
   const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
   const squareChuck = defaultRoundWorkholding('chuck', square, 'mm')
   const roundChuck = defaultRoundWorkholding('chuck', bar, 'mm')
-  assert.equal(roundChuck.h, 50, 'the round default is unchanged (twice the diameter)')
-  assert.ok(squareChuck.h > roundChuck.h, 'the square default clears corners the round one need not')
+  assert.equal(roundChuck.h, convertLength(3.94, 'inch', 'mm'), 'the 4 inch starter on a round bar')
+  // Both bars take the starter here, so the square's claim is not that it is
+  // bigger — it is that its body clears the corners the round one need not.
+  assert.ok(squareChuck.h / 2 >= barMaxRadius(square), 'the square body clears the corner radius')
+  assert.ok(roundChuck.h / 2 >= barMaxRadius(bar), 'and the round one covers its diameter')
+  assert.equal(squareChuck.chuck?.jawCount, 4, 'the square default is the 4-jaw set')
+  assert.equal(roundChuck.chuck?.jawCount, 3, 'the round default is the 3-jaw set')
 })
 
 // ── syncRoundWorkholding ──────────────────────────────────────
@@ -249,16 +276,16 @@ test('to square mints a chuck with the corner-clearing default on the blank it m
   const next = projectWithStockShape(newProject('block', 'mm'), 'square')
   assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
   assert.equal(next.clamps.length, 1, 'exactly one chuck')
-  const own = 4 * barMaxRadius(next.stock)
+  const own = defaultRoundWorkholding('chuck', next.stock, 'mm').h
   closeTo(next.clamps[0].h, own, 'the default diameter clears the corners')
   closeTo(next.clamps[0].height, barPivotZ(next.stock) + own / 2, 'raised to the true pivot')
 })
 
-// ── Round ↔ square: re-mint what no longer clears (#1016 C2 F3) ─
+// ── Round ↔ square: keep selected chuck equipment (#1112 M) ─
 
-console.log('\nRe-minting workholding on a round ↔ square switch')
+console.log('\nKeeping chosen chucks on a round ↔ square switch')
 
-test('round → square re-mints a 50 mm chuck that cannot clear the 2 in blank, keeping identity and along placement', () => {
+test('round → square keeps even a 50 mm chuck below the 2 in corner envelope', () => {
   const round = roundStock(2, 6, 'x', { x: 0, y: 0 })
   const fifty = convertLength(50, 'mm', 'inch')
   const chuck: Clamp = {
@@ -272,15 +299,13 @@ test('round → square re-mints a 50 mm chuck that cannot clear the 2 in blank, 
   const next = projectWithStockShape(project, 'square')
   assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
   const reminted = next.clamps[0]
-  assert.notEqual(reminted, chuck, 'the too-small chuck is re-minted, not kept')
+  assert.equal(reminted, chuck, 'even a too-small chuck keeps its selected equipment')
   assert.equal(reminted.id, 'cl0017', 'its id survives')
   assert.equal(reminted.name, 'Chuck', 'its name survives')
   assert.equal(reminted.visible, false, 'its visibility survives')
   assert.equal(reminted.x, chuck.x, 'its along position survives')
   assert.equal(reminted.w, chuck.w, 'its along size survives')
-  assert.ok(reminted.h >= next.stock.thickness * Math.SQRT2,
-    `its diameter clears the corners (${reminted.h} >= ${next.stock.thickness * Math.SQRT2})`)
-  closeTo(reminted.h, 4 * barMaxRadius(next.stock), 'the new diameter is the blank default')
+  assert.equal(reminted.h, chuck.h, 'body diameter is never silently resized')
   closeTo(reminted.y + reminted.h / 2, barCentre(next.stock), 'centred on the true centreline')
   closeTo(reminted.height, barPivotZ(next.stock) + reminted.h / 2, 'its height is pivot-derived')
   assert.equal(next.clamps[1], step, 'an ordinary clamp is untouched')
@@ -302,14 +327,14 @@ test('round → square leaves a chuck that already clears exactly as it is', () 
   assert.equal(next.clamps[0].h, 6, 'and its diameter is not enlarged')
 })
 
-test('square → round re-mints a chuck below the round bar and keeps one above it', () => {
+test('square → round keeps chucks both below and above the round bar', () => {
   const square = squareStock(20, 100, 'x', { x: 0, y: 0 })
   const small = chuckOnBar(square, 15, 'cl-small')
   const smaller = projectWithStockShape(projectOnStock('switch', square, [small]), 'round')
   assert.ok(isRoundStock(smaller.stock), 'the stock is a round bar')
-  assert.notEqual(smaller.clamps[0], small, 'a 15 mm chuck below the 20 mm bar is re-minted')
-  closeTo(roundWorkholdingDiameter(smaller.clamps[0], smaller.stock), 50,
-    'the new diameter is the round default (twice the bar, 50 mm floor)')
+  assert.equal(smaller.clamps[0], small, 'a 15 mm chuck stays 15 mm on stock change')
+  closeTo(roundWorkholdingDiameter(smaller.clamps[0], smaller.stock), 15,
+    'the selected diameter stays unchanged')
   closeTo(smaller.clamps[0].y + smaller.clamps[0].h / 2, barCentre(smaller.stock), 'centred on the round centreline')
   assert.equal(smaller.clamps[0].id, 'cl-small', 'its identity survives')
 
@@ -335,18 +360,15 @@ test("Codex's 30 mm chuck on a 20 mm square stays 30 mm on both axes", () => {
   }
 })
 
-test('round → square re-mints a 25 mm chuck below the 28.284 mm corner envelope', () => {
+test('round → square keeps a 25 mm chuck below the corner envelope', () => {
   const round = roundStock(20, 100, 'x', { x: 0, y: 0 })
   const chuck = chuckOnBar(round, 25)
   const project = projectOnStock('switch', round, [chuck])
 
   const next = projectWithStockShape(project, 'square')
   assert.ok(isSquareStock(next.stock), 'the stock is a square blank')
-  assert.notEqual(next.clamps[0], chuck, 'a 25 mm chuck below the envelope is re-minted')
-  assert.ok(roundWorkholdingDiameter(next.clamps[0], next.stock) > 20 * Math.SQRT2,
-    'the re-minted diameter clears the corner envelope')
-  closeTo(roundWorkholdingDiameter(next.clamps[0], next.stock), 4 * barMaxRadius(next.stock),
-    'the new diameter is the blank default')
+  assert.equal(next.clamps[0], chuck, 'a 25 mm chuck stays selected below the envelope')
+  assert.equal(roundWorkholdingDiameter(next.clamps[0], next.stock), 25, 'body diameter is kept')
   assert.equal(next.clamps[0].id, 'cl-chuck', 'its identity survives')
 })
 
@@ -369,7 +391,7 @@ test('a chuck exactly at the envelope and exactly at the safety boundary is kept
   }
 })
 
-test('inch round → square keeps a chuck above the envelope and re-mints one below it', () => {
+test('inch round → square keeps chucks above and below the envelope', () => {
   const side = convertLength(20, 'mm', 'inch')
   const round = roundStock(side, 6, 'x', { x: 0, y: 0 })
   const kept = chuckOnBar(round, convertLength(30, 'mm', 'inch'), 'cl-in-kept')
@@ -382,9 +404,9 @@ test('inch round → square keeps a chuck above the envelope and re-mints one be
   const below = chuckOnBar(round, convertLength(25, 'mm', 'inch'), 'cl-in-below')
   const afterRemint = projectWithStockShape(projectOnStock('switch-inch-2', round, [below], 'inch'), 'square')
   assert.ok(isSquareStock(afterRemint.stock), 'the stock is a square blank')
-  assert.notEqual(afterRemint.clamps[0], below, 'the 25 mm-equivalent chuck is below the envelope and is re-minted')
-  assert.ok(roundWorkholdingDiameter(afterRemint.clamps[0], afterRemint.stock) > convertLength(25, 'mm', 'inch'),
-    'the re-minted diameter clears the inch envelope')
+  assert.equal(afterRemint.clamps[0], below, 'inch equipment stays selected below the envelope')
+  assert.equal(roundWorkholdingDiameter(afterRemint.clamps[0], afterRemint.stock), convertLength(25, 'mm', 'inch'),
+    'the selected diameter stays unchanged in inches')
 })
 
 test('a kept clamp is byte-identical through the switch and undo restores the project', () => {
@@ -413,7 +435,7 @@ test('the shape switch is one undo step and restores the chuck', () => {
   seed(project)
 
   useProjectStore.getState().setStockShape('square')
-  assert.notEqual(useProjectStore.getState().project.clamps[0]?.h, fifty, 'the switch re-minted the chuck')
+  assert.equal(useProjectStore.getState().project.clamps[0]?.h, fifty, 'the switch keeps the chosen chuck')
 
   useProjectStore.getState().undo()
   assert.deepEqual(useProjectStore.getState().project, project, 'undo restores the round project and its chuck exactly')

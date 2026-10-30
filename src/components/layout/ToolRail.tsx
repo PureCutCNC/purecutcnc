@@ -155,8 +155,9 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const { t } = useI18n()
   const project = useProjectStore((state) => state.project)
   // On a square blank's Around sheet the sheet is round-only, so the drawing
-  // rail is hidden there; the desktop creation block hides the same controls
-  // (issue #1016 C2-U1/U2).
+  // rail is hidden there. The desktop creation block keeps the same entries
+  // listed and disabled with the reason (issue #1112 decision 17); the rail is
+  // left as #1016 C2-U1/U2 built it.
   const sketchAuthoringRefused = aroundSketchAuthoringRefused(project, activeFace(project))
   const aroundFace = activeFace(project) === 'around'
   const sketchCommands = useSketchCommands()

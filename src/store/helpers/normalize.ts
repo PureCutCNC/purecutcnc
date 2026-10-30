@@ -316,6 +316,7 @@ export function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], in
     id: clamp.id || `cl${index + 1}`,
     name: clamp.name || `Clamp ${index + 1}`,
     type: clamp.type ?? 'step_clamp',
+    ...(clamp.chuck !== undefined ? { chuck: structuredClone(clamp.chuck) } : {}),
     x: clamp.x ?? 0,
     y: clamp.y ?? 0,
     w: Math.max(clamp.w ?? defaultSize, convertLength(0.1, 'mm', units)),
@@ -587,24 +588,38 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
     global_constraints: [],
     operations: [],
     tabs: [],
-    clamps: [],
+    clamps: templateChucks(cloned),
     ai_history: [],
   }
   return withDefaultChuck(instantiated)
 }
 
 /**
- * A template's clamps are not carried into the new project, but a bar cannot
- * exist without its workholding: every block→bar conversion mints a chuck
- * (`projectWithStockShape`), and a project created already on a bar — the New
- * project dialog's rotary blank, or a template whose stock is one — would
- * otherwise start without it (#1046). The same `newChuck` helper sizes it, so a
- * square blank clears its corner envelope exactly as a conversion's chuck does.
- * A block (milling/plasma) has no workholding and gets none.
+ * A template's ordinary clamps are not carried into the new project, but its
+ * **chuck** is (issue #1112, item 24): a rotary template's chuck size, jaw
+ * count, clamping range and placement are the operator's equipment, so a
+ * project created from such a template keeps them instead of being handed the
+ * starter chuck. A block template carries none — there is nothing for a chuck
+ * to hold.
+ */
+function templateChucks(template: Project): Clamp[] {
+  if (!isBarStock(template.stock)) return []
+  return template.clamps.filter((clamp) => clamp.type === 'chuck')
+}
+
+/**
+ * A bar cannot exist without its workholding: every block→bar conversion mints
+ * a chuck (`projectWithStockShape`), and a project created already on a bar —
+ * the New project dialog's rotary blank, or a template whose stock is one —
+ * would otherwise start without it (#1046). A template that brought its own
+ * chuck keeps it (item 24); otherwise the same `newChuck` helper sizes one, so
+ * a square blank clears its corner envelope exactly as a conversion's chuck
+ * does. A block (milling/plasma) has no workholding and gets none.
  */
 function withDefaultChuck(project: Project): Project {
   const stock = project.stock
   if (!isBarStock(stock)) return project
+  if (project.clamps.some((clamp) => clamp.type === 'chuck')) return project
   return { ...project, clamps: [newChuck(project, stock)] }
 }
 

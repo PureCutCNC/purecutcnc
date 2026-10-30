@@ -23,8 +23,7 @@ import { camSetupSections, crossFaceTargets, operationOnActiveSetup } from './se
 import { CamSetupSectionView } from './CamSetupSectionView'
 import { SetupPropertiesDialog } from './SetupPropertiesDialog'
 import { SetupOperationControls } from './SetupOperationControls'
-import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
-import { RotaryTargetPicker } from './RotaryTargetPicker'
+import { OperationCuts } from './OperationCuts'
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -38,7 +37,7 @@ import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary
 import { ToolLibraryDialog } from './ToolLibraryDialog'
 import { CAMPlanDialog } from './CAMPlanDialog'
 import { createCamPlan, type CamPlanDraft } from '../../engine/operations/camPlan'
-import { setupFace } from '../../engine/setupOrientation'
+import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
 import { OperationNoteField } from './OperationNoteField'
@@ -51,7 +50,6 @@ import type {
   OperationKind,
   OperationPass,
   PocketPattern,
-  OperationTarget,
   Project,
   RotaryPassDirection,
   Tool,
@@ -73,9 +71,12 @@ import { ScallopHeightField } from './ScallopHeightField'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBookletExport, type BookletStage } from './bookletExport'
 import { platform } from '../../platform'
-import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
-import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds, rotaryAddKindsForFace } from './operationValidity'
-import { machineMode, operationCutOnMachine, operationOffer, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
+import { rotaryOperationHint, getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion } from './operationValidity'
+import { operationAddEntries, operationAddHint } from './operationAddEntries'
+import { operationUncutWarning } from './uncutWork'
+import { UncutWorkBadge } from '../common/UncutWorkBadge'
+import { UncutWorkNote } from '../common/UncutWorkNote'
+import { machineMode, operationCutOnMachine, selectableToolTypes, showsMillingAuthoring, uncutOperationCount } from './machineMode'
 import { projectType } from '../../store/helpers/projectType'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
@@ -83,7 +84,6 @@ import { Icon } from '../Icon'
 import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
-import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { camT, camTPlural } from './camI18n'
 import { exportDialectLabels } from '../export/exportDialectLabels'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -93,6 +93,7 @@ import {
   isTrochoidalOperation,
   operationFieldsForGroup,
   resolvedEntryStrategy,
+  stockRadialRefVariant,
   type OperationFieldId,
 } from './operationFields'
 
@@ -334,39 +335,6 @@ function resolvedWaterlineAdaptiveSpacing(
   return normalizedTool ? Math.max(0, operation.stepover * normalizedTool.diameter) : 0
 }
 
-function operationAddButtonLabel(kind: OperationKind): string {
-  switch (kind) {
-    case 'plasma_profile':
-      return camT('cam.plasma.title')
-    case 'pocket':
-      return camT('cam.opButton.pocket')
-    case 'v_carve':
-      return camT('cam.opButton.vCarve')
-    case 'v_carve_medial':
-      return camT('cam.opButton.vCarveMedial')
-    case 'edge_route_inside':
-      return camT('cam.opButton.edgeIn')
-    case 'edge_route_outside':
-      return camT('cam.opButton.edgeOut')
-    case 'surface_clean':
-      return camT('cam.opButton.surface')
-    case 'rotary_rough':
-      return camT('cam.opLabel.rotaryRough')
-    case 'rotary_finish':
-      return camT('cam.opLabel.rotaryFinish')
-    case 'rough_surface':
-      return camT('cam.opButton.roughSurface')
-    case 'finish_surface':
-      return camT('cam.opButton.finishSurface')
-    case 'finish_surface_cleanup':
-      return camT('cam.opButton.finishSurfaceCleanup')
-    case 'follow_line':
-      return camT('cam.opButton.engrave')
-    case 'drilling':
-      return camT('cam.opButton.drill')
-  }
-}
-
 function operationSupportsPassSelection(kind: OperationKind): boolean {
   return !isRotaryOperationKind(kind) && kind !== 'plasma_profile' && kind !== 'follow_line'
     && kind !== 'v_carve'
@@ -392,29 +360,6 @@ function drillTypeLabel(type: DrillType): string {
     case 'countersink':
       return camT('cam.drillType.countersink')
   }
-}
-
-function operationTargetSummary(project: Project, target: OperationTarget): string {
-  if (target.source === 'stock') {
-    return camT('cam.target.stock')
-  }
-
-  const features = resolveFeatureInstances(project, target.featureIds)
-  const names = features
-    .filter(isMachinable)
-    .map((feature) => feature.name)
-  const regionNames = features
-    .filter(isRegion)
-    .map((feature) => feature.name)
-
-  if (names.length === 0 && regionNames.length === 0) {
-    return camT('cam.target.noFeatures')
-  }
-
-  const machiningSummary = names.length > 0 ? names.join(', ') : camT('cam.target.noMachiningTarget')
-  return regionNames.length > 0
-    ? camT('cam.target.filters', { machiningSummary, regionNames: regionNames.join(', ') })
-    : machiningSummary
 }
 
 function pocketPatternLabel(pattern: PocketPattern): string {
@@ -480,7 +425,6 @@ export function CAMPanel({
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [showLibraryDialog, setShowLibraryDialog] = useState(false)
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
-  const [pickedTargetIds, setPickedTargetIds] = useState<string[] | null>(null)
   const [editingSetupId, setEditingSetupId] = useState<string | null>(null)
   const [showCamPlan, setShowCamPlan] = useState(false)
   const [camPlan, setCamPlan] = useState<CamPlanDraft | null>(null)
@@ -551,7 +495,6 @@ export function CAMPanel({
   const currentSetupFace = setupFace(currentSetup)
   const editingSetup = setupSections.sections.find((section) => section.setup.id === editingSetupId)?.setup
   const closeSetupProperties = useCallback(() => setEditingSetupId(null), [])
-  const addSelection = useMemo(() => pickedTargetIds === null ? selection : { ...selection, selectedFeatureIds: pickedTargetIds, selectedFeatureId: pickedTargetIds[0] ?? null }, [selection, pickedTargetIds])
 
   const selectedToolId =
     selectedToolIdState && project.tools.some((tool) => tool.id === selectedToolIdState)
@@ -630,65 +573,34 @@ export function CAMPanel({
   }, [expandedCamSection])
 
 
-  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
-    () => {
-      const button = (kind: OperationKind) => {
-        // #960/#1034: a kind the project type cannot author is still offered,
-        // blocked with the reason, so the menu can say what would make it
-        // available. The reason is the project type, which is what decides the
-        // family — never the selected machine.
-        if (operationOffer(machine, kind) === 'needs-plasma-project') {
-          return {
-            kind,
-            label: operationAddButtonLabel(kind),
-            hint: camT('cam.addMenu.needsPlasmaProject'),
-            selectAllFeatureIds: [],
-          }
-        }
-        const hint = getOperationAddHint(project, addSelection, kind)
-        return {
-          kind,
-          label: operationAddButtonLabel(kind),
-          hint: hint ?? undefined,
-          // "Select all" is only offered while the hint is showing, so skip
-          // the compatibility scan when the current selection is already valid.
-          selectAllFeatureIds: hint ? selectAllCompatibleFeatureIds(project, kind) : [],
-        }
-      }
-      // The other family's kinds are left out of the menu entirely.
-      return [
-        button('pocket'),
-        button('v_carve'),
-        button('v_carve_medial'),
-        button('edge_route_inside'),
-        button('edge_route_outside'),
-        button('surface_clean'),
-        button('follow_line'),
-        button('drilling'),
-        button('rough_surface'),
-        button('finish_surface_cleanup'),
-        button('finish_surface'),
-        button('plasma_profile'),
-        // The model lives in the bar: the rotary rows are offered on Around
-        // whether or not one exists, and are refused with their own hint when
-        // it does not (issue #1015). Only a rotary project offers them at all
-        // (issue #1028).
-        ...rotaryAddKindsForFace(project, currentSetupFace).map((kind) => button(kind)),
-      ].filter((entry) => operationOffer(machine, entry.kind) !== 'hidden')
-    },
-    [project, addSelection, machine, currentSetupFace]
+  // The menu's contents are `operationAddEntries`'s (issue #1112 K): the
+  // Around face offers only wrapped work and leads with its rotary rows, and a
+  // square blank keeps the round-only rows listed with the stock reason.
+  const operationButtons = useMemo(
+    () => operationAddEntries(project, selection, machine, currentSetupFace),
+    [project, selection, machine, currentSetupFace]
   )
 
+  // Kept work that can no longer be cut (issue #1112 K). The generation guard
+  // and its feature map are expensive, so answer once per project change and
+  // look up by id — never per row, per render, ghost rows included.
+  const uncutWarnings = useMemo(() => {
+    const warnings = new Map<string, string>()
+    for (const operation of project.operations) {
+      const warning = operationUncutWarning(project, operation)
+      if (warning) warnings.set(operation.id, warning)
+    }
+    return warnings
+  }, [project])
+
   const selectedNewOperationHint = selectedNewOperationKind
-    ? operationOffer(machine, selectedNewOperationKind) === 'needs-plasma-project'
-      ? camT('cam.addMenu.needsPlasmaProject')
-      : getOperationAddHint(project, addSelection, selectedNewOperationKind)
+    ? operationAddHint(project, selection, machine, currentSetupFace, selectedNewOperationKind)
     : null
 
   // #732: with nothing selected every kind is invalid for the same reason, so
   // the Add menu states that precondition once instead of drawing eleven
   // per-kind `cam.hint.empty.*` rows.
-  const emptySelectionHint = addSelection.selectedFeatureIds.length === 0
+  const emptySelectionHint = selection.selectedFeatureIds.length === 0
     ? camT('cam.addMenu.selectFirst')
     : null
 
@@ -790,7 +702,7 @@ export function CAMPanel({
   }
 
   async function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
-    const target = operationTargetFromSelection(project, addSelection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       setSelectedNewOperationKind(kind)
       return
@@ -832,7 +744,7 @@ export function CAMPanel({
   function handleChooseOperationForAdd(kind: OperationKind) {
     setSelectedNewOperationKind(kind)
 
-    const target = operationTargetFromSelection(project, addSelection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       return
     }
@@ -1038,6 +950,9 @@ export function CAMPanel({
       return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
     const operation = selectedOperation
+    // The operation's own setup, not the workspace's face: a reference picture
+    // describes where this operation cuts.
+    const operationFace = setupFace(setupForOperation(project, operation) ?? currentSetup)
     const operationTool = selectedOperationTool
       ? normalizeToolForProject(selectedOperationTool, project)
       : null
@@ -1155,11 +1070,10 @@ export function CAMPanel({
       ),
       target: () => (
         <>
-          <SetupOperationControls key={operation.id} operation={operation} requestToolpath={requestToolpath} />
-          <label className="properties-field">
-            <span>{camT('cam.operation.target')}</span>
-            <input type="text" value={operationTargetSummary(project, operation.target)} readOnly />
-          </label>
+          {/* Two siblings in one fragment need distinct keys, or React reports
+              a duplicated child for every selected operation. */}
+          <SetupOperationControls key={`${operation.id}:controls`} operation={operation} requestToolpath={requestToolpath} />
+          <OperationCuts key={`${operation.id}:cuts`} project={project} operation={operation} />
           {selectedOperationTargetsRegion ? (
             <div className="cam-region-note">
               <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>
@@ -1170,21 +1084,13 @@ export function CAMPanel({
       ),
       targetSource: () => (
         <>
-          {isRotaryOperationKind(operation.kind) ? (
-            // A rotary operation machines the imported model inside the bar,
-            // which is not selectable on the Around sheet: pick it from the
-            // list instead of from the selection (issue #1015 slice K).
-            <RotaryTargetPicker
-              project={project}
-              target={operation.target}
-              onChange={(target) => updateOperation(operation.id, { target })}
-            />
-          ) : null}
           {/* #1096: the same target control every other operation has. For a
-              rotary operation it adds a selected closed Around region as the
-              mask that limits where the operation may cut; the model checklist
-              above still chooses the model. An update needs a real selection,
-              so a stray click cannot reset the target to every model. */}
+              rotary operation the selected model narrows the target and a
+              selected closed Around region joins it as the mask that limits
+              where the operation may cut; with nothing selected the operation
+              keeps its target. An update needs a real selection, so a stray
+              click cannot reset the target to every model. The Cuts list above
+              removes a model the user no longer wants (issue #1112 I). */}
           <div className="properties-field">
             <span>{camT('cam.operation.targetSource')}</span>
             <button
@@ -1893,10 +1799,12 @@ export function CAMPanel({
             onCommit={(value) => updateOperation(operation.id, { stockToLeaveRadial: value })}
           />
           {/* On a rotary operation the cleared wall is the bar's circumference,
-              so the leave is drawn across a radial cross-section (#1112). */}
+              so the leave is drawn across a radial cross-section; any other
+              operation on Around keeps the pocket picture with its radial-wall
+              note (#1112 decisions 7.10, 8.16). */}
           <OperationParameterReference
             kind="stockRadial"
-            variant={isRotaryOperationKind(operation.kind) ? 'rotary' : undefined}
+            variant={stockRadialRefVariant(operation, operationFace)}
           />
         </label>
       ),
@@ -2014,6 +1922,7 @@ export function CAMPanel({
     }
 
     const rotaryHint = rotaryOperationHint(project, operation)
+    const uncutWarning = uncutWarnings.get(operation.id) ?? null
     const hasWarnings = Boolean(toolpathWarnings && toolpathWarnings.length > 0)
     const showBookletMessage = bookletExportMessage?.operationId === operation.id
 
@@ -2045,6 +1954,10 @@ export function CAMPanel({
           </div>
         ) : null}
         {rotaryHint ? <div className="cam-field-note">{rotaryHint}</div> : null}
+        {/* Kept work that can no longer be cut (issue #1112 K): the operation
+            stays listed and editable, and says in the user's terms why the
+            current stock or face leaves it out. */}
+        {uncutWarning ? <UncutWorkNote text={uncutWarning} /> : null}
         {operation.kind === 'plasma_profile' ? <PlasmaOperationFields operation={operation} project={project} onChange={(patch) => updateOperation(operation.id, patch)} /> : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {
@@ -2068,8 +1981,10 @@ export function CAMPanel({
         </div>
         {/* Dev-only. The source-tag markers this draws are a debugging aid for
             the toolpath generators, not a setting on the operation, so it sits
-            outside the groups and ships in dev builds only. */}
-        {import.meta.env.DEV ? (
+            outside the groups and ships in dev builds only. `import.meta.env`
+            is Vite-only: the optional fallback keeps the operation panel
+            renderable in a plain Node render (unit tests), as in Icon.tsx. */}
+        {import.meta.env?.DEV ? (
           <label className="properties-check cam-operation-dev-toggle">
             <input
               type="checkbox"
@@ -2287,7 +2202,6 @@ export function CAMPanel({
                       aria-haspopup="dialog"
                       onClick={() => {
                         setSelectedNewOperationKind(null)
-                        setPickedTargetIds(null)
                         setShowAddOperationMenu((value) => !value)
                       }}
                     >
@@ -2298,11 +2212,9 @@ export function CAMPanel({
                         ref={camPlanButtonRef}
                         className="cam-header-action cam-header-action--plan"
                         type="button"
-                        // Bottom plans in its setup frame; rotary planning remains unsupported.
-                        disabled={project.features.length === 0 || currentSetupFace === 'around'}
-                        title={currentSetupFace === 'around'
-                          ? camT('cam.plan.unavailableAround')
-                          : undefined}
+                        // Every face plans in its own cutting frame now: Top,
+                        // Bottom (setup turn) and Around (bar/rotary, #1112).
+                        disabled={project.features.length === 0}
                         onClick={() => void handleOpenCamPlan()}
                       >
                         {camT('cam.plan.launch')}
@@ -2340,7 +2252,6 @@ export function CAMPanel({
                     {showAddOperationMenu ? (
                       <OperationAddMenu
                         setupName={setupSections.grouped ? currentSetup?.name : undefined}
-                        targetPicker={currentSetupFace === 'around' ? undefined : <CrossFaceTargetPicker project={project} face={currentSetupFace} selectedIds={addSelection.selectedFeatureIds} onChange={setPickedTargetIds} />}
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
                         selectedNewOperationHint={selectedNewOperationHint}
@@ -2375,13 +2286,18 @@ export function CAMPanel({
                   <div className="feature-tree-panel cam-operation-tree">
                     <div className="tree-list">
                       {setupSections.sections.map((section) => (
-                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
+                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} projectType={projectType(project)} selectedOperationId={selectedOperationId} openForWarning={section.operations.some((operation) => uncutWarnings.has(operation.id))} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
                         {section.operations.map((operation) => {
                         // An operation of a setup the workspace is not on is a
                         // ghost row (issue #1102), like a feature from the other
-                        // face in the feature tree: listed, with its eye, never
-                        // selected, reordered or edited from here.
+                        // face in the feature tree: listed, with its eye, and
+                        // selectable — selecting it turns the workspace over to
+                        // its face (`revealOperationFace` in the app's
+                        // `useOperationSelection`, issue #1112 F3), which is what
+                        // keeps the header face control the one setup choice.
+                        // It is never reordered or edited from here.
                         const ghost = !operationOnActiveSetup(project, operation)
+                        const uncutWarning = uncutWarnings.get(operation.id)
                         const ghostTitle = ghost
                           ? camT(section.face === 'bottom'
                             ? 'cam.treeRow.ghostBottom'
@@ -2397,18 +2313,26 @@ export function CAMPanel({
                             !ghost && operation.id === selectedOperationId ? 'tree-row--selected' : '',
                             !ghost && dragOperationId === operation.id ? 'tree-row--dragging' : '',
                             !ghost && warningOperationIds?.has(operation.id) ? 'cam-operation-row--warning' : '',
+                            uncutWarning ? 'cam-operation-row--uncut' : '',
                           ].join(' ')}
                           data-ghost={ghost ? 'true' : undefined}
                           title={ghostTitle}
-                          onClick={ghost ? undefined : () => handleSelectOperation(operation.id)}
-                          onKeyDown={ghost ? undefined : (event) => {
+                          onClick={() => handleSelectOperation(operation.id)}
+                          onKeyDown={(event) => {
+                            // Only the row's own focus selects it (issue #1112
+                            // F3 review of PR #1126, finding 3): key events
+                            // bubble from the row's buttons, and claiming them
+                            // here would replace the button's activation —
+                            // Space on the eye would flip the workspace to the
+                            // operation's face instead of showing its toolpath.
+                            if (event.target !== event.currentTarget) return
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
                               handleSelectOperation(operation.id)
                             }
                           }}
-                          role={ghost ? undefined : 'button'}
-                          tabIndex={ghost ? undefined : 0}
+                          role="button"
+                          tabIndex={0}
                           draggable={ghost ? undefined : true}
                           onDragStart={ghost ? undefined : () => handleOperationDragStart(operation.id)}
                           onDragEnd={ghost ? undefined : () => setDragOperationId(null)}
@@ -2473,6 +2397,7 @@ export function CAMPanel({
                           <span className="tree-label cam-operation-label">
                             <span className="cam-operation-name">{operation.name}</span>
                             {crossFaceTargets(project, operation).length > 0 ? <span className="face-chip face-chip--thru">{camT('cam.setup.crossFace')}</span> : null}
+                            {uncutWarning ? <UncutWorkBadge text={uncutWarning} /> : null}
                           </span>
                           <span className="tree-row-actions">
                             {generatingOperationIds?.has(operation.id) ? (

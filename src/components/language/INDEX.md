@@ -8,10 +8,14 @@ nothing here touches project data.
 - `LanguageManagerDialog.tsx` — built-in locales + custom language packs;
   activate, duplicate-and-edit, rename, edit, delete, import, and export
   actions with translation-progress reporting; mirrors `ThemeManagerDialog`
-  and reuses its list/detail layout classes.
+  and reuses its list/detail layout classes. The inline rename's Save is
+  disabled while the trimmed draft still names the saved language (issue
+  #1112 F4), through `renameTarget` in `common/formDraft.ts`.
 - `LanguageEditorDialog.tsx` — per-key translation editor: rows grouped by
   key namespace in collapsed sections (rows render only when a section is
   open), search plus all/untranslated/edited filtering, placeholder-parity
   gate blocking Apply, name + BCP-47 tag fields, and "Preview in app" which
   persists the draft (Cancel restores the on-open snapshot and previously
-  active language).
+  active language). Apply is disabled while the pack still matches the one the
+  editor opened on — comparing by value through `common/formDraft.ts`, since
+  the overrides object is rebuilt on every keystroke (issue #1112 F4).

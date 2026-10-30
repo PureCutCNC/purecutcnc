@@ -363,12 +363,16 @@ function testOldPlainGearProjectStaysPlain(): void {
 }
 
 /**
- * The base command always made the first gear Add, including on a rotary bar,
- * where `barSeedsModel` means the bar is already the material. That Add/Subtract
- * pair is observable in the tree and in CAM, so the canned rewrite must not
- * hand it the bar's Subtract default (issue #1112 DE2 review).
+ * The first gear on a rotary bar is a cut (issue #1112 rt3-d item 33).
+ *
+ * The base command made every first gear Add, including on a bar, where the bar
+ * is already the material on every face (`barSeedsModel`, #1054): Frank saw a
+ * gear added as the first feature on a square bar's Top come out as Add, when it
+ * is a cut. The canned rewrite now lets the classifier's Subtract stand there,
+ * exactly as for a hand-drawn outline, and nesting turns the bore into an Add
+ * island — the same reversal item 14 gave the Around face.
  */
-function testFirstGearOnARotaryBarStaysAddWithSubtractBore(): void {
+function testFirstGearOnARotaryBarIsACutWithAnAddIslandBore(): void {
   const base = newProject('Rotary gear', 'mm')
   resetStore({
     ...base,
@@ -381,19 +385,19 @@ function testFirstGearOnARotaryBarStaysAddWithSubtractBore(): void {
   const ids = useProjectStore.getState().completePendingGear()
   assertEqual(ids.length, 1, 'one feature')
   const gear = createdFeature(ids[0])
-  assertEqual(gear.operation, 'add', 'the first gear on a rotary bar is Add, as before')
+  assertEqual(gear.operation, 'subtract', 'the first gear on a rotary bar cuts into the bar')
   assertEqual(
     resolveCannedShapeShapes(gear).map((shape) => shape.operation),
-    ['add', 'subtract'],
-    'so its bore is Subtract, not an Add island',
+    ['subtract', 'add'],
+    'so its bore is an Add island, the reverse of the block gear',
   )
-  console.log('first rotary gear + bore stays Add/Subtract: PASSED')
+  console.log('first rotary gear + bore is Subtract with an Add island: PASSED')
 }
 
 testGearWithoutBoreIsOneCannedFeature()
 testAddGearHasSubtractBoreInTheSameFeature()
 testSubtractGearBoreIsAnAddIsland()
-testFirstGearOnARotaryBarStaysAddWithSubtractBore()
+testFirstGearOnARotaryBarIsACutWithAnAddIslandBore()
 testRepeatedGearsUseSequentialNames()
 testExpandGivesTheOutlinesWithTheirOperations()
 testInvalidBoreDoesNotCreateFeature()

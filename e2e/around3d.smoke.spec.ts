@@ -365,18 +365,18 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
   await ui.operations.rowByName(page, 'Around pocket').click()
   await ui.viewMenu.tabSimulation(page).click()
 
-  // Two setups make the picker exist, and it offers both.
-  await expect(ui.simSetup.picker(page)).toBeVisible()
-  await expect(ui.simSetup.picker(page).locator('option')).toHaveCount(2)
-  await expect(ui.simSetup.picker(page)).toContainText('Around')
-  await expect(ui.simSetup.picker(page)).toContainText('Top')
-  await expect(ui.simSetup.picker(page).locator(`option[value="${topSetup.id}"]`)).toHaveCount(1)
-
-  await ui.simSetup.picker(page).selectOption(aroundSetup.id)
-  await expect(ui.simSetup.picker(page)).toHaveValue(aroundSetup.id)
-  await expect(ui.simSetup.note(page)).toContainText('Around')
-
+  // The workspace is on the Around face, so that is the setup simulated
+  // (issue #1112 F3: the face control is the only setup choice). Two setups
+  // put the fresh-stock sentence behind the toolbar's info button, unchanged.
   const viewport = ui.simSetup.viewport(page)
+  await expect(viewport).toHaveAttribute('data-simulation-setup', aroundSetup.id)
+  const freshStockNote = 'Around is simulated on fresh stock: material removed by other setups is not shown.'
+  await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', freshStockNote)
+  await expect(ui.simSetup.info(page)).toHaveAttribute('title', freshStockNote)
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveText(freshStockNote)
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveCount(0)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'bar')
   await expect(viewport).toHaveAttribute('data-simulation-bar-angle', '0.000')
   await expect.poll(async () => (await viewportStats(page)).removed).toBeGreaterThan(0)
@@ -428,7 +428,9 @@ test('the Simulation tab turns the cut bar under the tool', async ({ app, ui }, 
   const unrolledToggle = page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Unrolled', exact: true })
   await expect(unrolledToggle).toHaveCount(0)
 
-  await ui.simSetup.picker(page).selectOption(topSetup.id)
+  // Switching the header face to Top moves the simulation to Top's setup.
+  await ui.face.switchTo(page, 'Top')
+  await expect(viewport).toHaveAttribute('data-simulation-setup', topSetup.id)
   await expect(viewport).toHaveAttribute('data-simulation-view', 'flat')
   await expect(unrolledToggle).toHaveCount(0)
 

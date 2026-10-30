@@ -53,9 +53,9 @@ import { projectType } from './projectType'
 import { defaultSetupForFace, provisionalSetupFor } from './provisionalSetup'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
-import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
+import type { CreationTarget, PendingAddTool, ProjectStore, SelectionState } from '../types'
 
-type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions'>>
+type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions' | 'dimensions'>>
 
 /**
  * The setup the workspace is on. A project always has one — but it is not
@@ -145,13 +145,15 @@ type FaceFeature = {
   definitionId?: string
   kind?: string
   canned?: CannedShapeData | null
+  operation?: FeatureOperation
+  z_top?: DimensionRef
+  z_bottom?: DimensionRef
 }
 
 /**
  * True for a canned Turn/Polygon model (issue #1112 G). A canned model is not
  * tied to a face: it is one row the user can select and target from Top,
- * Bottom or Around, exactly as the plan requires. Ordinary imported models keep
- * the face behavior they had, so old rotary-solid folders load unchanged.
+ * Bottom or Around, exactly as the plan requires.
  */
 export function isCannedModelFeature(
   project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
@@ -162,15 +164,74 @@ export function isCannedModelFeature(
 }
 
 /**
+ * True for any 3D model row — an imported mesh or a canned Turn/Polygon. A
+ * model is not tied to a face (issue #1112 I): it is selectable everywhere and
+ * reachable as a target from every setup, so it is never a ghost.
+ */
+export function isModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  const definition = feature.definitionId ? project.featureDefinitions?.[feature.definitionId] : undefined
+  return (feature.kind ?? definition?.kind) === 'stl'
+}
+
+/**
+ * True for a **canned bar model**: a Turn or Polygon (issue #1112 G), whose
+ * geometry is a solid of revolution about the bar rather than a shape on a
+ * face. It is a model (`operation: 'model'`, kind `stl`) that draws itself from
+ * stored parameters, so an imported mesh — plain `kind: 'stl'`, no `canned` — is
+ * not one.
+ *
+ * Storage authors these rows on Top, because the persisted-model loader accepts
+ * only that face, so the authoring face says nothing about where the row
+ * belongs: it belongs to the bar. The feature tree therefore lists it once, in
+ * the Around section, whichever face is being worked on (issue #1112 rt3-a,
+ * item 27), and on a flat face the canvas shows its side view only (item 19).
+ */
+export function isBarModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  return isCannedModelFeature(project, feature) && featureOperation(project, feature) === 'model'
+}
+
+/**
+ * True for a subtract that goes through the whole stock, so the other flat
+ * face can target it too. The rule is `engine/setupTargets.ts`'s — the same one
+ * `judgeTargetFromFace` applies — asked without a stock or dimensions it
+ * answers false, because an unknown span never earns the exception.
+ */
+function isThroughFlatFeature(project: FaceProject, feature: FaceFeature): boolean {
+  if (!project.stock || !project.dimensions || feature.definitionId === undefined
+    || feature.z_top === undefined || feature.z_bottom === undefined) return false
+  return setupIsThroughFeature(
+    { stock: project.stock, dimensions: project.dimensions, featureDefinitions: project.featureDefinitions },
+    {
+      authoringFace: feature.authoringFace,
+      z_top: feature.z_top,
+      z_bottom: feature.z_bottom,
+      definitionId: feature.definitionId,
+    },
+  )
+}
+
+/**
  * The ghost rule, resolved once for a project: true for a feature authored on
- * the face the workspace is not on. A feature that names no face is on Top. A
- * canned model is never a ghost. Every "is this a ghost" question in the app is
- * this predicate.
+ * the face the workspace is not on that cannot be a target from it. A feature
+ * that names no face is on Top. Every "is this a ghost" question in the app is
+ * this predicate, and it is the same rule `judgeTargetFromFace` applies: a
+ * model is listed on every face, and a through-feature on both flat faces.
  */
 export function ghostPredicate(project: FaceProject): (feature: FaceFeature) => boolean {
   const face = activeFace(project)
-  return (feature) => !isCannedModelFeature(project, feature)
-    && (feature.authoringFace ?? 'top') !== face
+  return (feature) => {
+    const authoringFace = feature.authoringFace ?? 'top'
+    if (authoringFace === face) return false
+    if (isModelFeature(project, feature)) return false
+    if (face !== 'around' && authoringFace !== 'around' && isThroughFlatFeature(project, feature)) return false
+    return true
+  }
 }
 
 /** True for a feature authored on the face the workspace is not on. */
@@ -226,7 +287,7 @@ export function editableProjectFeatures(project: Project): readonly ResolvedSket
 }
 
 /** Ids of the project's ghost features, empty for a Top-only project. */
-export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'> & Partial<Pick<Project, 'featureDefinitions'>>): Set<string> {
+export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'> & Partial<Pick<Project, 'featureDefinitions' | 'stock' | 'dimensions'>>): Set<string> {
   const isGhost = ghostPredicate(project)
   const ids = new Set<string>()
   for (const feature of project.features) {
@@ -726,4 +787,67 @@ export function aroundSketchAuthoringRefused(
   return face === 'around'
     && aroundUnavailableReason(project) === null
     && !aroundSketchAuthoringAvailable(project)
+}
+
+/**
+ * The operation of a row about to be inserted or already stored (issue #1112
+ * decision 17). Format 3.3 keeps it on the shared definition, so a
+ * `FeatureInstance` answers from its definition and a draft — the shape
+ * `addFeature`, `createDerivedFeature` and the copy helpers build — carries it
+ * itself. Reading either shape is what keeps the sheet rule about the row, not
+ * about which of the two the caller happens to hold.
+ */
+export function featureOperation(
+  project: { featureDefinitions?: Project['featureDefinitions'] },
+  feature: { operation?: FeatureOperation; definitionId?: string },
+): FeatureOperation | undefined {
+  if (feature.operation) return feature.operation
+  return feature.definitionId === undefined ? undefined : project.featureDefinitions?.[feature.definitionId]?.operation
+}
+
+/**
+ * Whether an operation cuts the sheet (issue #1112 decision 17). A **region** is
+ * a filter on a rotary operation (#1096) and **construction** geometry is never
+ * machined, so neither cuts the stock; every other operation — an add, a
+ * subtract, an engraving line, a model — does.
+ */
+function operationCutsSheet(operation: FeatureOperation | null | undefined): boolean {
+  return operation !== 'region' && operation !== 'construction'
+}
+
+/**
+ * The operation a creation target authors, when the question is only "does it
+ * cut?" — `null` for the targets that do (`feature`, `line`). The operation
+ * itself is `buildShapeFeature`'s, which also infers an open profile into a
+ * line; neither of those two is sheet-safe, so one answer covers both.
+ */
+function creationTargetOperation(target: CreationTarget): FeatureOperation | null {
+  if (target === 'region') return 'region'
+  if (target === 'construction') return 'construction'
+  return null
+}
+
+/**
+ * Whether authoring a row of this **operation** is refused on `face` (issue
+ * #1112 decision 17). The rule is {@link aroundSketchAuthoringRefused} with one
+ * exception: a region or a construction line is authored on a square blank's
+ * Around sheet as on any other face, because it never cuts the sheet — and a
+ * region is exactly how a rotary operation is limited to part of that sheet
+ * (#1096). Everything that would be cut there keeps its refusal.
+ */
+export function aroundSheetAuthoringRefused(
+  project: Pick<Project, 'stock' | 'meta'>,
+  face: SetupFace,
+  operation: FeatureOperation | null | undefined,
+): boolean {
+  return operationCutsSheet(operation) && aroundSketchAuthoringRefused(project, face)
+}
+
+/** {@link aroundSheetAuthoringRefused} for a creation target rather than a row's operation. */
+export function aroundSheetTargetRefused(
+  project: Pick<Project, 'stock' | 'meta'>,
+  face: SetupFace,
+  target: CreationTarget,
+): boolean {
+  return aroundSheetAuthoringRefused(project, face, creationTargetOperation(target))
 }

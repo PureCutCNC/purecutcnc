@@ -32,11 +32,16 @@ interface OperationButton {
   hint?: string
   /** Features "Select all" would select; empty when the affordance is unavailable. */
   selectAllFeatureIds?: string[]
+  /**
+   * Blocked by something the user can change that is not the selection (the
+   * stock shape), so the row stays in the menu, disabled, with its reason
+   * instead of collapsing into the selection's disclosure (#1112 K).
+   */
+  blockedInPlace?: boolean
 }
 
 interface OperationAddMenuProps {
   setupName?: string
-  targetPicker?: import('react').ReactNode
   operationButtons: OperationButton[]
   selectedNewOperationKind: OperationKind | null
   selectedNewOperationHint: string | null
@@ -57,7 +62,6 @@ interface OperationAddMenuProps {
 
 export function OperationAddMenu({
   setupName,
-  targetPicker,
   operationButtons,
   selectedNewOperationKind,
   selectedNewOperationHint,
@@ -103,8 +107,15 @@ export function OperationAddMenu({
   // first and the rest collapse into one labelled section instead of eleven
   // inline rejections. Order inside each partition is the untouched array
   // order, which carries the 2D-then-3D arrangement #398 relies on.
+  //
+  // A row blocked by the stock shape is not a selection failure, so it stays
+  // in place, disabled with its own reason (decision 5: disable with the
+  // reason what belongs here but is blocked by something the user can change).
+  // Hiding it behind the disclosure makes "Needs a round bar" something the
+  // user has to go looking for.
   const availableButtons = operationButtons.filter((button) => !button.hint)
-  const unavailableButtons = operationButtons.filter((button) => button.hint)
+  const inPlaceButtons = operationButtons.filter((button) => button.hint && button.blockedInPlace)
+  const unavailableButtons = operationButtons.filter((button) => button.hint && !button.blockedInPlace)
 
   function renderOperationItem(button: OperationButton) {
     const isExpanded = expandedOperationKind === button.kind
@@ -263,7 +274,6 @@ export function OperationAddMenu({
     <div className="cam-add-menu cam-add-menu--vertical">
       <div className="cam-add-menu__section">
         {setupName ? <p>{camT('cam.setup.addTo', { name: setupName })}</p> : null}
-        {targetPicker}
         <span className="cam-add-menu__label">{camT('cam.addMenu.operation')}</span>
 
         {/* #732: an empty selection is one precondition, not eleven separate
@@ -277,6 +287,18 @@ export function OperationAddMenu({
         {availableButtons.length > 0 ? (
           <div className="cam-operations-list">
             {availableButtons.map((button) => renderOperationItem(button))}
+          </div>
+        ) : null}
+
+        {/* Disabled in place, with the reason: the stock shape blocks these,
+            not the selection, so they are not part of the disclosure below.
+            The wrapper keeps them out of the "available for this selection"
+            partition that tests and the disclosure count read. */}
+        {inPlaceButtons.length > 0 ? (
+          <div className="cam-add-menu__blocked">
+            <div className="cam-operations-list">
+              {inPlaceButtons.map((button) => renderOperationItem(button))}
+            </div>
           </div>
         ) : null}
 

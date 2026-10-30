@@ -61,6 +61,7 @@ export const featureTreeEn = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ First 2.5D feature must be ',
   'featureTree.tree.warning.firstFeatureSuffix': '. The 3D model will not build until this is fixed.',
+  'featureTree.treeRow.warning.noEffect': 'No effect on the final shape: later features cover it.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Expand folder',
@@ -437,6 +438,14 @@ export const featureTreeEn = {
   // ── Properties: clamp type (#392) ──
   'featureTree.properties.clampType': 'Type',
   'featureTree.properties.clampType.clamp': 'Clamp',
+  'featureTree.properties.chuckSize': 'Chuck size',
+  'featureTree.properties.chuckExisting': 'Existing size',
+  'featureTree.properties.chuckMin': 'Minimum grip diameter',
+  'featureTree.properties.chuckMax': 'Maximum grip diameter',
+  'featureTree.properties.chuckJaws': 'Jaws',
+  'featureTree.properties.chuckUnknownRange': 'Capacity unknown. Enter limits or pick a size.',
+  'featureTree.properties.chuckSquareRange': 'Square blank: across flats with 4 jaws; corner circle with 3 or 6.',
+  'featureTree.properties.chuckOutOfRange': 'Bar is outside the chuck’s clamping range.',
   'featureTree.properties.clampType.chuck': 'Chuck',
   'featureTree.properties.clampType.tailstock': 'Tailstock',
 

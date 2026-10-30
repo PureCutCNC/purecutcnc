@@ -32,6 +32,7 @@ import {
   type ResolvedThemeDefinition,
 } from '../../theme/registry'
 import { useTheme } from '../../theme/themeContext'
+import { renameTarget } from '../common/formDraft'
 import { ThemeEditorDialog } from './ThemeEditorDialog'
 import { ThemeSwatch } from './ThemeSwatch'
 
@@ -74,6 +75,12 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
   const selected = allThemes.find((theme) => theme.id === selectedId) ?? allThemes[0]
   const selectedCustom = customThemes.find((theme) => theme.id === selected.id) ?? null
   const existingNames = useMemo(() => allThemes.map((theme) => theme.name), [allThemes])
+  // The inline rename offers Save only when the trimmed draft would actually
+  // be written (issue #1112 F4): an unchanged, reverted, or blank name writes
+  // nothing, so the button is disabled instead of silently saving nothing.
+  const renameName = renameDraft === null || selectedCustom === null
+    ? null
+    : renameTarget(selectedCustom.name, renameDraft)
 
   // Escape closes the manager, unless the nested editor owns the key press.
   useWindowEvent('keydown', (event) => {
@@ -137,10 +144,9 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
 
   const commitRename = () => {
     if (!selectedCustom || renameDraft === null) return
-    const trimmed = renameDraft.trim()
-    if (trimmed !== '' && trimmed !== selectedCustom.name) {
-      saveCustomTheme({ ...selectedCustom, name: trimmed })
-    }
+    // Nothing to write means the button is disabled; Enter reaches here, so it
+    // takes the same guard rather than writing an empty edit.
+    if (renameName !== null) saveCustomTheme({ ...selectedCustom, name: renameName })
     setRenameDraft(null)
   }
 
@@ -221,7 +227,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                       }
                     }}
                   />
-                  <button className="btn-secondary" type="button" onClick={commitRename}>{t('themeManager.saveName')}</button>
+                  <button className="btn-secondary" type="button" disabled={renameName === null} onClick={commitRename}>{t('themeManager.saveName')}</button>
                 </span>
               ) : (
                 <h3 className="machine-manager-detail-name">{selected.name}</h3>

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { getFeatureGeometryProfiles } from '../../text'
+import { drawAroundChuck } from './aroundChuck'
 import { getProfileBounds, rectProfile } from '../../types/project'
 import type { Clamp, Operation, Project, SketchProfile, Stock } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
@@ -23,6 +23,8 @@ import type { ToolpathResult } from '../../engine/toolpaths'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { aroundSheetForOperation, aroundSheetStock, authoredOnFace } from './aroundSheet'
 import type { AroundSheet } from './aroundSheet'
+import { foldToolpathToSheet } from './aroundDisplayWrap'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
 import { drawToolpath } from './previewPrimitives'
 import { traceProfilePath } from './profilePrimitives'
 import { drawClampFootprint, drawTabFootprint } from './scenePrimitives'
@@ -120,7 +122,7 @@ function snapshotBounds(
     if (!feature.visible && !targetIds.has(feature.id)) {
       continue
     }
-    for (const profile of getFeatureGeometryProfiles(feature)) {
+    for (const profile of featureDisplayProfiles(feature, sheet)) {
       bounds = includeProfileBounds(bounds, profile)
     }
   }
@@ -263,8 +265,10 @@ export function drawOperationSnapshot(
   const sheet = aroundSheetForOperation(project, operation)
   const frameStock = sheet ? aroundSheetStock(project.stock, sheet) : project.stock
   // `aroundSheetForOperation` only answers on a bar, so this is a type narrowing.
+  // The sheet is one circumference across; a multi-turn path is folded into it
+  // for the drawing, exactly as the live canvas draws it (issue #1112 L).
   const displayToolpath = sheet && toolpath && isBarStock(project.stock)
-    ? unwrapToolpath(toolpath, aroundFrame(project.stock))
+    ? foldToolpathToSheet(unwrapToolpath(toolpath, aroundFrame(project.stock)), sheet)
     : toolpath
 
   const viewState = computeFitViewStateForBounds(frameStock, snapshotBounds(project, operation, displayToolpath, sheet, frameStock), canvasW, canvasH)
@@ -282,7 +286,7 @@ export function drawOperationSnapshot(
       continue
     }
     const isTarget = targetIds.has(feature.id) || operation.target.source === 'stock'
-    const profiles = getFeatureGeometryProfiles(feature)
+    const profiles = featureDisplayProfiles(feature, sheet)
     for (const profile of profiles) {
       drawProfile(ctx, profile, vt, isTarget
         ? {
@@ -307,6 +311,7 @@ export function drawOperationSnapshot(
 
   for (const clamp of clampsOf(project, sheet)) {
     if (clamp.visible) {
+      if (sheet && drawAroundChuck(ctx, clamp, sheet, vt, false, false)) continue
       drawClampFootprint(ctx, clamp, vt, false, false)
     }
   }

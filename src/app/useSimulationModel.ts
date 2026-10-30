@@ -16,17 +16,18 @@
 
 import { findOperationTool } from '../toolPolicy'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
+import type { SimulationPlaybackInput, SimulationSetupView } from '../components/simulation/SimulationViewport'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
-import { setupFace } from '../engine/setupOrientation'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
 import { isSquareStock } from '../types/barStock'
+import { activeSetup } from '../store/helpers/activeFace'
 import {
   computeSimulationResultAsync,
-  priorReplayGrid,
+  priorReplayResult,
   simulationBuildOptions,
+  visibleReplayOperations,
   type SimulationResultInput,
 } from './simulationCompute'
 import {
@@ -35,8 +36,14 @@ import {
   type SimulationBuild,
 } from './simulationBuild'
 import {
+  rememberedReplay,
+  simulationReplayEntries,
+  SimulationReplayCache,
+  type SimulationPathEntry,
+  type SimulationReplayKey,
+} from './simulationReuse'
+import {
   buildSimulationSetupInput,
-  resolveSimulationSetup,
   setupOperations,
   simulationSetups,
   type SimulationSetupInput,
@@ -106,8 +113,11 @@ export function useSimulationModel({
   simulationPlaybackInput: SimulationPlaybackInput | null
   /** True while the paths simulation needs are still being produced. */
   simulationInputPending: boolean
-  /** The setups the simulation can show, and which one it shows (issue #947). */
-  simulationSetupPicker: SimulationSetupPicker
+  /**
+   * The setup the simulation shows (issue #1112 F3): the one the workspace
+   * face control is on, plus whether the fresh-stock note applies.
+   */
+  simulationSetup: SimulationSetupView
   /** Visible clamps, placed where they sit in the simulated setup's frame. */
   simulationClamps: Clamp[]
   /**
@@ -125,21 +135,14 @@ export function useSimulationModel({
   simulationFlatRoundBar?: FlatRoundBarDescriptor
 } {
   /**
-   * The simulated setup (issue #947). A pick from the panel holds while the
-   * same operation stays selected; selecting another operation hands the
-   * choice back to `resolveSimulationSetup`, which follows that operation's
-   * setup — so selecting a Bottom operation never shows it on Top stock.
+   * The simulated setup (issue #1112 F3) is the setup the workspace face
+   * control is on, and nothing else: the panel has no picker of its own, so
+   * the one face control cannot disagree with what is simulated. Selecting an
+   * operation of another face puts the workspace on that face (see
+   * `revealOperationFace`), which is how "selected operation's setup" keeps
+   * working through the face control.
    */
-  const [choice, setChoice] = useState<{ setupId: string; operationId: string | null } | null>(null)
-  const selectedOperationId = selectedOperation?.id ?? null
-  // Dropped, not just ignored, once the selection moves on: reselecting the
-  // operation the pick was made with must not bring a stale pick back.
-  if (choice !== null && choice.operationId !== selectedOperationId) setChoice(null)
-  const chosenSetupId = choice !== null && choice.operationId === selectedOperationId ? choice.setupId : null
-  const simulationSetup = useMemo(
-    () => resolveSimulationSetup(project, chosenSetupId, selectedOperation),
-    [chosenSetupId, project, selectedOperation],
-  )
+  const simulationSetup = useMemo(() => activeSetup(project), [project])
   const setupScopedOperations = useMemo(
     () => scopedOperations(project, simulationSetup),
     [project, simulationSetup],
@@ -170,20 +173,29 @@ export function useSimulationModel({
 
   // Every operation simulation may need: the visible set for 'visible' mode,
   // and the prior operations for 'selected' playback's starting stock.
+  //
+  // `visibleOperations` is also the list the visible replay *cuts*, so it is
+  // what the panel's replay key names (review P2): a hidden selection keeps its
+  // preview path in `canonicalPaths` for the selected mode, and naming it in
+  // the visible key made the two modes share a cached result.
+  const visibleOperations = useMemo(
+    () => visibleReplayOperations(project, setupScopedOperations),
+    [project, setupScopedOperations],
+  )
   const requiredOperationIds = useMemo(() => {
     if (centerTab !== 'simulation') return []
-    const eligible = (operation: Operation): boolean =>
-      operation.enabled && operation.showToolpath && findOperationTool(project, operation) !== null
     // Only the simulated setup's operations: each setup starts from fresh
     // stock, so another setup's cuts are never part of its starting state.
     if (simulationMode === 'visible') {
-      return setupScopedOperations.filter(eligible).map((operation) => operation.id)
+      return visibleOperations.map((operation) => operation.id)
     }
     if (!selectedInSetup) return []
     const selectedIndex = setupScopedOperations.findIndex((operation) => operation.id === selectedInSetup.id)
     const prior = selectedIndex >= 0 ? setupScopedOperations.slice(0, selectedIndex) : []
-    return prior.filter(eligible).map((operation) => operation.id)
-  }, [centerTab, project, selectedInSetup, setupScopedOperations, simulationMode])
+    // The prior replay drops exactly what the visible replay drops
+    // (`buildPriorReplayItems` filters the same way), so both use one predicate.
+    return visibleReplayOperations(project, prior).map((operation) => operation.id)
+  }, [centerTab, project, selectedInSetup, setupScopedOperations, simulationMode, visibleOperations])
 
   const requiredKey = requiredOperationIds.join(',')
 
@@ -231,15 +243,19 @@ export function useSimulationModel({
    * into it once here and nowhere else. Paths still being acquired are simply
    * absent, as they were before setups.
    */
-  const setupInput = useMemo<SimulationSetupInput | null>(() => {
-    if (centerTab !== 'simulation') return null
+  const canonicalPaths = useMemo<ReadonlyMap<string, ToolpathResult>>(() => {
     const canonical = new Map(paths ?? NO_PATHS)
     // The selected path is the preview's; an acquired one always wins over it.
     if (selectedInSetup && selectedCanonicalToolpath && !canonical.has(selectedInSetup.id)) {
       canonical.set(selectedInSetup.id, selectedCanonicalToolpath)
     }
+    return canonical
+  }, [paths, selectedCanonicalToolpath, selectedInSetup])
+
+  const setupInput = useMemo<SimulationSetupInput | null>(() => {
+    if (centerTab !== 'simulation') return null
     try {
-      return buildSimulationSetupInput(project, simulationSetup, canonical)
+      return buildSimulationSetupInput(project, simulationSetup, canonicalPaths)
     } catch (error) {
       // A square blank's actual material has no flat fallback: propagating
       // here reaches the app's existing error surface instead of drawing a
@@ -247,7 +263,50 @@ export function useSimulationModel({
       if (isSquareStock(project.stock)) throw error
       return null
     }
-  }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
+  }, [centerTab, canonicalPaths, project, simulationSetup])
+
+  /**
+   * The finished replays this panel may show again (issue #1112 rt2-h). Opening
+   * the tab replays the selected operation, and the playback starting stock
+   * replays the operations before it — neither answer depends on the tab being
+   * open, so returning to the same operation, or pressing play on the operation
+   * whose stock the previous replay already produced, reuses it. On Frank's
+   * `turn-shape-test-01` that is 86 ms per rough switch and 61 ms per finish
+   * switch, plus the 89 ms the finish's playback base was replaying again.
+   */
+  const [replayCache] = useState(() => new SimulationReplayCache())
+
+  /**
+   * The paths this panel replays: the selection alone, or the whole setup in cut
+   * order. `null` while the set cannot be known yet — the visible mode replays
+   * everything it acquired, so it has nothing to key until the acquisition
+   * lands. The selected mode's result reads only the selected path, so it is
+   * keyable (and reusable) even while the prior operations are still arriving.
+   *
+   * Both branches name exactly the items their mode's replay reads, because a
+   * key that names anything else is not a cache key for that result (review
+   * P2). The visible branch passes `visibleOperations`, the same eligibility
+   * `visibleReplayItems` applies; the selected branch passes the selection,
+   * which the selected replay does not filter.
+   */
+  const shownEntries = useMemo<SimulationPathEntry[] | null>(() => {
+    if (centerTab !== 'simulation') return null
+    if (simulationMode === 'visible') {
+      return paths === null ? null : simulationReplayEntries(visibleOperations, canonicalPaths)
+    }
+    return selectedInSetup ? simulationReplayEntries([selectedInSetup], canonicalPaths) : []
+  }, [centerTab, canonicalPaths, paths, selectedInSetup, simulationMode, visibleOperations])
+
+  const shownKey = useMemo<SimulationReplayKey | null>(() => (
+    centerTab === 'simulation' && shownEntries !== null
+      ? { project, setup: simulationSetup, detailCells: simulationDetailCells, items: shownEntries }
+      : null
+  ), [centerTab, project, shownEntries, simulationDetailCells, simulationSetup])
+
+  // Read during the render on purpose: a replay finished for these exact inputs
+  // is what the panel shows, so returning to the operation does not paint a
+  // loading overlay first. `peek` compares references only.
+  const cachedResult = shownKey === null ? null : replayCache.peek(shownKey)
 
   // The render that opens the tab must be the one that commits it. The result
   // is built in an effect, in yielding slices (issue #1112 review P1), so a
@@ -283,6 +342,11 @@ export function useSimulationModel({
   useEffect(() => {
     if (simulationBuildInput === null) return
     if (simulationBuild !== null && simulationBuild.input === simulationBuildInput) return
+    // These exact paths were replayed for this project, setup and detail
+    // already, and that result is on screen: rebuilding it would only repeat
+    // the work the switch is paying for.
+    if (shownKey !== null && replayCache.peek(shownKey) !== null) return
+    const requestKey = shownKey
     const controller = new AbortController()
     let cancelled = false
     void computeSimulationResultAsync(simulationBuildInput, { signal: controller.signal })
@@ -294,14 +358,20 @@ export function useSimulationModel({
           simulationBuildInput,
           result,
         ))
+        // Kept only while this is still the request: a completion the panel has
+        // moved past describes inputs nobody is looking at, and remembering it
+        // would also drop another document's entries (see `remember`).
+        if (requestKey !== null && requestedBuildInput.current === simulationBuildInput) {
+          replayCache.remember(requestKey, result)
+        }
       })
     return () => {
       cancelled = true
       controller.abort()
     }
-  }, [simulationBuild, simulationBuildInput])
+  }, [replayCache, shownKey, simulationBuild, simulationBuildInput])
 
-  const simulationResult = simulationResultForInput(simulationBuild, simulationBuildInput)
+  const simulationResult = simulationResultForInput(simulationBuild, simulationBuildInput) ?? cachedResult
 
   // A path acquisition and a build that has not produced this input's result
   // are both waits; the panel shows one spinner for either.
@@ -350,13 +420,33 @@ export function useSimulationModel({
     // ordinary edits pay for a full heightfield replay. Every stock shape,
     // square included, replays through this same deferred in-thread path
     // (issue #1016 C2).
-    const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => priorReplayGrid(
-      localProject,
-      setupInput.operations,
-      setupInput.toolpaths,
-      selectedInSetup.id,
-      simulationBuildOptions(setupInput, simulationDetailCells),
-    ))
+    //
+    // It goes through the panel's replay cache (issue #1112 rt2-h): replaying
+    // the operations before the selection is exactly the work a selected cut of
+    // the last of them is, so a finish opened after its rough reuses that rough
+    // heightfield (89 ms on Frank's `turn-shape-test-01`) instead of building
+    // the same cells again. The grid is only read — the controller clones it.
+    const selectedIndex = setupScopedOperations.findIndex((operation) => operation.id === selectedInSetup.id)
+    const priorOperations = selectedIndex > 0 ? setupScopedOperations.slice(0, selectedIndex) : []
+    const baseKey: SimulationReplayKey = {
+      project,
+      setup: simulationSetup,
+      detailCells: simulationDetailCells,
+      // The operations `buildPriorReplayItems` replays, not the whole slice: the
+      // key names what the replay cuts (review P2).
+      items: simulationReplayEntries(visibleReplayOperations(project, priorOperations), canonicalPaths),
+    }
+    const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => rememberedReplay(
+      replayCache,
+      baseKey,
+      () => priorReplayResult(
+        localProject,
+        setupInput.operations,
+        setupInput.toolpaths,
+        selectedInSetup.id,
+        simulationBuildOptions(setupInput, simulationDetailCells),
+      ),
+    ).grid)
 
     const diameter = normalizedSelectedTool.radius * 2
     // Both maxCutDepth and diameter come from `normalizeToolForProject`, so they're
@@ -397,13 +487,27 @@ export function useSimulationModel({
       feedPerSecond,
       plungeFeedPerSecond,
     }
-  }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
+  }, [
+    canonicalPaths,
+    centerTab,
+    paths,
+    project,
+    replayCache,
+    selectedInSetup,
+    setupInput,
+    setupScopedOperations,
+    simulationDetailCells,
+    simulationMode,
+    simulationSetup,
+  ])
 
-  const simulationSetupPicker = useMemo<SimulationSetupPicker>(() => ({
-    options: simulationSetups(project).map((setup) => ({ id: setup.id, name: setup.name, face: setupFace(setup) })),
-    selectedId: simulationSetup.id,
-    onChange: (setupId: string) => setChoice({ setupId, operationId: selectedOperationId }),
-  }), [project, selectedOperationId, simulationSetup.id])
+  // A single-setup project has nothing carried over to explain, so the panel
+  // then looks as it did before setups (issue #947).
+  const simulationSetupView = useMemo<SimulationSetupView>(() => ({
+    id: simulationSetup.id,
+    name: simulationSetup.name,
+    freshStockNote: simulationSetups(project).length > 1,
+  }), [project, simulationSetup])
 
   const simulationClamps = useMemo(
     () => (setupInput?.project ?? project).clamps.filter((clamp) => clamp.visible),
@@ -419,7 +523,7 @@ export function useSimulationModel({
     simulationOperationCount,
     simulationPlaybackInput,
     simulationInputPending,
-    simulationSetupPicker,
+    simulationSetup: simulationSetupView,
     simulationClamps,
     simulationStock,
     simulationBar: setupInput?.bar,

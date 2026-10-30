@@ -30,6 +30,10 @@
  * - the workflow guard used as the sketch permission (i.e.
  *   `aroundSketchAuthoringAvailable` answered from `aroundUnavailableReason`)
  *   → the direct-feature / completion / import / paste / Thread refusals fail;
+ * - judging a text run by the creation target instead of the sheet rule
+ *   (`refusesSquareAroundText` in `pendingAddSlice.ts`, rt2-c review finding 1)
+ *   → the text arming and stale-completion refusals fail under the region and
+ *   construction targets, and the round-bar control still passes;
  * - `defaultSetupForFace` defaulting a square blank's Around axis to `'x'` →
  *   the Y-axis realization and axis assertions fail;
  * - `operationCutsInProject` letting a non-rotary Around operation count on a
@@ -79,6 +83,7 @@ import {
 import { provisionalSetupId } from './helpers/provisionalSetup'
 import { operationCutsInProject } from './helpers/projectType'
 import { pasteClipboardFeatures, selectedVisibleClipboardFeatures } from '../platform/featureClipboard'
+import { defaultTextToolConfig } from '../text'
 
 const store = () => useProjectStore.getState()
 
@@ -327,6 +332,59 @@ if (thread.ok) throw new Error('unreachable')
 assert.equal(thread.reason, 'aroundUnavailable', 'with the Around-unavailable reason')
 assert.equal(thread.detail, 'needsRoundBar', 'and the compatibility detail string')
 assertUntouched(beforeThread, 'addRotaryPattern')
+
+// A text run keeps the sheet rule itself, not the creation target's exemption
+// (rt2-c review finding 1): `createTextFeatureAt` stamps the run's own
+// `add`/`subtract` operation on it however it was armed, and `placePendingTextAt`
+// writes its row directly instead of through `addFeature`, so a region or
+// construction target must not arm a cutting run on the square sheet.
+assert.equal(activeFace(store().project), 'around', 'the square blank is still on the Around sheet')
+for (const target of ['feature', 'line', 'region', 'construction'] as const) {
+  store().setCreationTarget(target)
+  const beforeText = snapshot()
+  store().startAddTextPlacement(defaultTextToolConfig('mm'))
+  assert.equal(store().pendingAdd, null, `arming text under the ${target} target is refused on the square Around sheet`)
+  assertUntouched(beforeText, `${target} text arming`)
+}
+
+// The same run armed on a round bar is refused when it completes after the blank
+// became square — under every target, including the two that never cut.
+for (const target of ['feature', 'line', 'region', 'construction'] as const) {
+  store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [feature('top-rect', 'top')]))
+  assert.equal(switchWorkspaceFace('around'), true, `${target}: the round bar enters Around`)
+  store().setCreationTarget(target)
+  store().startAddTextPlacement(defaultTextToolConfig('mm'))
+  assert.ok(store().pendingAdd, `${target}: the round bar arms the text tool`)
+  store().setStockShape('square')
+  assert.ok(isSquareStock(store().project.stock), `${target}: the blank is now square`)
+  assert.equal(activeFace(store().project), 'around', `${target}: the workspace stays on the Around sheet`)
+  const beforeTextCompletion = snapshot()
+  assert.deepEqual(store().placePendingTextAt({ x: 20, y: 10 }), [], `${target}: the run creates no row on the square sheet`)
+  assertUntouched(beforeTextCompletion, `${target} stale text completion`)
+}
+
+// Control: on a round bar the same target is not a refusal, so the assertions
+// above are about the square sheet and not about text under a region target.
+{
+  store().loadProject(projectWithFeatures(roundProject(SPECS[0]), [feature('top-rect', 'top')]))
+  assert.equal(switchWorkspaceFace('around'), true, 'the round bar enters Around for the text control')
+  store().setCreationTarget('region')
+  store().startAddTextPlacement(defaultTextToolConfig('mm'))
+  const [textId] = store().placePendingTextAt({ x: 20, y: 10 })
+  assert.ok(textId, 'the round bar authors a text run under the region target')
+  const textInstance = store().project.features.find((entry) => entry.id === textId)
+  assert.ok(textInstance, 'the run is a stored row')
+  assert.equal(textInstance.authoringFace, 'around', 'authored on the Around face')
+  assert.notEqual(
+    resolvedFeature(store().project, textId).operation,
+    'region',
+    'and its own operation cuts, which is why the target is no exemption',
+  )
+}
+
+// `loadProject` keeps the creation target, and the gear assertions below read
+// it, so leave it where the rest of this file expects to find it.
+store().setCreationTarget('feature')
 
 // ── 3. Round → square → round keeps everything, disables cuts ──
 

@@ -43,6 +43,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import { toolpathWarningText } from '../../i18n/warningText'
 import { warningSeverity } from '../../engine/toolpaths/warningCodes'
 import { exportBlockReasonMessage } from './exportBlockReason'
+import { exportPreviewMessageKey, type ExportMachineState } from './exportPreviewText'
 
 interface ExportDialogProps {
   onClose: () => void
@@ -75,6 +76,15 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
   })
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
+  // The two ways a project can have no machine are different problems: nothing
+  // selected (the honest "select one" state) and a selection this build cannot
+  // resolve, which means the project's embedded snapshot is gone (issue #1112,
+  // item 35). Saying "select a machine" to someone who has one selected is what
+  // made a broken snapshot read as a bug in the dialog.
+  const machineState = useMemo<ExportMachineState>(() => {
+    if (activeDefinition) return 'resolved'
+    return project.meta.selectedMachineId ? 'missing' : 'none'
+  }, [activeDefinition, project.meta.selectedMachineId])
   const dialectLabels = exportDialectLabels(activeDefinition)
 
   const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
@@ -180,7 +190,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     }
 
     if (!activeDefinition) {
-      errors.push(td('dialogs.export.warning.noMachine'))
+      errors.push(td(machineState === 'missing' ? 'dialogs.export.warning.machineMissing' : 'dialogs.export.warning.noMachine'))
     }
     if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
       errors.push(td('dialogs.export.warning.noOperations'))
@@ -188,7 +198,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
     return { errors, warnings }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [activeDefinition, operationOptions, preparation, programs, project, selectedOperationIds, saveFailedFile, languageTag])
+  }, [activeDefinition, machineState, operationOptions, preparation, programs, project, selectedOperationIds, saveFailedFile, languageTag])
 
   // The same predicate the save path re-checks, so the button and the bytes
   // cannot disagree about whether these programs may be written.
@@ -280,9 +290,18 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
   const remainingPrograms = programs.filter((program) => !savedProgramNumbers.includes(program.programNumber)).length
 
+  // What the pane says when there is no program to show. It names the state
+  // instead of assuming "no machine", so a refusal for any other reason — or a
+  // project whose selected machine is gone — can no longer read as one
+  // (issue #1112, item 35).
+  const previewMessageKey = exportPreviewMessageKey({
+    hasPreview: previewResult !== null,
+    machine: machineState,
+    blockReason: preparation?.status === 'blocked' ? preparation.reason.kind : null,
+  })
   const previewLines = previewResult
     ? previewResult.gcode.split('\n').slice(0, 30).join('\n')
-    : td('dialogs.export.previewPlaceholder')
+    : previewMessageKey === null ? '' : td(previewMessageKey)
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -301,7 +320,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
             <div className="dialog-section-group">
               <label className="dialog-section-title">{td('dialogs.export.machine')}</label>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+                <div data-testid="export-machine-name" style={{ fontSize: '13px', color: 'var(--text)' }}>
                   {activeDefinition?.name ?? td('dialogs.export.machineNone')}
                 </div>
                 <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ padding: '0 12px' }}>

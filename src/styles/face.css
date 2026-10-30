@@ -198,17 +198,13 @@
   background: var(--line);
 }
 
-/* Tablet shells carry the control in the sketch's face row: full tap targets,
- * and the row grows to hold them. */
+/* Tablet shells need a real tap target for the control in the workspace header
+ * row, which grows to hold it (issue #1112 F3: the row is the control's one
+ * home on every shell). */
 [data-shell-mode='tablet'] .face-switch,
 [data-shell-mode='tablet-compact'] .face-switch {
   padding: 0;
   --face-switch-height: calc(var(--touch-target, 44px) + 4px);
-}
-
-[data-shell-mode='tablet'] .centre-view--face-banner,
-[data-shell-mode='tablet-compact'] .centre-view--face-banner {
-  --face-banner-height: 56px;
 }
 
 [data-shell-mode='tablet'] .face-switch .face-switch__trigger,
@@ -220,45 +216,6 @@
 [data-shell-mode='tablet'] .face-switch__menu-item,
 [data-shell-mode='tablet-compact'] .face-switch__menu-item {
   min-height: var(--touch-target, 44px);
-}
-
-/* ── Sketch face row: the face switch on a tablet shell ──
- * A fixed-height row above the canvas, present only on a tablet shell, where
- * the workspace has no header to hold the switch, so switching face never
- * resizes the canvas. Plain block layout with a calc() height: no flex or grid
- * percentages for WebKit to disagree on. */
-
-.centre-view--face-banner {
-  --face-banner-height: 44px;
-}
-
-.centre-view--face-banner > .sketch-canvas-container {
-  height: calc(100% - var(--face-banner-height));
-}
-
-/* The first-run overlay covers the canvas, not the row above it: on a tablet
- * shell the row carries the face switch and must stay reachable. */
-.centre-view--face-banner > .empty-state-overlay {
-  top: var(--face-banner-height);
-}
-
-/* The row carries the switch and nothing else (issue #1102 slice E 8): the
- * flip and the Around explanation are the control's own label and tooltips,
- * and its menu is portalled so this row's overflow cannot clip it. */
-.face-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: var(--face-banner-height, 44px);
-  padding: 0 10px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-subtle);
-  font-size: 12.5px;
-}
-
-.face-banner svg {
-  flex-shrink: 0;
 }
 
 /* ── Face chips: TOP / BOTTOM / THRU and the layer state ── */
@@ -550,14 +507,22 @@
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
 .cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
-.cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
-/* This class is shared: the cross-face picker is a `details`/`summary` now,
- * while RotaryTargetPicker is still a `fieldset`/`legend`, so both keep the
- * same dim caption. */
-.cam-cross-face-picker > summary,
-.cam-cross-face-picker legend { font-size: 12px; color: var(--text-dim); }
-.cam-cross-face-picker > summary { cursor: pointer; }
-.cam-cross-face-picker .properties-check { flex-wrap: wrap; padding: 4px 0; }
+/* The operation's Cuts list (issue #1112 I). A row is the target's icon, its
+ * name and a remove ×; a long list folds its rows by the tree's folders. The
+ * name takes the row's spare width, so a long one ellipsizes instead of pushing
+ * the × out, and the × stays a small row control (issue #1112 rt3-a, item 25). */
+.cam-cuts__list { display: grid; gap: 2px; min-width: 0; }
+.cam-cuts__row { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 22px; padding: 2px 0; border-radius: 4px; }
+.cam-cuts__row:hover { background: var(--accent-soft); }
+.cam-cuts__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-dim); }
+.cam-cuts__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-cuts__filter { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.cam-cuts__remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.cam-cuts__remove:hover:not(:disabled) { background: var(--surface-input); color: var(--text); }
+.cam-cuts__remove:disabled { opacity: 0.4; cursor: default; }
+.cam-cuts__folder { min-width: 0; }
+.cam-cuts__folder-summary { cursor: pointer; font-size: 12px; color: var(--text-dim); }
+.cam-cuts__group { display: grid; gap: 2px; min-width: 0; }
 .setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
 .cam-setup-reach { font-size: 12px; }
 .cam-setup-reach__target { margin: 6px 0; padding: 6px; border: 1px dashed var(--line-strong); border-radius: 6px; }
@@ -586,8 +551,8 @@
 [data-shell-mode='tablet-compact'] .cam-setup-group button,
 [data-shell-mode='tablet'] .dialog--setup button,
 [data-shell-mode='tablet-compact'] .dialog--setup button,
-[data-shell-mode='tablet'] .cam-cross-face-picker .properties-check,
-[data-shell-mode='tablet-compact'] .cam-cross-face-picker .properties-check { min-height: 44px; }
+[data-shell-mode='tablet'] .cam-cuts__remove,
+[data-shell-mode='tablet-compact'] .cam-cuts__remove { width: 44px; height: 44px; }
 
 .cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
 .dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }
@@ -606,10 +571,11 @@
 .cam-operation-tree .cam-operation-name { width: 100%; }
 
 /* An operation of a setup the workspace is not on (issue #1102): listed like a
-   feature-tree ghost — dimmed by `.tree-row--ghost` above — and with no hover
-   or selection of its own. It keeps its eye: showing its toolpath still works. */
-.cam-operation-tree .tree-row--ghost,
-.cam-operation-tree .tree-row--ghost:hover {
-  cursor: default;
-  background: transparent;
+   feature-tree ghost — dimmed by `.tree-row--ghost` above — and, since the face
+   control became the simulation's only setup choice (issue #1112 F3),
+   selectable: the click turns the workspace over to its face. It keeps its eye,
+   and still has no reorder or edit controls; its hover and selection follow the
+   ordinary CAM row so it reads as the button it is. */
+.cam-operation-tree .tree-row--ghost {
+  cursor: pointer;
 }

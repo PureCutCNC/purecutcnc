@@ -24,6 +24,7 @@ import {
   rectProfile,
   stockFromFeature,
   type FeatureInstance,
+  type Project,
   type Stock,
 } from '../../types/project'
 import { isSquareStock, normalizeSquareStock } from '../../types/barStock'
@@ -494,11 +495,12 @@ export function createWorkpieceSlice(
           return {}
         }
 
-        const convertedProject = mode === 'convert'
-          // Parameters converted with the frame; the derived mesh must follow
-          // them in the same write (#1112 A2).
-          ? rebuildCannedShapeModels(convertProjectUnits(s.project, units))
-          : { ...s.project, meta: { ...s.project.meta, units } }
+        // Parameters converted with the frame; the derived mesh must follow
+        // them in the same write (#1112 A2).
+        const convertUnitsOf = (project: Project): Project => (mode === 'convert'
+          ? rebuildCannedShapeModels(convertProjectUnits(project, units))
+          : { ...project, meta: { ...project.meta, units } })
+        const convertedProject = convertUnitsOf(s.project)
         const nextProject = {
           ...convertedProject,
           meta: { ...convertedProject.meta, modified: new Date().toISOString() },
@@ -507,7 +509,17 @@ export function createWorkpieceSlice(
           return {}
         }
         if (s.history.transactionStart) {
-          return { project: nextProject }
+          // An open transaction holds the state a Cancel puts back — a live
+          // canned-shape preview, a drag (#1112 F1). It converts with the
+          // project, otherwise cancelling the edit would also revert the unit
+          // switch the user just made.
+          return {
+            project: nextProject,
+            history: {
+              ...s.history,
+              transactionStart: convertUnitsOf(s.history.transactionStart),
+            },
+          }
         }
         return {
           project: nextProject,

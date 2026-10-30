@@ -45,7 +45,7 @@ import {
 } from './helpers/normalize'
 import { transformProfile } from '../geometry/profile'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
-import { aroundSketchAuthoringRefused } from './helpers/activeFace'
+import { aroundSheetAuthoringRefused, featureOperation } from './helpers/activeFace'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
@@ -77,6 +77,7 @@ import {
 } from '../sketch/constraintSolver'
 import type { ProjectStore } from './types'
 import { normalizeProject } from './helpers/projectFormat'
+import { syncRotaryPatternSurfaceProject } from './helpers/rotarySurface'
 export { normalizeProject } from './helpers/projectFormat'
 export { toolpathGenerationDeferred } from './slices/nestingSlice'
 
@@ -114,10 +115,46 @@ function withAutoDirty(rawSet: SetFn): SetFn {
   }
 }
 
+/**
+ * Wrap the store's `set` so every project it writes re-measures the Thread and
+ * Flutes bands against the surface they lie on (#1112 H2/H3). Deleting, moving,
+ * transforming, expanding, making unique, re-parenting or importing a Turn all
+ * change which surface a band sits on, so the sync belongs after every write
+ * rather than at each action. The previous project is what tells a derived span
+ * from a user's Properties override, and an unchanged project keeps its
+ * identity, so a write that does not touch a surface is not a new history state.
+ *
+ * Opening, creating or loading a document replaces the project wholesale
+ * (`projectKey` moves); the file's spans are authoritative there, so the sync
+ * stays out of the load and the document is not made dirty by it.
+ */
+function withRotarySurfaceSync(rawSet: SetFn): SetFn {
+  return (update) => {
+    // Always hand the inner setter a function: only then is the project being
+    // replaced still visible, and the sync needs it to read the old surface.
+    rawSet((state) => {
+      const patch = typeof update === 'function' ? update(state) : update
+      if (!patch.project) return patch
+      if (patch.projectKey !== undefined && patch.projectKey !== state.projectKey) return patch
+      const project = syncRotaryPatternSurfaceProject(patch.project, state.project)
+      return project === patch.project ? patch : { ...patch, project }
+    })
+  }
+}
+
 export const useProjectStore = create<ProjectStore>((rawSet, get) => {
-  // Every project written through `set` has its setups reconciled (#944), and
-  // no write leaves a feature from the other face selected (#945).
-  const set = withAutoDirty(withSetupSync(withGhostSelectionGuard(rawSet)))
+  // Every project written through `set` has its setups reconciled (#944), no
+  // write leaves a feature from the other face selected (#945), and every
+  // Thread/Flutes band follows the Turn surface it sits on.
+  const wrapSet = (options: { followStockChuck?: boolean }) =>
+    withAutoDirty(withRotarySurfaceSync(withSetupSync(withGhostSelectionGuard(rawSet), options)))
+  const set = wrapSet({})
+  // Undo, redo and a cancelled transaction put a stored snapshot back
+  // (#1112 R2 item 23): its equipment is what the operator had, so it is not a
+  // stock transition a default chuck follows. Everything else about the write
+  // is the same, which is why this is the same pipeline with one option off
+  // rather than a separate restore path.
+  const setRestored = wrapSet({ followStockChuck: false })
   const applyProfileBreak = (
     featureId: string,
     resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,
@@ -140,14 +177,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     }
 
     // A split inserts a new row beside the original (issue #1016 C2-U1H). On a
-    // square blank the Around sheet is round-only (`aroundSketchAuthoringRefused`),
+    // square blank the Around sheet is round-only (`aroundSheetAuthoringRefused`),
     // so the split half would be a new Around row no other Around creation path
     // admits: refuse the whole edit here — before `createDerivedFeature`, so the
     // original profile, definitions, tree, selection and history stay untouched —
     // judged by the source row's own face so a Top workspace cannot bypass it.
     // Breaks that stay in place (a closed outline opened, an end segment removed)
     // create no row and remain allowed.
-    if (result.splitProfile && aroundSketchAuthoringRefused(s.project, feature.authoringFace ?? 'top')) {
+    if (result.splitProfile && aroundSheetAuthoringRefused(s.project, feature.authoringFace ?? 'top', featureOperation(s.project, feature))) {
       return {}
     }
 
@@ -290,7 +327,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     rawSet,
     normalizeProject,
   }),
-  ...createHistorySlice(set, get, {
+  ...createHistorySlice(setRestored, get, {
     normalizeProject,
   }),
   ...createWorkpieceSlice(set),

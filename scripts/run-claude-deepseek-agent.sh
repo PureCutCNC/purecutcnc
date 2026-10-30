@@ -159,7 +159,7 @@ env_file="${DEEPSEEK_AGENT_ENV_FILE:-$REPO_ROOT/.env.agent}"
 
 # Refuse to run with a group/other-readable credential file (must be chmod 600).
 if [[ -f "$env_file" ]]; then
-  perms="$(stat -f '%Lp' "$env_file" 2>/dev/null || stat -c '%a' "$env_file" 2>/dev/null)"
+  perms="$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file" 2>/dev/null)"
   if [[ -n "$perms" && "${perms: -2}" != "00" ]]; then
     fail "credential file is group/other-accessible ($perms); run: chmod 600 $env_file"
   fi
