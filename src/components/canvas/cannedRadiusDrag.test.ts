@@ -27,9 +27,12 @@
  *   3. The release is exactly one write, so the gesture is one undo step — and
  *      through `updateFeature` it is the same normalize/apply path the
  *      Edit-ellipse panel uses, so linked copies and the summary follow.
+ *   4. The handle follows the same snap gate a dragged circle control does, and
+ *      a press that never moved it is not an edit (issue #1112 review).
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { newProject, type CannedShapeData, type Point, type Project } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore } from '../../store/types'
@@ -39,6 +42,7 @@ import {
   beginCannedRadiusDrag,
   cannedRadiusDrawParams,
   commitCannedRadiusDrag,
+  moveCannedRadiusDrag,
   updateCannedRadiusDrag,
   type CannedRadiusDragState,
 } from './cannedRadiusDrag'
@@ -132,6 +136,46 @@ assert.equal(
   'only an ellipse has radius handles to draw',
 )
 
+// ── 2b. The handle obeys the circle's snap gate (review fix 1) ─────────
+
+const gateStart = beginCannedRadiusDrag(ellipse, 0)
+assert.ok(gateStart, 'the gated drag starts')
+const noLock = (point: Point): Point => point
+assert.equal(
+  moveCannedRadiusDrag(gateStart, null, { x: 80, y: 50 }, noLock),
+  gateStart,
+  'a required snap that did not resolve leaves the radius exactly where it is',
+)
+// The gate holds whatever the drag origin is: it must not fall back to some
+// other point and move the radius through the positions snapping excludes.
+assert.equal(
+  moveCannedRadiusDrag(gateStart, null, { x: 120, y: 90 }, noLock),
+  gateStart,
+  'the snap gate ignores the drag origin',
+)
+const gatedMove = moveCannedRadiusDrag(gateStart, { x: 75, y: 50 }, { x: 80, y: 50 }, noLock)
+assert.equal(gatedMove.params.rx, 25, 'a resolved snap point still moves the handle')
+assert.equal(gatedMove.params.ry, 20, 'the gate never touches the other radius')
+
+// The axis lock is applied before the radius is mapped, exactly as the pointer
+// handler applied it before this fix.
+const lockY = (point: Point, reference: Point): Point => ({ x: reference.x, y: point.y })
+const lockedMove = moveCannedRadiusDrag(gateStart, { x: 95, y: 70 }, { x: 80, y: 50 }, lockY)
+assert.equal(lockedMove.params.rx, 30, 'the drag axis lock is applied to the gated point')
+
+// The pointer handler has no second decision: it hands the snap-gated point
+// straight to the drag. Pinned because the reviewed bug was a fallback to the
+// raw pointer in that branch, which no radius-drag unit can observe otherwise.
+const gesturesSource = readFileSync(new URL('./usePointerGestures.ts', import.meta.url), 'utf8')
+assert(
+  gesturesSource.includes('cannedRadius.update(constrainedPoint,'),
+  'the pointer handler routes the snap-gated point into the radius drag',
+)
+assert(
+  !gesturesSource.includes('constrainedPoint ?? snapped'),
+  'the radius drag never falls back to the raw snapped pointer',
+)
+
 // ── 3. The release is exactly one write ────────────────────────────────
 
 const writes: Array<{ featureId: string; canned: CannedShapeData }> = []
@@ -191,4 +235,53 @@ assert.deepEqual(
   'the linked copy keeps its own placement',
 )
 
-console.log('✓ ellipse radius drag: start rules, preview-only moves, one write, one undo step')
+// ── 5. A press that never moved the handle is not an edit (review fix 2) ─
+
+resetStore()
+store().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
+const clickId = resolvedProjectFeatures(store().project)[0].id
+
+const edit = beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)
+assert.ok(edit, 'the fixture ellipse starts an X drag')
+assert.equal(
+  commitCannedRadiusDrag(updateCannedRadiusDrag(edit, { x: 95, y: 50 }), (id, canned) => store().updateFeature(id, { canned })),
+  true,
+  'a moved drag writes once',
+)
+assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'the edit is stored')
+const undoStepsAfterEdit = store().history.past.length
+
+store().undo()
+assert.deepEqual(storedParams(clickId), { rx: 30, ry: 20 }, 'undo restores the edit')
+assert.equal(store().history.future.length, 1, 'the undo left one redo step')
+
+// A click on a handle: press, release, no move.
+const click = beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)
+assert.ok(click, 'the press grabs the handle')
+const clickWrites: CannedShapeData[] = []
+const clickWrote = commitCannedRadiusDrag(click, (id, canned) => {
+  clickWrites.push(canned)
+  store().updateFeature(id, { canned })
+})
+assert.equal(clickWrote, false, 'an unmoved press/release writes nothing')
+assert.equal(clickWrites.length, 0, 'the click never reaches updateFeature')
+assert.deepEqual(storedParams(clickId), { rx: 30, ry: 20 }, 'the click leaves the parameters alone')
+assert.equal(store().history.past.length, undoStepsAfterEdit - 1, 'the click adds no undo step')
+assert.equal(store().history.future.length, 1, 'the click keeps the redo step')
+store().redo()
+assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'redo still replays the undone edit')
+
+// Dragging away and back to the same radius is also not an edit.
+const roundTrip = dragTo(
+  beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)!,
+  { x: 80, y: 50 },
+  { x: 95, y: 50 },
+)
+assert.equal(
+  commitCannedRadiusDrag(roundTrip, (id, canned) => store().updateFeature(id, { canned })),
+  false,
+  'a drag that ends where it began writes nothing',
+)
+assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'the round trip leaves the parameters alone')
+
+console.log('✓ ellipse radius drag: start rules, snap gate, preview-only moves, one write, one undo step')

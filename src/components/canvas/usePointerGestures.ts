@@ -794,8 +794,10 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
       setHoveredEditControl(null)
-      const dragOrigin = dragStartWorldRef.current ?? snapped
-      cannedRadius.update(applyLock(constrainedPoint ?? snapped, dragOrigin))
+      // The handle follows the same snap-gated point a dragged circle control
+      // does: a required snap that did not resolve leaves it where it is rather
+      // than falling back to the raw pointer (issue #1112 review).
+      cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
       return
     }
 

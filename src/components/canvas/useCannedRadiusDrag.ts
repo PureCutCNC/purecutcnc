@@ -43,7 +43,7 @@ import {
   beginCannedRadiusDrag,
   cannedRadiusDrawParams,
   commitCannedRadiusDrag,
-  updateCannedRadiusDrag,
+  moveCannedRadiusDrag,
   type CannedRadiusDragState,
 } from './cannedRadiusDrag'
 
@@ -72,8 +72,12 @@ export interface UseCannedRadiusDrag {
   clearHover: () => void
   /** Grab a handle; false when there is nothing to grab. */
   begin: (axisIndex: number) => boolean
-  /** Move the dragged handle to `worldPoint` (already snapped and axis-locked). */
-  update: (worldPoint: Point) => void
+  /**
+   * Move the dragged handle to the snap-gated pointer point (already gated by
+   * snapping and locked onto the drag's axis). `null` — snapping is required and
+   * nothing resolved — leaves the handle where it is, like a circle control.
+   */
+  update: (constrainedPoint: Point | null, dragOrigin: Point | null, applyLock: (point: Point, reference: Point) => Point) => void
   /** Release: write the dragged parameters once and clear the preview. */
   finish: () => void
 }
@@ -145,12 +149,16 @@ export function useCannedRadiusDrag(ctx: CannedRadiusDragCtx): UseCannedRadiusDr
     return true
   }
 
-  function update(worldPoint: Point): void {
+  function update(
+    constrainedPoint: Point | null,
+    dragOrigin: Point | null,
+    applyLock: (point: Point, reference: Point) => Point,
+  ): void {
     const drag = dragRef.current
     if (!drag) return
-    const next = updateCannedRadiusDrag(drag, worldPoint)
-    if (next === drag) return
-    dragRef.current = next
+    const next = moveCannedRadiusDrag(drag, constrainedPoint, dragOrigin, applyLock)
+    if (next !== drag) dragRef.current = next
+    // Redraw either way: a gated move still refreshes the snap readout.
     scheduleDraw()
   }
 

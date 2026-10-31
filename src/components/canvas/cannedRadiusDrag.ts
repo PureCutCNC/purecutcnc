@@ -44,6 +44,8 @@ export interface CannedRadiusDragState {
   /** The instance placement the handles are read through, fixed for the drag. */
   transform: Matrix2D
   axis: EllipseRadiusAxis
+  /** The stored parameters when the gesture began: an unmoved release is no edit. */
+  start: EllipseCannedParams
   /** The parameters the release would store: the live preview. */
   params: EllipseCannedParams
 }
@@ -67,6 +69,7 @@ export function beginCannedRadiusDrag(
     kind: ELLIPSE_CANNED_KIND,
     transform: feature.transform,
     axis,
+    start: params,
     params,
   }
 }
@@ -85,15 +88,42 @@ export function updateCannedRadiusDrag(
 }
 
 /**
+ * One pointer move of a radius drag, as the canvas pointer handler applies it:
+ * the drag's own axis lock, then the radius preview.
+ *
+ * `constrainedPoint` is the snap-gated point every other canvas drag follows;
+ * `null` means snapping is on and nothing resolved, so the handle stays exactly
+ * where it is. A radius handle obeys the same gate as a dragged circle control:
+ * falling back to the raw pointer here would move the ellipse through the very
+ * positions snapping exists to keep it off (issue #1112 review).
+ */
+export function moveCannedRadiusDrag(
+  state: CannedRadiusDragState,
+  constrainedPoint: Point | null,
+  dragOrigin: Point | null,
+  applyLock: (point: Point, reference: Point) => Point,
+): CannedRadiusDragState {
+  if (!constrainedPoint) return state
+  return updateCannedRadiusDrag(state, applyLock(constrainedPoint, dragOrigin ?? constrainedPoint))
+}
+
+/**
  * Write the dragged parameters exactly once. Called on the release, so the
  * whole gesture is one write and therefore one undo step; the last preview is
  * what gets stored.
+ *
+ * A press that never moved the handle — or a drag that ended where it began —
+ * is not an edit, so nothing is written and `false` is returned. Committing the
+ * unchanged parameters anyway would add an undo entry and drop the redo stack
+ * for a plain click (issue #1112 review).
  */
 export function commitCannedRadiusDrag(
   state: CannedRadiusDragState,
   write: (featureId: string, canned: CannedShapeData) => void,
-): void {
+): boolean {
+  if (state.params.rx === state.start.rx && state.params.ry === state.start.ry) return false
   write(state.featureId, { kind: state.kind, params: state.params })
+  return true
 }
 
 /**
