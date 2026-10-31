@@ -61,6 +61,8 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 
 - `cam/rotaryOperations.test.ts` — Rotary rough/finish authoring contract: Around model-only targets, defaults, support cache/units/file persistence and exact field policy (#1015 slice D).
 
+- `cam/operationCutsLayout.test.ts` — the Cuts chips' packed geometry read off `face.css` (issue #1112 rt6-b fix1): the × box overhangs its chip by 7/9px above and below and 6/10px to the right, so the row gap, the gap between a folder and the ungrouped block, a folder summary's clearance, the column gap and the list's own edge padding are all checked against those overhangs in both shell modes — the arithmetic that decides whether a finger removes the cut it aimed at, with the browser half in `e2e/tablet1112.smoke.spec.ts`'s `elementFromPoint` edge checks.
+
 - `canvas/aroundSelection.testSupport.ts` supplies the overlapping X/Y model fixtures for `useClickPlacement.test.ts`, `useCanvasContextMenu.test.ts`, and `aroundCanvasDraw.test.ts`; these exercise Around band picking and the live canvas hover/selection draw pass without flat model silhouettes (#1112 I2).
 
 - `feature-tree/ChuckProperties.tsx` — chuck size presets, editable range, jaws and capacity warning (#1112 M); the old body is retained until a size is picked. A pick of the size or the jaws marks the chuck hand-set (`ChuckData.manual`), so a stock change no longer re-defaults it (#1112 R2 item 23); a size pick keeps the jaws it already had. `ChuckProperties.test.ts` checks rendered fields, warnings and both picks' patches.

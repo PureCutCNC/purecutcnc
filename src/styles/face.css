@@ -547,9 +547,19 @@
   gap: 4px 8px;
 }
 .cam-operation-properties .properties-field.cam-cuts > .cam-cuts__list { grid-column: 1; }
-.cam-cuts__list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+/* The list's padding reserves the part of a remove × that overhangs its chip:
+ * 7px above and below on desktop (6px to the right), 9px and 10px on a tablet.
+ * Without it the first and last lines' boxes reached into the label row above
+ * and the next field below, and a chip that fills its line pushed the × under
+ * the panel's clip. The 20px gap does the same between one block and the next:
+ * two chips' overhangs add up to 14px (18px on a tablet), which the 6px gap
+ * the blocks used to have did not cover (issue #1112 rt6-b fix1 F1). */
+.cam-cuts__list { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; min-width: 0; padding: 8px 8px 8px 0; }
 .cam-cuts__list > .properties-hint { max-width: 100%; }
 .cam-cuts__group { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 8px; min-width: 0; max-width: 100%; }
+/* A folder's summary sits directly above its chips, so a folder's group
+ * reserves the overhang at its top edge just as the list does at its own. */
+.cam-cuts__folder > .cam-cuts__group { padding-top: 8px; }
 .cam-cuts__chip { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; min-height: 24px; padding: 0 2px 0 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-input); }
 .cam-cuts__chip:hover { background: var(--accent-soft); border-color: var(--line-strong); }
 .cam-cuts__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-dim); }
@@ -602,15 +612,22 @@
 /* A tablet's Cuts chip: the × keeps the 44 × 44 touch target while the chip
  * stays one line tall — negative margins shrink the button's footprint to 24px
  * (44 - 2 × 10), so the chip is 26px including its own borders. Two wrapped
- * lines then need 18px between their touch boxes; 22 below leaves 4px of slack,
- * and the list's 10px padding keeps the first and last lines' boxes inside the
- * field instead of reaching into its neighbours. */
+ * lines then need 18px between their touch boxes; the 22px row gap leaves 4px
+ * of slack. The × also overhangs 10px to the right of its chip, so two chips on
+ * one line are 12px apart (an 8px gap put the neighbour's body over the × box's
+ * right edge, where `elementFromPoint` no longer found the button), and the
+ * list reserves 12px on its right so a full-width chip's × is not clipped. The
+ * 26px gap between blocks and the 10px above a folder's chips cover the
+ * vertical overhang the same way (see the desktop rules above; issue #1112
+ * rt6-b fix1 F1/F2). */
 [data-shell-mode='tablet'] .cam-cuts__remove,
 [data-shell-mode='tablet-compact'] .cam-cuts__remove { width: 44px; height: 44px; margin: -10px -13px; }
 [data-shell-mode='tablet'] .cam-cuts__list,
-[data-shell-mode='tablet-compact'] .cam-cuts__list { padding: 10px 0; }
+[data-shell-mode='tablet-compact'] .cam-cuts__list { padding: 10px 12px 10px 0; gap: 26px; }
 [data-shell-mode='tablet'] .cam-cuts__group,
-[data-shell-mode='tablet-compact'] .cam-cuts__group { gap: 22px 8px; }
+[data-shell-mode='tablet-compact'] .cam-cuts__group { gap: 22px 12px; }
+[data-shell-mode='tablet'] .cam-cuts__folder > .cam-cuts__group,
+[data-shell-mode='tablet-compact'] .cam-cuts__folder > .cam-cuts__group { padding-top: 10px; }
 
 .cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
 .dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }
