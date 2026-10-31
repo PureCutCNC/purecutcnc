@@ -266,6 +266,18 @@ export const featureTreeEn = {
   'featureTree.properties.canned.zSource.flutes': 'Depth {value} · set in Edit flutes…',
   'featureTree.properties.canned.zSource.turn': 'Diameter {value} · set in Edit turn…',
   'featureTree.properties.canned.zSource.polygon': 'Across flats {value} · set in Edit polygon…',
+  // A Thread/Flutes depth is measured from a surface, so the same line names it
+  // with its diameter and Z, and repeats the warning for a surface that is not
+  // one diameter (issue #1112 rt6-c).
+  'featureTree.properties.canned.zSource.threadSurface': 'Depth {value} {surface} · set in Edit thread…',
+  'featureTree.properties.canned.zSource.flutesSurface': 'Depth {value} {surface} · set in Edit flutes…',
+  'featureTree.properties.canned.surface.onTurn': 'below {name} (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.bar': 'below the bar (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.warned': 'below the bar (Ø {diameter}, surface at Z {value}) · {warning}',
+  // The Z a Turn's diameter or a Polygon's across-flats reaches: the bar axis
+  // plus the radius, appended to the summary line (issue #1112 rt6-c).
+  'featureTree.properties.canned.surface.turn': 'surface at Z {value}',
+  'featureTree.properties.canned.surface.flats': 'flats at Z {value}',
   // ── Canned shape names and one-line summaries (issue #1112) ──
   'canned.ellipse.name': 'ellipse',
   'canned.ellipse.summary': 'Ellipse · {rx} × {ry}',

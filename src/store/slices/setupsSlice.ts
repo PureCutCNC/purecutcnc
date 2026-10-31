@@ -93,9 +93,10 @@ export function withSetupSync<S extends { project: Project }>(
       : next
     // A document that is being replaced (open, new, load) carries its own
     // workholding; only an edit of the project in front of the operator is a
-    // stock change a default chuck follows (the same guard the rotary surface
-    // sync uses). `projectKey` is not part of this wrapper's generic state, so
-    // it is read through the shape the store's own sync uses.
+    // stock change a default chuck follows (the same replacement test the
+    // rotary surface sync uses to decide whether it has a previous project).
+    // `projectKey` is not part of this wrapper's generic state, so it is read
+    // through the shape the store's own sync uses.
     const patchKey = (patch as { projectKey?: number }).projectKey
     const replaced = patchKey !== undefined && patchKey !== (state as { projectKey?: number }).projectKey
     const followed = replaced || !followStockChuck ? transposed : followBarChuck(previous.stock, transposed)

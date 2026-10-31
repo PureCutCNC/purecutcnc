@@ -49,6 +49,7 @@ import {
   cannedShapeIsExpandable,
   cannedShapeLabelKey,
   cannedShapeSummary,
+  cannedShapeSurface,
   cannedShapeZIsOwned,
   cannedShapeZSource,
   getCannedShapeEditor,
@@ -57,6 +58,7 @@ import {
 } from '../../cannedShapes'
 import type { CannedShapeZSource } from '../../cannedShapes'
 import { CannedZSourceLine } from './CannedZSourceLine'
+import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../../store/helpers/rotarySurface'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -1541,6 +1543,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // from leaves the slot empty rather than bringing the slider back.
   const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
   const cannedZSource = isCannedShape ? cannedShapeZSource(selectedFeature.canned) : null
+  // A Thread/Flutes Depth is measured from a surface, so the line says which
+  // one and where it sits: the resolver the cut itself uses, plus the Z of that
+  // surface (#1112 rt6-c). Only this one row's surface is resolved here — a
+  // multi-selection reports the shared values without guessing one row's.
+  const cannedZSurface = cannedZSource?.surfaceMessageKey
+    ? rotaryPatternSurfaceOfFeature(project, selectedFeature.id)
+    : null
+  const cannedZSurfaceZ = cannedZSurface ? rotarySurfaceZ(project.stock, cannedZSurface.diameter) : null
+  // A Turn's diameter and a Polygon's across flats are the height Properties
+  // reports, so their summary line names the Z those surfaces reach: the axis
+  // plus the radius, from the same helper the Thread span uses (rt6-c).
+  const cannedSurface = isCannedShape ? cannedShapeSurface(selectedFeature.canned) : null
+  const cannedSurfaceZ = cannedSurface ? rotarySurfaceZ(project.stock, cannedSurface.diameter) : null
   const cannedShapesOpen = isCannedShape
     ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
     : !selectedFeature.sketch.profile.closed
@@ -1732,6 +1747,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               {cannedSummary ? (
                 <p className="properties-linked-face-note" data-testid="canned-shape-summary">
                   {t(cannedSummary.key as MessageKey, cannedSummary.values)}
+                  {cannedSurface && cannedSurfaceZ !== null
+                    ? ` · ${t(cannedSurface.messageKey as MessageKey, { value: formatLength(cannedSurfaceZ, units) })}`
+                    : ''}
                 </p>
               ) : (
                 <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
@@ -1865,9 +1883,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : cannedZOwned ? (
             // Thread, Flutes, Turn and Polygon: the span is built from the
             // parameter the Edit panel writes, so there is nothing here to
-            // edit — only the value to report and where it lives (#1112
-            // rt6-a, item 39).
-            cannedZSource ? <CannedZSourceLine source={cannedZSource} units={units} /> : null
+            // edit — only the value to report, the surface it is measured from
+            // and where it lives (#1112 rt6-a item 39, rt6-c).
+            cannedZSource
+              ? (
+                <CannedZSourceLine
+                  source={cannedZSource}
+                  units={units}
+                  surface={cannedZSurface && cannedZSurfaceZ !== null
+                    ? { surface: cannedZSurface, z: cannedZSurfaceZ }
+                    : null}
+                />
+              )
+              : null
           ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}

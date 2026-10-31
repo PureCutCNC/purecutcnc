@@ -16,7 +16,8 @@
 
 /**
  * The four rotary canned kinds have no Z range in Properties (issue #1112
- * rt6-a, item 39).
+ * rt6-a, item 39), and the line that replaces it says which surface a
+ * Thread/Flutes depth is measured from and where that surface sits (rt6-c).
  *
  * Frank: "what is the purpose of the Z top/bottom for the rotary canned
  * features? it does not seem to make sense." It has none — the span is built
@@ -35,7 +36,15 @@
  * - `zFromParameters={false}` on the orientation section → the Turn's "no Lift
  *   and no height figure" assertion fails;
  * - the Thread line reading `pitch` instead of `depth` → its value assertion
- *   fails.
+ *   fails;
+ * - the surface clause dropped from the Thread line → its "below Turn (Ø …, surface
+ *   at Z …)" assertion fails;
+ * - the bar's surface Z read as half the thickness (the axis, not the surface)
+ *   → the Thread and the warned Flutes lines fail;
+ * - `cannedShapeSurface` returning null → the Turn's and Polygon's summary
+ *   assertions fail;
+ * - the surface Z read from the blank's size instead of its axis → the
+ *   square-blank Turn summary assertion fails.
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/cannedZRange.test.ts
@@ -67,6 +76,7 @@ const { UnitConversionContext } = await import('../project/UnitConversionContext
 const { createRoot } = await import('react-dom/client')
 const { flushSync } = await import('react-dom')
 const { defaultTool, newProject, rectProfile, roundStock } = await import('../../types/project')
+const { squareStock } = await import('../../types/barStock')
 const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { bundledMachines } = await import('../../machine/registry')
 const { validateMachineDefinition } = await import('../../engine/gcode/types')
@@ -103,6 +113,16 @@ function rotaryProject(): Project {
   base.meta.selectedMachineId = machine.id
   base.tools = [{ ...defaultTool('mm', 1), id: 'ball', type: 'ball_endmill', diameter: 4 }]
   return projectWithFeatures(base, [])
+}
+
+/**
+ * The same rotary project on a **square blank**: its turning axis is still
+ * mid-thickness, which is what a Turn's surface Z must use there too.
+ */
+function squareRotaryProject(): Project {
+  const base = rotaryProject()
+  base.stock = squareStock(25, 120, 'x')
+  return base
 }
 
 /**
@@ -227,6 +247,12 @@ function zSourceLine(mounted: Mounted): { text: string } | null {
   return line ? { text: line[1] } : null
 }
 
+/** The `Shape` summary line, which names the surface a Turn/Polygon reaches. */
+function summaryLine(mounted: Mounted): { text: string } | null {
+  const line = mounted.html().match(/<p[^>]*data-testid="canned-shape-summary"[^>]*>(.*?)<\/p>/)
+  return line ? { text: line[1] } : null
+}
+
 function hasZSlider(mounted: Mounted): boolean {
   return mounted.html().includes('z-range-slider')
 }
@@ -248,7 +274,11 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   assert.equal(hasZSlider(mounted), false, 'a Thread has no Z range control')
   const line = zSourceLine(mounted)
   assert.ok(line, 'a Thread shows its Depth read-only instead')
-  assert.equal(line.text, 'Depth 1.2 mm · set in Edit thread…', 'the line names the Edit panel field and value')
+  assert.equal(
+    line.text,
+    'Depth 1.2 mm below Turn (Ø 30 mm, surface at Z 35) · set in Edit thread…',
+    'the line names the Edit panel field and value, the surface it is measured from and that surface\'s Z',
+  )
   mounted.unmount()
 }
 
@@ -260,7 +290,14 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   assert.equal(hasZSlider(mounted), false, 'Flutes have no Z range control')
   const line = zSourceLine(mounted)
   assert.ok(line, 'Flutes show their Depth read-only instead')
-  assert.equal(line.text, 'Depth 0.8 mm · set in Edit flutes…', 'the Flutes depth is the one the panel writes')
+  // This band runs past the Turn's end, so it measures from the bar and repeats
+  // the warning word for word instead of claiming the Turn's diameter.
+  assert.equal(
+    line.text,
+    'Depth 0.8 mm below the bar (Ø 40 mm, surface at Z 40) · '
+      + "This pattern crosses the end of Turn, where the bar's diameter changes. · set in Edit flutes…",
+    'the warned Flutes line says it is measured from the bar and why',
+  )
   mounted.unmount()
 }
 
@@ -273,6 +310,18 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const line = zSourceLine(mounted)
   assert.ok(line, 'a Turn shows its Diameter read-only instead')
   assert.equal(line.text, 'Diameter 30 mm · set in Edit turn…', 'the Turn diameter is the regenerated height')
+
+  // The summary names where that diameter's surface sits: the bar axis (20) plus
+  // the radius (15) on a Ø40 bar (rt6-c).
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'a Turn shows its parameter summary')
+  assert.equal(
+    summary.text,
+    'Turn · start 5 · length 30 · Ø30 · surface at Z 35',
+    'the Turn summary adds the Z its surface reaches',
+  )
 
   // The orientation section still offers the rotations — but a generated
   // model's height is not something the user lifts or types.
@@ -295,6 +344,42 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const line = zSourceLine(mounted)
   assert.ok(line, 'a Polygon shows its across-flats size read-only instead')
   assert.equal(line.text, 'Across flats 20 mm · set in Edit polygon…', 'the Polygon size is the regenerated height')
+
+  // A Polygon presents its flats at the axis plus half the across flats (rt6-c).
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'a Polygon shows its parameter summary')
+  assert.equal(
+    summary.text,
+    'Polygon · start 100 · length 20 · 6 sides · across flats 20 · rotation 0° · flats at Z 30',
+    'the Polygon summary adds the Z its flats reach',
+  )
+  mounted.unmount()
+}
+
+// ── the Turn line's Z on a square blank ──────────────────────
+//
+// The axis is mid-thickness on a square blank exactly as on a round bar, so a
+// Ø20 Turn on a 25 mm blank is at Z 12.5 + 10 = 22.5 — not at the side
+// (25 + 10) and not at the corner radius. Reading the blank's size as the axis
+// is the mutation.
+
+{
+  store().loadProject(squareRotaryProject())
+  assert.equal(switchWorkspaceFace('around'), true, 'a square blank has an Around face')
+  const squareTurn = store().addRotarySolid({ kind: 'turn', start: 5, length: 30, diameter: 20 })
+  assert.ok(squareTurn.ok, 'the Turn is created on the blank')
+  const mounted = await renderSingle(squareTurn.featureId)
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'a Turn on a square blank shows its summary')
+  assert.equal(
+    summary.text,
+    'Turn · start 5 · length 30 · Ø20 · surface at Z 22.5',
+    'the same Turn sits at mid-thickness plus its radius on a square blank',
+  )
   mounted.unmount()
 }
 

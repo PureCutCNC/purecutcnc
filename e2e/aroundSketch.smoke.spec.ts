@@ -590,6 +590,15 @@ async function openPropertiesShape(page: Page): Promise<void> {
   await expect(header).toHaveAttribute('aria-expanded', 'true')
 }
 
+/** Expand the Properties "Instance" section, where the read-only Z line lives. */
+async function openPropertiesInstance(page: Page): Promise<void> {
+  const instance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
+  if ((await instance.getAttribute('aria-expanded')) !== 'true') {
+    await instance.click()
+  }
+  await expect(instance).toHaveAttribute('aria-expanded', 'true')
+}
+
 /**
  * Open a Turn/Polygon dialog from the creation drawer. The drawer is dismissed
  * by any pointerdown outside it, so an entry clicked after interacting with a
@@ -742,15 +751,14 @@ test('Edit thread… reopens the dialog with its parameters and applies new ones
   expect(before.params).toMatchObject({ start: 5, length: 20, pitch: 2, depth: 1 })
   const dialog = ui.rotary.dialog(page)
 
-  // A Thread has no Z range in Properties: its span is the bar surface less the
-  // Depth the dialog writes, so the panel names that value instead
-  // (issue #1112 rt6-a, item 39).
+  // A Thread has no Z range in Properties: its span is the surface it sits on
+  // less the Depth the dialog writes, so the panel names that value, the
+  // surface and the surface's Z instead (issue #1112 rt6-a item 39, rt6-c).
   await openPropertiesShape(page)
-  const threadInstance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
-  if ((await threadInstance.getAttribute('aria-expanded')) !== 'true') await threadInstance.click()
-  await expect(threadInstance).toHaveAttribute('aria-expanded', 'true')
+  await openPropertiesInstance(page)
   await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
-  await expect(page.getByTestId('canned-z-source')).toContainText('Depth 1 mm · set in Edit thread…')
+  await expect(page.getByTestId('canned-z-source'))
+    .toContainText('Depth 1 mm below the bar (Ø 25 mm, surface at Z 25) · set in Edit thread…')
 
   // The selected canned feature shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.
@@ -1242,6 +1250,14 @@ async function solidSnapshot(page: Page): Promise<SolidSnapshot> {
       }),
     }
   })
+}
+
+/** One feature's stored Z span, read from the live project. */
+async function storedSpan(page: Page, featureId: string): Promise<{ zTop: number; zBottom: number }> {
+  const project = await getProject(page) as unknown as Project
+  const feature = project.features.find((row) => row.id === featureId)
+  expect(feature, `the feature ${featureId} is in the project`).toBeTruthy()
+  return { zTop: Number(feature?.z_top), zBottom: Number(feature?.z_bottom) }
 }
 
 /** The project's tools, replaced wholesale (the seed helper the C1 tests use only covers flutes). */
@@ -1915,6 +1931,91 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   expect(bounds.minX).toBeCloseTo(10, 3)
   expect(bounds.maxX).toBeCloseTo(30, 3)
 })
+
+// ── rt6-c: a Thread floats on its Turn and follows it ───────────────
+//
+// Frank: "I am still not sure if I can verify that the thread floats on top of
+// turn and it changes if I change turn diameter." A Thread under a Turn is
+// placed on the Turn's surface, an Edit turn… diameter change moves it in the
+// same history entry, and both Properties lines say which surface and which Z
+// they are on.
+
+test('a Thread follows the Turn under it, and both Properties lines name the surface', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+
+  // A Ø20 Turn on a Ø25 bar: the turning axis is Z 12.5, so its surface is
+  // Z 22.5.
+  await openRotarySolidEntry(page, ui, 'turn')
+  await ui.rotarySolid.field(page, 'start').fill('5')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openPropertiesShape(page)
+  const summary = page.getByTestId('canned-shape-summary')
+  await expect(summary).toContainText('Ø20')
+  await expect(summary).toContainText('surface at Z 22.5')
+
+  // One Thread wholly on that Turn, 1 mm deep.
+  await openRotaryEntry(page, ui, 'thread')
+  await ui.rotary.field(page, 'start').fill('10')
+  await ui.rotary.field(page, 'length').fill('10')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  // Its line names the Turn, the diameter it measures from and that surface's Z,
+  // and its stored span starts there — not on the bar (rt6-c).
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-z-source'))
+    .toContainText('Depth 1 mm below Turn (Ø 20 mm, surface at Z 22.5) · set in Edit thread…')
+  const threadId = (await rotarySnapshot(page)).featureId!
+  const beforeThread = await storedSpan(page, threadId)
+  expect(beforeThread.zTop).toBeCloseTo(22.5, 6)
+  expect(beforeThread.zBottom).toBeCloseTo(21.5, 6)
+
+  // Edit turn… → Ø10 moves the radius 5 mm inward; the Thread moves with it.
+  const turnId = (await solidSnapshot(page)).modelFeatureIds[0]!
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'diameter').fill('10')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('Ø10')
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('surface at Z 17.5')
+  await page.locator(`.tree-row--feature[data-feature-id="${threadId}"]`).click()
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-z-source'))
+    .toContainText('below Turn (Ø 10 mm, surface at Z 17.5)')
+  const afterThread = await storedSpan(page, threadId)
+  expect(afterThread.zTop).toBeCloseTo(17.5, 6)
+  expect(afterThread.zTop - beforeThread.zTop).toBeCloseTo(-5, 6)
+  expect(afterThread.zBottom).toBeCloseTo(16.5, 6)
+
+  // The Turn edit and the Thread move are one history entry: undo restores both.
+  await undo(page)
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('Ø20')
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('surface at Z 22.5')
+  await page.locator(`.tree-row--feature[data-feature-id="${threadId}"]`).click()
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-z-source'))
+    .toContainText('below Turn (Ø 20 mm, surface at Z 22.5)')
+  const undoneThread = await storedSpan(page, threadId)
+  expect(undoneThread.zTop).toBeCloseTo(22.5, 6)
+  expect(undoneThread.zBottom).toBeCloseTo(21.5, 6)
+})
+
 
 // ── C2-U2F: review corrections (#1016) ───────────────────────────────
 //
