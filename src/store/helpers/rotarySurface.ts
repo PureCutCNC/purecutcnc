@@ -38,15 +38,19 @@
  * warned about and measured from the bar rather than keeping a stale constant
  * diameter.
  *
- * The resolver is shared by the dialog and the tree, so the number shown and
- * the cut generated cannot disagree. Nothing is stored on the Thread: its
- * instance Z span is the persisted result, and an edit of the Turn moves it by
- * re-running this resolver (`syncRotaryPatternSurfaces`). A Z span the user
- * typed in Properties is an override: the sync leaves it alone and a save →
- * open keeps it.
+ * The resolver is shared by the dialog, the tree and the Properties line, so
+ * the number shown and the cut generated cannot disagree. Nothing is stored on
+ * the Thread: its instance Z span is the persisted result, and an edit of the
+ * Turn moves it by re-running this resolver (`syncRotaryPatternSurfaces`).
+ *
+ * **The derived span is the only span** (#1112 rt6-c): a stored span that does
+ * not match the surface is rewritten, on a write and on load, because a span
+ * that used to count as an "explicit override" made a Thread silently stop
+ * following its Turn. An unchanged span stays byte-identical, so a write that
+ * does not move a surface keeps the rows it had.
  */
 
-import { getProfileBounds, type DimensionRef, type Point, type Project } from '../../types/project'
+import { getProfileBounds, type DimensionRef, type Point, type Project, type Stock } from '../../types/project'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { RotaryPatternFrame } from '../../engine/rotaryPatterns'
 import { buildRotaryPatternLines, rotaryPatternFrame } from '../../engine/rotaryPatterns'
@@ -491,11 +495,24 @@ function spanForSurface(
   surface: RotaryPatternSurface,
   depth: number,
 ): { surface: RotaryPatternSurface; zTop: number; zBottom: number } {
-  const barRadius = project.stock.thickness / 2
   // Around features store Top-like heights: the bar surface is the stock
-  // thickness, so a surface at radius r is at barRadius + r.
-  const zTop = barRadius + surface.diameter / 2
+  // thickness, so a surface at radius r is at half the thickness plus r.
+  const zTop = rotarySurfaceZ(project.stock, surface.diameter)
   return { surface, zTop, zBottom: zTop - depth }
+}
+
+/**
+ * The Z a surface of `diameter` sits at: the bar's turning axis plus its
+ * radius, in the frame Around features store (a height from the bottom of the
+ * bar, so the axis is mid-thickness and the bar surface — diameter = thickness
+ * — lands on the thickness).
+ *
+ * This is the one formula: the Thread/Flutes span goes through it, and the
+ * Properties lines read it to say "surface at Z …", so the number the user sees
+ * cannot be a second derivation of the same surface.
+ */
+export function rotarySurfaceZ(stock: Pick<Stock, 'thickness'>, diameter: number): number {
+  return stock.thickness / 2 + diameter / 2
 }
 
 /** The warning a Thread/Flutes row and dialog show, or null on a plain bar/Turn. */
@@ -692,24 +709,20 @@ function dimensionNumber(value: number | string): number {
   return typeof value === 'number' ? value : 0
 }
 
-function sameSpan(
-  first: { zTop: number; zBottom: number },
-  second: { zTop: number; zBottom: number },
-): boolean {
-  return Math.abs(first.zTop - second.zTop) <= TOLERANCE
-    && Math.abs(first.zBottom - second.zBottom) <= TOLERANCE
-}
-
 /**
- * After a Turn's parameters change, move every Thread/Flutes that follows it
- * onto the new surface. The band and the number come from the same resolver
- * the dialog uses; an unchanged span is left byte-identical (no history churn).
+ * Move every Thread/Flutes row onto the surface it lies on. The band and the
+ * number come from the same resolver the dialog shows; an unchanged span is
+ * left byte-identical (no history churn, no byte-changed file).
  *
- * `previous` is the project *before* this write. It is what separates a span
- * the resolver wrote from one the user typed in Properties: a row whose stored
- * span still matched the derived one follows the geometry, while an explicit
- * override is kept. Passing it also lets a write that changes no surface leave
- * every row untouched.
+ * The derived span is the only span (#1112 rt6-c): a stored one that differs —
+ * an old file's Properties Z, a file written before the surface existed — is
+ * rewritten here, on a write and on load. Keeping such a span as an "override"
+ * was what made a Thread silently stop following its Turn.
+ *
+ * `previous` is the project *before* this write, when there is one. A write
+ * that leaves every rotary row, definition and the stock the same object is
+ * skipped without resolving anything; the load path passes none, so a document
+ * opened from disk is measured row by row.
  */
 export function syncRotaryPatternSurfaces(
   project: Project,
@@ -726,49 +739,15 @@ export function syncRotaryPatternSurfaces(
   if (previous && rotaryGeometryUnchanged(previous, nextProject)) return features
   const index = buildSurfaceIndex(nextProject)
   if (!index) return features
-  const previousIndex = previous ? buildSurfaceIndex(previous) : null
-  const previousById = previous
-    ? new Map(previous.features.map((feature) => [feature.id, feature]))
-    : null
 
   let changed = false
   const next = features.map((feature) => {
-    const definition = featureDefinitions[feature.definitionId]
-    const pattern = patternParams(definition)
+    const pattern = patternParams(featureDefinitions[feature.definitionId])
     if (!pattern) return feature
     const span = derivedSpan(nextProject, index, feature, pattern)
     if (!span) return feature
-    const zTop = dimensionNumber(feature.z_top)
-    const zBottom = dimensionNumber(feature.z_bottom)
-    const previousFeature = previousById?.get(feature.id)
-    if (!previousFeature) {
-      // Without a baseline there is no way to tell a derived span from one the
-      // user typed, so leave the rows alone; the store always has a "before"
-      // project, and a genuinely new row below is measured.
-      if (!previous) return feature
-      // A newly created or imported row has no user span to preserve: measure
-      // it now, which also re-measures a stale span in an imported file.
-      if (Math.abs(zTop - span.zTop) <= TOLERANCE && Math.abs(zBottom - span.zBottom) <= TOLERANCE) {
-        return feature
-      }
-      changed = true
-      return { ...feature, z_top: span.zTop, z_bottom: span.zBottom }
-    }
-    const previousPattern = previous
-      ? patternParams(previous.featureDefinitions[previousFeature.definitionId])
-      : null
-    const previousSpan = previous && previousIndex && previousPattern
-      ? derivedSpan(previous, previousIndex, previousFeature, previousPattern)
-      : null
-    if (!previousSpan) return feature
-    // The surface did not move: this write is not a geometry change for the
-    // row, so leave the span alone (this is the Properties Z edit itself).
-    if (sameSpan(previousSpan, span)) return feature
-    // The row's stored span was the derived one, so it follows the geometry.
-    const wasDerived = Math.abs(dimensionNumber(previousFeature.z_top) - previousSpan.zTop) <= TOLERANCE
-      && Math.abs(dimensionNumber(previousFeature.z_bottom) - previousSpan.zBottom) <= TOLERANCE
-    if (!wasDerived) return feature
-    if (Math.abs(zTop - span.zTop) <= TOLERANCE && Math.abs(zBottom - span.zBottom) <= TOLERANCE) {
+    if (Math.abs(dimensionNumber(feature.z_top) - span.zTop) <= TOLERANCE
+      && Math.abs(dimensionNumber(feature.z_bottom) - span.zBottom) <= TOLERANCE) {
       return feature
     }
     changed = true

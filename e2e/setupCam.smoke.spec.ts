@@ -383,6 +383,86 @@ for (const machine of ['grbl','shopbot']) {
   })
 }
 
+/**
+ * Three subtract targets named `A`, `B`, `C` and one pocket that cuts all three
+ * — the smallest project that can show whether the Cuts *chips* pack onto one
+ * line (issue #1112 rt6-b, item 40). One-letter names keep the line-fit
+ * assertion about the chips, not about how much of a name the panel can afford.
+ */
+async function seedThreeShortCuts(page: Page): Promise<void> {
+  await seedGcodeExportProject(page)
+  const project = await getProject(page) as unknown as Project
+  project.stock.profile = rectProfile(0,0,6,4)
+  project.stock.thickness = 2
+  project.origin = { ...project.origin,x:0,y:4,z:2 }
+  const template = project.features[0]
+  const definition = project.featureDefinitions[template.definitionId]
+  const ids = ['a','b','c']
+  project.featureDefinitions = Object.fromEntries(ids.map((id) => [
+    id,
+    { ...definition,id,operation:'subtract' as const,profile:rectProfile(0,0,1,1) },
+  ]))
+  project.features = ids.map((id,index) => ({
+    ...template,
+    id,
+    name:id.toUpperCase(),
+    definitionId:id,
+    authoringFace:'top' as const,
+    z_top:2,
+    z_bottom:1,
+    transform:{ a:1,b:0,c:0,d:1,e:0.5,f:0.5 + index * 1.2 },
+  }))
+  project.featureTree = []
+  project.operations = [{
+    ...project.operations[0],
+    name:'Top pass',
+    kind:'pocket',
+    target:{ source:'features',featureIds:ids },
+    stepdown:0.5,
+  }]
+  project.setups = [project.setups[0]]
+  project.activeSetupId = project.setups[0].id
+  await seedProject(page,JSON.stringify(project))
+}
+
+test('the Cuts list packs three short targets as chips on one line', async ({ app, ui }) => {
+  const { page } = app
+  await seedThreeShortCuts(page)
+  await ui.operations.rowByName(page,'Top pass').click()
+  const cuts = ui.setupCam.properties(page).locator('[data-operation-cuts]')
+  await expect(cuts).toBeVisible()
+  const chips = cuts.locator('.cam-cuts__chip')
+  await expect(chips).toHaveCount(3)
+  expect((await cuts.locator('.cam-cuts__name').allTextContents()).sort()).toEqual(['A','B','C'])
+
+  const measured = await chips.evaluateAll((elements) => elements.map((element) => {
+    const chip = element.getBoundingClientRect()
+    const name = element.querySelector('.cam-cuts__name') as HTMLElement
+    const remove = element.querySelector('.cam-cuts__remove')!.getBoundingClientRect()
+    return {
+      top: Math.round(chip.top),
+      left: Math.round(chip.left),
+      bottom: Math.round(chip.bottom),
+      nameClipped: name.scrollWidth > name.clientWidth + 1,
+      removeWidth: remove.width,
+      removeHeight: remove.height,
+    }
+  }))
+  // One line, left to right: three rows again would give three different tops.
+  expect(new Set(measured.map((chip) => chip.top)).size, 'chips share one line').toBe(1)
+  for (let index = 1; index < measured.length; index += 1) {
+    expect(measured[index].left, 'chips run left to right').toBeGreaterThan(measured[index - 1].left)
+  }
+  for (const chip of measured) {
+    // The chip keeps room for the name instead of squeezing it out, and each
+    // chip stays one line tall: three chips where three rows used to be.
+    expect(chip.nameClipped, 'the target name is not ellipsized').toBe(false)
+    expect(chip.removeWidth, 'the × keeps the desktop hit target').toBeGreaterThanOrEqual(40)
+    expect(chip.removeHeight, 'the × keeps the desktop hit target').toBeGreaterThanOrEqual(40)
+  }
+  expect(measured[0].bottom - measured[0].top, 'a chip is one line tall').toBeLessThan(40)
+})
+
 test('provisional Bottom Add reaches a through feature as a normal row', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)

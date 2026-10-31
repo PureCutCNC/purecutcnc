@@ -47,9 +47,15 @@
  *    one diameter**: it is warned about and measured from the bar, instead of
  *    keeping the unrotated constant. Ignoring the placed geometry is the named
  *    mutation.
- * 7. **A Properties Z span is an override**: it survives the same write, an
- *    unrelated write, save → open (which stays clean) and a later Turn edit.
- *    Re-deriving on load or on the next sync is the named mutation.
+ * 7. **A stored span is never an override** (#1112 rt6-c): a span that differs
+ *    from the derived one — the Properties Z a user typed, an old file's span —
+ *    is rewritten in the same write and again when the file is opened, and a
+ *    later Turn edit still moves the row. Restoring the "explicit override"
+ *    rule (keep a span that differed before the write) is the named mutation.
+ * 8. **The Properties surface Z is the span's own formula**: `rotarySurfaceZ`
+ *    is the axis plus the radius, on a round bar and on a square blank alike, so
+ *    "surface at Z …" and the span the cut starts from cannot drift. Using the
+ *    bar surface as the axis is the mutation.
  *
  * Other mutations checked one at a time:
  * - the surface resolved from the bar for every band → the on-Turn Z and the
@@ -63,9 +69,12 @@
  *   the `step` kind and the "diameter change in Turn" sentence, so it fails.
  * - the band read from the stored parameters instead of the placement → the
  *   Thread move assertions fail;
- * - the sync overwriting every stored span → the override assertions fail;
- * - the sync re-deriving on open → the override-on-load assertion fails and
- *   the opened document turns dirty.
+ * - the sync keeping a span that differed before the write → the hand-typed
+ *   span assertions fail;
+ * - the sync skipped when the document is replaced → the open-a-file assertion
+ *   fails, because the file's span is left as it was;
+ * - `rotarySurfaceZ` reading the bar surface as the axis (thickness + radius)
+ *   → the surface-Z assertions fail on both bar shapes.
  */
 
 import assert from 'node:assert/strict'
@@ -83,6 +92,8 @@ import { enMessages } from '../i18n/locales/en'
 import { interpolate } from '../i18n/catalog'
 import { bundledMachines } from '../machine/registry'
 import { validateMachineDefinition } from '../engine/gcode/types'
+import { barPivotZ } from '../types/barStock'
+import { squareStock } from '../types/barStock'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { rotarySolidCannedData } from './helpers/rotarySolids'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
@@ -90,6 +101,7 @@ import {
   rotaryPatternSurface,
   rotaryPatternSurfaceOfFeature,
   rotaryPatternSurfaceWarnings,
+  rotarySurfaceZ,
   syncRotaryPatternSurfaces,
 } from './helpers/rotarySurface'
 import { switchWorkspaceFace } from './workspaceFace'
@@ -584,41 +596,48 @@ assert.equal(
   'the raised row warns about the diameter change instead of keeping a stale Z span',
 )
 
-// ── a Properties Z override survives the sync and a reload ──
+// ── a stored span is not an override: the surface always wins ──
+//
+// Frank (rt6-c): "I am still not sure if I can verify that the thread floats on
+// top of turn and it changes if I change turn diameter." It did not always: a Z
+// span typed in Properties used to count as an explicit override, so that
+// Thread silently stopped following. Every span is derived now, both on a write
+// and when the document is opened.
 
 load()
-const overrideTurn = addTurn(20, 40, 10)
-const overrideThread = addThread(25, 20)
-assertNear(threadZ(overrideThread), BAR_RADIUS + 5, 'the derived span before the override')
-store().updateFeature(overrideThread, { z_top: 18 })
-assertNear(threadZ(overrideThread), 18, 'the Properties Z top survives the same write')
-store().updateFeature(overrideThread, { name: 'Raised thread' })
-assertNear(threadZ(overrideThread), 18, 'an unrelated write does not reset the override')
-const overrideFile = store().saveProject()
-// Open it as a **fresh** document, not as the one already in memory. The load
-// guard is what keeps the file's stored span authoritative; reopening the same
-// document would still have the old row in `previous` and mistake the override
-// for a derived span. A different document leaves no matching previous row, so
-// a sync on load would re-derive Z18 to the Turn surface and this assertion
-// fails — the named mutation for removing the guard.
+const typedTurn = addTurn(20, 40, 10)
+const typedThread = addThread(25, 20)
+assertNear(threadZ(typedThread), BAR_RADIUS + 5, 'the derived span before the typed one')
+store().updateFeature(typedThread, { z_top: 18, z_bottom: 17 })
+assertNear(threadZ(typedThread), BAR_RADIUS + 5, 'a hand-typed span is rewritten in the same write')
+store().updateFeature(typedThread, { name: 'Renamed thread' })
+assertNear(threadZ(typedThread), BAR_RADIUS + 5, 'an unrelated write keeps the derived span')
+
+// An old file whose span was typed by hand is re-derived on open.
+const typedFile = JSON.parse(store().saveProject()) as Project
+typedFile.features = typedFile.features.map((feature) => (
+  feature.id === typedThread ? { ...feature, z_top: 18, z_bottom: 17 } : feature
+))
 load()
-store().openProjectFromText(overrideFile, null)
-assertNear(threadZ(overrideThread), 18, 'save → open a fresh document keeps the override')
+store().openProjectFromText(JSON.stringify(typedFile), null)
+assertNear(threadZ(typedThread), BAR_RADIUS + 5, 'opening a file with a hand-typed span re-derives it')
 assert.equal(store().dirty, false, 'opening a saved file leaves the document clean')
-const overrideFrame = rotarySolidFrame(store().project)
-assert.ok(overrideFrame)
-const overrideCanned = rotarySolidCannedData(
-  overrideFrame,
+
+// Nothing was frozen by the old file: a later Turn edit still moves the row.
+const typedFrame = rotarySolidFrame(store().project)
+assert.ok(typedFrame)
+const finalCanned = rotarySolidCannedData(
+  typedFrame,
   { kind: 'turn', start: 20, length: 40, diameter: 8 },
   store().project.meta.units,
 )
-assert.ok(overrideCanned)
-store().updateFeature(overrideTurn, { canned: overrideCanned })
-assertNear(threadZ(overrideThread), 18, 'the explicit span wins over a later Turn edit')
-const lateTurn = addTurn(70, 20, 8)
-assertNear(threadZ(overrideThread), 18, 'adding another Turn does not clobber the override')
+assert.ok(finalCanned)
+store().updateFeature(typedTurn, { canned: finalCanned })
+assertNear(threadZ(typedThread), BAR_RADIUS + 4, 'a later Turn edit still moves the Thread')
+const laterTurn = addTurn(70, 20, 8)
+assertNear(threadZ(typedThread), BAR_RADIUS + 4, 'adding another Turn off the band does not move it')
 assert.equal(
-  resolveFeatureInstance(store().project, lateTurn)?.canned?.kind,
+  resolveFeatureInstance(store().project, laterTurn)?.canned?.kind,
   'turn',
   'the added row is the new Turn',
 )
@@ -628,5 +647,22 @@ assert.equal(
 const stable = store().project
 const synced = syncRotaryPatternSurfaces(stable, stable.features, stable.featureDefinitions)
 assert.equal(synced, stable.features, 'an unchanged surface does not churn the rows')
+
+// ── "surface at Z" is the span's own formula, on either bar ──
+//
+// Properties says where a Turn's diameter (or a Thread's surface) sits, and the
+// Thread span is placed with the same call. The axis is mid-thickness on a round
+// bar and on a square blank alike (barPivotZ), so reading the bar surface as the
+// axis is the mutation this catches.
+
+const roundBar = roundStock(40, 120, 'x', { x: 0, y: 0 })
+assertNear(rotarySurfaceZ(roundBar, 30), barPivotZ(roundBar) + 15, 'a round bar: axis + Ø/2')
+assertNear(rotarySurfaceZ(roundBar, 30), 35, 'a Ø30 Turn on a Ø40 round bar sits at Z 35')
+assertNear(rotarySurfaceZ(roundBar, 40), BAR_DIAMETER + 20, 'the bar surface itself is the thickness')
+
+const squareBar = squareStock(40, 120, 'x')
+assertNear(barPivotZ(squareBar), barPivotZ(roundBar), 'both bar shapes turn about mid-thickness')
+assertNear(rotarySurfaceZ(squareBar, 30), barPivotZ(squareBar) + 15, 'a square blank uses the same axis')
+assertNear(rotarySurfaceZ(squareBar, 30), 35, 'so the same Turn sits at the same Z on either blank')
 
 console.log('rotary surface: all assertions passed.')
