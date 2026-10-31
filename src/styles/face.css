@@ -550,6 +550,7 @@
 .cam-cuts__group { display: grid; gap: 2px; min-width: 0; }
 .setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
 .cam-setup-reach { font-size: 12px; }
+.cam-setup-reach__intro { margin: 0 0 6px; color: var(--text-dim); }
 .cam-setup-reach__target { margin: 6px 0; padding: 6px; border: 1px dashed var(--line-strong); border-radius: 6px; }
 .cam-setup-reach__target p { margin: 4px 0; }
 .cam-setup-reach__cross-face { margin-left: 4px; color: var(--role-region-text); }

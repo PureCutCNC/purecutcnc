@@ -218,17 +218,27 @@ export function operationTargetReach(
 }
 
 /**
- * The reach cards worth showing for a setup's face (issue #1102): only where
- * the two faces meet, or where the setup cannot reach a target at all. A
- * single-sided target — a blind pocket, an Around feature, a rotary pass — has
- * nothing on the other side to measure, so its card could only ever read
- * "unverified". Rejected targets stay: "cannot reach" is an error to see.
+ * Whether a target is cut from both flat faces (issue #1112 item 38): a
+ * through-feature whose operations are split between Top and Bottom, so there
+ * are two passes with a middle to check. Coverage is what answers it — a
+ * feature that reaches both faces but is targeted from one setup only reads
+ * `singleSide`, and has nothing on the other side to measure.
+ */
+export function cutFromBothSides(entry: TargetReach): boolean {
+  return entry.coverage !== null && entry.coverage.status !== 'singleSide'
+}
+
+/**
+ * The reach cards worth showing for a setup's face (issue #1112 item 38):
+ * only targets cut from both faces, plus the ones the setup cannot reach at
+ * all. A single-sided target — a blind pocket, a through-hole cut from one
+ * setup, an Around feature, a rotary pass — has nothing on the other side to
+ * measure, so its card could only ever read "unverified" and is left out.
+ * Rejected targets stay: "cannot reach" is an error to see.
  */
 export function visibleTargetReach(face: SetupFace, reaches: readonly TargetReach[]): TargetReach[] {
   if (face === 'around') return []
-  return reaches.filter((entry) => (
-    entry.verdict.through || entry.verdict.status === 'cross-face' || entry.verdict.status === 'rejected'
-  ))
+  return reaches.filter((entry) => cutFromBothSides(entry) || entry.verdict.status === 'rejected')
 }
 
 /**

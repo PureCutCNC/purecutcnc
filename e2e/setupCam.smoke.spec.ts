@@ -348,7 +348,15 @@ for (const machine of ['grbl','shopbot']) {
       await expect(row.locator('.cam-cuts__icon')).toBeVisible()
     }
     await expect(ui.setupCam.section(page,'bottom')).toContainText('⇄ CROSS-FACE')
-    await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
+    // Only the through target is cut from both setups, so only it gets a reach
+    // card; the one-sided Bottom pocket gets none and no check is offered for it
+    // (issue #1112 item 38).
+    const reach = ui.setupCam.properties(page).locator('.cam-setup-reach__target')
+    await expect(reach).toHaveCount(1)
+    await expect(reach).toContainText('Through hole')
+    await expect(reach).not.toContainText('Bottom pocket')
+    await expect(reach).toContainText('This feature is cut from both sides. Check that the two passes meet in the middle.')
+    await ui.setupCam.properties(page).getByRole('button',{ name:'Check the passes meet' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
     await expect(ui.setupCam.properties(page)).toContainText('Meets the other pass')
     await page.screenshot({ path:testInfo.outputPath('bottom-cam.png') })

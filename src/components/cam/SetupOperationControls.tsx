@@ -20,7 +20,7 @@ import type { ToolpathResult } from '../../engine/toolpaths'
 import { useProjectStore } from '../../store/projectStore'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 import { planOperationMove } from '../../engine/setupOperationMove'
-import { canMoveOperation, operationTargetReach, camSetupSections, visibleTargetReach } from './setupSections'
+import { canMoveOperation, cutFromBothSides, operationTargetReach, camSetupSections, visibleTargetReach } from './setupSections'
 import { SetupDialogShell } from './SetupDialogShell'
 import { useI18n } from '../../i18n/i18nContext'
 import { formatLength } from '../../utils/units'
@@ -29,7 +29,7 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   operation: Operation
   requestToolpath: (id: string, purpose: 'booklet', signal?: AbortSignal) => Promise<ToolpathResult | null>
 }) {
-  const { t } = useI18n()
+  const { t, tPlural } = useI18n()
   const { project, assignOperationToSetup } = useProjectStore()
   const [moving, setMoving] = useState(false)
   const [destination, setDestination] = useState('')
@@ -43,6 +43,9 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   const reaches = operationTargetReach(project, operation, measured?.project === project ? measured.paths : new Map())
   // Only where two faces meet: a single-sided target has nothing to verify.
   const shownReaches = visibleTargetReach(face, reaches)
+  // Cards for the targets cut from both sides; the "cannot reach" errors keep
+  // their card but are no reason to offer the check (issue #1112 item 38).
+  const twoSided = shownReaches.filter(cutFromBothSides)
   const movable = canMoveOperation(operation.kind)
   // Preview a provisional destination without adding it to the document.
   const dest = sections.find((section) => section.setup.id === destination)?.setup
@@ -67,17 +70,19 @@ export function SetupOperationControls({ operation, requestToolpath }: {
   return <div className="setup-operation-controls">
     <div className="properties-field"><span>{t('cam.setup.setup')}</span><div className="face-row__value"><span className={`face-chip face-chip--${face}`}>{setup.name}</span>{movable ? <button className="feat-btn" type="button" onClick={() => { setMoving(true); setConfirmSnapshot(project); setDestination(sections.find((section) => section.setup.id !== setup.id)?.setup.id ?? '') }}>{t('cam.setup.move')}</button> : null}</div></div>
     {shownReaches.length > 0 ? <div className="cam-setup-reach">
-      <button className="feat-btn" type="button" disabled={checking} onClick={() => void checkReach()}>{t(checking ? 'cam.setup.checkingReach' : 'cam.setup.checkReach')}</button>
+      {twoSided.length > 0 ? <>
+        <p className="cam-setup-reach__intro">{tPlural(twoSided.length, 'cam.setup.reachIntro.one', 'cam.setup.reachIntro.other')}</p>
+        <button className="feat-btn" type="button" disabled={checking} onClick={() => void checkReach()}>{t(checking ? 'cam.setup.checkingPasses' : 'cam.setup.checkPasses')}</button>
+      </> : null}
       {shownReaches.map((entry) => <div key={entry.featureId} className="cam-setup-reach__target">
         <strong>{entry.featureName}</strong> {entry.verdict.status === 'cross-face' ? <span className="cam-setup-reach__cross-face" title={t('cam.setup.crossFaceTitle')} aria-label={t('cam.setup.crossFaceTitle')}>⇄</span> : null}
-        {entry.verdict.status === 'rejected' ? <p className="cam-field-message">{t('cam.setup.unreachable')}</p> : null}
-        {entry.verdict.depth ? <p>{t(face === 'top' ? 'cam.setup.depthTop' : face === 'bottom' ? 'cam.setup.depthBottom' : 'cam.setup.depthAround', { start: formatLength(entry.verdict.depth.start,project.meta.units), end: formatLength(entry.verdict.depth.end,project.meta.units), units: project.meta.units })}</p> : null}
-        <p>{entry.range ? t('cam.setup.stockReach', { min: formatLength(entry.range.min,project.meta.units), max: formatLength(entry.range.max,project.meta.units), units: project.meta.units }) : t('cam.setup.unverified')}</p>
-        {entry.coverage && face !== 'around' ? <p className={`cam-setup-coverage cam-setup-coverage--${entry.coverage.status}`}>
-          {entry.coverage.status === 'meets' ? t('cam.setup.meets', { value: formatLength(entry.coverage.overlap ?? 0,project.meta.units), units: project.meta.units })
-            : entry.coverage.status === 'singleSide' ? t('cam.setup.singleSide')
-            : entry.coverage.status === 'gap' ? t('cam.setup.gap', { value: formatLength(entry.coverage.gap ?? 0,project.meta.units), units: project.meta.units }) : t('cam.setup.unverified')}
-        </p> : null}
+        {entry.verdict.status === 'rejected' ? <p className="cam-field-message">{t('cam.setup.unreachable')}</p> : <>
+          {entry.verdict.depth ? <p>{t(face === 'top' ? 'cam.setup.depthTop' : face === 'bottom' ? 'cam.setup.depthBottom' : 'cam.setup.depthAround', { start: formatLength(entry.verdict.depth.start,project.meta.units), end: formatLength(entry.verdict.depth.end,project.meta.units), units: project.meta.units })}</p> : null}
+          {entry.range ? <p>{t('cam.setup.stockReach', { min: formatLength(entry.range.min,project.meta.units), max: formatLength(entry.range.max,project.meta.units), units: project.meta.units })}</p> : null}
+          {entry.coverage?.status === 'meets' ? <p className="cam-setup-coverage cam-setup-coverage--meets">{t('cam.setup.meets', { value: formatLength(entry.coverage.overlap ?? 0,project.meta.units), units: project.meta.units })}</p>
+            : entry.coverage?.status === 'gap' ? <p className="cam-setup-coverage cam-setup-coverage--gap">{t('cam.setup.gap', { value: formatLength(entry.coverage.gap ?? 0,project.meta.units), units: project.meta.units })}</p>
+            : <p className="cam-setup-coverage cam-setup-coverage--unverified">{t('cam.setup.unverified')}</p>}
+        </>}
       </div>)}
     </div> : null}
     {moving ? <SetupDialogShell title={t('cam.setup.moveTitle', { name: operation.name })} onClose={close} footer={<>
