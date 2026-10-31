@@ -82,6 +82,7 @@ import {
   defaultTool,
   newProject,
   roundStock,
+  type CannedShapeData,
   type Project,
   type SketchFeature,
   type Tool,
@@ -93,6 +94,7 @@ import { switchWorkspaceFace } from './workspaceFace'
 import { useProjectStore } from './projectStore'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { cannedShapeModelAssetId } from '../cannedShapes/model'
+import { cannedShapeFrame } from '../cannedShapes'
 import {
   projectMovePreviewPoint,
   projectedMoveTarget,
@@ -184,6 +186,16 @@ function storedStart(featureId: string): number {
   const start = canned.params.start
   assert.equal(typeof start, 'number', 'the stored start is a number')
   return start as number
+}
+
+/** A canned feature's stored parameters, read straight from its definition. */
+function cannedOf(featureId: string): CannedShapeData {
+  const project = store().project
+  const row = project.features.find((feature) => feature.id === featureId)
+  assert.ok(row, `row ${featureId} exists`)
+  const canned = project.featureDefinitions[row.definitionId]?.canned
+  assert.ok(canned, `definition of ${featureId} is canned`)
+  return canned
 }
 
 /** The regenerated mesh's own X extent, from the persisted asset bounds. */
@@ -568,6 +580,102 @@ move(yLinkedCopy, { x: 0, y: 20 }, { x: 0, y: -380 })
 near(placedAlongStart(yLinkedCopy, 'y'), 0,
   'the Y-bar copy clamps from its own placed band, not the definition start')
 near(placedAlongStart(yLinkedSource, 'y'), 90, 'the unselected Y-bar copy stays where it was')
+
+// ── a surviving translated copy never stores an invalid band ─
+//
+// The clamp bounds the *placed* band, but the write that follows lands on the
+// shared start. A copy translated along the bar can be dragged far enough
+// towards the chuck end that the start it implies is negative — a band its own
+// generator refuses, so the shape kept the mesh it already had while the
+// preview promised the bar's low end (third review of rt6-d: Polygon start 20,
+// length 10, copy at +30, original deleted, move the copy -400 → stored -30,
+// geometry still at 50).
+//
+// A start its own kind refuses is not written; the row translates by the
+// displacement the preview drew instead, the same fallback an unselected linked
+// copy already takes. So the band lands where the drag showed it and the stored
+// parameters stay a band the generator accepts.
+//
+// Named mutations: dropping the stored-start check in `movedCannedBand` → the
+// write stores -30 and the placed band stays at 50; checking only the chuck end
+// → the far move stores 130 on a 120 bar.
+
+load()
+const orphanSource = addPolygon(20, 10, 12)
+store().startCopyFeature(orphanSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 5 })
+const orphanCopy = featureIds().find((id) => id !== orphanSource)!
+store().deleteFeatures([orphanSource])
+assert.deepEqual(featureIds(), [orphanCopy], 'the translated copy is the only row left')
+near(placedAlongStart(orphanCopy), 50, 'the surviving copy sits at its translated place')
+const orphanHistoryBefore = store().history.past.length
+
+const orphanFrom = { x: 60, y: 0 }
+const orphanTo = { x: -400, y: 0 }
+near(preview(orphanCopy, orphanFrom, orphanTo).x - orphanFrom.x, -50,
+  'the preview draws the band all the way to the chuck end')
+move(orphanCopy, orphanFrom, orphanTo)
+near(placedAlongStart(orphanCopy), 0, 'the band lands where the preview drew it')
+near(storedStart(orphanCopy), 20,
+  'the stored start is not written outside the range its own generator accepts')
+assert.ok(cannedShapeFrame(cannedOf(orphanCopy)) !== null,
+  'the stored band is still one the generator accepts')
+assert.equal(store().history.past.length, orphanHistoryBefore + 1, 'the move is one undo step')
+store().undo()
+near(placedAlongStart(orphanCopy), 50, 'undo puts the copy back where it sat')
+near(storedStart(orphanCopy), 20, 'undo leaves the stored start alone')
+store().redo()
+near(placedAlongStart(orphanCopy), 0, 'redo puts the band back at the chuck end')
+
+// The other end is the same rule: from the chuck end the band has the whole bar
+// to travel, and the start that would need (20 + 110) is past the stored bar.
+const orphanFarFrom = { x: 0, y: 0 }
+const orphanFarTo = { x: 400, y: 0 }
+near(preview(orphanCopy, orphanFarFrom, orphanFarTo).x - orphanFarFrom.x, BAR_LENGTH - 10,
+  'the preview draws the band all the way to the far end')
+move(orphanCopy, orphanFarFrom, orphanFarTo)
+near(placedAlongStart(orphanCopy), BAR_LENGTH - 10, 'the band reaches the far end')
+near(storedStart(orphanCopy), 20, 'the far move does not write 130 onto the stored band')
+assert.ok(cannedShapeFrame(cannedOf(orphanCopy)) !== null,
+  'the stored band is still a band, not an empty range')
+
+// A move the stored band *can* hold still writes it: the fallback is only for
+// the writes that would leave the kind's own range.
+move(orphanCopy, { x: 200, y: 0 }, { x: 190, y: 0 })
+near(storedStart(orphanCopy), 10, 'a move the stored band can hold still writes the start')
+near(placedAlongStart(orphanCopy), 100, 'and lands the band where the preview drew it')
+
+// A Turn is a model too, and its start is written the same way.
+load()
+const orphanTurnSource = addTurn(20, 10, 10)
+store().startCopyFeature(orphanTurnSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 0 })
+const orphanTurn = featureIds().find((id) => id !== orphanTurnSource)!
+store().deleteFeatures([orphanTurnSource])
+near(placedAlongStart(orphanTurn), 50, 'the surviving Turn copy sits at its translated place')
+move(orphanTurn, { x: 60, y: 0 }, { x: -400, y: 0 })
+near(placedAlongStart(orphanTurn), 0, 'the Turn band lands where the preview drew it')
+near(storedStart(orphanTurn), 20, 'the Turn keeps a stored start its generator accepts')
+assert.ok(cannedShapeFrame(cannedOf(orphanTurn)) !== null,
+  'the Turn definition is still a band the generator accepts')
+
+// A Thread's start is written the same way, and its own line builder refuses a
+// negative one too.
+load()
+const orphanThreadSource = addPattern('thread', 20, 10)
+store().startCopyFeature(orphanThreadSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 0 })
+const orphanThread = featureIds().find((id) => id !== orphanThreadSource)!
+store().deleteFeatures([orphanThreadSource])
+near(placedAlongStart(orphanThread), 50, 'the surviving Thread copy sits at its translated place')
+move(orphanThread, { x: 60, y: 0 }, { x: -400, y: 0 })
+near(placedAlongStart(orphanThread), 0, 'the Thread band lands where the preview drew it')
+near(storedStart(orphanThread), 20, 'the Thread keeps a stored start its own builder accepts')
+assert.ok(cannedShapeFrame(cannedOf(orphanThread)) !== null,
+  'the Thread definition still draws its lines')
 
 // ── a typed distance is projected too ───────────────────────
 //

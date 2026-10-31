@@ -38,6 +38,16 @@
  * parameter edit moves its linked copies. The instance transform carries only
  * the across part, which no canned kind but Thread/Flutes has.
  *
+ * The clamp reads the band where it is *placed*, so a translated copy travels
+ * as far as its own band has room. The write it lands on is still the shared
+ * start, and a copy can sit far enough along the bar that the start the move
+ * implies is one the kind's own generator refuses — a copy at +30 dragged to the
+ * chuck end implies a negative start, which a Polygon does not normalize. That
+ * write is refused and the row translates by the same drawn displacement
+ * instead (the caller's existing fallback), so the band still lands where the
+ * preview put it and the stored band stays one the generator accepts (third
+ * review of rt6-d).
+ *
  * A copy is the same definition **translated**, so each row's band may already
  * sit further along the bar than the stored start says. The bar's ends bound
  * the band where it is *placed*, and every clamp below reads it that way, so a
@@ -56,6 +66,7 @@ import {
   TURN_CANNED_KIND,
 } from '../../cannedShapes/generators/kinds'
 import {
+  rotarySolidBandProblem,
   rotarySolidBarLength,
   storedSolidFrameOf,
 } from '../../cannedShapes/generators/rotarySolidParams'
@@ -337,6 +348,25 @@ function shiftedTurnProfile(profile: unknown, along: number): unknown | null {
 }
 
 /**
+ * True when `start` is a stored start this kind's own parameters accept.
+ *
+ * A Turn or a Polygon validates its band with `rotarySolidBandProblem` —
+ * `start >= 0` and `start + length <= the bar` — while a Thread or a Flute line
+ * build only refuses a negative start. A move may write nothing else, or the
+ * shape would keep the mesh it has while the preview promised a new place
+ * (third review of rt6-d).
+ */
+function storedStartFits(canned: CannedShapeData, band: RotaryMoveBand, start: number): boolean {
+  if (!Number.isFinite(start)) return false
+  if (ROTARY_MODEL_KINDS.has(canned.kind)) {
+    const frame = storedSolidFrameOf(canned.params)
+    if (!frame) return false
+    return rotarySolidBandProblem(frame, start, band.length) === null
+  }
+  return start >= 0
+}
+
+/**
  * The same canned parameters with the band moved by an applied along
  * displacement.
  *
@@ -345,6 +375,10 @@ function shiftedTurnProfile(profile: unknown, along: number): unknown | null {
  * start is derived from them, so moving a profiled Turn shifts the contours and
  * lets the start follow — changing the start alone would regenerate the same
  * mesh in the same place.
+ *
+ * Returns null when there is no band to write or when the start the move
+ * implies is outside the range the kind accepts: the caller then translates the
+ * row instead, which is what the preview drew anyway.
  */
 function movedCannedBand(
   project: Pick<Project, 'stock'>,
@@ -358,7 +392,7 @@ function movedCannedBand(
   const along = axis === 'x' ? applied.dx : applied.dy
   if (Math.abs(along) <= TOLERANCE) return canned
   const start = band.start + along * alongStartDirection(axis)
-  if (!Number.isFinite(start)) return null
+  if (!storedStartFits(canned, band, start)) return null
   const storedProfile = canned.params.profile
   if (storedProfile === undefined || storedProfile === null) {
     return { kind: canned.kind, params: { ...canned.params, start } }
@@ -388,7 +422,11 @@ function movedCannedBand(
  * A definition is shared with every linked copy, so its stored start belongs to
  * all of them. This returns null — the caller's per-instance translate — unless
  * the selection holds every row that shares the definition, because writing the
- * start would move a copy the user did not select (review of rt6-d).
+ * start would move a copy the user did not select (review of rt6-d). It returns
+ * null for the same reason when the start the move implies is outside the range
+ * the kind accepts: a translated copy dragged to a bar end implies a negative
+ * start, and storing that band left the shape's mesh where it was (third review
+ * of rt6-d). The translate is the same projected displacement the preview drew.
  */
 export function moveCannedRotaryFeatures(
   project: Project,
