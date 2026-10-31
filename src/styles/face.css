@@ -532,22 +532,43 @@
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
 .cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
-/* The operation's Cuts list (issue #1112 I). A row is the target's icon, its
- * name and a remove ×; a long list folds its rows by the tree's folders. The
- * name takes the row's spare width, so a long one ellipsizes instead of pushing
- * the × out, and the × stays a small row control (issue #1112 rt3-a, item 25). */
-.cam-cuts__list { display: grid; gap: 2px; min-width: 0; }
-.cam-cuts__row { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 22px; padding: 2px 0; border-radius: 4px; }
-.cam-cuts__row:hover { background: var(--accent-soft); }
+/* The operation's Cuts list (issue #1112 I). A chip is the target's icon, its
+ * name and a remove ×; a long list folds its chips by the tree's folders. The
+ * name takes the chip's spare width, so a long one ellipsizes instead of
+ * pushing the × out (issue #1112 rt3-a, item 25).
+ *
+ * Chips wrap instead of taking a row each (issue #1112 rt6-b, item 40). The
+ * label owns a full row above them: in the properties split a label column
+ * (74-88px) leaves too little width for more than one chip per line, which is
+ * the whole point of the change. */
+.properties-field.cam-cuts,
+.cam-operation-properties .properties-field.cam-cuts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px 8px;
+}
+.cam-operation-properties .properties-field.cam-cuts > .cam-cuts__list { grid-column: 1; }
+.cam-cuts__list { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.cam-cuts__list > .properties-hint { max-width: 100%; }
+.cam-cuts__group { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 8px; min-width: 0; max-width: 100%; }
+.cam-cuts__chip { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; min-height: 24px; padding: 0 2px 0 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-input); }
+.cam-cuts__chip:hover { background: var(--accent-soft); border-color: var(--line-strong); }
 .cam-cuts__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-dim); }
-.cam-cuts__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two classes: `.properties-field span` (0,1,1) would otherwise leave the
+ * target's name in the label's dim colour. */
+.cam-cuts__chip .cam-cuts__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .cam-cuts__filter { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
-.cam-cuts__remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
+/* The × keeps the platform's hit target (40px, 44px on a tablet) while the chip
+ * stays one line tall: negative margins shrink its layout footprint to a chip
+ * line (40 - 2 × 8 = 24px), so the box overhangs the chip's edge instead of
+ * making it a row again. The wrapping row-gap is then what keeps two chips'
+ * touch areas apart — one chip's × must never be reachable from its neighbour's
+ * corner, or a finger removes the wrong cut. `expectTouchTargets` measures the
+ * button's own box, so the box, not the icon, is what carries the target size. */
+.cam-cuts__remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 40px; height: 40px; padding: 0; margin: -8px -9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
 .cam-cuts__remove:hover:not(:disabled) { background: var(--surface-input); color: var(--text); }
 .cam-cuts__remove:disabled { opacity: 0.4; cursor: default; }
-.cam-cuts__folder { min-width: 0; }
+.cam-cuts__folder { min-width: 0; max-width: 100%; }
 .cam-cuts__folder-summary { cursor: pointer; font-size: 12px; color: var(--text-dim); }
-.cam-cuts__group { display: grid; gap: 2px; min-width: 0; }
 .setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
 .cam-setup-reach { font-size: 12px; }
 .cam-setup-reach__intro { margin: 0 0 6px; color: var(--text-dim); }
@@ -576,9 +597,20 @@
 [data-shell-mode='tablet'] .cam-setup-group button,
 [data-shell-mode='tablet-compact'] .cam-setup-group button,
 [data-shell-mode='tablet'] .dialog--setup button,
-[data-shell-mode='tablet-compact'] .dialog--setup button,
+[data-shell-mode='tablet-compact'] .dialog--setup button { width: 44px; height: 44px; }
+
+/* A tablet's Cuts chip: the × keeps the 44 × 44 touch target while the chip
+ * stays one line tall — negative margins shrink the button's footprint to 24px
+ * (44 - 2 × 10), so the chip is 26px including its own borders. Two wrapped
+ * lines then need 18px between their touch boxes; 22 below leaves 4px of slack,
+ * and the list's 10px padding keeps the first and last lines' boxes inside the
+ * field instead of reaching into its neighbours. */
 [data-shell-mode='tablet'] .cam-cuts__remove,
-[data-shell-mode='tablet-compact'] .cam-cuts__remove { width: 44px; height: 44px; }
+[data-shell-mode='tablet-compact'] .cam-cuts__remove { width: 44px; height: 44px; margin: -10px -13px; }
+[data-shell-mode='tablet'] .cam-cuts__list,
+[data-shell-mode='tablet-compact'] .cam-cuts__list { padding: 10px 0; }
+[data-shell-mode='tablet'] .cam-cuts__group,
+[data-shell-mode='tablet-compact'] .cam-cuts__group { gap: 22px 8px; }
 
 .cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
 .dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }

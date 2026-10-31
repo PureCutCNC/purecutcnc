@@ -16,16 +16,20 @@
 
 /**
  * An operation's "Cuts" list (issue #1112 slice I): its current targets only,
- * each a compact row — the target's own icon, its name and a small remove × at
- * the end of the row — with hovering a row highlighting the target on the
- * canvas. It replaces the read-only Target line and the two target checklists
- * (`CrossFaceTargetPicker`, `RotaryTargetPicker`): every target those offered
- * is now selectable, so selecting it and using Add / Use current selection
- * reaches the same place, and removing a row is how a model is kept out.
+ * each a compact chip — the target's own icon, its name and a small remove × —
+ * with hovering a chip highlighting the target on the canvas. It replaces the
+ * read-only Target line and the two target checklists (`CrossFaceTargetPicker`,
+ * `RotaryTargetPicker`): every target those offered is now selectable, so
+ * selecting it and using Add / Use current selection reaches the same place,
+ * and removing a chip is how a model is kept out.
  *
- * A long list groups by the tree's folders and each folder collapses. The
- * rows, their icons and the grouping are `operationCuts.ts`'s — this file only
- * draws them.
+ * The chips wrap (issue #1112 rt6-b, item 40): a full row per target made a
+ * five-target list taller than the fields under it, while a chip carries the
+ * same three things at a third of the height and several fit on one line. The
+ * label takes a row of its own above them — the panel's label column would
+ * leave too little width for more than one chip — and a long list still groups
+ * by the tree's folders, each folder collapsing. The chips, their icons and the
+ * grouping are `operationCuts.ts`'s — this file only draws them.
  */
 
 import { useMemo } from 'react'
@@ -44,7 +48,7 @@ export function OperationCuts({ project, operation }: { project: Project; operat
   const updateOperation = useProjectStore((state) => state.updateOperation)
   // Keyed on the project and the operation, not on hover: CAMPanel re-renders
   // on every hover, and a 200-target list must not re-resolve its geometry for
-  // that. Hovering a row only reads the store's hovered id.
+  // that. Hovering a chip only reads the store's hovered id.
   const rows = useMemo(() => operationCutRows(project, operation), [project, operation])
   const { grouped, groups } = useMemo(() => operationCutGroups(project, rows), [project, rows])
 
@@ -53,11 +57,11 @@ export function OperationCuts({ project, operation }: { project: Project; operat
     if (target) updateOperation(operation.id, { target })
   }
 
-  function renderRow(row: OperationCutRow) {
+  function renderChip(row: OperationCutRow) {
     return (
       <div
         key={row.featureId}
-        className="cam-cuts__row"
+        className="cam-cuts__chip"
         data-cut-feature-id={row.featureId}
         data-cut-filter={row.filter ? 'true' : undefined}
         onMouseEnter={() => hoverFeature(row.featureId)}
@@ -86,10 +90,11 @@ export function OperationCuts({ project, operation }: { project: Project; operat
 
   return (
     <div className="properties-field cam-cuts" data-operation-cuts>
+      {/* Its own row, not the field's label column: see the file's header. */}
       <span>{camT('cam.operation.cuts')}</span>
       <div className="cam-cuts__list">
         {operation.target.source === 'stock' ? (
-          <div className="cam-cuts__row" data-cut-stock>
+          <div className="cam-cuts__chip" data-cut-stock>
             <span className="cam-cuts__icon" data-cut-icon="stock">
               <Icon id="stock" size={13} />
             </span>
@@ -99,7 +104,7 @@ export function OperationCuts({ project, operation }: { project: Project; operat
           <span className="properties-hint">{camT('cam.target.noFeatures')}</span>
         ) : grouped ? (
           groups.map((group) => group.folderId === null ? (
-            <div key="ungrouped" className="cam-cuts__group">{group.rows.map(renderRow)}</div>
+            <div key="ungrouped" className="cam-cuts__group">{group.rows.map(renderChip)}</div>
           ) : (
             <details
               key={group.folderId}
@@ -110,10 +115,12 @@ export function OperationCuts({ project, operation }: { project: Project; operat
               <summary className="cam-cuts__folder-summary">
                 {camT('cam.operation.cutsFolder', { name: group.folderName ?? '', count: group.rows.length })}
               </summary>
-              {group.rows.map(renderRow)}
+              <div className="cam-cuts__group">{group.rows.map(renderChip)}</div>
             </details>
           ))
-        ) : rows.map(renderRow)}
+        ) : (
+          <div className="cam-cuts__group">{rows.map(renderChip)}</div>
+        )}
       </div>
     </div>
   )

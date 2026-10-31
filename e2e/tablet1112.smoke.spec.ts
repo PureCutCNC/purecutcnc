@@ -802,32 +802,249 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
 
       const cuts = page.locator('[data-operation-cuts]')
       await expect(cuts).toBeVisible()
-      const rows = cuts.locator('.cam-cuts__row')
-      await expect(rows).toHaveCount(2)
-      // Every row carries the target's icon, its name (visible, not squeezed to
+      const chips = cuts.locator('.cam-cuts__chip')
+      await expect(chips).toHaveCount(2)
+      // Every chip carries the target's icon, its name (visible, not squeezed to
       // nothing by the ×) and a remove ×.
-      for (const row of await rows.all()) {
-        await expect(row.locator('.cam-cuts__icon')).toBeVisible()
-        await expect(row.locator('.cam-cuts__name')).toBeVisible()
-        await expect(row.locator('.cam-cuts__remove')).toBeEnabled()
+      for (const chip of await chips.all()) {
+        await expect(chip.locator('.cam-cuts__icon')).toBeVisible()
+        await expect(chip.locator('.cam-cuts__name')).toBeVisible()
+        await expect(chip.locator('.cam-cuts__remove')).toBeEnabled()
       }
       await expectTouchTargets(page, '.cam-cuts')
       await expectReachable(page, cuts, `Cuts list (${shape} blank)`)
       await cuts.scrollIntoViewIfNeeded()
       await shoot(page, `operation-cuts-${shape}-landscape`)
 
-      const removedName = (await rows.first().locator('.cam-cuts__name').textContent())!.trim()
-      await rows.first().locator('.cam-cuts__remove').tap()
-      await expect(rows).toHaveCount(1)
-      await expect(rows.first().locator('.cam-cuts__name')).not.toHaveText(removedName)
+      const removedName = (await chips.first().locator('.cam-cuts__name').textContent())!.trim()
+      await chips.first().locator('.cam-cuts__remove').tap()
+      await expect(chips).toHaveCount(1)
+      await expect(chips.first().locator('.cam-cuts__name')).not.toHaveText(removedName)
       // The last target cannot be removed: its × is disabled, with the reason as
       // its title.
-      await expect(rows.first().locator('.cam-cuts__remove')).toBeDisabled()
+      await expect(chips.first().locator('.cam-cuts__remove')).toBeDisabled()
       const afterRemoval = await getProject(page) as unknown as Project
       expect(afterRemoval.operations[0].target.source).toBe('features')
       expect((afterRemoval.operations[0].target as { featureIds: string[] }).featureIds).toHaveLength(1)
     })
   }
+
+  test('three short cuts pack onto one line as chips, each × owns its own 44px area, and a tap removes that cut', async ({ app, ui }) => {
+    const { page } = app
+    await seedBar(page, 'round')
+    // Three short-named targets: one-letter names keep the question to the chip
+    // layout, not to how much of a name the panel can afford. They are drawn
+    // (creation through the canvas is the only way in) and then named, so the
+    // chips read A, B, C however many features the blank already had.
+    await drawRect(page, 10, 4, 30, 12)
+    await drawRect(page, 40, 4, 70, 12)
+    await drawRect(page, 80, 4, 100, 12)
+    const drawn = await getProject(page) as unknown as Project
+    expect(drawn.features).toHaveLength(3)
+    const ids = drawn.features.map((feature) => feature.id)
+    const names = ['A', 'B', 'C']
+    await page.evaluate(async ({ ids: featureIds, names: newNames }: { ids: string[]; names: string[] }) => {
+      const module = await import('/src/store/projectStore.ts') as {
+        useProjectStore: {
+          getState: () => { updateFeature: (id: string, patch: { name: string }) => void }
+        }
+      }
+      featureIds.forEach((id, index) => module.useProjectStore.getState().updateFeature(id, { name: newNames[index] }))
+    }, { ids, names })
+    await selectFeatures(page, ids)
+    await openOperationsDrawer(page)
+    await ui.setupCam.addAction(page).tap()
+    await expect(ui.setupCam.addMenu(page)).toBeVisible()
+    await ui.setupCam.addMenu(page)
+      .locator('.cam-operation-item')
+      .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+      .getByRole('button', { name: 'Rough', exact: true })
+      .tap()
+
+    const cuts = page.locator('[data-operation-cuts]')
+    await expect(cuts).toBeVisible()
+    const chips = cuts.locator('.cam-cuts__chip')
+    await expect(chips).toHaveCount(3)
+    // Order-independent: what matters is that each chip carries one of the three
+    // names, not the order selection happened to write the target in.
+    expect((await cuts.locator('.cam-cuts__name').allTextContents()).sort()).toEqual([...names].sort())
+    await expectTouchTargets(page, '.cam-cuts')
+    await expectReachable(page, cuts, 'Cuts chips (round blank)')
+    await cuts.scrollIntoViewIfNeeded()
+
+    // Read every chip's own box and its × box, then ask the document what a
+    // finger lands on at the edges of that × box: the corner of a 44 × 44 box
+    // that overhangs a 26px chip is exactly where a neighbouring chip would
+    // steal the tap if the wrap spacing were wrong.
+    const measured = await page.evaluate(() => {
+      const corners = (box: DOMRect): Array<[number, number]> => [
+        [box.left + 1, box.top + 1],
+        [box.right - 1, box.top + 1],
+        [box.left + 1, box.bottom - 1],
+        [box.right - 1, box.bottom - 1],
+        [box.left + box.width / 2, box.top + 1],
+        [box.left + box.width / 2, box.bottom - 1],
+      ]
+      // The × a point resolves to, or null when nothing there is a remove button.
+      const removeAt = (x: number, y: number): string | null => {
+        const at = document.elementFromPoint(x, y)
+        return at?.closest('.cam-cuts__remove')?.closest('[data-cut-feature-id]')
+          ?.getAttribute('data-cut-feature-id') ?? null
+      }
+      return Array.from(document.querySelectorAll('[data-operation-cuts] .cam-cuts__chip')).map((chip) => {
+        const remove = chip.querySelector('.cam-cuts__remove') as HTMLElement
+        const name = chip.querySelector('.cam-cuts__name') as HTMLElement
+        const chipBox = chip.getBoundingClientRect()
+        const removeBox = remove.getBoundingClientRect()
+        const id = chip.getAttribute('data-cut-feature-id')
+        return {
+          id,
+          top: Math.round(chipBox.top),
+          left: Math.round(chipBox.left),
+          height: chipBox.height,
+          nameClipped: name.scrollWidth > name.clientWidth + 1,
+          hit: { x: removeBox.x, y: removeBox.y, width: removeBox.width, height: removeBox.height },
+          centre: removeAt(removeBox.x + removeBox.width / 2, removeBox.y + removeBox.height / 2),
+          edges: corners(removeBox).map(([x, y]) => removeAt(x, y)),
+        }
+      })
+    })
+    expect(measured, 'three chips measured').toHaveLength(3)
+    for (const chip of measured) {
+      // A finger still gets a 44 × 44 area for the ×, even though the chip it
+      // sits in is only one line tall.
+      expect(chip.hit.width, `× touch width on ${chip.id}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(chip.hit.height, `× touch height on ${chip.id}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      // The chip itself stays visibly smaller than that box: the box overhangs
+      // it instead of inflating it back into the row the change removed.
+      expect(chip.height, `the chip on ${chip.id} is shorter than its × box`).toBeLessThan(chip.hit.height)
+      // The chip keeps room for the name, so it is not an icon and a × with the
+      // target's name squeezed out of it (the shape of the rt3-a item 25 bug).
+      expect(chip.nameClipped, `the name is not ellipsized on ${chip.id}`).toBe(false)
+      // Its middle is the button itself, so the area is usable, not just present.
+      expect(chip.centre, `the centre of ${chip.id}'s × box is its own ×`).toBe(chip.id)
+      // No edge of that area reaches another chip's ×: whatever else is painted
+      // there (the chip's own body, the list's padding), it is never a remove
+      // control, so a finger cannot delete a neighbouring cut by aiming at this
+      // one. A point right at a box's corner may fall outside its snapped paint
+      // box, which is why the edges may resolve to nothing — never to a stranger.
+      for (const hit of chip.edges) {
+        expect([null, chip.id], `an edge of ${chip.id}'s × box resolves to ${String(hit)}`).toContain(hit)
+      }
+    }
+    // One line, left to right, and no two touch areas overlap.
+    expect(new Set(measured.map((chip) => chip.top)).size, 'three chips share one line').toBe(1)
+    for (let index = 1; index < measured.length; index += 1) {
+      expect(measured[index].left, 'chips run left to right').toBeGreaterThan(measured[index - 1].left)
+    }
+    for (let index = 0; index < measured.length; index += 1) {
+      for (let other = index + 1; other < measured.length; other += 1) {
+        const a = measured[index].hit
+        const b = measured[other].hit
+        const overlaps = a.x < b.x + b.width && b.x < a.x + a.width
+          && a.y < b.y + b.height && b.y < a.y + a.height
+        expect(overlaps, `× areas of ${measured[index].id} and ${measured[other].id} do not overlap`).toBe(false)
+      }
+    }
+    await shoot(page, 'operation-cuts-chips-round-landscape')
+
+    // Tapping the middle chip's × removes that cut and only that one.
+    const middle = chips.nth(1)
+    const middleId = (await middle.getAttribute('data-cut-feature-id'))!
+    const middleName = (await middle.locator('.cam-cuts__name').textContent())!.trim()
+    await middle.locator('.cam-cuts__remove').tap()
+    await expect(cuts.locator(`[data-cut-feature-id="${middleId}"]`)).toHaveCount(0)
+    await expect(chips).toHaveCount(2)
+    expect((await cuts.locator('.cam-cuts__name').allTextContents()).sort())
+      .toEqual(names.filter((name) => name !== middleName).sort())
+  })
+
+  test('wrapped Cuts chips keep the two lines of × areas apart, and a long name ellipsizes under a full-name title', async ({ app, ui }) => {
+    const { page } = app
+    await seedBar(page, 'round')
+    await drawRect(page, 10, 4, 30, 12)
+    await drawRect(page, 40, 4, 70, 12)
+    await drawRect(page, 80, 4, 100, 12)
+    const drawn = await getProject(page) as unknown as Project
+    const ids = drawn.features.map((feature) => feature.id)
+    // Long enough that no two chips share the 340px drawer: the list wraps, and
+    // that is where one chip's × area can reach into the neighbouring line's.
+    const names = [
+      'A very long target name that cannot possibly fit inside one chip',
+      'Another very long target name that cannot possibly fit inside one chip',
+      'One more very long target name that cannot possibly fit inside one chip',
+    ]
+    await page.evaluate(async ({ ids: featureIds, names: newNames }: { ids: string[]; names: string[] }) => {
+      const module = await import('/src/store/projectStore.ts') as {
+        useProjectStore: {
+          getState: () => { updateFeature: (id: string, patch: { name: string }) => void }
+        }
+      }
+      featureIds.forEach((id, index) => module.useProjectStore.getState().updateFeature(id, { name: newNames[index] }))
+    }, { ids, names })
+    await selectFeatures(page, ids)
+    await openOperationsDrawer(page)
+    await ui.setupCam.addAction(page).tap()
+    await expect(ui.setupCam.addMenu(page)).toBeVisible()
+    await ui.setupCam.addMenu(page)
+      .locator('.cam-operation-item')
+      .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+      .getByRole('button', { name: 'Rough', exact: true })
+      .tap()
+
+    const cuts = page.locator('[data-operation-cuts]')
+    await expect(cuts).toBeVisible()
+    await expect(cuts.locator('.cam-cuts__chip')).toHaveCount(3)
+    await expectTouchTargets(page, '.cam-cuts')
+    await cuts.scrollIntoViewIfNeeded()
+
+    const measured = await page.evaluate(() => Array.from(
+      document.querySelectorAll('[data-operation-cuts] .cam-cuts__chip'),
+    ).map((chip) => {
+      const chipBox = chip.getBoundingClientRect()
+      const removeBox = (chip.querySelector('.cam-cuts__remove') as HTMLElement).getBoundingClientRect()
+      const name = chip.querySelector('.cam-cuts__name') as HTMLElement
+      return {
+        id: chip.getAttribute('data-cut-feature-id'),
+        top: chipBox.top,
+        bottom: chipBox.bottom,
+        height: chipBox.height,
+        nameClipped: name.scrollWidth > name.clientWidth + 1,
+        nameTitle: name.getAttribute('title'),
+        nameText: (name.textContent ?? '').trim(),
+        hit: { x: removeBox.x, y: removeBox.y, width: removeBox.width, height: removeBox.height },
+      }
+    }))
+    expect(measured, 'three chips measured').toHaveLength(3)
+    for (const chip of measured) {
+      expect(chip.hit.width, `× touch width on ${chip.id}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(chip.hit.height, `× touch height on ${chip.id}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+      // A name too long for the chip ellipsizes, and keeps the whole name in the
+      // title so it is still readable.
+      expect(chip.nameClipped, `the long name on ${chip.id} is ellipsized`).toBe(true)
+      expect(names, `a title names a real target on ${chip.id}`).toContain(chip.nameTitle!)
+      expect(chip.nameText, `the title is the whole name on ${chip.id}`).toBe(chip.nameTitle)
+    }
+    // One chip per line: each name is wider than half the drawer.
+    const lines = [...measured].sort((a, b) => a.top - b.top)
+    expect(new Set(lines.map((chip) => Math.round(chip.top))).size, 'every long chip takes its own line').toBe(3)
+    // The wrap spacing, not luck: the gap between two lines must be at least the
+    // part of the × box that reaches above and below its chip (its height minus
+    // the chip's), or the two touch areas overlap and the lower chip's × steals
+    // taps aimed at the upper one.
+    for (let index = 1; index < lines.length; index += 1) {
+      const above = lines[index - 1]
+      const below = lines[index]
+      const overhang = above.hit.height - above.height
+      expect(below.top - above.bottom, `the gap above ${below.id} covers the overhanging × boxes`)
+        .toBeGreaterThanOrEqual(overhang)
+      const overlaps = above.hit.x < below.hit.x + below.hit.width
+        && below.hit.x < above.hit.x + above.hit.width
+        && above.hit.y < below.hit.y + below.hit.height
+        && below.hit.y < above.hit.y + above.hit.height
+      expect(overlaps, `× areas of ${above.id} and ${below.id} do not overlap`).toBe(false)
+    }
+  })
 
   for (const shape of ['round', 'square'] as const) {
     test(`the top bar carries the face control and the CAM panel opens from its own button (${shape} blank)`, async ({ app, ui }) => {
