@@ -33,7 +33,14 @@
  * - rendering the row on every shell (`{!tabletShell && (` dropped) → the
  *   desktop-only assertion fails;
  * - dropping `<FaceSwitch />` from the top command bar, or moving it before the
- *   view tabs (or into another section of the bar) → those assertions fail.
+ *   view tabs (or into another section of the bar) → those assertions fail;
+ * - dropping an `id`/`aria-controls` from a top command bar view tab, or
+ *   putting an id on the wrong button (Sketch ↔ Sim) → the panel-label
+ *   assertions fail, because the centre panels name themselves with those ids
+ *   and the desktop row that used to carry them is not rendered on a tablet
+ *   (issue #1112 rt5-a review);
+ * - renaming a panel's `aria-labelledby` without renaming its provider → the
+ *   two id sets stop matching.
  *
  * Run with: npx tsx src/components/layout/tabRowOrder.test.ts
  */
@@ -95,6 +102,64 @@ assert(
 assert(
   shell.split('<FaceSwitch />').length - 1 === 1,
   'the desktop row is the only other place the shell mounts the control',
+)
+
+// The tablet's view switch is also its tab strip. Each centre view keeps
+// `role="tabpanel"` and names itself with `aria-labelledby="workspace-tab-*"`
+// (issue #1112 rt5-a review): on a tablet the desktop row above is not
+// rendered, so the bar has to carry those ids or the panels have no accessible
+// name. The two homes are mutually exclusive — the bar is mounted only from the
+// shell's tablet branch — so an id is never in the document twice.
+const topBarMount = shell.indexOf('<TopCommandBar')
+const tabletBranchStart = shell.indexOf('{tabletShell ? (')
+const tabletBranchEnd = shell.indexOf(') : (', tabletBranchStart)
+assert(topBarMount >= 0, 'the shell mounts the top command bar')
+assert(
+  topBarMount > tabletBranchStart && topBarMount < tabletBranchEnd,
+  'the top command bar is mounted from the tablet branch only',
+)
+
+const tabsSource = /<div className="top-cmd-group top-cmd-group--tabs">([\s\S]*?)<\/div>/.exec(center)
+assert(tabsSource, 'the view switch group renders its tabs')
+const tabButtons = tabsSource[1].split('<button').slice(1)
+assert(tabButtons.length === 3, `the view switch has three tabs (found ${tabButtons.length})`)
+
+// The panels' side of the contract: three labels, and the desktop row that
+// provides them pair-for-pair.
+const panelLabelIds = Array.from(
+  shell.matchAll(/aria-labelledby="(workspace-tab-[a-z0-9]+)"/g),
+  (match) => match[1],
+)
+assert(
+  panelLabelIds.length === 3,
+  `the centre panels name themselves with three workspace tabs (found ${panelLabelIds.length})`,
+)
+const rowTabIds = Array.from(shell.matchAll(/id="(workspace-tab-[a-z0-9]+)"/g), (match) => match[1])
+assert(rowTabIds.length === 3, `the desktop row carries three workspace tab ids (found ${rowTabIds.length})`)
+assert(
+  [...rowTabIds].sort().join('|') === [...panelLabelIds].sort().join('|'),
+  `the desktop row provides exactly the ids its panels name (${rowTabIds.join(', ')} vs ${panelLabelIds.join(', ')})`,
+)
+
+// The tablet's side: each view tab switches one view, carries that view's id so
+// its panel can name itself with it, and says which panel it controls.
+const barTabIds: string[] = []
+for (const button of tabButtons) {
+  const tab = /onCenterTabChange\('([a-z0-9]+)'\)/.exec(button)?.[1]
+  assert(tab, 'each view tab switches a view')
+  assert(
+    button.includes(`id="workspace-tab-${tab}"`),
+    `the ${tab} tab carries workspace-tab-${tab} so its panel has a label`,
+  )
+  assert(
+    button.includes(`aria-controls="workspace-panel-${tab}"`),
+    `the ${tab} tab names the panel it controls`,
+  )
+  barTabIds.push(`workspace-tab-${tab}`)
+}
+assert(
+  [...barTabIds].sort().join('|') === [...panelLabelIds].sort().join('|'),
+  `the bar provides exactly the ids the panels name (${barTabIds.join(', ')} vs ${panelLabelIds.join(', ')})`,
 )
 
 console.log('tabRowOrder.test.ts passed')

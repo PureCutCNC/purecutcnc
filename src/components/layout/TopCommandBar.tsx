@@ -182,24 +182,39 @@ export function TopCommandBar({
             </button>
           </div>
 
+          {/* The view switch is the tablet's only tab strip. The centre panels
+              keep their `role="tabpanel"` and name themselves with
+              `aria-labelledby="workspace-tab-*"` (`AppShell`), and on a tablet
+              the desktop row that otherwise carries those ids is not rendered
+              at all (issue #1112 rt5-a, item 37). These buttons therefore carry
+              the same ids and name the panel each one controls, exactly as the
+              desktop tabs do — the two homes are mutually exclusive, so an id
+              never lands in the document twice. Without them the panels have no
+              accessible name on a tablet (issue #1112 rt5-a review). */}
           <div className="top-cmd-group top-cmd-group--tabs">
             <button
+              id="workspace-tab-sketch"
               className={`top-cmd-tab ${centerTab === 'sketch' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-sketch"
               onClick={() => onCenterTabChange('sketch')}
             >
               {t('shell.topBar.tabSketch')}
             </button>
             <button
+              id="workspace-tab-preview3d"
               className={`top-cmd-tab ${centerTab === 'preview3d' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-preview3d"
               onClick={() => onCenterTabChange('preview3d')}
             >
               {t('shell.topBar.tab3d')}
             </button>
             <button
+              id="workspace-tab-simulation"
               className={`top-cmd-tab ${centerTab === 'simulation' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-simulation"
               onClick={() => onCenterTabChange('simulation')}
             >
               {t('shell.topBar.tabSim')}
