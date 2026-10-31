@@ -49,6 +49,7 @@ import { barCentre, barInscribedRadius, isBarStock } from '../types/barStock'
 import { getFeatureGeometryBounds } from '../text'
 import { TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
+import { rotaryTurnSurfaceSections } from '../store/helpers/rotarySurface'
 import { setupForOperation } from './setupOrientation'
 import { resolveDimensionRef } from './toolpaths/geometry'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './toolpaths/types'
@@ -262,6 +263,11 @@ const MATERIAL_EXTENT_TOLERANCE = 1e-9
  * only the stretches no model covers, which is what "uncut bar next to a Turn"
  * means. Every surface is lowered by the frame radius, so it is in the same
  * frame as the unrolled project's feature Z tops (the one the generator reads).
+ *
+ * A Turn with a copied profile is split into its along sections, each carrying
+ * its own local surface (#1112 rt6-e correction 1). Its single Z top is the
+ * largest section's, so a guide on a smaller section would otherwise be called
+ * a wall against its own supporting Turn.
  */
 export function aroundMaterialBands(project: Project, frame: AroundFrame): AroundMaterialBands {
   const bounds = getStockBounds(project.stock)
@@ -269,6 +275,7 @@ export function aroundMaterialBands(project: Project, frame: AroundFrame): Aroun
   const alongMax = frame.axis === 'x' ? bounds.maxX : bounds.maxY
   const bodies: AroundMaterialBand[] = []
   const covered: Array<{ min: number; max: number }> = []
+  const turnSections = rotaryTurnSurfaceSections(project)
 
   for (const feature of project.features) {
     const definition = project.featureDefinitions[feature.definitionId]
@@ -287,9 +294,26 @@ export function aroundMaterialBands(project: Project, frame: AroundFrame): Aroun
     const clippedMin = Math.max(alongMin, min)
     const clippedMax = Math.min(alongMax, max)
     if (clippedMax - clippedMin <= MATERIAL_EXTENT_TOLERANCE) continue
+    const kind: AroundMaterialKind = definition.canned?.kind === TURN_CANNED_KIND ? 'turn' : 'body'
+    const sections = kind === 'turn' ? turnSections.get(feature.id) : undefined
+    if (sections && sections.length > 0) {
+      for (const section of sections) {
+        const sectionMin = Math.max(clippedMin, section.alongMin)
+        const sectionMax = Math.min(clippedMax, section.alongMax)
+        if (sectionMax - sectionMin <= MATERIAL_EXTENT_TOLERANCE) continue
+        bodies.push({
+          name: feature.name,
+          kind,
+          alongMin: sectionMin,
+          alongMax: sectionMax,
+          surfaceZ: section.radius,
+        })
+      }
+      continue
+    }
     bodies.push({
       name: feature.name,
-      kind: definition.canned?.kind === TURN_CANNED_KIND ? 'turn' : 'body',
+      kind,
       alongMin: clippedMin,
       alongMax: clippedMax,
       surfaceZ: resolveDimensionRef(project, feature.z_top) - frame.radius,

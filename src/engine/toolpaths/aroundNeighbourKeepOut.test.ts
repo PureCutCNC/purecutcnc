@@ -43,6 +43,18 @@
  *      surface → the same 3.5/3.53269 failure, because the Hex's Z top is
  *      level with the thread's surface: exactly the case this slice exists for.
  *
+ * Correction round 1 (Codex review of the slice) added the mutations 5–7:
+ *   5. Measure a stepped Turn by its single stored Z top again (the pre-fix
+ *      `aroundMaterialBands`) → "a stepped Turn is two local surfaces, not one"
+ *      and the thread on the small section is deleted with "nothing was cut".
+ *   6. Make every equal-height `body` a wall again (`isWall` ignoring whether
+ *      it supports the guide) → "a line on the Hex's own surface is cut, not
+ *      deleted": no cut move survives.
+ *   7. Drop the captured material read set from the cache stamp → "moving the
+ *      larger neighbour must invalidate the cached path": `cacheInputsValid`
+ *      keeps the stale endpoint, because the footprint narrowing cannot see a
+ *      neighbour outside the guide's world-XY footprint.
+ *
  * Run with: npx tsx src/engine/toolpaths/aroundNeighbourKeepOut.test.ts
  */
 
@@ -64,6 +76,9 @@ import type { SelectionState } from '../../store/types'
 import { aroundFrameForOperation, aroundMaterialBands, unrolledProject } from '../aroundFrame'
 import { computeOperationToolpath } from './generateOperation'
 import { generateFollowLineToolpath } from './carving'
+import { operationAffectedByChange, operationFootprint } from './toolpathDependencies'
+import { cacheInputsValid, captureCacheInputs } from '../../app/toolpathGeneration/cacheInputs'
+import type { TurnCannedProfile } from '../../cannedShapes/generators/turnProfile'
 import { toolpathWarningText } from '../../i18n/warningText'
 import type { ToolpathResult } from './types'
 
@@ -108,7 +123,7 @@ const BAR_ZERO = BAR_ORIGIN.y + BAR_DIAMETER / 2
 const CIRCUMFERENCE = Math.PI * BAR_DIAMETER
 
 type SolidInput =
-  | { kind: 'turn'; start: number; length: number; diameter: number }
+  | { kind: 'turn'; start: number; length: number; diameter: number; profile?: TurnCannedProfile }
   | { kind: 'polygon'; start: number; length: number; sides: number; acrossFlats: number }
 
 interface CaseSpec {
@@ -587,6 +602,200 @@ function closestCutterApproachToHex(
   assert.ok(
     Math.abs(removed - (hexEnd - hexStart + 2 * trim)) <= 1e-3,
     `the middle warning reports ${removed}, expected ${hexEnd - hexStart + 2 * trim}`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 8. A stepped Turn is not one diameter: only its larger sections are walls.
+//    (Correction round 1, finding 2 — the slice measured the whole Turn by its
+//    single stored Z top, which is the largest section's.)
+// ---------------------------------------------------------------------------
+
+{
+  const smallRadius = MODEL_DIAMETER / 2
+  const largeRadius = 0.45
+  const stepAt = BAR_START + 2.5
+  const steppedTurn: TurnCannedProfile = {
+    sourceFeatureId: 'drawn outline',
+    contours: [{
+      closed: false,
+      points: [
+        { along: BAR_START + 1.5, radius: smallRadius },
+        { along: stepAt, radius: smallRadius },
+        { along: stepAt, radius: largeRadius },
+        { along: BAR_START + 3.5, radius: largeRadius },
+      ],
+    }],
+  }
+  const { project, operation } = buildCase({
+    solids: [{ kind: 'turn', start: TURN_START, length: 2, diameter: largeRadius * 2, profile: steppedTurn }],
+    // Wholly on the Ø0.75 section, more than a cutter radius clear of the step.
+    thread: { start: 1.6, length: 0.8, depth: THREAD_DEPTH },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+
+  const frame = aroundFrameForOperation(project, operation)
+  assert.ok(frame)
+  const materials = aroundMaterialBands(project, frame)
+  const turnBands = materials.bands.filter((band) => band.kind === 'turn')
+  assert.equal(turnBands.length, 2, 'a stepped Turn is two local surfaces, not one')
+  assert.ok(Math.abs(turnBands[0]!.surfaceZ - smallRadius) <= 1e-6, `the small section's own surface (${turnBands[0]!.surfaceZ})`)
+  assert.ok(Math.abs(turnBands[1]!.surfaceZ - largeRadius) <= 1e-6, `the large section's own surface (${turnBands[1]!.surfaceZ})`)
+  assert.ok(Math.abs(turnBands[1]!.alongMin - stepAt) <= 1e-6, 'the split is at the step')
+
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope)
+  const cuts = envelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(cuts.length > 0, 'the thread wholly on the small section is cut, not deleted')
+  assert.deepEqual(
+    envelope.result.warnings.filter((row) => row.code.startsWith('carveNeighbour')),
+    [],
+    'its own supporting Turn is not a neighbour and nothing is warned about',
+  )
+  const extent = alongExtent(cuts)
+  assertStopsShortOf(extent.min, BAR_START + 1.6, 'start', 'the guide keeps its own start')
+  assertStopsShortOf(extent.max, BAR_START + 2.4, 'end', 'and its own end')
+
+  const unrolled = unrolledProject(project, frame)
+  assert.deepEqual(
+    generateFollowLineToolpath(unrolled, operation, materials),
+    generateFollowLineToolpath(unrolled, operation),
+    'a guide clear of every section is byte-identical to before the keep-out',
+  )
+
+  // The larger section is still a wall: the same surface line, drawn on past
+  // the step, stops clear of it.
+  const crossed = buildCase({
+    solids: [{ kind: 'turn', start: TURN_START, length: 2, diameter: largeRadius * 2, profile: steppedTurn }],
+    thread: null,
+    line: {
+      start: { x: BAR_START + 2.2, y: BAR_ZERO },
+      end: { x: BAR_START + 2.8, y: BAR_ZERO },
+      zTop: (BAR_DIAMETER + MODEL_DIAMETER) / 2,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+  const crossedEnvelope = computeOperationToolpath(crossed.project, crossed.operation)
+  assert.ok(crossedEnvelope)
+  const crossedCuts = crossedEnvelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(crossedCuts.length > 0, 'the line survives on the small section')
+  const stepTrim = vBitHalfWidthAt(largeRadius - smallRadius + THREAD_DEPTH)
+  assertStopsShortOf(alongExtent(crossedCuts).max, stepAt - stepTrim, 'end', 'the larger section of the Turn')
+  const warning = findWarning(crossedEnvelope.result, 'carveNeighbourTrimmed')
+  assert.equal(warning.params?.sideId, 'end', 'the step is the end it stops at')
+  assert.match(String(warning.params?.neighbour), /^Turn/, 'and it names that Turn')
+}
+
+// ---------------------------------------------------------------------------
+// 9. A body the guide is drawn on is its surface, not a neighbour.
+//    (Correction round 1, finding 3 — every equal-height body was a wall, so a
+//    line on a Hex's own top was deleted with "nothing was cut". Case 1 is the
+//    contrast: a guide that starts at the Hex's end is still kept clear of it.)
+// ---------------------------------------------------------------------------
+
+{
+  const hexStart = BAR_START + 2
+  const hexEnd = hexStart + HEX_LENGTH
+  const { project, operation } = buildCase({
+    solids: [{ kind: 'polygon', start: 2, length: HEX_LENGTH, sides: 6, acrossFlats: MODEL_DIAMETER }],
+    thread: null,
+    line: {
+      start: { x: hexStart + 0.1, y: BAR_ZERO },
+      end: { x: hexEnd - 0.1, y: BAR_ZERO },
+      zTop: (BAR_DIAMETER + MODEL_DIAMETER) / 2,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope)
+  const cuts = envelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(cuts.length > 0, "a line on the Hex's own surface is cut, not deleted")
+  assert.deepEqual(
+    envelope.result.warnings.filter((row) => row.code.startsWith('carveNeighbour')),
+    [],
+    'the Hex the line is drawn on is not a neighbour',
+  )
+  const extent = alongExtent(cuts)
+  assertStopsShortOf(extent.min, hexStart + 0.1, 'start', 'the line keeps its own start')
+  assertStopsShortOf(extent.max, hexEnd - 0.1, 'end', 'and its own end')
+}
+
+// ---------------------------------------------------------------------------
+// 10. Moving a neighbour across the sheet invalidates the cached path.
+//     (Correction round 1, finding 1 — the material bands were read but not
+//     stamped, so the old endpoint and warning survived a neighbour edit.)
+// ---------------------------------------------------------------------------
+
+{
+  // An Around line drawn at an across coordinate the models' side views do not
+  // reach (they stand around the zero line, the guide is a whole bar diameter
+  // around the sheet), with a larger Turn at its end.
+  const guideStart = BAR_START + 1.7
+  const guideEnd = BAR_START + 2.45
+  const largerTurnStart = BAR_START + 2.5
+  const { project, operation } = buildCase({
+    solids: [
+      { kind: 'turn', start: TURN_START, length: 1, diameter: MODEL_DIAMETER },
+      { kind: 'turn', start: 2.5, length: 1, diameter: 0.9 },
+    ],
+    thread: null,
+    line: {
+      start: { x: guideStart, y: BAR_ZERO + BAR_DIAMETER },
+      end: { x: guideEnd, y: BAR_ZERO + BAR_DIAMETER },
+      zTop: (BAR_DIAMETER + MODEL_DIAMETER) / 2,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+
+  const before = computeOperationToolpath(project, operation)
+  assert.ok(before)
+  const beforeEnd = alongExtent(before.result.moves.filter((move) => move.kind === 'cut')).max
+  // The larger Turn is the wall: the V-bit's width at its surface, not the
+  // radius the uncut bar would give.
+  const turnTrim = vBitHalfWidthAt((0.9 - MODEL_DIAMETER) / 2 + THREAD_DEPTH)
+  assertStopsShortOf(beforeEnd, largerTurnStart - turnTrim, 'end', 'the larger Turn')
+
+  const inputs = captureCacheInputs(project, operation)
+  assert.ok(cacheInputsValid(inputs, operation, project), 'the unchanged project keeps its entry')
+  assert.ok(
+    cacheInputsValid(inputs, operation, { ...project }),
+    'an equal snapshot keeps its entry: the captured material read set compares equal',
+  )
+
+  const neighbour = project.features.find((row) => row.name === 'Turn 2')
+  assert.ok(neighbour, 'the larger Turn is the second solid')
+  // Moving it one inch along the bar exposes the uncut bar at the guide's end.
+  const moved: Project = {
+    ...project,
+    features: project.features.map((row) => row.id === neighbour.id
+      ? { ...row, transform: { ...row.transform, e: row.transform.e + 1 } }
+      : row),
+  }
+
+  // The old narrowing on its own cannot see it: the model's silhouette is its
+  // side view around the bar, the guide is measured at its unrolled across
+  // coordinate. That gap is why the read set has to be stamped.
+  assert.equal(
+    operationAffectedByChange(operationFootprint(project, operation), project, moved, new Set([neighbour.id])),
+    false,
+    'the footprint narrowing alone misses the neighbour',
+  )
+  assert.ok(
+    !cacheInputsValid(inputs, operation, moved),
+    'moving the larger neighbour must invalidate the cached path',
+  )
+
+  const after = computeOperationToolpath(moved, operation)
+  assert.ok(after)
+  const afterEnd = alongExtent(after.result.moves.filter((move) => move.kind === 'cut')).max
+  assertStopsShortOf(afterEnd, largerTurnStart - VBIT_DIAMETER / 2, 'end', 'the uncut bar the move exposed')
+  assert.ok(
+    afterEnd < beforeEnd - 1e-3,
+    `the endpoint must retreat when the Turn leaves: ${beforeEnd} → ${afterEnd}`,
   )
 }
 

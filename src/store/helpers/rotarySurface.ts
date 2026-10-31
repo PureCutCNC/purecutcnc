@@ -155,6 +155,8 @@ interface TurnBand {
   maxRadius: number
   /** Map a world along position back to the copied profile's stored along. */
   toProfileAlong: (worldAlong: number) => number
+  /** Map the copied profile's stored along forward to its placed world along. */
+  toWorldAlong: (profileAlong: number) => number
   /** A profile Turn's copied outlines; the band's range is read per overlap. */
   profile?: TurnCannedProfile
 }
@@ -274,6 +276,9 @@ function turnBands(project: Project, frame: RotaryPatternFrame): TurnBand[] {
         const local = applyMatrixToPoint(inverse, pointOn(worldAxis, worldAlong, frame.zero))
         return localAxis === 'x' ? local.x : local.y
       },
+      toWorldAlong: (profileAlong: number) => alongOf(
+        applyMatrixToPoint(transform, localPoint(profileAlong, acrossCentre)),
+      ),
       ...(params.profile ? { profile: params.profile } : {}),
     })
   }
@@ -464,6 +469,83 @@ function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand)
     turnFeatureId: turn.id,
     turnName: turn.name,
   }
+}
+
+/**
+ * One stretch of a placed Turn's surface, split where its copied profile's
+ * diameter steps (issue #1112 rt6-e correction 1).
+ */
+export interface RotaryTurnSurfaceSection {
+  featureId: string
+  name: string
+  /** World-space along range, in the bar's own coordinates. */
+  alongMin: number
+  alongMax: number
+  /**
+   * The section's surface radius from the bar axis. A section that steps is one
+   * constant; a section that tapers (a profile edge with a slope) is counted at
+   * its highest point, the conservative direction for a keep-out.
+   */
+  radius: number
+}
+
+/**
+ * Every placed Turn whose surface a copied profile decides, split into its
+ * along sections (issue #1112 rt6-e correction 1).
+ *
+ * A stepped Turn is not one diameter: its stored Z top is the *largest*
+ * section's surface, so measuring a guide on a smaller section against that
+ * single number calls the guide's own supporting Turn a wall and trims it
+ * away. The sections are read through the same placement, profile and envelope
+ * machinery `rotaryPatternSurface` uses, never from a second geometry model.
+ *
+ * Absent from the map:
+ * - a plain-diameter Turn — one constant surface, already carried by its Z top;
+ * - a Turn whose placement no longer presents one surface about the bar
+ *   (`ambiguity`: off-centre or tilted) — the caller keeps measuring it from
+ *   the Z top rather than guessing a section.
+ */
+export function rotaryTurnSurfaceSections(
+  project: Project,
+): Map<string, RotaryTurnSurfaceSection[]> {
+  const sections = new Map<string, RotaryTurnSurfaceSection[]>()
+  const index = buildSurfaceIndex(project)
+  if (!index) return sections
+  for (const turn of index.turns) {
+    const profile = turn.profile
+    if (!profile || turn.ambiguity !== null) continue
+    const stations = new Set<number>([turn.alongMin, turn.alongMax])
+    for (const contour of profile.contours) {
+      for (const point of contour.points) {
+        const world = turn.toWorldAlong(point.along)
+        if (world > turn.alongMin + TOLERANCE && world < turn.alongMax - TOLERANCE) {
+          stations.add(world)
+        }
+      }
+    }
+    const sorted = [...stations].sort((left, right) => left - right)
+    const rows: RotaryTurnSurfaceSection[] = []
+    for (let station = 0; station < sorted.length - 1; station += 1) {
+      const start = sorted[station]
+      const end = sorted[station + 1]
+      if (start === undefined || end === undefined || end - start <= TOLERANCE) continue
+      const first = turn.toProfileAlong(start)
+      const second = turn.toProfileAlong(end)
+      const sampled = turnProfileRadiusRange(profile, Math.min(first, second), Math.max(first, second))
+      rows.push({
+        featureId: turn.id,
+        name: turn.name,
+        alongMin: start,
+        alongMax: end,
+        // A section whose spans cannot be sampled (a corrupt copy, a closed
+        // profile with no outer envelope) counts as its farthest reach: a
+        // keep-out one section short is a cutter inside material.
+        radius: sampled ? sampled.max * turn.radiusScale : turn.maxRadius,
+      })
+    }
+    if (rows.length > 0) sections.set(turn.id, rows)
+  }
+  return sections
 }
 
 /** The instance Z span a Thread/Flutes depth gets on this surface. */

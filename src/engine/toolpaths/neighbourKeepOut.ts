@@ -115,8 +115,14 @@ export function trimGuideForNeighbourMaterial(input: NeighbourTrimInput): Neighb
   const unchanged: NeighbourTrimResult = { fragments: input.fragments, warnings: [] }
   if (input.fragments.length === 0 || input.bands.length === 0) return unchanged
 
+  // The guide's extent decides which body supports it. Taken before this
+  // keep-out shortens it: a fragment an earlier trim left inside a body is not
+  // thereby a guide the user drew on that body.
+  const drawn = guideExtent(input.fragments, input.axis)
+  if (!drawn) return unchanged
+
   const obstacles = input.bands
-    .filter((band) => isWall(band, input.guideSurfaceZ))
+    .filter((band) => isWall(band, input.guideSurfaceZ, drawn))
     .map((band) => ({ band, halfWidth: cutterHalfWidthAt(band.surfaceZ - input.tipZ, input) }))
     // Widest first: overlapping keeps-out then resolve to the one that keeps
     // the cutter furthest away, and the narrower ones report nothing.
@@ -185,11 +191,23 @@ export function trimGuideForNeighbourMaterial(input: NeighbourTrimInput): Neighb
  * above the guide; a `body` counts at or above, because its end face is a wall
  * even where its top is level with the guide's surface (see
  * `AroundMaterialKind`).
+ *
+ * The exception is the body that **supports** the guide (issue #1112 rt6-e
+ * correction 1): a line drawn wholly inside a Hex's own band and level with
+ * its top is cut on that Hex, not beside it, so the Hex is its surface and not
+ * a neighbour. Its end faces are then not walls either — a body whose own top
+ * is being cut has no exposed face inside the band. A guide that crosses the
+ * body or stops beside it is still kept clear of it: Frank's bolt, where the
+ * Thread starts exactly at the Hex's end, is that case.
  */
-function isWall(band: AroundMaterialBand, guideSurfaceZ: number): boolean {
-  return band.kind === 'body'
-    ? band.surfaceZ >= guideSurfaceZ - SURFACE_TOLERANCE
-    : band.surfaceZ > guideSurfaceZ + SURFACE_TOLERANCE
+function isWall(band: AroundMaterialBand, guideSurfaceZ: number, guide: GuideExtent): boolean {
+  if (band.kind !== 'body') return band.surfaceZ > guideSurfaceZ + SURFACE_TOLERANCE
+  if (band.surfaceZ < guideSurfaceZ - SURFACE_TOLERANCE) return false
+  const levelWithGuide = band.surfaceZ <= guideSurfaceZ + SURFACE_TOLERANCE
+  const supports = levelWithGuide
+    && band.alongMin <= guide.min + ALONG_TOLERANCE
+    && band.alongMax >= guide.max - ALONG_TOLERANCE
+  return !supports
 }
 
 /**

@@ -51,6 +51,11 @@ import {
   type RotaryRoughDependency,
 } from '../../engine/toolpaths/rotaryOperation'
 import type { Clamp, Operation, Project, SetupOrientation, Stock, Tab, Tool } from '../../types/project'
+import {
+  aroundFrameForOperation,
+  aroundMaterialBands,
+  type AroundMaterialBand,
+} from '../../engine/aroundFrame'
 import { projectsEqual } from '../../store/helpers/normalize'
 
 /**
@@ -103,6 +108,20 @@ export interface ToolpathCacheInputs {
    * invalidate on unrelated operation edits.
    */
   rotaryPrecedingRoughs: readonly RotaryRoughDependency[]
+  /**
+   * The material standing on the Around sheet for a Follow line's neighbour
+   * keep-out (issue #1112 rt6-e correction 1).
+   *
+   * `aroundMaterialBands` reads every model's placed along span and surface,
+   * across the whole unrolled sheet, so moving a Turn changes this path even
+   * when it never enters the guide's world-XY footprint: the guide is measured
+   * at its unrolled across coordinate (up to half a circumference from the
+   * zero line), while the model's silhouette is its side view around the bar.
+   * The spatial narrowing below cannot see that, so the read set itself is
+   * captured here and compared. Empty for every other operation kind and for
+   * an operation off the Around face, which never read it.
+   */
+  aroundMaterials: readonly AroundMaterialBand[]
 }
 
 /** Captured inputs plus the result they produced. */
@@ -193,6 +212,18 @@ function sameOrientation(a: (SetupOrientation & { kind?: 'around' }) | null, b: 
 }
 
 /**
+ * The material an Around Follow line's neighbour keep-out reads, captured at
+ * submission time; empty for every other operation.
+ */
+const NO_AROUND_MATERIALS: readonly AroundMaterialBand[] = []
+
+function aroundMaterialInputs(project: Project, operation: Operation): readonly AroundMaterialBand[] {
+  if (operation.kind !== 'follow_line') return NO_AROUND_MATERIALS
+  const frame = aroundFrameForOperation(project, operation)
+  return frame ? aroundMaterialBands(project, frame).bands : NO_AROUND_MATERIALS
+}
+
+/**
  * Capture the inputs an operation is about to be generated from.
  *
  * Called at *submission* time with the main-thread project, so the stamp
@@ -211,7 +242,26 @@ export function captureCacheInputs(project: Project, operation: Operation): Tool
     machinedElsewhere: subtractsMachinedElsewhere(project, operation),
     setupOrientation: operationSetupOrientation(project, operation),
     rotaryPrecedingRoughs: rotaryPrecedingRoughs(project, operation),
+    aroundMaterials: aroundMaterialInputs(project, operation),
   }
+}
+
+/** Whether two captured Around material read sets are the same inputs. */
+function sameAroundMaterials(
+  before: readonly AroundMaterialBand[],
+  after: readonly AroundMaterialBand[],
+): boolean {
+  if (before === after) return true
+  if (before.length !== after.length) return false
+  return before.every((band, index) => {
+    const other = after[index]
+    return other !== undefined
+      && band.kind === other.kind
+      && band.name === other.name
+      && band.alongMin === other.alongMin
+      && band.alongMax === other.alongMax
+      && band.surfaceZ === other.surfaceZ
+  })
 }
 
 /** Whether two captured preceding-rough dependency lists are the same inputs. */
@@ -300,6 +350,22 @@ export function cacheInputsValid(
   // live on the project, so an identical snapshot also means identical
   // ownership and the check below cannot have anything to say.
   if (inputs.project === project) return true
+
+  // An Around Follow line reads the material standing on the unrolled sheet
+  // (issue #1112 rt6-e correction 1). The bands run along the bar and across
+  // the whole sheet, so a neighbouring model that changes the keep-out can sit
+  // outside this operation's world-XY footprint: the guide is measured at its
+  // unrolled across coordinate, while the model's silhouette is its side view
+  // around the bar. Moving a larger Turn then leaves the old endpoint and the
+  // old warning in place. The footprint narrowing below cannot see that, so the
+  // read set itself is compared here. Only a Follow line has it; every other
+  // kind compares two empty lists and pays nothing.
+  if (
+    operation.kind === 'follow_line'
+    && !sameAroundMaterials(inputs.aroundMaterials, aroundMaterialInputs(project, operation))
+  ) {
+    return false
+  }
 
   // Plasma cut order (issue #958) reads two things no check here covers: the
   // machine origin, where the first cut is chosen from, and what later plasma
