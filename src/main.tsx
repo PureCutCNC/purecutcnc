@@ -120,12 +120,23 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().openProjectFromText(json, null)
     },
-    /** Returns the current pendingMove state (null if idle). */
+    /**
+     * Returns the current pendingMove state (null if idle), with the points a
+     * spec needs to check what the preview is drawn from: the click that ends a
+     * drag stores the projected target, so `toPoint` is the place the outline
+     * was last drawn (issue #1112 rt6-d).
+     */
     getPendingMove: async () => {
       const { useProjectStore } = await _pcTestStore()
       const pm = useProjectStore.getState().pendingMove
       if (!pm) return null
-      return { mode: pm.mode, entityType: pm.entityType, entityIds: [...pm.entityIds] }
+      return {
+        mode: pm.mode,
+        entityType: pm.entityType,
+        entityIds: [...pm.entityIds],
+        fromPoint: pm.fromPoint,
+        toPoint: pm.toPoint,
+      }
     },
     /** Completes a pending copy/move starting from origin and ending at (x,y). */
     completePendingMove: async (x: number, y: number) => {

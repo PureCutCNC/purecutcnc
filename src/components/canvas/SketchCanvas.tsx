@@ -644,6 +644,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   })
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingMovePreviewPointRef.current = nextPoint
+    // Publish the point the move preview is drawn at, for the browser specs
+    // (issue #1112 rt6-d): the preview and the commit are one projection, so a
+    // spec asserts what the drag shows instead of the store it has not written
+    // yet. Dev-only, like the canvas' own view-state seam.
+    const element = canvasRef.current
+    if (import.meta.env.DEV && element) {
+      if (nextPoint) {
+        element.dataset.movePreviewX = String(nextPoint.point.x)
+        element.dataset.movePreviewY = String(nextPoint.point.y)
+      } else {
+        delete element.dataset.movePreviewX
+        delete element.dataset.movePreviewY
+      }
+    }
     scheduleDraw()
   })
 

@@ -33,6 +33,7 @@ import type { ProjectStore } from '../types'
 import { transformProfile } from '../../geometry/profile'
 import { translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
+import { moveCannedRotaryFeatures } from '../helpers/rotaryMove'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -177,6 +178,31 @@ export function createPendingCompletionSlice(
         }
 
         if (entityType === 'feature') {
+          // A canned rotary feature (Turn, Polygon, Thread, Flutes) moves its
+          // *band* along the bar, not a free 2D offset (issue #1112 rt6-d item
+          // 42). The projection lives in `rotaryMove.ts`, which the canvas
+          // preview calls too, so what is drawn during the drag is what is
+          // stored: the start the edit panel shows, the regenerated model and
+          // every Thread/Flutes following a Turn. `null` means "not this kind of
+          // move", and the generic translate below runs unchanged.
+          if (mode === 'move') {
+            const rotaryMove = moveCannedRotaryFeatures(s.project, entityIds, fromPoint, toPoint)
+            if (rotaryMove) {
+              if (projectsEqual(rotaryMove, s.project)) {
+                return { pendingMove: null }
+              }
+              return {
+                project: { ...rotaryMove, meta: { ...rotaryMove.meta, modified: new Date().toISOString() } },
+                pendingMove: null,
+                history: {
+                  past: [...s.history.past, cloneProject(s.project)].slice(-100),
+                  future: [],
+                  transactionStart: null,
+                },
+              }
+            }
+          }
+
           const sourceFeatures = entityIds
             .map((featureId) => featureById(s.project, featureId))
             .filter((feature): feature is ResolvedSketchFeature => feature !== null)

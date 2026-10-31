@@ -41,6 +41,7 @@ import { aroundModelBandAt, aroundSheet } from './aroundSheet'
 import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import type { ReferencePickIntent } from './referencePickIntent'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
 import { isCannedFeature } from '../../cannedShapes'
 import { useNoticeStore } from '../../store/noticeStore'
 import {
@@ -916,7 +917,10 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       } else if (!pendingMove.toPoint) {
         const lockedSnapped = applyLock(snapped, pendingMove.fromPoint)
-        move.beginMoveDistanceEntry(lockedSnapped)
+        // A canned rotary move only travels along the bar (issue #1112 rt6-d),
+        // so the target the distance panel measures from is already the
+        // committed one: one direction, one distance, one stored result.
+        move.beginMoveDistanceEntry(projectedMoveTarget(project, pendingMove, pendingMove.fromPoint, lockedSnapped))
       }
       return
     }

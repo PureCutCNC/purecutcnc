@@ -32,7 +32,9 @@ import { test, expect } from './fixtures'
 import {
   cancelPendingAdd,
   getHoveredFeatureId,
+  getPendingMove,
   getProject,
+  openRowContextMenu,
   placePendingAddAt,
   seedProject,
   selectFeatures,
@@ -163,9 +165,9 @@ async function visibleWorldBounds(page: Page): Promise<{ minX: number; maxX: num
   })
 }
 
-/** A page click at a world (stock/sheet) point, through the view the app draws. */
-async function clickWorld(page: Page, point: { x: number; y: number }): Promise<void> {
-  const at = await page.locator('canvas.sketch-canvas').evaluate(async (canvas, world) => {
+/** The page coordinates of a world (stock/sheet) point, through the view the app draws. */
+async function worldPoint(page: Page, point: { x: number; y: number }): Promise<{ x: number; y: number }> {
+  return page.locator('canvas.sketch-canvas').evaluate(async (canvas, world) => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     const viewUrl = '/src/components/canvas/viewTransform.ts'
     const { computeFitViewState, computeSketchViewTransform, worldToCanvas } = await import(viewUrl) as typeof import('../src/components/canvas/viewTransform')
@@ -179,6 +181,11 @@ async function clickWorld(page: Page, point: { x: number; y: number }): Promise<
       y: rect.top + canvasPoint.cy * (rect.height / element.height),
     }
   }, point)
+}
+
+/** A page click at a world (stock/sheet) point, through the view the app draws. */
+async function clickWorld(page: Page, point: { x: number; y: number }): Promise<void> {
+  const at = await worldPoint(page, point)
   await page.mouse.click(at.x, at.y)
 }
 
@@ -1507,6 +1514,112 @@ test('a canned model is selectable on every face', async ({ app, ui }) => {
   await expect(aroundRow).toBeVisible()
   await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
+})
+
+// ── moving a canned rotary band (issue #1112 rt6-d, item 42) ──
+//
+// Frank: "the Move preview lets them leave the bar's axis and the finished move
+// snaps them back; a Turn can't be moved at all." A Turn moves like a Polygon
+// (the side view on Top is editable), and one projection drives the preview,
+// the typed distance and the commit, so the drag shows the stored result: the
+// band travels along the bar and the stored start moves with it.
+
+/** A canned row's stored parameters, read where its edit panel reads them. */
+async function storedCanned(page: Page, featureId: string): Promise<{
+  start: number
+  transform: Record<string, number>
+}> {
+  return page.evaluate(async (id: string) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const project = useProjectStore.getState().project
+    const row = project.features.find((feature) => feature.id === id)
+    if (!row) throw new Error(`e2e: no row ${id}`)
+    const canned = project.featureDefinitions[row.definitionId]?.canned
+    if (!canned) throw new Error(`e2e: ${id} is not canned`)
+    return {
+      start: Number(canned.params.start),
+      transform: row.transform as unknown as Record<string, number>,
+    }
+  }, featureId)
+}
+
+test('a Turn drag on Top moves its band along the bar, and the preview is the result', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+  const turnId = await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const created = useProjectStore.getState().addRotarySolid({ kind: 'turn', start: 10, length: 20, diameter: 10 })
+    if (!created.ok) throw new Error(`e2e: the Turn was refused (${created.reason})`)
+    return created.featureId
+  })
+  await switchToTop(page)
+  await zoomToModel(page)
+  const before = await solidSnapshot(page)
+
+  // A canned model is listed once, in the Around section (item 27); on Top it
+  // is the editable side view, and its menu offers Move exactly as a Polygon's
+  // does. A Turn is a bar model, not a face feature, so it moves here too.
+  const row = page.locator(`.tree-face-group[data-face="around"] [data-feature-id="${turnId}"]`)
+  const menu = await openRowContextMenu(page, row)
+  const moveItem = menu.getByRole('button', { name: 'Move', exact: true })
+  await expect(moveItem).toBeEnabled()
+  await moveItem.click()
+  expect((await getPendingMove(page))?.entityIds).toEqual([turnId])
+
+  // Drag 15 along the bar and 7 across it. The preview is drawn at the
+  // committed target: the along displacement, at the drag origin's across
+  // coordinate — never at the pointer's.
+  const from = await worldPoint(page, { x: 20, y: 12.5 })
+  await page.mouse.click(from.x, from.y)
+  const origin = (await getPendingMove(page))?.fromPoint
+  expect(origin, 'the drag origin is picked').not.toBeNull()
+  const to = await worldPoint(page, { x: 35, y: 19.5 })
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  const sketchCanvas = ui.canvas.sketch(page)
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'the preview point is published while the drag is live' },
+  ).toBeGreaterThan(0)
+  const previewX = Number(await sketchCanvas.getAttribute('data-move-preview-x'))
+  const previewY = Number(await sketchCanvas.getAttribute('data-move-preview-y'))
+  // The across component is dropped: the outline keeps the origin's across
+  // coordinate, so it never leaves the bar's axis.
+  expect(previewY).toBeCloseTo(origin!.y, 6)
+  // The along component is the pointer's: the drag was 15 along (a snap step may
+  // round the picked points), and the diagonal pointer travel never reaches it.
+  const alongMoved = previewX - origin!.x
+  expect(alongMoved).toBeGreaterThan(14)
+  expect(alongMoved).toBeLessThan(16)
+  expect(alongMoved).toBeLessThan(Math.hypot(15, 7) - 1)
+
+  // The click that ends the drag measures along the bar as well, so the typed
+  // distance is the along distance, not the diagonal the pointer travelled.
+  await page.mouse.click(to.x, to.y)
+  const movePanel = page.locator('.canvas-workflow-panel--move')
+  const distanceValue = Number(await movePanel.locator('.canvas-workflow-panel__distance-input').inputValue())
+  expect(distanceValue).toBeGreaterThan(14)
+  expect(distanceValue).toBeLessThan(16)
+  expect((await getPendingMove(page))?.toPoint?.y).toBeCloseTo(origin!.y, 6)
+  await movePanel.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(movePanel).toHaveCount(0)
+
+  // What is stored is what the preview drew: the stored start moved by the
+  // along component (so Edit Turn… shows it), the regenerated mesh sits at it,
+  // nothing moved across the bar, and the whole move is one undo step.
+  const moved = await storedCanned(page, turnId)
+  expect(moved.start).toBeCloseTo(10 + distanceValue, 6)
+  expect(moved.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+  const after = await solidSnapshot(page)
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  expect(after.modelBounds[0]?.minX).toBeCloseTo(10 + distanceValue, 3)
+  expect(after.modelBounds[0]?.maxX).toBeCloseTo(30 + distanceValue, 3)
+
+  // One undo puts the band back where the drag started.
+  await undo(page)
+  expect((await storedCanned(page, turnId)).start).toBeCloseTo(10, 6)
+  expect((await solidSnapshot(page)).modelBounds[0]?.minX).toBeCloseTo(10, 3)
 })
 
 test('polygon sides, across flats and rotation change the emitted solid', async ({ app, ui }) => {

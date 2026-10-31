@@ -521,20 +521,30 @@ store().setPendingMoveFrom({ x: 0, y: 0 })
 store().completePendingMove({ x: -50, y: 0 })
 assertNear(threadZ(placedThread), BAR_RADIUS + 5, 'moving it back onto the Turn takes the Turn diameter again')
 
-// ── a Turn moved off the bar axis no longer supplies one diameter ──
+// ── a Turn off the bar axis no longer supplies one diameter ──
+//
+// A Move is locked to the bar (issue #1112 rt6-d item 42): both the preview and
+// the commit project the drag onto the along axis, so the off-centre body this
+// rule covers arrives the way an old file or a transform about an off-centre
+// pivot still leaves it — as a stored instance transform. The rule reads the
+// placed body, not how it got there.
 
 load()
 const shiftedTurn = addTurn(20, 40, 10)
 const shiftedThread = addThread(25, 20)
 assertNear(threadZ(shiftedThread), BAR_RADIUS + 5, 'the thread starts on the centred Turn')
-store().startMoveFeature(shiftedTurn)
-store().setPendingMoveFrom({ x: 20, y: 0 })
-store().completePendingMove({ x: 20, y: 5 })
+const centredProject = store().project
+store().loadProject({
+  ...centredProject,
+  features: centredProject.features.map((row) => (
+    row.id === shiftedTurn ? { ...row, transform: { ...row.transform, f: 5 } } : row
+  )),
+})
 assertNear(threadZ(shiftedThread), BAR_DIAMETER, 'an off-centre Turn is not measured as the old diameter')
 assert.equal(
   rotaryPatternSurfaceOfFeature(store().project, shiftedThread)?.kind,
   'step',
-  'the moved Turn spans a near and a far surface',
+  'the shifted Turn spans a near and a far surface',
 )
 assert.equal(
   rotaryPatternSurfaceWarnings(store().project).get(shiftedThread)?.key,

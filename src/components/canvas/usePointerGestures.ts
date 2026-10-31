@@ -35,6 +35,7 @@ import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
 import { isCannedFeature } from '../../cannedShapes'
 import { useNoticeStore } from '../../store/noticeStore'
 import { aroundSheet } from './aroundSheet'
@@ -760,7 +761,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         return
       }
       const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
-      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
+      // A canned rotary band only moves along the bar (issue #1112 rt6-d): the
+      // pointer preview is the committed target, so the outline never leaves
+      // the axis and then jumps back at release.
+      setPendingMovePreviewPointRef({
+        point: pendingMove.fromPoint
+          ? projectedMoveTarget(project, pendingMove, pendingMove.fromPoint, lockedSnapped)
+          : lockedSnapped,
+        session: pendingMove.session,
+      })
       return
     }
 
