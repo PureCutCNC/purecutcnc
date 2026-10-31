@@ -906,8 +906,18 @@ export const face = {
     await face.current(page).click()
     await face.item(page, name).click()
   },
-  /** The control's home: the right end of the centre panel's tab bar (issue #1112 F3). */
+  /**
+   * The desktop control's home: the right end of the centre panel's tab bar
+   * (issue #1112 F3). A tablet shell draws no such bar — it carries the control
+   * in the top command bar instead (issue #1112 rt5-a), which is
+   * {@link face.topBarControl}.
+   */
   tabBarControl: (page: Page) => page.locator('.panel-tabs-header .face-switch'),
+  /**
+   * The tablet control's home: the top command bar, directly after the
+   * Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37).
+   */
+  topBarControl: (page: Page) => page.locator('.top-command-bar .face-switch'),
   /** A face section heading in the tree: a button that switches face (#1107). */
   heading: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),

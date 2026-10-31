@@ -521,9 +521,12 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
 
-    // The tablet shell carries the control in its workspace header row, still
-    // enabled (issue #1112 F3).
+    // The tablet shell carries the control in its top command bar, beside the
+    // Sketch / 3D / Sim switch, still enabled (issue #1112 rt5-a item 37; the
+    // workspace header row it used to sit on is gone).
     const control = ui.face.current(page)
+    await expect(ui.face.topBarControl(page)).toBeVisible()
+    await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
     await expect(control).toBeVisible()
 
     // Keyboard: focus the control, open the menu and walk to the Around entry.

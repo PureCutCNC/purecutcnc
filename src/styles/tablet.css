@@ -745,6 +745,39 @@
   height: 20px;
 }
 
+/* The bar also carries the workspace face control since issue #1112 rt5-a
+   (44 × 44, directly after the view switch), and at the tablet landscape widths
+   that matter — 1024 and 1180 — there is no slack left in it. What gives way is
+   only what was already giving way there: the spacing, and the project title,
+   which truncates anyway. No control loses its target, and the bar never grows
+   a second row for the face. Measured on a coarse-pointer layout (44px buttons):
+   1180 keeps every control inside the window; at 1024 the bar's content is
+   still wider than the window, as it already was before the face control
+   existed — the answer at that one width is the swipeable centre below, not a
+   new row, and the face control itself stays fully inside and unscrolled. */
+@media (max-width: 1200px) {
+  .top-command-bar {
+    gap: 4px;
+    padding: 4px 6px;
+  }
+
+  .top-command-bar__center {
+    gap: 4px;
+  }
+
+  .top-command-bar__right {
+    gap: 4px;
+  }
+
+  .top-cmd-group--tabs {
+    padding: 1px;
+  }
+
+  .top-command-bar__name {
+    max-width: 72px;
+  }
+}
+
 /* On the narrowest tablet widths, compact the command bar instead of
    dropping buttons — a touch-only tablet has no Cmd/Ctrl+P or desktop menu,
    so every command (incl. Print Design) must stay reachable. Buttons keep
@@ -753,12 +786,7 @@
    swipe-scrollable ("safe center" keeps the left edge reachable) as a
    no-overlap safety net when 44px coarse-pointer targets overflow it. */
 @media (max-width: 1080px) {
-  .top-command-bar {
-    gap: 6px;
-  }
-
   .top-command-bar__center {
-    gap: 6px;
     justify-content: flex-start;
     justify-content: safe center;
     overflow-x: auto;
@@ -772,10 +800,6 @@
   .top-cmd-btn--operations {
     width: auto;
     padding: 0 8px;
-  }
-
-  .top-command-bar__name {
-    max-width: 90px;
   }
 }
 
@@ -1194,18 +1218,15 @@
   display: inline-flex;
 }
 
-/* The view tabs live in the tablet's top command bar, so this row carries no
-   tabs — but it is still the one row above the workspace, and it holds the face
-   control (issue #1112 F3). Keep the row, drop its tablist. */
-[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header .panel-tablist,
-[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header .panel-tablist {
-  display: none;
-}
-
-/* The face control needs a real tap target on the row; the row grows for it. */
-[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header,
-[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header {
-  padding: 4px 6px;
+/* The tablet shell draws no workspace header row at all: its view tabs and its
+   face control both live in the top command bar (issue #1112 rt5-a, item 37), so
+   the centre panel starts at the stage and nothing is left behind above it.
+   `.panel`'s two-row grid would otherwise put the stage in the `auto` row, which
+   has no content of its own to size by (the views are absolutely positioned) —
+   the tablet keeps one fixed row instead of an empty one. */
+[data-shell-mode="tablet"] .centre-workspace,
+[data-shell-mode="tablet-compact"] .centre-workspace {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* ── Drag grip handle (tablet only) ──────────────────────── */

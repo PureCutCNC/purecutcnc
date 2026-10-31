@@ -198,19 +198,44 @@
   background: var(--line);
 }
 
-/* Tablet shells need a real tap target for the control in the workspace header
- * row, which grows to hold it (issue #1112 F3: the row is the control's one
- * home on every shell). */
+/* A tablet shell carries the control in its top command bar, right after the
+ * Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37), so it is the same
+ * 44px tap target as the bar's own buttons. */
 [data-shell-mode='tablet'] .face-switch,
 [data-shell-mode='tablet-compact'] .face-switch {
   padding: 0;
-  --face-switch-height: calc(var(--touch-target, 44px) + 4px);
+  --face-switch-height: var(--touch-target, 44px);
 }
 
 [data-shell-mode='tablet'] .face-switch .face-switch__trigger,
 [data-shell-mode='tablet-compact'] .face-switch .face-switch__trigger {
   min-width: var(--touch-target, 44px);
   min-height: var(--touch-target, 44px);
+}
+
+/* In that bar the control is icon-only, as the bar's other buttons are: the
+ * target is exactly 44 × 44, and the face's name lives in the aria-label and
+ * title instead of on screen. The bar is the narrowest place the control has
+ * ever had, and the label is the part that gives way — the control itself
+ * never does, and the menu behind it is the same one (issue #1112 rt5-a). */
+[data-shell-mode='tablet'] .top-command-bar .face-switch,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch {
+  flex: 0 0 auto;
+}
+
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__trigger,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__trigger {
+  width: var(--touch-target, 44px);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__trigger-label,
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__chevron,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__trigger-label,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__chevron {
+  display: none;
 }
 
 [data-shell-mode='tablet'] .face-switch__menu-item,

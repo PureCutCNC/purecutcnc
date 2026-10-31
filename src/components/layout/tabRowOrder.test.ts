@@ -16,7 +16,9 @@
 
 /**
  * The centre panel's tab row ends with the face control, then the CAM pull-out
- * handle (issue #1112 R2 item 11).
+ * handle (issue #1112 R2 item 11), and that row exists on the desktop shell only:
+ * a tablet shell carries the same control in its top command bar, right after
+ * the Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37).
  *
  * The row is a plain flexbox and its keyboard order is its DOM order, so where
  * the two controls sit is decided by the JSX order alone. `e2e/setupFaces`
@@ -27,7 +29,11 @@
  * - putting `<FaceSwitch />` back after the right handle → the order assertion
  *   fails;
  * - moving the face control left of the tab list (or the handle left of the
- *   switch) → the order assertions fail.
+ *   switch) → the order assertions fail;
+ * - rendering the row on every shell (`{!tabletShell && (` dropped) → the
+ *   desktop-only assertion fails;
+ * - dropping `<FaceSwitch />` from the top command bar, or moving it before the
+ *   view tabs (or into another section of the bar) → those assertions fail.
  *
  * Run with: npx tsx src/components/layout/tabRowOrder.test.ts
  */
@@ -60,5 +66,35 @@ assert(leftHandle < tabList, 'the left handle opens the row, before the tabs')
 assert(tabList < faceSwitch, 'the tabs come before the face control')
 assert(faceSwitch < rightHandle, 'the face control sits just left of the CAM handle')
 assert(row.indexOf('className="panel-tabs-spacer"') < faceSwitch, 'the spacer pushes the control pair to the right edge')
+
+// The row is the desktop shell's: a tablet draws no row at all, so nothing is
+// left behind above the workspace (issue #1112 rt5-a, item 37).
+const beforeRow = shell.slice(0, rowStart).trimEnd()
+assert(
+  beforeRow.endsWith('{!tabletShell && ('),
+  'the centre panel tab row is rendered on the desktop shell only',
+)
+
+// The tablet's home for the control: inside the top command bar's centre
+// section, after the view switch group and before that section closes.
+const bar = readFileSync(new URL('./TopCommandBar.tsx', import.meta.url), 'utf8')
+const centerStart = bar.indexOf('<div className="top-command-bar__center">')
+const centerEnd = bar.indexOf('<div className="top-command-bar__right">', centerStart)
+assert(centerStart >= 0, 'the top command bar has its centre section')
+assert(centerEnd > centerStart, 'the centre section ends before the right section')
+const center = bar.slice(centerStart, centerEnd)
+const tabletsFaceSwitch = center.indexOf('<FaceSwitch />')
+const viewTabs = center.indexOf('className="top-cmd-group top-cmd-group--tabs"')
+assert(tabletsFaceSwitch >= 0, 'the top command bar carries the face control')
+assert(viewTabs >= 0, 'the view switch group is in the centre section')
+assert(viewTabs < tabletsFaceSwitch, 'the face control sits right after the Sketch / 3D / Sim switch')
+assert(
+  center.slice(tabletsFaceSwitch + '<FaceSwitch />'.length).trim().startsWith('</div>'),
+  'the face control is the last thing before the centre section closes',
+)
+assert(
+  shell.split('<FaceSwitch />').length - 1 === 1,
+  'the desktop row is the only other place the shell mounts the control',
+)
 
 console.log('tabRowOrder.test.ts passed')

@@ -680,6 +680,12 @@ test.describe('landscape tablet', () => {
     const canvasWidth = async () => (await page.locator('.sketch-canvas').boundingBox())!.width
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
     await expect(page.locator('.empty-state-overlay')).toBeVisible()
+    // The tablet shell carries the control in its top command bar, beside the
+    // Sketch / 3D / Sim switch, and draws no workspace header row for it
+    // (issue #1112 rt5-a, item 37). 1024 is the narrowest landscape width the
+    // handoff names, so this is also the bar's narrowest case.
+    await expect(ui.face.topBarControl(page)).toBeVisible()
+    await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
     await ui.face.switchTo(page, 'Bottom')
     await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
 
@@ -692,7 +698,25 @@ test.describe('landscape tablet', () => {
     expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(1024)
 
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
-    await expect(control).toContainText('flipped X')
+    // The flip axis is the control's accessible name now that the bar shows it
+    // icon-only: the face in view is still fully readable to a screen reader
+    // and to a long press.
+    await expect(control).toHaveAttribute('aria-label', /flipped X$/)
+    await expect(control).toHaveAttribute('title', /flipped X$/)
+
+    // The bar holds it without scrolling to it, and nothing overflows the page.
+    const bar = await page.evaluate(() => {
+      const centre = document.querySelector<HTMLElement>('.top-command-bar__center')
+      const barEl = document.querySelector<HTMLElement>('.top-command-bar')
+      return {
+        scrolled: centre?.scrollLeft ?? 0,
+        overflow: (barEl?.scrollWidth ?? 0) - (barEl?.clientWidth ?? 0),
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }
+    })
+    expect(bar.scrolled, 'the bar is scrolled to reach the face control').toBe(0)
+    expect(bar.overflow, 'the top command bar overflows at 1024').toBeLessThanOrEqual(0)
+    expect(bar.pageOverflow, 'the page scrolls sideways at 1024').toBeLessThanOrEqual(0)
 
     // The entries behind it are full tap targets too, and stay on screen.
     await control.click()

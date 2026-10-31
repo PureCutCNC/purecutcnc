@@ -40,7 +40,7 @@
  *
  * The handoff's surface list applies to a round bar **and** a square blank, so
  * every surface runs on both blanks: the Turn/Polygon creation and edit forms,
- * the feature context menu, the Cuts list, the header face control, the
+ * the feature context menu, the Cuts list, the top bar's face control, the
  * simulation info button, chuck properties and the side views drawn on Top.
  * Screenshots name the blank so the two runs of a surface cannot be mistaken
  * for each other (#1112 rt4-a fix2 review F2).
@@ -830,18 +830,28 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
   }
 
   for (const shape of ['round', 'square'] as const) {
-    test(`the header face control is touch-sized and the CAM panel opens from its own button (${shape} blank)`, async ({ app, ui }) => {
+    test(`the top bar carries the face control and the CAM panel opens from its own button (${shape} blank)`, async ({ app, ui }) => {
       const { page } = app
       await seedBar(page, shape)
 
-      // The one face control sits at the right end of the tab row.
+      // The one face control rides in the top command bar, right after the
+      // Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37), and the row that
+      // used to hold it above the workspace is gone (not merely empty).
       const control = ui.face.current(page)
-      await expect(ui.face.tabBarControl(page)).toBeVisible()
+      await expect(ui.face.topBarControl(page)).toBeVisible()
+      await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
       await expect(control).toBeVisible()
+      // It is the bar's own 44 × 44 button, not a labelled 48px row control.
       const box = await control.boundingBox()
-      expect(box!.height, 'face control height').toBeGreaterThanOrEqual(TOUCH_TARGET)
       expect(box!.width, 'face control width').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(box!.height, 'face control height').toBeGreaterThanOrEqual(TOUCH_TARGET)
+      expect(Math.round(box!.width), 'face control width is the touch target').toBe(TOUCH_TARGET)
+      expect(Math.round(box!.height), 'face control height is the touch target').toBe(TOUCH_TARGET)
       await expectInsideViewport(page, control, `face control (${shape} blank)`)
+      // The name it used to show is still its accessible name, and the label is
+      // the part that gave way to the bar's width — not the control.
+      await expect(control).toHaveAttribute('aria-label', 'Current face: Top')
+      await expect(control.locator('.face-switch__trigger-label')).toBeHidden()
       await shoot(page, `face-control-${shape}-landscape`)
 
       // Opening it is a tap, and its entries are touch-sized on the tablet shell.
@@ -851,6 +861,8 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
       await expectInsideViewport(page, ui.face.menu(page), 'face menu')
       await ui.face.item(page, 'Bottom').tap()
       await expect(control).toHaveAttribute('data-face', 'bottom')
+      // …and the menu is the same one: the face it now shows is on screen.
+      await expect(control).toHaveAttribute('aria-label', /^Current face: Bottom/)
 
       // A tablet has no `»` pull-out handle: the CAM panel is a drawer, opened by
       // the command bar's Operations button, which is its stand-in here. The
@@ -869,6 +881,134 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
       await expectInsideViewport(page, page.locator('#panel-right'), 'operations drawer')
     })
   }
+
+  /**
+   * The bar has to hold one more 44px control at the two landscape widths the
+   * handoff names, with the face control fully in the window and reachable
+   * without scrolling the bar to it (issue #1112 rt5-a: shrink what already
+   * shrinks there instead of bringing the row back).
+   *
+   * One fresh page per width, never a resize: a tablet shell's sketch canvas is
+   * sized from its container and its `width` attribute then holds the layout's
+   * min-content open, so shrinking a loaded page would measure that artefact
+   * instead of the bar.
+   */
+  const WIDTHS = [1180, 1024] as const
+  for (const width of WIDTHS) {
+    test.describe(`tablet landscape at ${width} × 820`, () => {
+      test.use({ viewport: { width, height: 820 } })
+
+      test(`the top bar holds the face control at ${width} wide`, async ({ app, ui }) => {
+        const { page } = app
+        await seedBar(page, 'round')
+        await expect(page.locator('.app-shell')).toHaveAttribute('data-shell-mode', 'tablet')
+        // The row that used to hold the control above the workspace is gone, so
+        // the bar is the control's only home and the stage is the panel's only row.
+        await expect(ui.face.topBarControl(page)).toBeVisible()
+        await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
+
+        const control = ui.face.current(page)
+        await expect(control).toBeVisible()
+        const box = await control.boundingBox()
+        expect(box!.width, `face control width at ${width}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+        expect(box!.height, `face control height at ${width}`).toBeGreaterThanOrEqual(TOUCH_TARGET)
+        expect(box!.x, `face control starts on screen at ${width}`).toBeGreaterThanOrEqual(0)
+        expect(box!.x + box!.width, `face control ends on screen at ${width}`)
+          .toBeLessThanOrEqual(width + 0.5)
+
+        // No empty row is left behind either: the workspace starts at the bar's
+        // bottom edge and fills the rest of the window (a tablet's old header row
+        // sat between them, 60px tall, holding the face control). Measured, not
+        // inferred from the class: a leftover spacer would fail this too.
+        const rows = await page.evaluate(() => {
+          const bar = document.querySelector('.app-toolbar')!.getBoundingClientRect()
+          const stage = document.querySelector('.centre-stage')!.getBoundingClientRect()
+          return {
+            gap: Math.round(stage.top - bar.bottom),
+            share: stage.height / window.innerHeight,
+          }
+        })
+        expect(rows.gap, `nothing sits between the top bar and the workspace at ${width}`)
+          .toBeLessThanOrEqual(1)
+        expect(rows.share, `the workspace fills the window below the bar at ${width}`)
+          .toBeGreaterThan(0.75)
+
+        // It is not merely painted inside the window: the bar is not scrolled to
+        // reach it, so it is there on arrival. The row's own content is what must
+        // give way; the control and its gap are never clipped.
+        const bar = await page.evaluate(() => {
+          const centre = document.querySelector<HTMLElement>('.top-command-bar__center')
+          return {
+            centreLeft: centre?.scrollLeft ?? 0,
+            centreOverflow: (centre?.scrollWidth ?? 0) - (centre?.clientWidth ?? 0),
+            documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          }
+        })
+        expect(bar.centreLeft, `the bar is scrolled to reach the control at ${width}`).toBe(0)
+        expect(bar.centreOverflow, `the view switch and face control overflow their row at ${width}`)
+          .toBeLessThanOrEqual(0)
+        expect(bar.documentOverflow, `the page scrolls sideways at ${width}`).toBeLessThanOrEqual(0)
+
+        // And it works by tap at this width: the same menu, the same entries.
+        await control.tap()
+        await expect(ui.face.menu(page)).toBeVisible()
+        await ui.face.item(page, 'Bottom').tap()
+        await expect(control).toHaveAttribute('data-face', 'bottom')
+        await shoot(page, `face-control-bar-${width}`)
+      })
+    })
+  }
+
+  /**
+   * The same bar on a **coarse-pointer** tablet, where its buttons take the
+   * 44px touch token: that is the layout Frank uses, and it is wider than this
+   * harness's default (Playwright's `hasTouch` does not flip `pointer` to
+   * coarse, so the two tokens the `(pointer: coarse)` block sets are forced
+   * here). At 1180 — the larger of the two widths the handoff names — the bar
+   * still holds every control inside the window, which is what the spacing and
+   * project-title squeeze bought for the new face control (issue #1112 rt5-a).
+   * 1024 is not asserted to fit: the bar's content needs more than that on a
+   * coarse pointer and already did before the face control existed.
+   */
+  test('the top bar still fits at 1180 with 44px coarse-pointer buttons', async ({ app, ui }) => {
+    const { page } = app
+    await seedBar(page, 'round')
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--touch-target', '44px')
+      document.querySelector<HTMLElement>('.app-shell')!
+        .style.setProperty('--control-hit-target', '44px')
+    })
+    await expect(ui.face.topBarControl(page)).toBeVisible()
+    const data = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const el = document.querySelector<HTMLElement>(selector)
+        return el ? el.getBoundingClientRect() : null
+      }
+      const barEl = document.querySelector<HTMLElement>('.top-command-bar')!
+      const bar = barEl.getBoundingClientRect()
+      const ops = rect('.top-cmd-btn--operations')!
+      const centre = document.querySelector<HTMLElement>('.top-command-bar__center')!
+      const face = rect('.face-switch')!
+      return {
+        barRight: Math.round(bar.right),
+        barOverflow: barEl.scrollWidth - barEl.clientWidth,
+        opsRight: Math.round(ops.right),
+        faceRight: Math.round(face.right),
+        faceWidth: Math.round(face.width),
+        centreScrollLeft: centre.scrollLeft,
+        windowWidth: window.innerWidth,
+      }
+    })
+    expect(data.faceWidth, 'the control keeps its 44px target').toBe(TOUCH_TARGET)
+    expect(data.barRight, 'the top bar stays inside the 1180px window')
+      .toBeLessThanOrEqual(data.windowWidth)
+    expect(data.opsRight, 'the last control in the bar is inside the window')
+      .toBeLessThanOrEqual(data.windowWidth)
+    expect(data.faceRight, 'the face control is inside the window')
+      .toBeLessThanOrEqual(data.windowWidth)
+    expect(data.barOverflow, 'the bar has no content pushed out of it').toBeLessThanOrEqual(0)
+    expect(data.centreScrollLeft, 'the bar is not scrolled').toBe(0)
+  })
 
   for (const shape of ['round', 'square'] as const) {
     test(`the simulation toolbar explains fresh stock behind a 44px info button (${shape} blank)`, async ({ app, ui }) => {
@@ -1422,17 +1562,19 @@ test.describe('portrait tablet (820 × 1180, touch)', () => {
     })
   }
 
-  test('the header face control stays inside a portrait viewport', async ({ app, ui }) => {
+  test('the top-bar face control stays inside a portrait viewport', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(barProject()))
     // The portrait shell is a landscape layout in an 820px window, and the face
-    // control sits at the right end of its row. What is worth pinning is that a
-    // tablet pointer target keeps its size there and that the *document* never
-    // scrolls sideways (the rotate prompt, not a horizontal scrollbar, is the
-    // portrait answer). Whether the control happens to be off-screen behind the
-    // prompt is not asserted: a future portrait layout that fits must not fail
-    // this test (#1112 rt4-a review F4).
+    // control rides in the top command bar (issue #1112 rt5-a). What is worth
+    // pinning is that the control is there at all, that a tablet pointer target
+    // keeps its size, and that the *document* never scrolls sideways (the rotate
+    // prompt, not a horizontal scrollbar, is the portrait answer). Whether the
+    // control happens to be off-screen behind the prompt is not asserted: a
+    // future portrait layout that fits must not fail this test
+    // (#1112 rt4-a review F4).
     const control = ui.face.current(page)
+    await expect(ui.face.topBarControl(page)).toBeVisible()
     await expect(control).toBeVisible()
     const box = await control.boundingBox()
     expect(box!.height).toBeGreaterThanOrEqual(TOUCH_TARGET)

@@ -25,6 +25,7 @@ import { DimensionPopover } from './DimensionPopover'
 import { useFileCommands } from '../../commands/fileCommands'
 import { useI18n } from '../../i18n/i18nContext'
 import { AppearanceControl } from './AppearanceControl'
+import { FaceSwitch } from './FaceSwitch'
 import { LanguageControl } from './LanguageControl'
 
 interface TopCommandBarProps {
@@ -204,6 +205,16 @@ export function TopCommandBar({
               {t('shell.topBar.tabSim')}
             </button>
           </div>
+
+          {/* The workspace face control, directly beside the view switch it
+              belongs with: the face is what the Sketch / 3D / Sim view shows,
+              and on a tablet this bar is the shell's one header row
+              (issue #1112 rt5-a, item 37). It is the same control the desktop
+              shell draws at the right end of the centre panel's tab row, and it
+              decides for itself whether it shows (`showsFaceSwitch`); the
+              tablet's own styling in `face.css` makes it the 44px, icon-only
+              button the rest of this bar is. */}
+          <FaceSwitch />
         </div>
 
         {/* Right section: zoom + snap + operations */}
