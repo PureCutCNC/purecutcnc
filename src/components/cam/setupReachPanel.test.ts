@@ -34,6 +34,8 @@
  *    one-sided test finds a card and a button;
  *  - the intro line or the result line dropped from the render → the two-sided
  *    test fails;
+ *  - the intro line moved inside a target card → the placement test fails (the
+ *    e2e spec asserts the explanation on the section, not on a card);
  *  - the unmeasured "Unverified" line left out → the pre-check assertion fails.
  *
  * Run with: npx tsx src/components/cam/setupReachPanel.test.ts
@@ -225,6 +227,27 @@ async function testTwoSidedExplainsAndMeasures(): Promise<void> {
   }
 }
 
+// Where the explanation sits is part of the contract: the e2e spec asserts it
+// on the reach section's intro line, above the cards, never inside a card
+// (issue #1112 item 38, review round 1).
+async function testIntroSitsAboveTheCards(): Promise<void> {
+  const view = await mount(makeProject({ topPass: true }), measuredBy({ topOp: 8, bottomOp: 9 }))
+  try {
+    const intro = enMessages['cam.setup.reachIntro.one']
+    const section = view.host.querySelector('.cam-setup-reach')
+    assert(section !== null, 'the two-sided target renders the reach section')
+    assert(section.querySelector('.cam-setup-reach__intro')?.textContent === intro, `the explanation is the section intro line: ${view.html()}`)
+    const cards = Array.from(view.host.querySelectorAll('.cam-setup-reach__target'))
+    assert(cards.length === 1, 'one card, for the one target cut from both sides')
+    for (const card of cards) {
+      assert(!(card.textContent ?? '').includes(intro), 'the explanation is above the cards, not inside one')
+    }
+    assert(view.button(enMessages['cam.setup.checkPasses']) !== null, 'the check button belongs to the section, not a card')
+  } finally {
+    view.unmount()
+  }
+}
+
 async function testTwoSidedGapResult(): Promise<void> {
   const view = await mount(makeProject({ topPass: true }), measuredBy({ topOp: 12, bottomOp: 9 }))
   try {
@@ -252,6 +275,7 @@ async function testRejectedTargetKeepsOnlyItsError(): Promise<void> {
 
 await testOneSidedHasNoCardOrButton()
 await testTwoSidedExplainsAndMeasures()
+await testIntroSitsAboveTheCards()
 await testTwoSidedGapResult()
 await testRejectedTargetKeepsOnlyItsError()
 

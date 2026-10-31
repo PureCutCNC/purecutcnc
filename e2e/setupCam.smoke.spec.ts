@@ -351,11 +351,15 @@ for (const machine of ['grbl','shopbot']) {
     // Only the through target is cut from both setups, so only it gets a reach
     // card; the one-sided Bottom pocket gets none and no check is offered for it
     // (issue #1112 item 38).
-    const reach = ui.setupCam.properties(page).locator('.cam-setup-reach__target')
+    const reachSection = ui.setupCam.properties(page).locator('.cam-setup-reach')
+    const reach = reachSection.locator('.cam-setup-reach__target')
     await expect(reach).toHaveCount(1)
     await expect(reach).toContainText('Through hole')
     await expect(reach).not.toContainText('Bottom pocket')
-    await expect(reach).toContainText('This feature is cut from both sides. Check that the two passes meet in the middle.')
+    // The explanation is the section's intro line, above the cards, not text
+    // inside a card (issue #1112 item 38).
+    await expect(reachSection.locator('.cam-setup-reach__intro')).toHaveText('This feature is cut from both sides. Check that the two passes meet in the middle.')
+    await expect(reach).not.toContainText('This feature is cut from both sides.')
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check the passes meet' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
     await expect(ui.setupCam.properties(page)).toContainText('Meets the other pass')
