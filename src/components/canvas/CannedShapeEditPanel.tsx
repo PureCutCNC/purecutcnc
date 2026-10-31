@@ -119,6 +119,20 @@ function flatNormalized(
   return candidate ? request.normalize(candidate) : null
 }
 
+/**
+ * Whether two parameter sets fill the editor's fields with the same text: the
+ * test for "this stored change is the panel's own preview, not a canvas drag".
+ */
+function sameEditorFields(
+  request: CannedShapeEditorRequest,
+  a: CannedShapeParams,
+  b: CannedShapeParams,
+): boolean {
+  const left = editorInitialValues(request, a)
+  const right = editorInitialValues(request, b)
+  return request.fields.every((field) => left[field.key] === right[field.key])
+}
+
 /** A gear field's number, or `NaN` when the text is unusable. */
 function draftNumber(text: string): number {
   return text.trim() === '' ? Number.NaN : Number(text)
@@ -241,6 +255,22 @@ function FlatCannedShapeEditPanel({
     featureId,
     draft: canned && normalized ? { kind: canned.kind, params: normalized } : null,
   })
+
+  // A radius dragged on the canvas is a stored-parameter change like an Apply,
+  // so an open panel's fields follow it. The field text itself is a draft and
+  // never writes back here (issue #1112 slice w3e-a).
+  const storedParamsKey = canned ? JSON.stringify(canned.params) : ''
+  useEffect(() => {
+    if (!request || !canned) return
+    // The panel's own live preview writes the stored parameters too; when they
+    // already equal the current draft, the change came from the fields, and
+    // resetting them would rewrite text the user is still typing.
+    if (normalized && sameEditorFields(request, canned.params, normalized)) return
+    setValues(editorInitialValues(request, canned.params))
+    // The stored parameters are the trigger; `request`/`canned` are rebuilt each
+    // render and would refire this on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedParamsKey])
 
   if (!canned) return null
 

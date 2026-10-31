@@ -206,6 +206,59 @@ export function drawSketchControls(
   }
 }
 
+/**
+ * A canned ellipse's two radius handles (issue #1112 slice w3e-a). The shape is
+ * committed geometry, not an editable sketch, so the handles are drawn against
+ * the placed axes: a dashed radius from the placed centre to each axis end and
+ * a diamond at that end, the same marker an arc handle uses.
+ */
+export function drawEllipseRadiusHandles(
+  ctx: CanvasRenderingContext2D,
+  centre: Point,
+  handles: readonly { axis: 'rx' | 'ry'; world: Point }[],
+  vt: ViewTransform,
+  activeAxis: 'rx' | 'ry' | null,
+  palette: CanvasThemePalette,
+): void {
+  const centreCanvas = worldToCanvas(centre, vt)
+
+  ctx.save()
+  for (const handle of handles) {
+    const point = worldToCanvas(handle.world, vt)
+    ctx.beginPath()
+    ctx.moveTo(centreCanvas.cx, centreCanvas.cy)
+    ctx.lineTo(point.cx, point.cy)
+    ctx.strokeStyle = canvasColors().handleGuide
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  // The placed centre, so a rotated ellipse's handles read as its own axes.
+  const crossSize = activeAxis ? 8 : 6
+  ctx.beginPath()
+  ctx.moveTo(centreCanvas.cx - crossSize, centreCanvas.cy)
+  ctx.lineTo(centreCanvas.cx + crossSize, centreCanvas.cy)
+  ctx.moveTo(centreCanvas.cx, centreCanvas.cy - crossSize)
+  ctx.lineTo(centreCanvas.cx, centreCanvas.cy + crossSize)
+  ctx.strokeStyle = activeAxis ? palette.active : palette.mutedGeometry
+  ctx.lineWidth = activeAxis ? 2 : 1.2
+  ctx.stroke()
+
+  for (const handle of handles) {
+    const point = worldToCanvas(handle.world, vt)
+    const active = handle.axis === activeAxis
+    drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
+    ctx.fillStyle = active ? palette.active : canvasColors().handleFill
+    ctx.fill()
+    ctx.strokeStyle = active ? palette.activeStrong : canvasColors().handleStroke
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
 export function drawSketchEditPreviewPoint(
   ctx: CanvasRenderingContext2D,
   preview: { point: Point; mode: 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer' | 'trim' | 'extend' },

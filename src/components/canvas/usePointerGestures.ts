@@ -72,6 +72,7 @@ import {
 } from './manualEntry'
 import { profileVertices } from '../../types/project'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
+import type { UseCannedRadiusDrag } from './useCannedRadiusDrag'
 import type { UseSnapPreviewReturn } from './useSnapPreview'
 import type { UseCanvasContextMenuReturn } from './useCanvasContextMenu'
 
@@ -153,6 +154,8 @@ export interface PointerGesturesCtx {
   snap: UseSnapPreviewReturn
   contextMenu: UseCanvasContextMenuReturn
   dimEdit: DimensionEditWorkflow
+  /** A selected canned ellipse's radius handles (issue #1112 slice w3e-a). */
+  cannedRadius: UseCannedRadiusDrag
   isGestureActiveRef: MutableRefObject<boolean>
 
   // Shell-local helpers (stay in shell, passed via ctx)
@@ -305,6 +308,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     snap,
     contextMenu,
     dimEdit,
+    cannedRadius,
     isGestureActiveRef,
     hitEditableControl,
     editableFeature,
@@ -455,6 +459,28 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
           suppressClickRef.current = true
           return
         }
+      }
+    }
+
+    // A selected canned ellipse draws two radius handles in feature mode. They
+    // are the only handles there, so a press on one starts a radius drag before
+    // the feature body or a marquee can take the pointer (issue #1112).
+    const canGrabRadiusHandle = selection.mode === 'feature'
+      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
+      && !pendingShapeAction && !pendingConstraintRef.current
+      && !pendingTextLayoutRef.current && !pendingFeatureDistributionRef.current
+      && !pendingClipboardPlacementRef.current
+      // A reference pick (a trim subject, a guide, a clipboard placement) owns
+      // the pointer; a handle must not take the click it is waiting for.
+      && !getReferencePickIntent()
+    if (canGrabRadiusHandle) {
+      const radiusHandle = cannedRadius.hitHandle(point)
+      if (radiusHandle !== null && cannedRadius.begin(radiusHandle)) {
+        suppressClickRef.current = true
+        isDraggingNodeRef.current = true
+        dragStartWorldRef.current = world
+        setHoveredEditControl(null)
+        return
       }
     }
 
@@ -763,6 +789,18 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
 
+    if (isDraggingNodeRef.current && cannedRadius.dragRef.current) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
+      // The handle follows the same snap-gated point a dragged circle control
+      // does: a required snap that did not resolve leaves it where it is rather
+      // than falling back to the raw pointer (issue #1112 review).
+      cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
+      return
+    }
+
     if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
@@ -906,6 +944,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingSketchExtensionRef.current = null
     pendingSketchFilletRef.current = null
     setHoveredEditControl(null)
+    cannedRadius.hover(point)
 
     const sheet = aroundSheet(project)
     const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
@@ -1088,6 +1127,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       sketchEditPreviewRef.current = null
     }
     setHoveredEditControl(null)
+    cannedRadius.clearHover()
     setPendingOffsetPreviewPointRef(null)
     setPendingOffsetRawPreviewPointRef(null)
     setClipboardPlacementPreviewPoint(null)
