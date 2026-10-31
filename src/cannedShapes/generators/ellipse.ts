@@ -33,16 +33,24 @@ export type EllipseCannedParams = CannedShapeParams & {
   ry: number
 }
 
-function isEllipseParams(value: CannedShapeParams): value is EllipseCannedParams {
+/**
+ * The one validation path for stored ellipse parameters: the generator, the
+ * Edit-ellipse panel and the canvas radius handles all come through here, so a
+ * dragged radius is accepted under exactly the same rule as a typed one
+ * (issue #1112 slice w3e-a).
+ */
+export function normalizeEllipseCannedParams(value: CannedShapeParams): EllipseCannedParams | null {
   return typeof value.rx === 'number' && Number.isFinite(value.rx) && value.rx > 0
     && typeof value.ry === 'number' && Number.isFinite(value.ry) && value.ry > 0
+    ? value as EllipseCannedParams
+    : null
 }
 
 export const ellipseCannedShape = defineCannedShape<EllipseCannedParams>({
   kind: ELLIPSE_CANNED_KIND,
   labelKey: 'canned.ellipse.name',
   generate: (params) => [{ profile: ellipseProfile(0, 0, params.rx, params.ry) }],
-  normalizeParams: (raw) => (isEllipseParams(raw) ? raw : null),
+  normalizeParams: (raw) => normalizeEllipseCannedParams(raw),
   convertParams: (params, convertLength) => ({
     ...params,
     rx: convertLength(params.rx),
@@ -62,5 +70,5 @@ export const ELLIPSE_EDITOR_REQUEST: CannedShapeEditorRequest = {
     { key: 'rx', labelKey: 'canvas.field.radiusX' },
     { key: 'ry', labelKey: 'canvas.field.radiusY' },
   ],
-  normalize: (params) => (isEllipseParams(params) ? params : null),
+  normalize: (params) => normalizeEllipseCannedParams(params),
 }

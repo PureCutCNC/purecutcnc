@@ -45,6 +45,10 @@ import {
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
+import { useCannedRadiusDrag } from './useCannedRadiusDrag'
+import { cannedRadiusDrawParams } from './cannedRadiusDrag'
+import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { ellipseRadiusCentre, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
 import { ConstraintEditPanel } from './ConstraintEditPanel'
 import { DrivingDimensionPanel } from './DrivingDimensionPanel'
 import { CanvasCreationPanel } from './CanvasCreationPanel'
@@ -123,6 +127,7 @@ import {
   drawBackdropImage, drawAroundModelBands,
   drawClampClearanceOutlines,
   drawClampFootprint,
+  drawEllipseRadiusHandles,
   drawGrid,
   drawOriginMarker,
   drawSketchControls,
@@ -234,6 +239,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function stopNodeDrag() {
+    // A canned ellipse's radius drag is a preview: the release is the one write.
+    cannedRadius.finish()
     if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
     dragStartWorldRef.current = null
@@ -349,6 +356,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformKeepOriginals,
     completePendingOffset,
     cancelPendingOffset,
+    updateFeature,
     updateFeatureDistribution,
     setFeatureDistributionPickTarget,
     setFeatureDistributionGuide,
@@ -432,6 +440,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   operationHighlightKindRef.current = operationHighlightKind
   pendingClipboardPlacementRef.current = pendingClipboardPlacement
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
+
+  // A canned ellipse's radius handles belong to the selected feature, not to a
+  // sketch-edit session (its geometry is generated, issue #1112).
+  const cannedRadius = useCannedRadiusDrag({
+    projectRef,
+    selectionRef,
+    canvasRef,
+    viewStateRef,
+    updateFeature,
+    scheduleDraw,
+  })
 
   const dimEdit = useDimensionEditWorkflow({
     projectRef,
@@ -1031,6 +1050,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
 
+      // While a radius handle is dragged the ellipse draws from the preview
+      // parameters, so the outline follows the pointer without a store write.
+      const radiusDrag = cannedRadius.dragRef.current
+      const previewParams = radiusDrag && radiusDrag.featureId === feature.id ? radiusDrag.params : null
+      const drawableFeature = previewParams
+        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: previewParams } }
+        : feature
+
       const batchLine = feature.operation === 'line'
         && !operationHighlightIds
         && !selected
@@ -1040,7 +1067,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (batchLine) {
         batchedLineFeatures.push(feature)
       } else {
-        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
+        drawFeature(ctx, drawableFeature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
+      }
+
+      // A selected canned ellipse owns the two radius handles, drawn the way
+      // a circle's radius handle is (issue #1112 slice w3e-a).
+      const handleParams = cannedRadiusDrawParams(feature, radiusDrag)
+      if (handleParams && selection.mode === 'feature' && selection.selectedFeatureId === feature.id) {
+        const handles = ellipseRadiusHandles(handleParams, feature.transform)
+        const centre = ellipseRadiusCentre(feature.transform)
+        const activeAxis = radiusDrag?.featureId === feature.id
+          ? radiusDrag.axis
+          : cannedRadius.hoveredAxisRef.current
+        drawEllipseRadiusHandles(ctx, centre, handles, vt, activeAxis, canvasPalette)
+        const activeHandle = handles.find((handle) => handle.axis === activeAxis)
+        if (activeHandle) {
+          drawRadiusMeasurement(ctx, centre, activeHandle.world, vt, project.meta.units)
+        }
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
@@ -2817,6 +2860,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     snap,
     contextMenu,
     dimEdit,
+    cannedRadius,
     isGestureActiveRef,
     hitEditableControl,
     editableFeature,

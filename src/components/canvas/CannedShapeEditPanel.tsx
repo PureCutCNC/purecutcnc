@@ -142,6 +142,18 @@ export function CannedShapeEditPanel({
     if (!canned) cancelPendingAdd()
   }, [canned, cancelPendingAdd])
 
+  // A radius dragged on the canvas is a stored-parameter change like an Apply,
+  // so an open panel's fields follow it. The field text itself is a draft and
+  // never writes back here (issue #1112 slice w3e-a).
+  const storedParamsKey = canned ? JSON.stringify(canned.params) : ''
+  useEffect(() => {
+    if (!request || !canned) return
+    setValues(editorInitialValues(request, canned.params))
+    // The stored parameters are the trigger; `request`/`canned` are rebuilt each
+    // render and would refire this on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedParamsKey])
+
   if (!canned) return null
 
   const labelKey = cannedShapeLabelKey(canned)
