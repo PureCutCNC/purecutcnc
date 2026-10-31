@@ -33,7 +33,7 @@ import type { ProjectStore } from '../types'
 import { transformProfile } from '../../geometry/profile'
 import { translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
-import { moveCannedRotaryFeatures } from '../helpers/rotaryMove'
+import { moveCannedRotaryFeatures, rotaryMoveTranslateDelta } from '../helpers/rotaryMove'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -137,8 +137,8 @@ export function createPendingCompletionSlice(
         }
 
         const { entityIds, entityType, fromPoint, mode } = s.pendingMove
-        const dx = toPoint.x - fromPoint.x
-        const dy = toPoint.y - fromPoint.y
+        let dx = toPoint.x - fromPoint.x
+        let dy = toPoint.y - fromPoint.y
 
         if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
           return { pendingMove: null }
@@ -201,6 +201,14 @@ export function createPendingCompletionSlice(
                 },
               }
             }
+            // A linked copy outside the selection holds this definition too, so
+            // the shared start cannot move without moving it (review of rt6-d).
+            // Translate the selected rows instead — what a Polygon's move always
+            // did — by the same projected displacement the preview drew, so the
+            // outline still lands where it was drawn.
+            const projected = rotaryMoveTranslateDelta(s.project, entityIds, dx, dy)
+            dx = projected.dx
+            dy = projected.dy
           }
 
           const sourceFeatures = entityIds

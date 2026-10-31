@@ -176,6 +176,7 @@ import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMi
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { projectMovePreviewPoint } from '../../store/helpers/rotaryMove'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
@@ -643,16 +644,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
-    pendingMovePreviewPointRef.current = nextPoint
+    // Every way a move preview point arrives — the pointer drag, a typed
+    // distance, a resnap after typing — publishes through here, so the canned
+    // rotary projection is applied once, at the one place that cannot be
+    // skipped. The preview the canvas draws is then the target the commit
+    // stores (issue #1112 rt6-d review).
+    const pendingMove = pendingMoveRef.current
+    const projected = nextPoint && pendingMove && pendingMove.session === nextPoint.session
+      ? {
+          point: projectMovePreviewPoint(
+            projectRef.current,
+            pendingMove,
+            pendingMove.fromPoint ?? null,
+            nextPoint.point,
+          ),
+          session: nextPoint.session,
+        }
+      : nextPoint
+    pendingMovePreviewPointRef.current = projected
     // Publish the point the move preview is drawn at, for the browser specs
-    // (issue #1112 rt6-d): the preview and the commit are one projection, so a
-    // spec asserts what the drag shows instead of the store it has not written
-    // yet. Dev-only, like the canvas' own view-state seam.
+    // (issue #1112 rt6-d): a spec asserts what the drag and a typed distance
+    // show instead of the store it has not written yet. Dev-only, like the
+    // canvas' own view-state seam.
     const element = canvasRef.current
     if (import.meta.env.DEV && element) {
-      if (nextPoint) {
-        element.dataset.movePreviewX = String(nextPoint.point.x)
-        element.dataset.movePreviewY = String(nextPoint.point.y)
+      if (projected) {
+        element.dataset.movePreviewX = String(projected.point.x)
+        element.dataset.movePreviewY = String(projected.point.y)
       } else {
         delete element.dataset.movePreviewX
         delete element.dataset.movePreviewY
@@ -1509,7 +1527,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         : null
 
     if (pendingMove) {
-      const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+      // A typed distance stores its own preview while `toPoint` still holds the
+      // point the click ended on, so the live preview is the target while a
+      // distance edit is open — and it is already the committed target for a
+      // canned rotary move. Without an open edit the confirmed `toPoint` stays
+      // the place to draw, so a stray pointer move (the copy-count prompt)
+      // cannot drag the outline with it (issue #1112 rt6-d review).
+      const moveEdit = operationDimEditRef.current
+      const distanceEditActive = !!moveEdit && (moveEdit.kind === 'move' || moveEdit.kind === 'copy')
+      const targetPoint = distanceEditActive
+        ? currentMovePreviewPoint ?? pendingMove.toPoint
+        : pendingMove.toPoint ?? currentMovePreviewPoint
       const guideColor = lockModeGuideColor(lockModeRef.current)
 
       if (pendingMove.entityType === 'backdrop') {
@@ -1581,8 +1609,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           return
         }
 
-        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
-
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
@@ -1628,8 +1654,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (tabs.length === 0) {
           return
         }
-
-        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)

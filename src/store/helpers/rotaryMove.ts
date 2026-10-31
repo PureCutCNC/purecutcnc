@@ -226,6 +226,43 @@ export function projectedMoveTarget(
 }
 
 /**
+ * The point a pending move's outline is drawn at for a raw preview point.
+ *
+ * Every way a preview point arrives — a pointer drag, a typed distance, a
+ * resnap after typing — publishes through one call, and that call is this one,
+ * so no path can draw a place the commit will not store. A copy and every
+ * non-rotary move pass through unchanged, exactly as {@link projectedMoveTarget}
+ * does.
+ */
+export function projectMovePreviewPoint(
+  project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
+  move: { mode: 'move' | 'copy'; entityType: string; entityIds: readonly string[] } | null | undefined,
+  fromPoint: Point | null | undefined,
+  point: Point,
+): Point {
+  if (!move || !fromPoint) return point
+  return projectedMoveTarget(project, move, fromPoint, point)
+}
+
+/**
+ * The displacement a canned rotary move applies when it cannot write the
+ * shared band — its definition also places a linked copy the selection does not
+ * hold. That move keeps the definition and translates the selected rows, which
+ * is what a Polygon's move did before this slice; the translation is the same
+ * projection the preview drew, so the drawn place is still the stored one.
+ *
+ * A non-rotary move gets its displacement back unchanged.
+ */
+export function rotaryMoveTranslateDelta(
+  project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
+  featureIds: readonly string[],
+  dx: number,
+  dy: number,
+): { dx: number; dy: number } {
+  return rotaryMoveDelta(project, rotaryMoveFeatures(project, featureIds), dx, dy)
+}
+
+/**
  * A copied Turn profile with every contour moved `along` the bar, in the
  * absolute stock coordinates the profile stores (its points are checked against
  * the bar's ends when they are copied).
@@ -300,6 +337,11 @@ function movedCannedBand(
  * regenerated model follow), the model's mesh, every linked instance's Z span,
  * and the across displacement a Thread/Flutes keeps. The caller adds the undo
  * entry, so a move stays one step.
+ *
+ * A definition is shared with every linked copy, so its stored start belongs to
+ * all of them. This returns null — the caller's per-instance translate — unless
+ * the selection holds every row that shares the definition, because writing the
+ * start would move a copy the user did not select (review of rt6-d).
  */
 export function moveCannedRotaryFeatures(
   project: Project,
@@ -312,6 +354,13 @@ export function moveCannedRotaryFeatures(
   if (rows.some((row) => row === null)) return null
   const instances = rows as NonNullable<(typeof rows)[number]>[]
   if (instances.some((row) => row.locked)) return null
+
+  const selected = new Set(featureIds)
+  if (instances.some((row) => project.features.some(
+    (other) => other.definitionId === row.definitionId && !selected.has(other.id),
+  ))) {
+    return null
+  }
 
   const definitions = instances.map((row) => project.featureDefinitions[row.definitionId] ?? null)
   if (definitions.some((definition) => definition === null)) return null

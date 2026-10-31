@@ -41,6 +41,14 @@
  * 4. **One undo step**, and undo puts the start, the mesh and the Thread's span
  *    back.
  * 5. A **copy** move is untouched: a copy is a new row, not this band.
+ * 6. **An unselected linked copy stays put**: a definition is shared with every
+ *    linked copy, so the band write only happens when the selection holds all of
+ *    them (the review of rt6-d found a move moving an unselected copy). Otherwise
+ *    the selected rows translate by the projected displacement, which is what a
+ *    Polygon's move has always done.
+ * 7. **A typed distance is the same projection**: the point a typed target is
+ *    drawn at is the point the commit stores, including the clamp past the bar's
+ *    end (also the review of rt6-d).
  *
  * Other mutations checked one at a time:
  * - the preview projection returning the raw point → the Turn/Polygon
@@ -55,7 +63,11 @@
  * - skipping the model rebuild → the mesh-bounds assertion stays at the old
  *   span;
  * - a second history entry (the parameter write plus a transform write) → the
- *   one-undo assertion fails.
+ *   one-undo assertion fails;
+ * - dropping the shared-definition guard → the unselected linked copy's placed
+ *   start moves with the moved one;
+ * - translating a linked move by the raw 2D drag instead of the projection →
+ *   the moved copy lands off the bar, by the diagonal.
  */
 
 import assert from 'node:assert/strict'
@@ -75,10 +87,12 @@ import { useProjectStore } from './projectStore'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { cannedShapeModelAssetId } from '../cannedShapes/model'
 import {
+  projectMovePreviewPoint,
   projectedMoveTarget,
   rotaryMoveBand,
   rotaryMoveDelta,
 } from './helpers/rotaryMove'
+import { computeMoveDistancePreviewPoint } from '../components/canvas/manualEntry'
 
 const store = () => useProjectStore.getState()
 
@@ -389,5 +403,110 @@ const copyRow = store().project.features.find((feature) => feature.id !== copied
 assert.ok(copyRow, 'the copy row exists')
 assert.deepEqual(copyRow.transform, { a: 1, b: 0, c: 0, d: 1, e: 30, f: 5 },
   'the copy keeps the ordinary 2D offset a copy always had')
+
+// ── an unselected linked copy does not move ─────────────────
+//
+// A definition is shared with every linked copy, so its stored start belongs to
+// all of them. Writing the moved start moved a copy the user did not select
+// (review of rt6-d): the previous path translates the selected rows, and a
+// Polygon's move has always left the other copies where they are. The
+// translation is the *projected* displacement, so the outline still lands where
+// the preview drew it.
+//
+// Named mutations: dropping the shared-definition guard → the unselected copy's
+// placed start moves too; translating by the raw 2D drag instead of the
+// projection → the moved copy lands off the bar and by the diagonal.
+
+load()
+const linkedSource = addPolygon(20, 10, 12)
+store().startCopyFeature(linkedSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 5 })
+assert.equal(featureIds().length, 2, 'the linked copy is a second row')
+const linkedCopy = featureIds().find((id) => id !== linkedSource)!
+const linkedSourceRow = store().project.features.find((feature) => feature.id === linkedSource)
+const linkedCopyRow = store().project.features.find((feature) => feature.id === linkedCopy)
+assert.equal(linkedCopyRow?.definitionId, linkedSourceRow?.definitionId, 'the copy is linked, not independent')
+const linkedStoredBefore = storedStart(linkedSource)
+const linkedMovedBefore = placedAlongStart(linkedSource)
+const linkedCopyBefore = placedAlongStart(linkedCopy)
+const linkedHistoryBefore = store().history.past.length
+
+const linkedDragFrom = { x: 20, y: 0 }
+const linkedDragTo = { x: 35, y: 9 }
+const linkedPreview = preview(linkedSource, linkedDragFrom, linkedDragTo)
+move(linkedSource, linkedDragFrom, linkedDragTo)
+
+near(linkedPreview.x - linkedDragFrom.x, 15, 'the preview keeps only the along component')
+near(placedAlongStart(linkedSource), linkedMovedBefore + 15,
+  'the moved copy travels exactly the previewed along distance')
+assert.deepEqual(
+  store().project.features.find((feature) => feature.id === linkedSource)?.transform,
+  { a: 1, b: 0, c: 0, d: 1, e: 15, f: 0 },
+  'the translation carries the projected (along only) displacement, not the diagonal drag',
+)
+near(placedAlongStart(linkedCopy), linkedCopyBefore,
+  'an unselected linked copy stays where it was')
+near(storedStart(linkedSource), linkedStoredBefore,
+  'the shared definition keeps its band, so the other copy cannot follow')
+assert.equal(
+  store().project.features.find((feature) => feature.id === linkedCopy)?.transform.e,
+  linkedCopyRow?.transform.e,
+  'the unselected copy keeps its own placement',
+)
+assert.equal(store().history.past.length, linkedHistoryBefore + 1, 'the move is one undo step')
+
+store().undo()
+near(placedAlongStart(linkedSource), linkedMovedBefore, 'undo puts the moved copy back')
+near(placedAlongStart(linkedCopy), linkedCopyBefore, 'undo leaves the unselected copy alone')
+
+// Selecting every copy is what lets the shared band move: one write, both rows.
+load()
+const groupSource = addPolygon(20, 10, 12)
+store().startCopyFeature(groupSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 5 })
+const groupCopy = featureIds().find((id) => id !== groupSource)!
+store().selectFeatures([groupSource, groupCopy])
+store().startMoveFeature(groupSource)
+assert.deepEqual(store().pendingMove?.entityIds, [groupSource, groupCopy],
+  'both linked copies are in the move')
+const groupHistoryBefore = store().history.past.length
+store().setPendingMoveFrom({ x: 20, y: 0 })
+store().completePendingMove({ x: 30, y: 0 })
+near(storedStart(groupSource), 30, 'moving every copy writes the shared band once')
+near(placedAlongStart(groupSource), 30, 'the first copy sits at the moved band')
+near(placedAlongStart(groupCopy), 60, 'the linked copy follows the band it shares')
+assert.equal(store().history.past.length, groupHistoryBefore + 1, 'moving the group is one undo step')
+
+// ── a typed distance is projected too ───────────────────────
+//
+// The review of rt6-d found the typed preview computed without the projection,
+// so a 400-unit target drew 400 away and committed 90 (the bar end). The one
+// preview point every publisher stores is the committed point; here the typed
+// path is checked against the commit for a target past the end of the bar.
+//
+// Named mutation: skipping the projection in the preview point → the preview
+// reads 400 past the origin while the commit stores the clamped band, and the
+// two assertions below disagree by 310.
+
+load()
+const typedTurn = addTurn(10, 20, 10)
+const typedFrom = { x: 20, y: 0 }
+const typedReference = { x: 35, y: 0 }
+const typedRaw = computeMoveDistancePreviewPoint(typedFrom, typedReference, 400)
+const typedPreview = projectMovePreviewPoint(
+  store().project,
+  { mode: 'move', entityType: 'feature', entityIds: [typedTurn] },
+  typedFrom,
+  typedRaw,
+)
+near(typedPreview.x, typedFrom.x + (BAR_LENGTH - 10 - 20),
+  'the typed preview clamps to the bar end')
+near(typedPreview.y, typedFrom.y, 'the typed preview stays on the bar axis')
+move(typedTurn, typedFrom, typedRaw)
+near(storedStart(typedTurn), 100, 'the commit stores the clamped start')
+near(storedStart(typedTurn) - 10, typedPreview.x - typedFrom.x,
+  'the typed preview and the commit moved the band the same distance')
 
 console.log('rotaryMove.test.ts passed')

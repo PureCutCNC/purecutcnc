@@ -1598,23 +1598,46 @@ test('a Turn drag on Top moves its band along the bar, and the preview is the re
   // distance is the along distance, not the diagonal the pointer travelled.
   await page.mouse.click(to.x, to.y)
   const movePanel = page.locator('.canvas-workflow-panel--move')
-  const distanceValue = Number(await movePanel.locator('.canvas-workflow-panel__distance-input').inputValue())
+  const distanceInput = movePanel.locator('.canvas-workflow-panel__distance-input')
+  const distanceValue = Number(await distanceInput.inputValue())
   expect(distanceValue).toBeGreaterThan(14)
   expect(distanceValue).toBeLessThan(16)
   expect((await getPendingMove(page))?.toPoint?.y).toBeCloseTo(origin!.y, 6)
+
+  // A typed distance is the same projection (review of rt6-d): 400 along the
+  // bar clamps to the band's last position, and the outline is drawn there.
+  // Before the fix the typed target drew 400 away and the commit stored 90.
+  await distanceInput.fill('400')
+  const clampedPreviewX = origin!.x + (120 - 10 - 20)
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'the typed preview is drawn at the clamped band' },
+  ).toBeCloseTo(clampedPreviewX, 3)
+  expect(Number(await sketchCanvas.getAttribute('data-move-preview-y'))).toBeCloseTo(origin!.y, 6)
+
+  // Resnapping after typing republishes through the same projection: the
+  // pointer's new position must not replace the typed clamp.
+  const resnap = await worldPoint(page, { x: 90, y: 24 })
+  await page.mouse.move(resnap.x, resnap.y, { steps: 6 })
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'a resnap keeps the typed target' },
+  ).toBeCloseTo(clampedPreviewX, 3)
+
   await movePanel.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(movePanel).toHaveCount(0)
 
-  // What is stored is what the preview drew: the stored start moved by the
-  // along component (so Edit Turn… shows it), the regenerated mesh sits at it,
-  // nothing moved across the bar, and the whole move is one undo step.
+  // What is stored is what the preview drew: the typed 400 was clamped to the
+  // bar's end (start 100 on a 120 bar with a 20-long band), the regenerated mesh
+  // sits at it, nothing moved across the bar, and the whole move is one undo
+  // step.
   const moved = await storedCanned(page, turnId)
-  expect(moved.start).toBeCloseTo(10 + distanceValue, 6)
+  expect(moved.start).toBeCloseTo(100, 6)
   expect(moved.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
   const after = await solidSnapshot(page)
   expect(after.historyPast).toBe(before.historyPast + 1)
-  expect(after.modelBounds[0]?.minX).toBeCloseTo(10 + distanceValue, 3)
-  expect(after.modelBounds[0]?.maxX).toBeCloseTo(30 + distanceValue, 3)
+  expect(after.modelBounds[0]?.minX).toBeCloseTo(100, 3)
+  expect(after.modelBounds[0]?.maxX).toBeCloseTo(120, 3)
 
   // One undo puts the band back where the drag started.
   await undo(page)
