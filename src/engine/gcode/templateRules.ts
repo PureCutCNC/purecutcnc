@@ -35,8 +35,8 @@
  * - a numeric placeholder was expanded to `1` before judging the line, so
  *   `M{toolNumber}` validated as `M1` and could emit `M6`. A placeholder is
  *   now judged where it stands: a fixed word letter it may follow, never a G
- *   or M number, never joined to another word, and never at an unknown
- *   position.
+ *   or M number, never joined to a following value, and never at an unknown
+ *   position. Slice K below relaxes the word-adjacency half of this rule.
  * - single-command fields were split into lines before matching, so
  *   `feedCommand: "F\nF"` passed one line at a time. A command field is now
  *   one line and one command, judged whole.
@@ -44,9 +44,10 @@
  * Three classes, decided by Frank on 2026-10-21:
  *
  * - **Program header** — written before any motion, so modal setup is allowed:
- *   `G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, the units words,
- *   work-coordinate select, a bare program number, a parameter assignment,
- *   comments, and M codes that do not move. No motion word and no axis word.
+ *   `G90`, `G17`, `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, `G91.1`, a bare
+ *   `G0`/`G00` with no axis word, the units words, work-coordinate select, a
+ *   bare program number, a parameter assignment, comments, and M codes that do
+ *   not move. No other motion word and no axis word.
  * - **Tool change and end of program (footer)** — anything is allowed: motion,
  *   `G53`, `G28`/`G30`, `M6`, O-word calls, macros. The emitter follows a tool
  *   change with one full restart block of its own, and nothing follows the
@@ -88,9 +89,73 @@
  * - the material feed expression's `F` is case-insensitive like every G-code
  *   letter; the HAL pin name itself stays exact.
  *
+ * Slice K (#1119, 2026-10-26) relaxes the three cases Frank approved as
+ * legitimate G-code, so a 0.5.x machine such as the #1109 reporter's loads and
+ * exports unchanged:
+ *
+ * - a program header may spell a bare `G0`/`G00` with no axis word: it sets the
+ *   motion mode and moves nothing. An axis word on the same line is still
+ *   refused;
+ * - a program header may spell `G91.1`, arc centres relative to the start,
+ *   which is how the emitter writes I/J (`arcFitting.ts`). `G90.1` (absolute
+ *   arc centres) and `G91` (incremental distance) stay refused;
+ * - a numeric placeholder may end a word and be immediately followed by the
+ *   next word, and may itself follow a completed word: `T{toolNumber}M6` and
+ *   `G43Z0.8000H{toolNumber}` are accepted. A placeholder that would become
+ *   part of a G or M number (`M{toolNumber}`, `G{x}`) or be joined to a
+ *   following value (`T{toolNumber}5`) stays refused.
+ *
  * The documentation for each form is cited beside the constant that enforces
  * it.
  */
+
+/**
+ * Stable identifiers for the rules the UI names (#1119). The engine returns
+ * one of these with every diagnostic; the language packs own the wording, so a
+ * French user never sees the English rule label. The array is the union and
+ * the coverage tests iterate it, so adding a rule without a translation fails
+ * the build instead of leaking English.
+ */
+export const MACHINE_TEMPLATE_RULE_CODES = [
+  'comment-syntax',
+  'header',
+  'inert.operation-header',
+  'inert.spindle-on',
+  'inert.spindle-off',
+  'inert.pause',
+  'inert.coolant',
+  'units',
+  'inverse-time-on',
+  'inverse-time-off',
+  'torch',
+  'material',
+  'material-feed',
+  'canned-cycle',
+  'canned-retract',
+  'canned-cancel',
+  'anything',
+  'tool-change',
+  'command.rapid',
+  'command.linear',
+  'command.arc-cw',
+  'command.arc-ccw',
+  'command.feed',
+  'command.rpm',
+  'command.peck',
+  'command.machine-rapid',
+  'command.probe',
+  'command.set-zero',
+] as const
+
+export type MachineTemplateRuleCode = (typeof MACHINE_TEMPLATE_RULE_CODES)[number]
+
+/** The inert templates, named by the field they guard. */
+export type InertTemplateLabel =
+  | 'operation header'
+  | 'spindle-on'
+  | 'spindle-off'
+  | 'pause'
+  | 'coolant'
 
 /**
  * The rule a template field is held to.
@@ -105,7 +170,7 @@ export type TemplateRule =
   | { kind: 'anything' }
   | { kind: 'tool-change' }
   | { kind: 'header' }
-  | { kind: 'inert', label: string }
+  | { kind: 'inert', label: InertTemplateLabel }
   | { kind: 'units' }
   | { kind: 'inverse-time-on' }
   | { kind: 'inverse-time-off' }
@@ -123,7 +188,7 @@ export type TemplateRule =
    * (Codex review of #1057 slice F, finding 1: `rpmCommand: "G91\nS"` wrote a
    * motion word after the restart).
    */
-  | { kind: 'command', label: string, pattern: RegExp, hint: string }
+  | { kind: 'command', command: CommandField, label: string, pattern: RegExp, hint: string }
 
 /** The single-word command fields, by the shape they must have. */
 type CommandField =
@@ -290,10 +355,40 @@ export interface TemplateRuleViolation {
   message: string
 }
 
+/**
+ * One template line that breaks its class rule (#1119).
+ *
+ * The schema reports these as issues; the machine editor, the export dialog
+ * and the load warning read them directly so the user can see *which* line of
+ * *which* field breaks *which* rule. A definition that still breaks a rule is
+ * kept — never rewritten and never dropped — and export refuses it.
+ */
+export interface MachineTemplateDiagnostic {
+  /** Schema path of the field carrying the text, e.g. `['program','header',3]`. */
+  path: Array<string | number>
+  /** The path as a person reads it: `program.header[3]`. */
+  field: string
+  /** One-based line within the field's text. */
+  line: number
+  /** The offending line exactly as stored. */
+  text: string
+  /** The word, placeholder or marker the rule refused. */
+  word: string
+  /**
+   * Stable rule identifier (`header`, `inert.spindle-on`, `command.rapid`, …).
+   * The UI translates it; nothing user-visible is stored as English here.
+   */
+  ruleCode: MachineTemplateRuleCode
+  /** One sentence naming the field, line, offending text and rule (engine diagnostics only). */
+  message: string
+}
+
 interface TemplateField {
   path: Array<string | number>
   text: string
   rule: TemplateRule
+  /** Rendered lines that precede this field's text in the same template array. */
+  lineOffset: number
 }
 
 /**
@@ -302,10 +397,20 @@ interface TemplateField {
  * compensation cancel, work-coordinate select, path control, cycle cancel,
  * offset reset and constant-surface-speed cancel. `G43`/`G44` apply an offset
  * and `G91` changes the distance mode, so neither is here.
+ *
+ * Two #1119 forms are safe before the first move and are allowed:
+ *
+ * - a bare `G0`/`G00` with no axis word: it selects the rapid motion mode and
+ *   moves nothing, and the word loop still refuses an axis word on the same
+ *   line (`G0 Z-2`);
+ * - `G91.1`, arc centres relative to the start, which is exactly how the
+ *   emitter writes I/J (`arcFitting.ts`: `i = center.x - segStart.x`). `G90.1`
+ *   would make every emitted arc use absolute centres and `G91` would change
+ *   where every following move lands, so neither is here.
  */
 const HEADER_G_COMMANDS: ReadonlySet<string> = new Set([
-  'G4', 'G17', 'G20', 'G21', 'G40', 'G49', 'G54', 'G55', 'G56', 'G57', 'G58',
-  'G59', 'G61', 'G64', 'G80', 'G90', 'G92.1', 'G94', 'G97',
+  'G0', 'G4', 'G17', 'G20', 'G21', 'G40', 'G49', 'G54', 'G55', 'G56', 'G57',
+  'G58', 'G59', 'G61', 'G64', 'G80', 'G90', 'G91.1', 'G92.1', 'G94', 'G97',
 ])
 
 /**
@@ -798,16 +903,53 @@ function endsWord(code: string, at: number): boolean {
 }
 
 /**
+ * True when `at` ends a completed placeholder (`{key}`). A placeholder is a
+ * value the emitter substitutes, so the word after it begins exactly as it
+ * does after a number (`S{rpm}F{feed}`), while `#T{…}` is still not a `T`
+ * word because the `#` is neither.
+ */
+function endsPlaceholder(code: string, at: number): boolean {
+  if (code[at] !== '}') return false
+  const open = code.lastIndexOf('{', at)
+  return open >= 0 && /^\{\w+\}$/.test(code.slice(open, at + 1))
+}
+
+/**
+ * True when `at` starts a word in run-together G-code. A letter begins a new
+ * word as soon as the previous word's value ends (`Z0.8000H1` is a Z word and
+ * an H word), because a word is a letter plus its value and needs no
+ * whitespace after the number. A completed placeholder is a value too, so
+ * `S{rpm}F{feed}` is two words. Line start, whitespace and block delete remain
+ * boundaries, so `#T{…}` is still not a `T` word.
+ */
+function startsJoinedWord(code: string, at: number): boolean {
+  if (startsWord(code, at)) return true
+  return /[0-9.]/.test(code[at - 1] ?? '') || endsPlaceholder(code, at - 1)
+}
+
+/**
+ * True when `at` ends a word in run-together G-code: the next word's letter
+ * starts a new word (`T1M6` ends the T word at the M), while a digit, sign or
+ * dot continues the same value (`T15`) and is not a word end.
+ */
+function endsJoinedWord(code: string, at: number): boolean {
+  return endsWord(code, at) || /[A-Za-z]/.test(code[at] ?? '')
+}
+
+/**
  * A placeholder in *code* that the emitter cannot safely fill.
  *
  * - Operator text may close a comment or start a new line, so it may only be
  *   written inside one.
  * - A numeric placeholder may only be the value of a fixed word letter
  *   (`T{toolNumber}`, `H{toolNumber}` in a tool change, `S{rpm}`, `F{feed}`,
- *   `P{materialNumber}`). It may never be the number of a `G` or
- *   `M` word, never be joined to another word, and any position not in that
- *   list is forbidden. `M{toolNumber}` therefore cannot validate as `M1` and
- *   emit `M6` (Codex review of #1057 slice H, finding 2).
+ *   `P{materialNumber}`). It may end a word where the next word begins
+ *   (`T{toolNumber}M6`) and may itself follow a completed word
+ *   (`G43Z0.8000H{toolNumber}`), but it may never be the number of a `G` or
+ *   `M` word, may never be joined to a following value (`T{toolNumber}5`), and
+ *   any other position is forbidden. `M{toolNumber}` therefore cannot validate
+ *   as `M1` and emit `M6` (Codex review of #1057 slice H, finding 2; #1119
+ *   relaxed only the word-adjacency half).
  * - `{unitsCommand}`/`{wcsCommand}` expand to whole commands, so they must
  *   occupy a whole word too.
  * - An unknown placeholder is refused.
@@ -842,10 +984,12 @@ function placeholderRefusal(
       letters.length === 0
       || letter === undefined
       || !letters.includes(letter)
-      // The fixed letter must itself start a word, so `#T{…}` and `M8T{…}`
-      // are not a `T` word at all.
-      || !startsWord(code, at - 1)
-      || !endsWord(code, at + whole.length)
+      // The fixed letter must itself start a word: `#T{…}` is not a `T` word,
+      // while a letter after a completed word's value does start one
+      // (`G43Z0.8000H{…}`). The placeholder's value ends where the next
+      // word's letter begins (`T{…}M6`), never in the middle of a number.
+      || !startsJoinedWord(code, at - 1)
+      || !endsJoinedWord(code, at + whole.length)
     ) {
       return { word: whole, kind: 'misplaced-placeholder' }
     }
@@ -1002,55 +1146,84 @@ function checkTemplateLine(
   return null
 }
 
+/** The diagnostic code and source label for an inert template. */
+const INERT_RULE_CODES: Record<InertTemplateLabel, MachineTemplateRuleCode> = {
+  'operation header': 'inert.operation-header',
+  'spindle-on': 'inert.spindle-on',
+  'spindle-off': 'inert.spindle-off',
+  'pause': 'inert.pause',
+  'coolant': 'inert.coolant',
+}
+
+/** The diagnostic code for a single-command field. */
+const COMMAND_RULE_CODES: Record<CommandField, MachineTemplateRuleCode> = {
+  rapid: 'command.rapid',
+  linear: 'command.linear',
+  'arc-cw': 'command.arc-cw',
+  'arc-ccw': 'command.arc-ccw',
+  feed: 'command.feed',
+  rpm: 'command.rpm',
+  peck: 'command.peck',
+  'machine-rapid': 'command.machine-rapid',
+  probe: 'command.probe',
+  'set-zero': 'command.set-zero',
+}
+
 /** How a rule is named in a refusal, and the one-sentence reason. */
-function describeRule(rule: TemplateRule): { label: string, hint: string } {
+function describeRule(rule: TemplateRule): { code: MachineTemplateRuleCode, label: string, hint: string } {
   switch (rule.kind) {
     case 'header':
       return {
+        code: 'header',
         label: 'program header',
-        hint: 'before the first move only modal setup, comments, parameter assignments and non-moving M codes are allowed; there is no motion or axis word here',
+        hint: 'before the first move only modal setup (including a bare G0/G00 with no axis word, and G91.1), comments, parameter assignments and non-moving M codes are allowed; there is no other motion or axis word here',
       }
     case 'inert':
       return {
+        code: INERT_RULE_CODES[rule.label],
         label: `${rule.label} template`,
         hint: 'a template that runs inside the program may contain only comments, parameter words and commands that neither move an axis nor change a mode',
       }
     case 'units':
-      return { label: 'units template', hint: 'a units template may contain only its G20 or G21 word' }
+      return { code: 'units', label: 'units template', hint: 'a units template may contain only its G20 or G21 word' }
     case 'inverse-time-on':
-      return { label: 'inverse-time on template', hint: 'the inverse-time on template may contain only G93' }
+      return { code: 'inverse-time-on', label: 'inverse-time on template', hint: 'the inverse-time on template may contain only G93' }
     case 'inverse-time-off':
-      return { label: 'inverse-time off template', hint: 'the inverse-time off template may contain only G94' }
+      return { code: 'inverse-time-off', label: 'inverse-time off template', hint: 'the inverse-time off template may contain only G94' }
     case 'torch':
       return {
+        code: 'torch',
         label: 'plasma torch template',
         hint: 'a torch template may contain only M3, M4 or M5 with an optional S word and a $ selector ($0 torch, $1 scribe, $2 spotting; $-1 stops all tools on M5)',
       }
     case 'material':
       return {
+        code: 'material',
         label: 'material/THC template',
         hint: 'a material/THC template may contain only M62-M67 or M190/M191 output commands and the P/L/Q/E words those commands define (Q may be decimal on M66/M67)',
       }
     case 'material-feed':
       return {
+        code: 'material-feed',
         label: 'material feed template',
         hint: `a material feed template may contain only ${MATERIAL_FEED_EXPRESSION}, optionally followed by a comment`,
       }
     case 'canned-cycle':
       return {
+        code: 'canned-cycle',
         label: 'canned-cycle template',
         hint: 'a canned-cycle template may contain only a cycle command (G73, G81-G89)',
       }
     case 'canned-retract':
-      return { label: 'canned-cycle retract template', hint: 'a canned-cycle retract template may contain only G98 or G99' }
+      return { code: 'canned-retract', label: 'canned-cycle retract template', hint: 'a canned-cycle retract template may contain only G98 or G99' }
     case 'canned-cancel':
-      return { label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
+      return { code: 'canned-cancel', label: 'canned-cycle cancel template', hint: 'a canned-cycle cancel template may contain only G80' }
     case 'anything':
-      return { label: 'template', hint: 'this template may contain anything' }
+      return { code: 'anything', label: 'template', hint: 'this template may contain anything' }
     case 'tool-change':
-      return { label: 'tool-change template', hint: 'this template may contain anything' }
+      return { code: 'tool-change', label: 'tool-change template', hint: 'this template may contain anything' }
     case 'command':
-      return { label: rule.label, hint: rule.hint }
+      return { code: COMMAND_RULE_CODES[rule.command], label: rule.label, hint: rule.hint }
   }
 }
 
@@ -1099,6 +1272,7 @@ function fieldRule(
       const command = COMMAND_CORES[fieldClass.command]
       return {
         kind: 'command',
+        command: fieldClass.command,
         label: command.label,
         pattern: commandPattern(fieldClass.command, syntax),
         hint: command.hint,
@@ -1133,11 +1307,17 @@ function templateFields(definition: TemplateRuleDefinition): TemplateField[] {
     if (value === null || value === undefined) continue
     if (spec.array) {
       if (!Array.isArray(value)) continue
+      // An array template is written one element per line, so a diagnostic's
+      // line is the program line: the index of the element plus any embedded
+      // newlines before it (#1119, "header lines 3-4").
+      let lineOffset = 0
       value.forEach((text, index) => {
-        if (typeof text === 'string') fields.push({ path: [...spec.path, index], text, rule })
+        if (typeof text !== 'string') return
+        fields.push({ path: [...spec.path, index], text, rule, lineOffset })
+        lineOffset += text.split(/\r?\n/).length
       })
     } else if (typeof value === 'string') {
-      fields.push({ path: [...spec.path], text: value, rule })
+      fields.push({ path: [...spec.path], text: value, rule, lineOffset: 0 })
     }
   }
   return fields
@@ -1182,33 +1362,39 @@ function visibleWord(word: string): string {
     .replace(/\t/g, '\\t')
 }
 
-/** The refusal as a person reads it, naming the field and saying why. */
+/**
+ * The refusal as a person reads it, naming the field, the one-based line and
+ * the rule (#1119). `line` is omitted only by the comment-marker check, which
+ * has no lines.
+ */
 function refusalMessage(
   path: Array<string | number>,
   rule: TemplateRule,
   refusal: LineRefusal,
+  line?: number,
 ): string {
   const field = fieldName(path)
+  const where = line === undefined ? field : `${field}: line ${line}`
   const word = visibleWord(refusal.word)
   if (refusal.kind === 'user-placeholder') {
-    return `${field}: the placeholder "${word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
+    return `${where}: the placeholder "${word}" may only be used inside a comment; outside one it writes the operator's own text as program code.`
   }
   if (refusal.kind === 'unknown-placeholder') {
-    return `${field}: the placeholder "${word}" is not one the emitter fills in; remove it or use a supported placeholder.`
+    return `${where}: the placeholder "${word}" is not one the emitter fills in; remove it or use a supported placeholder.`
   }
   if (refusal.kind === 'misplaced-placeholder') {
     const key = refusal.word.replace(/^\{/, '').replace(/\}$/, '')
     const letters = placeholderWordLetters(key, rule)
     if (letters.length === 0) {
-      return `${field}: the placeholder "${word}" may only be used inside a comment; outside one there is no fixed word letter that can safely carry its value.`
+      return `${where}: the placeholder "${word}" may only be used inside a comment; outside one there is no fixed word letter that can safely carry its value.`
     }
     const list = letters.length === 1
       ? letters[0]
       : `${letters.slice(0, -1).join(', ')} or ${letters[letters.length - 1]}`
-    return `${field}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to another word.`
+    return `${where}: the placeholder "${word}" is not in a position the emitter can fill safely; it may only be the value of the fixed word letter ${list}, never the number of a G or M word and never joined to a following value.`
   }
   const { label, hint } = describeRule(rule)
-  return `${field}: the word "${word}" is not allowed in the ${label}; ${hint}.`
+  return `${where}: the word "${word}" is not allowed in the ${label}; ${hint}.`
 }
 
 /** The allowlisted comment forms, spelled for a refusal message. */
@@ -1255,43 +1441,106 @@ function commentSyntaxViolation(
 }
 
 /**
- * Every template in the definition that breaks its class rule, one violation
- * per field (the first offending line wins), plus a comment marker that is not
- * one of the dialect's exact forms. The schema turns each into an issue on the
- * field's path, so the editor and machine import can say which template and
- * which word are wrong.
+ * Every diagnostic a definition's templates raise (#1119): the template path,
+ * the one-based line, the offending text and word, and the rule that was
+ * broken. Every offending line is reported, including lines after an embedded
+ * newline; a single-line command field is judged whole, exactly as the schema
+ * judges it.
+ *
+ * This is a pure function on a definition and its source of truth is the same
+ * walk the schema uses, so export eligibility cannot drift from what the
+ * machine editor shows. A definition that still breaks a rule is retained by
+ * the loader; this list is what refuses its export until it is fixed.
  */
-export function templateRuleViolations(definition: TemplateRuleDefinition): TemplateRuleViolation[] {
+export function machineTemplateDiagnostics(
+  definition: TemplateRuleDefinition,
+): MachineTemplateDiagnostic[] {
   const dialect = commentDialectOf(definition.outputDialect)
   const syntax = COMMENT_SYNTAX[dialect]
   const unitsCommand = definition.units.mmCommand ?? definition.units.inchCommand ?? ''
   const wcsCommand = definition.workCoordinates.selectCommand ?? ''
-  const violations: TemplateRuleViolation[] = []
+  const diagnostics: MachineTemplateDiagnostic[] = []
   const comment = commentSyntaxViolation(definition, dialect, syntax)
-  if (comment !== null) violations.push(comment)
+  if (comment !== null) {
+    const text = comment.path[1] === 'commentSuffix'
+      ? definition.program.commentSuffix
+      : definition.program.commentPrefix
+    diagnostics.push({
+      path: comment.path,
+      field: fieldName(comment.path),
+      line: 1,
+      text,
+      word: text,
+      ruleCode: 'comment-syntax',
+      message: comment.message,
+    })
+  }
   for (const field of templateFields(definition)) {
+    const fieldLabel = fieldName(field.path)
+    const rule = describeRule(field.rule)
+    const lines = field.text.split(/\r?\n/)
     // A command field is one line and one command: the whole field is judged
-    // once, never split into lines that each match on their own.
+    // once, never split into lines that each match on their own. When it does
+    // carry an embedded newline every line that breaks the pattern is named
+    // with its own line number, and a field whose lines each match but which is
+    // still several lines is refused as a whole.
     if (field.rule.kind === 'command') {
       const refusal = checkCommandText(field.text, field.rule)
       if (refusal !== null) {
-        violations.push({
+        if (lines.length > 1) {
+          let reported = 0
+          lines.forEach((rawLine, index) => {
+            const lineRefusal = checkCommandText(rawLine, field.rule)
+            if (lineRefusal === null) return
+            reported += 1
+            diagnostics.push({
+              path: field.path,
+              field: fieldLabel,
+              line: field.lineOffset + index + 1,
+              text: rawLine,
+              word: lineRefusal.word,
+              ruleCode: rule.code,
+              message: refusalMessage(field.path, field.rule, lineRefusal, field.lineOffset + index + 1),
+            })
+          })
+          if (reported > 0) continue
+        }
+        diagnostics.push({
           path: field.path,
-          message: refusalMessage(field.path, field.rule, refusal),
+          field: fieldLabel,
+          line: field.lineOffset + 1,
+          text: field.text,
+          word: refusal.word,
+          ruleCode: rule.code,
+          message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + 1),
         })
       }
       continue
     }
-    for (const rawLine of field.text.split(/\r?\n/)) {
+    lines.forEach((rawLine, index) => {
       const refusal = checkTemplateLine(rawLine, field.rule, syntax, unitsCommand, wcsCommand)
-      if (refusal !== null) {
-        violations.push({
-          path: field.path,
-          message: refusalMessage(field.path, field.rule, refusal),
-        })
-        break
-      }
-    }
+      if (refusal === null) return
+      diagnostics.push({
+        path: field.path,
+        field: fieldLabel,
+        line: field.lineOffset + index + 1,
+        text: rawLine,
+        word: refusal.word,
+        ruleCode: rule.code,
+        message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + index + 1),
+      })
+    })
   }
-  return violations
+  return diagnostics
+}
+
+/**
+ * Every template in the definition that breaks its class rule, one violation
+ * per offending line, plus a comment marker that is not one of the dialect's
+ * exact forms. The schema turns each into an issue on the field's path, so the
+ * editor and machine import can say which template, which line and which word
+ * are wrong.
+ */
+export function templateRuleViolations(definition: TemplateRuleDefinition): TemplateRuleViolation[] {
+  return machineTemplateDiagnostics(definition).map(({ path, message }) => ({ path, message }))
 }

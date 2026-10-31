@@ -309,7 +309,12 @@ function testRotaryProgramReadback(): void {
 function testCompactMachineCoordinateReadback(): void {
   console.log('Testing a compact G53G0 retract read back through the exporter...')
   const definition = rotaryGrbl('own')
-  definition.motion = { ...definition.motion, machineCoordinateCommand: 'G53G0' }
+  // `motion.machineCoordinateCommand` must be the valid `G53` / `G53 G0` form
+  // (#1119's export guard). The compact `G53G0` spelling still occurs in real
+  // programs — a footer template is free text — so the parser must still read
+  // that block as machine-coordinate motion.
+  definition.motion = { ...definition.motion, machineCoordinateCommand: 'G53 G0' }
+  definition.program = { ...definition.program, footer: ['G53G0 Z0'] }
   const project: Project = { ...rotaryProject(), meta: { ...rotaryProject().meta, projectType: 'rotary' } }
   const operation = rotaryOperation()
   const moves: ToolpathMove[] = [

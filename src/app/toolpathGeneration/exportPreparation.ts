@@ -51,7 +51,9 @@
 
 import { runPostProcessor } from '../../engine/gcode/postprocessor'
 import { planSetupPrograms } from '../../engine/gcode/setupPrograms'
+import { machineExportDiagnostics } from '../../engine/gcode/types'
 import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/types'
+import type { MachineTemplateDiagnostic } from '../../engine/gcode/templateRules'
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
@@ -106,6 +108,9 @@ export interface ExportPreparationToken {
 
 export type ExportBlockReason =
   | { kind: 'no-machine' }
+  /** The selected machine's templates still break a #1057 rule (#1119). The
+   *  list is what the export dialog shows; no program is generated at all. */
+  | { kind: 'machine-invalid'; diagnostics: MachineTemplateDiagnostic[] }
   | { kind: 'no-operations' }
   | { kind: 'generation-failed'; operationId: string; message: string }
   | { kind: 'generation-cancelled'; operationId: string }
@@ -204,6 +209,16 @@ export async function prepareExport(
 ): Promise<ExportPreparation> {
   if (!definition) {
     return { status: 'blocked', token, reason: { kind: 'no-machine' } }
+  }
+
+  // A machine that still breaks a template rule is refused before any toolpath
+  // is requested (#1119). Deciding it here means the dialog names the exact
+  // lines and no generation work is spent on a program that cannot be written;
+  // `runPostProcessor` and the save path re-check the same pure list, so this
+  // cannot be bypassed by a stale preview or a direct call.
+  const machineDiagnostics = machineExportDiagnostics(definition)
+  if (machineDiagnostics.length > 0) {
+    return { status: 'blocked', token, reason: { kind: 'machine-invalid', diagnostics: machineDiagnostics } }
   }
 
   // Only an operation in an Around setup of a non-rotary project is left out:

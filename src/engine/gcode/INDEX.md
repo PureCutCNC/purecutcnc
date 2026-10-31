@@ -31,9 +31,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 ## Files
 
 - `index.ts` — public API.
-- `types.ts` — `MachineDefinition` and its zod schema (whose `superRefine` also
-  runs `templateRuleViolations`, so a template that breaks its class is refused
-  at the boundary; see `templateRules.ts`), covering `motion.arcInterpolation`,
+- `machineTemplateDiagnostics.test.ts` — #1119: the structural reader is
+  byte-identical to the strict one for valid definitions, every offending line
+  is diagnosed, the still-invalid #1109 variant is kept and selected, and
+  export produces no program with tool changes/coolant off or on.
+- `types.ts` — `MachineDefinition` and its two zod readers (#1119): the strict
+  `MachineDefinitionSchema` (structure plus `templateRuleViolations`, used for
+  anything the app writes) and `MachineDefinitionStructureSchema` (capability
+  checks and defaults only, used to load persisted project snapshots and the
+  custom-machine library so a template-invalid machine is kept rather than
+  dropped). `machineExportDiagnostics` is the pure export-eligibility list.
+  Covers `motion.arcInterpolation`,
   `arcFormat`, the optional `motion.machineCoordinateCommand` — the block prefix
   for a machine-coordinate rapid, absent meaning G-code's `G53 <rapid>` and
   `null` meaning none — `motion.machineSafeZ`, the machine-coordinate retract
@@ -48,7 +56,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `templateRules.ts` — the template classes and their allowlists (#1057 slice
   F): which field is a *program header*, *tool change*, *footer* or an *inert*
   in-program template, what each may contain, and the refusal message naming the
-  field and the offending word. `types.ts` runs it in the schema's
+  field and the offending word. `machineTemplateDiagnostics` (#1119) is the
+  same walk as structured data: template path, one-based program line (embedded
+  newlines included, every offending line reported), offending text and word,
+  and the broken rule. It is a pure function on a definition, used by the
+  schema, the export guard and (slice C) the editor and load warning. `types.ts` runs it in the schema's
   `superRefine`, so machine import, the editor and project snapshots all refuse
   a definition that breaks a class. It expands the emitter's `{placeholder}`
   syntax before judging a line, so `{unitsCommand}` is judged by the command it
@@ -58,7 +70,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   templates are scanned with the *dialect's* comment syntax, never the
   definition's own field; a numeric placeholder may only be the value of a
   fixed word letter it is safe under (`T`/`H` tool number, `S` RPM, `F` feed,
-  `P` material number), never a G/M number and never joined to a word; and a
+  `P` material number), never a G/M number and never joined to a following
+  value — since #1119 it may end a word where the next word starts
+  (`T{toolNumber}M6`) and may follow a completed word
+  (`G43Z0.8000H{toolNumber}`); and a
   single-command field is judged whole, so a newline or semicolon cannot split
   it into separately-valid commands. `templateInjectionSweep.test.ts` runs every
   field against every injection pattern.
@@ -115,9 +130,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   and a test enumerates the schema's string paths so a new field without a class
   fails before it can reach an emitter. The schema refuses a definition that
   breaks its class: a *program header* may only set up modals (`G90`, `G17`,
-  `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, units, work-coordinate select, a
-  bare program number, a fully scanned parameter assignment, comments,
-  non-moving M codes) with no motion or axis word; the *tool change*, the
+  `G40`, `G49`, `G80`, `G94`, `G92.1`, `G97`, `G91.1`, a bare `G0`/`G00` with
+  no axis word, units, work-coordinate select, a bare program number, a fully
+  scanned parameter assignment, comments, non-moving M codes) with no other
+  motion or axis word; the *tool change*, the
   *footer* and the program-end command may do anything; and every template that
   runs inside the program (spindle, coolant, pause, operation header,
   inverse-time, units, canned cycle, plasma torch, material/THC) is inert — no
@@ -127,9 +143,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   only in the header, the tool change and the footer. A *single-word command*
   field (rapid/linear/arc words, feed/RPM prefixes, units, the peck word, the
   machine-coordinate retract, the plasma probe/set-zero) is matched whole
-  against its own pattern, so `rpmCommand: "G91\nS"` is refused; every other
-  placeholder that carries operator text (`{programName}`, `{operationName}`,
-  `{operationDescription}`, `{toolName}`) may appear only inside a comment, and
+  against its own pattern, so `rpmCommand: "G91\nS"` is refused; a *numeric
+  placeholder* may end a word where the next word's letter begins
+  (`T{toolNumber}M6`) and may follow a completed word
+  (`G43Z0.8000H{toolNumber}`), but it may not become a G/M number
+  (`M{toolNumber}`) or absorb a following value (`T{toolNumber}5`, #1119); every
+  other placeholder that carries operator text (`{programName}`,
+  `{operationName}`, `{operationDescription}`, `{toolName}`) may appear only
+  inside a comment, and
   the emitter strips the dialect's closing marker, `;` and newlines from that
   text. The purpose templates keep exactly their own word (`G93`/`G94`,
   `G20`/`G21`, the torch's `M3`/`M4`/`M5` with an optional `S` and `$` selector,
@@ -351,7 +372,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (every restricted template field refuses a motion/axis/mode/macro word with a
   message naming field and word; the header's own class; tool change and footer
   accept anything; every bundled definition validates; machine import reports
-  the refusal), `templateByteIdentity.test.ts` (a tool-change-free program per
+  the refusal; the #1119 relaxations with each still-refused counterpart),
+  `issue1109MachineMigration.test.ts` (the untouched #1109 snapshot
+  `issue-1109-tab-ramp-original.camj` loads with `avid-mach4-inch-shop`
+  selected and posts its saved `G00`/`G91.1` header and joined
+  `T{toolNumber}M6` / `G43Z0.8000H{toolNumber}` tool change),
+  `templateByteIdentity.test.ts` (a tool-change-free program per
   bundled definition is byte-identical to `origin/integration/0.6.0`),
   `templateReviewFixes.test.ts` (the seven Codex review findings: every schema
   string field is classified, command fields refuse injected words, an

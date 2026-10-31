@@ -266,7 +266,13 @@ assert.deepEqual(
 
 // The store save/load path the machine-snapshot tests use.
 resetMachineLibraryForTests()
-initMachineLibrary(null)
+// Null storage is not durable (#1119); a fake in-memory store stands in for
+// localStorage so the library path is exercised as it is in the browser.
+const rotaryLibraryStorage = new Map<string, string>()
+initMachineLibrary({
+  getItem: (key: string) => rotaryLibraryStorage.get(key) ?? null,
+  setItem: (key: string, value: string) => { rotaryLibraryStorage.set(key, value) },
+})
 useProjectStore.setState({
   project: newProject('Rotary round trip', 'mm'),
   history: { past: [], future: [], transactionStart: null },
@@ -285,7 +291,7 @@ assert.equal(saveResult.error, undefined, 'the library accepts a machine with a 
 assert.deepEqual(getMachineLibrarySnapshot().customMachines[0].rotary, ROTARY_BORROWED_REVERSED, 'My Machines keeps the block')
 
 const stored = sanitizeStoredCustomMachines({ schemaVersion: CUSTOM_MACHINES_SCHEMA_VERSION, machines: [machine] })
-assert.deepEqual(stored[0]?.rotary, ROTARY_BORROWED_REVERSED, 'persisted custom machines keep the block')
+assert.deepEqual(stored.machines[0]?.rotary, ROTARY_BORROWED_REVERSED, 'persisted custom machines keep the block')
 
 const imported = parseMachineImport(serializeMachineExport(machine), [])
 assert.equal(imported.error, undefined, 'an exported machine imports back')
