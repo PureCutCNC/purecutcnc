@@ -37,9 +37,16 @@
  * parameter edit, so a linked copy follows it the same way a Polygon's
  * parameter edit moves its linked copies. The instance transform carries only
  * the across part, which no canned kind but Thread/Flutes has.
+ *
+ * A copy is the same definition **translated**, so each row's band may already
+ * sit further along the bar than the stored start says. The bar's ends bound
+ * the band where it is *placed*, and every clamp below reads it that way, so a
+ * move can never carry a translated copy past the end (second review of rt6-d:
+ * clamping against the shared start let repeated moves walk the copy off the
+ * bar).
  */
 
-import type { CannedShapeData, FeatureDefinition, Point, Project } from '../../types/project'
+import type { CannedShapeData, FeatureDefinition, FeatureInstance, Point, Project } from '../../types/project'
 import { getStockBounds } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
 import {
@@ -71,9 +78,21 @@ const ROTARY_MODEL_KINDS = new Set<string>([TURN_CANNED_KIND, POLYGON_CANNED_KIN
 /** Numeric slack for "did the move change anything" and the band bounds. */
 const TOLERANCE = 1e-9
 
-/** A feature as the move rule reads it: just its canned data. */
+/** A feature as the move rule reads it: its canned data and where its row sits. */
 export interface RotaryMoveFeature {
   canned?: CannedShapeData | null
+  /**
+   * How far this row's band already sits along the bar from the shared
+   * definition's stored start, in stored-start units.
+   *
+   * A definition is shared by every linked copy and a copy is placed by its
+   * instance transform, so a row's band can be further along the bar than the
+   * parameters say. The bar's ends bound the *placed* band, so the clamp has to
+   * include this: without it a translated copy is clamped against the
+   * definition's start and walks past the bar's end one move at a time (review
+   * of rt6-d).
+   */
+  alongOffset?: number
 }
 
 /** A band in stored terms: the start from the chuck end, its length, and the bar it sits on. */
@@ -163,16 +182,20 @@ export function rotaryMoveDelta(
   const across = axis === 'x' ? dy : dx
 
   // Every selected band has to stay on the bar, so the allowed start change is
-  // the intersection of their own ranges. A band already outside (a stale frame)
-  // contributes an empty range, which clamps to no along move rather than
-  // pushing it further out.
+  // the intersection of their own ranges. The range is the *placed* band's —
+  // the stored start plus where this row's own instance translate puts it — so
+  // a linked copy that has already been moved is clamped from where it is, not
+  // from the shared definition's start (review of rt6-d). A band already
+  // outside (a stale frame) contributes an empty range, which clamps to no
+  // along move rather than pushing it further out.
   let lowest = Number.NEGATIVE_INFINITY
   let highest = Number.POSITIVE_INFINITY
   for (const feature of features) {
     const band = feature.canned ? rotaryMoveBand(project, feature.canned) : null
     if (!band) return { dx, dy }
-    lowest = Math.max(lowest, -band.start)
-    highest = Math.min(highest, band.barLength - band.start - band.length)
+    const placedStart = band.start + (feature.alongOffset ?? 0)
+    lowest = Math.max(lowest, -placedStart)
+    highest = Math.min(highest, band.barLength - placedStart - band.length)
   }
   if (lowest > highest) lowest = highest = 0
 
@@ -196,15 +219,39 @@ export function projectedRotaryMovePoint(
   return { x: from.x + delta.dx, y: from.y + delta.dy }
 }
 
-/** The canned data of a move's selected rows, as {@link projectedRotaryMovePoint} reads it. */
+/**
+ * Where a row's own instance places its band along the bar, in stored-start
+ * units: the translation component along the axis, signed the way `start`
+ * runs from the chuck end.
+ *
+ * A linked copy is the same definitions translated, so this is what separates
+ * its band from the shared start. Only the translation is read — a canned rotary
+ * row is created and moved by translation, so rotation and scale cannot arise
+ * for it — and the bar's own ends are what the clamp measures the placed band
+ * against.
+ */
+function instanceAlongOffset(row: FeatureInstance, axis: 'x' | 'y'): number {
+  const along = axis === 'x' ? row.transform.e : row.transform.f
+  return Number.isFinite(along) ? along * alongStartDirection(axis) : 0
+}
+
+/**
+ * The rows a move holds, as {@link projectedRotaryMovePoint} reads them: each
+ * row's canned data and its own along-bar placement, so a translated linked
+ * copy clamps from where it actually sits.
+ */
 export function rotaryMoveFeatures(
-  project: Pick<Project, 'features' | 'featureDefinitions'>,
+  project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
   featureIds: readonly string[],
 ): RotaryMoveFeature[] {
+  const axis = isBarStock(project.stock) ? project.stock.axis : null
   return featureIds.map((id) => {
     const row = project.features.find((feature) => feature.id === id)
     const definition = row ? project.featureDefinitions[row.definitionId] : undefined
-    return { canned: definition?.canned ?? null }
+    return {
+      canned: definition?.canned ?? null,
+      alongOffset: row && axis ? instanceAlongOffset(row, axis) : 0,
+    }
   })
 }
 
@@ -367,7 +414,15 @@ export function moveCannedRotaryFeatures(
   const canned = definitions.map((definition) => (definition as FeatureDefinition).canned ?? null)
   if (!canned.every((data) => isRotaryMoveKind(data))) return null
 
-  const moveFeatures = canned.map((data) => ({ canned: data }))
+  // Each row's own placement is part of its band here too: this writes the
+  // shared start, and the clamp that decides how far it may go is the placed
+  // band's, exactly as the preview's (review of rt6-d).
+  const stockAxis = isBarStock(project.stock) ? project.stock.axis : null
+  if (!stockAxis) return null
+  const moveFeatures = canned.map((data, index) => ({
+    canned: data,
+    alongOffset: instanceAlongOffset(instances[index], stockAxis),
+  }))
   const axis = rotaryMoveAxis(project, moveFeatures)
   if (!axis) return null
   const delta = rotaryMoveDelta(project, moveFeatures, to.x - from.x, to.y - from.y)

@@ -1543,8 +1543,20 @@ async function storedCanned(page: Page, featureId: string): Promise<{
   }, featureId)
 }
 
-test('a Turn drag on Top moves its band along the bar, and the preview is the result', async ({ app, ui }) => {
-  const { page } = app
+/**
+ * A Top view holding one 10..30 Turn, with a Move armed on its row and the drag
+ * origin picked — the setup both Turn-move browser cases share.
+ *
+ * A canned model is listed once, in the Around section (item 27); on Top it is
+ * the editable side view, and its menu offers Move exactly as a Polygon's does.
+ * A Turn is a bar model, not a face feature, so it moves here too.
+ */
+async function beginTurnMove(page: Page): Promise<{
+  turnId: string
+  from: { x: number; y: number }
+  origin: { x: number; y: number }
+  before: SolidSnapshot
+}> {
   await prepareMmRoundBarWithRotary(page)
   await switchToAround(page)
   const turnId = await page.evaluate(async () => {
@@ -1557,9 +1569,6 @@ test('a Turn drag on Top moves its band along the bar, and the preview is the re
   await zoomToModel(page)
   const before = await solidSnapshot(page)
 
-  // A canned model is listed once, in the Around section (item 27); on Top it
-  // is the editable side view, and its menu offers Move exactly as a Polygon's
-  // does. A Turn is a bar model, not a face feature, so it moves here too.
   const row = page.locator(`.tree-face-group[data-face="around"] [data-feature-id="${turnId}"]`)
   const menu = await openRowContextMenu(page, row)
   const moveItem = menu.getByRole('button', { name: 'Move', exact: true })
@@ -1567,13 +1576,20 @@ test('a Turn drag on Top moves its band along the bar, and the preview is the re
   await moveItem.click()
   expect((await getPendingMove(page))?.entityIds).toEqual([turnId])
 
-  // Drag 15 along the bar and 7 across it. The preview is drawn at the
-  // committed target: the along displacement, at the drag origin's across
-  // coordinate — never at the pointer's.
   const from = await worldPoint(page, { x: 20, y: 12.5 })
   await page.mouse.click(from.x, from.y)
   const origin = (await getPendingMove(page))?.fromPoint
   expect(origin, 'the drag origin is picked').not.toBeNull()
+  return { turnId, from, origin: origin!, before }
+}
+
+test('a Turn drag on Top commits the along component of the drag, and undo restores it', async ({ app, ui }) => {
+  const { page } = app
+  const { turnId, from, origin, before } = await beginTurnMove(page)
+
+  // Drag 15 along the bar and 7 across it. The preview is drawn at the
+  // committed target: the along displacement, at the drag origin's across
+  // coordinate — never at the pointer's.
   const to = await worldPoint(page, { x: 35, y: 19.5 })
   await page.mouse.move(from.x, from.y)
   await page.mouse.move(to.x, to.y, { steps: 8 })
@@ -1586,34 +1602,75 @@ test('a Turn drag on Top moves its band along the bar, and the preview is the re
   const previewY = Number(await sketchCanvas.getAttribute('data-move-preview-y'))
   // The across component is dropped: the outline keeps the origin's across
   // coordinate, so it never leaves the bar's axis.
-  expect(previewY).toBeCloseTo(origin!.y, 6)
+  expect(previewY).toBeCloseTo(origin.y, 6)
   // The along component is the pointer's: the drag was 15 along (a snap step may
   // round the picked points), and the diagonal pointer travel never reaches it.
-  const alongMoved = previewX - origin!.x
+  const alongMoved = previewX - origin.x
   expect(alongMoved).toBeGreaterThan(14)
   expect(alongMoved).toBeLessThan(16)
   expect(alongMoved).toBeLessThan(Math.hypot(15, 7) - 1)
 
-  // The click that ends the drag measures along the bar as well, so the typed
-  // distance is the along distance, not the diagonal the pointer travelled.
+  // The click that ends the drag measures along the bar as well, so the distance
+  // the panel shows is the along distance, not the diagonal the pointer
+  // travelled.
+  await page.mouse.click(to.x, to.y)
+  const movePanel = page.locator('.canvas-workflow-panel--move')
+  const distanceValue = Number(await movePanel.locator('.canvas-workflow-panel__distance-input').inputValue())
+  expect(distanceValue).toBeGreaterThan(14)
+  expect(distanceValue).toBeLessThan(16)
+  const toPoint = (await getPendingMove(page))?.toPoint
+  expect(toPoint?.y).toBeCloseTo(origin.y, 6)
+  // The click snaps the picked point independently of the last pointer move, so
+  // the two can differ by under a snap step; both express the along distance.
+  const committedAlong = toPoint!.x - origin.x
+  expect(committedAlong).toBeGreaterThan(14)
+  expect(committedAlong).toBeLessThan(16)
+  expect(Math.abs(committedAlong - alongMoved)).toBeLessThan(1)
+
+  // Nothing typed: the confirmed drag is committed as drawn.
+  await movePanel.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(movePanel).toHaveCount(0)
+
+  // What is stored is what the preview drew: the stored start moved by the along
+  // component (so Edit Turn… shows it), the regenerated mesh sits at it, nothing
+  // moved across the bar, and the whole move is one undo step.
+  const moved = await storedCanned(page, turnId)
+  expect(moved.start).toBeCloseTo(10 + committedAlong, 6)
+  expect(moved.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+  const after = await solidSnapshot(page)
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  expect(after.modelBounds[0]?.minX).toBeCloseTo(10 + committedAlong, 3)
+  expect(after.modelBounds[0]?.maxX).toBeCloseTo(30 + committedAlong, 3)
+
+  // One undo puts the band back where the drag started.
+  await undo(page)
+  expect((await storedCanned(page, turnId)).start).toBeCloseTo(10, 6)
+  expect((await solidSnapshot(page)).modelBounds[0]?.minX).toBeCloseTo(10, 3)
+})
+
+test('a typed distance on a Turn draws the clamped band and stores it, and a resnap keeps it', async ({ app, ui }) => {
+  const { page } = app
+  const { turnId, from, origin, before } = await beginTurnMove(page)
+  const sketchCanvas = ui.canvas.sketch(page)
+
+  // End the drag at a short target, then type past the far end of the bar.
+  const to = await worldPoint(page, { x: 35, y: 19.5 })
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.move(to.x, to.y, { steps: 8 })
   await page.mouse.click(to.x, to.y)
   const movePanel = page.locator('.canvas-workflow-panel--move')
   const distanceInput = movePanel.locator('.canvas-workflow-panel__distance-input')
-  const distanceValue = Number(await distanceInput.inputValue())
-  expect(distanceValue).toBeGreaterThan(14)
-  expect(distanceValue).toBeLessThan(16)
-  expect((await getPendingMove(page))?.toPoint?.y).toBeCloseTo(origin!.y, 6)
 
   // A typed distance is the same projection (review of rt6-d): 400 along the
   // bar clamps to the band's last position, and the outline is drawn there.
   // Before the fix the typed target drew 400 away and the commit stored 90.
   await distanceInput.fill('400')
-  const clampedPreviewX = origin!.x + (120 - 10 - 20)
+  const clampedPreviewX = origin.x + (120 - 10 - 20)
   await expect.poll(
     async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
     { message: 'the typed preview is drawn at the clamped band' },
   ).toBeCloseTo(clampedPreviewX, 3)
-  expect(Number(await sketchCanvas.getAttribute('data-move-preview-y'))).toBeCloseTo(origin!.y, 6)
+  expect(Number(await sketchCanvas.getAttribute('data-move-preview-y'))).toBeCloseTo(origin.y, 6)
 
   // Resnapping after typing republishes through the same projection: the
   // pointer's new position must not replace the typed clamp.

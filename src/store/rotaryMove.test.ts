@@ -49,6 +49,10 @@
  * 7. **A typed distance is the same projection**: the point a typed target is
  *    drawn at is the point the commit stores, including the clamp past the bar's
  *    end (also the review of rt6-d).
+ * 8. **The bar bounds the placed band, not the shared start**: a linked copy is
+ *    the same definition translated, so a moved copy has to be clamped from
+ *    where it actually sits. Otherwise repeated moves walk it past the bar's
+ *    end (the second review of rt6-d).
  *
  * Other mutations checked one at a time:
  * - the preview projection returning the raw point → the Turn/Polygon
@@ -67,7 +71,10 @@
  * - dropping the shared-definition guard → the unselected linked copy's placed
  *   start moves with the moved one;
  * - translating a linked move by the raw 2D drag instead of the projection →
- *   the moved copy lands off the bar, by the diagonal.
+ *   the moved copy lands off the bar, by the diagonal;
+ * - clamping a linked copy against the shared definition's start instead of its
+ *   own placed band → the repeated move stores 125 on a 120 bar, and the group
+ *   move drives the translated copy past the end.
  */
 
 import assert from 'node:assert/strict'
@@ -189,11 +196,11 @@ function meshSpanX(featureId: string): { min: number; max: number } {
   return { min: asset.bounds.minX, max: asset.bounds.maxX }
 }
 
-/** The placed band's along start in stock coordinates. */
-function placedAlongStart(featureId: string): number {
+/** The placed band's along start in stock coordinates (X unless the bar runs Y). */
+function placedAlongStart(featureId: string, axis: 'x' | 'y' = 'x'): number {
   const feature = resolveFeatureInstance(store().project, featureId)
   assert.ok(feature, `feature ${featureId} resolves`)
-  return feature.sketch.profile.start.x
+  return axis === 'x' ? feature.sketch.profile.start.x : feature.sketch.profile.start.y
 }
 
 function featureIds(): string[] {
@@ -478,6 +485,89 @@ near(storedStart(groupSource), 30, 'moving every copy writes the shared band onc
 near(placedAlongStart(groupSource), 30, 'the first copy sits at the moved band')
 near(placedAlongStart(groupCopy), 60, 'the linked copy follows the band it shares')
 assert.equal(store().history.past.length, groupHistoryBefore + 1, 'moving the group is one undo step')
+
+// ── a translated linked copy is clamped from where it sits ──
+//
+// The bar's ends bound the *placed* band, not the shared definition's stored
+// start: a linked copy is the same parameters translated, so it can already sit
+// further along the bar than the definition says. The review of rt6-d caught
+// the clamp reading the definition's start, which let a translated copy walk
+// past the bar one move at a time — start 20, length 10, copied, then moved +15
+// and +400 landed at 125 on a 120 bar.
+//
+// Named mutations: clamping against `band.start` instead of the placed start in
+// `rotaryMoveDelta` → the repeat move stores 125; dropping each row's offset
+// from `rotaryMoveFeatures` → the preview draws past the bar; dropping it from
+// `moveCannedRotaryFeatures` → the group move drives the translated copy off
+// the end.
+
+load()
+const repeatSource = addPolygon(20, 10, 12)
+store().startCopyFeature(repeatSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 5 })
+const repeatCopy = featureIds().find((id) => id !== repeatSource)!
+const repeatCopyBefore = placedAlongStart(repeatCopy)
+const repeatHistoryBefore = store().history.past.length
+
+// The first move travels the along component from the row's own placed band.
+near(preview(repeatSource, { x: 10, y: 0 }, { x: 25, y: 9 }).x - 10, 15,
+  'the first move of the copy keeps only the along component')
+move(repeatSource, { x: 10, y: 0 }, { x: 25, y: 9 })
+near(placedAlongStart(repeatSource), 35, 'the first move puts the band at 35')
+
+// The second move starts from 35, not from the definition's 20: the band has
+// 75 left to travel, and no more.
+const repeatDragFrom = { x: 10, y: 0 }
+const repeatDragTo = { x: 410, y: 0 }
+near(preview(repeatSource, repeatDragFrom, repeatDragTo).x - repeatDragFrom.x, BAR_LENGTH - 10 - 35,
+  'the preview clamps the placed band at the bar end')
+move(repeatSource, repeatDragFrom, repeatDragTo)
+near(placedAlongStart(repeatSource), BAR_LENGTH - 10,
+  'the repeated move stops with its band at the far end of the bar')
+assert.deepEqual(
+  store().project.features.find((feature) => feature.id === repeatSource)?.transform,
+  { a: 1, b: 0, c: 0, d: 1, e: 90, f: 0 },
+  'the placed band, not the definition state, is what the clamp measured',
+)
+near(placedAlongStart(repeatCopy), repeatCopyBefore, 'the unselected linked copy still stays put')
+near(storedStart(repeatSource), 20, 'the shared definition still keeps its own start')
+assert.equal(store().history.past.length, repeatHistoryBefore + 2, 'each repeated move is one undo step')
+
+// A group move writes the shared start, so the tightest placed band decides how
+// far the write may go: the copy at +30 is the one the bar end limits.
+load()
+const bandSource = addPolygon(20, 10, 12)
+store().startCopyFeature(bandSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 30, y: 5 })
+const bandCopy = featureIds().find((id) => id !== bandSource)!
+store().selectFeatures([bandSource, bandCopy])
+store().startMoveFeature(bandSource)
+store().setPendingMoveFrom({ x: 20, y: 0 })
+store().completePendingMove({ x: 420, y: 0 })
+near(storedStart(bandSource), BAR_LENGTH - 30 - 10,
+  'the shared start stops where the furthest placed copy meets the bar end')
+near(placedAlongStart(bandSource), 80, 'the source follows the shared band')
+near(placedAlongStart(bandCopy), BAR_LENGTH - 10,
+  'the translated copy ends at the bar end, never past it')
+
+// The sign of the placed offset is the bar's own: on a Y bar a copy moved up
+// the sheet sits *further* along the start, and is clamped from there.
+load(rotaryProject([], 'y'))
+const yLinkedSource = addPolygon(20, 10, 12)
+store().startCopyFeature(yLinkedSource, 'reference')
+store().setPendingMoveFrom({ x: 0, y: 0 })
+store().completePendingMove({ x: 0, y: -30 })
+const yLinkedCopy = featureIds().find((id) => id !== yLinkedSource)!
+near(placedAlongStart(yLinkedCopy, 'y'), 60,
+  'the Y-bar copy up the sheet is further along the start')
+move(yLinkedCopy, { x: 0, y: 20 }, { x: 0, y: -380 })
+// The band's far end is the chuck end's opposite: it stops at the bar's low Y,
+// y 0..10, i.e. stored start 110 — not at y -30 as a definition-start clamp did.
+near(placedAlongStart(yLinkedCopy, 'y'), 0,
+  'the Y-bar copy clamps from its own placed band, not the definition start')
+near(placedAlongStart(yLinkedSource, 'y'), 90, 'the unselected Y-bar copy stays where it was')
 
 // ── a typed distance is projected too ───────────────────────
 //
