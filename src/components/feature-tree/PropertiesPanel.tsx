@@ -49,9 +49,14 @@ import {
   cannedShapeIsExpandable,
   cannedShapeLabelKey,
   cannedShapeSummary,
+  cannedShapeZIsOwned,
+  cannedShapeZSource,
   getCannedShapeEditor,
   isCannedFeature,
+  uniqueCannedZSources,
 } from '../../cannedShapes'
+import type { CannedShapeZSource } from '../../cannedShapes'
+import { CannedZSourceLine } from './CannedZSourceLine'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -187,8 +192,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     )
       ? selectedRegionFeatures[0]?.regionMaskMode ?? 'include'
       : '__mixed__'
-  const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
+  const selectedZEditableFeatures = allSelectedFeatures.filter(
+    (feature) => isMachinable(feature) && !cannedShapeZIsOwned(feature.canned),
+  )
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
+  // The rotary canned kinds have no Z control to share: their span comes from
+  // the parameter their Edit panel writes, so a multi-selection leaves them out
+  // of the shared editor and says where their value comes from instead (#1112
+  // rt6-a, item 39).
+  const selectedZOwnedSources = uniqueCannedZSources(
+    allSelectedFeatures
+      .map((feature) => cannedShapeZSource(feature.canned))
+      .filter((source): source is CannedShapeZSource => source !== null),
+  )
   // Line-operation features (including closed profiles) are treated as
   // open for Z purposes: they are engraved paths with bottom locked at
   // zero, never bottom-editable.
@@ -1464,6 +1480,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
+            ) : selectedZOwnedSources.length > 0 ? (
+              // Every selected feature takes its span from its Edit panel, so
+              // there is no shared Z to edit — the "follows stock" line below
+              // would be a second wrong answer (#1112 rt6-a, item 39).
+              selectedZOwnedSources.map((source) => (
+                <CannedZSourceLine
+                  key={`${source.messageKey}-${source.value}`}
+                  source={source}
+                  units={units}
+                />
+              ))
             ) : (
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
@@ -1507,6 +1534,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     ? getCannedShapeEditor(selectedFeature.canned.kind)
     : null
   const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
+  // The four rotary kinds build their span from a parameter of their own, so
+  // the Instance section shows that value read-only instead of a Z control
+  // that could only fight the regenerate (#1112 rt6-a, item 39). The kind is
+  // what hides the control, so a parameter set too corrupt to read a number
+  // from leaves the slot empty rather than bringing the slider back.
+  const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
+  const cannedZSource = isCannedShape ? cannedShapeZSource(selectedFeature.canned) : null
   const cannedShapesOpen = isCannedShape
     ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
     : !selectedFeature.sketch.profile.closed
@@ -1790,6 +1824,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             zBottom={zBottom}
             units={units}
             linkedInstanceCount={linkedInstanceCount}
+            // A generated model's height is the regenerated mesh's, centred on
+            // the bar's pivot, so no lift field or height figure here (#1112
+            // rt6-a, item 39).
+            zFromParameters={isCannedShape}
           />
         ) : null}
         <DisclosureSection title={t('featureTree.properties.instance')} storageKey="feature-instance">
@@ -1824,6 +1862,12 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </>
           ) : selectedFeature.authoringFace === 'bottom' ? (
             <FaceZRange features={[selectedFeature]} />
+          ) : cannedZOwned ? (
+            // Thread, Flutes, Turn and Polygon: the span is built from the
+            // parameter the Edit panel writes, so there is nothing here to
+            // edit — only the value to report and where it lives (#1112
+            // rt6-a, item 39).
+            cannedZSource ? <CannedZSourceLine source={cannedZSource} units={units} /> : null
           ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}
