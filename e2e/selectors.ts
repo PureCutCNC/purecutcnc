@@ -861,16 +861,41 @@ export const panelHandles = {
   sketchStage: (page: Page) => page.locator('#workspace-panel-sketch'),
 }
 
-// ── Top / Bottom / Around faces (issues #945, #395) ────────────────
+// ── Top / Bottom / Around faces (issues #945, #395, #1112) ─────────
+
+/** The lowercase face a menu entry and the control's `data-face` carry. */
+function faceKey(name: 'Top' | 'Bottom' | 'Around'): 'top' | 'bottom' | 'around' {
+  return name.toLowerCase() as 'top' | 'bottom' | 'around'
+}
 
 export const face = {
-  switchGroup: (page: Page) => page.getByRole('group', { name: 'Face' }),
-  segment: (page: Page, name: 'Top' | 'Bottom' | 'Around') =>
-    face.switchGroup(page).getByRole('button', { name, exact: true }),
-  otherSideToggle: (page: Page) => page.locator('.face-switch__ghost'),
+  /** The switch's host: present only where the workspace shows a face control. */
+  switchGroup: (page: Page) => page.locator('.face-switch'),
+  /** The one compact control; its `data-face` names the face it is on (issue #1112). */
+  current: (page: Page) => page.locator('.face-switch__trigger'),
+  /** The menu the control opens, portalled to the body. */
+  menu: (page: Page) => page.locator('.face-switch__menu'),
+  item: (page: Page, name: 'Top' | 'Bottom' | 'Around') =>
+    page.locator(`.face-switch__menu-item[data-face="${faceKey(name)}"]`),
+  otherSideItem: (page: Page) => page.locator('.face-switch__menu-item--other-side'),
+  /** Toggle the ghost overlay the way a user does: open the menu and pick it. */
+  toggleOtherSide: async (page: Page): Promise<void> => {
+    await face.current(page).click()
+    await face.otherSideItem(page).click()
+  },
+  /**
+   * Switch the workspace face the way a user does: open the control's menu and
+   * pick the face. Picking the face already in view is a no-op, so it skips
+   * the menu exactly as the old segmented control did.
+   */
+  switchTo: async (page: Page, name: 'Top' | 'Bottom' | 'Around'): Promise<void> => {
+    if (await face.current(page).getAttribute('data-face') === faceKey(name)) return
+    await face.current(page).click()
+    await face.item(page, name).click()
+  },
   banner: (page: Page) => page.locator('.face-banner'),
-  /** The short "Flipped about X/Y" chip beside the switch on Bottom (issue #1102); its title is the full sentence. */
-  flipChip: (page: Page) => page.locator('.face-switch__chip'),
+  /** A face section heading in the tree: a button that switches face (#1107). */
+  heading: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   /** Feature-tree ghost rows only: CAM operation ghost rows (#1102) carry the same classes. */
   ghostRows: (page: Page) => page.locator('.feature-tree-panel:not(.cam-operation-tree) .tree-row--feature[data-ghost="true"]'),

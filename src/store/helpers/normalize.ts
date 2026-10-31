@@ -21,7 +21,7 @@ import type { MachineDefinition } from '../../engine/gcode/types'
 import { allocateMachineId, getBundledMachine, isBundledMachineId, machinesFunctionallyEqual } from '../../machine/registry'
 import { MachineLoadError, type MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { convertLength } from '../../utils/units'
-import { defaultTool, inferFeatureKind, newProject, profileVertices, tabShape } from '../../types/project'
+import { cloneCannedShapeData, defaultTool, inferFeatureKind, newProject, profileVertices, tabShape } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
 import type {
   Clamp,
@@ -133,6 +133,12 @@ export function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
 export function normalizeFeatureDefinition(definition: FeatureDefinition): FeatureDefinition {
   return {
     ...definition,
+    // Deep-copied only when present: a plain definition must stay byte-for-byte
+    // what it was, and a canned definition must not share its params object
+    // with the file input or another definition (issue #1112).
+    ...(definition.canned !== undefined
+      ? { canned: cloneCannedShapeData(definition.canned) }
+      : {}),
     regionMaskMode: normalizeRegionMaskMode(definition.operation, definition.regionMaskMode),
   }
 }

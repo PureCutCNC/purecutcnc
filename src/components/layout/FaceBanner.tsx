@@ -31,8 +31,10 @@ interface FaceBannerProps {
  * The row above the sketch that carries the face switch on a tablet shell
  * (issue #945, #1102 slice E). It holds nothing else: a desktop shell keeps the
  * switch in the workspace header and shows no row at all, and the switch
- * itself explains the flip and the Around view through its tooltips, so the
- * row cannot be cut off at tablet width.
+ * itself is one compact control that names the current face and opens the menu
+ * of faces and the other-side overlay (issue #1112 slice B), so the row cannot
+ * be cut off at tablet width. The menu is portalled, so this row's own
+ * overflow clipping cannot cut the open menu.
  */
 export function FaceBanner({ withSwitch = false }: FaceBannerProps) {
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))

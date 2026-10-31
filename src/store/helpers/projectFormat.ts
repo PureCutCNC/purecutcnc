@@ -44,12 +44,13 @@ import type {
   Stock,
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneCannedShapeData, cloneTextFeatureData, isCannedShapeData } from '../../types/project'
 import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
+import { rebuildCannedShapeModels } from '../../cannedShapes/model'
 import {
   dedupeProjectIds,
   normalizeClamp,
@@ -265,6 +266,12 @@ function normalizeDefinition(id: string, value: unknown): FeatureDefinition {
   if (value.text !== undefined && value.text !== null && !isRecord(value.text)) {
     throw new Error(`Project definition ${id} has invalid text data.`)
   }
+  // Canned shape data is additive (issue #1112): a definition either carries the
+  // kind/params envelope or does not. An unregistered kind is kept verbatim, so
+  // a file from a newer build never loses its shape data on an older one.
+  if (value.canned !== undefined && value.canned !== null && !isCannedShapeData(value.canned)) {
+    throw new Error(`Project definition ${id} has invalid canned shape data.`)
+  }
   if (value.stl !== undefined && value.stl !== null && !isRecord(value.stl)) {
     throw new Error(`Project definition ${id} has invalid STL data.`)
   }
@@ -322,7 +329,7 @@ function normalizeLegacyFeature(
 
 function normalizeInstance(feature: FeatureInstance, definitions: Record<string, FeatureDefinition>): FeatureInstance {
   const raw = feature as unknown as Record<string, unknown>
-  const duplicatedField = ['sketch', 'kind', 'operation', 'regionMaskMode', 'text', 'stl']
+  const duplicatedField = ['sketch', 'kind', 'operation', 'regionMaskMode', 'text', 'canned', 'stl']
     .find((field) => field in raw)
   if (duplicatedField) {
     throw new Error(`Project feature ${feature.id || '(unnamed)'} contains definition-owned field ${duplicatedField}.`)
@@ -677,6 +684,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
           profile: canonicalized.feature.sketch.profile,
           dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
           text: cloneTextFeatureData(canonicalized.feature.text),
+          ...(canonicalized.feature.canned
+            ? { canned: cloneCannedShapeData(canonicalized.feature.canned) }
+            : {}),
           stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
           operation: canonicalized.feature.operation,
           regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -710,6 +720,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
             profile: canonicalized.feature.sketch.profile,
             dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
             text: cloneTextFeatureData(canonicalized.feature.text),
+            ...(canonicalized.feature.canned
+              ? { canned: cloneCannedShapeData(canonicalized.feature.canned) }
+              : {}),
             stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
             operation: canonicalized.feature.operation,
             regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -856,6 +869,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   }
   syncIdCounter(edgeEntry.project)
   // A round bar's chuck and tailstock are centred and their height derived
-  // (#392 slice C). The stock and clamps are canonical by now.
-  return syncRoundWorkholding(edgeEntry.project)
+  // (#392 slice C). The stock and clamps are canonical by now. Canned models
+  // regenerate their mesh from the saved parameters here, so a file opened in
+  // another build cannot disagree with itself about the geometry (#1112 A2).
+  const rebuiltCannedModels = rebuildCannedShapeModels(edgeEntry.project)
+  return syncRoundWorkholding(pruneUnusedModelAssets(rebuiltCannedModels))
 }

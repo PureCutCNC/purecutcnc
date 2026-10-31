@@ -64,6 +64,7 @@ import {
   type ResolvedProject,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
 import { segmentIntersections, type ResolvedSeg, type LineSeg } from '../helpers/segmentIntersection'
 import { resolveProfileSegments } from '../helpers/resolveProfileSegments'
 
@@ -807,6 +808,12 @@ export function createFeatureGeometrySlice(
         hints.push('Subject feature not found or locked')
         return {}
       }
+      // A canned shape has no editable segments — its frame is not its geometry.
+      // Expand to features first (issue #1112).
+      if (isCannedFeature(subjectFeature)) {
+        hints.push('Canned shape cannot be trimmed — expand to features first')
+        return {}
+      }
 
       const profile = subjectFeature.sketch.profile
       if (profile.closed) {
@@ -843,6 +850,10 @@ export function createFeatureGeometrySlice(
       const cutterFeature = resolveFeatureInstance(s.project, cutterRef.featureId)
       if (!cutterFeature) {
         hints.push('Cutter feature not found')
+        return {}
+      }
+      if (isCannedFeature(cutterFeature)) {
+        hints.push('Canned shape cannot be a trim reference — expand to features first')
         return {}
       }
       const cutterResolved = resolveProfileSegments(cutterFeature.sketch.profile)
@@ -1046,6 +1057,11 @@ export function createFeatureGeometrySlice(
       const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
       if (!subjectFeature || subjectFeature.locked || isGhostFeature(s.project, subjectFeature)) {
         hints.push('Subject feature not found or locked')
+        return {}
+      }
+      // Extend is a sketch edit, which a canned shape refuses until Expanded.
+      if (isCannedFeature(subjectFeature)) {
+        hints.push('Canned shape cannot be extended — expand to features first')
         return {}
       }
 

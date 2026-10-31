@@ -138,7 +138,7 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.trim': 'Recortar',
   'appShell.toolRail.extend': 'Extender',
 
-  // ── Workspace face switch (issue #945) ──
+  // ── Workspace face control (issues #945, #1112) ──
   'appShell.face.label': 'Cara',
   'appShell.face.top': 'Superior',
   'appShell.face.bottom': 'Inferior',
@@ -146,8 +146,10 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.face.switchToTop': 'Trabajar en la cara superior',
   'appShell.face.switchToBottom': 'Trabajar en la cara inferior',
   'appShell.face.busy': 'Termina la edición actual antes de cambiar de cara',
+  'appShell.face.current': 'Cara actual: {face}',
+  'appShell.face.flippedShort': 'volteado {axis}',
   'appShell.face.otherSide': 'Otra cara',
   'appShell.face.showOtherSide': 'Mostrar la otra cara como fantasma',
   'appShell.face.hideOtherSide': 'Ocultar la otra cara',
-  'appShell.face.flipped': 'Volteado sobre {axis}',
+  'appShell.face.showOtherSideItem': 'Mostrar la otra cara',
 }

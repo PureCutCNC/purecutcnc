@@ -524,9 +524,16 @@ export type ToolpathWarningCode =
   | 'restOnlyPocketEdgeTargets'
   | 'restTrochoidalUnsupported'
 
+/**
+ * One warning placeholder value. A name list stays an array through generation
+ * so presentation can join it in the active language (`Intl.ListFormat`)
+ * instead of baking a comma join into the engine.
+ */
+export type ToolpathWarningParam = string | number | readonly string[]
+
 export interface ToolpathWarning {
   code: ToolpathWarningCode
-  params?: Record<string, string | number>
+  params?: Record<string, ToolpathWarningParam>
 }
 
 export type ToolpathWarningSeverity = 'warning' | 'error'

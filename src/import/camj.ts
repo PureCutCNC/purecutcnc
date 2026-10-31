@@ -39,6 +39,7 @@ import { cloneTextFeatureData } from '../types/project'
 import { isBarStock } from '../types/barStock'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
+import { rebuildCannedShapeModels } from '../cannedShapes/model'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
 import type { MachineLoadDiagnostic } from '../machine/diagnostics'
@@ -251,7 +252,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   const sourceProject =
     input.sourceProject.meta.units === currentProject.meta.units
       ? input.sourceProject
-      : convertProjectUnits(input.sourceProject, currentProject.meta.units)
+      : rebuildCannedShapeModels(convertProjectUnits(input.sourceProject, currentProject.meta.units))
 
   // 2. Identify features inside selected folders.
   //

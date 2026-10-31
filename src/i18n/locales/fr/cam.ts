@@ -440,6 +440,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.paramRef.finishFloor': 'Référence de finition du fond',
   'cam.paramRef.stockRadial': 'Référence de surépaisseur radiale',
   'cam.paramRef.stockAxial': 'Référence de surépaisseur axiale',
+  'cam.paramRef.passes': 'Référence des passes',
   'cam.paramRef.adaptiveSpacing': 'Référence de l’espacement adaptatif',
   'cam.paramRef.adaptiveRefinement': 'Référence du raffinement adaptatif',
   'cam.paramRef.maxRings': 'Référence du nombre maximal d’anneaux',

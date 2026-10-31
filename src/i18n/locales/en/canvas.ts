@@ -541,9 +541,6 @@ export const canvasEn = {
   // ── Stock faces on the sketch (issue #945) ──
   'canvas.face.through': 'THRU',
   'canvas.face.topOriginLanding': 'Top origin lands here after the flip',
-  'canvas.face.flippedAboutX': 'Stock flipped about X (front edge ↔ back edge).',
-  'canvas.face.flippedAboutY': 'Stock flipped about Y (left edge ↔ right edge).',
-  'canvas.face.topIsGhost': 'Top features are a ghost and cannot be edited here.',
   'canvas.face.aroundTurnsBar': 'The bar turns in the rotary. This view is its surface unrolled: along the bar, and around it.',
 
   // ── The Around sheet's model bands (issue #1015 slice K) ──

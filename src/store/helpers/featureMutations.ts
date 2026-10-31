@@ -18,6 +18,7 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   FeatureOperation,
+  PersistedImportedMesh,
   Project,
   SketchFeature,
   SketchProfile,
@@ -30,6 +31,9 @@ import {
 } from '../../sketch/constraintSolver'
 import { transformProfile } from '../../geometry/profile'
 import { refitTextFrameProfile } from '../../text'
+import { cloneCannedShapeData } from '../../types/project'
+import { cannedShapeFrame } from '../../cannedShapes'
+import { applyCannedShapeModelSpans, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
@@ -80,12 +84,17 @@ function updateDefinitionFromFeaturePatch(
 ): FeatureDefinition {
   const operation = patch.operation ?? definition.operation
   const text = patch.text !== undefined ? patch.text : definition.text
+  const canned = patch.canned !== undefined ? patch.canned : definition.canned
+  const cannedFrame = patch.canned !== undefined && patch.canned
+    ? cannedShapeFrame(patch.canned)
+    : null
   return {
     ...definition,
     kind: patch.kind ?? definition.kind,
-    profile: patch.sketch?.profile ?? refitTextFrame(definition, text, operation),
+    profile: patch.sketch?.profile ?? cannedFrame ?? refitTextFrame(definition, text, operation),
     dimensions: patch.sketch?.dimensions ?? definition.dimensions,
     text,
+    ...(canned !== undefined ? { canned: cloneCannedShapeData(canned) } : {}),
     stl: patch.stl !== undefined ? patch.stl : definition.stl,
     operation,
     regionMaskMode: operation === 'region'
@@ -129,7 +138,11 @@ export function applyFeaturePatch(
   project: Project,
   ids: ReadonlySet<string>,
   patch: Partial<SketchFeature>,
-): { features: FeatureInstance[]; featureDefinitions: Record<string, FeatureDefinition> } {
+): {
+  features: FeatureInstance[]
+  featureDefinitions: Record<string, FeatureDefinition>
+  modelAssets: Record<string, PersistedImportedMesh>
+} {
   let featureDefinitions = { ...project.featureDefinitions }
   const changedDefinitionIds = new Set<string>()
 
@@ -183,7 +196,24 @@ export function applyFeaturePatch(
     ))
   }
 
-  return { features, featureDefinitions }
+  // A canned model's mesh is derived from its parameters, so a parameter edit
+  // rebuilds the asset in the same write. Doing it here — rather than at each
+  // caller — keeps `updateFeature` and every future edit path consistent.
+  // Regenerated dimensions reach every consumer through the instance Z span:
+  // the edit's own row and every linked copy get the new mesh height above
+  // their own bottom (issue #1112 A3).
+  let modelAssets = project.modelAssets ?? {}
+  if (patch.canned !== undefined) {
+    const rebuilt = rebuildCannedShapeModelDefinitions(
+      { ...project, featureDefinitions },
+      changedDefinitionIds,
+    )
+    featureDefinitions = rebuilt.featureDefinitions
+    modelAssets = rebuilt.modelAssets
+    features = applyCannedShapeModelSpans(project, features, rebuilt.models)
+  }
+
+  return { features, featureDefinitions, modelAssets }
 }
 
 export function applyTranslatedFeatureOffsets(

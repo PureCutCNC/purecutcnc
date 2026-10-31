@@ -16,6 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import { convertProjectUnits } from '../../utils/units'
+import { rebuildCannedShapeModels } from '../../cannedShapes/model'
 import {
   getStockBounds,
   isRoundStock,
@@ -494,7 +495,9 @@ export function createWorkpieceSlice(
         }
 
         const convertedProject = mode === 'convert'
-          ? convertProjectUnits(s.project, units)
+          // Parameters converted with the frame; the derived mesh must follow
+          // them in the same write (#1112 A2).
+          ? rebuildCannedShapeModels(convertProjectUnits(s.project, units))
           : { ...s.project, meta: { ...s.project.meta, units } }
         const nextProject = {
           ...convertedProject,

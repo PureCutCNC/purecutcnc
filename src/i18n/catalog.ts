@@ -86,3 +86,26 @@ export function pluralVariant(languageTag: string, count: number): 'one' | 'othe
   }
   return rules.select(count) === 'one' ? 'one' : 'other'
 }
+
+const listFormats = new Map<string, Intl.ListFormat | null>()
+
+/**
+ * Join names as a list in `languageTag` ("A and B", "A und B", "A、B"), for
+ * message params that carry several user-authored names as one placeholder.
+ * `Intl.ListFormat` is a browser built-in with no shipped polyfill, so an
+ * invalid tag falls back to the plain comma join instead of throwing. Cached
+ * per tag because warnings are re-rendered on every locale change.
+ */
+export function formatList(items: readonly string[], languageTag: string): string {
+  if (items.length === 0) return ''
+  let formatter = listFormats.get(languageTag)
+  if (formatter === undefined) {
+    try {
+      formatter = new Intl.ListFormat(languageTag, { style: 'long', type: 'conjunction' })
+    } catch {
+      formatter = null
+    }
+    listFormats.set(languageTag, formatter)
+  }
+  return formatter ? formatter.format(items) : items.join(', ')
+}

@@ -40,6 +40,7 @@ import type {
   TextFeatureData,
   Tool,
 } from '../types/project'
+import { convertCannedShapeData } from '../cannedShapes'
 
 export type Units = ProjectMeta['units']
 
@@ -256,6 +257,12 @@ function convertFeatureDefinition(
     profile: convertProfile(definition.profile, from, to),
     dimensions: definition.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
     text: convertTextFeatureData(definition.text, from, to),
+    // Canned parameters are project-unit lengths. The generator owns which of
+    // its fields are lengths; a stored shape whose parameters kept the old unit
+    // would regenerate at the wrong size (issue #1112).
+    ...(definition.canned
+      ? { canned: convertCannedShapeData(definition.canned, (value) => convertLength(value, from, to)) }
+      : {}),
     stl: convertStlFeatureData(definition.stl, from, to),
   }
 }

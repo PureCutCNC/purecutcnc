@@ -210,12 +210,15 @@ async function generatedOperation(page: Page, operationId: string): Promise<Oper
   }, operationId)
 }
 
-test('a block stock shows exactly the switch it always had: no Around segment', async ({ app, ui }) => {
+test('a block stock shows exactly the switch it always had: no Around entry', async ({ app, ui }) => {
   const { page } = app
   // The default project is a block.
-  await expect(ui.face.segment(page, 'Top')).toBeVisible()
-  await expect(ui.face.segment(page, 'Bottom')).toBeVisible()
-  await expect(ui.face.segment(page, 'Around')).toHaveCount(0)
+  await expect(ui.face.current(page)).toBeVisible()
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Top')).toBeVisible()
+  await expect(ui.face.item(page, 'Bottom')).toBeVisible()
+  await expect(ui.face.item(page, 'Around')).toHaveCount(0)
+  await page.keyboard.press('Escape')
 })
 
 /**
@@ -247,13 +250,14 @@ test.describe('Around is authored by the project type and bar, never the machine
       const { page } = app
       await seedProject(page, JSON.stringify(aroundProject({ machine, units })))
 
-      // ── The segment is present and usable, whatever the machine is ──
-      const around = ui.face.segment(page, 'Around')
+      // ── The Around entry is present and usable, whatever the machine is ──
+      await ui.face.current(page).click()
+      const around = ui.face.item(page, 'Around')
       await expect(around).toBeVisible()
       await expect(around).toBeEnabled()
       await expect(around).toHaveAttribute('title', /^The bar turns in the rotary\./)
       await around.click()
-      await expect(around).toHaveAttribute('aria-pressed', 'true')
+      await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
       // ── Draw a cut: it lands on Around and its provisional setup becomes real ──
       await drawRect(page, ...fixtureRect(units))
@@ -282,7 +286,13 @@ test.describe('Around is authored by the project type and bar, never the machine
 
       // ── Changing the machine alone moves neither the face nor the work ──
       await selectMachine(page, ui, 'GRBL 1.1')
-      await expect(around).toHaveAttribute('aria-pressed', 'true')
+      // The control names Around. The menu is closed here, so the entry only
+      // exists once it is opened — and it is a radio, checked rather than
+      // aria-pressed (issue #1112's one compact control).
+      await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+      await ui.face.current(page).click()
+      await expect(ui.face.item(page, 'Around')).toHaveAttribute('aria-checked', 'true')
+      await page.keyboard.press('Escape')
       await expect(ui.face.layer(page, 'around')).toHaveAttribute('data-face-state', 'active')
       const after = await getProject(page) as unknown as SavedProject
       expect(after.features.map((entry) => entry.id)).toEqual([feature.id])
@@ -297,7 +307,7 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
   test('a rotary project with no machine authors and previews Around but cannot post it', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
-    await ui.face.segment(page, 'Around').click()
+    await ui.face.switchTo(page, 'Around')
     await drawRect(page, ...fixtureRect('mm'))
     const operationId = await addAroundPocket(page, ui)
 
@@ -319,7 +329,7 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
   test('a plain router on a rotary project blocks the export in the dialog', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'plain' })))
-    await ui.face.segment(page, 'Around').click()
+    await ui.face.switchTo(page, 'Around')
     await drawRect(page, ...fixtureRect('mm'))
     await addAroundPocket(page, ui)
 
@@ -334,7 +344,7 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
   test('an opposite-axis rotary machine leaves the turn out and blocks the save', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-y' })))
-    await ui.face.segment(page, 'Around').click()
+    await ui.face.switchTo(page, 'Around')
     await drawRect(page, ...fixtureRect('mm'))
     await addAroundPocket(page, ui)
 
@@ -352,13 +362,15 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
 
   // ── The switch, the banner and the empty Around layer ──
-  await ui.face.segment(page, 'Around').click()
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.segment(page, 'Around')).toHaveAttribute('title', /^The bar turns in the rotary\./)
-  // The explanation is the Around button's tooltip; desktop has no banner row (issue #1102).
+  await ui.face.switchTo(page, 'Around')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+  // The explanation is the Around entry's tooltip; desktop has no banner row (issue #1102).
   await expect(ui.face.banner(page)).toHaveCount(0)
-  // A flat face and Around share no plane: the other-side toggle is gone.
-  await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
+  // A flat face and Around share no plane: the other-side entry is gone.
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Around')).toHaveAttribute('title', /^The bar turns in the rotary\./)
+  await expect(ui.face.otherSideItem(page)).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   // ── Two cuts side by side, both Around ──
   // Side by side, not nested: a shape drawn inside an Around cut is an add
@@ -438,7 +450,7 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(ui.toolbar.exportModelButton(page)).toHaveAttribute('aria-label', 'The design export shows the flat faces. Switch to the top or bottom face to export.')
 
   // ── A flat face sees the Around features as ghosts that name their face ──
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await expect(ui.face.ghostRows(page)).toHaveCount(2)
   await expect(ui.face.ghostRows(page).first()).toHaveAttribute('title', 'On the around face. Switch to it to edit.')
   await ui.face.ghostRows(page).first().click({ button: 'right' })
@@ -457,17 +469,23 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
 
-    // The tablet shell carries the switch in the face row, still enabled.
-    const around = ui.face.segment(page, 'Around')
-    await expect(around).toBeVisible()
+    // The tablet shell carries the control in the face row, still enabled.
+    const control = ui.face.current(page)
+    await expect(control).toBeVisible()
+
+    // Keyboard: focus the control, open the menu and walk to the Around entry.
+    await control.focus()
+    await expect(control).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(ui.face.item(page, 'Top')).toBeFocused()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    const around = ui.face.item(page, 'Around')
+    await expect(around).toBeFocused()
     await expect(around).toBeEnabled()
     await expect(around).toHaveAttribute('title', /^The bar turns in the rotary\./)
-
-    // Keyboard focus reaches the segment and Enter enters Around.
-    await around.focus()
-    await expect(around).toBeFocused()
     await page.keyboard.press('Enter')
-    await expect(around).toHaveAttribute('aria-pressed', 'true')
+    await expect(control).toHaveAttribute('data-face', 'around')
 
     // A cut authored here is undone in one step, face and all.
     await drawRect(page, ...fixtureRect('mm'))

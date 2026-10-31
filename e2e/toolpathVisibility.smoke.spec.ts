@@ -318,19 +318,25 @@ test('GPU renderer draws a Bottom view and clears its Top overlay', async ({ app
   // The foreground carries whatever the frame drew above the toolpaths — a
   // marquee, a snap marker, a preview. Stand in for that with painted pixels,
   // and turn to Bottom before another Top frame can clear them.
-  await ui.face.segment(page, 'Bottom').evaluate((button) => {
+  //
+  // Open the menu first, then paint and pick the face in one evaluation: a
+  // frame between the paint and the switch could clear the evidence this test
+  // is about, so the two must happen in the same task (issue #1112).
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Bottom')).toBeVisible()
+  await ui.face.item(page, 'Bottom').evaluate((item) => {
     const foreground = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-foreground')!
     const context = foreground.getContext('2d')!
     context.fillStyle = 'rgb(255, 0, 255)'
     context.fillRect(0, 0, foreground.width, foreground.height)
-    ;(button as HTMLButtonElement).click()
+    ;(item as HTMLButtonElement).click()
   })
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(gpu).toBeVisible()
   await expect.poll(magentaPixels).toBe(0)
 
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(gpu).toBeVisible()
 })

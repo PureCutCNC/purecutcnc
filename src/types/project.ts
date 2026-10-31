@@ -367,6 +367,78 @@ export function cloneTextFeatureData(text: TextFeatureData | null | undefined): 
 }
 
 /**
+ * A value a canned-shape generator stores. The set is deliberately JSON-only:
+ * every parameter has to survive the `.camj` round trip unchanged, so a stored
+ * shape can regenerate the same outlines after a save and a load (issue #1112).
+ */
+export type CannedShapeParamValue =
+  | number
+  | string
+  | boolean
+  | null
+  | CannedShapeParamValue[]
+  | { [key: string]: CannedShapeParamValue }
+
+/** Generator-owned parameters, keyed by the generator's own schema. */
+export type CannedShapeParams = Record<string, CannedShapeParamValue>
+
+/**
+ * Shape data that keeps a parametric shape *canned*: the definition stores the
+ * kind and parameters, and the outlines are generated on read instead of being
+ * frozen into `profile` (the Text pattern, issue #1112).
+ *
+ * `kind` is a generator registry key rather than a `FeatureKind` member so a
+ * new shape can be added by registering a generator, without widening the
+ * stored model or the `FeatureKind` union. The registry lives in
+ * `src/cannedShapes/`; the read path is `resolveCannedShapeProfiles` there.
+ *
+ * An unregistered kind is preserved verbatim on load: a file written by a later
+ * build must not lose its shape data when an older build opens it.
+ */
+export interface CannedShapeData {
+  /** Generator registry key, e.g. `'slot'`. */
+  kind: string
+  /** The generator's parameters, JSON-safe. */
+  params: CannedShapeParams
+}
+
+function cloneCannedParamValue(value: CannedShapeParamValue): CannedShapeParamValue {
+  if (Array.isArray(value)) {
+    return value.map(cloneCannedParamValue)
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, cloneCannedParamValue(entry)]),
+    )
+  }
+  return value
+}
+
+/** Deep-copy canned-shape data, so two definitions never share one params object. */
+export function cloneCannedShapeData(canned: CannedShapeData | null | undefined): CannedShapeData | null {
+  return canned
+    ? { kind: canned.kind, params: cloneCannedParamValue(canned.params) as CannedShapeParams }
+    : null
+}
+
+/**
+ * Structural check for decorative `.camj` input. It validates only the
+ * envelope this file owns (`kind` + `params`); a generator validates its own
+ * parameter schema when it is asked to generate.
+ */
+export function isCannedShapeData(value: unknown): value is CannedShapeData {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as { kind?: unknown; params?: unknown }
+  return typeof candidate.kind === 'string'
+    && candidate.kind.length > 0
+    && candidate.params !== null
+    && typeof candidate.params === 'object'
+    && !Array.isArray(candidate.params)
+}
+
+/**
  * The file format an imported model came from. A STEP model is tessellated once
  * at import (issue #784) and stored as a mesh like any other; the STEP file
  * itself is never persisted.
@@ -443,6 +515,8 @@ export interface SketchFeature {
   text?: TextFeatureData | null
   /** Curved baseline, in the same space as `sketch.profile`. See {@link FeatureInstance.textLayout}. */
   textLayout?: TextLayout | null
+  /** Canned-shape kind and parameters. Definition-owned; a draft carries it until it is minted. */
+  canned?: CannedShapeData | null
   stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
@@ -490,6 +564,12 @@ export interface FeatureDefinition {
   profile: SketchProfile
   dimensions: LocalDimension[]
   text?: TextFeatureData | null
+  /**
+   * Canned shape, if this definition generates its outlines on read instead of
+   * using `profile` verbatim. `profile` then holds the shape's placement frame
+   * (as Text's holds its run frame), and `canned` is the authoritative data.
+   */
+  canned?: CannedShapeData | null
   stl?: STLFeatureData | null
   operation: FeatureOperation
   regionMaskMode?: RegionMaskMode

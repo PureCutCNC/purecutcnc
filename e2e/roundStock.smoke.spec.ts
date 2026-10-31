@@ -186,7 +186,7 @@ test('a square blank gets the same chuck Type and Diameter as a round bar', asyn
   await createNewProject(page, ui, { type: 'Rotary', shape: 'Square blank' })
   await ui.tree.stockRow(page).click()
   await expect(ui.properties.stockShape(page).locator('.ui-select__label')).toHaveText('Square blank')
-  await ui.face.segment(page, 'Around').click()
+  await ui.face.switchTo(page, 'Around')
 
   const loaded = await getProject(page) as unknown as Project
   const blank = loaded.stock as SquareStock

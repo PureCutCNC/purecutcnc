@@ -96,9 +96,15 @@ test('a Top-only project shows the face switch and nothing else about faces', as
   const { page } = app
   await drawRect(page, 1, 1, 3, 2)
 
-  await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'false')
-  await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
+  // One control: its menu lists the faces the project has and no other side.
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Top')).toHaveAttribute('aria-checked', 'true')
+  await expect(ui.face.item(page, 'Bottom')).toHaveAttribute('aria-checked', 'false')
+  await expect(ui.face.item(page, 'Around')).toHaveCount(0)
+  await expect(ui.face.otherSideItem(page)).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(ui.face.menu(page)).toHaveCount(0)
   await expect(ui.face.banner(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'top')).toHaveCount(0)
   await expect(page.locator('.face-chip')).toHaveCount(0)
@@ -109,6 +115,50 @@ test('a Top-only project shows the face switch and nothing else about faces', as
   await expect(ui.face.zRange(page)).toHaveCount(0)
 })
 
+test('a face section heading switches face, and an empty face says so', async ({ app, ui }) => {
+  const { page } = app
+
+  // A brand-new project has no features at all: picking Bottom still shows its
+  // section, saying it is empty (issue #1112 slice B, the provisional setup).
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
+  await expect(page.locator('.tree-face-children .feature-tree-empty')).toHaveText('Nothing here yet')
+  // Back on Top with nothing drawn on Bottom, both sections go again.
+  await ui.face.switchTo(page, 'Top')
+  await expect(ui.face.layer(page, 'bottom')).toHaveCount(0)
+  await expect(page.locator('.feature-tree-empty').first()).toHaveText('No feature nodes yet.')
+
+  await drawRect(page, 1, 1, 3, 2)
+
+  // Picking an empty face from the menu shows its section in the tree.
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
+  await expect(page.locator('.tree-face-children .feature-tree-empty')).toHaveText('Nothing here yet')
+
+  // The heading is the second home of the same action: clicking Top switches.
+  await ui.face.heading(page, 'top').click()
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
+  // Nothing was drawn on Bottom, so leaving it abandons its provisional face:
+  // the project is single-face again and the tree shows no face sections at
+  // all, exactly as after the first switch back to Top above. The heading did
+  // switch the face; the Top row below is editable rather than a ghost.
+  await expect(ui.face.layer(page, 'top')).toHaveCount(0)
+  await expect(ui.face.layer(page, 'bottom')).toHaveCount(0)
+  await expect(ui.face.ghostRows(page)).toHaveCount(0)
+
+  // Once Bottom carries something, both headings stay and each switches.
+  await ui.face.switchTo(page, 'Bottom')
+  await drawRect(page, 0.2, 0.2, 0.9, 0.9)
+  await ui.face.heading(page, 'top').click()
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
+  await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'ghost')
+  await ui.face.heading(page, 'bottom').click()
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
+})
+
 test('switching to Bottom, drawing a pocket and setting its Z range the way Top does', async ({ app, ui }) => {
   const { page } = app
   // A base covering the middle of the stock, so the canvas centre is on it in both views.
@@ -116,11 +166,10 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   const [base] = await features(page)
   expect(base.authoringFace).toBe('top')
 
-  await ui.face.segment(page, 'Bottom').click()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
-  // No banner row on desktop: the switch carries a short chip (issue #1102).
-  await expect(ui.face.flipChip(page)).toHaveText('Flipped about X')
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  // The control names the flip itself: "Bottom · flipped X" (issue #1112).
+  await expect(ui.face.current(page)).toContainText('flipped X')
   await expect(ui.face.banner(page)).toHaveCount(0)
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
@@ -175,8 +224,8 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   expect([floating.z_bottom, floating.z_top]).toEqual([0.1, 0.25])
 
   // Back on Top the same feature is the ghost and the base is editable again.
-  await ui.face.segment(page, 'Top').click()
-  await expect(ui.face.flipChip(page)).toHaveCount(0)
+  await ui.face.switchTo(page, 'Top')
+  await expect(ui.face.current(page)).not.toContainText('flipped')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -193,22 +242,21 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
 
-  await ui.face.segment(page, 'Bottom').click()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.current(page)).toContainText('flipped X')
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
 
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await expect(ui.face.banner(page)).toHaveCount(0)
-  await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
 
   // The first feature drawn on Bottom brings the setup with it, as one edit.
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await drawRect(page, 0.2, 0.2, 0.9, 0.9)
   const drawn = await getProject(page)
   const setups = drawn.setups as SavedSetup[]
@@ -224,8 +272,8 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   expect(undone.features as unknown[]).toHaveLength(0)
   expect(undone.setups as unknown[]).toHaveLength(1)
   await expect(undo).toBeDisabled()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.current(page)).toContainText('flipped X')
 })
 
 // The review's finding 1: the header switch was disabled during a move, but a
@@ -233,13 +281,21 @@ test('looking at Bottom leaves a clean project untouched until something is draw
 test('a ghost row cannot switch or change a face while a move is in progress', async ({ app, ui }) => {
   const { page } = app
   await drawRect(page, 1, 1, 3, 2)
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await drawRect(page, 0.2, 0.2, 0.9, 0.9)
   const [base, pocket] = await features(page)
 
   await (await openRowContextMenu(page, featureRow(page, pocket.id))).getByRole('button', { name: 'Move', exact: true }).click()
   expect((await getPendingMove(page))?.entityIds).toEqual([pocket.id])
-  await expect(ui.face.segment(page, 'Top')).toBeDisabled()
+  // Both homes of the action refuse the other face while the move is open:
+  // the tree heading directly, the header menu on open.
+  await expect(ui.face.heading(page, 'top')).toBeDisabled()
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Top')).toBeDisabled()
+  await expect(ui.face.item(page, 'Bottom')).toBeEnabled()
+  // Close the menu by its own control: Escape would reach the canvas and
+  // cancel the move this test is about.
+  await ui.face.current(page).click()
 
   await ui.face.ghostRows(page).click({ button: 'right' })
   await expect(page.getByRole('button', { name: 'Switch to top face to edit' })).toBeDisabled()
@@ -252,8 +308,8 @@ test('a ghost row cannot switch or change a face while a move is in progress', a
   expect(baseAfter).toEqual(base)
   expect(pocketAfter.authoringFace).toBe('bottom')
   expect(pocketAfter.transform).not.toEqual(pocket.transform)
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(ui.face.segment(page, 'Top')).toBeEnabled()
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(ui.face.heading(page, 'top')).toBeEnabled()
 })
 
 // Second review: the face could be switched half-way through drawing a shape,
@@ -261,14 +317,19 @@ test('a ghost row cannot switch or change a face while a move is in progress', a
 test('the face is held once a shape has a point on the canvas', async ({ app, ui }) => {
   const { page } = app
   await startAddRectPlacement(page)
+  // Open the menu first: it is derived from the store, so the armed tool, the
+  // placed point and the finished shape can be read without touching the canvas.
+  await ui.face.current(page).click()
+  const bottomEntry = ui.face.item(page, 'Bottom')
   // An armed tool belongs to no face yet.
-  await expect(ui.face.segment(page, 'Bottom')).toBeEnabled()
+  await expect(bottomEntry).toBeEnabled()
   await setPendingAddAnchor(page, 1, 1)
-  await expect(ui.face.segment(page, 'Bottom')).toBeDisabled()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('title', 'Finish the current edit before switching face')
+  await expect(bottomEntry).toBeDisabled()
+  await expect(bottomEntry).toHaveAttribute('title', 'Finish the current edit before switching face')
   await placePendingAddAt(page, 3, 2)
+  await expect(bottomEntry).toBeEnabled()
+  await page.keyboard.press('Escape')
   await cancelPendingAdd(page)
-  await expect(ui.face.segment(page, 'Bottom')).toBeEnabled()
   expect((await features(page))[0].authoringFace).toBe('top')
 })
 
@@ -284,7 +345,7 @@ test('a shape shared with linked copies on the other face says so where it is mo
   expect(copy.definitionId).toBe(plate.definitionId)
 
   // From Bottom both are ghosts. Moving one across names the copy that stays.
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await featureRow(page, copy.id).click({ button: 'right' })
   await page.getByRole('button', { name: 'Change authoring face…' }).click()
   const dialog = ui.face.changeFaceDialog(page)
@@ -306,7 +367,7 @@ test('a shape shared with linked copies on the other face says so where it is mo
   await expect(page.getByTestId('edit-linked-other-face-note')).toContainText('1 linked copy on the top face')
   await page.locator('.canvas-workflow-panel--edit').getByRole('button', { name: 'Cancel editing', exact: true }).click()
   await expect(page.locator('.canvas-workflow-panel--edit')).toHaveCount(0)
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await featureRow(page, plate.id).click()
   await expect(page.getByTestId('linked-other-face-note')).toContainText('1 linked copy on the bottom face')
 
@@ -327,7 +388,7 @@ test('the ghost toggle hides and shows the other side, and a ghost cannot be pic
   await page.mouse.click(centre.x, centre.y)
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(1)
 
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
   const before = await features(page)
 
@@ -347,17 +408,23 @@ test('the ghost toggle hides and shows the other side, and a ghost cannot be pic
   await ui.face.ghostRows(page).click()
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
 
-  // The toggle changes what the canvas draws, both ways, and nothing else.
-  const toggle = ui.face.otherSideToggle(page)
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  // The menu's other-side entry changes what the canvas draws, both ways, and
+  // nothing else (issue #1112: the eye is one entry of the face menu).
+  await ui.face.current(page).click()
+  await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
   await page.mouse.move(centre.x, centre.y - 300)
   const shown = await canvasImage(page)
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await ui.face.toggleOtherSide(page)
+  await ui.face.current(page).click()
+  await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'false')
+  await page.keyboard.press('Escape')
   await expect.poll(() => canvasImage(page)).not.toBe(shown)
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await ui.face.toggleOtherSide(page)
+  await ui.face.current(page).click()
+  await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
   await expect.poll(() => canvasImage(page)).toBe(shown)
   expect(await features(page)).toEqual(before)
 })
@@ -365,7 +432,7 @@ test('the ghost toggle hides and shows the other side, and a ghost cannot be pic
 test('a ghost row leads to its own face, and changing a face is confirmed and keeps the stock span', async ({ app, ui }) => {
   const { page } = app
   await drawRect(page, 1, 1, 3, 2)
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await drawRect(page, 0.2, 0.2, 0.9, 0.9)
   const pocket = (await features(page))[1]
   await openInstanceProperties(page)
@@ -375,10 +442,10 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.stockSpan(page)).toHaveText('0.25 → 0 in')
 
   // From Top, the Bottom pocket's row menu switches the workspace to its face.
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await ui.face.ghostRows(page).click({ button: 'right' })
   await page.getByRole('button', { name: 'Switch to bottom face to edit' }).click()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   await expect(page.locator(`.tree-row--feature.tree-row--selected[data-feature-id="${pocket.id}"]`)).toHaveCount(1)
 
   // A blind pocket cannot change face: from the other side nothing could
@@ -415,27 +482,35 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await expect(ui.face.ghostRows(page)).toHaveCount(2)
 })
 
-test('the face switch is reachable and operable from the keyboard', async ({ app, ui }) => {
+test('the face control is reachable and operable from the keyboard', async ({ app, ui }) => {
   const { page } = app
   await page.getByRole('tab', { name: 'Sketch', exact: true }).focus()
   await page.keyboard.press('Tab')
-  await expect(ui.face.segment(page, 'Top')).toBeFocused()
-  await page.keyboard.press('Tab')
-  const bottom = ui.face.segment(page, 'Bottom')
-  await expect(bottom).toBeFocused()
+  const control = ui.face.current(page)
+  await expect(control).toBeFocused()
   // Keyboard focus is visible on the control itself.
-  expect(await bottom.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
+  expect(await control.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
 
-  await page.keyboard.press('Space')
-  await expect(bottom).toHaveAttribute('aria-pressed', 'true')
-  await expect(bottom).toBeFocused()
-  await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
-
-  // The ghost toggle appears next in the tab order once both faces exist.
-  await page.keyboard.press('Tab')
-  await expect(ui.face.otherSideToggle(page)).toBeFocused()
+  // Enter opens the menu on the face in view; the faces are ordinary buttons.
   await page.keyboard.press('Enter')
-  await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')
+  await expect(ui.face.item(page, 'Top')).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(ui.face.item(page, 'Bottom')).toBeFocused()
+  await page.keyboard.press('Space')
+  await expect(control).toHaveAttribute('data-face', 'bottom')
+  await expect(control).toBeFocused()
+  await expect(control).toContainText('flipped X')
+
+  // The other-side entry follows the faces in the same menu.
+  await page.keyboard.press('Enter')
+  await expect(ui.face.item(page, 'Bottom')).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(ui.face.otherSideItem(page)).toBeFocused()
+  await page.keyboard.press('Space')
+  await expect(control).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'false')
+  await page.keyboard.press('Escape')
 })
 
 test('angle fields on Bottom read and turn as they do on Top', async ({ app, ui }) => {
@@ -464,20 +539,20 @@ test('angle fields on Bottom read and turn as they do on Top', async ({ app, ui 
 
   // Flipped about X the backdrop points the other way up; the field says so,
   // and a typed angle is stored back in stock space.
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await page.locator('.tree-row--backdrop').click()
   await expect(angle).toHaveValue('-90')
   await angle.fill('-80')
   await angle.press('Enter')
   await expect.poll(async () => ((await getProject(page)).backdrop as { orientationAngle: number }).orientationAngle).toBe(80)
   await expect(angle).toHaveValue('-80')
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await page.locator('.tree-row--backdrop').click()
   await expect(angle).toHaveValue('80')
 
   // A radial sweep: positive in its field on Bottom, as on Top, and it stays
   // what was typed (the stored value is the reversed stock-space turn).
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await drawRect(page, 0.4, 0.4, 0.9, 0.9)
   await page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
   await page.getByRole('menu').getByRole('button', { name: 'Radial', exact: true }).click()
@@ -516,7 +591,7 @@ test('grid spacing on Bottom steps the way it does on Top', async ({ app, ui }) 
 
   // Bottom, flipped about X: the field reads a positive default, and the same
   // typed 0.5 steps the same way on screen, which is −0.5 in the stock.
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await drawRect(page, 2.4, 1.4, 2.8, 1.8)
   panel = await grid()
   const spacingY = panel.getByLabel('Y spacing')
@@ -545,16 +620,16 @@ test('a 3D view parked on the Top or Bottom preset follows the face; other views
   }
 
   // The default isometric view is left where it is.
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   expect(await checked('Isometric view')).toBe('true')
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
 
   // A plan view turns over with the stock.
   await ui.viewMenu.trigger3d(page).click()
   await ui.viewMenu.option3d(page, 'Top view').click()
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   expect(await checked('Bottom view')).toBe('true')
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   expect(await checked('Top view')).toBe('true')
 })
 
@@ -568,25 +643,38 @@ test.describe('landscape tablet', () => {
     const canvasWidth = async () => (await page.locator('.sketch-canvas').boundingBox())!.width
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
     await expect(page.locator('.empty-state-overlay')).toBeVisible()
-    await ui.face.segment(page, 'Bottom').tap()
-    await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+    await ui.face.switchTo(page, 'Bottom')
+    await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
 
-    for (const control of [ui.face.segment(page, 'Top'), ui.face.segment(page, 'Bottom'), ui.face.otherSideToggle(page)]) {
-      const box = await control.boundingBox()
+    const control = ui.face.current(page)
+    const controlBox = await control.boundingBox()
+    expect(controlBox).not.toBeNull()
+    expect(controlBox!.height).toBeGreaterThanOrEqual(44)
+    expect(controlBox!.width).toBeGreaterThanOrEqual(44)
+    expect(controlBox!.x).toBeGreaterThanOrEqual(0)
+    expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(1024)
+
+    expect(await canvasWidth()).toBeLessThanOrEqual(1024)
+    await expect(control).toContainText('flipped X')
+
+    // The entries behind it are full tap targets too, and stay on screen.
+    await control.click()
+    for (const entry of [ui.face.item(page, 'Top'), ui.face.item(page, 'Bottom'), ui.face.otherSideItem(page)]) {
+      const box = await entry.boundingBox()
       expect(box).not.toBeNull()
       expect(box!.height).toBeGreaterThanOrEqual(44)
       expect(box!.width).toBeGreaterThanOrEqual(44)
       expect(box!.x).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width).toBeLessThanOrEqual(1024)
     }
+    await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'true')
+    await ui.face.otherSideItem(page).click()
+    await control.click()
+    await expect(ui.face.otherSideItem(page)).toHaveAttribute('aria-checked', 'false')
+    await page.keyboard.press('Escape')
 
-    expect(await canvasWidth()).toBeLessThanOrEqual(1024)
-    await expect(ui.face.flipChip(page)).toHaveAttribute('title', /^Stock flipped about X/)
-
-    await ui.face.otherSideToggle(page).tap()
-    await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')
-    await ui.face.segment(page, 'Top').tap()
-    await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
+    await ui.face.switchTo(page, 'Top')
+    await expect(ui.face.current(page)).toHaveAttribute('data-face', 'top')
   })
 })
 
@@ -611,10 +699,10 @@ for (const face of ['top', 'bottom'] as const) {
       const nearCorner = await referenceCanvasPoint(canvas, options, 20.3, 15.2)
       await canvas.hover({ position: nearCorner })
       await expect(referenceSnapIndicator(page)).toHaveCount(1)
-      await ui.face.otherSideToggle(page).click()
+      await ui.face.toggleOtherSide(page)
       await canvas.hover({ position: nearCorner })
       await expect(referenceSnapIndicator(page)).toHaveCount(0)
-      await ui.face.otherSideToggle(page).click()
+      await ui.face.toggleOtherSide(page)
       await canvas.hover({ position: nearCorner })
       await expect(referenceSnapIndicator(page)).toHaveCount(1)
       await canvas.click({ position: nearCorner })
@@ -677,7 +765,7 @@ test('#994 a cross-face anchored dimension stays a measurement and construction 
   await pickReference(canvas, options, 35, 8)
   await expect(app.page.locator('.canvas-workflow-panel--driving-edit')).toHaveCount(0)
   expect(referenceSnapshot(await getProject(app.page))).toEqual(before)
-  await ui.face.segment(app.page, 'Top').click()
+  await ui.face.switchTo(app.page, 'Top')
   await featureRow(app.page, 'reference-guide').click()
   await app.page.getByRole('button', { name: 'Add to Top', exact: true }).click()
   await expect(ui.operations.addMenuAvailableRows(app.page)).toHaveCount(0)
@@ -775,7 +863,7 @@ for (const face of ['top', 'bottom'] as const) {
       expect(withoutModified(await getProject(page))).toEqual(before)
 
       // Other side off cannot satisfy point-only snapping; disabling snap permits raw placement.
-      await ui.face.otherSideToggle(page).click()
+      await ui.face.toggleOtherSide(page)
       await canvas.focus()
       await page.keyboard.press('ControlOrMeta+v')
       await expect(paste).toBeVisible()

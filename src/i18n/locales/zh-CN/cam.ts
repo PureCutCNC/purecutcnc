@@ -506,6 +506,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.paramRef.finishFloor': '精修底面参考',
   'cam.paramRef.stockRadial': '径向余量参考',
   'cam.paramRef.stockAxial': '轴向余量参考',
+  'cam.paramRef.passes': '走刀方向参考',
   'cam.paramRef.adaptiveSpacing': '自适应间距参考',
   'cam.paramRef.adaptiveRefinement': '自适应细化参考',
   'cam.paramRef.maxRings': '最大环数参考',

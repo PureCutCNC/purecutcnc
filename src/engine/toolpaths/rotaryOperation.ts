@@ -24,7 +24,7 @@ import { splitFeatureTargets, buildRegionMask, type SplitFeatureTargets } from '
 import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
 import type { RotaryFinishParams } from './rotaryModel'
 import type { NormalizedTool, ToolpathResult } from './types'
-import type { ToolpathWarningCode } from './warningCodes'
+import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
 /**
  * Adapt the saved operation to the rotary generators; the mesh stays in stock
@@ -46,6 +46,8 @@ interface RotaryContext {
   readonly params: RotaryFinishParams
   /** STL model feature ids this operation targets, in target order. */
   readonly modelIds: string[]
+  /** The same models' names, aligned with `modelIds`, for the advisory text. */
+  readonly modelNames: string[]
   /** Closed regions this operation's target carries (#1096), split by mode. */
   readonly regions: RotaryRegionFilter
 }
@@ -202,6 +204,7 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
   return {
     stock, surface, tool, params,
     modelIds: models.map((feature) => feature.id),
+    modelNames: models.map((feature) => feature.name),
     regions: regionFilterOf(targets.regionFeatures),
   }
 }
@@ -302,6 +305,40 @@ function roughCoversFinishRegion(
 }
 
 /**
+ * The STL models of `modelIds` that no preceding rough covers, in target order
+ * and deduplicated (#1112 decision 7.11).
+ *
+ * This is the same rule `rotaryFinishWithoutRough` states, returning the
+ * models themselves so the advisory can name them ("no earlier rough for Turn
+ * 2") instead of saying "this model". `modelIds` must already be the target's
+ * **STL models**, and `regions` its closed regions, so a region mask id can
+ * never stand in for a model and a model id can never stand in for a region.
+ */
+export function rotaryUncoveredModelIds(
+  roughs: readonly RotaryRoughDependency[],
+  modelIds: readonly string[],
+  regions: RotaryRegionFilter = ROTARY_WHOLE_BAR,
+): string[] {
+  const models = new Set(modelIds)
+  if (models.size === 0) return []
+  const covered = new Set<string>()
+  for (const rough of roughs) {
+    if (!roughCoversFinishRegion(rough.regions, regions)) continue
+    for (const modelId of rough.modelIds) {
+      if (models.has(modelId)) covered.add(modelId)
+    }
+  }
+  const seen = new Set<string>()
+  const uncovered: string[] = []
+  for (const modelId of modelIds) {
+    if (seen.has(modelId)) continue
+    seen.add(modelId)
+    if (!covered.has(modelId)) uncovered.push(modelId)
+  }
+  return uncovered
+}
+
+/**
  * True when any STL model this finish targets has no preceding enabled rotary
  * rough in the same setup that both targets that model **and** covers the
  * finish's region (2026-10-22 decision, #1096).
@@ -320,16 +357,7 @@ export function rotaryFinishWithoutRough(
   modelIds: readonly string[],
   regions: RotaryRegionFilter = ROTARY_WHOLE_BAR,
 ): boolean {
-  const models = new Set(modelIds)
-  if (models.size === 0) return false
-  const covered = new Set<string>()
-  for (const rough of roughs) {
-    if (!roughCoversFinishRegion(rough.regions, regions)) continue
-    for (const modelId of rough.modelIds) {
-      if (models.has(modelId)) covered.add(modelId)
-    }
-  }
-  return [...models].some((modelId) => !covered.has(modelId))
+  return rotaryUncoveredModelIds(roughs, modelIds, regions).length > 0
 }
 
 export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
@@ -339,18 +367,23 @@ export function generateRotaryOperation(project: Project, operation: Operation):
   })
   const built = rotaryContext(project, operation)
   if ('code' in built) return empty(built.code)
-  const { stock, surface, tool, params, modelIds, regions } = built
+  const { stock, surface, tool, params, modelIds, modelNames, regions } = built
   const result = operation.kind === 'rotary_rough'
     ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
     : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
-  const warnings = result.warnings.map((warning) => ({
+  const warnings: ToolpathWarning[] = result.warnings.map((warning) => ({
     ...warning, params: { ...warning.params, operation: operation.name },
   }))
   // Advisory only: the finish still emits exactly the model-following motion
-  // above, and this warning changes nothing about it.
-  if (operation.kind === 'rotary_finish'
-    && rotaryFinishWithoutRough(rotaryPrecedingRoughs(project, operation), modelIds, regions)) {
-    warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name } })
+  // above, and this warning changes nothing about it. The message names the
+  // models left uncovered (#1112 decision 7.11), in target order; the names
+  // stay a list so presentation joins them in the active language (#1112 C2).
+  if (operation.kind === 'rotary_finish') {
+    const uncovered = rotaryUncoveredModelIds(rotaryPrecedingRoughs(project, operation), modelIds, regions)
+    if (uncovered.length > 0) {
+      const names = uncovered.map((modelId) => modelNames[modelIds.indexOf(modelId)])
+      warnings.push({ code: 'rotaryFinishWithoutRough', params: { operation: operation.name, model: names } })
+    }
   }
   return { ...result, warnings }
 }

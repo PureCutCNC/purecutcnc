@@ -83,7 +83,7 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   const topId = project.setups[0].id
 
   // An operation is selected on its own face (issue #1102).
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await ui.operations.rowByName(page, 'Bottom pass').click()
   await ui.viewMenu.tabSimulation(page).click()
   await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
@@ -114,9 +114,9 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   await page.screenshot({ path: testInfo.outputPath('top-simulation.png') })
 
   // Selecting an operation hands the choice back to its setup.
-  await ui.face.segment(page, 'Top').click()
+  await ui.face.switchTo(page, 'Top')
   await ui.operations.rowByName(page, 'Top pass').click()
-  await ui.face.segment(page, 'Bottom').click()
+  await ui.face.switchTo(page, 'Bottom')
   await ui.operations.rowByName(page, 'Bottom pass').click()
   await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
 })
@@ -232,8 +232,8 @@ test('the GPU renderer keeps drawing when the workspace turns to Bottom', async 
   await seedTwoSetups(page)
   const base = page.locator('canvas.sketch-canvas')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
-  await ui.face.segment(page, 'Bottom').click()
-  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('bottom-sketch-gpu.png') })
