@@ -742,9 +742,18 @@ test('Edit thread… reopens the dialog with its parameters and applies new ones
   expect(before.params).toMatchObject({ start: 5, length: 20, pitch: 2, depth: 1 })
   const dialog = ui.rotary.dialog(page)
 
+  // A Thread has no Z range in Properties: its span is the bar surface less the
+  // Depth the dialog writes, so the panel names that value instead
+  // (issue #1112 rt6-a, item 39).
+  await openPropertiesShape(page)
+  const threadInstance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
+  if ((await threadInstance.getAttribute('aria-expanded')) !== 'true') await threadInstance.click()
+  await expect(threadInstance).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
+  await expect(page.getByTestId('canned-z-source')).toContainText('Depth 1 mm · set in Edit thread…')
+
   // The selected canned feature shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.
-  await openPropertiesShape(page)
   await page.getByRole('button', { name: /^Edit thread/ }).click()
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('.canvas-workflow-panel__title')).toContainText('Edit thread')
@@ -1870,6 +1879,14 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   await expect(summary).toContainText('start 10')
   await expect(summary).toContainText('across flats 15')
   await expect(summary).toContainText('rotation 0°')
+
+  // A Polygon has no Z range either: its height is the regenerated mesh's, set
+  // by the across-flats size in the dialog (issue #1112 rt6-a, item 39).
+  const polygonInstance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
+  if ((await polygonInstance.getAttribute('aria-expanded')) !== 'true') await polygonInstance.click()
+  await expect(polygonInstance).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
+  await expect(page.getByTestId('canned-z-source')).toContainText('Across flats 15 mm · set in Edit polygon…')
 
   // The selected canned model shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.

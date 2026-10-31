@@ -335,6 +335,10 @@ const SENTENCE_CASE_TERMS = new Set([
   // The workspace face names are the face chip's own labels, so prose that
   // points at one keeps its capital ("draw it on the Top face", #1112 rt2-b).
   'Top', 'Bottom',
+  // The Properties action named in prose: "set in Edit thread…" points at the
+  // panel's own "Edit {shape}…" button, so the capital is the button's
+  // (issue #1112 rt6-a).
+  'Edit',
 ])
 
 /** Locale whose values carry the sentence-case rule. */

@@ -260,6 +260,12 @@ export const featureTreeEn = {
   'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
   'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
   'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
+  // The four rotary kinds own their Z span: Properties names the parameter the
+  // Edit panel writes instead of offering a Z control (issue #1112 rt6-a).
+  'featureTree.properties.canned.zSource.thread': 'Depth {value} · set in Edit thread…',
+  'featureTree.properties.canned.zSource.flutes': 'Depth {value} · set in Edit flutes…',
+  'featureTree.properties.canned.zSource.turn': 'Diameter {value} · set in Edit turn…',
+  'featureTree.properties.canned.zSource.polygon': 'Across flats {value} · set in Edit polygon…',
   // ── Canned shape names and one-line summaries (issue #1112) ──
   'canned.ellipse.name': 'ellipse',
   'canned.ellipse.summary': 'Ellipse · {rx} × {ry}',
