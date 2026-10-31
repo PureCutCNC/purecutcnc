@@ -208,6 +208,12 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.carveNoTargets': 'Gravur-Operation hat keine Feature-Ziele',
   'warnings.carveWrongKind': 'Nur Gravur-Operationen können vom Gravur-Generator aufgelöst werden',
   'warnings.carveNoValidTargets': 'Keine gültigen Ziel-Features für diese Gravur-Operation gefunden',
+  'warnings.carveNeighbourTrimmed': '{name}: endet {distance} {units} vor {neighbour} am {side}, damit der Fräser nicht hineinschneidet.',
+  'warnings.carveNeighbourTrimmedSpan': '{name}: {distance} {units} der Linie bleiben ungeschnitten, wo sie {neighbour} passiert, damit der Fräser nicht hineinschneidet.',
+  'warnings.carveNeighbourTrimmedAway': '{name}: nichts geschnitten — die Linie würde in {neighbour} schneiden und wurde deshalb freigehalten.',
+  'warnings.neighbour.bar': 'dem ungeschnittenen Rohteil',
+  'warnings.side.start': 'Anfang',
+  'warnings.side.end': 'Ende',
   // rest regions
   'warnings.restOnlyEdgeRoute': 'Restbereiche können nur für Kontur-Operationen erzeugt werden',
   'warnings.restOnlyPocket': 'Restbereiche können nur für Tasche-Operationen erzeugt werden',

@@ -82,7 +82,7 @@ const ALL_CODES = [
   'drillCountersinkNeedsVBit', 'drillCountersinkDiameterPositive', 'drillCountersinkExceedsToolDiameter',
   'drillCountersinkDepthExceedsToolMax', 'drillCountersinkNotLargerThanHole',
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
-  'carveNoValidTargets',
+  'carveNoValidTargets', 'carveNeighbourTrimmed', 'carveNeighbourTrimmedSpan', 'carveNeighbourTrimmedAway',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',
   'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded', 'clampBlockedCut',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
@@ -128,8 +128,10 @@ for (const code of ALL_CODES) {
 // No orphans: every warnings.* key (except the moveKind word table) matches
 // a code in the union.
 const codeSet = new Set<string>(ALL_CODES)
+/** Word tables the warnings inject by id (see `warningText.ts`). */
+const WORD_TABLES = ['warnings.moveKind.', 'warnings.neighbour.', 'warnings.side.']
 for (const key of Object.keys(warningsEn)) {
-  if (key.startsWith('warnings.moveKind.')) continue
+  if (WORD_TABLES.some((prefix) => key.startsWith(prefix))) continue
   const code = key.slice('warnings.'.length)
   assert(codeSet.has(code), `catalog key ${key} corresponds to a ToolpathWarningCode`)
 }
@@ -154,6 +156,35 @@ assert(
     === 'Rotary finish: no earlier rough for Turn 2 comes before this finish in the setup; it will cut to full depth in one pass.',
   'the finish-without-rough advisory names the operation, the uncovered model and the consequence',
 )
+
+// The Follow line's neighbour keep-out (#1112 rt6-e) names the line, the
+// distance, the material kept clear of and the end of the line it stopped at —
+// and the last two are words, so they follow the language with the rest.
+const neighbourWarning: ToolpathWarning = {
+  code: 'carveNeighbourTrimmed',
+  params: { name: 'Thread', distance: '0.033', units: 'in', neighbour: 'Hex', sideId: 'start' },
+}
+assert(
+  toolpathWarningText(neighbourWarning)
+    === 'Thread: stopped 0.033 in short of Hex at the start so the cutter does not cut into it.',
+  'the neighbour warning reads as the report asked for it',
+)
+const barWarning: ToolpathWarning = {
+  code: 'carveNeighbourTrimmed',
+  params: { name: 'Thread', distance: '0.02', units: 'mm', neighbourId: 'bar', sideId: 'end' },
+}
+assert(
+  toolpathWarningText(barWarning)
+    === 'Thread: stopped 0.02 mm short of the uncut bar at the end so the cutter does not cut into it.',
+  'the uncut bar is a translated word, not an English name baked into the engine',
+)
+setActiveLocale('de')
+assert(
+  toolpathWarningText(barWarning)
+    === 'Thread: endet 0.02 mm vor dem ungeschnittenen Rohteil am Ende, damit der Fräser nicht hineinschneidet.',
+  'the German message translates both nested words',
+)
+resetI18nStoreForTests()
 
 // A list param is joined at display time in the active language (#1112 C2),
 // not with a comma the engine baked in: switching language changes the

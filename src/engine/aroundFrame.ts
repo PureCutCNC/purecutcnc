@@ -47,6 +47,7 @@ import { getStockBounds, isAroundSetup, rectProfile } from '../types/project'
 import type { BarStock, Operation, Project } from '../types/project'
 import { barCentre, barInscribedRadius, isBarStock } from '../types/barStock'
 import { getFeatureGeometryBounds } from '../text'
+import { TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { setupForOperation } from './setupOrientation'
 import { resolveDimensionRef } from './toolpaths/geometry'
@@ -206,6 +207,123 @@ export function unrolledProject(project: Project, frame: AroundFrame): Project {
       return plain
     }),
   }
+}
+
+/**
+ * What a band of material on the Around sheet is, for the Follow line keep-out
+ * (issue #1112 slice rt6-e).
+ *
+ * - `bar` — the stock where no model has been cut into it. It is the surface a
+ *   follow line may itself be cut on, so it is a wall only where it stands
+ *   **above** the guide's surface: the uncut shoulder beside a smaller Turn.
+ * - `turn` — a Turn is the surface a Thread/Flutes over it is cut *on*, so a
+ *   Turn is a wall only where its surface is **above** the guide's: a Turn of
+ *   larger diameter. At the same diameter it is the same cylinder, and the
+ *   guide's groove simply ends on it.
+ * - `body` — a Polygon/Hex or a placed model: a distinct body with an end face.
+ *   It counts at **or above** the guide's surface, because a body whose top is
+ *   level with the guide is still a wall the cutter's flank enters. Frank's bolt
+ *   is exactly that case: the Hex's Z top and the Thread's surface are both
+ *   measured from the same Ø0.75, and at 0.122 deep a 30° V-bit is 0.0327 half-
+ *   width at that height — the 0.033 in the report.
+ */
+export type AroundMaterialKind = 'bar' | 'turn' | 'body'
+
+/** One body of material on the sheet, as an interval along the bar. */
+export interface AroundMaterialBand {
+  /** The feature's name; `''` for the bar itself. */
+  name: string
+  kind: AroundMaterialKind
+  /** Absolute stock interval along the bar, in the bar's own coordinates. */
+  alongMin: number
+  alongMax: number
+  /** Material surface height in the unrolled sheet's Top-like frame. */
+  surfaceZ: number
+}
+
+export interface AroundMaterialBands {
+  /** The stock's axis; `along` names the project coordinate in each band. */
+  axis: 'x' | 'y'
+  bands: AroundMaterialBand[]
+}
+
+/** Slack for a model's along extent: a degenerate band is not a body. */
+const MATERIAL_EXTENT_TOLERANCE = 1e-9
+
+/**
+ * The material standing on the Around sheet, one band per body, for a Follow
+ * line's keep-out (issue #1112 slice rt6-e). Read from the project's own
+ * models and stock — their instance Z top is the surface height in the bar's
+ * Top-like frame — rather than from a new geometry model.
+ *
+ * A model band **replaces** the bar over its span: the rotary work cuts the bar
+ * down to the model, which is why a Thread beside a Hex measures against the
+ * Hex's surface, not the raw bar it was cut from. The bar therefore contributes
+ * only the stretches no model covers, which is what "uncut bar next to a Turn"
+ * means. Every surface is lowered by the frame radius, so it is in the same
+ * frame as the unrolled project's feature Z tops (the one the generator reads).
+ */
+export function aroundMaterialBands(project: Project, frame: AroundFrame): AroundMaterialBands {
+  const bounds = getStockBounds(project.stock)
+  const alongMin = frame.axis === 'x' ? bounds.minX : bounds.minY
+  const alongMax = frame.axis === 'x' ? bounds.maxX : bounds.maxY
+  const bodies: AroundMaterialBand[] = []
+  const covered: Array<{ min: number; max: number }> = []
+
+  for (const feature of project.features) {
+    const definition = project.featureDefinitions[feature.definitionId]
+    // A model is the part the rotary work leaves standing; every other feature
+    // is geometry the guide is drawn from, not material to keep it out of.
+    if (definition?.kind !== 'stl' || definition.operation !== 'model') continue
+    const resolved = resolveFeatureInstance(project, feature.id)
+    if (!resolved) continue
+    const extent = getFeatureGeometryBounds(resolved)
+    const min = frame.axis === 'x' ? extent.minX : extent.minY
+    const max = frame.axis === 'x' ? extent.maxX : extent.maxY
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max - min <= MATERIAL_EXTENT_TOLERANCE) continue
+    covered.push({ min, max })
+    // A model placed off the bar's length is still a target, but it stands on
+    // no material the sheet can reach, so it is not a band here.
+    const clippedMin = Math.max(alongMin, min)
+    const clippedMax = Math.min(alongMax, max)
+    if (clippedMax - clippedMin <= MATERIAL_EXTENT_TOLERANCE) continue
+    bodies.push({
+      name: feature.name,
+      kind: definition.canned?.kind === TURN_CANNED_KIND ? 'turn' : 'body',
+      alongMin: clippedMin,
+      alongMax: clippedMax,
+      surfaceZ: resolveDimensionRef(project, feature.z_top) - frame.radius,
+    })
+  }
+
+  const bands: AroundMaterialBand[] = subtractSpans(alongMin, alongMax, covered).map((piece) => ({
+    name: '',
+    kind: 'bar' as const,
+    alongMin: piece.min,
+    alongMax: piece.max,
+    // The bar surface is the stock thickness in the Top-like frame, i.e. one
+    // radius above the turning axis on the unrolled sheet.
+    surfaceZ: project.stock.thickness - frame.radius,
+  }))
+  return { axis: frame.axis, bands: [...bands, ...bodies] }
+}
+
+/** `[min, max]` minus every covered interval, in ascending order. */
+function subtractSpans(
+  min: number,
+  max: number,
+  covered: ReadonlyArray<{ min: number; max: number }>,
+): Array<{ min: number; max: number }> {
+  const pieces: Array<{ min: number; max: number }> = []
+  let cursor = min
+  for (const span of [...covered].sort((left, right) => left.min - right.min)) {
+    if (span.max <= cursor) continue
+    if (span.min > cursor) pieces.push({ min: cursor, max: Math.min(span.min, max) })
+    cursor = Math.max(cursor, span.max)
+    if (cursor >= max) break
+  }
+  if (cursor < max) pieces.push({ min: cursor, max })
+  return pieces.filter((piece) => piece.max - piece.min > MATERIAL_EXTENT_TOLERANCE)
 }
 
 function boundsOf(moves: readonly ToolpathMove[]): ToolpathBounds | null {

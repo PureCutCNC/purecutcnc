@@ -278,6 +278,20 @@ export type ToolpathWarningCode =
   | 'carveNoTargets'
   | 'carveWrongKind'
   | 'carveNoValidTargets'
+  /** A Follow line on the Around face was stopped short of a neighbouring
+   *  section standing above the surface it is cut on, so the cutter body cannot
+   *  enter it (issue #1112 slice rt6-e; a safety rule, not an option). Params:
+   *  the guide feature's name, the distance kept, the project units, the
+   *  neighbour (`neighbour`, or `neighbourId: 'bar'` for the uncut bar, which
+   *  presentation translates) and `sideId` (`start` or `end`, likewise
+   *  translated). */
+  | 'carveNeighbourTrimmed'
+  /** The same keep-out broke the guide in the middle and left a span uncut
+   *  (`distance` is the length of line removed). */
+  | 'carveNeighbourTrimmedSpan'
+  /** The keep-out removed the whole guide: nothing is cut, and saying so
+   *  matters more than the missing motion (issue #1112 slice rt6-e). */
+  | 'carveNeighbourTrimmedAway'
   | 'targetsMissing'
   /** A selected target resolved to a feature that exists, but that feature
    *  expands into no geometry (a canned shape or a text feature whose

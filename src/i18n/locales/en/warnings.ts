@@ -208,6 +208,14 @@ export const warningsEn = {
   'warnings.carveNoTargets': 'Follow-line operation has no feature targets',
   'warnings.carveWrongKind': 'Only follow-line operations can be resolved by the carving generator',
   'warnings.carveNoValidTargets': 'No valid target features were found for this follow-line operation',
+  'warnings.carveNeighbourTrimmed': '{name}: stopped {distance} {units} short of {neighbour} at the {side} so the cutter does not cut into it.',
+  'warnings.carveNeighbourTrimmedSpan': '{name}: {distance} {units} of the line was left uncut where it passes {neighbour}, so the cutter does not cut into it.',
+  'warnings.carveNeighbourTrimmedAway': '{name}: nothing was cut — the line would cut into {neighbour}, so it was kept clear of it.',
+  // The neighbouring material and the ends of a line, named by the two warnings
+  // above: the engine carries an id so the words follow the active language.
+  'warnings.neighbour.bar': 'the uncut bar',
+  'warnings.side.start': 'start',
+  'warnings.side.end': 'end',
   // rest regions
   'warnings.restOnlyEdgeRoute': 'Rest regions can only be generated for edge-route operations',
   'warnings.restOnlyPocket': 'Rest regions can only be generated for pocket operations',

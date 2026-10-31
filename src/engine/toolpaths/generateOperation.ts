@@ -67,7 +67,14 @@ import type { Operation, Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
-import { aroundFrameForOperation, flatFaceProject, unrolledProject, wrapToolpath } from '../aroundFrame'
+import {
+  aroundFrameForOperation,
+  aroundMaterialBands,
+  flatFaceProject,
+  unrolledProject,
+  wrapToolpath,
+} from '../aroundFrame'
+import type { AroundMaterialBands } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
 import { operationFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
@@ -204,10 +211,15 @@ export function computeOperationToolpath(
 
   const around = aroundFrameForOperation(project, operation)
   if (around) {
+    // What stands on the sheet, for the Follow line's keep-out (issue #1112
+    // rt6-e). Computed from the real project, before the unroll drops the
+    // models it is made of, and in the unrolled frame the generator reads.
+    const materials = operation.kind === 'follow_line' ? aroundMaterialBands(project, around) : undefined
     const envelope = computeTopDownToolpath(
       withoutUnreachableSubtracts(unrolledProject(project, around), face),
       operation,
       options,
+      materials,
     )
     if (!envelope) return null
     // A depth the operation works out itself — an Engrave's carve depth, a
@@ -257,6 +269,8 @@ function computeTopDownToolpath(
   project: Project,
   operation: Operation,
   options: ComputeOperationOptions,
+  /** Around only: the material standing on the unrolled sheet, see the call site. */
+  materials?: AroundMaterialBands,
 ): OperationToolpathEnvelope | null {
   let raw: ToolpathResult | null = null
 
@@ -302,7 +316,7 @@ function computeTopDownToolpath(
     const warned = applyTabWarnings(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
     result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
   } else if (operation.kind === 'follow_line') {
-    result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation)), operation)
+    result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation, materials)), operation)
   } else if (operation.kind === 'drilling') {
     result = applyClampWarnings(project, optimizeAndCapture(generateDrillingToolpath(project, operation)), operation)
   }

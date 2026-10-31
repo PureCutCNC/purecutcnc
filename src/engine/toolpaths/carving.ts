@@ -45,6 +45,8 @@ import {
   type TrochoidalOperationBudget,
 } from './trochoidalPath'
 import { appendAll } from './appendAll'
+import { trimGuideForNeighbourMaterial } from './neighbourKeepOut'
+import type { AroundMaterialBands } from '../aroundFrame'
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -181,6 +183,29 @@ interface PreparedTrochoidalCarve {
 }
 
 /**
+ * A guide warned about the same neighbouring section twice — the four lines of
+ * one Flutes pattern share a name and can all stop at the same shoulder — is
+ * one line in the panel, not four.
+ */
+function neighbourWarningKey(warning: ToolpathWarning): string {
+  const params = warning.params ?? {}
+  return [warning.code, params.name, params.neighbour, params.neighbourId, params.sideId].join('\u0000')
+}
+
+function appendNeighbourWarnings(
+  warnings: ToolpathWarning[],
+  seen: Set<string>,
+  incoming: readonly ToolpathWarning[],
+): void {
+  for (const warning of incoming) {
+    const key = neighbourWarningKey(warning)
+    if (seen.has(key)) continue
+    seen.add(key)
+    warnings.push(warning)
+  }
+}
+
+/**
  * One carve target, prepared but not yet emitted. Targets are ordered by travel
  * before emission, so `start` and `end` are the block's XY endpoints for that
  * ordering.
@@ -195,7 +220,16 @@ interface PreparedCarveTarget {
   work: PreparedDirectCarve | PreparedTrochoidalCarve
 }
 
-export function generateFollowLineToolpath(project: Project, operation: Operation): ToolpathResult {
+export function generateFollowLineToolpath(
+  project: Project,
+  operation: Operation,
+  /**
+   * The material standing on the Around sheet, when this operation cuts it
+   * (issue #1112 slice rt6-e). Omitted on a flat face and for every other
+   * operation kind, where a neighbouring section cannot be above the sheet.
+   */
+  materials?: AroundMaterialBands,
+): ToolpathResult {
   if (operation.kind !== 'follow_line') {
     return {
       operationId: operation.id,
@@ -388,6 +422,10 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   // sequence of targets — and therefore the rapid that reaches each one —
   // differs from the operation's target order.
   const preparedTargets: PreparedCarveTarget[] = []
+  // One warning per guide feature and neighbouring section, no matter how many
+  // expanded geometries (a Flutes pattern's four lines, a text run's glyphs)
+  // reached the same shoulder.
+  const warnedNeighbours = new Set<string>()
 
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
@@ -424,6 +462,27 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
       expansion: clampExpansion,
     }))
     if (fragments.length === 0) continue
+
+    // A section of the part standing above the surface this guide is cut on is
+    // as much a keep-out as a clamp: the cutter body may not enter it, and the
+    // guide is trimmed rather than left cutting into it (issue #1112 rt6-e).
+    // Same splitter, so ordering, link moves and lead-ins are unchanged.
+    if (materials && materials.bands.length > 0) {
+      const trimmed = trimGuideForNeighbourMaterial({
+        fragments,
+        axis: materials.axis,
+        bands: materials.bands,
+        guideSurfaceZ: topZ,
+        tipZ: carveZ,
+        tool,
+        trochoidalHalfWidth: cutWidth / 2,
+        guideName: feature.name,
+        units: project.meta.units,
+      })
+      fragments = trimmed.fragments
+      appendNeighbourWarnings(warnings, warnedNeighbours, trimmed.warnings)
+      if (fragments.length === 0) continue
+    }
 
     const cutLevels = buildCarveLevels(topZ, carveZ, operation.stepdown, operation.pass === 'finish')
 
