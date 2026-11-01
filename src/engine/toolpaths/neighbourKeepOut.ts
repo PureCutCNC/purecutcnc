@@ -32,10 +32,11 @@
  *    keep-out interval along the bar. The one band the guide is **drawn on** is
  *    its surface, whatever its kind, so it is never a wall — chosen by surface
  *    height, not by which band holds the guide's lowest coordinate, because a
- *    guide crosses onto a higher neighbour at either of its ends (see
- *    `supportingBand`). Every other band keeps every rule, including a band the
- *    guide crosses in its middle and a higher band it runs onto. Each band's
- *    height is the largest radius it presents at any angle, never its
+ *    guide crosses onto a higher neighbour at either of its ends, and between
+ *    sections at the same height by the stretch the guide runs along longest
+ *    (see `supportingBand`). Every other band keeps every rule, including a
+ *    band the guide crosses in its middle and a higher band it runs onto. Each
+ *    band's height is the largest radius it presents at any angle, never its
  *    across-flats radius (see `AroundMaterialKind`).
  * 2. That interval is grown by the cutter's real half-width at the height of
  *    the neighbour's surface: `(height above the tip) · tan(angle / 2)` for a
@@ -209,7 +210,7 @@ function isWall(band: AroundMaterialBand, guideSurfaceZ: number): boolean {
 
 /**
  * The band whose surface the guide is cut on: the one band it is **drawn on**,
- * never a neighbour (issue #1112 rt7-a corrections 2 and 3).
+ * never a neighbour (issue #1112 rt7-a corrections 2 to 4).
  *
  * The support is chosen by **surface height**, not by which band holds the
  * guide's lowest coordinate. The guide is cut on the material it rests on, so
@@ -228,6 +229,20 @@ function isWall(band: AroundMaterialBand, guideSurfaceZ: number): boolean {
  * the surface it instead read the Turn as a wall and deleted the supported Turn
  * half (review round 2, P1). Surface height is independent of the drawing
  * direction, so the crossing is handled at either end.
+ *
+ * Height cannot separate two sections that are level, and that is a real pair:
+ * a Hex whose corner radius equals the Turn beside it (case 14 of the test).
+ * The tie is broken by **how far the guide runs along each** — the section it
+ * is drawn on is the one it stays on longest, and a section it only just
+ * crosses onto at either end is a neighbour, which is what keeps both mirrors
+ * of case 14 a wall. Keyed to the guide's start instead — the rule this review
+ * round found — a line drawn on the Turn from 0.1 in inside the level Hex
+ * beside it read the crossed Hex as its surface, exempted it, and cut straight
+ * through its end face: to 3.4, inside the Hex's 3.0–3.5 band, instead of
+ * stopping a V-bit half-width past its face (review round 3, P1). Only a tie in
+ * length is left to the guide's start and then to a stable band order — an
+ * exactly half-and-half crossing, and a circumferential line, whose along
+ * extent is a single coordinate and so overlaps every band by nothing.
  *
  * Only a band that **overlaps** the guide's along extent is under it: the band
  * that merely ends where the guide starts is not a candidate, so Frank's bolt
@@ -248,14 +263,20 @@ function supportingBand(
   const height = resting.length > 0
     ? Math.max(...resting.map((band) => band.surfaceZ))
     : Math.min(...under.map((band) => band.surfaceZ))
-  // Two sections at the same height (a level Turn and Hex) are told apart by
-  // the guide's start, which is the only tie the surface height cannot break;
-  // the rest is a stable order so the choice never depends on band order.
+  // Sections at the same height are told apart by how much of the guide runs
+  // along each; the rest is a stable order so the choice never depends on band
+  // order, and only an exactly equal split falls back to the guide's start.
   return under
     .filter((band) => Math.abs(band.surfaceZ - height) <= SURFACE_TOLERANCE)
-    .sort((left, right) => Number(containsStart(right, guide)) - Number(containsStart(left, guide))
+    .sort((left, right) => overlapLength(right, guide) - overlapLength(left, guide)
+      || Number(containsStart(right, guide)) - Number(containsStart(left, guide))
       || left.alongMin - right.alongMin
       || left.name.localeCompare(right.name))[0]
+}
+
+/** How much of the guide's along extent this band runs under. */
+function overlapLength(band: AroundMaterialBand, guide: GuideExtent): number {
+  return Math.max(0, Math.min(band.alongMax, guide.max) - Math.max(band.alongMin, guide.min))
 }
 
 /** Whether the guide's start along the bar lies inside this band's span. */

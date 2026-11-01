@@ -96,6 +96,17 @@
  *      3.3–3.4403 on the higher bar: "the Turn's left shoulder: 3.3, expected
  *      3.5625".
  *
+ * Correction round 4 (Codex review of rt7-a correction 3, P1) re-checked 1–13
+ * against the length tie-break, added case 16 — the level Hex at the guide's
+ * **left** shoulder, case 14 mirrored — and added mutation 14:
+ *   1–13 → each still fails on the assertion quoted above (re-run against the
+ *      corrected code). 13 also fails case 16 with case 15 skipped, on the same
+ *      3.4-into-the-Hex number as 14.
+ *   14. Break the equal-height tie by the band that contains the guide's start
+ *      again — the reviewed rule — → "the level Hex's end face at the left
+ *      shoulder: 3.4, expected 3.53269": the crossed Hex is exempt, so the cut
+ *      runs through its end face from inside its 3.0–3.5 band.
+ *
  * Run with: npx tsx src/engine/toolpaths/aroundNeighbourKeepOut.test.ts
  */
 
@@ -1377,6 +1388,88 @@ function minCutterClearance(
       assert.equal(warning.params?.distance, '0.0625', `and it reports the radius it kept clear (${label})`)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 16. An equal-height body at the guide's **left** shoulder is still a wall.
+//     (Correction round 4, Codex review of rt7-a correction 3, P1: the
+//     equal-height tie was broken by the band that contains the guide's start,
+//     so a line drawn on a Turn whose start is 0.1 in inside the level Hex
+//     beside it read the *crossed* Hex as its surface, exempted it, and cut
+//     straight through its end face. Case 14 is the same pair mirrored; this is
+//     the other end of the same bug.)
+// ---------------------------------------------------------------------------
+
+{
+  // Case 14 mirrored: the Hex is on the left at the same corner height as the
+  // Turn beside it, and the line is drawn on the Turn from 0.1 in inside the
+  // Hex. Height cannot tell the two sections apart — both tops are the guide's
+  // own surface — so this is the tie the supporting rule has to break.
+  const levelRadius = cornerRadius(MODEL_DIAMETER)
+  const levelTurnDiameter = levelRadius * 2
+  const levelTurnNet = BAR_DIAMETER + levelTurnDiameter
+  const hexStart = BAR_START + HEX_START
+  const hexEnd = hexStart + HEX_LENGTH
+  const turnStart = hexEnd
+  const guideStart = hexEnd - 0.1
+  const guideEnd = hexEnd + 0.9
+  const { project, operation } = buildCase({
+    solids: [
+      { kind: 'polygon', start: HEX_START, length: HEX_LENGTH, sides: 6, acrossFlats: MODEL_DIAMETER },
+      { kind: 'turn', start: turnStart - BAR_START, length: 1.5, diameter: levelTurnDiameter },
+    ],
+    thread: null,
+    line: {
+      start: { x: guideStart, y: BAR_ZERO + 0.1 },
+      end: { x: guideEnd, y: BAR_ZERO + 0.1 },
+      zTop: levelTurnNet / 2,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+  const frame = aroundFrameForOperation(project, operation)
+  assert.ok(frame, 'the operation has an Around frame')
+  const materials = aroundMaterialBands(project, frame)
+  const levelHex = materials.bands.find((row) => row.kind === 'body' && row.name === 'Hex')
+  const levelTurn = materials.bands.find((row) => row.kind === 'turn')
+  const guideSurface = levelTurnNet / 2 - BAR_DIAMETER / 2
+  assert.ok(levelHex && levelTurn, 'the case has a Hex and a Turn')
+  assert.ok(
+    Math.abs(levelHex.surfaceZ - guideSurface) < 1e-6,
+    `the fixture is the level case: the Hex corner ${levelHex.surfaceZ} is the guide's surface ${guideSurface}`,
+  )
+  // A model's stored Z top is Float32: the Turn reads 9.8e-6 short of the value
+  // its own diameter gives, which is inside the keep-out's own surface slack.
+  assert.ok(
+    Math.abs(levelTurn.surfaceZ - guideSurface) < 2e-5,
+    `the Turn beside it is level too (${levelTurn.surfaceZ}), so surface height cannot choose between them`,
+  )
+
+  // Without the keep-out the guide is cut from its own start, inside the Hex:
+  // that is the gouge this case is about.
+  const unrolled = unrolledProject(project, frame)
+  const untrimmed = generateFollowLineToolpath(unrolled, operation)
+  assertStopsShortOf(alongExtent(untrimmed.moves.filter((move) => move.kind === 'cut')).min,
+    guideStart, 'start', 'untouched, the line cuts from inside the Hex band')
+
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope)
+  const cuts = envelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(cuts.length > 0, 'the line on the Turn is still cut, not deleted')
+  // The Hex's own end face at the right of its band is the wall: the cutter
+  // stops a V-bit half-width past it, exactly as case 14 stops short of the
+  // same face from the Turn's side. Cutting to 3.4 would be inside the band.
+  const trim = vBitHalfWidthAt(THREAD_DEPTH)
+  const extent = alongExtent(cuts)
+  assertStopsShortOf(extent.min, hexEnd + trim, 'start', "the level Hex's end face at the left shoulder")
+  assertStopsShortOf(extent.max, guideEnd, 'end', 'the line keeps its own end on the Turn')
+  const warning = findWarning(envelope.result, 'carveNeighbourTrimmed')
+  assert.equal(warning.params?.neighbour, 'Hex', 'the level body is the neighbour it stops at')
+  assert.equal(warning.params?.sideId, 'start', 'and it stops at the start')
+  assert.ok(
+    Math.abs(Number(warning.params?.distance) - trim) < 1e-4,
+    `the warning reports the half-width it used (${warning.params?.distance})`,
+  )
 }
 
 console.log('Around follow-line neighbour keep-out tests passed')
