@@ -39,9 +39,9 @@
  *   and no height figure" assertion fails;
  * - the Thread's Depth read from `pitch` instead of `depth` → its merged-line
  *   value assertion fails;
- * - the surface clause dropped from the merged line → the Thread's, the
- *   Flutes' and the bare-bar Thread's "below … (Ø …, surface at Z …)"
- *   assertions fail;
+ * - the surface clause dropped from the merged line → the Thread's, both
+ *   Flutes' (the warned band and the one wholly on the Turn) and the bare-bar
+ *   Thread's "below … (Ø …, surface at Z …)" assertions fail;
  * - the bar's surface Z read as half the thickness (the axis, not the surface)
  *   → the Thread and the warned Flutes lines fail;
  * - the old read-only line rendered again under Instance (a second
@@ -340,6 +340,40 @@ async function renderSingle(featureId: string): Promise<Mounted> {
       + '(Ø 40 mm, surface at Z 40) · '
       + 'This pattern crosses the end of Turn, where the bar\'s diameter changes.',
     'the warned Flutes line says it is measured from the bar and why',
+  )
+  assert.equal(zSourceLine(mounted), null, 'no second read-only line under Instance')
+  assert.equal(statementCount(mounted, 'depth 0.8 mm'), 1, 'and the Depth is stated once')
+  mounted.unmount()
+}
+
+// ── Flutes wholly on the Turn: the same line, no warning ─────
+//
+// The fixture's own Flutes run to 50 while the Turn ends at 35, so they are the
+// warned case above. This band (8…28) sits wholly inside that Turn, so nothing
+// warns: the same one line must name the Turn, its diameter and that surface's
+// Z, and the Instance section must still have nothing to say.
+
+{
+  loadWithShapes()
+  const contained = store().addRotaryPattern({
+    kind: 'flutes',
+    start: 8,
+    length: 20,
+    count: 4,
+    twist: 0.5,
+    depth: 0.8,
+  })
+  assert.ok(contained.ok, 'a Flutes band wholly inside the Turn is created')
+  const mounted = await renderSingle(contained.featureId)
+  mounted.openSection('Shape')
+  await flush()
+  assert.equal(hasZSlider(mounted), false, 'Flutes have no Z range control')
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'Flutes show their Shape summary line')
+  assert.equal(
+    summary.text,
+    'Flutes · 4 · twist 0.5 turns · length 20 · depth 0.8 mm below Turn (Ø 30 mm, surface at Z 35)',
+    'a band wholly on the Turn is measured from that Turn, with its diameter and surface Z',
   )
   assert.equal(zSourceLine(mounted), null, 'no second read-only line under Instance')
   assert.equal(statementCount(mounted, 'depth 0.8 mm'), 1, 'and the Depth is stated once')
