@@ -29,12 +29,14 @@
  *
  * 1. Each material band the caller supplies (from `aroundMaterialBands`) whose
  *    surface counts as a wall for its kind — see `AroundMaterialKind` — is a
- *    keep-out interval along the bar. The band that contains the guide's own
- *    start along the bar is the surface the guide is drawn on, whatever its
- *    kind, so it is never a wall — even where the guide runs past its end onto
- *    a higher band; the band that only overlaps the guide keeps every rule.
- *    Each band's height is the largest radius it presents at any angle, never
- *    its across-flats radius (see `AroundMaterialKind`).
+ *    keep-out interval along the bar. The one band the guide is **drawn on** is
+ *    its surface, whatever its kind, so it is never a wall — chosen by surface
+ *    height, not by which band holds the guide's lowest coordinate, because a
+ *    guide crosses onto a higher neighbour at either of its ends (see
+ *    `supportingBand`). Every other band keeps every rule, including a band the
+ *    guide crosses in its middle and a higher band it runs onto. Each band's
+ *    height is the largest radius it presents at any angle, never its
+ *    across-flats radius (see `AroundMaterialKind`).
  * 2. That interval is grown by the cutter's real half-width at the height of
  *    the neighbour's surface: `(height above the tip) · tan(angle / 2)` for a
  *    V-bit capped at the tool radius, the radius for a flat or ball cutter,
@@ -120,14 +122,15 @@ export function trimGuideForNeighbourMaterial(input: NeighbourTrimInput): Neighb
   const unchanged: NeighbourTrimResult = { fragments: input.fragments, warnings: [] }
   if (input.fragments.length === 0 || input.bands.length === 0) return unchanged
 
-  // The guide's extent decides which body supports it. Taken before this
+  // The guide's extent decides which surface supports it. Taken before this
   // keep-out shortens it: a fragment an earlier trim left inside a body is not
   // thereby a guide the user drew on that body.
   const drawn = guideExtent(input.fragments, input.axis)
   if (!drawn) return unchanged
 
+  const support = supportingBand(input.bands, input.guideSurfaceZ, drawn)
   const obstacles = input.bands
-    .filter((band) => isWall(band, input.guideSurfaceZ, drawn))
+    .filter((band) => band !== support && isWall(band, input.guideSurfaceZ))
     .map((band) => ({ band, halfWidth: cutterHalfWidthAt(band.surfaceZ - input.tipZ, input) }))
     // Widest first: overlapping keeps-out then resolve to the one that keeps
     // the cutter furthest away, and the narrower ones report nothing.
@@ -193,40 +196,70 @@ export function trimGuideForNeighbourMaterial(input: NeighbourTrimInput): Neighb
 /**
  * Whether one band is a wall for a guide on `guideSurfaceZ`.
  *
- * The band the guide is **drawn on** is its surface, never a neighbour, for
- * every kind (issue #1112 rt7-a correction 2). The evidence is the guide's own
- * start along the bar: the band that contains that start is the body whose top
- * the guide follows, and its stored Z need not agree with the band's surface —
- * a circumferential line drawn around a Turn reads its Z top below the Turn's
- * (that depth mismatch is #1131, not this rule). Treating the Turn as a wall
- * dropped the whole line with "nothing was cut". This extends the rt6-e `body`
- * rule (`supports`) to `turn` and `bar`: a `body` counts at or above the
- * guide's surface because its end face is a wall even where its top is level
- * with the guide's, and a `turn`/`bar` only where it stands above it, but none
- * of them is a wall over the span the guide is drawn on.
- *
- * The support is keyed to a band that **contains** the start, half-open at its
- * end, not to a band that spans the whole guide (review round 1): a line 0.1 in
- * below its Turn and running off the Turn's end onto uncut bar is still drawn
- * on that Turn, so the Turn cannot be a wall over its own span — only the
- * higher bar beyond trims. The band that merely *ends* at the guide's start is
- * not the support: Frank's bolt has the Thread starting exactly where the Hex
- * ends, and the Hex's end face must stay a wall there. A neighbour that stands
- * inside the guide's span (a body it crosses, a larger Turn step) is not the
- * band it starts on, so it keeps every rule it had.
+ * A `body` counts at **or above** the guide's surface, because its end face is
+ * a wall even where its top is level with the guide's; a `turn` or `bar` only
+ * where it stands strictly above. Whether the band the guide is drawn on is
+ * exempted is `supportingBand`'s decision, not this one (issue #1112 rt7-a
+ * corrections 2 and 3).
  */
-function isWall(band: AroundMaterialBand, guideSurfaceZ: number, guide: GuideExtent): boolean {
-  if (supportsGuide(band, guide)) return false
+function isWall(band: AroundMaterialBand, guideSurfaceZ: number): boolean {
   if (band.kind !== 'body') return band.surfaceZ > guideSurfaceZ + SURFACE_TOLERANCE
   return band.surfaceZ >= guideSurfaceZ - SURFACE_TOLERANCE
 }
 
 /**
- * Whether the guide is drawn on this band: the guide's own start along the bar
- * lies inside the band's span. The end is half-open so a band that stops where
- * the guide starts is a neighbour, not a support.
+ * The band whose surface the guide is cut on: the one band it is **drawn on**,
+ * never a neighbour (issue #1112 rt7-a corrections 2 and 3).
+ *
+ * The support is chosen by **surface height**, not by which band holds the
+ * guide's lowest coordinate. The guide is cut on the material it rests on, so
+ * the band whose top is the highest at or below the guide's own Z is its
+ * surface; when the guide is drawn below every surface under it — a
+ * circumferential line whose stored Z top sits below the Turn it was drawn from
+ * (that depth mismatch is #1131, not this rule) — the lowest surface above it
+ * is the one it was drawn from. A guide's Z is one value along its whole
+ * length, so this does not depend on which end the line was drawn from.
+ *
+ * Keying the support to the band that **contained** the guide's start (review
+ * round 1) picked the wrong side whenever the guide crossed onto a higher band
+ * at its low end: a line drawn on a Turn at 4.3 and back onto uncut bar at 3.3
+ * has its minimum on the bar, so the bar became its surface, that shoulder was
+ * exempt, and the line cut through it with no warning at all — a tenth below
+ * the surface it instead read the Turn as a wall and deleted the supported Turn
+ * half (review round 2, P1). Surface height is independent of the drawing
+ * direction, so the crossing is handled at either end.
+ *
+ * Only a band that **overlaps** the guide's along extent is under it: the band
+ * that merely ends where the guide starts is not a candidate, so Frank's bolt
+ * keeps the Hex's end face a wall at the Thread's start. Every other band keeps
+ * every rule it had — the higher Turn step, the uncut bar a line runs onto, and
+ * a Hex or body the guide crosses in its middle are all still trimmed against.
  */
-function supportsGuide(band: AroundMaterialBand, guide: GuideExtent): boolean {
+function supportingBand(
+  bands: readonly AroundMaterialBand[],
+  guideSurfaceZ: number,
+  guide: GuideExtent,
+): AroundMaterialBand | undefined {
+  const under = bands.filter((band) => band.alongMin < guide.max - ALONG_TOLERANCE
+    && band.alongMax > guide.min + ALONG_TOLERANCE)
+  if (under.length === 0) return undefined
+
+  const resting = under.filter((band) => band.surfaceZ <= guideSurfaceZ + SURFACE_TOLERANCE)
+  const height = resting.length > 0
+    ? Math.max(...resting.map((band) => band.surfaceZ))
+    : Math.min(...under.map((band) => band.surfaceZ))
+  // Two sections at the same height (a level Turn and Hex) are told apart by
+  // the guide's start, which is the only tie the surface height cannot break;
+  // the rest is a stable order so the choice never depends on band order.
+  return under
+    .filter((band) => Math.abs(band.surfaceZ - height) <= SURFACE_TOLERANCE)
+    .sort((left, right) => Number(containsStart(right, guide)) - Number(containsStart(left, guide))
+      || left.alongMin - right.alongMin
+      || left.name.localeCompare(right.name))[0]
+}
+
+/** Whether the guide's start along the bar lies inside this band's span. */
+function containsStart(band: AroundMaterialBand, guide: GuideExtent): boolean {
   return band.alongMin <= guide.min + ALONG_TOLERANCE
     && band.alongMax > guide.min + ALONG_TOLERANCE
 }

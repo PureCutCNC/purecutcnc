@@ -65,12 +65,9 @@
  *   9. Keep the rt6-e supporting rule for `body` only, as it was → the
  *      circumferential line on the Turn is deleted again with "nothing was cut",
  *      because the Turn's surface is above the line's stored Z top.
- *   10. Make every *overlapping* band supporting instead of the bands that span
- *      the guide's whole along extent → the line crossing the Hex runs through
- *      it: "no cut may run through the Hex band". After review round 1 the
- *      support is keyed to the guide's own start, so this mutation now trips
- *      the earlier start-face case first: "the Hex end face: 3.5, expected
- *      3.54823".
+ *   10. Make every *overlapping* band supporting instead of the band the guide
+ *      is drawn on → the line crossing the Hex runs through it: "no cut may run
+ *      through the Hex band (3.6 → 5.4)".
  *
  * Review round 1 (Codex review of rt7-a) added the mutations 11–12:
  *   11. Key the supporting rule to a band that spans the guide's whole along
@@ -80,7 +77,24 @@
  *   12. Close the supporting interval at the band's end (`alongMax >= guide.min
  *      - ALONG_TOLERANCE`) → "the Hex end face: 3.5, expected 3.54823": the Hex
  *      ending exactly where the line starts stops being a wall, so the cutter
- *      runs onto its end face again.
+ *      runs onto its end face again. Correction 3 stopped keying the support to
+ *      an interval around the guide's start, so this exact break no longer
+ *      exists; its equivalent is the height-blind start band listed just below.
+ *
+ * Correction round 3 (Codex review of rt7-a correction 2, P1) re-checked 8–12
+ * against the surface-height support rule and added mutation 13:
+ *   8, 9, 10, 11 → each still fails on the assertion quoted above (checked
+ *      against the corrected code).
+ *   12. Pick the band that contains **or ends at** the guide's start, its height
+ *      ignored (the interval-closing form, now impossible by construction) →
+ *      "the Hex end face: 3.5, expected 3.54823": the Hex ending exactly where
+ *      the Thread starts becomes the support and stops being a wall.
+ *   13. Key the support to the guide's minimum coordinate again — the rule the
+ *      review found — → case 15 fails at both depths. At the Turn's surface the
+ *      line cuts through the shoulder (3.3 → 4.3, no warning); 0.1 in below it
+ *      the Turn reads as a wall and deletes the supported Turn half, leaving
+ *      3.3–3.4403 on the higher bar: "the Turn's left shoulder: 3.3, expected
+ *      3.5625".
  *
  * Run with: npx tsx src/engine/toolpaths/aroundNeighbourKeepOut.test.ts
  */
@@ -855,9 +869,9 @@ function minCutterClearance(
   )
 
   // The larger section is still a wall: the same surface line, drawn on past
-  // the step, stops clear of it. The supporting rule is keyed to the band the
-  // line **starts** on (the small section), so this higher section — which only
-  // the line's far end reaches — keeps its trim.
+  // the step, stops clear of it. The support is the surface the line's own Z
+  // rests on (the small section), so this higher section — which only the
+  // line's far end reaches — keeps its trim.
   const crossed = buildCase({
     solids: [{ kind: 'turn', start: TURN_START, length: 2, diameter: largeRadius * 2, profile: steppedTurn }],
     thread: null,
@@ -1062,8 +1076,9 @@ function minCutterClearance(
   //
   // Their stored Z top (0.25 above the axis) is below the Turn's 0.375 surface.
   // rt6-e read the Turn as a wall and dropped both lines with "nothing was
-  // cut"; the Turn contains each line's own start along the bar, so it is the
-  // surface they are cut on, not a neighbour (rt7-a corrections 2 and review 1).
+  // cut"; each line's own Z is nearer the Turn's surface than any other band
+  // under it, so the Turn is the surface they are cut on, not a neighbour
+  // (rt7-a corrections 2 and 3).
   for (const along of BOLT_LINES) {
     const cuts = trimmed.moves.filter((move) => move.kind === 'cut'
       && Math.abs(move.from.x - along) < 1e-6
@@ -1093,12 +1108,12 @@ function minCutterClearance(
 }
 
 // ---------------------------------------------------------------------------
-// 12. The supporting rule is keyed to the band the guide is **drawn on** — the
-//     one that contains its own start — not to a band that spans the whole
-//     guide: a line on the Turn is cut end to end, the same line running off
-//     onto the bar stops at the shoulder, and the same line drawn *below* the
-//     Turn's surface survives on the Turn while the bar trims its end
-//     (rt7-a correction 2, corrected in review round 1).
+// 12. The support is the surface the guide is **drawn on**, chosen by height
+//     rather than by a band that spans the whole guide: a line on the Turn is
+//     cut end to end, the same line running off onto the bar stops at the
+//     shoulder, and the same line drawn *below* the Turn's surface survives on
+//     the Turn while the bar trims its end (rt7-a correction 2, corrected in
+//     review round 1 and again in correction 3).
 // ---------------------------------------------------------------------------
 
 {
@@ -1190,11 +1205,10 @@ function minCutterClearance(
   assert.equal(belowWarning.params?.neighbourId, 'bar', 'the bar past the Turn is the only neighbour it stops at')
   assert.equal(belowWarning.params?.sideId, 'end', 'at its far end')
 
-  // The band containing the guide's start is the support for the whole guide,
-  // and the band that merely *ends* where the guide starts is still a wall:
-  // a line drawn from the Hex's end face (the Turn's own start) with a stored
-  // Z below both keeps its cut on the Turn and loses only what the Hex's end
-  // face needs.
+  // The Turn is the support because the guide's Z rests on it, and the Hex
+  // that merely *ends* where the guide starts is still a wall: a line drawn
+  // from the Hex's end face (the Turn's own start) with a stored Z below both
+  // keeps its cut on the Turn and loses only what the Hex's end face needs.
   const crossesFromHex = buildCase({
     solids: [
       { kind: 'polygon', start: HEX_START, length: HEX_LENGTH, sides: 6, acrossFlats: MODEL_DIAMETER },
@@ -1310,6 +1324,59 @@ function minCutterClearance(
   assertStopsShortOf(alongExtent(cuts).max, hexStart - trim, 'end', "the level Hex's end face")
   const warning = findWarning(envelope.result, 'carveNeighbourTrimmed')
   assert.equal(warning.params?.neighbour, 'Hex', 'the level body is the neighbour it stops at')
+}
+
+// ---------------------------------------------------------------------------
+// 15. A guide that runs off a Turn's **left** shoulder onto higher bar is still
+//     kept clear of that shoulder, at the surface and below it, whichever end it
+//     is drawn from. (Correction round 3, Codex review of rt7-a correction 2,
+//     P1: the support was keyed to the guide's minimum coordinate, which is not
+//     the drawn start. A line drawn on the Turn at 4.3 and ending on the bar at
+//     3.3 had its minimum on the bar, so the bar read as its surface: at the
+//     surface level the line cut through the shoulder with no warning, and a
+//     tenth below it the Turn read as a wall and deleted the supported Turn
+//     half, leaving only 3.3–3.4403 on the higher bar.)
+// ---------------------------------------------------------------------------
+
+{
+  // A Ø0.75 Turn from along 3.5 to 5.5 with the uncut bar standing to its left.
+  // The line is drawn on the Turn's surface at 4.3 and back across the shoulder
+  // at 3.5 onto the bar at 3.3, in both directions; `below` puts the whole line
+  // 0.1 in under the Turn's surface, the bolt's Polyline 6 shape.
+  const shoulder = BAR_START + TURN_START
+  const turnSurface = (BAR_DIAMETER + MODEL_DIAMETER) / 2
+  const onTurn = shoulder + 0.8
+  const onBar = shoulder - 0.2
+  for (const below of [0, 0.1]) {
+    for (const drawnFromTurn of [true, false]) {
+      const trim = VBIT_DIAMETER / 2
+      const label = `${below === 0 ? 'at the surface' : '0.1 in below it'}, drawn ${drawnFromTurn ? 'from the Turn' : 'from the bar'}`
+      const { project, operation } = buildCase({
+        solids: [{ kind: 'turn', start: TURN_START, length: 2, diameter: MODEL_DIAMETER }],
+        thread: null,
+        line: {
+          start: { x: drawnFromTurn ? onTurn : onBar, y: BAR_ZERO },
+          end: { x: drawnFromTurn ? onBar : onTurn, y: BAR_ZERO },
+          zTop: turnSurface - below,
+        },
+        toolRef: 'vbit',
+        carveDepth: THREAD_DEPTH,
+      })
+      const envelope = computeOperationToolpath(project, operation)
+      assert.ok(envelope)
+      const cuts = envelope.result.moves.filter((move) => move.kind === 'cut')
+      assert.ok(cuts.length > 0, `the line is still cut (${label})`)
+      const extent = alongExtent(cuts)
+      // The bar's surface is 0.125 above the Turn's, so the V-bit's width there
+      // is wider than its radius: the keep-out is the radius, 0.0625 in.
+      assertStopsShortOf(extent.min, shoulder + trim, 'start', `the Turn's left shoulder (${label})`)
+      assertStopsShortOf(extent.max, onTurn, 'end', `the line keeps its own end on the Turn (${label})`)
+      const warning = findWarning(envelope.result, 'carveNeighbourTrimmed')
+      assert.equal(warning.params?.neighbourId, 'bar', `the uncut bar is the neighbour (${label})`)
+      assert.equal(warning.params?.sideId, 'start', `stopped at the start (${label})`)
+      assert.equal(warning.params?.distance, '0.0625', `and it reports the radius it kept clear (${label})`)
+    }
+  }
 }
 
 console.log('Around follow-line neighbour keep-out tests passed')
