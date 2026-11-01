@@ -297,6 +297,11 @@ depth, or asks for a list they want enumerated — not because the work was big.
 - **Make a needed decision easy to see.** Ask in the first sentence, in ordinary
   language. Do not bury a question in a recap, and do not end a completed task
   with an implied wait.
+- **No full local paths on GitHub.** Issues, PRs, comments and review text
+  never contain a full path to a user's own files (a home folder, a checkout or
+  a worktree). Use repo-relative paths (`work/bolt-test-01.camj`, `src/...`),
+  and `<worktrees>/<slug>` or `<primary checkout>/` for local folders. Paths to
+  OS things (`/etc/...`, `/usr/lib/...`, `/tmp`, `C:\Windows\...`) are fine.
 - **Challenge constructively.** State the concern, offer an alternative, give the
   trade-off in a sentence. Once the user picks a reasonable direction, implement
   it rather than reopening the debate. Raise a true safety, authority, or scope
