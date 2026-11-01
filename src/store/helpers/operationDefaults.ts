@@ -22,6 +22,7 @@ import { defaultRetractOffset, defaultTool, isRotaryOperationKind } from '../../
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
+import { toolInUnits } from '../../engine/operations/toolSelection'
 import { samePlasmaParameters } from '../../toolPolicy'
 import type {
   FeatureOperation,
@@ -320,7 +321,13 @@ export function defaultOperationForTarget(
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
   if (isRotaryOperationKind(kind)) pass = kind === 'rotary_rough' ? 'rough' : 'finish'
-  const firstTool = project.tools.find((candidate) => kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma')
+  // The fallback cutter is in the project's units too (issue #1132): an
+  // automatic pick never crosses the unit systems, so a project holding only
+  // other-unit tools falls back to `defaultTool` instead of them.
+  const firstTool = project.tools.find((candidate) =>
+    toolInUnits(candidate, project.meta.units)
+    && (kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma'),
+  )
   const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
   const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
 

@@ -97,6 +97,9 @@ interface RunOptions {
   storedTorch?: Record<string, unknown>
   /** Cut two parts, so a program has more than one drop. */
   twoParts?: boolean
+  /** Assign the created tool to the operation by hand, as an operator does.
+   *  An automatic pick never crosses the unit systems (issue #1132). */
+  handAssignTool?: boolean
 }
 
 /** Build the project with the production actions and post it, as the export does. */
@@ -140,6 +143,7 @@ async function runExport(options: RunOptions): Promise<ExportPreparation> {
     options.importFrom ?? [],
   )
   assert.ok(operationId, 'the plasma operation is accepted')
+  if (options.handAssignTool && toolId !== null) store().updateOperation(operationId, { toolRef: toolId })
   if (options.operationPlungeFeed !== undefined || options.operationFeed !== undefined) {
     store().updateOperation(operationId, {
       ...(options.operationPlungeFeed === undefined ? {} : { plungeFeed: options.operationPlungeFeed }),
@@ -278,19 +282,31 @@ async function main(): Promise<void> {
     assert.equal(feedOf(dropLine(gcode(prepared))), 450, 'the fallback reaches the emitted drop')
   }
 
-  // 4. Units. A tool in the project's units emits its value unchanged; a tool
-  //    in another unit is converted, both when the operation is created and when
-  //    the tool is configured afterwards.
+  // 4. Units. A tool in the project's units emits its value unchanged. A tool
+  //    in another unit is never picked automatically (#1132): the operation is
+  //    created with no tool and the export blocks, rather than converting a
+  //    torch the operator never chose. A hand-assigned foreign-unit tool is
+  //    still converted for generation.
   {
     const inchValue = 300
     const sameUnits = await runExport({ units: 'inch', machineId: 'grbl-plasma', feedBefore: inchValue })
     assert.equal(feedOf(dropLine(gcode(sameUnits))), inchValue, 'an inch tool emits the stored inch feed')
 
-    const converted = convertLength(2000, 'mm', 'inch')
-    const before = await runExport({ units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 2000 })
-    assert.ok(Math.abs(feedOf(dropLine(gcode(before)))! - converted) < 1e-3, 'a millimetre tool seeds an inch operation converted')
+    const unassigned = await runExport({ units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 2000 })
+    assert.equal(unassigned.status, 'blocked', 'an inch project is never handed a millimetre torch')
+    assert.equal(unassigned.status === 'blocked' ? unassigned.reason.kind : null, 'missing-tool', 'the blocked reason names the missing tool')
 
-    const after = await runExport({ units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 0, feedAfter: 2000 })
+    const converted = convertLength(2000, 'mm', 'inch')
+    const before = await runExport({
+      units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 2000,
+      handAssignTool: true, operationPlungeFeed: 0,
+    })
+    assert.ok(Math.abs(feedOf(dropLine(gcode(before)))! - converted) < 1e-3, 'a hand-assigned millimetre tool feeds the inch operation converted')
+
+    const after = await runExport({
+      units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 0, feedAfter: 2000,
+      handAssignTool: true, operationPlungeFeed: 0,
+    })
     assert.ok(Math.abs(feedOf(dropLine(gcode(after)))! - converted) < 1e-3, 'the after-create fallback is converted too')
   }
 
