@@ -58,3 +58,18 @@ export function editorParamsFromValues(
   }
   return params
 }
+
+/**
+ * The parameters a draft's field text stands for after the generator's own
+ * validation, or `null` while a field holds a value the generator refuses
+ * (issue #1112 rt7-g). The panel's live preview and the canvas radius handles
+ * both read the fields through this one function, so a typed value and a
+ * dragged one can never disagree about what the fields mean.
+ */
+export function editorNormalizedParams(
+  request: CannedShapeEditorRequest,
+  values: Record<string, string>,
+): CannedShapeParams | null {
+  const candidate = editorParamsFromValues(request, values)
+  return candidate ? request.normalize(candidate) : null
+}

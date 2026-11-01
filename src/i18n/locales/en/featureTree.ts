@@ -61,6 +61,7 @@ export const featureTreeEn = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ First 2.5D feature must be ',
   'featureTree.tree.warning.firstFeatureSuffix': '. The 3D model will not build until this is fixed.',
+  'featureTree.treeRow.warning.noEffect': 'No effect on the final shape: later features cover it.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Expand folder',
@@ -254,11 +255,30 @@ export const featureTreeEn = {
   'featureTree.properties.canned.edit': 'Edit {shape}…',
   'featureTree.properties.canned.editUnavailable': 'This shape’s editor is not available yet',
   'featureTree.properties.canned.expand': 'Expand to features',
+  'featureTree.properties.canned.label': 'Canned feature',
   'featureTree.properties.canned.note': 'The sketch is generated from this shape’s parameters. Expand to features to edit it, cut, join, trim or offset it.',
   'featureTree.properties.canned.noteBadge': 'Generated',
   'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
   'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
   'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
+  // A Thread and Flutes own their Z span, so Properties offers no Z control and
+  // names the Depth the Edit panel writes on the shape's own summary line — one
+  // line, with the Edit button right under it, instead of a second read-only
+  // line under Instance (issue #1112 rt6-a, rt7-d). A Turn and a Polygon own
+  // theirs too but report no Depth: their summary already shows the
+  // diameter/across flats and its surface Z (rt7-b).
+  'featureTree.properties.canned.depth': 'depth {value}',
+  // A Thread/Flutes Depth is measured from a surface, so the same clause names it
+  // with its diameter and Z, and repeats the warning for a surface that is not
+  // one diameter (issue #1112 rt6-c).
+  'featureTree.properties.canned.depth.surface': 'depth {value} {surface}',
+  'featureTree.properties.canned.surface.onTurn': 'below {name} (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.bar': 'below the bar (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.warned': 'below the bar (Ø {diameter}, surface at Z {value}) · {warning}',
+  // The Z a Turn's diameter or a Polygon's across-flats reaches: the bar axis
+  // plus the radius, appended to the summary line (issue #1112 rt6-c).
+  'featureTree.properties.canned.surface.turn': 'surface at Z {value}',
+  'featureTree.properties.canned.surface.flats': 'flats at Z {value}',
   // ── Canned shape names and one-line summaries (issue #1112) ──
   'canned.ellipse.name': 'ellipse',
   'canned.ellipse.summary': 'Ellipse · {rx} × {ry}',
@@ -427,6 +447,7 @@ export const featureTreeEn = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'No compatible operations',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Not used in any operation',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Removing this would make the operation invalid',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Change the size in {edit}',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Shape',
@@ -437,6 +458,14 @@ export const featureTreeEn = {
   // ── Properties: clamp type (#392) ──
   'featureTree.properties.clampType': 'Type',
   'featureTree.properties.clampType.clamp': 'Clamp',
+  'featureTree.properties.chuckSize': 'Chuck size',
+  'featureTree.properties.chuckExisting': 'Existing size',
+  'featureTree.properties.chuckMin': 'Minimum grip diameter',
+  'featureTree.properties.chuckMax': 'Maximum grip diameter',
+  'featureTree.properties.chuckJaws': 'Jaws',
+  'featureTree.properties.chuckUnknownRange': 'Capacity unknown. Enter limits or pick a size.',
+  'featureTree.properties.chuckSquareRange': 'Square blank: across flats with 4 jaws; corner circle with 3 or 6.',
+  'featureTree.properties.chuckOutOfRange': 'Bar is outside the chuck’s clamping range.',
   'featureTree.properties.clampType.chuck': 'Chuck',
   'featureTree.properties.clampType.tailstock': 'Tailstock',
 

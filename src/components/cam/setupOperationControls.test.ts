@@ -16,19 +16,21 @@
 
 /**
  * What an operation's "What it cuts" group shows (issue #1102): the reach cards
- * only where two faces meet, no "Move…" on a rotary pass, and the folded
- * other-face list's summary naming its picks.
+ * only where two faces meet and no "Move…" on a rotary pass.
  *
  * The reach rule is per entry, not per operation: one operation can target a
  * single-sided pocket (no card — nothing has two sides) and a through-feature
- * (a card — it must be measured on both) at the same time.
+ * cut from both setups (a card — it must be measured on both) at the same time.
+ * A through-feature cut from one setup only is single-sided too, so it gets no
+ * card either (issue #1112 item 38).
  *
  * Run with: npx tsx src/components/cam/setupOperationControls.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { canMoveOperation, crossFaceSummaryLine, visibleTargetReach } from './setupSections'
+import { canMoveOperation, cutFromBothSides, visibleTargetReach } from './setupSections'
 import type { TargetReach } from './setupSections'
+import type { ThroughCoverageStatus } from '../../engine/setupReach'
 import type { TargetFaceStatus, TargetFaceVerdict } from '../../engine/setupTargets'
 import type { OperationKind } from '../../types/project'
 
@@ -45,8 +47,21 @@ function verdict(id: string, status: TargetFaceStatus, through = false): TargetF
   }
 }
 
-function reach(id: string, entry: TargetFaceVerdict): TargetReach {
-  return { featureId: id, featureName: id, verdict: entry, range: null, coverage: null }
+function reach(id: string, entry: TargetFaceVerdict, coverage: ThroughCoverageStatus | null = null): TargetReach {
+  return {
+    featureId: id,
+    featureName: id,
+    verdict: entry,
+    range: null,
+    coverage: coverage === null ? null : {
+      featureId: id,
+      status: coverage,
+      top: { operationIds: [], range: null },
+      bottom: { operationIds: [], range: null },
+      overlap: null,
+      gap: null,
+    },
+  }
 }
 
 /** The ids the cards would render, in order. */
@@ -58,18 +73,24 @@ function shown(face: 'top' | 'bottom' | 'around', reaches: TargetReach[]): strin
 assert.deepEqual(shown('top', [reach('blind', verdict('blind', 'same-face'))]), [], 'a single-sided target has no card on Top')
 assert.deepEqual(shown('bottom', [reach('blind', verdict('blind', 'same-face'))]), [], 'nor on Bottom')
 
-// A through-feature reaches both faces: it must be measured on both.
-assert.deepEqual(shown('top', [reach('pin', verdict('pin', 'same-face', true))]), ['pin'], 'a through target keeps its card')
+// A through-feature cut from one setup only reaches both stock faces, but there
+// is no second pass to measure: no card (issue #1112 item 38).
+assert.deepEqual(shown('top', [reach('pin', verdict('pin', 'same-face', true), 'singleSide')]), [], 'a through target cut from one side has no card')
+assert.equal(cutFromBothSides(reach('pin', verdict('pin', 'same-face', true), 'singleSide')), false, 'one side is not both sides')
 
-// Cut from the other face: same reason.
-assert.deepEqual(shown('bottom', [reach('pin', verdict('pin', 'cross-face', true))]), ['pin'], 'a cross-face target keeps its card')
+// Cut from both setups: the card stays however much has been measured.
+for (const status of ['unverified', 'meets', 'gap'] as const) {
+  assert.deepEqual(shown('top', [reach('pin', verdict('pin', 'same-face', true), status)]), ['pin'], `a two-sided target keeps its card (${status})`)
+  assert.deepEqual(shown('bottom', [reach('pin', verdict('pin', 'cross-face', true), status)]), ['pin'], `a cross-face two-sided target keeps its card (${status})`)
+  assert.equal(cutFromBothSides(reach('pin', verdict('pin', 'cross-face', true), status)), true, `both sides are both sides (${status})`)
+}
 
 // "Cannot reach" is an error the user has to see, so it keeps its card too.
 assert.deepEqual(shown('top', [reach('wrong', verdict('wrong', 'rejected'))]), ['wrong'], 'a rejected target keeps its card')
 
 // Around has no other face at all — not even a through or a rejected entry shows.
 assert.deepEqual(
-  shown('around', [reach('pin', verdict('pin', 'same-face', true)), reach('wrong', verdict('wrong', 'rejected'))]),
+  shown('around', [reach('pin', verdict('pin', 'same-face', true), 'meets'), reach('wrong', verdict('wrong', 'rejected'))]),
   [],
   'Around shows no reach cards',
 )
@@ -78,11 +99,12 @@ assert.deepEqual(
 assert.deepEqual(
   shown('top', [
     reach('blind', verdict('blind', 'same-face')),
-    reach('pin', verdict('pin', 'cross-face', true)),
+    reach('pin', verdict('pin', 'cross-face', true), 'unverified'),
+    reach('oneSide', verdict('oneSide', 'same-face', true), 'singleSide'),
     reach('wrong', verdict('wrong', 'rejected')),
   ]),
   ['pin', 'wrong'],
-  'single-sided entries are dropped and the rest keep their order',
+  'one-sided entries are dropped and the rest keep their order',
 )
 
 // Moving is offered for every operation that can live on more than one setup.
@@ -96,16 +118,5 @@ for (const kind of movableKinds) {
 // A rotary pass only ever lives on Around, so there is nowhere to move it.
 assert.equal(canMoveOperation('rotary_rough'), false, 'rotary rough cannot be moved')
 assert.equal(canMoveOperation('rotary_finish'), false, 'rotary finish cannot be moved')
-
-// The folded list's summary shows the picks while it is closed, each with ⇄.
-const candidates = [{ id: 'a', name: 'Circle 6' }, { id: 'b', name: 'Pin 2' }, { id: 'c', name: 'Slot 1' }]
-const base = 'Also from the top side (3)'
-assert.equal(crossFaceSummaryLine(base, candidates, []), base, 'nothing ticked: the summary alone')
-assert.equal(
-  crossFaceSummaryLine(base, candidates, ['b', 'a']),
-  `${base}: Circle 6 ⇄ Pin 2 ⇄`,
-  'ticked targets are named in candidate order, each followed by ⇄',
-)
-assert.equal(crossFaceSummaryLine(base, candidates, ['nope']), base, 'a selection outside the list adds nothing')
 
 console.log('setup operation controls tests passed')

@@ -35,6 +35,7 @@ import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
 import { isCannedFeature } from '../../cannedShapes'
 import { useNoticeStore } from '../../store/noticeStore'
 import { aroundSheet } from './aroundSheet'
@@ -462,11 +463,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       }
     }
 
-    // A selected canned ellipse draws two radius handles in feature mode. They
-    // are the only handles there, so a press on one starts a radius drag before
-    // the feature body or a marquee can take the pointer (issue #1112).
+    // A canned ellipse whose Edit panel is open draws two radius handles in
+    // feature mode. They are the only handles there, so a press on one starts a
+    // radius drag before the feature body or a marquee can take the pointer
+    // (issue #1112). The `canned-edit` session is the one pending-create state
+    // that places nothing on the canvas, so it must not swallow the press.
+    const pendingEditSession = pendingAddRef.current?.shape === 'canned-edit'
     const canGrabRadiusHandle = selection.mode === 'feature'
-      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
+      && (!pendingAddRef.current || pendingEditSession)
+      && !pendingMoveRef.current && !pendingTransformRef.current
       && !pendingShapeAction && !pendingConstraintRef.current
       && !pendingTextLayoutRef.current && !pendingFeatureDistributionRef.current
       && !pendingClipboardPlacementRef.current
@@ -490,7 +495,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const sheet = aroundSheet(project)
     const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
+    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -710,6 +715,17 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       pendingSketchFilletRef.current = null
       setHoveredEditControl(null)
       hoverFeature(null)
+      // A canned-shape edit borrows `pendingAdd` only to open its side panel: it
+      // places nothing, and its one canvas gesture is dragging the ellipse's
+      // radius handles, which writes that panel's fields (issue #1112 rt7-g).
+      if (pendingAdd.shape === 'canned-edit') {
+        if (isDraggingNodeRef.current && cannedRadius.dragRef.current) {
+          cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
+        } else {
+          cannedRadius.hover(point)
+        }
+        return
+      }
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
         scheduleDraw()
@@ -760,7 +776,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         return
       }
       const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
-      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
+      // A canned rotary band only moves along the bar (issue #1112 rt6-d): the
+      // pointer preview is the committed target, so the outline never leaves
+      // the axis and then jumps back at release.
+      setPendingMovePreviewPointRef({
+        point: pendingMove.fromPoint
+          ? projectedMoveTarget(project, pendingMove, pendingMove.fromPoint, lockedSnapped)
+          : lockedSnapped,
+        session: pendingMove.session,
+      })
       return
     }
 
@@ -946,13 +970,14 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     setHoveredEditControl(null)
     cannedRadius.hover(point)
 
-    const hitTabId = aroundSheet(project) ? null : findHitTabId(world, project.tabs)
+    const sheet = aroundSheet(project)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       hoverFeature(null)
       return
     }
 
-    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
     hoverFeature(hitId)
   }
 
@@ -1071,9 +1096,10 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         const minY = Math.min(startWorld.y, endWorld.y)
         const maxX = Math.max(startWorld.x, endWorld.x)
         const maxY = Math.max(startWorld.y, endWorld.y)
+        const sheet = aroundSheet(project)
         const enclosedIds = editableProjectFeatures(project)
           .filter((feature) => feature.visible)
-          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
+          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY, sheet))
           .map((feature) => feature.id)
         const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
           .filter((id, index, array) => array.indexOf(id) === index)
@@ -1240,14 +1266,14 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
     if (!hitId) return
     // A generated shape has no editable sketch. Select it and say why, since a
     // double-click has no disabled button to hover (#1112 A2).
     const hitFeature = editableProjectFeatures(project).find((feature) => feature.id === hitId)
     if (hitFeature && isCannedFeature(hitFeature)) {
       selectFeatures([hitId])
-      useNoticeStore.getState().showNotice('sketch.canned.editSketchRefused')
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     enterSketchEdit(hitId)

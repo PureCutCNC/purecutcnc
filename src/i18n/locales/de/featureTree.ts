@@ -56,6 +56,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ Erstes 2.5D-Feature muss ',
   'featureTree.tree.warning.firstFeatureSuffix': ' sein. Das 3D-Modell wird erst erstellt, wenn dies behoben ist.',
+  'featureTree.treeRow.warning.noEffect': 'Keine Wirkung auf die endgültige Form: spätere Features überdecken sie.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Ordner ausklappen',
@@ -249,11 +250,19 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.edit': '{shape} bearbeiten…',
   'featureTree.properties.canned.editUnavailable': 'Der Editor für diese Form ist noch nicht verfügbar',
   'featureTree.properties.canned.expand': 'In Features umwandeln',
+  'featureTree.properties.canned.label': 'Vorlagen-Element',
   'featureTree.properties.canned.note': 'Die Skizze wird aus den Parametern dieser Form erzeugt. Wandle sie in Features um, um sie zu bearbeiten, zu schneiden, zu verbinden, zu kürzen oder zu versetzen.',
   'featureTree.properties.canned.noteBadge': 'Erzeugt',
   'featureTree.properties.canned.modelNote': 'Dieses Modell wird aus seinen Parametern erzeugt. Eine Änderung baut sein Netz neu auf; es kann nicht in ebene Features aufgelöst werden.',
   'featureTree.properties.canned.sketchDisabled': 'Vor dem Bearbeiten der Skizze in Features umwandeln',
   'featureTree.properties.canned.unknown': 'Formparameter aus einer neueren Version',
+  'featureTree.properties.canned.depth': 'Tiefe {value}',
+  'featureTree.properties.canned.depth.surface': 'Tiefe {value} {surface}',
+  'featureTree.properties.canned.surface.onTurn': 'unter {name} (Ø {diameter}, Oberfläche bei Z {value})',
+  'featureTree.properties.canned.surface.bar': 'unter der Stange (Ø {diameter}, Oberfläche bei Z {value})',
+  'featureTree.properties.canned.surface.warned': 'unter der Stange (Ø {diameter}, Oberfläche bei Z {value}) · {warning}',
+  'featureTree.properties.canned.surface.turn': 'Oberfläche bei Z {value}',
+  'featureTree.properties.canned.surface.flats': 'Flächen bei Z {value}',
   'canned.ellipse.name': 'Ellipse',
   'canned.ellipse.summary': 'Ellipse · {rx} × {ry}',
   'canned.slot.name': 'Nut',
@@ -421,6 +430,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'Keine kompatiblen Operationen',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Wird in keiner Operation verwendet',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Das Entfernen würde die Operation ungültig machen',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Größe in {edit} ändern',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Form',
@@ -431,6 +441,14 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   // ── Properties: clamp type (#392) ──
   'featureTree.properties.clampType': 'Typ',
   'featureTree.properties.clampType.clamp': 'Spannzwinge',
+  'featureTree.properties.chuckSize': 'Futtergröße',
+  'featureTree.properties.chuckExisting': 'Vorhandene Größe',
+  'featureTree.properties.chuckMin': 'Kleinster Spanndurchmesser',
+  'featureTree.properties.chuckMax': 'Größter Spanndurchmesser',
+  'featureTree.properties.chuckJaws': 'Backen',
+  'featureTree.properties.chuckUnknownRange': 'Spannbereich unbekannt. Grenzen eingeben oder eine Größe wählen.',
+  'featureTree.properties.chuckSquareRange': 'Vierkant: Schlüsselweite bei 4 Backen; Umkreis bei 3 oder 6.',
+  'featureTree.properties.chuckOutOfRange': 'Der Stab liegt außerhalb des Spannbereichs des Futters.',
   'featureTree.properties.clampType.chuck': 'Spannfutter',
   'featureTree.properties.clampType.tailstock': 'Reitstock',
 

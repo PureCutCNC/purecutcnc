@@ -17,11 +17,15 @@
 import { rectProfile, sampleProfilePoints } from '../../types/project'
 import type { CannedShapeData, Clamp, FeatureOperation, Matrix2D, Point, Project, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
-import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { editableProjectFeatures, activeFace } from '../../store/helpers/activeFace'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import type { ArcSeg } from '../../store/helpers/segmentIntersection'
 import { isCannedFeature, resolveCannedShapeShapes } from '../../cannedShapes'
+import { foldProfileToSheet } from './aroundDisplayWrap'
+import type { AroundWrapWindow } from './aroundDisplayWrap'
+import { aroundFrame } from '../../engine/aroundFrame'
+import { isBarStock } from '../../types/barStock'
 
 export interface FeatureLike {
   id: string
@@ -234,6 +238,12 @@ export function segmentHitTest(
 ): SegmentHitResult | null {
   const features = opts.referenceFeatures ?? editableProjectFeatures(project)
   const toleranceWorld = tolerancePx / Math.max(vt.scale, 1e-6)
+  // On Around, canned outlines are drawn folded, so a folded stripe is what the
+  // reference pick must find (issue #1112 L). The frame is all the fold needs;
+  // building the full sheet would resolve every model band on every pick.
+  const sheet = activeFace(project) === 'around' && isBarStock(project.stock)
+    ? aroundFrame(project.stock)
+    : null
 
   let bestDist = Infinity
   let best: SegmentHitResult | null = null
@@ -244,7 +254,7 @@ export function segmentHitTest(
     // A generated shape's editable-segment index means nothing (it has no
     // editable sketch), but reference picking must still find the drawn lines
     // rather than the frame (#1112 A2).
-    for (const profile of featureHitProfiles(feature)) {
+    for (const profile of featureHitProfiles(feature, sheet)) {
       if (opts.openOnly && profile.closed) continue
 
       const resolved = resolveProfileSegments(profile)
@@ -306,27 +316,40 @@ export function segmentHitTest(
  * stores only its placement frame in `sketch.profile`; hit testing against that
  * frame would make the empty space between generated lines — or outside a
  * curved outline — clickable, so the generated outlines are used instead
- * (issue #1112 A2).
+ * (issue #1112 A2). On the Around sheet the drawn outlines are folded into the
+ * sheet, so a folded stripe is hit where it is drawn (issue #1112 L).
  */
-export function featureHitProfiles(feature: FeatureLike): SketchProfile[] {
+export function featureHitProfiles(
+  feature: FeatureLike,
+  sheet?: AroundWrapWindow | null,
+): SketchProfile[] {
+  let profiles: SketchProfile[] | null = null
   if (isCannedFeature(feature) && feature.operation) {
     const shapes = resolveCannedShapeShapes({
       operation: feature.operation,
       canned: feature.canned,
       transform: feature.transform,
     })
-    if (shapes.length > 0) return shapes.map((shape) => shape.profile)
+    if (shapes.length > 0) profiles = shapes.map((shape) => shape.profile)
   }
-  return [feature.sketch.profile]
+  if (profiles === null) profiles = [feature.sketch.profile]
+  if (!sheet || !isCannedFeature(feature)) return profiles
+  const folded = profiles.flatMap((profile) => foldProfileToSheet(profile, sheet))
+  return folded.length > 0 ? folded : profiles
 }
 
-function featureProfileHit(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): {
+function featureProfileHit(
+  feature: FeatureLike,
+  worldPoint: Point,
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): {
   hit: boolean
   nearOutline: boolean
 } {
   let hit = false
   let nearOutline = false
-  for (const profile of featureHitProfiles(feature)) {
+  for (const profile of featureHitProfiles(feature, sheet)) {
     if (pointNearProfile(worldPoint, profile, vt)) {
       hit = true
       nearOutline = true
@@ -337,8 +360,13 @@ function featureProfileHit(feature: FeatureLike, worldPoint: Point, vt: ViewTran
   return { hit, nearOutline }
 }
 
-function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): boolean {
-  return featureProfileHit(feature, worldPoint, vt).hit
+function featureContainsPoint(
+  feature: FeatureLike,
+  worldPoint: Point,
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): boolean {
+  return featureProfileHit(feature, worldPoint, vt, sheet).hit
 }
 
 /**
@@ -347,12 +375,17 @@ function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewT
  * The selection UI uses this to disambiguate overlaps. Callers that only need
  * the topmost feature should keep using {@link findHitFeatureId}.
  */
-export function findHitFeatureIds(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string[] {
+export function findHitFeatureIds(
+  worldPoint: Point,
+  features: readonly FeatureLike[],
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): string[] {
   const hitIds: string[] = []
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (featureContainsPoint(feature, worldPoint, vt)) hitIds.push(feature.id)
+    if (featureContainsPoint(feature, worldPoint, vt, sheet)) hitIds.push(feature.id)
   }
   return hitIds
 }
@@ -370,6 +403,7 @@ export function resolveFeatureSelectionHit(
   worldPoint: Point,
   features: readonly FeatureLike[],
   vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
 ): FeatureSelectionHit {
   const candidates: { id: string; profile: SketchProfile }[] = []
   const nearbyOutlineIds: string[] = []
@@ -378,8 +412,8 @@ export function resolveFeatureSelectionHit(
     const feature = features[index]
     if (!feature.visible) continue
 
-    const profiles = featureHitProfiles(feature)
-    const outlineHit = featureProfileHit(feature, worldPoint, vt)
+    const profiles = featureHitProfiles(feature, sheet)
+    const outlineHit = featureProfileHit(feature, worldPoint, vt, sheet)
     if (!outlineHit.hit) {
       continue
     }
@@ -413,13 +447,18 @@ export function resolveFeatureSelectionHit(
   return { kind: 'ambiguous', candidateIds }
 }
 
-export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {
+export function findHitFeatureId(
+  worldPoint: Point,
+  features: readonly FeatureLike[],
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): string | null {
   const candidates: { id: string; profile: SketchProfile }[] = []
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (featureContainsPoint(feature, worldPoint, vt)) {
-      candidates.push({ id: feature.id, profile: featureHitProfiles(feature)[0] })
+    if (featureContainsPoint(feature, worldPoint, vt, sheet)) {
+      candidates.push({ id: feature.id, profile: featureHitProfiles(feature, sheet)[0] })
     }
   }
   return resolveInnermostOrTopmostId(candidates)
@@ -429,9 +468,16 @@ function pointInRect(point: Point, minX: number, minY: number, maxX: number, max
   return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
 }
 
-export function featureFullyInsideRect(feature: FeatureLike, minX: number, minY: number, maxX: number, maxY: number): boolean {
+export function featureFullyInsideRect(
+  feature: FeatureLike,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  sheet?: AroundWrapWindow | null,
+): boolean {
   let sawPoints = false
-  for (const profile of featureHitProfiles(feature)) {
+  for (const profile of featureHitProfiles(feature, sheet)) {
     const points = sampleProfilePoints(profile)
     if (points.length === 0) {
       return false

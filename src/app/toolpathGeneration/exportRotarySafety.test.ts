@@ -22,15 +22,17 @@
  * rather than by asserting the predicate alone. The export service generates
  * the rotary fixture and `prepareExport` posts it; the refusals then land on
  * different sides of that post. A machine whose rotary axis lies across the
- * bar is refused inside the postprocessor (`postRotaryAxisMismatch`), while a
- * machine of the wrong type still posts a program and then carries the
- * `exportMachineTypeMismatch` error appended to it — posting runs and real
- * G-code is constructed for that case; it is the shared error predicate on the
- * prepared program that blocks Save and the export/download. The one refusal
- * that really does happen first is a missing machine, which `prepareExport`
- * blocks before generation starts. A compatible machine emits its program
- * byte-for-byte as it did at its recaptured baseline (the #1054 fix-2
- * machine-coordinate retract included).
+ * bar is refused inside the postprocessor (`postRotaryAxisMismatch`), while an
+ * unsuited machine still posts a program and then carries the matching error
+ * appended to it — `exportMachineMissingRotaryAxis` for a router with no rotary
+ * block (the right family, short one axis: issue #1112 item 35) and
+ * `exportMachineTypeMismatch` for one of the wrong family — posting runs and
+ * real G-code is constructed for those cases; it is the shared error predicate
+ * on the prepared program that blocks Save and the export/download. The one
+ * refusal that really does happen first is a missing machine, which
+ * `prepareExport` blocks before generation starts. A compatible machine emits
+ * its program byte-for-byte as it did at its recaptured baseline (the #1054
+ * fix-2 machine-coordinate retract included).
  *
  * Run with: npx tsx src/app/toolpathGeneration/exportRotarySafety.test.ts
  */
@@ -206,7 +208,7 @@ async function main(): Promise<void> {
     )
   })
 
-  await test('a machine with no rotary block is posted, then refused as a type mismatch', async () => {
+  await test('a machine with no rotary block is posted, then refused for the missing axis', async () => {
     const project = barProject(PLAIN_ROUTER)
     const operationId = project.operations[0].id
     const h = realService(project)
@@ -215,11 +217,21 @@ async function main(): Promise<void> {
     assert.equal(prepared.status, 'ready', 'the program prepares so the reason is visible')
     if (prepared.status !== 'ready') return
     assert.equal(exportHasError(prepared.programs), true, 'a router cannot run a rotary project')
-    const mismatch = prepared.programs
+    const warnings = prepared.programs
       .flatMap((program) => program.result.warnings)
-      .find((warning) => warning.code === 'exportMachineTypeMismatch')
-    assert.ok(mismatch, 'every program carries the mismatch refusal')
-    assert.deepEqual(mismatch.params, { machine: PLAIN_ROUTER.name, expected: 'rotary' })
+    // A router on a rotary project is the right family of machine and short
+    // one axis, so the refusal says which piece of hardware is missing rather
+    // than calling the machine the wrong kind (issue #1112, item 35).
+    const missingAxes = warnings.filter((warning) => warning.code === 'exportMachineMissingRotaryAxis')
+    assert.equal(missingAxes.length, prepared.programs.length, 'every program carries the missing-axis refusal')
+    for (const warning of missingAxes) {
+      assert.deepEqual(warning.params, { machine: PLAIN_ROUTER.name }, 'naming the machine')
+    }
+    assert.equal(
+      warnings.some((warning) => warning.code === 'exportMachineTypeMismatch'),
+      false,
+      'and not the generic type mismatch, which would read as the wrong choice of machine',
+    )
   })
 
   await test('a plasma machine on a rotary project is posted, then refused as a family mismatch', async () => {

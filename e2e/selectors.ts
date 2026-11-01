@@ -212,6 +212,8 @@ export const newProjectDialog = {
   /** The project type tiles, chosen once here (issue #1046), first in the dialog since #1102. */
   typeTile: (page: Page, label: string) =>
     newProjectDialog.root(page).getByRole('radiogroup', { name: 'Project type' }).getByRole('radio', { name: label, exact: true }),
+  /** The note saying a template's own type is what the new project gets (issue #1112, item 24). */
+  typeLockNote: (page: Page) => newProjectDialog.root(page).locator('.new-project-type-note'),
   /** A rotary blank's Shape picker — Round bar or Square blank (issue #1046). */
   stockShapeTrigger: (page: Page) =>
     newProjectDialog.root(page).locator('.properties-field--stock-shape .ui-select__trigger'),
@@ -338,6 +340,15 @@ export const contextMenu = {
   /** A menu item by its label text. */
   item: (menu: Locator, label: string) =>
     menu.locator('.feature-context-menu__item', { hasText: label }),
+
+  /**
+   * A menu item whose accessible name is exactly `label`. `item()` matches a
+   * substring, so it also reaches every refused row whose visible reason
+   * happens to contain the same words ("Expand to features first"); use this
+   * when the row itself is what is wanted (#1112 rt4-a).
+   */
+  itemExact: (menu: Locator, label: string) =>
+    menu.getByRole('button', { name: label, exact: true }),
 
   /** Non-interactive group headings (the quick-op 2D/3D split). */
   groupLabels: (menu: Locator) => menu.locator('.feature-context-menu__group-label'),
@@ -529,6 +540,13 @@ export const properties = {
 
   /** The Diameter number input for a chuck or tailstock. */
   clampDiameter: (page: Page) => page.getByTestId('clamp-diameter').locator('input'),
+
+  /** The standard-size select for a chuck (#1112 M); its label is the diameter. */
+  chuckSize: (page: Page) => page.getByTestId('chuck-size'),
+
+  /** An option in the open chuck-size select. */
+  chuckSizeOption: (page: Page, label: string) =>
+    properties.chuckSize(page).getByRole('option', { name: label, exact: true }),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────
@@ -601,6 +619,13 @@ export const exportDialog = {
 
   /** The dialog title. */
   title: (page: Page) => exportDialog.root(page).locator('.dialog-title'),
+
+  /**
+   * The machine the export will use, exactly as the dialog names it. It is read
+   * from the project's own embedded snapshot, so asserting it is how a test
+   * proves the header and the export agree (issue #1112, item 35).
+   */
+  machineName: (page: Page) => exportDialog.root(page).getByTestId('export-machine-name'),
 
   /** All rows of the operation checklist. */
   operationOptions: (page: Page) =>
@@ -893,7 +918,18 @@ export const face = {
     await face.current(page).click()
     await face.item(page, name).click()
   },
-  banner: (page: Page) => page.locator('.face-banner'),
+  /**
+   * The desktop control's home: the right end of the centre panel's tab bar
+   * (issue #1112 F3). A tablet shell draws no such bar — it carries the control
+   * in the top command bar instead (issue #1112 rt5-a), which is
+   * {@link face.topBarControl}.
+   */
+  tabBarControl: (page: Page) => page.locator('.panel-tabs-header .face-switch'),
+  /**
+   * The tablet control's home: the top command bar, directly after the
+   * Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37).
+   */
+  topBarControl: (page: Page) => page.locator('.top-command-bar .face-switch'),
   /** A face section heading in the tree: a button that switches face (#1107). */
   heading: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
   layer: (page: Page, which: 'top' | 'bottom' | 'around') => page.locator(`[data-face-layer="${which}"]`),
@@ -909,7 +945,8 @@ export const face = {
   changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
 }
 
-// Simulation setup picker and its fresh-stock note (#947).
+// Simulation toolbar and its fresh-stock info button (#947; issue #1112 F3
+// replaced the setup picker and the full-width note with one info button).
 export const simSetup = {
   canvas: (page: Page) => page.locator('#workspace-panel-simulation canvas'),
   progress: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__readout'),
@@ -917,8 +954,13 @@ export const simSetup = {
   coordA: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__coord--a .simulation-playback-bar__coord-value'),
   playPause: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn--primary'),
   viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),
-  picker: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('combobox', { name: 'Setup' }),
-  note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-note'),
+  /**
+   * The info button at the end of the toolbar: present only when the project
+   * has more than one setup. Its title and accessible name carry the sentence.
+   */
+  info: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-info__button'),
+  /** The sentence the button opens on a tap (a `title` alone never shows on touch). */
+  note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-info__text'),
   modeSelected: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Selected', exact: true }),
   modeVisible: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Visible', exact: true }),
   playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),
@@ -935,6 +977,13 @@ export const setupCam = {
   section: (page: Page, face: 'top' | 'bottom' | 'around') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),
   properties: (page: Page) => page.locator('.cam-section--properties'),
   add: (page: Page) => page.getByRole('button', { name: /^Add to (Top|Bottom|Around)$/ }),
+  /**
+   * The Add-operation header action itself, whatever it is called: the button
+   * names the setup ("Add to Top") only when the project groups setups, and is
+   * the bare "Add" for a single-setup project (#1112 rt4-a).
+   */
+  addAction: (page: Page) =>
+    page.locator('.cam-panel .cam-operations-toolbar .cam-header-action--primary'),
   addMenu: (page: Page) => page.locator('.cam-add-menu'),
   dialog: (page: Page) => page.locator('.dialog--setup'),
   /** The "Plan" (automatic CAM plan) header action. */
@@ -942,39 +991,55 @@ export const setupCam = {
 }
 
 // Thread and Flutes on the Around face (#1016 C1). The commands carry a stable
-// `data-command` hook; their accessible names are localized button labels. The
-// Flutes dialog holds two `Select`s (direction and tool), so each is scoped by
-// its own stable wrapper class instead of matching every `.ui-select__trigger`.
+// `data-command` hook; their accessible names are localized button labels.
+// Since #1112 rt2-b the form is the canvas side panel the other canned shapes
+// use, not a modal, so `dialog` names that panel root and the field ids are
+// unchanged. The panel holds one `Select` (Direction), scoped by its own stable
+// wrapper class.
 export const rotary = {
   threadButton: (page: Page) => page.locator('[data-command="rotary-thread"]'),
   flutesButton: (page: Page) => page.locator('[data-command="rotary-flutes"]'),
-  dialog: (page: Page) => page.locator('.dialog--rotary'),
+  dialog: (page: Page) => page.locator('.rotary-pattern-panel'),
   field: (page: Page, name: 'start' | 'length' | 'pitch' | 'starts' | 'depth' | 'count' | 'twist') =>
     page.locator(`#rotary-${name}`),
-  /** The Right/Left physical-hand group shown by both dialogs. */
-  direction: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__direction'),
+  /** The Right/Left physical-hand group shown by both panels. */
+  direction: (page: Page) => rotary.dialog(page).locator('.rotary-panel__direction'),
   directionTrigger: (page: Page) => rotary.direction(page).locator('.ui-select__trigger'),
   directionOption: (page: Page, name: string) => rotary.direction(page).getByRole('option', { name }),
-  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
+  createButton: (page: Page) => rotary.dialog(page).locator('.rotary-panel__create'),
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
-  error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
-  note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
+  error: (page: Page) => rotary.dialog(page).locator('.rotary-panel__error'),
+  note: (page: Page) => rotary.dialog(page).locator('.rotary-panel__note'),
+  // The read-only surface line: a Turn diameter, or the model/two-diameter/
+  // taper warning (issue #1112 H, decision 10).
+  surfaceNote: (page: Page) => rotary.dialog(page).locator('.rotary-panel__surface-note'),
+  surfaceWarning: (page: Page) => rotary.dialog(page).locator('.rotary-panel__surface-warning'),
 }
 
-// Turn and Polygon canned models on the Around face (#1112 G). Both entries
-// work on a round bar or a square blank and carry stable `data-command` hooks.
-// They share the C1 rotary dialog frame, but keep their own
-// `rotary-solid-dialog` root, so the two dialogs' selectors can never be
-// confused if both are mounted.
+// Turn and Polygon canned models (#1112 G), created and edited in the canvas
+// panel since rt2-b. Both entries work on a round bar or a square blank and on
+// every face of one, and carry stable `data-command` hooks. Each rotary form
+// lives in its own panel root, so the two selectors can never be confused if
+// both are mounted.
 export const rotarySolid = {
   turnButton: (page: Page) => page.locator('[data-command="rotary-turn"]'),
   polygonButton: (page: Page) => page.locator('[data-command="rotary-polygon"]'),
-  dialog: (page: Page) => page.locator('.rotary-solid-dialog'),
+  dialog: (page: Page) => page.locator('.rotary-solid-panel'),
   field: (page: Page, name: 'start' | 'length' | 'sides' | 'across-flats' | 'rotation' | 'diameter') =>
     page.locator(`#rotary-solid-${name}`),
-  createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__create'),
+  createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__create'),
   cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
-  error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
-  note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
+  error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__error'),
+  note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__note'),
+  // Turn side profile (#1112 H, items 16/17): Pick a shape, the drawing hint,
+  // Refresh and the copied summary, plus the picture beside them.
+  profile: (page: Page) => rotarySolid.dialog(page).locator('.rotary-panel__profile'),
+  profileTrigger: (page: Page) => rotarySolid.profile(page).locator('.ui-select__trigger'),
+  profileOption: (page: Page, name: string) => rotarySolid.profile(page).getByRole('option', { name }),
+  profileRefresh: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-refresh'),
+  profileMissing: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-missing'),
+  profileHint: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-empty'),
+  profileFigure: (page: Page) => rotarySolid.profile(page).locator('.rotary-panel__profile-figure'),
 }
+
 

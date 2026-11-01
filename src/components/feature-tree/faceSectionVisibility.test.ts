@@ -31,7 +31,10 @@
  * - showing the current face only when it has content → the "current empty
  *   Bottom still says so" assertion fails;
  * - listing a canned model under both its authoring face and the current face
- *   → the "exactly one row" assertion fails (issue #1112).
+ *   → the "exactly one row" assertion fails (issue #1112);
+ * - listing a canned model under every face, or under the current one instead
+ *   of Around → the "row is in the Around section, on every face" assertions
+ *   fail (issue #1112 rt3-a, item 27).
  *
  * Run with: npx tsx src/components/feature-tree/faceSectionVisibility.test.ts
  */
@@ -40,11 +43,13 @@ import * as React from 'react'
 import { createElement, type ReactElement } from 'react'
 import { parseHTML } from 'linkedom'
 import { FeatureTree } from './FeatureTree'
+import { isBarModelFeature } from '../../store/helpers/activeFace'
 import { I18nProvider } from '../../i18n/I18nProvider'
 import { enMessages } from '../../i18n/locales/en'
 import { useProjectStore } from '../../store/projectStore'
 import { defaultSetupForFace, provisionalSetupId } from '../../store/helpers/provisionalSetup'
 import { newProject, rectProfile, roundStock } from '../../types/project'
+import { squareStock } from '../../types/barStock'
 import type { FeatureDefinition, FeatureInstance, Project } from '../../types/project'
 
 // A DOM for the client render, in place before React DOM is first imported.
@@ -77,9 +82,13 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 /** The default project, on a rotary bar so Around is a real face to be on. */
-function projectOn(face: 'top' | 'around' | 'bottom', withBottomFeature = false): Project {
+function projectOn(
+  face: 'top' | 'around' | 'bottom',
+  withBottomFeature = false,
+  stockShape: 'round' | 'square' = 'round',
+): Project {
   const base = newProject()
-  const stock = roundStock(12, 30, 'x')
+  const stock = stockShape === 'square' ? squareStock(12, 30, 'x') : roundStock(12, 30, 'x')
   const meta = { ...base.meta, projectType: 'rotary' as const }
   const around = defaultSetupForFace('around', { stock, meta })
   const project: Project = {
@@ -124,30 +133,37 @@ function projectOn(face: 'top' | 'around' | 'bottom', withBottomFeature = false)
 }
 
 /**
- * The same project with one canned model. A canned model is authored on Top
- * because that is the face the persisted-model loader accepts, but it is a
- * model rather than face geometry: it must be listed in the face being worked
- * on and nowhere else (issue #1112).
+ * One model row on the project: a **canned** Turn/Polygon when `canned` is
+ * given, an imported mesh otherwise.
+ *
+ * A canned model is stored authored on Top — the face the persisted-model
+ * loader accepts — but it is a solid about the bar, not a face shape, so the
+ * authoring face says nothing about where its row belongs (issue #1112 rt3-a,
+ * item 27). `authoringFace` is a parameter so the rule is pinned against the
+ * stored default and against a row that names Around.
  */
-function withCannedModel(project: Project): Project {
+function withModelRow(
+  project: Project,
+  options: { canned: boolean; authoringFace: 'top' | 'around' | 'bottom' },
+): Project {
   const definition: FeatureDefinition = {
-    id: 'def-hex',
+    id: 'def-model',
     kind: 'stl',
     profile: rectProfile(0, 0, 4, 4),
     dimensions: [],
     operation: 'model',
     stl: null,
-    canned: { kind: 'polygon', params: {} },
+    ...(options.canned ? { canned: { kind: 'polygon' as const, params: {} } } : {}),
   }
   const instance: FeatureInstance = {
-    id: 'hex',
-    name: 'Hex',
+    id: 'model',
+    name: options.canned ? 'Hex' : 'Model',
     definitionId: definition.id,
     transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
     constraints: [],
     z_top: 4,
     z_bottom: 0,
-    authoringFace: 'top',
+    authoringFace: options.authoringFace,
     folderId: null,
     visible: true,
     locked: false,
@@ -158,6 +174,14 @@ function withCannedModel(project: Project): Project {
     features: [instance],
     featureTree: [{ type: 'feature', featureId: instance.id }],
   }
+}
+
+/** The markup of one face layer's group, or empty when that layer is not drawn. */
+function faceGroupMarkup(html: string, face: 'top' | 'bottom' | 'around'): string {
+  const start = html.indexOf(`data-face="${face}"`)
+  if (start === -1) return ''
+  const next = html.indexOf('data-face="', start + 1)
+  return next === -1 ? html.slice(start) : html.slice(start, next)
 }
 
 /** Render `element` as the browser would, and return its markup. */
@@ -204,23 +228,127 @@ async function renderTree(project: Project): Promise<string> {
   assert(html.includes('data-face-state="ghost"'), 'that section is the ghost heading of the other face')
 }
 
-// A canned model authored on Top is listed once, under the face being worked
-// on. Rendering the authoring face too put one row under Top and one under
-// Around at the same time (issue #1112).
-{
-  const html = await renderTree(withCannedModel(projectOn('around')))
-  const rows = html.match(/data-feature-id="hex"/g) ?? []
-  assert(rows.length === 1, 'the canned model has exactly one row while Around is current')
-  assert(html.includes('data-face-layer="around"'), 'the row is in the current Around layer')
-  assert(!html.includes('data-face-layer="top"'), 'the authored Top layer is not also shown')
+// ── An imported model is listed once, in the layer being worked on (#1112 I) ──
+
+/**
+ * An imported model is not tied to a face: it is a normal, selectable row on
+ * every face, and it appears once — in the current face's layer — rather than
+ * under its authoring face and the current one. Mutations checked one at a
+ * time: listing it only under its authoring face → the Around/Bottom counts
+ * fail; listing it under both → the count of 2 fails.
+ */
+for (const face of ['top', 'bottom', 'around'] as const) {
+  const html = await renderTree(withModelRow(projectOn(face), { canned: false, authoringFace: 'top' }))
+  const rows = html.match(/data-feature-id="model"/g) ?? []
+  assert(rows.length === 1, `imported model on ${face}: the row is listed once (${rows.length})`)
+  assert(html.includes(`data-face-layer="${face}"`), `imported model on ${face}: its layer is the current one`)
+  assert(faceGroupMarkup(html, face).includes('data-feature-id="model"'), `imported model on ${face}: the row is in that layer`)
 }
 
-// The same row follows the face switch: one row on Top, none left behind.
+// A through subtract is a normal, selectable row on the inactive flat face:
+// it is not a ghost, because it can be a target from there too. A blind cut on
+// the same face keeps its ghost row.
 {
-  const html = await renderTree(withCannedModel(projectOn('top')))
-  const rows = html.match(/data-feature-id="hex"/g) ?? []
-  assert(rows.length === 1, 'the canned model has exactly one row while Top is current')
-  assert(html.includes('data-face-layer="top"'), 'the row is in the current Top layer')
+  const project = projectOn('top')
+  const thickness = project.stock.thickness
+  const definition: FeatureDefinition = {
+    id: 'def-through',
+    kind: 'rect',
+    profile: rectProfile(1, 1, 3, 2),
+    dimensions: [],
+    operation: 'subtract',
+  }
+  const through: FeatureInstance = {
+    id: 'through',
+    name: 'Through',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    z_top: thickness,
+    z_bottom: 0,
+    authoringFace: 'top',
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  const blind: FeatureInstance = { ...through, id: 'blind', name: 'Blind', z_bottom: thickness / 2 }
+  const html = await renderTree({
+    ...project,
+    features: [through, blind],
+    featureTree: [{ type: 'feature', featureId: 'through' }, { type: 'feature', featureId: 'blind' }],
+    featureDefinitions: { [definition.id]: definition },
+    activeSetupId: provisionalSetupId('bottom'),
+  })
+  const rowTag = (markup: string, id: string): string => {
+    const at = markup.indexOf(`data-feature-id="${id}"`)
+    return markup.slice(markup.lastIndexOf('<div', at), markup.indexOf('>', at))
+  }
+  assert(html.includes('data-feature-id="through"'), 'the through feature is listed on Bottom')
+  assert(!rowTag(html, 'through').includes('data-ghost="true"'), 'and it is not a ghost row')
+  assert(rowTag(html, 'blind').includes('data-ghost="true"'), 'the blind cut on the other face is a ghost row')
+}
+
+// ── A canned Turn/Polygon is listed once, in the Around section (#1112 rt3-a, item 27) ──
+
+// The rule the tree applies, on its own: a canned shape is a bar model only
+// when it is a model — an imported mesh (no canned parameters) and a canned
+// flat shape (a slot, an ngon) stay face geometry and keep their own layer.
+{
+  const project = projectOn('top')
+  const canned = (kind: string, operation: 'model' | 'subtract') => (
+    { kind: 'stl', canned: { kind, params: {} }, operation } as const
+  )
+  assert(isBarModelFeature(project, canned('turn', 'model')) === true, 'a canned Turn is a bar model')
+  assert(isBarModelFeature(project, canned('polygon', 'model')) === true, 'a canned Polygon is a bar model')
+  assert(isBarModelFeature(project, { kind: 'stl', operation: 'model' }) === false, 'an imported mesh is not a bar model')
+  assert(isBarModelFeature(project, canned('turn', 'subtract')) === false, 'a canned shape that cuts a face is not a bar model')
+  assert(isBarModelFeature(project, { kind: 'composite', operation: 'model' }) === false, 'a sheet feature is not a bar model')
+}
+
+/**
+ * A canned model is a solid about the bar, not a shape on a face: its row
+ * belongs to the Around section whichever face is being worked on, and
+ * whichever face it was created from. Frank's sequence — the model listed under
+ * every face on #1123, right on #1125, wrong again here — is exactly what
+ * "listed in the current layer" produces: the row follows the workspace, so it
+ * reads as a row under every face. Mutations checked one at a time: leaving the
+ * model in the current layer (the bug) → the Top and Bottom assertions fail;
+ * listing it in its authoring face *and* Around → both rows count 2; dropping
+ * the Around layer when a model exists → no layer holds the row.
+ */
+for (const stockShape of ['round', 'square'] as const) {
+  for (const face of ['top', 'bottom', 'around'] as const) {
+    for (const authoringFace of ['top', 'around', 'bottom'] as const) {
+      const label = `${stockShape} bar, workspace ${face}, created on ${authoringFace}`
+      const html = await renderTree(withModelRow(projectOn(face, false, stockShape), { canned: true, authoringFace }))
+      const rows = html.match(/data-feature-id="model"/g) ?? []
+      assert(rows.length === 1, `${label}: the model row is listed once (${rows.length})`)
+      assert(
+        faceGroupMarkup(html, 'around').includes('data-feature-id="model"'),
+        `${label}: the row is in the Around section`,
+      )
+      for (const other of ['top', 'bottom'] as const) {
+        assert(
+          !faceGroupMarkup(html, other).includes('data-feature-id="model"'),
+          `${label}: the row is not in the ${other} section`,
+        )
+      }
+    }
+  }
+}
+
+// The row keeps the actions a selectable row has while another face is worked
+// on: the dashed side view on Top or Bottom is clicked to select it, and the
+// selection lands on this one row (issue #1112 rt3-a, items 19 and 27).
+{
+  const html = await renderTree(withModelRow(projectOn('top'), { canned: true, authoringFace: 'top' }))
+  const rowTag = (() => {
+    const at = html.indexOf('data-feature-id="model"')
+    return html.slice(html.lastIndexOf('<div', at), html.indexOf('>', at))
+  })()
+  assert(!rowTag.includes('data-ghost="true"'), 'the Around row of a bar model is a normal row on Top, not a ghost')
+  assert(html.includes('data-face-layer="around"'), 'the Around section exists on Top because the model lives there')
+  assert(html.includes('data-face-state="ghost"'), 'and its heading is the way to that face')
 }
 
 console.log('face section visibility tests passed')

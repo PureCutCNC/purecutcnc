@@ -27,6 +27,12 @@ interface CanvasWorkflowActionProps {
   shortcut?: CanvasShortcut
   variant?: 'confirm' | 'cancel' | 'neutral'
   disabled?: boolean
+  /**
+   * Extra class for a call site that needs a stable hook of its own (the
+   * rotary panels' Create/Save action). Purely additive: the standard panel
+   * classes are always applied.
+   */
+  className?: string
 }
 
 /**
@@ -44,6 +50,7 @@ export function CanvasWorkflowAction({
   shortcut,
   variant = 'neutral',
   disabled = false,
+  className: extraClassName,
 }: CanvasWorkflowActionProps) {
   const hinted = shortcut ? withShortcut(label, shortcut) : label
   const className = [
@@ -51,6 +58,7 @@ export function CanvasWorkflowAction({
     variant === 'confirm' ? 'tablet-cmd-btn--confirm' : '',
     variant === 'cancel' ? 'tablet-cmd-btn--cancel' : '',
     icon ? 'tablet-cmd-btn--icon' : '',
+    extraClassName ?? '',
   ].filter(Boolean).join(' ')
   // An action with a key mapped to it does not also need to be a tab stop — Tab is
   // then free to cycle only the panel's input fields. An action WITHOUT a key has no
@@ -96,6 +104,7 @@ interface StandardActionProps {
   label: string
   onClick: () => void
   disabled?: boolean
+  className?: string
 }
 
 /**
@@ -116,7 +125,7 @@ export function CanvasWorkflowCancel({ label, onClick, disabled }: StandardActio
 }
 
 /** The Enter/✓ counterpart to {@link CanvasWorkflowCancel}. */
-export function CanvasWorkflowConfirm({ label, onClick, disabled }: StandardActionProps) {
+export function CanvasWorkflowConfirm({ label, onClick, disabled, className }: StandardActionProps) {
   return (
     <CanvasWorkflowAction
       variant="confirm"
@@ -125,6 +134,7 @@ export function CanvasWorkflowConfirm({ label, onClick, disabled }: StandardActi
       label={label}
       onClick={onClick}
       disabled={disabled}
+      className={className}
     />
   )
 }

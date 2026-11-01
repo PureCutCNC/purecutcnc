@@ -28,6 +28,16 @@ const intent = (patch: Partial<ProjectStore> = {}) => referencePickIntent({ ...i
 assert.equal(intent(), null, 'ordinary selection never sees foreign references')
 assert.equal(intent({ selection: { ...idle.selection, mode: 'sketch_edit' } }), 'point', 'own sketch placement accepts points')
 assert.equal(intent({ pendingAdd: { shape: 'rect', anchor: null, session: 1 } }), 'point')
+// A canned-shape edit borrows `pendingAdd` to open its side panel and places
+// nothing, so it must not claim the pointer as a point pick: that gate is what
+// made the ellipse's radius handles ungrabbable in Edit-ellipse mode — the dots
+// were drawn and every press was refused (issue #1112 rt7-g correction,
+// round 3).
+assert.equal(
+  intent({ pendingAdd: { shape: 'canned-edit', featureId: 'subject', session: 1 } }),
+  null,
+  'an open Edit panel picks no reference point',
+)
 assert.equal(intent({ tapeMeasure: { first: null, frozen: null } }), 'point')
 assert.equal(intent({ pendingDimension: { type: 'horizontal', a: null, b: null, c: null, session: 1 } }), 'point')
 const distribution: NonNullable<ProjectStore['pendingFeatureDistribution']> = {

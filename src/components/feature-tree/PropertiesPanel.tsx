@@ -24,6 +24,7 @@ import { clampDomainMax, validateZEdits } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
 import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
+import { ChuckProperties } from './ChuckProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
@@ -45,12 +46,18 @@ import { getFeatureGeometryProfiles } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { textPathRefreshState } from '../../store/helpers/textPathSource'
 import {
+  cannedShapeDepth,
+  cannedShapeEditorFor,
   cannedShapeIsExpandable,
+  cannedShapeIsModel,
   cannedShapeLabelKey,
   cannedShapeSummary,
-  getCannedShapeEditor,
+  cannedShapeSurface,
+  cannedShapeZIsOwned,
   isCannedFeature,
 } from '../../cannedShapes'
+import { CannedShapeSummaryLine } from './CannedShapeSummaryLine'
+import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../../store/helpers/rotarySurface'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -186,8 +193,23 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     )
       ? selectedRegionFeatures[0]?.regionMaskMode ?? 'include'
       : '__mixed__'
-  const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
+  const selectedZEditableFeatures = allSelectedFeatures.filter(
+    (feature) => isMachinable(feature) && !cannedShapeZIsOwned(feature.canned),
+  )
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
+  // The rotary canned kinds have no Z control to share: their span comes from
+  // the parameter their Edit panel writes, so a multi-selection leaves them out
+  // of the shared editor (#1112 rt6-a, item 39). Since rt7-d a Thread's or
+  // Flutes' Depth is reported on its own Shape summary, which a multi-selection
+  // does not show — but the slot must still stay empty rather than fall through
+  // to the "follows stock" line below, because the span does come from the Edit
+  // panel (#1112 rt7-b). A Turn and a Polygon report nothing either, so a
+  // selection of kinds that all own their span stays empty too.
+  const selectedReportsCannedDepth = allSelectedFeatures.some(
+    (feature) => cannedShapeDepth(feature.canned) !== null,
+  )
+  const selectedAllOwnTheirZ = allSelectedFeatures.length > 0
+    && allSelectedFeatures.every((feature) => isMachinable(feature) && cannedShapeZIsOwned(feature.canned))
   // Line-operation features (including closed profiles) are treated as
   // open for Z purposes: they are engraved paths with bottom locked at
   // zero, never bottom-editable.
@@ -1197,7 +1219,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </label>
           ) : null}
-          {barWorkholding ? (
+          {barWorkholding && selectedClamp.type === 'chuck' ? (
+            <ChuckProperties clamp={selectedClamp} stock={barWorkholding} units={units} onChange={(patch) => updateClamp(selectedClamp.id, patch)} />
+          ) : barWorkholding ? (
             <label className="properties-field">
               <span>{t('featureTree.properties.diameter')}</span>
               <div data-testid="clamp-diameter">
@@ -1461,6 +1485,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
+            ) : selectedReportsCannedDepth || selectedAllOwnTheirZ ? (
+              // Nothing selected here has a shared Z to edit: either a Thread
+              // or Flutes reports a Depth, or every selected feature takes its
+              // span from its Edit panel — so the "follows stock" line below
+              // would be a wrong answer (#1112 rt6-a, item 39). No line here
+              // either: since rt7-d a Thread's or Flutes' Depth is part of its
+              // own Shape summary, which a multi-selection does not show, and a
+              // Turn and a Polygon report none (#1112 rt7-b).
+              null
             ) : (
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
@@ -1500,10 +1533,41 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const isCannedShape = isCannedFeature(selectedFeature)
   const cannedSummary = isCannedShape ? cannedShapeSummary(selectedFeature.canned) : null
   const cannedLabelKey = isCannedShape ? cannedShapeLabelKey(selectedFeature.canned) : null
-  const cannedEditor = isCannedShape && selectedFeature.canned
-    ? getCannedShapeEditor(selectedFeature.canned.kind)
-    : null
+  // The one "Edit {shape}…" rule Properties and the feature context menu both
+  // read, so neither entry point can offer a shape the other refuses — on any
+  // face (issue #1112 rt7-c).
+  const cannedEditor = cannedShapeEditorFor(selectedFeature)
   const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
+  // The four rotary kinds build their span from a parameter of their own, so
+  // the Instance section shows no Z control that could only fight the regenerate
+  // (#1112 rt6-a, item 39). The kind is what hides the control, so a parameter
+  // set too corrupt to read a number from leaves the slot empty rather than
+  // bringing the slider back.
+  const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
+  // A generated model's solid is its mesh, rebuilt from its parameters on the
+  // bar's pivot, so it gets no 3D orientation section (issue #1112 rt7-e): a
+  // rotation about any axis but the bar would tip it off the bar axis, and
+  // turning about the bar is the Polygon editor's Rotation field — while a
+  // regenerate would undo a manual rotation anyway. The registry is what says a
+  // canned kind is a model, so a kind this build does not know still counts as
+  // generated rather than falling back to the imported-model controls.
+  const isGeneratedModel = isCannedShape || cannedShapeIsModel(selectedFeature.canned)
+  // A Thread's or Flutes' Depth is reported on the Shape summary line, and since
+  // rt7-d it is measured from a surface there: the resolver the cut itself uses,
+  // plus the Z of that surface (#1112 rt6-c). Only this one row's surface is
+  // resolved — a multi-selection shows no summary to put it on.
+  const cannedDepth = isCannedShape ? cannedShapeDepth(selectedFeature.canned) : null
+  const cannedDepthSurface = cannedDepth !== null
+    ? rotaryPatternSurfaceOfFeature(project, selectedFeature.id)
+    : null
+  const cannedDepthSurfaceZ = cannedDepthSurface
+    ? rotarySurfaceZ(project.stock, cannedDepthSurface.diameter)
+    : null
+  // A Turn's diameter and a Polygon's across flats are the height Properties
+  // reports, so their summary line names the Z those surfaces reach: the axis
+  // plus the radius, from the same helper the Thread span uses (rt6-c).
+  const cannedSurface = isCannedShape ? cannedShapeSurface(selectedFeature.canned) : null
+  const cannedSurfaceZ = cannedSurface ? rotarySurfaceZ(project.stock, cannedSurface.diameter) : null
   const cannedShapesOpen = isCannedShape
     ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
     : !selectedFeature.sketch.profile.closed
@@ -1617,7 +1681,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {textFeature ? (
             <>
-              <p className="properties-linked-face-note" data-testid="text-summary">
+              <p className="properties-note" data-testid="text-summary">
                 {t('featureTree.properties.text.summary', {
                   text: textFeature.text,
                   size: formatLength(textFeature.size, units),
@@ -1657,7 +1721,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 ) : null}
               </div>
               {textPathRefreshReason === 'missing-source' || textPathRefreshReason === 'empty-source' ? (
-                <p className="properties-linked-face-note" data-testid="text-path-source-missing">
+                <p className="properties-note" data-testid="text-path-source-missing">
                   {t('featureTree.properties.text.path.refreshUnavailable')}
                 </p>
               ) : null}
@@ -1692,12 +1756,27 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {isCannedShape ? (
             <>
+              {/* The shape is generated from parameters rather than drawn, so
+                  the summary says what it is with a label instead of the
+                  drawing tools the reader would otherwise look for. One label
+                  per canned shape, every kind (issue #1112 rt7-h). */}
+              <span className="properties-canned-label" data-testid="canned-feature-label">
+                {t('featureTree.properties.canned.label')}
+              </span>
               {cannedSummary ? (
-                <p className="properties-linked-face-note" data-testid="canned-shape-summary">
-                  {t(cannedSummary.key as MessageKey, cannedSummary.values)}
-                </p>
+                <CannedShapeSummaryLine
+                  summary={cannedSummary}
+                  surface={cannedSurface && cannedSurfaceZ !== null
+                    ? { surface: cannedSurface, z: cannedSurfaceZ }
+                    : null}
+                  depth={cannedDepth}
+                  depthSurface={cannedDepthSurface && cannedDepthSurfaceZ !== null
+                    ? { surface: cannedDepthSurface, z: cannedDepthSurfaceZ }
+                    : null}
+                  units={units}
+                />
               ) : (
-                <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
+                <p className="properties-note" data-testid="canned-shape-unknown">
                   {t('featureTree.properties.canned.unknown')}
                 </p>
               )}
@@ -1732,6 +1811,23 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </>
           ) : null}
+          {isCannedShape || isTextFeature ? null : (
+            // The one edit action Shape offers a drawn feature, in the place a
+            // generated shape's "Edit {shape}…" sits. A generated shape has its
+            // own editor in the block above, and so does a text run — its
+            // "Edit text…" reopens the run, so a sketch edit here would be a
+            // second, permanently disabled action (issue #1112 rt7-i). The
+            // bottom row is Delete alone now.
+            <div className="properties-actions" style={{ marginTop: '12px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.stock.editSketch')}
+              </button>
+            </div>
+          )}
           {isTextFeature ? (
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
@@ -1759,26 +1855,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </div>
           ) : null}
           {linkedOnOtherFace > 0 ? (
-            <p className="properties-linked-face-note" data-testid="linked-other-face-note">
+            <p className="properties-note" data-testid="linked-other-face-note">
               {t(
                 `featureTree.face.linkedOtherFace.${linkedFaceKey}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
                 { count: linkedOnOtherFace },
               )}
             </p>
           ) : null}
-          {hasLinkedInstances ? (
-            <div className="properties-actions" style={{ marginTop: '8px' }}>
-              <button
-                className="feat-btn"
-                type="button"
-                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
-              >
-                {t('featureTree.properties.makeUnique')}
-              </button>
-            </div>
-          ) : null}
         </DisclosureSection>
-        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId ? (
+        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId && !isGeneratedModel ? (
           <ModelOrientationSection
             face={face}
             featureId={selectedFeature.id}
@@ -1821,6 +1906,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </>
           ) : selectedFeature.authoringFace === 'bottom' ? (
             <FaceZRange features={[selectedFeature]} />
+          ) : cannedZOwned ? (
+            // Thread, Flutes, Turn and Polygon: the span is built from the
+            // parameter the Edit panel writes, so there is nothing here to edit
+            // — and since rt7-d nothing to report either. A Thread's and
+            // Flutes' Depth and the surface it is measured from are on the Shape
+            // summary line, one section up, with the Edit button right under it;
+            // a Turn and a Polygon already name their parameter and its surface
+            // Z on that same summary (#1112 rt7-b).
+            null
           ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}
@@ -1872,6 +1966,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             />
             <span>{t("featureTree.properties.locked")}</span>
           </label>
+          {/* A shared shape's way out of the link is an instance decision, not a
+              property of the geometry, so it lives here rather than in Shape
+              (issue #1112 rt7-i). Visibility is unchanged: only while the shape
+              is shared. */}
+          {hasLinkedInstances ? (
+            <div className="properties-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.makeUnique')}
+              </button>
+            </div>
+          ) : null}
         </DisclosureSection>
         {hasSelfIntersection ? (
           <div className="properties-warning">
@@ -1885,15 +1994,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button
-          className="feat-btn"
-          type="button"
-          onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
-          disabled={isTextFeature || isCannedShape}
-          title={isCannedShape ? t('featureTree.properties.canned.sketchDisabled') : undefined}
-        >
-          {t('featureTree.properties.stock.editSketch')}
-        </button>
+        {/* Delete is the one action left outside the sections: the edit action
+            sits in Shape and Make unique in Instance (issue #1112 rt7-i). */}
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           {t('featureTree.properties.deleteFeature')}
         </button>

@@ -150,3 +150,54 @@ export function rotarySolidFrame(project: Pick<Project, 'stock'>): RotarySolidFr
     acrossCentre: stock.axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2,
   }
 }
+
+/**
+ * A point of the bar's side view — a distance `along` its axis and a signed
+ * distance `radius` from its centreline — as stock XY, where the flat faces'
+ * sketch draws it (issue #1112 rt2-d). `across` maps to project Y on an X bar
+ * and project X on a Y bar, the same way the mesh builders project it.
+ */
+export function rotarySolidSideViewPoint(
+  frame: RotarySolidFrame,
+  along: number,
+  radius: number,
+): { x: number; y: number } {
+  const across = frame.acrossCentre + radius
+  return frame.axis === 'x' ? { x: along, y: across } : { x: across, y: along }
+}
+
+/**
+ * A rectangle of the side view given the band it covers and its **two** across
+ * extents about the centreline, as stock XY. The one place the axis decides
+ * which project coordinate is the band and which is the width.
+ *
+ * The extents are signed distances from the centreline, not a half width: a
+ * shape need not have the same amount of material on both sides of the axis
+ * (an odd-sided polygon with a corner across reaches further one way than the
+ * other), and the outline must not gain material it does not have.
+ */
+export function rotarySolidSideViewSpanRect(
+  frame: RotarySolidFrame,
+  alongStart: number,
+  alongEnd: number,
+  acrossLow: number,
+  acrossHigh: number,
+): { x: number; y: number; width: number; height: number } {
+  const acrossMin = frame.acrossCentre + Math.min(acrossLow, acrossHigh)
+  const acrossMax = frame.acrossCentre + Math.max(acrossLow, acrossHigh)
+  const acrossWidth = acrossMax - acrossMin
+  const along = Math.abs(alongEnd - alongStart)
+  return frame.axis === 'x'
+    ? { x: alongStart, y: acrossMin, width: along, height: acrossWidth }
+    : { x: acrossMin, y: alongStart, width: acrossWidth, height: along }
+}
+
+/** A side-view rectangle symmetric about the centreline, `halfWidth` each way. */
+export function rotarySolidSideViewRect(
+  frame: RotarySolidFrame,
+  alongStart: number,
+  alongEnd: number,
+  halfWidth: number,
+): { x: number; y: number; width: number; height: number } {
+  return rotarySolidSideViewSpanRect(frame, alongStart, alongEnd, -halfWidth, halfWidth)
+}

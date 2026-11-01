@@ -25,6 +25,7 @@ import { DimensionPopover } from './DimensionPopover'
 import { useFileCommands } from '../../commands/fileCommands'
 import { useI18n } from '../../i18n/i18nContext'
 import { AppearanceControl } from './AppearanceControl'
+import { FaceSwitch } from './FaceSwitch'
 import { LanguageControl } from './LanguageControl'
 
 interface TopCommandBarProps {
@@ -181,29 +182,54 @@ export function TopCommandBar({
             </button>
           </div>
 
+          {/* The view switch is the tablet's only tab strip. The centre panels
+              keep their `role="tabpanel"` and name themselves with
+              `aria-labelledby="workspace-tab-*"` (`AppShell`), and on a tablet
+              the desktop row that otherwise carries those ids is not rendered
+              at all (issue #1112 rt5-a, item 37). These buttons therefore carry
+              the same ids and name the panel each one controls, exactly as the
+              desktop tabs do — the two homes are mutually exclusive, so an id
+              never lands in the document twice. Without them the panels have no
+              accessible name on a tablet (issue #1112 rt5-a review). */}
           <div className="top-cmd-group top-cmd-group--tabs">
             <button
+              id="workspace-tab-sketch"
               className={`top-cmd-tab ${centerTab === 'sketch' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-sketch"
               onClick={() => onCenterTabChange('sketch')}
             >
               {t('shell.topBar.tabSketch')}
             </button>
             <button
+              id="workspace-tab-preview3d"
               className={`top-cmd-tab ${centerTab === 'preview3d' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-preview3d"
               onClick={() => onCenterTabChange('preview3d')}
             >
               {t('shell.topBar.tab3d')}
             </button>
             <button
+              id="workspace-tab-simulation"
               className={`top-cmd-tab ${centerTab === 'simulation' ? 'top-cmd-tab--active' : ''}`}
               type="button"
+              aria-controls="workspace-panel-simulation"
               onClick={() => onCenterTabChange('simulation')}
             >
               {t('shell.topBar.tabSim')}
             </button>
           </div>
+
+          {/* The workspace face control, directly beside the view switch it
+              belongs with: the face is what the Sketch / 3D / Sim view shows,
+              and on a tablet this bar is the shell's one header row
+              (issue #1112 rt5-a, item 37). It is the same control the desktop
+              shell draws at the right end of the centre panel's tab row, and it
+              decides for itself whether it shows (`showsFaceSwitch`); the
+              tablet's own styling in `face.css` makes it the 44px, icon-only
+              button the rest of this bar is. */}
+          <FaceSwitch />
         </div>
 
         {/* Right section: zoom + snap + operations */}

@@ -23,7 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
-import { activeFace, aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { activeFace, aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -127,12 +127,14 @@ export type FeatureSlice = Pick<
  * {@link SketchFeature.authoringFace} (`derivedFeatures.ts`), and these paths
  * insert it directly rather than through `addFeature`, so the resulting faces
  * — not the current workspace face — are what the square blank's policy must
- * judge. An unset face means Top, so it is never refused here.
+ * judge. An unset face means Top, so it is never refused here. A derived region
+ * or construction row never cuts the sheet, so it is admitted on a square
+ * blank's Around sheet (issue #1112 decision 17).
  *
  * Returns true before any project, selection, history or pending mutation.
  */
 function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
-  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
 }
 
 function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature | null {
@@ -577,8 +579,10 @@ export function createFeatureSlice(
         // unrolled sheet is round-only (issue #1016 C2-U1): a feature that would
         // be authored there is refused before any id, asset, tree, history or
         // selection work. A generated solid (C2-B) lands as an ordinary Top
-        // model through its own action and never comes through here.
-        if (aroundSketchAuthoringRefused(s.project, authoringFace)) return {}
+        // model through its own action and never comes through here. A region or
+        // a construction row is not a cut, so the sheet takes it (issue #1112
+        // decision 17).
+        if (aroundSheetAuthoringRefused(s.project, authoringFace, featureOperation(s.project, featureForInsert))) return {}
         // A rotary project's bar is already the material (#1054), so a first
         // subtract is a cut into the bar, not a base solid waiting to be made
         // into Add. Block projects keep the base-add rule unchanged.
@@ -1347,8 +1351,9 @@ export function createFeatureSlice(
       // the folders, definitions, rows, selection and history are written, and
       // judged by the rows about to be created rather than the workspace face.
       // Ordinary Top and round-bar Around text expansion is unaffected
-      // (issue #1016 C2-U1G).
-      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+      // (issue #1016 C2-U1G). Glyphs are lines, so the square blank still
+      // refuses them (issue #1112 decision 17).
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
         return
       }
 
@@ -1377,7 +1382,7 @@ export function createFeatureSlice(
 
       // Same atomic face check as Text: the plain outlines copy the canned
       // feature's face and are inserted directly, bypassing `addFeature`.
-      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
         return
       }
 

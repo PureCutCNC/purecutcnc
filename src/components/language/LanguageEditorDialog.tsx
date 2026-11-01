@@ -17,6 +17,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useWindowEvent } from '../../hooks/useEventListener'
+import { formHasChanges } from '../common/formDraft'
 import { placeholderNames, placeholdersMatch } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 import { enMessages, type MessageKey } from '../../i18n/locales/en'
@@ -107,6 +108,10 @@ export function LanguageEditorDialog({ language, onApply, onClose }: LanguageEdi
 
   const nameInvalid = name.trim() === ''
   const tagInvalid = !isValidLanguageTag(languageTag.trim())
+  // Apply stores `working`, so a pack that still matches the one the editor
+  // opened on has nothing to save (issue #1112 F4). Compared by value: the
+  // overrides object is rebuilt on every keystroke.
+  const unchanged = !formHasChanges(language, working)
   const blocked = issueCount > 0 || nameInvalid || tagInvalid
 
   const handleCancel = () => {
@@ -154,7 +159,7 @@ export function LanguageEditorDialog({ language, onApply, onClose }: LanguageEdi
   }
 
   const handleApply = () => {
-    if (blocked) return
+    if (blocked || unchanged) return
     onApply(working)
   }
 
@@ -373,7 +378,7 @@ export function LanguageEditorDialog({ language, onApply, onClose }: LanguageEdi
             className="btn-primary"
             type="button"
             onClick={handleApply}
-            disabled={blocked}
+            disabled={blocked || unchanged}
           >
             {t('langEditor.apply')}
           </button>

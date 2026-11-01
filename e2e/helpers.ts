@@ -154,14 +154,18 @@ export async function getHoveredFeatureId(page: Page): Promise<string | null> {
   })
 }
 
-/** Get the current pending move state (null if idle). */
-export async function getPendingMove(
-  page: Page,
-): Promise<{ mode: string; entityType: string; entityIds: string[] } | null> {
+export interface PendingMoveState {
+  mode: string
+  entityType: string
+  entityIds: string[]
+  fromPoint: { x: number; y: number } | null
+  toPoint: { x: number; y: number } | null
+}
+
+/** Get the current pending move state (null if idle), with the points it holds. */
+export async function getPendingMove(page: Page): Promise<PendingMoveState | null> {
   return page.evaluate(async () => {
-    const w = window as unknown as {
-      __pcTest: { getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null> }
-    }
+    const w = window as unknown as { __pcTest: { getPendingMove: () => Promise<PendingMoveState | null> } }
     return w.__pcTest.getPendingMove()
   })
 }

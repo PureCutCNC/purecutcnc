@@ -18,6 +18,7 @@ import type { RefObject } from 'react'
 import type { FeatureDistributionPickTarget, PendingFeatureDistribution } from '../../store/types'
 import { useDocumentEvent } from '../../hooks/useEventListener'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
+import { cancelFeatureDistributionOnPointerDown } from './featureDistributionCancelTarget'
 
 interface FeatureDistributionWorkflowCtx {
   pendingFeatureDistribution: PendingFeatureDistribution | null
@@ -59,15 +60,7 @@ export function useFeatureDistributionWorkflow({
   })
 
   useDocumentEvent('pointerdown', (event) => {
-    if (!pendingFeatureDistribution || !(event.target instanceof Element)) {
-      return
-    }
-    if (event.target.closest('.toolbar-group--snap, .snap-popover-host--snap, .top-cmd-btn--project-panel')) {
-      return
-    }
-    if (event.target.closest('.toolbar, .toolbar-popover, .tool-rail, .tool-rail__popover, .app-toolbar')) {
-      cancelFeatureDistribution()
-    }
+    cancelFeatureDistributionOnPointerDown(pendingFeatureDistribution, event.target, cancelFeatureDistribution)
   })
 
   function pickGuideFromPanel() {

@@ -105,7 +105,7 @@ test('a Top-only project shows the face switch and nothing else about faces', as
   await expect(ui.face.otherSideItem(page)).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(ui.face.menu(page)).toHaveCount(0)
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(ui.face.layer(page, 'top')).toHaveCount(0)
   await expect(page.locator('.face-chip')).toHaveCount(0)
   await page.locator('.tree-row--feature').first().click()
@@ -170,7 +170,7 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
   // The control names the flip itself: "Bottom · flipped X" (issue #1112).
   await expect(ui.face.current(page)).toContainText('flipped X')
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'active')
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
@@ -250,7 +250,7 @@ test('looking at Bottom leaves a clean project untouched until something is draw
   expect(withoutModified(await getProject(page))).toEqual(before)
 
   await ui.face.switchTo(page, 'Top')
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   await expect(undo).toBeDisabled()
   await expect(cleanSave).toBeVisible()
   expect(withoutModified(await getProject(page))).toEqual(before)
@@ -459,6 +459,18 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await zBottom.fill('0')
   await zBottom.press('Enter')
   await expect(ui.face.stockSpan(page)).toHaveText('0.75 → 0 in')
+  // Make it a through cut before moving it. A full-height Add is material, not
+  // a through cut, so it is a ghost on the other face; a through subtract is a
+  // valid target from either flat face (issue #1112 I).
+  const pocketRow = featureRow(page, pocket.id)
+  await pocketRow.locator('.tree-action-btn--operation').click()
+  // The menu entry is the icon span plus its label, so its accessible name is
+  // "− Subtract" — match the item's text, as the other specs do.
+  await page.locator('.tree-operation-menu__item').filter({ hasText: /^.?Subtract$/ }).click()
+  const cutProject = await getProject(page) as unknown as {
+    featureDefinitions: Record<string, { operation: string }>
+  }
+  expect(cutProject.featureDefinitions[pocket.definitionId].operation).toBe('subtract')
   await change.click()
   const dialog = ui.face.changeFaceDialog(page)
   await expect(dialog).toBeVisible()
@@ -477,21 +489,46 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   const moved = (await features(page))[1]
   expect(moved.authoringFace).toBe('top')
   expect([moved.z_bottom, moved.z_top]).toEqual([0, 0.75])
-  // It is now a ghost on Bottom, and no longer selected.
-  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(0)
-  await expect(ui.face.ghostRows(page)).toHaveCount(2)
+  // It is now Top content but stays selected on Bottom: a through cut is a
+  // valid target from either flat face, so moving its authoring face is not a
+  // ghost change (issue #1112 I). It stays a normal selectable row instead of
+  // joining the ghosts; only the full-height add (material, not a through cut)
+  // is a ghost there.
+  await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveAttribute('data-feature-id', moved.id)
+  await expect(ui.face.ghostRows(page)).toHaveCount(1)
+  const movedRow = page.locator(`.tree-row--feature[data-feature-id="${moved.id}"]`)
+  await expect(movedRow).toBeVisible()
+  await expect(movedRow).not.toHaveAttribute('data-ghost', 'true')
 })
 
 test('the face control is reachable and operable from the keyboard', async ({ app, ui }) => {
   const { page } = app
+  // The face control sits at the right end of the centre panel's tab bar,
+  // just left of the CAM pull-out handle (issue #1112 F3, R2 item 11). With the
+  // Sketch tab focused — the only tab in the tab order — Tab walks the row as
+  // it is drawn: the face switch comes next, then the right pull-out handle.
   await page.getByRole('tab', { name: 'Sketch', exact: true }).focus()
+  const rightHandle = ui.panelHandles.rightHandle(page)
   await page.keyboard.press('Tab')
   const control = ui.face.current(page)
   await expect(control).toBeFocused()
   // Keyboard focus is visible on the control itself.
   expect(await control.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
+  await page.keyboard.press('Tab')
+  await expect(rightHandle).toBeFocused()
+  // Keyboard order is the visual order: the switch sits to the right of the
+  // last tab, and the handle closes the row at the far right edge.
+  const handleBox = await rightHandle.boundingBox()
+  const lastTabBox = await page.getByRole('tab', { name: 'Simulation', exact: true }).boundingBox()
+  const controlBox = await control.boundingBox()
+  expect(handleBox).not.toBeNull()
+  expect(lastTabBox).not.toBeNull()
+  expect(controlBox).not.toBeNull()
+  expect(controlBox!.x).toBeGreaterThan(lastTabBox!.x)
+  expect(handleBox!.x).toBeGreaterThan(controlBox!.x)
 
   // Enter opens the menu on the face in view; the faces are ordinary buttons.
+  await control.focus()
   await page.keyboard.press('Enter')
   await expect(ui.face.item(page, 'Top')).toBeFocused()
   await page.keyboard.press('Tab')
@@ -643,6 +680,12 @@ test.describe('landscape tablet', () => {
     const canvasWidth = async () => (await page.locator('.sketch-canvas').boundingBox())!.width
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
     await expect(page.locator('.empty-state-overlay')).toBeVisible()
+    // The tablet shell carries the control in its top command bar, beside the
+    // Sketch / 3D / Sim switch, and draws no workspace header row for it
+    // (issue #1112 rt5-a, item 37). 1024 is the narrowest landscape width the
+    // handoff names, so this is also the bar's narrowest case.
+    await expect(ui.face.topBarControl(page)).toBeVisible()
+    await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
     await ui.face.switchTo(page, 'Bottom')
     await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
 
@@ -655,7 +698,25 @@ test.describe('landscape tablet', () => {
     expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(1024)
 
     expect(await canvasWidth()).toBeLessThanOrEqual(1024)
-    await expect(control).toContainText('flipped X')
+    // The flip axis is the control's accessible name now that the bar shows it
+    // icon-only: the face in view is still fully readable to a screen reader
+    // and to a long press.
+    await expect(control).toHaveAttribute('aria-label', /flipped X$/)
+    await expect(control).toHaveAttribute('title', /flipped X$/)
+
+    // The bar holds it without scrolling to it, and nothing overflows the page.
+    const bar = await page.evaluate(() => {
+      const centre = document.querySelector<HTMLElement>('.top-command-bar__center')
+      const barEl = document.querySelector<HTMLElement>('.top-command-bar')
+      return {
+        scrolled: centre?.scrollLeft ?? 0,
+        overflow: (barEl?.scrollWidth ?? 0) - (barEl?.clientWidth ?? 0),
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }
+    })
+    expect(bar.scrolled, 'the bar is scrolled to reach the face control').toBe(0)
+    expect(bar.overflow, 'the top command bar overflows at 1024').toBeLessThanOrEqual(0)
+    expect(bar.pageOverflow, 'the page scrolls sideways at 1024').toBeLessThanOrEqual(0)
 
     // The entries behind it are full tap targets too, and stay on screen.
     await control.click()

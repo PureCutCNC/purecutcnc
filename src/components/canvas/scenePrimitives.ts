@@ -23,6 +23,7 @@ import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
 import { hexToRgba } from './previewPrimitives'
 import type { AroundSheet } from './aroundSheet'
+import { aroundSeamLabels } from './aroundSheet'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import { applyViewMirror, worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
@@ -570,6 +571,41 @@ export function drawAroundTurnLines(
   ctx.restore()
 }
 
+/**
+ * The seam labels on the sheet's two edges (issue #1112 slice L, decision
+ * 8.13). Both edges are the same seam — the bottom of the bar, a = ±180° — so
+ * one reads −180° and the other +180°. They hang just outside the sheet at its
+ * along start, where they do not collide with the dimension labels.
+ */
+export function drawAroundSeamLabels(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'along'>,
+  vt: ViewTransform,
+  palette: CanvasThemePalette,
+): void {
+  const labels = aroundSeamLabels(sheet)
+  if (labels.length === 0) return
+  ctx.save()
+  ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.textBaseline = 'middle'
+  for (const label of labels) {
+    const anchor = worldToCanvas(label.anchor, vt)
+    const first = label.edge === 'first'
+    // Outside the sheet across its edge, inset a little along it: for an X bar
+    // above the top edge and below the bottom one, for a Y bar left and right.
+    ctx.textAlign = sheet.axis === 'x' ? 'left' : first ? 'right' : 'left'
+    const x = sheet.axis === 'x' ? anchor.cx + 6 : anchor.cx + (first ? -6 : 6)
+    const y = sheet.axis === 'x' ? anchor.cy + (first ? -10 : 10) : anchor.cy + 10
+    const width = ctx.measureText(label.text).width
+    const left = ctx.textAlign === 'right' ? x - width : x
+    ctx.fillStyle = palette.labelBackground
+    ctx.fillRect(left - 4, y - 8, width + 8, 16)
+    ctx.fillStyle = palette.labelText
+    ctx.fillText(label.text, x, y)
+  }
+  ctx.restore()
+}
+
 /** The band label's type size, and the inset that keeps it off the band edge. */
 const MODEL_BAND_LABEL_FONT = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
 const MODEL_BAND_LABEL_LINE = 13
@@ -579,8 +615,9 @@ const MODEL_BAND_LABEL_PAD = 5
  * The imported models machined inside the bar, as bands on the Around sheet
  * (issue #1015 slice K). The model's geometry lives inside the bar, so it can
  * neither be drawn nor selected there; a band at its extent along the bar, one
- * circumference across, is what tells the user where it is. The band is
- * reference only — never hit-tested, snapped to, or given a context menu.
+ * circumference across, is what tells the user where it is. The band is the
+ * model's click target on the sheet (issue #1112 I) and highlights like any
+ * other hovered or selected target.
  *
  * `label` names a model for the note drawn at the top-left of the part of the
  * band that is on screen. The note is left out when it does not fit that
@@ -592,6 +629,7 @@ export function drawAroundModelBands(
   sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'modelBands'>,
   vt: ViewTransform,
   label: (name: string) => string,
+  selection: { selectedFeatureIds: readonly string[]; hoveredFeatureId: string | null },
 ): void {
   if (sheet.modelBands.length === 0) return
   const palette = canvasColors()
@@ -610,9 +648,13 @@ export function drawAroundModelBands(
     const y = Math.min(from.cy, to.cy)
     const width = Math.abs(to.cx - from.cx)
     const height = Math.abs(to.cy - from.cy)
-    ctx.fillStyle = hexToRgba(palette.featureModelFill, 0.14)
-    ctx.strokeStyle = hexToRgba(palette.featureModelStroke, 0.6)
-    ctx.lineWidth = 1.4
+    const selected = selection.selectedFeatureIds.includes(band.featureId)
+    const hovered = selection.hoveredFeatureId === band.featureId
+    ctx.fillStyle = selected ? hexToRgba(palette.active, 0.45)
+      : hovered ? hexToRgba(palette.draft, 0.35) : hexToRgba(palette.featureModelFill, 0.14)
+    ctx.strokeStyle = selected ? palette.active
+      : hovered ? palette.draft : hexToRgba(palette.featureModelStroke, 0.6)
+    ctx.lineWidth = selected ? 2.5 : hovered ? 1.8 : 1.4
     ctx.setLineDash([6, 4])
     ctx.fillRect(x, y, width, height)
     ctx.strokeRect(x, y, width, height)
@@ -658,7 +700,10 @@ export function drawViewStockOutline(
   stockLabelRects?: StockLabelRect[],
 ): void {
   drawStockOutline(ctx, stock, vt, units, exceeded, palette, sheet ? undefined : stockLabelRects)
-  if (sheet) drawAroundTurnLines(ctx, sheet, vt, stock.color)
+  if (sheet) {
+    drawAroundTurnLines(ctx, sheet, vt, stock.color)
+    drawAroundSeamLabels(ctx, sheet, vt, palette)
+  }
 }
 
 /**

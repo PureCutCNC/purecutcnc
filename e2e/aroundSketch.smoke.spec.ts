@@ -32,7 +32,9 @@ import { test, expect } from './fixtures'
 import {
   cancelPendingAdd,
   getHoveredFeatureId,
+  getPendingMove,
   getProject,
+  openRowContextMenu,
   placePendingAddAt,
   seedProject,
   selectFeatures,
@@ -116,6 +118,14 @@ async function switchToTop(page: Page): Promise<void> {
   })
 }
 
+async function switchToBottom(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const url = '/src/store/workspaceFace.ts'
+    const { switchWorkspaceFace } = await import(url) as typeof import('../src/store/workspaceFace')
+    switchWorkspaceFace('bottom')
+  })
+}
+
 /** The sheet the page's own canvas code computes for the live project. */
 async function sheetInfo(page: Page): Promise<SheetInfo | null> {
   return page.evaluate(async () => {
@@ -155,9 +165,9 @@ async function visibleWorldBounds(page: Page): Promise<{ minX: number; maxX: num
   })
 }
 
-/** A page click at a world (stock/sheet) point, through the view the app draws. */
-async function clickWorld(page: Page, point: { x: number; y: number }): Promise<void> {
-  const at = await page.locator('canvas.sketch-canvas').evaluate(async (canvas, world) => {
+/** The page coordinates of a world (stock/sheet) point, through the view the app draws. */
+async function worldPoint(page: Page, point: { x: number; y: number }): Promise<{ x: number; y: number }> {
+  return page.locator('canvas.sketch-canvas').evaluate(async (canvas, world) => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     const viewUrl = '/src/components/canvas/viewTransform.ts'
     const { computeFitViewState, computeSketchViewTransform, worldToCanvas } = await import(viewUrl) as typeof import('../src/components/canvas/viewTransform')
@@ -171,6 +181,11 @@ async function clickWorld(page: Page, point: { x: number; y: number }): Promise<
       y: rect.top + canvasPoint.cy * (rect.height / element.height),
     }
   }, point)
+}
+
+/** A page click at a world (stock/sheet) point, through the view the app draws. */
+async function clickWorld(page: Page, point: { x: number; y: number }): Promise<void> {
+  const at = await worldPoint(page, point)
   await page.mouse.click(at.x, at.y)
 }
 
@@ -460,6 +475,54 @@ async function prepareMmRoundBarWithRotary(page: Page): Promise<{ diameter: numb
   return { diameter: bar.thickness }
 }
 
+/** A half-profile on Top, drawn as an open construction spline. */
+async function seedHalfProfile(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: {
+        getProject: () => Promise<Record<string, unknown>>
+        loadProject: (json: string) => Promise<void>
+      }
+    }
+    const project = await w.__pcTest.getProject() as {
+      features: unknown[]
+      featureDefinitions: Record<string, unknown>
+      featureTree: unknown[]
+    }
+    project.featureDefinitions.dHalfProfile = {
+      id: 'dHalfProfile',
+      kind: 'spline',
+      operation: 'construction',
+      profile: {
+        start: { x: 20, y: 12.5 },
+        segments: [
+          { type: 'line', to: { x: 30, y: 5 } },
+          { type: 'line', to: { x: 60, y: 5 } },
+          { type: 'line', to: { x: 60, y: 12.5 } },
+        ],
+        closed: false,
+      },
+      dimensions: [],
+      text: null,
+      stl: null,
+    }
+    project.features.push({
+      id: 'fHalfProfile',
+      name: 'Half profile',
+      definitionId: 'dHalfProfile',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      constraints: [],
+      z_top: 5,
+      z_bottom: 0,
+      folderId: null,
+      visible: true,
+      locked: false,
+    })
+    project.featureTree.push({ type: 'feature', featureId: 'fHalfProfile' })
+    await w.__pcTest.loadProject(JSON.stringify(project))
+  })
+}
+
 /** Two compatible project tools for the flute dialog: a ball and a V-bit. */
 async function seedFluteTools(page: Page): Promise<void> {
   const project = await getProject(page)
@@ -534,6 +597,15 @@ async function openPropertiesShape(page: Page): Promise<void> {
   await expect(header).toHaveAttribute('aria-expanded', 'true')
 }
 
+/** Expand the Properties "Instance" section, which holds no Z line since rt7-d. */
+async function openPropertiesInstance(page: Page): Promise<void> {
+  const instance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
+  if ((await instance.getAttribute('aria-expanded')) !== 'true') {
+    await instance.click()
+  }
+  await expect(instance).toHaveAttribute('aria-expanded', 'true')
+}
+
 /**
  * Open a Turn/Polygon dialog from the creation drawer. The drawer is dismissed
  * by any pointerdown outside it, so an entry clicked after interacting with a
@@ -544,24 +616,43 @@ async function openRotarySolidEntry(page: Page, ui: Ui, kind: 'turn' | 'polygon'
   await (kind === 'turn' ? ui.rotarySolid.turnButton(page) : ui.rotarySolid.polygonButton(page)).click()
 }
 
-test('Thread and Flutes are offered only on an available, active Around face', async ({ app, ui }) => {
+test('Thread and Flutes are Around-only, listed with the reason everywhere else', async ({ app, ui }) => {
   const { page } = app
-  // A milling block has no Around face at all.
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  const aroundOnly = 'Only available on the around face'
+  const needsABar = 'Needs a bar in a rotary project'
+
+  // A milling block has no Around face and no bar: the entries stay listed in
+  // the drawer, disabled with the reason (issue #1112 rt3-d item 31).
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', needsABar)
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', needsABar)
 
   await prepareMmRoundBarWithRotary(page)
-  // A rotary bar still shows nothing while the workspace is on Top.
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
+  // A rotary bar has the bar but the workspace is on Top: the reason changes.
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', aroundOnly)
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', aroundOnly)
 
   await switchToAround(page)
   await openCreationDrawer(page)
   await expect(ui.rotary.threadButton(page)).toBeVisible()
   await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeEnabled()
+  await expect(ui.rotary.flutesButton(page)).toBeEnabled()
 
   await switchToTop(page)
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  await openCreationDrawer(page)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', aroundOnly)
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', aroundOnly)
 })
 
 test('a mm thread creates one canned feature in a single undo step, with no operation', async ({ app, ui }) => {
@@ -667,12 +758,23 @@ test('Edit thread… reopens the dialog with its parameters and applies new ones
   expect(before.params).toMatchObject({ start: 5, length: 20, pitch: 2, depth: 1 })
   const dialog = ui.rotary.dialog(page)
 
+  // A Thread has no Z range in Properties: its span is the surface it sits on
+  // less the Depth the dialog writes, so one Shape line names the shape, that
+  // value, the surface and the surface's Z — with the Edit button right under it
+  // and nothing of the sort under Instance (issue #1112 rt6-a item 39, rt6-c,
+  // rt7-d).
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
+  await expect(page.getByTestId('canned-shape-summary'))
+    .toContainText('Thread · 1-start · pitch 2 · length 20 · depth 1 mm below the bar (Ø 25 mm, surface at Z 25)')
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
+
   // The selected canned feature shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.
-  await openPropertiesShape(page)
   await page.getByRole('button', { name: /^Edit thread/ }).click()
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('.dialog-title')).toContainText('Edit thread')
+  await expect(dialog.locator('.canvas-workflow-panel__title')).toContainText('Edit thread')
   await expect(ui.rotary.field(page, 'start')).toHaveValue('5')
   await expect(ui.rotary.field(page, 'length')).toHaveValue('20')
   await expect(ui.rotary.field(page, 'pitch')).toHaveValue('2')
@@ -1160,6 +1262,14 @@ async function solidSnapshot(page: Page): Promise<SolidSnapshot> {
   })
 }
 
+/** One feature's stored Z span, read from the live project. */
+async function storedSpan(page: Page, featureId: string): Promise<{ zTop: number; zBottom: number }> {
+  const project = await getProject(page) as unknown as Project
+  const feature = project.features.find((row) => row.id === featureId)
+  expect(feature, `the feature ${featureId} is in the project`).toBeTruthy()
+  return { zTop: Number(feature?.z_top), zBottom: Number(feature?.z_bottom) }
+}
+
 /** The project's tools, replaced wholesale (the seed helper the C1 tests use only covers flutes). */
 async function seedTools(page: Page, tools: unknown[]): Promise<void> {
   const project = await getProject(page)
@@ -1249,7 +1359,7 @@ async function activeFaceOf(page: Page): Promise<string> {
   })
 }
 
-test('the Around rotary group offers Turn and Polygon on round and square bars', async ({ app, ui }) => {
+test('the rotary group offers Turn and Polygon on every face of a round or square bar', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
   await switchToAround(page)
@@ -1263,8 +1373,26 @@ test('the Around rotary group offers Turn and Polygon on round and square bars',
   await expect(ui.rotary.flutesButton(page)).toBeVisible()
   await expect(page.locator('.toolbar-group--rotary')).toHaveCount(0)
 
+  // A Turn or Polygon belongs to the bar, not to the face it is drawn on, so
+  // Top and Bottom offer them too (issue #1112 rt2-b item 20). Thread and
+  // Flutes stay Around-only — their unrolled sheet describes a round bar — and
+  // they say so rather than vanishing (issue #1112 rt3-d item 31).
+  for (const visit of ['top', 'bottom'] as const) {
+    await (visit === 'top' ? switchToTop(page) : switchToBottom(page))
+    await openCreationDrawer(page)
+    await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
+    await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
+    await expect(ui.rotary.threadButton(page)).toBeVisible()
+    await expect(ui.rotary.threadButton(page)).toBeDisabled()
+    await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Only available on the around face')
+    await expect(ui.rotary.flutesButton(page)).toBeVisible()
+    await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  }
+  await switchToAround(page)
+
   // On a square blank the sheet authoring is gone, but Turn and Polygon stay:
-  // both work on a square blank (decision 13).
+  // both work on a square blank (decision 13). Thread and Flutes stay listed
+  // and are disabled with the reason instead of vanishing (decision 17).
   await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().setStockShape('square')
@@ -1273,8 +1401,18 @@ test('the Around rotary group offers Turn and Polygon on round and square bars',
   await openCreationDrawer(page)
   await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
   await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
-  await expect(ui.rotary.threadButton(page)).toHaveCount(0)
-  await expect(ui.rotary.flutesButton(page)).toHaveCount(0)
+  await expect(ui.rotary.threadButton(page)).toBeVisible()
+  await expect(ui.rotary.flutesButton(page)).toBeVisible()
+  await expect(ui.rotary.threadButton(page)).toBeDisabled()
+  await expect(ui.rotary.flutesButton(page)).toBeDisabled()
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
+
+  // Square blank from Top as well: the model is the same bar model.
+  await switchToTop(page)
+  await openCreationDrawer(page)
+  await expect(ui.rotarySolid.turnButton(page)).toBeVisible()
+  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
 })
 
 test('a hex polygon creates one canned model, with no folder or operation', async ({ app, ui }) => {
@@ -1287,6 +1425,9 @@ test('a hex polygon creates one canned model, with no folder or operation', asyn
   await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  // #1112 decision 8.16: the Polygon dialog carries the flats limit note.
+  await expect(ui.rotarySolid.dialog(page).locator('.rotary-panel__limit-note'))
+    .toHaveText('Flats are approximated on the around view.')
   // Defaults: six sides, across flats at 0.75 × the bar diameter, rotation 0.
   await expect(ui.rotarySolid.field(page, 'sides')).toHaveValue('6')
   await expect(ui.rotarySolid.field(page, 'across-flats')).toHaveValue(String(bar.diameter * 0.75))
@@ -1352,22 +1493,216 @@ test('a canned model is selectable on every face', async ({ app, ui }) => {
     return useProjectStore.getState().selection.selectedFeatureId
   })
   const row = page.locator(`[data-feature-id="${modelId}"]`)
+  // One row, in the Around section, on every face: a canned model is a solid
+  // about the bar, not a shape on a face (issue #1112 rt3-a, item 27). Storage
+  // authors it on Top for the persisted-model loader, so the authoring face is
+  // not where the row is looked up.
+  const aroundRow = page.locator(`.tree-face-group[data-face="around"] [data-feature-id="${modelId}"]`)
 
-  // Authored on Top for the persisted-model loader, but not a ghost anywhere:
-  // the row is in the current face layer and can be selected there.
-  await expect(row).toBeVisible()
-  await row.click()
+  await expect(row).toHaveCount(1)
+  await expect(aroundRow).toBeVisible()
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
 
   await switchToTop(page)
-  await expect(row).toBeVisible()
-  await row.click()
+  // On Top the model is the dashed side view on the canvas (item 19) and this
+  // one tree row in Around: no second row appears for the face in view.
+  await expect(row).toHaveCount(1)
+  await expect(aroundRow).toBeVisible()
+  await expect(page.locator(`.tree-face-group[data-face="top"] [data-feature-id="${modelId}"]`)).toHaveCount(0)
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
 
   await switchToAround(page)
-  await expect(row).toBeVisible()
-  await row.click()
+  await expect(aroundRow).toBeVisible()
+  await aroundRow.click()
   expect(await selectedId()).toBe(modelId)
+})
+
+// ── moving a canned rotary band (issue #1112 rt6-d, item 42) ──
+//
+// Frank: "the Move preview lets them leave the bar's axis and the finished move
+// snaps them back; a Turn can't be moved at all." A Turn moves like a Polygon
+// (the side view on Top is editable), and one projection drives the preview,
+// the typed distance and the commit, so the drag shows the stored result: the
+// band travels along the bar and the stored start moves with it.
+
+/** A canned row's stored parameters, read where its edit panel reads them. */
+async function storedCanned(page: Page, featureId: string): Promise<{
+  start: number
+  transform: Record<string, number>
+}> {
+  return page.evaluate(async (id: string) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const project = useProjectStore.getState().project
+    const row = project.features.find((feature) => feature.id === id)
+    if (!row) throw new Error(`e2e: no row ${id}`)
+    const canned = project.featureDefinitions[row.definitionId]?.canned
+    if (!canned) throw new Error(`e2e: ${id} is not canned`)
+    return {
+      start: Number(canned.params.start),
+      transform: row.transform as unknown as Record<string, number>,
+    }
+  }, featureId)
+}
+
+/**
+ * A Top view holding one 10..30 Turn, with a Move armed on its row and the drag
+ * origin picked — the setup both Turn-move browser cases share.
+ *
+ * A canned model is listed once, in the Around section (item 27); on Top it is
+ * the editable side view, and its menu offers Move exactly as a Polygon's does.
+ * A Turn is a bar model, not a face feature, so it moves here too.
+ */
+async function beginTurnMove(page: Page): Promise<{
+  turnId: string
+  from: { x: number; y: number }
+  origin: { x: number; y: number }
+  before: SolidSnapshot
+}> {
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+  const turnId = await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const created = useProjectStore.getState().addRotarySolid({ kind: 'turn', start: 10, length: 20, diameter: 10 })
+    if (!created.ok) throw new Error(`e2e: the Turn was refused (${created.reason})`)
+    return created.featureId
+  })
+  await switchToTop(page)
+  await zoomToModel(page)
+  const before = await solidSnapshot(page)
+
+  const row = page.locator(`.tree-face-group[data-face="around"] [data-feature-id="${turnId}"]`)
+  const menu = await openRowContextMenu(page, row)
+  const moveItem = menu.getByRole('button', { name: 'Move', exact: true })
+  await expect(moveItem).toBeEnabled()
+  await moveItem.click()
+  expect((await getPendingMove(page))?.entityIds).toEqual([turnId])
+
+  const from = await worldPoint(page, { x: 20, y: 12.5 })
+  await page.mouse.click(from.x, from.y)
+  const origin = (await getPendingMove(page))?.fromPoint
+  expect(origin, 'the drag origin is picked').not.toBeNull()
+  return { turnId, from, origin: origin!, before }
+}
+
+test('a Turn drag on Top commits the along component of the drag, and undo restores it', async ({ app, ui }) => {
+  const { page } = app
+  const { turnId, from, origin, before } = await beginTurnMove(page)
+
+  // Drag 15 along the bar and 7 across it. The preview is drawn at the
+  // committed target: the along displacement, at the drag origin's across
+  // coordinate — never at the pointer's.
+  const to = await worldPoint(page, { x: 35, y: 19.5 })
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  const sketchCanvas = ui.canvas.sketch(page)
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'the preview point is published while the drag is live' },
+  ).toBeGreaterThan(0)
+  const previewX = Number(await sketchCanvas.getAttribute('data-move-preview-x'))
+  const previewY = Number(await sketchCanvas.getAttribute('data-move-preview-y'))
+  // The across component is dropped: the outline keeps the origin's across
+  // coordinate, so it never leaves the bar's axis.
+  expect(previewY).toBeCloseTo(origin.y, 6)
+  // The along component is the pointer's: the drag was 15 along (a snap step may
+  // round the picked points), and the diagonal pointer travel never reaches it.
+  const alongMoved = previewX - origin.x
+  expect(alongMoved).toBeGreaterThan(14)
+  expect(alongMoved).toBeLessThan(16)
+  expect(alongMoved).toBeLessThan(Math.hypot(15, 7) - 1)
+
+  // The click that ends the drag measures along the bar as well, so the distance
+  // the panel shows is the along distance, not the diagonal the pointer
+  // travelled.
+  await page.mouse.click(to.x, to.y)
+  const movePanel = page.locator('.canvas-workflow-panel--move')
+  const distanceValue = Number(await movePanel.locator('.canvas-workflow-panel__distance-input').inputValue())
+  expect(distanceValue).toBeGreaterThan(14)
+  expect(distanceValue).toBeLessThan(16)
+  const toPoint = (await getPendingMove(page))?.toPoint
+  expect(toPoint?.y).toBeCloseTo(origin.y, 6)
+  // The click snaps the picked point independently of the last pointer move, so
+  // the two can differ by under a snap step; both express the along distance.
+  const committedAlong = toPoint!.x - origin.x
+  expect(committedAlong).toBeGreaterThan(14)
+  expect(committedAlong).toBeLessThan(16)
+  expect(Math.abs(committedAlong - alongMoved)).toBeLessThan(1)
+
+  // Nothing typed: the confirmed drag is committed as drawn.
+  await movePanel.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(movePanel).toHaveCount(0)
+
+  // What is stored is what the preview drew: the stored start moved by the along
+  // component (so Edit Turn… shows it), the regenerated mesh sits at it, nothing
+  // moved across the bar, and the whole move is one undo step.
+  const moved = await storedCanned(page, turnId)
+  expect(moved.start).toBeCloseTo(10 + committedAlong, 6)
+  expect(moved.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+  const after = await solidSnapshot(page)
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  expect(after.modelBounds[0]?.minX).toBeCloseTo(10 + committedAlong, 3)
+  expect(after.modelBounds[0]?.maxX).toBeCloseTo(30 + committedAlong, 3)
+
+  // One undo puts the band back where the drag started.
+  await undo(page)
+  expect((await storedCanned(page, turnId)).start).toBeCloseTo(10, 6)
+  expect((await solidSnapshot(page)).modelBounds[0]?.minX).toBeCloseTo(10, 3)
+})
+
+test('a typed distance on a Turn draws the clamped band and stores it, and a resnap keeps it', async ({ app, ui }) => {
+  const { page } = app
+  const { turnId, from, origin, before } = await beginTurnMove(page)
+  const sketchCanvas = ui.canvas.sketch(page)
+
+  // End the drag at a short target, then type past the far end of the bar.
+  const to = await worldPoint(page, { x: 35, y: 19.5 })
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  await page.mouse.click(to.x, to.y)
+  const movePanel = page.locator('.canvas-workflow-panel--move')
+  const distanceInput = movePanel.locator('.canvas-workflow-panel__distance-input')
+
+  // A typed distance is the same projection (review of rt6-d): 400 along the
+  // bar clamps to the band's last position, and the outline is drawn there.
+  // Before the fix the typed target drew 400 away and the commit stored 90.
+  await distanceInput.fill('400')
+  const clampedPreviewX = origin.x + (120 - 10 - 20)
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'the typed preview is drawn at the clamped band' },
+  ).toBeCloseTo(clampedPreviewX, 3)
+  expect(Number(await sketchCanvas.getAttribute('data-move-preview-y'))).toBeCloseTo(origin.y, 6)
+
+  // Resnapping after typing republishes through the same projection: the
+  // pointer's new position must not replace the typed clamp.
+  const resnap = await worldPoint(page, { x: 90, y: 24 })
+  await page.mouse.move(resnap.x, resnap.y, { steps: 6 })
+  await expect.poll(
+    async () => Number(await sketchCanvas.getAttribute('data-move-preview-x')),
+    { message: 'a resnap keeps the typed target' },
+  ).toBeCloseTo(clampedPreviewX, 3)
+
+  await movePanel.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(movePanel).toHaveCount(0)
+
+  // What is stored is what the preview drew: the typed 400 was clamped to the
+  // bar's end (start 100 on a 120 bar with a 20-long band), the regenerated mesh
+  // sits at it, nothing moved across the bar, and the whole move is one undo
+  // step.
+  const moved = await storedCanned(page, turnId)
+  expect(moved.start).toBeCloseTo(100, 6)
+  expect(moved.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+  const after = await solidSnapshot(page)
+  expect(after.historyPast).toBe(before.historyPast + 1)
+  expect(after.modelBounds[0]?.minX).toBeCloseTo(100, 3)
+  expect(after.modelBounds[0]?.maxX).toBeCloseTo(120, 3)
+
+  // One undo puts the band back where the drag started.
+  await undo(page)
+  expect((await storedCanned(page, turnId)).start).toBeCloseTo(10, 6)
+  expect((await solidSnapshot(page)).modelBounds[0]?.minX).toBeCloseTo(10, 3)
 })
 
 test('polygon sides, across flats and rotation change the emitted solid', async ({ app, ui }) => {
@@ -1467,7 +1802,7 @@ test('the dialog has no Tool field and creation needs no tool', async ({ app, ui
   await openCreationDrawer(page)
   await ui.rotarySolid.polygonButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await expect(ui.rotarySolid.dialog(page).locator('.rotary-dialog__tool')).toHaveCount(0)
+  await expect(ui.rotarySolid.dialog(page).locator('.rotary-panel__tool')).toHaveCount(0)
   await expect(ui.rotarySolid.dialog(page).locator('.ui-select')).toHaveCount(0)
   await ui.rotarySolid.field(page, 'start').fill('0')
   await ui.rotarySolid.field(page, 'length').fill('20')
@@ -1598,6 +1933,140 @@ test('Turn on a square blank creates the finished round target inside the real b
   expect((project.stock as { shape?: string; thickness: number }).thickness).toBeCloseTo(25, 6)
 })
 
+test('a Turn revolves a drawn half-profile and Refresh copies the edited source', async ({ app, ui }) => {
+  test.setTimeout(90_000)
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await seedHalfProfile(page)
+  await switchToAround(page)
+  const baseline = await solidSnapshot(page)
+
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.profileTrigger(page)).toContainText('None — one plain diameter')
+  // A drawn shape qualifies, so the empty-list hint stays away; None is still
+  // selected, so Refresh has nothing to re-read and is hidden (item 16).
+  await expect(ui.rotarySolid.profileHint(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.profileRefresh(page)).toHaveCount(0)
+  await ui.rotarySolid.profileTrigger(page).click()
+  await ui.rotarySolid.profileOption(page, 'Half profile').click()
+
+  // The copied profile owns the extent and the diameter, so the fields are
+  // read-only and show the spline's real numbers.
+  await expect(ui.rotarySolid.field(page, 'start')).toHaveValue('20')
+  await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('40')
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('15')
+  await expect(ui.rotarySolid.field(page, 'start')).toBeDisabled()
+  await expect(ui.rotarySolid.field(page, 'length')).toBeDisabled()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toBeDisabled()
+  await expect(ui.rotarySolid.profile(page)).toContainText('Half profile')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  const created = await solidSnapshot(page)
+  expect(created.featureCount).toBe(baseline.featureCount + 1)
+  const firstBounds = created.modelBounds[0]!
+  expect(firstBounds.minX).toBeCloseTo(20, 3)
+  expect(firstBounds.maxX).toBeCloseTo(60, 3)
+  expect(firstBounds.maxY - firstBounds.minY).toBeCloseTo(15, 1)
+
+  // Editing the source is not a live link: the Turn keeps its copy until
+  // Refresh re-reads the spline, then it takes the new diameter.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const state = useProjectStore.getState()
+    const source = state.project.features.find((row) => row.name === 'Half profile')
+    if (!source) throw new Error('the half-profile source exists')
+    state.updateFeature(source.id, {
+      sketch: {
+        profile: {
+          start: { x: 20, y: 12.5 },
+          segments: [
+            { type: 'line', to: { x: 30, y: 8 } },
+            { type: 'line', to: { x: 60, y: 8 } },
+            { type: 'line', to: { x: 60, y: 12.5 } },
+          ],
+          closed: false,
+        },
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+    })
+  })
+
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('15')
+  await expect(ui.rotarySolid.profileRefresh(page)).toBeEnabled()
+  await ui.rotarySolid.profileRefresh(page).click()
+  await expect(ui.rotarySolid.field(page, 'diameter')).toHaveValue('9')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  const refreshed = await solidSnapshot(page)
+  expect(refreshed.modelBounds[0]!.maxY - refreshed.modelBounds[0]!.minY).toBeCloseTo(9, 1)
+
+  // Deleting the source cannot break the copy; Refresh is disabled with the
+  // reason instead of silently doing nothing.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    const state = useProjectStore.getState()
+    const source = state.project.features.find((row) => row.name === 'Half profile')
+    if (source) state.deleteFeature(source.id)
+  })
+  const turnId = refreshed.modelFeatureIds[0]!
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await expect(ui.rotarySolid.profileRefresh(page)).toBeDisabled()
+  await expect(ui.rotarySolid.profileRefresh(page)).toHaveAttribute('title', /no longer exists/)
+  await expect(ui.rotarySolid.profileMissing(page)).toContainText('no longer exists')
+  await page.keyboard.press('Escape')
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+})
+
+test('the Turn profile field explains an empty list and Turn creates from Top', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  // No drawn shape yet: the picker said "None — one plain diameter" with no
+  // hint, so the panel now says what to draw (item 16) and shows the picture
+  // that explains the profile (item 17).
+  await switchToTop(page)
+  await openCreationDrawer(page)
+  await ui.rotarySolid.turnButton(page).click()
+  const panel = ui.rotarySolid.dialog(page)
+  await expect(panel).toBeVisible()
+  await expect(ui.rotarySolid.profileTrigger(page)).toContainText('None — one plain diameter')
+  await expect(ui.rotarySolid.profileHint(page)).toContainText('Draw a half profile')
+  await expect(ui.rotarySolid.profileRefresh(page)).toHaveCount(0)
+  await expect(ui.rotarySolid.profileFigure(page).locator('svg')).toHaveAttribute('aria-label', /half profile/i)
+  await expect(ui.rotarySolid.profileFigure(page).locator('figcaption')).not.toBeEmpty()
+
+  // Creating on Top is allowed and writes the same bar model (item 20): the
+  // band is measured from the chuck end exactly as it is on Around.
+  const baseline = await solidSnapshot(page)
+  await ui.rotarySolid.field(page, 'start').fill('10')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
+  await ui.rotarySolid.createButton(page).click()
+  await expect(panel).toBeHidden()
+
+  const created = await solidSnapshot(page)
+  expect(created.featureCount).toBe(baseline.featureCount + 1)
+  expect(created.operationCount).toBe(baseline.operationCount)
+  expect(created.historyPast).toBe(baseline.historyPast + 1)
+  const bounds = created.modelBounds[0]!
+  expect(bounds.minX).toBeCloseTo(10, 3)
+  expect(bounds.maxX).toBeCloseTo(40, 3)
+  expect(bounds.maxY - bounds.minY).toBeCloseTo(20, 1)
+})
+
 test('Edit polygon… reopens the dialog and a parameter change rebuilds the mesh', async ({ app, ui }) => {
   const { page } = app
   await prepareMmRoundBarWithRotary(page)
@@ -1623,11 +2092,21 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   await expect(summary).toContainText('across flats 15')
   await expect(summary).toContainText('rotation 0°')
 
+  // A Polygon has no Z range either: its height is the regenerated mesh's, set
+  // by the across-flats size in the dialog (issue #1112 rt6-a, item 39), and no
+  // read-only line repeats the across flats its summary already shows, with the
+  // Z the flats reach (rt7-b).
+  const polygonInstance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
+  if ((await polygonInstance.getAttribute('aria-expanded')) !== 'true') await polygonInstance.click()
+  await expect(polygonInstance).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
+
   // The selected canned model shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.
   await page.getByRole('button', { name: /^Edit polygon/ }).click()
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('.dialog-title')).toContainText('Edit polygon')
+  await expect(dialog.locator('.canvas-workflow-panel__title')).toContainText('Edit polygon')
   await expect(ui.rotarySolid.field(page, 'start')).toHaveValue('10')
   await expect(ui.rotarySolid.field(page, 'length')).toHaveValue('20')
   await expect(ui.rotarySolid.field(page, 'sides')).toHaveValue('6')
@@ -1651,6 +2130,98 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   expect(bounds.maxX).toBeCloseTo(30, 3)
 })
 
+// ── rt6-c: a Thread floats on its Turn and follows it ───────────────
+//
+// Frank: "I am still not sure if I can verify that the thread floats on top of
+// turn and it changes if I change turn diameter." A Thread under a Turn is
+// placed on the Turn's surface, an Edit turn… diameter change moves it in the
+// same history entry, and both Shape summary lines say which surface and which Z
+// they are on — the Thread's own line carrying its Depth since rt7-d.
+
+test('a Thread follows the Turn under it, and both summary lines name the surface', async ({ app, ui }) => {
+  const { page } = app
+  await prepareMmRoundBarWithRotary(page)
+  await switchToAround(page)
+
+  // A Ø20 Turn on a Ø25 bar: the turning axis is Z 12.5, so its surface is
+  // Z 22.5.
+  await openRotarySolidEntry(page, ui, 'turn')
+  await ui.rotarySolid.field(page, 'start').fill('5')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await openPropertiesShape(page)
+  const summary = page.getByTestId('canned-shape-summary')
+  await expect(summary).toContainText('Ø20')
+  await expect(summary).toContainText('surface at Z 22.5')
+
+  // One Thread wholly on that Turn, 1 mm deep.
+  await openRotaryEntry(page, ui, 'thread')
+  await ui.rotary.field(page, 'start').fill('10')
+  await ui.rotary.field(page, 'length').fill('10')
+  await ui.rotary.field(page, 'pitch').fill('2')
+  await ui.rotary.field(page, 'depth').fill('1')
+  await ui.rotary.createButton(page).click()
+  await expect(ui.rotary.dialog(page)).toBeHidden()
+
+  // Its one Shape line names the Turn, the diameter it measures from and that
+  // surface's Z, and its stored span starts there — not on the bar (rt6-c,
+  // rt7-d).
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-shape-summary')).toContainText(
+    'Thread · 1-start · pitch 2 · length 10 '
+      + '· depth 1 mm below Turn (Ø 20 mm, surface at Z 22.5)',
+  )
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
+  const threadId = (await rotarySnapshot(page)).featureId!
+  const beforeThread = await storedSpan(page, threadId)
+  expect(beforeThread.zTop).toBeCloseTo(22.5, 6)
+  expect(beforeThread.zBottom).toBeCloseTo(21.5, 6)
+
+  // Edit turn… → Ø10 moves the radius 5 mm inward; the Thread moves with it.
+  const turnId = (await solidSnapshot(page)).modelFeatureIds[0]!
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await page.getByRole('button', { name: /^Edit turn/ }).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'diameter').fill('10')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('Ø10')
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('surface at Z 17.5')
+  await page.locator(`.tree-row--feature[data-feature-id="${threadId}"]`).click()
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-shape-summary'))
+    .toContainText('below Turn (Ø 10 mm, surface at Z 17.5)')
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
+  const afterThread = await storedSpan(page, threadId)
+  expect(afterThread.zTop).toBeCloseTo(17.5, 6)
+  expect(afterThread.zTop - beforeThread.zTop).toBeCloseTo(-5, 6)
+  expect(afterThread.zBottom).toBeCloseTo(16.5, 6)
+
+  // The Turn edit and the Thread move are one history entry: undo restores both.
+  await undo(page)
+  await page.locator(`.tree-row--feature[data-feature-id="${turnId}"]`).click()
+  await openPropertiesShape(page)
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('Ø20')
+  await expect(page.getByTestId('canned-shape-summary')).toContainText('surface at Z 22.5')
+  await page.locator(`.tree-row--feature[data-feature-id="${threadId}"]`).click()
+  await openPropertiesShape(page)
+  await openPropertiesInstance(page)
+  await expect(page.getByTestId('canned-shape-summary'))
+    .toContainText('below Turn (Ø 20 mm, surface at Z 22.5)')
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
+  const undoneThread = await storedSpan(page, threadId)
+  expect(undoneThread.zTop).toBeCloseTo(22.5, 6)
+  expect(undoneThread.zBottom).toBeCloseTo(21.5, 6)
+})
+
+
 // ── C2-U2F: review corrections (#1016) ───────────────────────────────
 //
 // Seven findings from the independent UI review, each pinned to behaviour the
@@ -1669,9 +2240,10 @@ test('a solid form is dropped when the bar, units, document or face behind it ch
   await openCreationDrawer(page)
 
   // ── face change ──
-  // Leaving Around unmounts the entry and the dialog; coming back must not
-  // resurrect a form whose numbers were typed on the same bar but a different
-  // face of the workflow.
+  // Leaving Around closes the form (a new face is a new context); coming back
+  // must not resurrect one whose numbers were typed on the same bar but a
+  // different face of the workflow. The Turn/Polygon entries themselves stay
+  // available on Top and Bottom (issue #1112 rt2-b item 20).
   await openRotarySolidEntry(page, ui, 'polygon')
   await expect(ui.rotarySolid.dialog(page)).toBeVisible()
   await ui.rotarySolid.field(page, 'length').fill('9')
@@ -2058,10 +2630,16 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
   // The loaded file retains its bar and its Around setup as the workspace face…
   expect(await activeFaceOf(page)).toBe('around')
-  // …but the Around workflow is unavailable, so the command is absent instead
-  // of offered and then refused by the store.
-  await expect(ui.rotarySolid.polygonButton(page)).toHaveCount(0)
-  await expect(ui.rotarySolid.turnButton(page)).toHaveCount(0)
+  // …but the bar workflow is unavailable, so both entries keep their place in
+  // the drawer and say what is missing instead of vanishing (issue #1112 rt3-d
+  // item 31). Nothing is created or offered by them: they are disabled, so the
+  // no-mutation assertions below still hold.
+  await openCreationDrawer(page)
+  for (const entry of [ui.rotarySolid.polygonButton(page), ui.rotarySolid.turnButton(page)]) {
+    await expect(entry).toBeVisible()
+    await expect(entry).toBeDisabled()
+    await expect(entry).toHaveAttribute('title', 'Needs a bar in a rotary project')
+  }
   expect(await solidSnapshot(page)).toMatchObject({
     folderCount: baseline.folderCount,
     featureCount: baseline.featureCount,
@@ -2073,7 +2651,11 @@ test('a loaded non-rotary file offers no Around solid, and restoring the type br
   // fresh closed form — never the one that was open before the change.
   await seedProject(page, JSON.stringify(aroundProject))
   await openCreationDrawer(page)
-  await expect(ui.rotarySolid.polygonButton(page)).toBeVisible()
+  for (const entry of [ui.rotarySolid.polygonButton(page), ui.rotarySolid.turnButton(page)]) {
+    await expect(entry).toBeVisible()
+    await expect(entry).toBeEnabled()
+    await expect(entry).not.toHaveAttribute('title', 'Needs a bar in a rotary project')
+  }
   await expect(ui.rotarySolid.dialog(page)).toHaveCount(0)
 })
 
@@ -2164,203 +2746,155 @@ async function expectUnoccluded(locator: Locator, label: string): Promise<void> 
   expect(missed, `${label} is unoccluded at its centre and corners`).toEqual([])
 }
 
-/**
- * The complete rectangle is inside the dialog and the viewport, and the
- * control's own pixels are on top. `scroll` is set only for a field or picker
- * trigger that legitimately lives in the scrolling body.
- */
-async function expectComplete(
-  page: Page,
-  locator: Locator,
-  dialog: Locator,
-  label: string,
-  options?: { scroll?: boolean },
-): Promise<Box> {
-  // A field below the fold is scrolled into the body first; the box asserted is
-  // then the one the user sees, not an off-screen layout position.
-  if (options?.scroll) await locator.scrollIntoViewIfNeeded()
-  const box = await locator.boundingBox()
-  expect(box, `${label} has a layout box`).not.toBeNull()
-  const frame = await dialog.boundingBox()
-  expect(frame, 'the dialog has a layout box').not.toBeNull()
-  const viewport = page.viewportSize()
-  expect(viewport, 'the test has a viewport').not.toBeNull()
-  expect(inside(box!, frame!), `${label} is complete inside the dialog`).toBe(true)
-  expect(
-    inside(box!, { x: 0, y: 0, width: viewport!.width, height: viewport!.height }),
-    `${label} is complete inside the viewport`,
-  ).toBe(true)
-  await expectUnoccluded(locator, label)
-  return box!
-}
-
 interface ChromeControl {
   label: string
   locator: Locator
 }
 
-interface ChromeSnapshot {
-  frame: Box
-  controls: Array<{ label: string; box: Box }>
-}
-
 /** The header, the title, the close button and both footer actions. */
-function dialogChrome(dialog: Locator, cancel: Locator, create: Locator): ChromeControl[] {
+/** Two chrome snapshots agree: nothing moved while the body scrolled. */
+/** The header ends above the body, the body above the footer, all inside the frame. */
+/**
+ * A canvas panel's own chrome: its title and both actions. The rotary forms are
+ * the page-level canvas panel the other canned shapes use since #1112 rt2-b, so
+ * there is no dialog header, body or footer to measure — the panel and its
+ * action row are the whole frame.
+ */
+function panelChrome(panel: Locator, cancel: Locator, create: Locator): ChromeControl[] {
   return [
-    { label: 'header', locator: dialog.locator('.dialog-header') },
-    { label: 'title', locator: dialog.locator('.dialog-title') },
-    { label: 'close', locator: dialog.locator('.dialog-close') },
+    { label: 'title', locator: panel.locator('.canvas-workflow-panel__title') },
     { label: 'Cancel', locator: cancel },
     { label: 'Create', locator: create },
   ]
 }
 
-/**
- * Measure the header and the footer actions from one frame snapshot without
- * scrolling anything: either all of them are complete at the same time or the
- * dialog has failed to contain its own chrome.
- */
-async function expectChromeComplete(
+/** Every control is complete inside the panel and inside the viewport. */
+async function expectPanelComplete(
   page: Page,
-  dialog: Locator,
+  panel: Locator,
   controls: ChromeControl[],
   label: string,
-): Promise<ChromeSnapshot> {
-  const frame = await dialog.boundingBox()
-  expect(frame, `${label} dialog has a layout box`).not.toBeNull()
+): Promise<Box> {
+  const frame = await panel.boundingBox()
+  expect(frame, `${label} panel has a layout box`).not.toBeNull()
   const viewport = page.viewportSize()
   expect(viewport, 'the test has a viewport').not.toBeNull()
   const screen = { x: 0, y: 0, width: viewport!.width, height: viewport!.height }
-  expect(inside(frame!, screen), `${label} dialog is complete inside the viewport`).toBe(true)
-
-  const measured: Array<{ label: string; box: Box }> = []
+  expect(inside(frame!, screen), `${label} panel is complete inside the viewport`).toBe(true)
   for (const control of controls) {
+    if (await control.locator.count() === 0) continue
     const box = await control.locator.boundingBox()
     expect(box, `${label} ${control.label} has a layout box`).not.toBeNull()
-    expect(inside(box!, frame!), `${label} ${control.label} is complete inside the dialog`).toBe(true)
+    expect(inside(box!, frame!), `${label} ${control.label} is complete inside the panel`).toBe(true)
     expect(inside(box!, screen), `${label} ${control.label} is complete inside the viewport`).toBe(true)
-    measured.push({ label: control.label, box: box! })
+    await expectUnoccluded(control.locator, `${label} ${control.label}`)
   }
-  for (const control of controls) await expectUnoccluded(control.locator, `${label} ${control.label}`)
-  return { frame: frame!, controls: measured }
-}
-
-/** Two chrome snapshots agree: nothing moved while the body scrolled. */
-function expectChromeUnchanged(before: ChromeSnapshot, after: ChromeSnapshot, label: string): void {
-  const moved = (first: Box, second: Box): boolean =>
-    Math.abs(first.x - second.x) > 1 ||
-    Math.abs(first.y - second.y) > 1 ||
-    Math.abs(first.width - second.width) > 1 ||
-    Math.abs(first.height - second.height) > 1
-  expect(moved(before.frame, after.frame), `${label} frame stays put`).toBe(false)
-  before.controls.forEach((control, index) => {
-    expect(moved(control.box, after.controls[index].box), `${label} ${control.label} stays put`).toBe(false)
-  })
-}
-
-/** The header ends above the body, the body above the footer, all inside the frame. */
-async function expectDialogStacked(dialog: Locator, label: string): Promise<void> {
-  const frame = await dialog.boundingBox()
-  const header = await dialog.locator('.dialog-header').boundingBox()
-  const body = await dialog.locator('.dialog-body').boundingBox()
-  const footer = await dialog.locator('.dialog-footer').boundingBox()
-  expect(
-    frame !== null && header !== null && body !== null && footer !== null,
-    `${label} lays out header, body and footer`,
-  ).toBe(true)
-  expect(inside(header!, frame!), `${label} header is inside the dialog`).toBe(true)
-  expect(inside(body!, frame!), `${label} body is inside the dialog`).toBe(true)
-  expect(inside(footer!, frame!), `${label} footer is inside the dialog`).toBe(true)
-  expect(header!.y + header!.height, `${label} header ends above the body`).toBeLessThanOrEqual(body!.y + 1)
-  expect(body!.y + body!.height, `${label} body ends above the footer`).toBeLessThanOrEqual(footer!.y + 1)
-}
-
-interface BodyScroll {
-  scrollTop: number
-  clientHeight: number
-  scrollHeight: number
-  frameScrollTop: number
-}
-
-async function readBodyScroll(dialog: Locator): Promise<BodyScroll> {
-  return dialog.evaluate((element) => {
-    const body = element.querySelector('.dialog-body') as HTMLElement | null
-    if (body === null) throw new Error('the dialog has a body')
-    return {
-      scrollTop: body.scrollTop,
-      clientHeight: body.clientHeight,
-      scrollHeight: body.scrollHeight,
-      frameScrollTop: (element as HTMLElement).scrollTop,
-    }
-  })
+  return frame!
 }
 
 /**
- * The body owns the scroll: the frame's own offset stays at zero while the
- * form scrolls inside it, and the header and the footer keep the exact
- * rectangles they had when the dialog opened. The dialog frame must never be
- * the scroller, or scrolling for a field would carry the header away.
+ * Where the panel's fields are taller than the space it is given, the body is
+ * the only scroller: its own offset moves while the title and the actions keep
+ * the rectangles they opened with. A panel that pushed its actions out instead
+ * would fail the chrome check above.
+ *
+ * `requireOverflow` is the short-window proof: it asserts the form really is
+ * taller than the body before checking that scrolling works, so a test cannot
+ * silently stop exercising the scroll path when the form gets shorter.
  */
-async function expectBodyOwnsScroll(
+async function expectPanelBodyScrolls(
   page: Page,
-  dialog: Locator,
+  panel: Locator,
   controls: ChromeControl[],
-  baseline: ChromeSnapshot,
   label: string,
-  options: { requireOverflow: boolean },
+  options?: { requireOverflow?: boolean },
 ): Promise<void> {
-  await dialog.evaluate((element) => {
-    const body = element.querySelector('.dialog-body') as HTMLElement | null
-    if (body !== null) body.scrollTop = 0
+  const before = await panel.evaluate((element) => {
+    const body = element.querySelector('.canvas-workflow-panel__body') as HTMLElement | null
+    return {
+      scrollTop: body?.scrollTop ?? 0,
+      clientHeight: body?.clientHeight ?? 0,
+      scrollHeight: body?.scrollHeight ?? 0,
+      frameScrollTop: (element as HTMLElement).scrollTop,
+    }
   })
-  const before = await readBodyScroll(dialog)
-  expect(before.frameScrollTop, `${label} dialog frame is not the scroller`).toBe(0)
-  expect(before.scrollTop, `${label} body starts at the top`).toBe(0)
+  expect(before.frameScrollTop, `${label} panel frame is not the scroller`).toBe(0)
   const overflows = before.scrollHeight > before.clientHeight
-  if (options.requireOverflow) expect(overflows, `${label} body is taller than its viewport`).toBe(true)
-
-  await dialog.evaluate((element) => {
-    const body = element.querySelector('.dialog-body') as HTMLElement | null
+  if (options?.requireOverflow) {
+    expect(overflows, `${label} body is taller than the space it is given`).toBe(true)
+  }
+  await panel.evaluate((element) => {
+    const body = element.querySelector('.canvas-workflow-panel__body') as HTMLElement | null
     if (body !== null) body.scrollTop = body.scrollHeight
   })
-  const after = await readBodyScroll(dialog)
+  const after = await panel.evaluate((element) => {
+    const body = element.querySelector('.canvas-workflow-panel__body') as HTMLElement | null
+    return {
+      scrollTop: body?.scrollTop ?? 0,
+      frameScrollTop: (element as HTMLElement).scrollTop,
+    }
+  })
   expect(after.frameScrollTop, `${label} frame stays at scrollTop 0`).toBe(0)
   if (overflows) {
     expect(after.scrollTop, `${label} body owns the scroll`).toBeGreaterThan(0)
   } else {
     expect(after.scrollTop, `${label} a body that fits does not scroll`).toBe(0)
   }
-
-  const chrome = await expectChromeComplete(page, dialog, controls, `${label} scrolled`)
-  expectChromeUnchanged(baseline, chrome, `${label} scrolled`)
+  await expectPanelComplete(page, panel, controls, `${label} scrolled`)
 }
 
 /**
- * Open a shared Select and prove the trigger (which may legitimately be
- * scrolled into the body) and the open list are both complete inside the
- * dialog. The list is never scrolled into view: a list the dialog cannot show
- * in place must fail instead of being rescued.
+ * The panel caps its own height to the space **below its own top edge**, not to
+ * the whole viewport (review finding 3). A page-level panel opens at the canvas
+ * container's top, so a viewport-sized cap would let a tall form run past the
+ * bottom of the window before its body began scrolling. The 12px is the same
+ * margin the stylesheet subtracts.
  */
-async function expectPickerComplete(
+async function expectPanelCappedBelowItsTop(panel: Locator, label: string): Promise<void> {
+  const geometry = await panel.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return {
+      top: rect.top,
+      bottom: rect.bottom,
+      height: rect.height,
+      maxHeight: Number.parseFloat(getComputedStyle(element).maxHeight),
+      windowHeight: window.innerHeight,
+    }
+  })
+  const available = geometry.windowHeight - geometry.top - 12
+  expect(geometry.maxHeight, `${label} caps its height to the space below its own top`).toBeCloseTo(available, 0)
+  expect(geometry.height, `${label} is never taller than that space`).toBeLessThanOrEqual(available + 1)
+  expect(geometry.bottom, `${label} ends inside the window`).toBeLessThanOrEqual(geometry.windowHeight)
+}
+
+/**
+ * Open a picker in the panel and prove the trigger and the open list are both
+ * complete inside the panel and the viewport, then choose an option. The
+ * trigger may legitimately be scrolled into the body first (it lives in the
+ * scrolling body); the list is never scrolled into view, so a list the panel
+ * cannot show in place fails instead of being rescued.
+ */
+async function expectPanelPickerComplete(
   page: Page,
-  dialog: Locator,
+  panel: Locator,
   trigger: Locator,
   option: Locator,
   chosen: string,
   label: string,
 ): Promise<void> {
-  await expectComplete(page, trigger, dialog, `${label} trigger`, { scroll: true })
+  await trigger.scrollIntoViewIfNeeded()
+  await expectPanelComplete(page, panel, [{ label: `${label} trigger`, locator: trigger }], label)
   await trigger.click()
   await expect(option).toBeVisible()
-  await expectComplete(page, option, dialog, `${label} option`)
+  await expectPanelComplete(page, panel, [{ label: `${label} option`, locator: option }], `${label} open`)
   await option.click()
   await expect(trigger).toContainText(chosen)
 }
 
-test.describe('tablet Thread and Flutes', () => {
+test.describe('tablet Thread and Flutes panels', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
-  test('the tool rail offers both dialogs, which fit with reachable actions', async ({ app, ui }) => {
+  test('the tool rail opens both panels with reachable actions', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await switchToAround(page)
@@ -2370,98 +2904,81 @@ test.describe('tablet Thread and Flutes', () => {
     await expect(rotaryEntry(page, ui, 'flutes')).toBeVisible()
     await rotaryEntry(page, ui, 'thread').click()
 
-    const dialog = ui.rotary.dialog(page)
-    await expect(dialog).toBeVisible()
+    const panel = ui.rotary.dialog(page)
+    await expect(panel).toBeVisible()
 
-    // The whole frame and the header plus both actions are complete at once,
-    // with nothing scrolled into view to hide a footer the frame has pushed
-    // out (issue #1016 C1 correction, slice D2).
-    const chrome = await expectChromeComplete(
+    // The panel and its title plus both actions are complete at once, inside
+    // the canvas panel the other canned shapes use.
+    const frame = await expectPanelComplete(
       page,
-      dialog,
-      dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page)),
+      panel,
+      panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page)),
       'thread',
     )
-    expect(chrome.frame.y, 'the dialog frame starts on screen').toBeGreaterThanOrEqual(0)
-    expect(chrome.frame.y + chrome.frame.height, 'the dialog frame ends on screen').toBeLessThanOrEqual(820)
+    expect(frame.y, 'the panel starts on screen').toBeGreaterThanOrEqual(0)
+    expect(frame.y + frame.height, 'the panel ends on screen').toBeLessThanOrEqual(820)
 
     await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
-    // Closing returns focus to the canvas.
+    await expect(panel).toBeHidden()
+    // Closing returns focus to the canvas, the panel contract.
     const canvasFocused = await page.evaluate(() => document.activeElement?.classList.contains('sketch-canvas') ?? false)
     expect(canvasFocused).toBe(true)
   })
 
-  test('both dialogs keep every action and picker complete inside the dialog', async ({ app, ui }) => {
+  test('both panels keep every action and picker complete', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await switchToAround(page)
 
     for (const kind of ['thread', 'flutes'] as const) {
       await openRotaryEntry(page, ui, kind)
-      const dialog = ui.rotary.dialog(page)
-      await expect(dialog).toBeVisible()
+      const panel = ui.rotary.dialog(page)
+      await expect(panel).toBeVisible()
 
-      // Fresh open: the header and the actions are complete at once and none of
-      // them is scrolled into view first. A clipped footer cannot pass by being
-      // brought into view.
-      const controls = dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
-      const fresh = await expectChromeComplete(page, dialog, controls, `${kind} fresh`)
-      await expectDialogStacked(dialog, kind)
+      const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      await expectPanelCappedBelowItsTop(panel, kind)
 
-      // A picker may scroll the body; the frame, header and footer may not
-      // move, and the open list must sit inside the dialog unaided. The Tool
-      // picker is gone (decision 3), so Direction is the only picker left.
-      await expectPickerComplete(
+      // The one picker left is Direction: its trigger and its open list must
+      // both be complete, and picking must leave the title and the actions
+      // where they were (the panel has no dialog footer to scroll away).
+      await expectPanelPickerComplete(
         page,
-        dialog,
+        panel,
         ui.rotary.directionTrigger(page),
         ui.rotary.directionOption(page, 'Left-hand'),
         'Left-hand',
         `${kind} Direction`,
       )
-      const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
-      expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
+      await expectPanelComplete(page, panel, controls, `${kind} after pickers`)
 
-      // Scrolling the body leaves the header and the footer where they were;
-      // where the body is taller than its viewport it, not the frame, scrolls.
-      await expectBodyOwnsScroll(page, dialog, controls, fresh, kind, { requireOverflow: false })
+      await expectPanelBodyScrolls(page, panel, controls, kind)
 
       await page.keyboard.press('Escape')
-      await expect(dialog).toBeHidden()
+      await expect(panel).toBeHidden()
     }
   })
 
-  test('a Left flute created from the tablet dialog reverses the hand and undoes in one step', async ({ app, ui }) => {
+  test('a Left flute created from the tablet panel reverses the hand and undoes in one step', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await switchToAround(page)
     const baseline = await rotarySnapshot(page)
 
     await openRotaryEntry(page, ui, 'flutes')
-    const dialog = ui.rotary.dialog(page)
-    await expect(dialog).toBeVisible()
+    const panel = ui.rotary.dialog(page)
+    await expect(panel).toBeVisible()
     await ui.rotary.field(page, 'length').fill('30')
     await ui.rotary.field(page, 'count').fill('2')
     await ui.rotary.field(page, 'twist').fill('2')
     await ui.rotary.field(page, 'depth').fill('1')
 
-    await expectPickerComplete(
-      page,
-      dialog,
-      ui.rotary.directionTrigger(page),
-      ui.rotary.directionOption(page, 'Left-hand'),
-      'Left-hand',
-      'Flutes Direction',
-    )
-    await expectChromeComplete(
-      page,
-      dialog,
-      dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page)),
-      'Flutes Create',
-    )
+    await ui.rotary.directionTrigger(page).click()
+    await ui.rotary.directionOption(page, 'Left-hand').click()
+    await expect(ui.rotary.directionTrigger(page)).toContainText('Left-hand')
+    await expectPanelComplete(page, panel, panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page)), 'Flutes Create')
     await ui.rotary.createButton(page).click()
-    await expect(dialog).toBeHidden()
+    await expect(panel).toBeHidden()
 
     const geometry = await rotaryLineGeometry(page)
     expect(geometry.lineCount).toBe(2)
@@ -2478,104 +2995,135 @@ test.describe('tablet Thread and Flutes', () => {
   })
 })
 
-test.describe('tablet Thread and Flutes on a short viewport', () => {
-  // The Tool field is gone, so the form is shorter than C1's; this height is
-  // still below it, so the body must scroll while the header and footer stay.
-  // It must also stay at 500 px or more: a touch viewport whose short side is
-  // under 500 is a phone as far as `isPhoneSizedTouchDevice` is concerned, and
-  // the app boots its "not supported on phones" screen with no canvas at all.
+test.describe('tablet Thread and Flutes panels on a short viewport', () => {
+  // A touch viewport below 500 px on its short side is a phone as far as
+  // `isPhoneSizedTouchDevice` is concerned, and the app boots its "not
+  // supported on phones" screen with no canvas at all, so this stays at 520.
   test.use({ viewport: { width: 1180, height: 520 }, hasTouch: true })
 
-  test('both dialogs keep their actions and pickers reachable while the body scrolls', async ({ app, ui }) => {
+  test('both panels keep their actions and picker reachable at the tablet floor', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await switchToAround(page)
 
     for (const kind of ['thread', 'flutes'] as const) {
       await openRotaryEntry(page, ui, kind)
-      const dialog = ui.rotary.dialog(page)
-      await expect(dialog).toBeVisible()
+      const panel = ui.rotary.dialog(page)
+      await expect(panel).toBeVisible()
 
-      // Fresh open: the header and the actions are complete at once and none of
-      // them is scrolled into view first, at the height where the frame has the
-      // least room to spare (issue #1016 C1 correction, slice D2).
-      const controls = dialogChrome(dialog, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
-      const fresh = await expectChromeComplete(page, dialog, controls, `${kind} fresh`)
-      await expectDialogStacked(dialog, kind)
+      const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      // The panel opens at the canvas container's top, so its cap is the space
+      // below that top — the reason a tall form can never end off screen
+      // (review finding 3).
+      await expectPanelCappedBelowItsTop(panel, kind)
 
-      // The form really is taller than the body at this height, so the test is
-      // exercising the scroll path and not a form that happens to fit.
-      const metrics = await readBodyScroll(dialog)
-      expect(metrics.scrollHeight, `${kind} body scrolls on a short viewport`).toBeGreaterThan(metrics.clientHeight)
-
-      await expectPickerComplete(
+      // Direction is the only picker left: its trigger and its open list must
+      // both be complete, and picking must leave the title and the actions
+      // where they were (review finding 4).
+      await expectPanelPickerComplete(
         page,
-        dialog,
+        panel,
         ui.rotary.directionTrigger(page),
         ui.rotary.directionOption(page, 'Left-hand'),
         'Left-hand',
         `${kind} Direction`,
       )
-      const afterPickers = await expectChromeComplete(page, dialog, controls, `${kind} after pickers`)
-      expectChromeUnchanged(fresh, afterPickers, `${kind} after pickers`)
+      await expectPanelComplete(page, panel, controls, `${kind} after pickers`)
 
-      // Even with the form taller than the body, the body owns the scroll and
-      // the header and the footer keep the rectangles they opened with.
-      await expectBodyOwnsScroll(page, dialog, controls, fresh, kind, { requireOverflow: true })
+      // The body is the only scroller and the title and the actions keep their
+      // rectangles. At this height the form happens to fit inside the cap, so
+      // this case does not demand overflow; the short-window test below does,
+      // where the same form is genuinely taller than the space it is given.
+      await expectPanelBodyScrolls(page, panel, controls, kind)
 
       await page.keyboard.press('Escape')
-      await expect(dialog).toBeHidden()
+      await expect(panel).toBeHidden()
     }
   })
 })
 
+test.describe('Thread and Flutes panels on a short desktop window', () => {
+  // A fine-pointer window this short is a normal small/split-screen window, and
+  // it is where the rotary form is genuinely taller than the space below the
+  // panel's top: the body has to scroll (review finding 4). The panel used to
+  // be a dialog with a header and a footer, which needed the scroll already at
+  // 520; the panel's own chrome is one row, so the shorter window is what
+  // exercises the same path.
+  test.use({ viewport: { width: 1180, height: 420 } })
 
-/** True when the focused element matches `selector` and sits inside the solid dialog. */
-async function solidDialogHasFocus(page: Page, selector: string): Promise<boolean> {
+  test('the body owns the scroll when the form is taller than the panel', async ({ app, ui }) => {
+    const { page } = app
+    await prepareMmRoundBarWithRotary(page)
+    await switchToAround(page)
+
+    for (const kind of ['thread', 'flutes'] as const) {
+      await openRotaryEntry(page, ui, kind)
+      const panel = ui.rotary.dialog(page)
+      await expect(panel).toBeVisible()
+
+      const controls = panelChrome(panel, ui.rotary.cancelButton(page), ui.rotary.createButton(page))
+      await expectPanelComplete(page, panel, controls, `${kind} fresh`)
+      await expectPanelCappedBelowItsTop(panel, kind)
+      await expectPanelBodyScrolls(page, panel, controls, kind, { requireOverflow: true })
+
+      await page.keyboard.press('Escape')
+      await expect(panel).toBeHidden()
+    }
+  })
+})
+
+/** True when the focused element matches `selector` and sits inside the solid panel. */
+async function solidPanelHasFocus(page: Page, selector: string): Promise<boolean> {
   return page.evaluate((sel) => {
     const active = document.activeElement
     return active instanceof HTMLElement
       && active.matches(sel)
-      && active.closest('.rotary-solid-dialog') !== null
+      && active.closest('.rotary-solid-panel') !== null
   }, selector)
 }
 
-test.describe('tablet solid dialogs', () => {
+test.describe('tablet solid panels', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
-  test('both solid dialogs keep their actions complete', async ({ app, ui }) => {
+  test('both solid panels keep their actions complete', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await seedFluteTools(page)
     await switchToAround(page)
 
-    // Polygon, on a round bar: the C1 frame contains its own chrome.
+    // Polygon, on a round bar.
     await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
-    const dialog = ui.rotarySolid.dialog(page)
-    await expect(dialog).toBeVisible()
-    const controls = dialogChrome(dialog, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
-    const fresh = await expectChromeComplete(page, dialog, controls, 'polygon fresh')
-    await expectDialogStacked(dialog, 'polygon')
-    await expectBodyOwnsScroll(page, dialog, controls, fresh, 'polygon', { requireOverflow: false })
+    const panel = ui.rotarySolid.dialog(page)
+    await expect(panel).toBeVisible()
+    await expectPanelComplete(
+      page,
+      panel,
+      panelChrome(panel, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page)),
+      'polygon fresh',
+    )
     await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
+    await expect(panel).toBeHidden()
 
-    // Square to round, on a real blank: the short form fits the same frame.
+    // Square to round, on a real blank.
     await prepareMmSquareBlankWithRotary(page)
     await switchToAround(page)
     await openCreationDrawer(page)
     await ui.rotarySolid.turnButton(page).click()
     const square = ui.rotarySolid.dialog(page)
     await expect(square).toBeVisible()
-    const squareControls = dialogChrome(square, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
-    await expectChromeComplete(page, square, squareControls, 'square fresh')
-    await expectDialogStacked(square, 'square')
+    await expectPanelComplete(
+      page,
+      square,
+      panelChrome(square, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page)),
+      'square fresh',
+    )
     await page.keyboard.press('Escape')
     await expect(square).toBeHidden()
   })
 
-  test('the solid dialog takes and traps keyboard focus, and Escape closes it', async ({ app, ui }) => {
+  test('the solid panel focuses its first field, traps Tab, and Escape closes it', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await seedFluteTools(page)
@@ -2583,28 +3131,29 @@ test.describe('tablet solid dialogs', () => {
 
     await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
-    const dialog = ui.rotarySolid.dialog(page)
-    await expect(dialog).toBeVisible()
+    const panel = ui.rotarySolid.dialog(page)
+    await expect(panel).toBeVisible()
 
-    // Opening focuses the first field the user fills, inside the modal.
+    // Opening focuses the first field the user fills.
     await expect.poll(
-      async () => solidDialogHasFocus(page, '#rotary-solid-start'),
+      async () => solidPanelHasFocus(page, '#rotary-solid-start'),
       { message: 'Start takes focus on open' },
     ).toBe(true)
 
-    // Tab from the last control wraps to the first instead of leaving the modal.
+    // Tab from the last field wraps to the first instead of leaving the panel:
+    // the two actions carry their shortcuts and are not tab stops.
     await expect(ui.rotarySolid.createButton(page)).toBeEnabled()
-    await ui.rotarySolid.createButton(page).focus()
+    await ui.rotarySolid.field(page, 'rotation').focus()
     await page.keyboard.press('Tab')
-    expect(await solidDialogHasFocus(page, '.dialog-close'), 'Tab wraps to the close button').toBe(true)
+    expect(await solidPanelHasFocus(page, '#rotary-solid-start'), 'Tab wraps to the first field').toBe(true)
     // Shift+Tab wraps the other way.
     await page.keyboard.press('Shift+Tab')
-    expect(await solidDialogHasFocus(page, '.rotary-dialog__create'), 'Shift+Tab wraps back to Create').toBe(true)
+    expect(await solidPanelHasFocus(page, '#rotary-solid-rotation'), 'Shift+Tab wraps back to the last field').toBe(true)
 
     // Escape closes the form; there is no Tool picker to dismiss first.
     await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
-    // Closing returns focus to the canvas, the existing dialog contract.
+    await expect(panel).toBeHidden()
+    // Closing returns focus to the canvas, the same contract the dialog had.
     await expect.poll(
       async () => page.evaluate(() => document.activeElement?.classList.contains('sketch-canvas') ?? false),
       { message: 'the canvas regains focus' },
@@ -2612,13 +3161,12 @@ test.describe('tablet solid dialogs', () => {
   })
 })
 
-test.describe('tablet solid dialogs on a short viewport', () => {
-  // At this height the polygon form is taller than the body, so the body must
-  // scroll while the header and the footer actions stay put — the C1 D2 rule
-  // applied to the solid dialog (#1016 C2-U2).
+test.describe('tablet solid panels on a short viewport', () => {
+  // The polygon form is taller than the panel at this height, so the fields
+  // must scroll while the title and the actions stay put.
   test.use({ viewport: { width: 1180, height: 600 }, hasTouch: true })
 
-  test('the polygon form scrolls its body and keeps its actions reachable', async ({ app, ui }) => {
+  test('the polygon fields scroll and its actions stay reachable', async ({ app, ui }) => {
     const { page } = app
     await prepareMmRoundBarWithRotary(page)
     await seedFluteTools(page)
@@ -2626,18 +3174,14 @@ test.describe('tablet solid dialogs on a short viewport', () => {
 
     await openCreationDrawer(page)
     await ui.rotarySolid.polygonButton(page).click()
-    const dialog = ui.rotarySolid.dialog(page)
-    await expect(dialog).toBeVisible()
-    const controls = dialogChrome(dialog, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
-    const fresh = await expectChromeComplete(page, dialog, controls, 'polygon short')
-    await expectDialogStacked(dialog, 'polygon short')
-
-    // Whether or not the form is taller than the body at this height, the body
-    // is the only scroller and the header and footer keep their rectangles: a
-    // form the frame cannot show must not push its actions out instead.
-    await expectBodyOwnsScroll(page, dialog, controls, fresh, 'polygon short', { requireOverflow: false })
+    const panel = ui.rotarySolid.dialog(page)
+    await expect(panel).toBeVisible()
+    const controls = panelChrome(panel, ui.rotarySolid.cancelButton(page), ui.rotarySolid.createButton(page))
+    await expectPanelComplete(page, panel, controls, 'polygon short')
+    await expectPanelCappedBelowItsTop(panel, 'polygon short')
+    await expectPanelBodyScrolls(page, panel, controls, 'polygon short')
 
     await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
+    await expect(panel).toBeHidden()
   })
 })

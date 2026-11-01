@@ -178,7 +178,15 @@ test.describe('Feature references browser smoke', () => {
 
     // Verify pending copy mode is set (wiring)
     const pending = await getPendingMove(app.page)
-    expect(pending).toEqual({ mode: 'copy', entityType: 'feature', entityIds: ['f-independent'] })
+    // The seam also reports the points a drag holds (issue #1112 rt6-d); an
+    // armed copy has none yet.
+    expect(pending).toEqual({
+      mode: 'copy',
+      entityType: 'feature',
+      entityIds: ['f-independent'],
+      fromPoint: null,
+      toPoint: null,
+    })
 
     // Complete placement — canvas pointer events don't reliably set
     // fromPoint/toPoint in headless Chromium.

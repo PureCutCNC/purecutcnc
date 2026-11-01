@@ -78,7 +78,7 @@ export interface RotaryPolygonPrismInput {
   rotationDeg?: number
 }
 
-interface CrossPoint {
+export interface CrossPoint {
   across: number
   up: number
 }
@@ -155,6 +155,64 @@ function validate(
   if (acrossCorners > diameter + TOLERANCE) {
     throw new RangeError(`Rotary polygon across-corners ${acrossCorners} exceeds the ${diameter} stock size.`)
   }
+}
+
+/**
+ * The prism's cross-section vertices in the bar's own (across, up) plane.
+ *
+ * The half-step offset puts a *flat* over the +up direction — its two vertices
+ * straddle it at 90° ± step/2, so their edge midpoint is exactly (0, apothem) —
+ * where a whole-step offset would put a corner on a triangle or a pentagon.
+ * Decreasing angles keep the ring clockwise in that plane; the project-axis
+ * handedness turns that into the outward winding.
+ *
+ * `rotationDeg` turns the cross-section counterclockwise in (across, up), so a
+ * positive angle carries the flat-up hexagon's top flat towards -across.
+ * Reduced modulo a whole turn *before* the radians conversion: a finite degree
+ * value near `Number.MAX_VALUE` overflows `deg * π / 180` to Infinity, whose
+ * sine and cosine are NaN, so validation on finiteness alone is not enough.
+ *
+ * Exported because the Polygon's side-view outline (issue #1112 rt2-d) needs
+ * the same cross-section the mesh is built from: the outline's width across
+ * the bar is this ring's extent, and a second copy of the rotation convention
+ * would silently disagree with the solid.
+ */
+export function rotaryPolygonCrossSection(
+  input: Pick<RotaryPolygonPrismInput, 'sides' | 'acrossFlats' | 'rotationDeg'>,
+): CrossPoint[] {
+  const sides = input.sides
+  const apothem = input.acrossFlats / 2
+  if (!Number.isInteger(sides) || sides < 3 || sides > MAX_SIDES) {
+    throw new RangeError(`Rotary polygon sides must be an integer 3..${MAX_SIDES}, got ${sides}.`)
+  }
+  if (!Number.isFinite(input.acrossFlats) || input.acrossFlats <= 0) {
+    throw new RangeError(`Rotary polygon acrossFlats must be positive and finite, got ${input.acrossFlats}.`)
+  }
+  const rotationDeg = input.rotationDeg ?? 0
+  if (!Number.isFinite(rotationDeg)) {
+    throw new RangeError(`Rotary polygon rotationDeg must be finite, got ${rotationDeg}.`)
+  }
+  const circumradius = apothem / Math.cos(Math.PI / sides)
+  const step = (2 * Math.PI) / sides
+  const cross: CrossPoint[] = []
+  for (let i = 0; i < sides; i++) {
+    const angle = Math.PI / 2 - (i + 0.5) * step
+    cross.push({ across: circumradius * Math.cos(angle), up: circumradius * Math.sin(angle) })
+  }
+
+  const rotation = (rotationDeg % 360) * Math.PI / 180
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  if (rotation !== 0) {
+    for (let i = 0; i < sides; i++) {
+      const point = cross[i]
+      cross[i] = {
+        across: point.across * cos - point.up * sin,
+        up: point.across * sin + point.up * cos,
+      }
+    }
+  }
+  return cross
 }
 
 /**
@@ -236,38 +294,7 @@ export function buildRotaryPolygonPrism(
   const acrossCentre = barCentre(stock)
   const radius = diameter / 2
 
-  // Cross-section vertices in the bar's own (across, up) plane. The half-step
-  // offset puts a *flat* over the +up direction — its two vertices straddle it
-  // at 90° ± step/2, so their edge midpoint is exactly (0, apothem) — where a
-  // whole-step offset would put a corner on a triangle or a pentagon.
-  // Decreasing angles keep the ring clockwise in that plane; the project-axis
-  // handedness below turns that into the outward winding.
-  const apothem = input.acrossFlats / 2
-  const circumradius = apothem / Math.cos(Math.PI / sides)
-  const step = (2 * Math.PI) / sides
-  const cross: CrossPoint[] = []
-  for (let i = 0; i < sides; i++) {
-    const angle = Math.PI / 2 - (i + 0.5) * step
-    cross.push({ across: circumradius * Math.cos(angle), up: circumradius * Math.sin(angle) })
-  }
-
-  // `rotationDeg` turns the cross-section counterclockwise in (across, up), so
-  // a positive angle carries the flat-up hexagon's top flat towards -across.
-  // Reduce modulo a whole turn *before* the radians conversion: a finite degree
-  // value near `Number.MAX_VALUE` overflows `deg * π / 180` to Infinity, whose
-  // sine and cosine are NaN, so validation on finiteness alone is not enough.
-  const rotation = ((input.rotationDeg ?? 0) % 360) * Math.PI / 180
-  const cos = Math.cos(rotation)
-  const sin = Math.sin(rotation)
-  if (rotation !== 0) {
-    for (let i = 0; i < sides; i++) {
-      const point = cross[i]
-      cross[i] = {
-        across: point.across * cos - point.up * sin,
-        up: point.across * sin + point.up * cos,
-      }
-    }
-  }
+  const cross = rotaryPolygonCrossSection(input)
 
   // Project a cross-section point at an absolute along position into stock
   // coordinates. `across` maps to project Y on an X bar and project X on a Y

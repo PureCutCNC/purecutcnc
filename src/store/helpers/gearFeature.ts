@@ -32,6 +32,7 @@ import type {
   FeatureOperation,
   Point,
   Project,
+  SetupFace,
   SketchFeature,
 } from '../../types/project'
 import {
@@ -48,8 +49,9 @@ import type { ProjectStore } from '../types'
 import { buildShapeFeature } from './buildShapeFeature'
 import { createDefinitionForFeature } from './featureDefinitions'
 import { isMachinable, sectionForOperation } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { resolvedProjectFeatures } from './resolveFeatures'
-import { activeFace, aroundSketchAuthoringRefused } from './activeFace'
+import { activeFace, aroundSheetAuthoringRefused, featureOperation } from './activeFace'
 
 const GEAR_NAME_PATTERN = /^Gear (\d+)$/
 const GEAR_BORE_NAME_PATTERN = /^Gear Bore (\d+)$/
@@ -115,6 +117,38 @@ function referencedCannedDraft(
   } as unknown as SketchFeature
 }
 
+/**
+ * The operation a new gear is created with (issue #1112 R2 item 14, generalised
+ * by rt3-d item 33).
+ *
+ * On **bar stock** — round or square, on Top, Bottom or Around — the bar is
+ * already the material, so a new closed feature is a cut into it and the
+ * classifier's Subtract stands. That is the same rule a hand-drawn outline
+ * follows (`inferManualFeatureOperation` via `barSeedsModel`), and the same one
+ * `addFeature`'s base-solid rule already applies; only the gear action's own
+ * "the first machining feature is Add" default was getting in the way. Item 14
+ * took the Around face of a round bar first; item 33 completes it, because a
+ * bar is solid on every face.
+ *
+ * A **block** project keeps the historical rule exactly: the first *machining*
+ * feature is Add, not "the first solid". A rotary project whose stock is a block
+ * has no bar to seed from, so it follows the block rule too. `face` is passed in
+ * rather than read here so the rule can be pinned per face; Around never earns
+ * the base-solid Add, because a project that can author on that sheet is a bar
+ * project and takes the branch above.
+ */
+export function gearCreationOperation(
+  project: Project,
+  draft: SketchFeature,
+  face: SetupFace,
+): FeatureOperation {
+  if (!isMachinable(draft)) return draft.operation
+  if (barSeedsModel(project)) return draft.operation
+  const isFirstMachiningFeature = face !== 'around'
+    && !resolvedProjectFeatures(project).some(isMachinable)
+  return isFirstMachiningFeature ? 'add' : draft.operation
+}
+
 export function createAddGearFeatureAction(
   _set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -139,19 +173,13 @@ export function createAddGearFeatureAction(
     // round-only Around sheet must refuse it before any project, selection or
     // history mutation (issue #1016 C2-U1F).
     const gearFace = gearFeature.authoringFace ?? activeFace(state.project)
-    if (aroundSketchAuthoringRefused(state.project, gearFace)) {
+    if (aroundSheetAuthoringRefused(state.project, gearFace, featureOperation(state.project, gearFeature))) {
       return []
     }
 
-    // Preserve the original creation rule exactly: the first *machining*
-    // feature is Add, not "the first solid on a block project". In particular
-    // a rotary bar needs no base add (`barSeedsModel`), but the old command
-    // still created its first gear as Add, which is what gives the first
-    // gear+bore the Add/Subtract pair it has always had (issue #1112 DE2
-    // review). `addFeature`'s base-solid rule then agrees with this operation.
-    const isFirstMachiningFeature = isMachinable(gearFeature)
-      && !resolvedProjectFeatures(state.project).some(isMachinable)
-    const operation: FeatureOperation = isFirstMachiningFeature ? 'add' : gearFeature.operation
+    // Preserve the original creation rule exactly, with the Around exception
+    // that makes item 14's default a cut into the bar (see the rule itself).
+    const operation: FeatureOperation = gearCreationOperation(state.project, gearFeature, gearFace)
     // A region/construction gear has no solid to bore; the old command created
     // the bore only for the features section, and that stays true.
     const boreDiameter = sectionForOperation(operation) === 'features' ? params.boreDiameter : 0

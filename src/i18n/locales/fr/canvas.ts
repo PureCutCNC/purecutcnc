@@ -496,5 +496,5 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.face.through': 'TRAV.',
   'canvas.face.topOriginLanding': 'L’origine du dessus se retrouve ici après le retournement',
   'canvas.face.aroundTurnsBar': 'La barre tourne dans le rotatif. Cette vue est sa surface déroulée : le long de la barre et autour d’elle.',
-  'canvas.around.modelBand': '{name} — à l’intérieur de la barre, usiné par Ébauche rotative et Finition rotative',
+  'canvas.around.modelBand': '{name}',
 }

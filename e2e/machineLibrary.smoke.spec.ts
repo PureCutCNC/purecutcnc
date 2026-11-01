@@ -50,12 +50,22 @@ test('custom machines live in My Machines and survive project changes and restar
   await expect(ui.machineManager.item(app.page, 'GRBL 1.1')).toBeVisible()
   expect((await embeddedMachine(app.page)).definitions).toHaveLength(0)
 
-  // Duplicating a built-in creates an editable custom machine.
+  // Duplicating a built-in creates an editable custom machine; the copy is
+  // already in My Machines when its editor opens, so Save is disabled until
+  // the editor has something to write (issue #1112 F4).
   await ui.machineManager.item(app.page, 'GRBL 1.1').click()
   await ui.machineManager.duplicateButton(app.page).click()
-  await expect(ui.machineEditor.dialog(app.page)).toBeVisible()
+  const editor = ui.machineEditor.dialog(app.page)
+  await expect(editor).toBeVisible()
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const editorJson = ui.machineEditor.advancedJson(app.page)
+  const duplicateDefinition = JSON.parse(await editorJson.inputValue())
+  duplicateDefinition.program.footer = [...duplicateDefinition.program.footer, '; custom copy']
+  await editorJson.fill(JSON.stringify(duplicateDefinition, null, 2))
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
   await ui.machineEditor.saveButton(app.page).click()
-  await expect(ui.machineEditor.dialog(app.page)).toBeHidden()
+  await expect(editor).toBeHidden()
 
   await expect(ui.machineManager.item(app.page, 'GRBL 1.1 (copy)')).toBeVisible()
   expect(await readStorage(app.page, CUSTOM_MACHINES_KEY)).toContain('GRBL 1.1 (copy)')
@@ -99,6 +109,13 @@ test('a ShopBot duplicate keeps its output format and offers no G-code fields', 
   await expect(editor.getByText('Operation header', { exact: true })).toHaveCount(0)
   await expect(editor.getByText('Flood on', { exact: true })).toHaveCount(0)
   await expect(editor.getByText('Variables reference', { exact: true })).toHaveCount(0)
+  // The duplicate is already saved, so Save needs a real edit (issue #1112 F4).
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const editorJson = ui.machineEditor.advancedJson(app.page)
+  const duplicateDefinition = JSON.parse(await editorJson.inputValue())
+  duplicateDefinition.program.footer = [...duplicateDefinition.program.footer, "' custom copy"]
+  await editorJson.fill(JSON.stringify(duplicateDefinition, null, 2))
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
   await ui.machineEditor.saveButton(app.page).click()
   await expect(editor).toBeHidden()
 
@@ -443,8 +460,11 @@ test('invalid Advanced plasma metadata stays invalid across focused edits until 
   expect(JSON.parse(await json.inputValue()).machineKind).toBeUndefined()
   definition.machineKind = 'plasma'
   await json.fill(JSON.stringify(definition))
-  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
+  // This restores the definition the editor opened on, which is valid again and
+  // still nothing to save (issue #1112 F4).
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
   await ui.machineEditor.field(app.page, 'Torch on command').fill('  M3 $0 S1  ')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
   expect(JSON.parse(await json.inputValue()).plasma.torchOnCommand).toBe('  M3 $0 S1  ')
   await ui.machineEditor.saveButton(app.page).click()
 })

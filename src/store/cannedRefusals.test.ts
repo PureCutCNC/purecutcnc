@@ -19,8 +19,10 @@
  *
  * Run with: npx tsx src/store/cannedRefusals.test.ts
  *
- * Move/rotate/mirror/copy keep a shape canned (those are transforms and
- * definition copies, covered by the format/definition tests). Edit sketch,
+ * Move/copy keep a shape canned (those are transforms and definition copies,
+ * covered by the format/definition tests), and since issue #1112 rt7-f Rotate,
+ * Resize and Mirror are refused for the four rotary kinds rather than
+ * transforming them (`store/helpers/cannedShapeActions.ts`). Edit sketch,
  * constraints, Cut, Join, Trim and Offset have no meaningful result on a
  * generated shape, so every entry point must refuse until Expand to features.
  */

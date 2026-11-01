@@ -15,27 +15,33 @@
  */
 
 /**
- * The Thread and Flutes entries (issues #1016 C1, #1112 slice F).
+ * The Thread and Flutes entries (issues #1016 C1, #1112 slice F; canvas panel
+ * in rt2-b).
  *
- * They are not a separate toolbar group any more: the creation drawer's rotary
- * group holds them next to the drawing shapes, and the tablet rail keeps a
- * rail variant. Each entry only opens the dialog; the one dialog host lives in
- * AppShell, so the drawer closing cannot unmount an open form.
+ * They are not a separate toolbar group: the creation drawer's rotary group
+ * holds them next to the drawing shapes, and the tablet rail keeps a rail
+ * variant. Each entry arms the canvas creation panel through the store — the
+ * same page-level panel the other canned shapes use — so the drawer closing
+ * cannot unmount an open form, and no modal is involved.
  *
- * The entries exist only while the workspace is on an available, active Around
- * face — a flat, milling or plasma view never offers them.
+ * The entries work only while the workspace is on an active Around face. With
+ * a **round** bar they are live; on a square blank the unrolled sheet's raw
+ * coordinates describe a round bar, so they stay listed and disabled with the
+ * reason instead of vanishing (issue #1016 C2-U2, issue #1112 decision 17).
+ * Off Around, and in a project with no bar at all, they keep their place in the
+ * drawer and say what is missing (issue #1112 rt3-d item 31).
  */
 
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace, aroundSketchAuthoringAvailable } from '../../../store/helpers/activeFace'
+import { activeFace, aroundSketchAuthoringAvailable, aroundUnavailableReason } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Icon } from '../../Icon'
 import { ToolbarActionButton } from './primitives'
-import { openRotaryPatternCreate, type RotaryPatternKind } from './rotaryPatternDialogState'
+import type { RotaryPatternCannedKind } from '../../../store/types'
 
 interface RotaryCommand {
-  kind: RotaryPatternKind
+  kind: RotaryPatternCannedKind
   command: string
   icon: string
   labelKey: MessageKey
@@ -53,12 +59,24 @@ interface RotaryPatternActionsProps {
 
 function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: RotaryPatternActionsProps) {
   const { t } = useI18n()
-  const face = useProjectStore((state) => activeFace(state.project))
   const project = useProjectStore((state) => state.project)
-  // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2): the
-  // unrolled sheet's raw coordinates describe a round bar, so on a square blank
-  // the entries are absent rather than offered and refused.
-  if (face !== 'around' || !aroundSketchAuthoringAvailable(project)) return null
+  const start = useProjectStore((state) => state.startAddRotaryPatternPlacement)
+  // The reasons are asked in order of what the entry needs, the most
+  // fundamental first: a bar to work on, the Around face to work from, and — on
+  // a square blank's round-only sheet — authoring that the sheet accepts
+  // (issue #1112 rt3-d item 31, decision 17).
+  const noBar = aroundUnavailableReason(project) !== null
+  const blockedReason = noBar
+    ? t('sketch.creation.rotaryBarUnavailable')
+    : activeFace(project) !== 'around'
+      ? t('sketch.creation.aroundFaceOnly')
+      // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2):
+      // the unrolled sheet's raw coordinates describe a round bar, so on a
+      // square blank they are refused — but listed and disabled with the
+      // reason, never hidden (issue #1112 decision 17).
+      : aroundSketchAuthoringAvailable(project)
+        ? undefined
+        : t('sketch.creation.squareBarUnavailable')
 
   if (variant === 'rail') {
     return (
@@ -72,12 +90,15 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
                 type="button"
                 data-command={entry.command}
                 aria-label={label}
-                aria-haspopup="dialog"
-                onClick={() => openRotaryPatternCreate(entry.kind)}
+                disabled={blockedReason !== undefined}
+                title={blockedReason}
+                onClick={() => start(entry.kind)}
               >
                 <Icon id={entry.icon} />
               </button>
-              <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+              <span className="tool-rail__tooltip" role="tooltip">
+                {blockedReason ? `${label} — ${blockedReason}` : label}
+              </span>
             </div>
           )
         })}
@@ -96,8 +117,10 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
           icon={entry.icon}
           label={t(entry.labelKey)}
           command={entry.command}
+          disabled={blockedReason !== undefined}
+          disabledReason={blockedReason}
           tooltipSide={tooltipSide}
-          onClick={() => openRotaryPatternCreate(entry.kind)}
+          onClick={() => start(entry.kind)}
         />
       ))}
     </>

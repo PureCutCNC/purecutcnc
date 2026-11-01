@@ -211,6 +211,10 @@ export function applyFeaturePatch(
     featureDefinitions = rebuilt.featureDefinitions
     modelAssets = rebuilt.modelAssets
     features = applyCannedShapeModelSpans(project, features, rebuilt.models)
+    // Thread/Flutes follow the Turn they sit on in one place after every
+    // project write (`withRotarySurfaceSync`), not here: a delete, move,
+    // transform, expand, make-unique, folder change or import must move them
+    // too, and those paths never call this function.
   }
 
   return { features, featureDefinitions, modelAssets }

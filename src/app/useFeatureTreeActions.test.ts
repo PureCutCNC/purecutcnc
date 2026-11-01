@@ -20,7 +20,9 @@
  */
 
 import type { ProjectStore } from '../store/types'
-import { newProject, type Operation } from '../types/project'
+import { newProject, rectProfile, type Operation, type Project } from '../types/project'
+import { registerCannedShapeEditor } from '../cannedShapes'
+import { projectWithFeatures } from '../test/projectFixtures'
 import { createFeatureTreeActions, type FeatureTreeActions } from './useFeatureTreeActions'
 
 function assert(condition: boolean, message: string) {
@@ -67,6 +69,7 @@ function makeActions(
     groupSelectedFeaturesIntoNewFolder: () => '',
     assignFeaturesToFolder: noopVoid,
     addFeatureFolder: (() => '') satisfies ProjectStore['addFeatureFolder'],
+    expandCannedFeature: noopVoid,
     project: undefined as unknown as ProjectStore['project'],
     ...storeOverrides,
   }
@@ -235,6 +238,56 @@ function testUseAsStockLeavesMenuOpen() {
   console.log('useAsStock dispatch shape: PASSED')
 }
 
+/** A project with one generated ellipse, authored on Top. */
+function cannedProject(): Project {
+  return projectWithFeatures(newProject('canned', 'mm'), [{
+    id: 'ellipse-1',
+    name: 'Ellipse',
+    kind: 'composite',
+    folderId: null,
+    sketch: { profile: rectProfile(0, 0, 10, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    canned: { kind: 'ellipse', params: {} },
+    operation: 'add',
+    authoringFace: 'top',
+    z_top: 3,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }])
+}
+
+// The two entries the context menu adds for a generated shape (issue #1112
+// F2) call the very actions Properties calls, so neither can drift.
+function testCannedShapeActions() {
+  console.log('Testing the generated-shape actions...')
+
+  const opened: string[] = []
+  registerCannedShapeEditor('ellipse', (featureId) => opened.push(featureId))
+  const calls: string[] = []
+  const expanded: string[] = []
+  const actions = makeActions(calls, {
+    project: cannedProject(),
+    expandCannedFeature: (featureId) => expanded.push(featureId),
+  })
+
+  actions.editCannedShape('ellipse-1')
+  assert(opened.join() === 'ellipse-1', 'editCannedShape opens the same editor Properties opens')
+  assert(calls.includes('closeTreeContextMenu'), 'editCannedShape closes the menu')
+
+  calls.length = 0
+  actions.expandCannedFeature('ellipse-1')
+  assert(expanded.join() === 'ellipse-1', 'expandCannedFeature runs the store action Properties runs')
+  assert(calls.join('|') === 'closeTreeContextMenu', 'expandCannedFeature closes the menu')
+
+  // A kind with no registered opener does nothing and never throws: the menu
+  // item is disabled in that state, so the action is only the safety net.
+  calls.length = 0
+  actions.editCannedShape('missing-feature')
+  assert(calls.join('|') === 'closeTreeContextMenu', 'an unknown feature closes the menu without opening anything')
+
+  console.log('generated-shape actions: PASSED')
+}
+
 try {
   testMoveFeatureDispatchShape()
   testDeleteFeaturesDoesNotSwitchTabs()
@@ -242,6 +295,7 @@ try {
   testAddToOperationDispatchShape()
   testRemoveFromOperationDispatchShape()
   testOperationTargetActionsGuardMissingOperations()
+  testCannedShapeActions()
   console.log('\nAll useFeatureTreeActions tests PASSED.')
 } catch (e) {
   console.error(e)

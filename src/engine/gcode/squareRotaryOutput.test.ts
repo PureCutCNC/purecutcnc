@@ -59,7 +59,7 @@ import { defaultTool, getStockBounds, newProject, rectProfile } from '../../type
 import type { Clamp, Operation, OperationKind, Project, SquareStock, Tool, ToolType } from '../../types/project'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
-import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
+import { chuckSizePatch, defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { computeOperationToolpath } from '../toolpaths/generateOperation'
 import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
@@ -493,9 +493,24 @@ for (const cell of MATRIX_CELLS) {
 
 // ── 2. the round bar is byte-identical to the base commit ─────
 
+/**
+ * The equipment the baselines were captured with: the 3 inch preset, which was
+ * the app's new-chuck default before #1112 R2 item 23 moved it to the 4 inch
+ * starter. The baselines pin the *path and program* for fixed equipment, so a
+ * change to the default chuck cannot move the control they guard — the same
+ * reason a fixture hand-writes its stock instead of reading today's defaults.
+ */
+const baselineClamps: (stock: SquareStock, units: Units) => Clamp[] = (stock, units) => [{
+  ...chuckSizePatch('bison-3204-3', stock, units, { jawCount: 3 }),
+  type: 'chuck',
+  id: 'chuck',
+  name: 'Chuck',
+  visible: true,
+}]
+
 console.log('Testing the round baseline across the same matrix...')
 for (const cell of MATRIX_CELLS) {
-  const { project, operation } = fixture({ ...cell, round: true })
+  const { project, operation } = fixture({ ...cell, round: true, clamps: baselineClamps })
   const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.machine}`
   const expected = ROUND_BASELINE[key]
   assert.ok(expected, `fixture: a captured round baseline for ${key}`)
@@ -506,7 +521,7 @@ for (const cell of MATRIX_CELLS) {
 
 console.log('Testing the generated square baseline across axes, units and cutters...')
 for (const cell of SQUARE_SHAPE_CELLS) {
-  const { project, operation } = fixture(cell)
+  const { project, operation } = fixture({ ...cell, clamps: baselineClamps })
   const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.toolType}`
   const expected = SQUARE_BASELINE[key]
   assert.ok(expected, `fixture: a captured square baseline for ${key}`)

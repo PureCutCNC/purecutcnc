@@ -17,6 +17,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { validQuickOperationsForFeature, type QuickOperation } from '../components/cam/operationValidity'
+import { validQuickOperationsForFeatureOnActiveFace } from '../components/cam/operationAddEntries'
+import { activeFace } from '../store/helpers/activeFace'
 import { addToOperationCandidates, removeFromOperationCandidates, type RemoveFromOperationCandidate } from '../components/cam/operationTargetLists'
 import { useOutsideDismiss } from '../hooks/useOutsideDismiss'
 import { useProjectStore } from '../store/projectStore'
@@ -96,6 +98,13 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   menuTab: Tab | null
   menuClamp: Clamp | null
   menuQuickOperations: QuickOperation[]
+  /**
+   * True when the menu's feature is authored on another face but an operation
+   * on the current face can still target it (a through cut, a model), so its
+   * menu is the normal one with only its editable items refused (issue #1112
+   * F2). False for a plain ghost, whose menu is the way to its own face.
+   */
+  menuFeatureTargetableFromFace: boolean
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   setQuickOpsSubmenu: Dispatch<SetStateAction<QuickOpsSubmenuPosition | null>>
   addToFolderSubmenu: FolderSubmenuPosition | null
@@ -155,12 +164,32 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     [treeContextMenu, project.tabs]
   )
 
+  // A feature authored on another face can still be cut from the face in
+  // view — a through cut, a model — and then its menu is the normal one with
+  // the editable items refused (issue #1112 F2). The Add menu's own list for
+  // that face and stock decides: an empty list means this face has no
+  // operation for the feature at all, and the menu stays the way to its face.
+  const workspaceFace = activeFace(project)
+  const menuFeatureOnOtherFace = menuFeature !== null
+    && (menuFeature.authoringFace ?? 'top') !== workspaceFace
+  const menuFeatureFaceOperations = useMemo<QuickOperation[]>(
+    () => (
+      menuFeature && menuFeatureOnOtherFace
+        ? validQuickOperationsForFeatureOnActiveFace(project, menuFeature.id)
+        : []
+    ),
+    [menuFeature, menuFeatureOnOtherFace, project],
+  )
+
   const menuQuickOperations = useMemo<QuickOperation[]>(
-    () =>
+    () => (
       menuFeature && (treeContextMenu?.ids.length ?? 1) <= 1
-        ? validQuickOperationsForFeature(project, menuFeature.id)
-        : [],
-    [menuFeature, treeContextMenu, project]
+        ? menuFeatureOnOtherFace
+          ? menuFeatureFaceOperations
+          : validQuickOperationsForFeature(project, menuFeature.id)
+        : []
+    ),
+    [menuFeature, menuFeatureOnOtherFace, menuFeatureFaceOperations, treeContextMenu, project]
   )
 
   const menuAddToOperationCandidates = useMemo<Operation[]>(
@@ -368,6 +397,9 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     menuHasLockedSelection,
     menuAddToOperationCandidates.length,
     menuRemoveFromOperationCandidates.length,
+    // The menu is a different height as a ghost than as a full menu, and the
+    // Create-operation list changes its height too (issue #1112 F2).
+    menuQuickOperations.length,
   ])
 
   useEffect(() => {
@@ -387,6 +419,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     menuTab,
     menuClamp,
     menuQuickOperations,
+    menuFeatureTargetableFromFace: menuFeatureOnOtherFace && menuFeatureFaceOperations.length > 0,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
     addToFolderSubmenu,

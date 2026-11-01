@@ -415,7 +415,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   motion from the true pivot with no refusal; the round bar is byte-identical
   across the same 24-cell matrix to a fingerprint captured from the base commit,
   with the generated-date comment pinned exactly as `legacyMachineParity.test.ts`
-  pins it; axis mismatch, a machine with no rotary, borrowed-axis travel, a
+  pins it, and both that baseline and the by-cutter square baseline pin fixed
+  3-inch equipment so a change to the app's new-chuck default (#1112 R2 item
+  23 moved it to the 4-inch starter) cannot move the control; axis mismatch, a machine with no rotary, borrowed-axis travel, a
   split-angle feed, a non-rotary square Around path and stale wholly-angle-free
   motion all refuse; the Z12 `A0 -> A45` probe is refused at export by
   `postRotarySquareTurnBelowEnvelope` with no angle posted, a turn just above

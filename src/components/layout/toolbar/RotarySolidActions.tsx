@@ -15,36 +15,43 @@
  */
 
 /**
- * The Turn and Polygon entries (issue #1112 slice G).
+ * The Turn and Polygon entries (issue #1112 slice G; canvas panel in rt2-b).
  *
- * They are not a separate toolbar group any more: the creation drawer's rotary
- * group holds them next to Thread and Flutes, and the tablet rail keeps a rail
- * variant. Each entry only opens the dialog; the one dialog host lives in
- * AppShell, so the drawer closing cannot unmount an open form.
+ * They are not a separate toolbar group: the creation drawer's rotary group
+ * holds them next to Thread and Flutes, and the tablet rail keeps a rail
+ * variant. Each entry arms the canvas creation panel through the store — the
+ * same page-level panel the other canned shapes use — so the drawer closing
+ * cannot unmount an open form, and no modal is involved.
  *
- * The entries exist only while the workspace is on an available, active Around
- * face — a flat, milling or plasma view never offers them — and each works on
- * either bar shape (decision 13).
+ * The entries work while the bar workflow is available: a rotary project with
+ * round or square bar stock, on **any** face. A Turn or Polygon belongs to the
+ * bar, not to the face it was drawn on, so Top and Bottom offer them too
+ * (issue #1112 rt2-b item 20). A block has no bar to turn, and the entries stay
+ * listed there, disabled with the reason, rather than vanishing (issue #1112
+ * rt3-d item 31).
  */
 
 import { useProjectStore } from '../../../store/projectStore'
-import { activeFace, aroundUnavailableReason } from '../../../store/helpers/activeFace'
+import { aroundUnavailableReason } from '../../../store/helpers/activeFace'
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import { Icon } from '../../Icon'
 import { ToolbarActionButton } from './primitives'
-import { openRotarySolidCreate, type RotarySolidKind } from './rotarySolidDialogState'
+import type { RotarySolidCannedKind } from '../../../store/types'
 
 interface RotarySolidCommand {
-  kind: RotarySolidKind
+  kind: RotarySolidCannedKind
   command: string
   icon: string
   labelKey: MessageKey
 }
 
 const ROTARY_SOLID_COMMANDS: readonly RotarySolidCommand[] = [
-  { kind: 'turn', command: 'rotary-turn', icon: 'roundrect', labelKey: 'dialogs.rotarySolid.turn.button' },
-  { kind: 'polygon', command: 'rotary-polygon', icon: 'ngon', labelKey: 'dialogs.rotarySolid.polygon.button' },
+  { kind: 'turn', command: 'rotary-turn', icon: 'turn', labelKey: 'dialogs.rotarySolid.turn.button' },
+  // Polygon (the Hex model) has its own icon since rt3-d item 32: a hexagonal
+  // bar section on the centreline, not the regular-polygon outline it used to
+  // borrow ('ngon').
+  { kind: 'polygon', command: 'rotary-polygon', icon: 'hex', labelKey: 'dialogs.rotarySolid.polygon.button' },
 ]
 
 interface RotarySolidActionsProps {
@@ -54,9 +61,14 @@ interface RotarySolidActionsProps {
 
 function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: RotarySolidActionsProps) {
   const { t } = useI18n()
-  const face = useProjectStore((state) => activeFace(state.project))
   const project = useProjectStore((state) => state.project)
-  if (face !== 'around' || aroundUnavailableReason(project) !== null) return null
+  const start = useProjectStore((state) => state.startAddRotarySolidPlacement)
+  // Turn and Polygon turn the bar, so a block project — milling or plasma —
+  // cannot create them. The entries keep their place and say why instead of
+  // disappearing (issue #1112 rt3-d item 31).
+  const blockedReason = aroundUnavailableReason(project) === null
+    ? undefined
+    : t('sketch.creation.rotaryBarUnavailable')
 
   if (variant === 'rail') {
     return (
@@ -70,12 +82,15 @@ function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: Rota
                 type="button"
                 data-command={entry.command}
                 aria-label={label}
-                aria-haspopup="dialog"
-                onClick={() => openRotarySolidCreate(entry.kind)}
+                disabled={blockedReason !== undefined}
+                title={blockedReason}
+                onClick={() => start(entry.kind)}
               >
                 <Icon id={entry.icon} />
               </button>
-              <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+              <span className="tool-rail__tooltip" role="tooltip">
+                {blockedReason ? `${label} — ${blockedReason}` : label}
+              </span>
             </div>
           )
         })}
@@ -94,8 +109,10 @@ function RotarySolidActions({ variant = 'drawer', tooltipSide = 'bottom' }: Rota
           icon={entry.icon}
           label={t(entry.labelKey)}
           command={entry.command}
+          disabled={blockedReason !== undefined}
+          disabledReason={blockedReason}
           tooltipSide={tooltipSide}
-          onClick={() => openRotarySolidCreate(entry.kind)}
+          onClick={() => start(entry.kind)}
         />
       ))}
     </>

@@ -47,7 +47,10 @@ import { getStockBounds, isAroundSetup, rectProfile } from '../types/project'
 import type { BarStock, Operation, Project } from '../types/project'
 import { barCentre, barInscribedRadius, isBarStock } from '../types/barStock'
 import { getFeatureGeometryBounds } from '../text'
+import { POLYGON_CANNED_KIND, TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import { normalizePolygonCannedParams } from '../cannedShapes/generators/polygon'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
+import { rotaryTurnSurfaceSections } from '../store/helpers/rotarySurface'
 import { setupForOperation } from './setupOrientation'
 import { resolveDimensionRef } from './toolpaths/geometry'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './toolpaths/types'
@@ -206,6 +209,197 @@ export function unrolledProject(project: Project, frame: AroundFrame): Project {
       return plain
     }),
   }
+}
+
+/**
+ * What a band of material on the Around sheet is, for the Follow line keep-out
+ * (issue #1112 slice rt6-e).
+ *
+ * - `bar` — the stock where no model has been cut into it. It is the surface a
+ *   follow line may itself be cut on, so it is a wall only where it stands
+ *   **above** the guide's surface: the uncut shoulder beside a smaller Turn.
+ * - `turn` — a Turn is the surface a Thread/Flutes over it is cut *on*, so a
+ *   Turn is a wall only where its surface is **above** the guide's: a Turn of
+ *   larger diameter. At the same diameter it is the same cylinder, and the
+ *   guide's groove simply ends on it.
+ * - `body` — a Polygon/Hex or a placed model: a distinct body with an end face.
+ *   It counts at **or above** the guide's surface, because a body whose top is
+ *   level with the guide is still a wall the cutter's flank enters. Frank's bolt
+ *   is exactly that case: the Hex ends where the Thread starts, both measured
+ *   from the same Ø0.75. Measuring that Hex by its 0.5625 across-flats radius
+ *   (rt6-e) trimmed 0.0327 in and left the corner cutting 0.023 in into the
+ *   body; its corners stand 0.6495 above the axis and that is the height that
+ *   counts, so the trim is 0.1062 in.
+ *
+ * A band's height is the **largest radius it presents at any angle**, not its
+ * stored Z top (issue #1112 rt7-a correction 1). A canned Polygon's Z top is its
+ * across-flats radius, but its corners stand `flats/2 / cos(π/sides)` above the
+ * axis and sweep past the cutter as the bar turns; see `bodySurfaceZ`. Measuring
+ * the flats radius let the V-bit cut 0.023 into Frank's Hex at the thread's
+ * start. A Turn section is a cylinder, so its section radius already is its
+ * maximum, and a placed model's Z top is its bounding box's top — the largest
+ * up direction, which is the maximum for a body of revolution but not for every
+ * silhouette (RISKS of the slice names the limit).
+ */
+export type AroundMaterialKind = 'bar' | 'turn' | 'body'
+
+/** One body of material on the sheet, as an interval along the bar. */
+export interface AroundMaterialBand {
+  /** The feature's name; `''` for the bar itself. */
+  name: string
+  kind: AroundMaterialKind
+  /** Absolute stock interval along the bar, in the bar's own coordinates. */
+  alongMin: number
+  alongMax: number
+  /** Material surface height in the unrolled sheet's Top-like frame. */
+  surfaceZ: number
+}
+
+export interface AroundMaterialBands {
+  /** The stock's axis; `along` names the project coordinate in each band. */
+  axis: 'x' | 'y'
+  bands: AroundMaterialBand[]
+}
+
+/** Slack for a model's along extent: a degenerate band is not a body. */
+const MATERIAL_EXTENT_TOLERANCE = 1e-9
+
+/**
+ * The material standing on the Around sheet, one band per body, for a Follow
+ * line's keep-out (issue #1112 slice rt6-e). Read from the project's own
+ * models and stock — their instance Z top is the surface height in the bar's
+ * Top-like frame — rather than from a new geometry model.
+ *
+ * A model band **replaces** the bar over its span: the rotary work cuts the bar
+ * down to the model, which is why a Thread beside a Hex measures against the
+ * Hex's surface, not the raw bar it was cut from. The bar therefore contributes
+ * only the stretches no model covers, which is what "uncut bar next to a Turn"
+ * means. Every surface is lowered by the frame radius, so it is in the same
+ * frame as the unrolled project's feature Z tops (the one the generator reads).
+ *
+ * A Turn with a copied profile is split into its along sections, each carrying
+ * its own local surface (#1112 rt6-e correction 1). Its single Z top is the
+ * largest section's, so a guide on a smaller section would otherwise be called
+ * a wall against its own supporting Turn.
+ */
+export function aroundMaterialBands(project: Project, frame: AroundFrame): AroundMaterialBands {
+  const bounds = getStockBounds(project.stock)
+  const alongMin = frame.axis === 'x' ? bounds.minX : bounds.minY
+  const alongMax = frame.axis === 'x' ? bounds.maxX : bounds.maxY
+  const bodies: AroundMaterialBand[] = []
+  const covered: Array<{ min: number; max: number }> = []
+  const turnSections = rotaryTurnSurfaceSections(project)
+
+  for (const feature of project.features) {
+    const definition = project.featureDefinitions[feature.definitionId]
+    // A model is the part the rotary work leaves standing; every other feature
+    // is geometry the guide is drawn from, not material to keep it out of.
+    if (definition?.kind !== 'stl' || definition.operation !== 'model') continue
+    const resolved = resolveFeatureInstance(project, feature.id)
+    if (!resolved) continue
+    const extent = getFeatureGeometryBounds(resolved)
+    const min = frame.axis === 'x' ? extent.minX : extent.minY
+    const max = frame.axis === 'x' ? extent.maxX : extent.maxY
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max - min <= MATERIAL_EXTENT_TOLERANCE) continue
+    covered.push({ min, max })
+    // A model placed off the bar's length is still a target, but it stands on
+    // no material the sheet can reach, so it is not a band here.
+    const clippedMin = Math.max(alongMin, min)
+    const clippedMax = Math.min(alongMax, max)
+    if (clippedMax - clippedMin <= MATERIAL_EXTENT_TOLERANCE) continue
+    const kind: AroundMaterialKind = definition.canned?.kind === TURN_CANNED_KIND ? 'turn' : 'body'
+    const sections = kind === 'turn' ? turnSections.get(feature.id) : undefined
+    if (sections && sections.length > 0) {
+      for (const section of sections) {
+        const sectionMin = Math.max(clippedMin, section.alongMin)
+        const sectionMax = Math.min(clippedMax, section.alongMax)
+        if (sectionMax - sectionMin <= MATERIAL_EXTENT_TOLERANCE) continue
+        bodies.push({
+          name: feature.name,
+          kind,
+          alongMin: sectionMin,
+          alongMax: sectionMax,
+          surfaceZ: section.radius,
+        })
+      }
+      continue
+    }
+    bodies.push({
+      name: feature.name,
+      kind,
+      alongMin: clippedMin,
+      alongMax: clippedMax,
+      surfaceZ: kind === 'body'
+        ? bodySurfaceZ(project, definition, feature, frame)
+        : resolveDimensionRef(project, feature.z_top) - frame.radius,
+    })
+  }
+
+  const bands: AroundMaterialBand[] = subtractSpans(alongMin, alongMax, covered).map((piece) => ({
+    name: '',
+    kind: 'bar' as const,
+    alongMin: piece.min,
+    alongMax: piece.max,
+    // The bar surface is the stock thickness in the Top-like frame, i.e. one
+    // radius above the turning axis on the unrolled sheet.
+    surfaceZ: project.stock.thickness - frame.radius,
+  }))
+  return { axis: frame.axis, bands: [...bands, ...bodies] }
+}
+
+/**
+ * A body's keep-out height: the largest radius it presents at any angle
+ * (issue #1112 rt7-a correction 1).
+ *
+ * A canned Polygon stores its across-flats radius as the model's Z top, but its
+ * corners stand `flats/2 / cos(π/sides)` above the axis — 0.6495 for Frank's
+ * 1.125 in Hex — and they sweep past the cutter as the bar turns. Measuring the
+ * flats radius let the V-bit cut 0.023 in too close. The circumradius comes from
+ * the shape's own parameters, so it is exact and independent of the stored
+ * rotation: a rotation moves where the corners are, not how far out they reach,
+ * and at an in-between angle both stored extents read short of the corner.
+ *
+ * Any other body keeps its Z top, which is the largest distance in the up
+ * direction: exact for a Turn section (a cylinder, measured by
+ * `aroundMaterialBands` before this point) and for a placed model of revolution.
+ * An imported silhouette whose corners reach further sideways than its top does
+ * is under-reported — the slice's RISKS names that limit, because the exact
+ * maximum would need the mesh, not the band's stored height.
+ *
+ * The result is never below the stored Z top, so a body raised in Z cannot end
+ * up with a smaller keep-out than before this correction.
+ */
+function bodySurfaceZ(
+  project: Project,
+  definition: Project['featureDefinitions'][string] | undefined,
+  feature: Project['features'][number],
+  frame: AroundFrame,
+): number {
+  const top = resolveDimensionRef(project, feature.z_top) - frame.radius
+  const canned = definition?.canned
+  if (!canned || canned.kind !== POLYGON_CANNED_KIND) return top
+  const params = normalizePolygonCannedParams(canned.params)
+  if (!params) return top
+  const circumradius = params.acrossFlats / (2 * Math.cos(Math.PI / params.sides))
+  return Math.max(top, circumradius)
+}
+
+/** `[min, max]` minus every covered interval, in ascending order. */
+function subtractSpans(
+  min: number,
+  max: number,
+  covered: ReadonlyArray<{ min: number; max: number }>,
+): Array<{ min: number; max: number }> {
+  const pieces: Array<{ min: number; max: number }> = []
+  let cursor = min
+  for (const span of [...covered].sort((left, right) => left.min - right.min)) {
+    if (span.max <= cursor) continue
+    if (span.min > cursor) pieces.push({ min: cursor, max: Math.min(span.min, max) })
+    cursor = Math.max(cursor, span.max)
+    if (cursor >= max) break
+  }
+  if (cursor < max) pieces.push({ min: cursor, max })
+  return pieces.filter((piece) => piece.max - piece.min > MATERIAL_EXTENT_TOLERANCE)
 }
 
 function boundsOf(moves: readonly ToolpathMove[]): ToolpathBounds | null {

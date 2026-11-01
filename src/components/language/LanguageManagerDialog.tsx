@@ -33,6 +33,7 @@ import {
   type ResolvedLocale,
 } from '../../i18n/registry'
 import { platform } from '../../platform'
+import { renameTarget } from '../common/formDraft'
 import { LanguageEditorDialog } from './LanguageEditorDialog'
 
 export interface LanguageManagerDialogProps {
@@ -72,6 +73,12 @@ export function LanguageManagerDialog({ onClose }: LanguageManagerDialogProps) {
   const selected = allLocales.find((locale) => locale.id === selectedId) ?? allLocales[0]
   const selectedCustom = customLanguages.find((language) => language.id === selected.id) ?? null
   const existingNames = useMemo(() => allLocales.map((locale) => locale.name), [allLocales])
+  // The inline rename offers Save only when the trimmed draft would actually
+  // be written (issue #1112 F4): an unchanged, reverted, or blank name writes
+  // nothing, so the button is disabled instead of silently saving nothing.
+  const renameName = renameDraft === null || selectedCustom === null
+    ? null
+    : renameTarget(selectedCustom.name, renameDraft)
 
   // Escape closes the manager, unless the nested editor owns the key press.
   useWindowEvent('keydown', (event) => {
@@ -137,10 +144,9 @@ export function LanguageManagerDialog({ onClose }: LanguageManagerDialogProps) {
 
   const commitRename = () => {
     if (!selectedCustom || renameDraft === null) return
-    const trimmed = renameDraft.trim()
-    if (trimmed !== '' && trimmed !== selectedCustom.name) {
-      saveCustomLanguage({ ...selectedCustom, name: trimmed })
-    }
+    // Nothing to write means the button is disabled; Enter reaches here, so it
+    // takes the same guard rather than writing an empty edit.
+    if (renameName !== null) saveCustomLanguage({ ...selectedCustom, name: renameName })
     setRenameDraft(null)
   }
 
@@ -221,7 +227,7 @@ export function LanguageManagerDialog({ onClose }: LanguageManagerDialogProps) {
                       }
                     }}
                   />
-                  <button className="btn-secondary" type="button" onClick={commitRename}>
+                  <button className="btn-secondary" type="button" disabled={renameName === null} onClick={commitRename}>
                     {t('langManager.saveName')}
                   </button>
                 </span>

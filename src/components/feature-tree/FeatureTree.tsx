@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
+import { ChuckRangeWarning } from './ChuckProperties'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import type { FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
+import type { CannedShapeData, FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -25,10 +26,15 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, aroundUnavailableReason, isCannedModelFeature, isFaceEditInProgress, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, aroundUnavailableReason, isBarModelFeature, isFaceEditInProgress, isGhostFeature, isModelFeature, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
+import { featureUncutWarnings } from '../cam/uncutWork'
+import { rotaryPatternSurfaceWarnings } from '../../store/helpers/rotarySurface'
+import { UncutWorkBadge } from '../common/UncutWorkBadge'
+import { NoEffectBadge } from '../common/NoEffectBadge'
+import { useFeatureEffectWarnings } from '../../app/featureEffect/useFeatureEffectWarnings'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -85,10 +91,29 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     hoverFeature,
   } = useProjectStore()
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
+  // Kept work the current stock (or an operation that reaches the centreline)
+  // cannot cut, derived once per project rather than per row (issue #1112 K).
+  const uncutWarnings = useMemo(() => featureUncutWarnings(project, features), [project, features])
+  // Features erased by later opposite features (issue #1112 N). Analysed off
+  // the main thread after edits settle; this is the latest snapshot, never a
+  // stale answer for an earlier edit.
+  const noEffectWarnings = useFeatureEffectWarnings(project, features)
+  // A Thread/Flutes band over a model or across a diameter change warns on its
+  // own row (issue #1112 H, decision 10); the dialog shows the same rule.
+  const rotaryWarnings = useMemo(
+    () => rotaryPatternSurfaceWarnings(project, features.map((feature) => feature.id)),
+    [project, features],
+  )
   const { t } = useI18n()
+  // A canned Turn or Polygon belongs to the bar, not to a face (issue #1112
+  // rt3-a, item 27). Its row lives in the Around section only, so that section
+  // has to exist wherever the model does — its own presence is enough, even on
+  // Top with no other Around work and no Around setup of its own yet.
+  const barModels = features.filter((feature) => isMachinable(feature) && isBarModelFeature(project, feature))
   // Face layers, ghost rows and face chips exist only once the project uses
-  // both faces; a Top-only project renders the tree it always did (#945).
-  const bothFaces = projectUsesBothFaces(project)
+  // both faces; a Top-only project renders the tree it always did (#945). A bar
+  // model is one more reason to show them: its row is in the Around layer.
+  const bothFaces = projectUsesBothFaces(project) || barModels.length > 0
   const workspaceFace = activeFace(project)
   // A face section heading switches face exactly as the header control does,
   // and refuses the same way: an edit in progress belongs to its own face.
@@ -318,10 +343,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // project is valid with no warning. The store enforces this, but a loaded file
   // could be malformed.
   const machiningFeatures = features.filter(isMachinable)
-  // Around's layer appears when the project has Around content or the
-  // workspace is on it. A flat-only project keeps exactly the two layers it
-  // has today (issue #395).
-  const faceLayers: readonly SetupFace[] = workspaceFace === 'around' || machiningFeatures.some((feature) => feature.authoringFace === 'around')
+  // Around's layer appears when the project has Around content — a bar model
+  // counts — or the workspace is on it. A flat-only project keeps exactly the
+  // two layers it has today (issue #395).
+  const faceLayers: readonly SetupFace[] = workspaceFace === 'around'
+    || barModels.length > 0
+    || machiningFeatures.some((feature) => feature.authoringFace === 'around')
     ? ['top', 'bottom', 'around']
     : ['top', 'bottom']
   const solidFeatures = features.filter(isSolid)
@@ -377,9 +404,22 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     const throughChip = through
       ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
       : null
-    if (!isCannedModelFeature(project, feature) && feature.authoringFace !== workspaceFace) {
+    // Kept work that the current stock can no longer cut (issue #1112 K). The
+    // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
+    // every action it had — nothing is hidden or removed.
+    const uncutWarning = uncutWarnings.get(feature.id)
+    // Later features erase this row's contribution to the final shape
+    // (issue #1112 N). Status only: every action on the row stays as it was.
+    const noEffectWarning = noEffectWarnings.has(feature.id)
+      ? t('featureTree.treeRow.warning.noEffect')
+      : undefined
+    const rotaryWarning = rotaryWarnings.get(feature.id)
+    const rowWarning = uncutWarning
+      ?? (rotaryWarning ? t(rotaryWarning.key, rotaryWarning.values) : undefined)
+    if (isGhostFeature(project, feature)) {
       // A ghost: listed for reference, with the way to its own face on the
-      // row menu. It cannot be selected, dragged or edited from here.
+      // row menu. It cannot be selected, dragged or edited from here. A model
+      // is never a ghost; a through-feature is not one on either flat face.
       const openGhostMenu = onFeatureContextMenu
         ? (x: number, y: number) => onFeatureContextMenu(feature.id, x, y)
         : undefined
@@ -391,6 +431,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={depth}
           ghost
           title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
+          warning={rowWarning}
+          effectWarning={noEffectWarning}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -440,6 +482,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isFirstFeature={feature.id === firstSolidFeature?.id && !barIsMaterial}
         subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
+        warning={rowWarning}
+        effectWarning={noEffectWarning}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -474,16 +518,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     )
   }
 
-  /**
-   * Whether a feature row belongs in `face`'s layer. A canned model is not
-   * bound to the face it was authored on: it belongs to the face being worked
-   * on, and to that face only. Testing the authoring face as well would list
-   * one model twice — once under Top, once under Around (issue #1112).
-   */
-  function belongsToFace(feature: (typeof features)[number], face: SetupFace): boolean {
-    return isCannedModelFeature(project, feature)
-      ? face === workspaceFace
-      : feature.authoringFace === face
+  // Which face layer a feature row belongs to.
+  //
+  // A canned Turn or Polygon is a solid about the bar, not a shape on a face
+  // (issue #1112 rt3-a, item 27): it is listed once, in the Around section,
+  // whichever face it was created from and whichever face is being worked on.
+  // Storage authors it on Top for the persisted-model loader, so its authoring
+  // face cannot be the rule.
+  //
+  // Any other model — an imported mesh — is not tied to a face either
+  // (issue #1112 I), so it is listed once, in the layer being worked on; every
+  // other feature belongs to the face it was drawn on. Listing a model under
+  // its authoring face *and* the current one would duplicate one row.
+  function inFaceLayer(feature: { authoringFace?: SetupFace; definitionId?: string; kind?: string; canned?: CannedShapeData | null }, face: SetupFace): boolean {
+    if (isBarModelFeature(project, feature)) return face === 'around'
+    return isModelFeature(project, feature) ? face === workspaceFace : feature.authoringFace === face
   }
 
   /**
@@ -497,7 +546,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return rootEntries.map((entry, rootIdx) => {
               if (entry.type === 'feature') {
                 const entryFeature = features.find((item) => item.id === entry.featureId)
-                if (face !== null && (!entryFeature || !belongsToFace(entryFeature, face))) return null
+                if (face !== null && (!entryFeature || !inFaceLayer(entryFeature, face))) return null
                 return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
               }
 
@@ -511,7 +560,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               // belongs to the layer being worked on.
               const folderFeatures = face === null
                 ? allFolderFeatures
-                : allFolderFeatures.filter((feature) => belongsToFace(feature, face))
+                : allFolderFeatures.filter((feature) => inFaceLayer(feature, face))
               if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
                 return null
               }
@@ -692,7 +741,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
             )}
             {bothFaces
               ? faceLayers.map((face) => {
-                  const count = machiningFeatures.filter((feature) => belongsToFace(feature, face)).length
+                  const count = machiningFeatures.filter((feature) => inFaceLayer(feature, face)).length
                   const active = face === workspaceFace
                   const entries = renderMachiningEntries(face)
                   // A face with nothing on it says so, once it is the face
@@ -1002,6 +1051,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               <TreeRow
                 key={clamp.id}
                 label={clamp.name}
+                chips={<ChuckRangeWarning clamp={clamp} stock={project.stock} units={project.meta.units} compact />}
                 kind="clamp"
                 depth={1}
                 isSelected={selection.selectedClampIds.includes(clamp.id)}
@@ -1053,6 +1103,10 @@ interface TreeRowProps {
   isFirstFeature?: boolean
   subtractDisabled?: boolean
   linkedCount?: number
+  /** Kept work the current stock cannot cut; the row shows a warning marker. */
+  warning?: string
+  /** Later features erase this row's contribution; the row shows a warning marker. */
+  effectWarning?: string
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -1101,6 +1155,8 @@ function TreeRow({
   isFirstFeature = false,
   subtractDisabled = false,
   linkedCount,
+  warning,
+  effectWarning,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -1313,6 +1369,8 @@ function TreeRow({
             <Icon id="link" className="tree-icon--link" />
           </span>
         ) : null}
+        {kind === 'feature' && warning ? <UncutWorkBadge text={warning} /> : null}
+        {kind === 'feature' && effectWarning ? <NoEffectBadge text={effectWarning} /> : null}
         {chips}
       </div>
       <div className="tree-row-actions">

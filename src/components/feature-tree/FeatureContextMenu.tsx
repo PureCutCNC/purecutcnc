@@ -20,12 +20,14 @@ import type { RemoveFromOperationCandidate } from '../cam/operationTargetLists'
 import { camT } from '../cam/camI18n'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
 import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, OperationTargetSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
-import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, Operation, SetupFace, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
-import { isCannedFeature } from '../../cannedShapes'
+import { cannedShapeEditorFor, cannedShapeIsExpandable, cannedShapeLabelKey, isCannedFeature } from '../../cannedShapes'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { hasRotaryCannedFeature, isRotaryCannedFeature, isRotaryCannedMoveSelection } from '../../store/helpers/cannedShapeActions'
 
 /**
  * A disabled menu item's reason is visible text, not only a native `title`:
@@ -61,6 +63,13 @@ interface FeatureContextMenuProps {
   menuHasLockedSelection: boolean
   menuFeatureHasLinkedInstances: boolean
   menuQuickOperations: QuickOperation[]
+  /**
+   * True when the menu's feature is authored on another face yet an operation
+   * on the current face can target it (`useTreeContextMenu` asks the Add menu's
+   * own list). The menu is then the normal one with its editable items refused;
+   * otherwise it stays the hint-only ghost menu.
+   */
+  menuFeatureTargetableFromFace: boolean
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   menuFeatureFolders: MenuFolderEntry[]
   menuAddToOperationCandidates: Operation[]
@@ -96,6 +105,7 @@ export function FeatureContextMenu({
   menuHasLockedSelection,
   menuFeatureHasLinkedInstances,
   menuQuickOperations,
+  menuFeatureTargetableFromFace,
   quickOpsSubmenu,
   menuFeatureFolders,
   menuAddToOperationCandidates,
@@ -139,21 +149,39 @@ export function FeatureContextMenu({
   // A generated shape owns its geometry through parameters, so join/cut/
   // offset/constraints refuse a selection that contains one, and the menu
   // entries stay (disabled) so the reason can be read (#1112 A2).
-  const menuHasCannedSelection = resolveFeatureInstances(project, [...ids]).some(isCannedFeature)
+  const selectionRows = resolveFeatureInstances(project, [...ids])
+  const menuHasCannedSelection = selectionRows.some(isCannedFeature)
+  // The four rotary kinds (Turn, Polygon/Hex, Thread, Flutes) are refused the
+  // three transforms, and a Move of them is the bar edit that belongs to no
+  // face (issue #1112 rt7-f). The primary row leads the list so a Resize names
+  // *its* editor.
+  const selectionRowsPrimaryFirst = [
+    ...selectionRows.filter((feature) => feature.id === primaryId),
+    ...selectionRows.filter((feature) => feature.id !== primaryId),
+  ]
+  const menuHasRotaryCannedSelection = hasRotaryCannedFeature(selectionRows)
+  const menuRotaryMoveSelection = isRotaryCannedMoveSelection(project, selectionRowsPrimaryFirst)
   const menuFeatureIsCanned = isCannedFeature(menuFeature)
+  // The generated shape's own two actions: its parameter editor (the same
+  // opener Properties uses) and expansion into plain features. Both read the
+  // same registry Properties reads, so a kind can never be offered there and
+  // missing here (issue #1112 F2).
+  const cannedLabelKey = menuFeatureIsCanned ? cannedShapeLabelKey(menuFeature?.canned) : null
+  // One shared predicate with Properties, which carries no face condition: a
+  // Turn or a Polygon is authored on Top yet Properties offers its editor from
+  // Around too, so the menu must offer it there as well (issue #1112 rt7-c).
+  const cannedEditor = cannedShapeEditorFor(menuFeature)
+  const cannedExpandable = menuFeatureIsCanned && cannedShapeIsExpandable(menuFeature?.canned)
   const cannedRefusal = t('sketch.canned.actionRefused')
+  // The refusal a canned feature shows whenever its kind has no editor — the
+  // same sentence and reasoning Properties shows in that state.
+  const editCannedReason = cannedEditor
+    ? undefined
+    : t('featureTree.properties.canned.editUnavailable')
   const addToOperationReason = menuAddToOperationCandidates.length === 0
     ? t('featureTree.contextMenu.addToOperationEmptyTooltip') : undefined
   const removeFromOperationReason = menuRemoveFromOperationCandidates.length === 0
     ? t('featureTree.contextMenu.removeFromOperationEmptyTooltip') : undefined
-  const editSketchReason = menuFeatureIsCanned ? t('sketch.canned.editSketchRefused') : undefined
-  const constraintReason = menuFeatureIsCanned
-    ? cannedRefusal
-    : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
-  const moveReason = menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
-  const offsetReason = menuHasCannedSelection
-    ? cannedRefusal
-    : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined
   const addToFolderReason = menuSelectionSectionsMixed
     ? t('featureTree.contextMenu.addToFolderMixedTooltip') : undefined
   const groupReason = !menuHasMultipleSelection
@@ -161,17 +189,21 @@ export function FeatureContextMenu({
     : menuSelectionSectionsMixed
       ? t('featureTree.contextMenu.sectionsMixedTooltip')
       : undefined
-  const joinReason = menuHasCannedSelection
-    ? cannedRefusal
-    : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined
-  const cutReason = menuHasCannedSelection ? cannedRefusal : undefined
   const useAsStockReason = !menuCanUseAsStock
     ? t('featureTree.contextMenu.useAsStockDisabledTooltip') : undefined
-  const changeFaceReason = menuHasLockedSelection
-    ? t('featureTree.contextMenu.lockedTooltip')
-    : faceBusy
-      ? t('featureTree.face.changeBusy')
-      : selectionCanChangeFace ? undefined : t('featureTree.face.changeNotThrough')
+  // A rotary shape's Resize is refused because its size lives in the shape's
+  // own editor — the one edit that belongs to no face, so the reason names it
+  // exactly as the "Edit {shape}…" entry above does (issue #1112 rt7-f).
+  const rotaryShapeLabelKey = menuHasRotaryCannedSelection
+    ? cannedShapeLabelKey(selectionRowsPrimaryFirst.find(isRotaryCannedFeature)?.canned)
+    : null
+  const rotaryResizeReason = menuHasRotaryCannedSelection
+    ? rotaryShapeLabelKey
+      ? t('featureTree.contextMenu.resizeCannedTooltip', {
+          edit: t('featureTree.properties.canned.edit', { shape: t(rotaryShapeLabelKey as MessageKey) }),
+        })
+      : cannedRefusal
+    : undefined
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -183,9 +215,24 @@ export function FeatureContextMenu({
   }
 
   // A feature from the other face is a ghost here: the menu offers the way
-  // to its own face and the explicit face change, and no edit (issue #945).
+  // to its own face and the explicit face change, and no edit of its geometry
+  // (issue #945) — except a generated shape's parameter editor, which is the
+  // one edit that belongs to no face (#1112 rt7-c).
   const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
-  if (menuFeature && menuFeatureFace !== workspaceFace) {
+  const onOtherFace = menuFeature !== null && menuFeatureFace !== workspaceFace
+  const switchFaceLabelFor = (face: SetupFace): string => t(
+    face === 'bottom'
+      ? 'featureTree.face.switchToBottomToEdit'
+      : face === 'around'
+        ? 'featureTree.face.switchToAroundToEdit'
+        : 'featureTree.face.switchToTopToEdit',
+  )
+  const switchFaceLabel = switchFaceLabelFor(menuFeatureFace)
+  // When an operation on this face can still cut the feature (a through cut, a
+  // model), the menu is the normal one and only its editable items are
+  // refused: the face, not the feature, is what has to change (issue #1112
+  // F2). The hint stays the reason, so touch can read it without a hover.
+  if (menuFeature && onOtherFace && !menuFeatureTargetableFromFace) {
     const ghostCanChangeFace = canChangeAuthoringFace(project, menuFeature)
     const switchFaceReason = faceBusy ? t('appShell.face.busy') : undefined
     const changeGhostFaceReason = menuFeature.locked
@@ -200,6 +247,22 @@ export function FeatureContextMenu({
         style={position}
         onContextMenu={(event) => event.preventDefault()}
       >
+        {/* The generated shape's parameter editor is the one edit that belongs
+            to no face: Properties offers it from every face, so the ghost menu
+            offers it here too, above the way to its own face (#1112 rt7-c). */}
+        {cannedLabelKey ? (
+          <button
+            className={menuItemClass(editCannedReason)}
+            type="button"
+            onClick={() => actions.editCannedShape(menuFeature.id)}
+            disabled={!cannedEditor}
+            title={editCannedReason}
+          >
+            <MenuItemText reason={editCannedReason}>
+              {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
+            </MenuItemText>
+          </button>
+        ) : null}
         <button
           className={menuItemClass(switchFaceReason)}
           type="button"
@@ -208,7 +271,7 @@ export function FeatureContextMenu({
           title={switchFaceReason}
         >
           <MenuItemText reason={switchFaceReason}>
-            {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : menuFeatureFace === 'around' ? 'featureTree.face.switchToAroundToEdit' : 'featureTree.face.switchToTopToEdit')}
+            {switchFaceLabel}
           </MenuItemText>
         </button>
         {/* From Around the change is refused (`requestAuthoringFaceChange`), so
@@ -233,6 +296,73 @@ export function FeatureContextMenu({
     )
   }
 
+  // Past the ghost menu: every item that edits the feature is refused from
+  // here, because its geometry belongs to the face it was drawn on.
+  const otherFaceEditingReason = onOtherFace ? switchFaceLabel : undefined
+  // Bulk actions (move, resize, rotate, mirror, offset, join, cut, delete and
+  // the face change) act on the whole selection, so one selected feature from
+  // another face refuses every one of them — checking only the right-clicked
+  // feature let an own-face primary carry another face's features through
+  // (issue #1112 F2 review). The reason names that feature's face, which need
+  // not be the primary's.
+  const selectionOtherFace = project.features.find(
+    (feature) => ids.includes(feature.id) && (feature.authoringFace ?? 'top') !== workspaceFace,
+  ) ?? null
+  const selectionOnOtherFace = onOtherFace || selectionOtherFace !== null
+  const selectionEditingReason = onOtherFace
+    ? switchFaceLabel
+    : selectionOtherFace
+      ? switchFaceLabelFor(selectionOtherFace.authoringFace ?? 'top')
+      : undefined
+  const otherFaceSwitchReason = faceBusy ? t('appShell.face.busy') : undefined
+  const otherFaceOr = (reason: string | undefined) => otherFaceEditingReason ?? reason
+  const selectionOr = (reason: string | undefined) => selectionEditingReason ?? reason
+  // Edit sketch is now the one edit entry a drawn feature shows, and a
+  // generated shape shows its own editor instead of it — so the shape's
+  // "Expand to features first" refusal no longer belongs to this entry, only
+  // the face's (issue #1112 rt7-i).
+  const editSketchReason = otherFaceEditingReason
+  const constraintReason = otherFaceOr(
+    menuFeatureIsCanned
+      ? cannedRefusal
+      : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
+  )
+  // A Move of the four rotary kinds is the bar edit `rotaryMove.ts` owns, and
+  // it reads the same on every face, so the other-face refusal is the one gate
+  // it does not take (issue #1112 rt7-f). Every other selection keeps it.
+  const moveReason = (menuRotaryMoveSelection ? undefined : selectionEditingReason)
+    ?? (menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined)
+  const moveDisabled = menuHasLockedSelection || (selectionOnOtherFace && !menuRotaryMoveSelection)
+  const offsetReason = selectionOr(
+    menuHasCannedSelection
+      ? cannedRefusal
+      : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
+  )
+  const joinReason = selectionOr(
+    menuHasCannedSelection
+      ? cannedRefusal
+      : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined,
+  )
+  const cutReason = selectionOr(menuHasCannedSelection ? cannedRefusal : undefined)
+  // The three transforms cannot be expressed by a rotary shape's parameters,
+  // so each is refused for the shape's own reason — the sentence Offset and
+  // Join show, or, for Resize, the editor that does own the size. The shape's
+  // reason wins over the face's: the face switch would not make a generated
+  // shape resizable, and the editor Resize names is offered on every face
+  // (issue #1112 rt7-f).
+  const resizeReason = rotaryResizeReason ?? selectionEditingReason
+  const rotateReason = (menuHasRotaryCannedSelection ? cannedRefusal : undefined) ?? selectionEditingReason
+  const transformDisabled = menuHasLockedSelection
+    || selectionOnOtherFace
+    || menuHasRotaryCannedSelection
+  const changeFaceReason = selectionOr(
+    menuHasLockedSelection
+      ? t('featureTree.contextMenu.lockedTooltip')
+      : faceBusy
+        ? t('featureTree.face.changeBusy')
+        : selectionCanChangeFace ? undefined : t('featureTree.face.changeNotThrough'),
+  )
+
   return (
     <div
       ref={menuRef}
@@ -242,6 +372,23 @@ export function FeatureContextMenu({
     >
       {menuFeature ? (
         <>
+          {/* A feature authored on another face can be cut from here, but it
+              cannot be edited here: the way to its own face stays the first
+              entry, exactly as it is in the ghost menu (#1112 F2). */}
+          {onOtherFace ? (
+            <>
+              <button
+                className={menuItemClass(otherFaceSwitchReason)}
+                type="button"
+                onClick={() => actions.switchFaceToEdit(menuFeature.id)}
+                disabled={faceBusy}
+                title={otherFaceSwitchReason}
+              >
+                <MenuItemText reason={otherFaceSwitchReason}>{switchFaceLabel}</MenuItemText>
+              </button>
+              <div className="feature-context-menu__separator" />
+            </>
+          ) : null}
           {menuFeatureHasLinkedInstances ? (
             <>
               <button
@@ -433,20 +580,55 @@ export function FeatureContextMenu({
             ) : null}
           </div>
           <div className="feature-context-menu__separator" />
-          <button
-            className={menuItemClass(editSketchReason)}
-            type="button"
-            onClick={() => actions.editSketch(menuFeature.id)}
-            disabled={menuFeatureIsCanned}
-            title={editSketchReason}
-          >
-            <MenuItemText reason={editSketchReason}>{t('featureTree.contextMenu.editSketch')}</MenuItemText>
-          </button>
+          {/* One edit entry per kind, the same one Properties offers in Shape: a
+              generated shape is edited by its parameters, so its own editor is
+              the only edit here — Expand follows it, which is the way out of the
+              shape (#1112 F2). Every other feature gets Edit sketch alone
+              (issue #1112 rt7-i). A model kind has no plain features to expand
+              into, exactly as Properties shows it. The editor is the one edit a
+              face does not gate — Properties offers it on Around and so must
+              this entry (#1112 rt7-c). */}
+          {cannedLabelKey ? (
+            <button
+              className={menuItemClass(editCannedReason)}
+              type="button"
+              onClick={() => actions.editCannedShape(menuFeature.id)}
+              disabled={!cannedEditor}
+              title={editCannedReason}
+            >
+              <MenuItemText reason={editCannedReason}>
+                {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
+              </MenuItemText>
+            </button>
+          ) : (
+            <button
+              className={menuItemClass(editSketchReason)}
+              type="button"
+              onClick={() => actions.editSketch(menuFeature.id)}
+              disabled={onOtherFace}
+              title={editSketchReason}
+            >
+              <MenuItemText reason={editSketchReason}>{t('featureTree.contextMenu.editSketch')}</MenuItemText>
+            </button>
+          )}
+          {cannedExpandable ? (
+            <button
+              className={menuItemClass(otherFaceEditingReason)}
+              type="button"
+              onClick={() => actions.expandCannedFeature(menuFeature.id)}
+              disabled={onOtherFace}
+              title={otherFaceEditingReason}
+            >
+              <MenuItemText reason={otherFaceEditingReason}>
+                {t('featureTree.properties.canned.expand')}
+              </MenuItemText>
+            </button>
+          ) : null}
           <button
             className={menuItemClass(constraintReason)}
             type="button"
             onClick={() => actions.constraint(menuFeature.id)}
-            disabled={menuHasMultipleSelection || menuHasLockedSelection || menuFeatureIsCanned}
+            disabled={menuHasMultipleSelection || menuHasLockedSelection || menuFeatureIsCanned || onOtherFace}
             title={constraintReason}
           >
             <MenuItemText reason={constraintReason}>{t('featureTree.contextMenu.addConstraint')}</MenuItemText>
@@ -459,7 +641,7 @@ export function FeatureContextMenu({
             className={menuItemClass(moveReason)}
             type="button"
             onClick={() => actions.moveFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
+            disabled={moveDisabled}
             title={moveReason}
           >
             <MenuItemText reason={moveReason}>
@@ -467,35 +649,38 @@ export function FeatureContextMenu({
             </MenuItemText>
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(resizeReason)}
             type="button"
             onClick={() => actions.resizeFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
+            disabled={transformDisabled}
+            title={resizeReason}
           >
-            {t('featureTree.contextMenu.resize')}
+            <MenuItemText reason={resizeReason}>{t('featureTree.contextMenu.resize')}</MenuItemText>
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(rotateReason)}
             type="button"
             onClick={() => actions.rotateFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
+            disabled={transformDisabled}
+            title={rotateReason}
           >
-            {t('featureTree.contextMenu.rotate')}
+            <MenuItemText reason={rotateReason}>{t('featureTree.contextMenu.rotate')}</MenuItemText>
           </button>
           <button
-            className="feature-context-menu__item"
+            className={menuItemClass(rotateReason)}
             type="button"
             onClick={() => actions.mirrorFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
+            disabled={transformDisabled}
+            title={rotateReason}
           >
-            {t('featureTree.contextMenu.mirror')}
+            <MenuItemText reason={rotateReason}>{t('featureTree.contextMenu.mirror')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button
             className={menuItemClass(offsetReason)}
             type="button"
             onClick={() => actions.offsetFeatures()}
-            disabled={menuHasLockedSelection || menuHasCannedSelection}
+            disabled={menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={offsetReason}
           >
             <MenuItemText reason={offsetReason}>{t('featureTree.contextMenu.offset')}</MenuItemText>
@@ -578,7 +763,7 @@ export function FeatureContextMenu({
             className={menuItemClass(joinReason)}
             type="button"
             onClick={() => actions.joinFeatures()}
-            disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection}
+            disabled={!menuHasMultipleSelection || menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={joinReason}
           >
             <MenuItemText reason={joinReason}>{t('featureTree.contextMenu.join')}</MenuItemText>
@@ -587,7 +772,7 @@ export function FeatureContextMenu({
             className={menuItemClass(cutReason)}
             type="button"
             onClick={() => actions.cutFeatures()}
-            disabled={menuHasLockedSelection || menuHasCannedSelection}
+            disabled={menuHasLockedSelection || menuHasCannedSelection || selectionOnOtherFace}
             title={cutReason}
           >
             <MenuItemText reason={cutReason}>{t('featureTree.contextMenu.cut')}</MenuItemText>
@@ -602,14 +787,19 @@ export function FeatureContextMenu({
           >
             <MenuItemText reason={useAsStockReason}>{t('featureTree.contextMenu.useAsStock')}</MenuItemText>
           </button>
-          {bothFaces && !selectionOnAround ? (
+          {/* From Around the face change is refused (issue #395/#1015), so the
+              entry is normally left out rather than dead. A selection holding
+              another face's feature is the exception: item 10 requires it
+              present and disabled with the switch-face reason, the only way
+              touch can read why it cannot run (#1112 F2 review). */}
+          {bothFaces && (!selectionOnAround || selectionEditingReason !== undefined) ? (
             <>
               <div className="feature-context-menu__separator" />
               <button
                 className={menuItemClass(changeFaceReason)}
                 type="button"
                 onClick={() => actions.changeAuthoringFace([...ids])}
-                disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace}
+                disabled={menuHasLockedSelection || faceBusy || !selectionCanChangeFace || selectionOnOtherFace}
                 title={changeFaceReason}
               >
                 <MenuItemText reason={changeFaceReason}>{t('featureTree.face.changeAuthoringFace')}</MenuItemText>
@@ -618,11 +808,15 @@ export function FeatureContextMenu({
           ) : null}
           <div className="feature-context-menu__separator" />
           <button
-            className="feature-context-menu__item feature-context-menu__item--danger"
+            className={menuItemClass(selectionEditingReason, 'feature-context-menu__item--danger')}
             type="button"
             onClick={() => actions.deleteFeatures([...ids])}
+            disabled={selectionOnOtherFace}
+            title={selectionEditingReason}
           >
-            {menuSelectionIsGroup ? t('featureTree.contextMenu.deleteGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.deleteSelected') : t('featureTree.contextMenu.delete')}
+            <MenuItemText reason={selectionEditingReason}>
+              {menuSelectionIsGroup ? t('featureTree.contextMenu.deleteGroup') : menuHasMultipleSelection ? t('featureTree.contextMenu.deleteSelected') : t('featureTree.contextMenu.delete')}
+            </MenuItemText>
           </button>
         </>
       ) : menuTab ? (
