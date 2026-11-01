@@ -248,6 +248,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postSetupNoRegistration': '装夹“{setup}”没有定位基准，因此没有记录翻面后工件如何定位。请在装夹设置中添加定位销、靠山或角点基准。',
   'warnings.exportMachineTypeMismatch': '所选机床“{machine}”与此{expected}项目不匹配。请在导出前选择匹配的机床，或更改项目类型。',
   'warnings.exportMachineMissingRotaryAxis': '所选机床“{machine}”没有旋转轴，无法旋转该项目需要整周加工的棒料。请在导出前为该机床添加旋转轴，或选择一台带旋转轴的机床。',
+  'warnings.exportMachineTemplateInvalid': '所选机床“{machine}”无法导出：其模板违反了机床模板规则。请在导出前修正该机床。',
   'warnings.postWcsNullSelect': '机床定义在程序头中请求 {wcsCommand}，但 selectCommand 为 null。',
   'warnings.postToolChangesDisabled': '加工操作“{operation}”需要刀具“{tool}”，但换刀已禁用：程序会继续使用上一把刀具切削。请启用换刀，或每次只导出一个加工操作。',
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',

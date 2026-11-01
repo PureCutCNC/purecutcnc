@@ -209,6 +209,48 @@ async function main(): Promise<void> {
     assert(h.executor() === undefined, 'neither case may start generation')
   })
 
+  await test('a machine that still breaks a template rule blocks before generation', async () => {
+    const invalid = {
+      ...structuredClone(definition),
+      program: { ...structuredClone(definition.program), header: [...definition.program.header, 'G90.1'] },
+    }
+    const h = harness(project)
+    const pending = prepareExport(
+      h.service, h.context, createExportToken(1, h.context, ['a', 'b'], invalid, OPTIONS), invalid, OPTIONS,
+    )
+    await flush()
+    assert(h.executor() === undefined, 'no generation work starts for an invalid machine')
+    const preparation = await pending
+    assert(preparation.status === 'blocked', `expected blocked, got ${preparation.status}`)
+    assert(
+      preparation.status === 'blocked' && preparation.reason.kind === 'machine-invalid',
+      'the block reason must name the invalid machine',
+    )
+    if (preparation.status === 'blocked' && preparation.reason.kind === 'machine-invalid') {
+      assert(
+        preparation.reason.diagnostics.some((entry) => entry.field === `program.header[${definition.program.header.length}]`
+          && entry.line === definition.program.header.length + 1
+          && entry.word === 'G90.1'),
+        `the diagnostics name the appended header line: ${JSON.stringify(preparation.reason.diagnostics)}`,
+      )
+    }
+    assert(h.executor() === undefined, 'no generation work starts for an invalid machine')
+
+    // Turning off tool changes and coolant, and selecting fewer operations,
+    // must not turn the refusal into a program (#1119).
+    const offOptions = { ...OPTIONS, emitToolChanges: false, emitCoolant: false }
+    const bypass = prepareExport(
+      h.service, h.context, createExportToken(2, h.context, ['a'], invalid, offOptions), invalid, offOptions,
+    )
+    await flush()
+    assert(h.executor() === undefined, 'the bypass attempt starts no generation either')
+    const bypassed = await bypass
+    assert(
+      bypassed.status === 'blocked' && bypassed.reason.kind === 'machine-invalid',
+      'options and selection cannot bypass the machine guard',
+    )
+  })
+
   await test('operations are posted in the order the token names, not completion order', async () => {
     const h = harness(project)
     const token = createExportToken(1, h.context, ['a', 'b'], definition, OPTIONS)

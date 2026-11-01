@@ -24,6 +24,8 @@ import { getStockBounds, newProject } from '../../types/project'
 import type { Project, ProjectType } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
+import { decodeProjectFormat } from '../../store/helpers/projectFormat'
+import { rescueMachinesToLibrary } from '../../machine/store'
 import {
   blankTemplateProject,
   defaultBlankStockDraft,
@@ -137,8 +139,8 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const imperialTemplate = useMemo(() => newProject('Untitled', 'inch'), [])
   const [stockDraft, setStockDraft] = useState<BlockStockDraft>(() => stockDimensionsDraft(metricTemplate))
   const [barDraft, setBarDraft] = useState<BlankStockDraft>(() => defaultBlankStockDraft(metricTemplate.meta.units))
-  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project), [project])
-  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate) : null), [fileTemplate])
+  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project).project, [project])
+  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate).project : null), [fileTemplate])
 
   const blankTemplate = isBlankTemplateKind(templateKind)
 
@@ -287,15 +289,25 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     const reader = new FileReader()
     reader.onload = (readerEvent) => {
       try {
-        const parsed = JSON.parse(readerEvent.target?.result as string) as Project
-        setFileTemplate(parsed)
+        const parsed = JSON.parse(readerEvent.target?.result as string) as unknown
+        // Decode now so a structurally unreadable machine refuses the template
+        // visibly instead of throwing while the dialog renders, and so the
+        // file's other machines reach My Machines rather than disappearing
+        // (#1119). The selected snapshot is kept, including a template-invalid
+        // one; export refuses it later.
+        const decoded = decodeProjectFormat(parsed, rescueMachinesToLibrary)
+        setFileTemplate(decoded.project)
         setFileLabel(file.name)
         setFileError(null)
         setTemplateKind('file')
-      } catch {
+      } catch (error) {
         setFileTemplate(null)
         setFileLabel(file.name)
-        setFileError(td('dialogs.newProject.templateFileParseError'))
+        setFileError(
+          error instanceof SyntaxError
+            ? td('dialogs.newProject.templateFileParseError')
+            : (error instanceof Error ? error.message : td('dialogs.newProject.templateFileParseError')),
+        )
       }
     }
     reader.readAsText(file)

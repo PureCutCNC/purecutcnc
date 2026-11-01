@@ -439,6 +439,13 @@ export type ToolpathWarningCode =
    *  message names the missing axis instead of telling a router owner their
    *  machine is the wrong kind. Params: the machine's name. */
   | 'exportMachineMissingRotaryAxis'
+  /** The selected machine's templates still break a #1057 template rule, so
+   *  the program is refused rather than written (#1119). The definition is
+   *  kept, selected and shown with its diagnostics until it is corrected;
+   *  turning off tool changes or coolant, or selecting fewer operations, does
+   *  not bypass the refusal because it is decided from the definition alone.
+   *  Params: the machine's name. */
+  | 'exportMachineTemplateInvalid'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'
@@ -572,6 +579,11 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   rotary project. The same reasoning as the code above, but the machine is
  *   the right family and short one axis, so the message says what is missing
  *   instead of calling the choice wrong (issue #1112, item 35).
+ * - `exportMachineTemplateInvalid` — the selected machine's own templates still
+ *   break a #1057 class rule: a header that moves, a mode change inside the
+ *   program, a placeholder that would become part of a G/M number. The program
+ *   is refused rather than written; the machine is kept and its diagnostics are
+ *   shown so it can be corrected (#1119).
  * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
  *   with the first operation's tool. Nothing in the program pauses the machine
  *   for a change, so the part is machined with the wrong cutter.
@@ -619,6 +631,7 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
   'exportMachineMissingRotaryAxis',
+  'exportMachineTemplateInvalid',
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',

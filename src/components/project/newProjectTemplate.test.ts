@@ -307,7 +307,7 @@ test('a template keeps its setup and its chuck and drops everything else', () =>
     ...template,
     clamps: [template.clamps[0], { id: 'cl-step', name: 'Step clamp', type: 'step_clamp', x: 0, y: 0, w: 20, h: 10, height: 12, visible: true }],
   }
-  const setup = setupOnlyTemplate(withOrdinaryClamp)
+  const setup = setupOnlyTemplate(withOrdinaryClamp).project
   assert.deepEqual(storedStock(setup.stock), template.stock, 'the stock is part of the setup')
   assert.deepEqual(setup.origin, template.origin, 'so is the origin')
   assert.equal(setup.meta.projectType, 'rotary', 'and the stored type')

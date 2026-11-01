@@ -264,6 +264,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postSetupNoRegistration': 'Aufspannung „{setup}" hat keine Ausrichtreferenz, daher ist nicht festgehalten, wie das Teil nach dem Wenden positioniert wird. Fügen Sie in den Aufspannungseinstellungen eine Passstift-, Anschlag- oder Eckreferenz hinzu.',
   'warnings.exportMachineTypeMismatch': 'Die gewählte Maschine „{machine}" passt nicht zu diesem Projekt vom Typ {expected}. Wählen Sie eine passende Maschine oder ändern Sie den Projekttyp, bevor Sie exportieren.',
   'warnings.exportMachineMissingRotaryAxis': 'Die gewählte Maschine „{machine}" hat keine Drehachse und kann die Stange, die dieses Projekt rundum bearbeitet, deshalb nicht drehen. Fügen Sie dieser Maschine eine Drehachse hinzu (oder wählen Sie eine mit Drehachse), bevor Sie exportieren.',
+  'warnings.exportMachineTemplateInvalid': 'Die gewählte Maschine „{machine}" kann nicht exportiert werden: Ihre Vorlagen verletzen eine Template-Regel. Korrigieren Sie die Maschine vor dem Export.',
   'warnings.postWcsNullSelect': 'Maschinendefinition fordert {wcsCommand} in der Kopfzeile an, aber selectCommand ist null.',
   'warnings.postToolChangesDisabled': 'Operation „{operation}" benötigt das Werkzeug „{tool}", aber Werkzeugwechsel sind deaktiviert: Das Programm schneidet weiter mit dem vorherigen Werkzeug. Aktivieren Sie die Werkzeugwechsel, oder exportieren Sie jeweils nur eine Operation.',
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',

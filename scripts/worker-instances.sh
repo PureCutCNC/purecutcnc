@@ -164,9 +164,24 @@ patterns=(
   'MacOS/claude'
   'dsh --profile'
 )
+# Portable process rows. BSD `pgrep -fl` prints "PID full command line", but
+# procps `-l` prints only the 15-character process name (`-a` is the command
+# line there), so ask for the ids and read each command line explicitly.
+cmdline_for_pid() {
+  if [[ -r "/proc/$1/cmdline" ]]; then
+    tr '\0' ' ' <"/proc/$1/cmdline"
+  else
+    ps -o args= -p "$1" 2>/dev/null | head -1
+  fi
+}
 : >"$listing"
 for pattern in "${patterns[@]}"; do
-  pgrep -fl "$pattern" >>"$listing" 2>/dev/null || true
+  while IFS= read -r matched_pid; do
+    [[ -n "$matched_pid" ]] || continue
+    matched_cmd="$(cmdline_for_pid "$matched_pid")"
+    [[ -n "$matched_cmd" ]] || continue
+    printf '%s %s\n' "$matched_pid" "$matched_cmd" >>"$listing"
+  done < <(pgrep -f "$pattern" 2>/dev/null || true)
 done
 # One record per PID: "PID<TAB>first command line". Continuation lines (a
 # pasted prompt) are dropped on purpose; every flag this script needs is on the

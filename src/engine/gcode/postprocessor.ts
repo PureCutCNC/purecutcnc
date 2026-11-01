@@ -20,7 +20,7 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord, machineCoordinateRapidCommand } from './types'
+import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord, machineCoordinateRapidCommand, machineExportDiagnostics } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -221,6 +221,23 @@ function templateCanMoveZ(line: string, commentPrefix: string): boolean {
  * dialect and no dialect is special-cased inside another's emitter.
  */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  // A machine that still breaks a template rule produces no program at all
+  // (#1119). The refusal is decided from the definition alone, before either
+  // dialect emitter runs and before the operation plan is built, so turning
+  // off tool changes or coolant, or selecting fewer operations, cannot make a
+  // refused machine post something. The definition itself is kept and shown
+  // with its diagnostics; only the program is withheld.
+  const machineDiagnostics = machineExportDiagnostics(input.definition)
+  if (machineDiagnostics.length > 0) {
+    return {
+      gcode: '',
+      warnings: [{
+        code: 'exportMachineTemplateInvalid',
+        params: { machine: input.definition.name },
+      }],
+      stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+    }
+  }
   // A rotary operation this machine cannot run is dropped before any emitter
   // sees it (issue #393, rule 5), exactly as a plasma cut is on a non-plasma
   // machine. An operation with no angle anywhere is untouched.

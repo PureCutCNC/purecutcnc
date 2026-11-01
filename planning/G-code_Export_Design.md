@@ -376,7 +376,20 @@ project without any per-project refresh.
 project. `project.meta.machineDefinitions` holds zero or one entry and
 `selectedMachineId` always matches `machineDefinitions[0]?.id ?? null`
 (enforced on decode and by the `setProjectMachine` store action). Selecting a
-library machine copies a validated snapshot in by value.
+library machine copies a snapshot in by value.
+
+Persisted snapshots and library entries are read through the **structural**
+reader (`MachineDefinitionStructureSchema`): capability checks and schema
+defaults, but not the #1057 template rules (#1119). A 0.5.x machine whose
+templates still break a rule is therefore kept unchanged, with its id,
+selection, templates and joined words intact — it is never rewritten or
+dropped. Export eligibility is derived from the unchanged rules by
+`machineTemplateDiagnostics`; nothing is persisted as an "invalid" flag. An
+invalid definition's export is refused before generation, again in the save
+path, and again inside `runPostProcessor` before either dialect emitter, so it
+produces no program even with tool changes/coolant off or a smaller operation
+selection. The diagnostics name the template path, one-based program line,
+offending text/word and broken rule, and every offending line is reported.
 
 `getActiveMachineDefinition(project)` is the export boundary and resolves
 **only** the embedded snapshot. Export, preview, exported-motion inspection,
@@ -407,12 +420,24 @@ Nothing replaces an embedded snapshot automatically.
 
 Files that stored a whole machine library are compacted on decode: the entry
 matching `selectedMachineId` is preserved verbatim as the only embedded
-snapshot, unselected bundled copies are discarded (the live library supplies
-them), and valid custom definitions are merged into My Machines — skipping
-semantically identical entries and re-keying ID collisions. An unresolvable
-selection is cleared and reported in the load warning. Compacted projects are
-marked dirty; the original file is unchanged until saved. The compact
-zero-or-one array is valid format 3.0 and stays readable by older builds.
+snapshot, and distinct unselected definitions are rescued into My Machines
+instead of being discarded — custom definitions, template-invalid definitions,
+and edited copies of bundled machines (re-keyed away from the reserved bundled
+id). Only an unmodified bundled copy is dropped, because the build supplies it.
+Semantically identical entries are consolidated, ID collisions are re-keyed,
+and every move/consolidation/re-key is reported as a structured load
+diagnostic. An unresolvable selection is cleared and reported. A structurally
+unreadable entry, or a selected id carried by two different definitions,
+refuses the whole load atomically with an indexed diagnostic: the current
+project and the original bytes are untouched, and no other machine is
+substituted. Compacted projects are marked dirty; the original file is
+unchanged until saved. The compact zero-or-one array is valid format 3.0 and
+stays readable by older builds.
+
+The My Machines envelope follows the same rule (#1119): an unreadable envelope
+(bad JSON, a future schema version, an unrepresentable entry) is reported with
+its index, the readable entries still load, and every library write is blocked
+so the stored bytes are preserved until the problem is resolved.
 
 ## Postprocessor invariants
 

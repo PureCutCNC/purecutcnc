@@ -370,6 +370,12 @@ export const machineManager = {
     machineManager.dialog(page).locator('.machine-manager-detail-header .machine-manager-badge', { hasText: text }),
   comparison: (page: Page) =>
     machineManager.dialog(page).locator('.machine-manager-comparison'),
+  /** Template diagnostics for the previewed machine (#1119). */
+  diagnostics: (page: Page) =>
+    machineManager.dialog(page).getByTestId('machine-diagnostics'),
+  /** The library's own state banner (unreadable envelope, refused writes). */
+  libraryNotices: (page: Page) =>
+    machineManager.dialog(page).locator('.machine-manager-library-notices'),
   useButton: (page: Page) =>
     machineManager.dialog(page).getByRole('button', { name: 'Use this machine' }),
   updateProjectCopyButton: (page: Page) =>
@@ -407,6 +413,8 @@ export const machineEditor = {
   rotaryReversed: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-reversed'),
   /** The program-word helper text under the drive picker. */
   rotaryWord: (page: Page) => machineEditor.dialog(page).getByTestId('machine-rotary-word'),
+  /** Live template diagnostics while editing (#1119). */
+  diagnostics: (page: Page) => machineEditor.dialog(page).getByTestId('machine-diagnostics'),
 }
 
 export const machineUpdateNotice = {
@@ -640,6 +648,10 @@ export const exportDialog = {
 
   /** Error entries shown in the dialog — the tier that blocks Export (issue #755). */
   errors: (page: Page) => exportDialog.root(page).locator('.export-error'),
+
+  /** The machine's template diagnostics, the same list the manager shows (#1119). */
+  machineDiagnostics: (page: Page) =>
+    exportDialog.root(page).getByTestId('machine-diagnostics'),
 
   /** The "Emit tool changes (M6)" checkbox in the options group. */
   emitToolChanges: (page: Page) =>

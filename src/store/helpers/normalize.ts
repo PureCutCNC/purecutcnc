@@ -16,9 +16,10 @@
 
 import { clearImportedModelCaches } from '../../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../../engine/csg'
-import { validateMachineDefinition } from '../../engine/gcode/types'
+import { machineExportDiagnostics, MachineDefinitionStructureSchema } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
-import { getBundledMachine, isBundledMachineId } from '../../machine/registry'
+import { allocateMachineId, getBundledMachine, isBundledMachineId, machinesFunctionallyEqual } from '../../machine/registry'
+import { MachineLoadError, type MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { convertLength } from '../../utils/units'
 import { cloneCannedShapeData, defaultTool, inferFeatureKind, newProject, profileVertices, tabShape } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
@@ -346,104 +347,415 @@ export function normalizeTab(tab: Tab, units: Project['meta']['units'], index: n
   }
 }
 
+/** What a rescue seam reports: did every definition survive a reload? */
+export interface MachineRescueOutcome {
+  durable: boolean
+  diagnostics?: readonly MachineLoadDiagnostic[]
+}
+
+/**
+ * Persist rescued definitions (the application library). A caller that can
+ * compact unselected machines must pass one; compaction happens only after it
+ * reports `durable` (#1119).
+ */
+export type MachineRescuer = (definitions: readonly MachineDefinition[]) => MachineRescueOutcome
+
 export interface MachineSnapshotNormalization {
   /** The project's embedded snapshot: zero or one definition, never a library. */
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
   /**
-   * Valid non-bundled definitions the stored file carried, selected one
-   * first. Decode hands these to the application library so a legacy
-   * project's custom machines survive the compaction.
+   * Definitions compaction would drop from the project (the unselected ones).
+   * Decode hands these to the application library so a legacy project's custom
+   * machines survive the move. A template-invalid definition is included
+   * unchanged — the library stores it and export refuses it until it is fixed
+   * (#1119). The selected/retained definition is never included: it stays in
+   * the project, and copying it into My Machines would undo an explicit delete.
    */
   customDefinitions: MachineDefinition[]
+  /**
+   * Every definition the source carried, selected first. When a rescue is not
+   * durable, this is what stays in the project instead of being compacted away.
+   */
+  retainedDefinitions: MachineDefinition[]
   /** True when the stored file carried more machines than the snapshot keeps. */
   compacted: boolean
-  /** A machine ID the file selected but could not resolve to a valid definition. */
+  /** A machine ID the file selected but could not resolve to a definition. */
   unresolvedSelectionId: string | null
+  /**
+   * What rescue, consolidation and re-keying did, plus a retained
+   * template-invalid machine. The load warning and the machine manager read
+   * this instead of information being discarded here (#1119).
+   */
+  diagnostics: MachineLoadDiagnostic[]
+}
+
+/** A JSON value's type, for a diagnostic that has to say what it found. */
+function describeJsonType(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'an array'
+  if (typeof value === 'object') return 'an object'
+  if (typeof value === 'string') return 'a string'
+  if (typeof value === 'boolean') return 'a boolean'
+  return typeof value
+}
+
+/** A structural failure that must refuse the whole load, with its list index. */
+function machineStructureError(index: number, issues: ReadonlyArray<{ path: PropertyKey[], message: string }>): MachineLoadError {
+  const issue = issues[0]
+  const path = issue?.path.map(String).join('.')
+  const detail = issue ? (path ? `${path}: ${issue.message}` : issue.message) : 'the entry is not a machine definition'
+  return new MachineLoadError([{
+    severity: 'error',
+    kind: 'machine-structural-error',
+    index,
+    message: `Machine ${index + 1} in this project could not be read (${detail}). The project was not opened; its original bytes are unchanged.`,
+  }])
+}
+
+/** A retained machine whose templates still break a rule: export is blocked until corrected. */
+function retainedInvalidDiagnostic(definition: MachineDefinition): MachineLoadDiagnostic | null {
+  const templateDiagnostics = machineExportDiagnostics(definition)
+  if (templateDiagnostics.length === 0) return null
+  return {
+    severity: 'warning',
+    kind: 'machine-retained-invalid',
+    machineId: definition.id,
+    machineName: definition.name,
+    templateDiagnostics,
+    message: `The machine "${definition.name}" was kept and stays selected, but its templates break a machine-template rule (${templateDiagnostics.length === 1 ? 'one line' : `${templateDiagnostics.length} lines`}). G-code export is blocked until it is corrected.`,
+  }
+}
+
+/**
+ * Re-key a rescued definition away from a bundled id the build owns. A custom
+ * id that reached this point is already unique: duplicates were consolidated or
+ * re-keyed while the file was read.
+ */
+function asRescuedCustom(
+  definition: MachineDefinition,
+  usedIds: Set<string>,
+): { definition: MachineDefinition, rekeyed: boolean } {
+  if (!isBundledMachineId(definition.id)) {
+    return { definition: { ...definition, builtin: false }, rekeyed: false }
+  }
+  const id = allocateMachineId(definition.name || definition.id, usedIds)
+  return { definition: { ...definition, id, builtin: false }, rekeyed: true }
 }
 
 /**
  * Reduce a stored project's machine data to the single embedded snapshot the
- * current format keeps, and report what had to be rescued or dropped.
+ * current format keeps, and report what had to be rescued or dropped (#1119).
  *
- * Unselected bundled copies are discarded because the live application
- * library supplies them; unselected custom definitions are surfaced in
- * `customDefinitions` so nothing the user authored is lost. The snapshot
- * itself is preserved verbatim — it is authoritative for export.
+ * The selected definition is preserved verbatim — including a template that
+ * still breaks a #1057 rule — because it is authoritative for export. Every
+ * *distinct* unselected definition is rescued into `customDefinitions` instead
+ * of being compacted away: custom machines, and edited copies of bundled
+ * machines. Colliding ids are re-keyed and the move is reported. An unmodified
+ * bundled copy is not rescued because the build supplies it.
+ *
+ * The selected definition is never rescued: it is retained in the project, so
+ * a rescue would not protect it from loss — it would only copy it back into My
+ * Machines after the user explicitly deleted it there. Rescue protects against
+ * silent loss; it never overrides an explicit user action.
+ *
+ * A structurally unreadable entry, a selected id carried by two different
+ * definitions, or a machine list that is not an array refuses the load
+ * atomically: the caller never replaces the project with one that lost a
+ * machine.
+ *
+ * When a `rescue` seam is passed, the unselected definitions are compacted away
+ * only after it reports them durable; otherwise they stay in the project,
+ * selected first, with an error diagnostic (#1119).
  */
-export function normalizeMachineDefinitions(project: Project): MachineSnapshotNormalization {
+export function normalizeMachineDefinitions(
+  project: Project,
+  rescue?: MachineRescuer,
+): MachineSnapshotNormalization {
   const legacyMeta = project.meta as Project['meta'] & {
     machineId?: string | null
     customMachineDefinition?: MachineDefinition | null
   }
 
-  const rawDefinitions = Array.isArray(project.meta.machineDefinitions)
-    ? project.meta.machineDefinitions
-    : null
+  // The real pre-3.0 shape has **no** `machineDefinitions` key (or undefined).
+  // Anything else that is not an array is a malformed envelope, not legacy
+  // data: reading it as "no machines" would clear the selection silently.
+  const rawValue: unknown = project.meta.machineDefinitions
+  if (rawValue !== undefined && !Array.isArray(rawValue)) {
+    throw new MachineLoadError([{
+      severity: 'error',
+      kind: 'machine-structural-error',
+      index: 0,
+      message: `This project's machine definitions are not a list (found ${describeJsonType(rawValue)}). The project was not opened; its original bytes are unchanged.`,
+    }])
+  }
+  const rawDefinitions = Array.isArray(rawValue) ? rawValue : null
 
   const snapshotOf = (
     definition: MachineDefinition | null,
-    others: MachineDefinition[],
+    rescued: MachineDefinition[],
     rawCount: number,
     unresolvedSelectionId: string | null,
+    diagnostics: MachineLoadDiagnostic[],
+    retained: MachineDefinition[] = definition ? [definition] : [],
   ): MachineSnapshotNormalization => {
-    const customDefinitions = [
-      ...(definition && !isBundledMachineId(definition.id) ? [definition] : []),
-      ...others.filter((entry) => !isBundledMachineId(entry.id)),
-    ]
+    const selectedDiagnostic = definition ? retainedInvalidDiagnostic(definition) : null
+    if (selectedDiagnostic) diagnostics.push(selectedDiagnostic)
     return {
       machineDefinitions: definition ? [definition] : [],
       selectedMachineId: definition?.id ?? null,
-      customDefinitions,
+      customDefinitions: rescued,
+      retainedDefinitions: retained,
       compacted: rawCount > (definition ? 1 : 0),
       unresolvedSelectionId,
+      diagnostics,
     }
   }
 
   // --- pre-3.0 shape: `machineId` plus an optional inline custom definition.
   if (!rawDefinitions) {
     if (legacyMeta.customMachineDefinition) {
-      try {
-        const customDefinition = validateMachineDefinition({
-          ...legacyMeta.customMachineDefinition,
-          builtin: false,
-        })
-        return snapshotOf(customDefinition, [], 0, null)
-      } catch {
-        // Fall through to the machineId path below.
+      const parsed = MachineDefinitionStructureSchema.safeParse({
+        ...legacyMeta.customMachineDefinition,
+        builtin: false,
+      })
+      if (!parsed.success) {
+        throw machineStructureError(0, parsed.error.issues)
       }
+      const customDefinition = parsed.data
+      // The inline definition becomes the project's snapshot, so it is not
+      // lost: it is retained rather than rescued into My Machines (a rescue
+      // here would re-add a machine the user deleted from the library).
+      return snapshotOf(customDefinition, [], 0, null, [])
     }
     const legacyId = legacyMeta.machineId ?? null
     const bundled = legacyId ? getBundledMachine(legacyId) ?? null : null
-    return snapshotOf(bundled, [], 0, legacyId && !bundled ? legacyId : null)
+    const diagnostics: MachineLoadDiagnostic[] = []
+    if (legacyId && !bundled) {
+      diagnostics.push({
+        severity: 'warning',
+        kind: 'machine-selection-unresolved',
+        machineId: legacyId,
+        message: `This project selected a machine ("${legacyId}") that this build does not have, so no machine is selected.`,
+      })
+    }
+    return snapshotOf(bundled, [], 0, legacyId && !bundled ? legacyId : null, diagnostics)
   }
 
-  const definitions: MachineDefinition[] = []
-  const seenIds = new Set<string>()
-  for (const rawDefinition of rawDefinitions) {
-    try {
-      const definition = validateMachineDefinition(rawDefinition)
-      if (seenIds.has(definition.id)) {
-        continue
-      }
-      seenIds.add(definition.id)
-      definitions.push(definition)
-    } catch {
-      continue
+  // Every entry must be structurally readable. A skipped entry is a machine
+  // the project would silently lose, so the whole load is refused instead.
+  const parsedDefinitions: Array<{ definition: MachineDefinition, index: number }> = []
+  rawDefinitions.forEach((rawDefinition, index) => {
+    const parsed = MachineDefinitionStructureSchema.safeParse(rawDefinition)
+    if (!parsed.success) throw machineStructureError(index, parsed.error.issues)
+    parsedDefinitions.push({ definition: parsed.data, index })
+  })
+
+  const selectedMachineId = project.meta.selectedMachineId ?? null
+  const selectedCandidates = selectedMachineId
+    ? parsedDefinitions.filter((entry) => entry.definition.id === selectedMachineId)
+    : []
+  // Two different definitions claiming the selected id make the selection
+  // ambiguous: keeping either one would silently pick a machine for the user.
+  const firstSelected = selectedCandidates[0]?.definition ?? null
+  if (firstSelected) {
+    const conflicting = selectedCandidates.find(
+      (entry) => !machinesFunctionallyEqual(firstSelected, entry.definition),
+    )
+    if (conflicting) {
+      throw new MachineLoadError([{
+        severity: 'error',
+        kind: 'machine-structural-error',
+        index: conflicting.index,
+        machineId: selectedMachineId ?? undefined,
+        machineName: conflicting.definition.name,
+        message: `This project's selected machine "${selectedMachineId}" is stored twice with different definitions, so it cannot be loaded without guessing. The project was not opened; its original bytes are unchanged.`,
+      }])
     }
   }
 
-  const selectedMachineId = project.meta.selectedMachineId ?? null
-  const selected = selectedMachineId
-    ? definitions.find((definition) => definition.id === selectedMachineId) ?? null
-    : null
-  const others = definitions.filter((definition) => definition !== selected)
+  const diagnostics: MachineLoadDiagnostic[] = []
+  // Identical duplicates are folded into one; the first occurrence wins.
+  if (selectedCandidates.length > 1) {
+    for (const duplicate of selectedCandidates.slice(1)) {
+      diagnostics.push({
+        severity: 'info',
+        kind: 'machine-consolidated',
+        index: duplicate.index,
+        machineId: duplicate.definition.id,
+        machineName: duplicate.definition.name,
+        message: `Machine "${duplicate.definition.name}" appears more than once in this project; the duplicate was merged.`,
+      })
+    }
+  }
 
+  const selected = firstSelected
+  const usedIds = new Set<string>()
+  if (selected) usedIds.add(selected.id)
+  const keptUnselected: Array<{ definition: MachineDefinition, index: number }> = []
+  for (const entry of parsedDefinitions) {
+    if (entry.definition === selected) continue
+    // A second copy of the selected id was already proven identical above.
+    if (selected && entry.definition.id === selected.id) continue
+    if (usedIds.has(entry.definition.id)) {
+      const existing = keptUnselected.find((candidate) => candidate.definition.id === entry.definition.id)
+        ?? parsedDefinitions.find((candidate) => candidate.definition === selected)
+      if (existing && machinesFunctionallyEqual(existing.definition, entry.definition)) {
+        diagnostics.push({
+          severity: 'info',
+          kind: 'machine-consolidated',
+          index: entry.index,
+          machineId: entry.definition.id,
+          machineName: entry.definition.name,
+          message: `Machine "${entry.definition.name}" appears more than once in this project; the duplicate was merged.`,
+        })
+        continue
+      }
+      const id = allocateMachineId(entry.definition.name || entry.definition.id, usedIds)
+      const rekeyed = { ...entry.definition, id }
+      diagnostics.push({
+        severity: 'warning',
+        kind: 'machine-rekeyed',
+        index: entry.index,
+        machineId: entry.definition.id,
+        machineName: entry.definition.name,
+        nextId: id,
+        message: `Machine "${entry.definition.name}" was kept as "${id}" because "${entry.definition.id}" is already used in this project.`,
+      })
+      usedIds.add(id)
+      keptUnselected.push({ definition: rekeyed, index: entry.index })
+      continue
+    }
+    usedIds.add(entry.definition.id)
+    keptUnselected.push(entry)
+  }
+
+  // Only unselected definitions can be lost by compaction; the selected one
+  // stays in the project either way, so it is never rescued (#1119).
+  const customDefinitions: MachineDefinition[] = []
+  // Reports about the move itself. They are only true once the rescue is
+  // durable, so they are held back until then (#1119).
+  const libraryMoveDiagnostics: MachineLoadDiagnostic[] = []
+  for (const { definition, index } of keptUnselected) {
+    if (isBundledMachineId(definition.id)) {
+      const bundled = getBundledMachine(definition.id)
+      // An unmodified bundled copy is what the build already supplies.
+      if (bundled && machinesFunctionallyEqual(bundled, definition)) continue
+    }
+    const { definition: rescued, rekeyed } = asRescuedCustom(definition, usedIds)
+    if (rekeyed) {
+      libraryMoveDiagnostics.push({
+        severity: 'warning',
+        kind: 'machine-rekeyed',
+        index,
+        machineId: definition.id,
+        machineName: definition.name,
+        nextId: rescued.id,
+        message: `An unselected copy of "${definition.name}" was kept in My Machines as "${rescued.id}" because "${definition.id}" is a built-in id.`,
+      })
+    }
+    libraryMoveDiagnostics.push({
+      severity: 'info',
+      kind: 'machine-moved-to-library',
+      index,
+      machineId: definition.id,
+      machineName: definition.name,
+      nextId: rescued.id,
+      message: `Machine "${definition.name}" was moved to My Machines so opening this project cannot lose it.`,
+    })
+    usedIds.add(rescued.id)
+    customDefinitions.push(rescued)
+  }
+
+  if (selectedMachineId && !selected) {
+    diagnostics.push({
+      severity: 'warning',
+      kind: 'machine-selection-unresolved',
+      machineId: selectedMachineId,
+      message: `This project selected a machine ("${selectedMachineId}") that it does not carry, so no machine is selected. Choose one in Project Properties before exporting G-code.`,
+    })
+  }
+
+  // Every definition that would be lost by compaction, selected first so the
+  // embedded snapshot stays `machineDefinitions[0]`. This is what survives when
+  // the rescue seam cannot make the library durable; an unmodified bundled copy
+  // is omitted because the build already supplies it.
+  const retainedDefinitions: MachineDefinition[] = [
+    ...(selected ? [selected] : []),
+    ...customDefinitions.filter((definition) => definition.id !== selected?.id),
+  ]
+  const unresolvedSelectionId = selectedMachineId && !selected ? selectedMachineId : null
+
+  // No durable-library seam: compacting is forbidden. Undo, sketch-cancel and
+  // pure inspection normalize an in-memory project with nowhere to rescue an
+  // unselected machine, so the only safe result keeps every definition the
+  // source carried (#1119).
+  if (!rescue) {
+    // The re-key/consolidation reports are facts about reading the file; the
+    // "moved to My Machines" reports are only true after a durable rescue, so
+    // they stay out until a caller supplies the seam.
+    diagnostics.push(...libraryMoveDiagnostics.filter(
+      (diagnostic) => diagnostic.kind !== 'machine-moved-to-library',
+    ))
+    const selectedDiagnostic = selected ? retainedInvalidDiagnostic(selected) : null
+    if (selectedDiagnostic) diagnostics.push(selectedDiagnostic)
+    return {
+      machineDefinitions: retainedDefinitions,
+      selectedMachineId: selected?.id ?? null,
+      customDefinitions,
+      retainedDefinitions,
+      compacted: false,
+      unresolvedSelectionId,
+      diagnostics,
+    }
+  }
+
+  if (customDefinitions.length > 0) {
+    const outcome = rescue(customDefinitions)
+    if (outcome.diagnostics && outcome.diagnostics.length > 0) {
+      diagnostics.push(...outcome.diagnostics)
+    }
+    if (!outcome.durable) {
+      // Nothing was compacted: dropping a machine that is not durably stored
+      // would lose it on the next reload. The held-back "moved" reports are
+      // dropped (it did not move) and the reason the list stayed is added.
+      const keptDiagnostics = diagnostics.filter((diagnostic) => diagnostic.kind !== 'machine-moved-to-library')
+      const selectedDiagnostic = selected ? retainedInvalidDiagnostic(selected) : null
+      if (selectedDiagnostic) keptDiagnostics.push(selectedDiagnostic)
+      keptDiagnostics.push({
+        severity: 'error',
+        kind: 'machine-kept-in-project',
+        message: `${customDefinitions.length === 1 ? 'A machine from this project could not be saved to My Machines, so it was' : `${customDefinitions.length} machines from this project could not be saved to My Machines, so they were`} kept in the project instead of being compacted away. Resolve the machine-library problem and save the project again to complete the move; until then the project file carries them.`,
+      })
+      return {
+        machineDefinitions: retainedDefinitions,
+        selectedMachineId: selected?.id ?? null,
+        customDefinitions: [],
+        retainedDefinitions,
+        compacted: false,
+        unresolvedSelectionId,
+        diagnostics: keptDiagnostics,
+      }
+    }
+    diagnostics.push(...libraryMoveDiagnostics)
+    return snapshotOf(
+      selected,
+      [],
+      rawDefinitions.length,
+      unresolvedSelectionId,
+      diagnostics,
+      retainedDefinitions,
+    )
+  }
+
+  diagnostics.push(...libraryMoveDiagnostics)
   return snapshotOf(
     selected,
-    others,
+    [],
     rawDefinitions.length,
-    selectedMachineId && !selected ? selectedMachineId : null,
+    unresolvedSelectionId,
+    diagnostics,
+    retainedDefinitions,
   )
 }
 

@@ -41,8 +41,8 @@
           "header": [
             "( {programName} )",
             "( for Avid CNC Machines, PureCutCNC post from AvidCNC_inch.pp )",
-            "G94 {unitsCommand} G17 G90 G40 G49 G80",
-            "( G91.1 )"
+            "G00 G94 {unitsCommand} G17 G90 G40 G49 G80",
+            "G91.1"
           ],
           "operationHeader": [
             "(Toolpath: {operationName} Tool: {toolName})"
@@ -80,9 +80,9 @@
         },
         "toolChange": {
           "commands": [
-            "T{toolNumber} M6",
+            "T{toolNumber}M6",
             "M07",
-            "G00 G43 Z0.8000 H{toolNumber}"
+            "G00 G43Z0.8000H{toolNumber}"
           ],
           "stopSpindleFirst": true,
           "pauseAfterChange": false,

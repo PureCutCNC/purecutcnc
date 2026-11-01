@@ -39,6 +39,8 @@
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { machineCandidates } from '../../machine/registry'
+import { rescueMachinesToLibrary } from '../../machine/store'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
 import { projectType } from '../../store/helpers/projectType'
 import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
@@ -73,16 +75,48 @@ function templateChucks(template: Project): Clamp[] {
  * picker always reads the current application library, so a template can't
  * decide which bundled machines exist.
  */
-export function setupOnlyTemplate(template: Project): Project {
+/** A setup-only template and the diagnostics its machine rescue produced (#1119). */
+export interface SetupOnlyTemplateResult {
+  project: Project
+  diagnostics: MachineLoadDiagnostic[]
+}
+
+export function setupOnlyTemplate(template: Project): SetupOnlyTemplateResult {
   const cloned = structuredClone(template)
-  const machines = normalizeMachineDefinitions(cloned)
+  const selectedId = cloned.meta.selectedMachineId
+  const machines = normalizeMachineDefinitions(cloned, (definitions) => (
+    // The selected snapshot stays in the template, so only the *other* rescued
+    // machines need a home. Merging the selected one would add a machine to My
+    // Machines merely by opening this dialog.
+    rescueMachinesToLibrary(definitions.filter((definition) => definition.id !== selectedId))
+  ))
+  // The normalization above is the one rescue-or-keep gate for this write: it
+  // already moved the unselected machines into My Machines on a durable rescue,
+  // or kept them in the template when the rescue failed. Re-running the write
+  // gate would rescue them a second time and re-embed the originals under their
+  // old ids (#1119).
   return {
-    ...cloned,
-    meta: {
-      ...cloned.meta,
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
-    },
+    project: stripToSetup({
+      ...cloned,
+      meta: {
+        ...cloned.meta,
+        machineDefinitions: machines.machineDefinitions,
+        selectedMachineId: machines.selectedMachineId,
+      },
+    }),
+    diagnostics: machines.diagnostics,
+  }
+}
+
+/**
+ * The template's setup with every drawn and machined item removed, its machine
+ * list untouched. `templateChosenProject` receives a template the dialog has
+ * already passed through `setupOnlyTemplate`, so it strips without rescuing the
+ * machines a second time (#1119).
+ */
+function stripToSetup(template: Project): Project {
+  return {
+    ...template,
     dimensions: {},
     features: [],
     featureFolders: [],
@@ -90,7 +124,7 @@ export function setupOnlyTemplate(template: Project): Project {
     global_constraints: [],
     operations: [],
     tabs: [],
-    clamps: templateChucks(cloned),
+    clamps: templateChucks(template),
     ai_history: [],
   }
 }
@@ -122,7 +156,7 @@ export function templateChosenProject(
   choice: ProjectType,
   library: readonly MachineDefinition[],
 ): Project {
-  const setup = setupOnlyTemplate(template)
+  const setup = stripToSetup(structuredClone(template))
   return projectWithProjectType(
     setup,
     newProjectType(kind, choice, setup),

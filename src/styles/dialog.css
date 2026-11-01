@@ -2306,9 +2306,28 @@
 
 .dialog-body--machine-manager {
   grid-template-columns: 240px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* The library's own state (unreadable envelope, repeated write failure)
+   spans both columns so it cannot be mistaken for a machine's property. */
+.machine-manager-library-notices {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.machine-manager-library-notices .machine-editor-error,
+.machine-manager-library-notices .machine-manager-hint {
+  margin: 0;
 }
 
 /* Left: machine list */
@@ -2322,6 +2341,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 4px;
   width: 100%;
   padding: 10px 14px;
   border: none;
@@ -2349,6 +2370,7 @@
 }
 
 .machine-manager-item-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2418,6 +2440,12 @@
   color: var(--text-dim);
 }
 
+/* The machine still breaks a template rule: export is blocked. */
+.machine-manager-badge--invalid {
+  background: color-mix(in srgb, var(--danger-text) 16%, transparent);
+  color: var(--danger-text);
+}
+
 /* Group headings in the library list */
 .machine-manager-group-label {
   padding: 10px 12px 4px;
@@ -2452,6 +2480,88 @@
 .machine-manager-comparison .machine-manager-hint {
   margin: 0;
   word-break: break-word;
+}
+
+/* ── Machine template diagnostics (#1119) ─────────────────── */
+
+.machine-manager-diagnostics {
+  border: 1px solid color-mix(in srgb, var(--danger-text) 40%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 7%, transparent);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.machine-manager-diagnostics strong {
+  display: block;
+  color: var(--danger-text);
+  margin-bottom: 4px;
+}
+
+.machine-manager-diagnostics .machine-manager-hint {
+  margin: 0 0 6px;
+}
+
+.machine-diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.machine-diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 70%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.machine-diagnostic-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.machine-diagnostic-field {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.machine-diagnostic-rule {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.machine-diagnostic-text {
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-hover) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.machine-diagnostic-word {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.machine-editor-diagnostics .machine-editor-note {
+  margin: 0 0 6px;
 }
 
 /* ── Non-blocking machine-update notice ─────────────────────── */
@@ -2618,7 +2728,18 @@
 
   .dialog-body--machine-manager {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
+  }
+
+  /* Larger touch-readable diagnostic rows on the tablet layout. */
+  .machine-diagnostic {
+    font-size: 13px;
+  }
+
+  .machine-diagnostic-field,
+  .machine-diagnostic-text,
+  .machine-diagnostic-word {
+    font-size: 12.5px;
   }
 
   .machine-manager-list {

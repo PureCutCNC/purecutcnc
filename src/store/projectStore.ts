@@ -274,6 +274,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   dirty: false,
   projectLoading: false,
   loadWarning: null,
+  machineLoadDiagnostics: [],
   projectKey: 0,
   pendingConstraint: null,
   pendingSketchEdit: null,

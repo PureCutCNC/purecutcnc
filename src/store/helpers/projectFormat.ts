@@ -47,6 +47,7 @@ import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/proje
 import { cloneCannedShapeData, cloneTextFeatureData, isCannedShapeData } from '../../types/project'
 import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
 import { rebuildCannedShapeModels } from '../../cannedShapes/model'
@@ -60,6 +61,8 @@ import {
   normalizeTab,
   normalizeTool,
   syncFeatureTreeProject,
+  type MachineRescuer,
+  type MachineSnapshotNormalization,
 } from './normalize'
 import { createFeatureInstance } from './featureDefinitions'
 import { invertMatrix, multiplyMatrix } from './instanceTransforms'
@@ -102,6 +105,8 @@ export interface DecodedMachineMigration {
   compacted: boolean
   /** A machine ID the file selected but could not resolve; the selection was cleared. */
   unresolvedSelectionId: string | null
+  /** Structured rescue/retention reports for the load-warning surface (#1119). */
+  diagnostics: MachineLoadDiagnostic[]
 }
 
 export interface DecodedProjectFormat {
@@ -122,6 +127,22 @@ export interface DecodedProjectFormat {
 export interface ProjectMigrationInfo {
   retractHeightsReexpressed: number
   edgeEntryStrategiesReset: number
+  /**
+   * What machine reading rescued or retained (#1119). A caller that has an
+   * application-library seam (`loadProject`, save, template extraction) merges
+   * `rescuedMachineDefinitions` and shows `machineDiagnostics`; leaving them
+   * unused is how the old code lost a project's other machines silently.
+   */
+  machineDiagnostics: MachineLoadDiagnostic[]
+  rescuedMachineDefinitions: MachineDefinition[]
+  /**
+   * The durable library seam. When present, `normalizeProject` hands the
+   * unselected machines to it and compacts them away only if it reports them
+   * durably stored (#1119).
+   */
+  rescueMachineDefinitions?: MachineRescuer
+  /** The machine normalization the project actually used, for `decodeProjectFormat`. */
+  machineNormalization?: MachineSnapshotNormalization
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -546,8 +567,17 @@ function migrateDormantEdgeEntryStrategy(
   return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
 }
 
-/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
-export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
+/**
+ * Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project.
+ *
+ * `rescue` is the optional durable-library seam: open/load pass it so an
+ * unselected machine is compacted away only once it is safely in My Machines.
+ * Inspection omits it and reads what the source carried instead (#1119).
+ */
+export function decodeProjectFormat(
+  input: unknown,
+  rescue?: MachineRescuer,
+): DecodedProjectFormat {
   assertProjectEnvelope(input)
   const sourceVersion = typeof input.version === 'string' ? input.version : null
   const convertedLegacy = sourceVersion === null
@@ -560,11 +590,19 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   if (!convertedLegacy && hasLegacyRows) {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
-  const machines = normalizeMachineDefinitions(input as unknown as Project)
-  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0, edgeEntryStrategiesReset: 0 }
+  const migrationInfo: ProjectMigrationInfo = {
+    retractHeightsReexpressed: 0,
+    edgeEntryStrategiesReset: 0,
+    machineDiagnostics: [],
+    rescuedMachineDefinitions: [],
+    rescueMachineDefinitions: rescue,
+  }
+  // Nest records are session state, never read from a file (#889).
+  const project = normalizeProject({ ...input, nests: undefined }, migrationInfo)
+  const machines = migrationInfo.machineNormalization
+    ?? normalizeMachineDefinitions(input as unknown as Project)
   return {
-    // Nest records are session state, never read from a file (#889).
-    project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
+    project,
     sourceVersion,
     convertedLegacy,
     retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,
@@ -573,6 +611,7 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
       customDefinitions: machines.customDefinitions,
       compacted: machines.compacted,
       unresolvedSelectionId: machines.unresolvedSelectionId,
+      diagnostics: machines.diagnostics,
     },
   }
 }
@@ -734,7 +773,24 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   const nests = normalizeNests(input.nests, features)
   if (nests.length > 0) authoritativeProject.nests = nests
   else delete authoritativeProject.nests
-  const machines = normalizeMachineDefinitions(authoritativeProject)
+  const machines = normalizeMachineDefinitions(
+    authoritativeProject,
+    migrationInfo?.rescueMachineDefinitions,
+  )
+  // `normalizeMachineDefinitions` is the one rescue-or-keep gate for this path:
+  // it already moved every unselected definition into the library on a durable
+  // rescue, or kept it in `machineDefinitions` when the rescue failed. Running
+  // the write gate again would rescue the originals a second time and re-embed
+  // them under their old ids (an edited bundled copy would appear both in My
+  // Machines under its new id and in the project under the bundled one), and
+  // its diagnostics would disagree with `compacted` (#1119).
+  const normalizedMachineDefinitions = machines.machineDefinitions
+  const normalizedSelectedMachineId = machines.selectedMachineId
+  if (migrationInfo) {
+    migrationInfo.machineDiagnostics = machines.diagnostics
+    migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
+    migrationInfo.machineNormalization = machines
+  }
   const meta: ProjectMeta = {
     ...authoritativeProject.meta,
     // A stored type is kept exactly; a file without one gets what today's
@@ -742,8 +798,8 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     // selection cannot leave a plasma type behind (issue #1028).
     projectType: input.meta.projectType ?? inferProjectTypeFrom(
       {
-        machineDefinitions: machines.machineDefinitions,
-        selectedMachineId: machines.selectedMachineId,
+        machineDefinitions: normalizedMachineDefinitions,
+        selectedMachineId: normalizedSelectedMachineId,
       },
       authoritativeProject.stock,
     ),
@@ -754,8 +810,8 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     operationClearanceZ: authoritativeProject.meta.operationClearanceZ ?? defaultOperationClearanceZ(authoritativeProject.meta.units),
     clampClearanceXY: authoritativeProject.meta.clampClearanceXY ?? defaultClampClearanceXY(authoritativeProject.meta.units),
     clampClearanceZ: authoritativeProject.meta.clampClearanceZ ?? defaultClampClearanceZ(authoritativeProject.meta.units),
-    machineDefinitions: machines.machineDefinitions,
-    selectedMachineId: machines.selectedMachineId,
+    machineDefinitions: normalizedMachineDefinitions,
+    selectedMachineId: normalizedSelectedMachineId,
   }
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
