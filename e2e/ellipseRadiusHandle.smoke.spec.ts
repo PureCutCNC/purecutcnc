@@ -15,12 +15,19 @@
  */
 
 /**
- * Dragging a canned ellipse's two radius handles (issue #1112 slice w3e-a).
+ * A canned ellipse's two radius handles (issue #1112 slices w3e-a, rt7-g).
+ *
+ * The handles belong to **Edit ellipse…**, not to a plain selection: a selected
+ * ellipse draws none and nothing can be dragged, and they appear only while the
+ * panel is open (Frank, round 7: "we should only show dots when in edit ellipse
+ * mode"). A drag writes the panel's Radius X / Radius Y field, so the panel's
+ * own preview follows the pointer, Save commits the whole session as one undo
+ * step and Cancel puts the stored radius back.
  *
  * A placed, rotated ellipse draws one handle at the end of its local X axis and
  * one at the end of its local Y axis — in the ellipse's own frame, so a 30°
  * placement turns both handles with it. Dragging a handle changes only its own
- * radius, the placement is untouched, and the release is one undo step.
+ * radius, the placement is untouched.
  *
  * The expected handle positions here are computed from the fixture's known
  * placement (`translate(100, 80)` then rotate 30°), not read back from the
@@ -30,10 +37,8 @@
  * Every drag is kept inside the canvas. The view is fitted to the scene, so a
  * handle sits about one padding-width from the edge and a pull long enough to
  * leave the canvas ends the drag there — the commit-on-leave every canvas drag
- * has, the circle's radius handle included. The release would then store the
- * radius of the last point on the canvas, not the one this test asks for, so
- * `dragRadiusHandle` stops short of the edge and the expectation follows the
- * point the pointer actually reached.
+ * has, the circle's radius handle included. `dragRadiusHandle` stops short of
+ * the edge and the expectation follows the point the pointer actually reached.
  */
 
 import type { Page } from '@playwright/test'
@@ -104,6 +109,40 @@ async function seedRotatedEllipse(page: Page): Promise<StoredEllipse> {
       transform: feature.transform,
     }
   }, { e: PLACEMENT.e, f: PLACEMENT.f, rx: RADII.rx, ry: RADII.ry })
+}
+
+/**
+ * Open Edit ellipse… through the app's own registry opener, the route
+ * Properties and the feature context menu use. It arms the `canned-edit`
+ * session and seeds the panel's fields, which is what puts the handles on the
+ * canvas (issue #1112 rt7-g).
+ */
+async function openEditEllipse(page: Page, featureId: string): Promise<void> {
+  await page.evaluate(async (id) => {
+    const { getCannedShapeEditor } = await import('/src/cannedShapes/registry.ts') as typeof import('/src/cannedShapes/registry')
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('/src/store/projectStore')
+    const opener = getCannedShapeEditor('ellipse')
+    if (!opener) throw new Error('e2e: no Edit-ellipse opener is registered')
+    opener(id)
+    if (useProjectStore.getState().pendingAdd?.shape !== 'canned-edit') {
+      throw new Error('e2e: the Edit-ellipse session did not open')
+    }
+  }, featureId)
+  await page.locator('.canvas-workflow-panel--creation .canvas-workflow-panel__parameter-fields input').first().waitFor()
+}
+
+/** The Edit-ellipse panel's two radius fields, as text. */
+async function radiusFields(page: Page): Promise<{ rx: string; ry: string }> {
+  const inputs = page.locator('.canvas-workflow-panel--creation .canvas-workflow-panel__parameter-fields input')
+  return { rx: await inputs.nth(0).inputValue(), ry: await inputs.nth(1).inputValue() }
+}
+
+/** How many committed undo steps the project has. */
+async function undoDepth(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('/src/store/projectStore')
+    return useProjectStore.getState().history.past.length
+  })
 }
 
 /**
@@ -249,7 +288,7 @@ async function dragRadiusHandle(page: Page, axis: EllipseRadiusAxis, distance: n
   })
   const end = stopInsideCanvas(start, target, await canvasInterior(page, CANVAS_EDGE_MARGIN))
   // Read the world point before the release: the view is the one the drag runs
-  // in, and the release is what writes the radius.
+  // in, and the last move is the radius the panel's field ends on.
   const reached = await worldPoint(page, end)
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
@@ -265,6 +304,18 @@ async function storedEllipse(page: Page, definitionId: string): Promise<{ rx: nu
   }>)[definitionId]
   if (!definition?.canned) throw new Error(`e2e: ${definitionId} is not a canned shape`)
   return { rx: definition.canned.params.rx, ry: definition.canned.params.ry }
+}
+
+async function saveEditPanel(page: Page): Promise<void> {
+  const panel = page.locator('.canvas-workflow-panel--creation')
+  await panel.getByRole('button', { name: 'Save' }).click()
+  await expect(panel).toHaveCount(0)
+}
+
+async function cancelEditPanel(page: Page): Promise<void> {
+  const panel = page.locator('.canvas-workflow-panel--creation')
+  await panel.getByRole('button', { name: 'Cancel' }).click()
+  await expect(panel).toHaveCount(0)
 }
 
 async function undo(page: Page): Promise<void> {
@@ -283,10 +334,41 @@ function expectNear(actual: number, expected: number, label: string): void {
   expect(Math.abs(actual - expected), `${label}: expected ${expected}, got ${actual}`).toBeLessThan(1.5)
 }
 
-test('the X handle changes rx, in the ellipse’s own rotated frame', async ({ app }) => {
+test('a plain selection of a canned ellipse has no radius handles', async ({ app }) => {
+  const ellipse = await seedRotatedEllipse(app.page)
+  await settleView(app.page)
+  // The selection the seeding left is the plain one: no Edit panel, no handles.
+  await expect(app.page.locator('.canvas-workflow-panel--creation')).toHaveCount(0)
+  const undoBefore = await undoDepth(app.page)
+
+  // Press exactly where the X handle would be and pull: nothing moves, because
+  // a plain selection draws no handles to grab.
+  const from = handleWorldPoints().rx
+  const start = await screenPoint(app.page, from)
+  const target = await screenPoint(app.page, {
+    x: from.x + axisDirection('rx').x * DRAG,
+    y: from.y + axisDirection('rx').y * DRAG,
+  })
+  const end = stopInsideCanvas(start, target, await canvasInterior(app.page, CANVAS_EDGE_MARGIN))
+  await app.page.mouse.move(start.x, start.y)
+  await app.page.mouse.down()
+  await app.page.mouse.move(end.x, end.y, { steps: 8 })
+  await app.page.mouse.up()
+
+  const after = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(after.rx, RADII.rx, 'a press on a plain selection leaves rx alone')
+  expectNear(after.ry, RADII.ry, 'a press on a plain selection leaves ry alone')
+  expect(await undoDepth(app.page), 'and writes no undo step').toBe(undoBefore)
+})
+
+test('the X handle writes the panel field and only Save stores rx', async ({ app }) => {
   const ellipse = await seedRotatedEllipse(app.page)
   await settleView(app.page)
   expect(ellipse.transform.b).not.toBe(0)
+  const undoBeforeDrag = await undoDepth(app.page)
+
+  await openEditEllipse(app.page, ellipse.featureId)
+  expect(await radiusFields(app.page)).toEqual({ rx: '30', ry: '20' })
 
   // Pull the X handle further along the placed X axis: rx 30 → 55, as far as the
   // canvas allows.
@@ -295,12 +377,19 @@ test('the X handle changes rx, in the ellipse’s own rotated frame', async ({ a
   expect(asked, `the X drag must stay on the canvas and pull the handle: it reached ${asked}`)
     .toBeGreaterThan(RADII.rx + MIN_PULL)
 
-  const after = await storedEllipse(app.page, ellipse.definitionId)
-  expectNear(after.rx, asked, 'the X drag sets rx')
-  expectNear(after.ry, RADII.ry, 'the X drag leaves ry alone')
+  // The drag is the panel's field, not a direct write: the panel shows it, the
+  // Y field is untouched, and nothing is committed yet.
+  const fields = await radiusFields(app.page)
+  expectNear(Number(fields.rx), asked, 'the X drag fills the panel’s Radius X field')
+  expect(Number(fields.ry), 'the drag leaves the Radius Y field alone').toBe(RADII.ry)
+  expect(await undoDepth(app.page), 'a drag before Save is not an undo step').toBe(undoBeforeDrag)
 
-  // The second undo proves the whole gesture was one write: a second mid-drag
-  // step would still be stored here.
+  await saveEditPanel(app.page)
+  const after = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(after.rx, asked, 'Save stores the dragged rx')
+  expectNear(after.ry, RADII.ry, 'Save leaves ry alone')
+  expect(await undoDepth(app.page), 'Save commits the whole session as one undo step').toBe(undoBeforeDrag + 1)
+
   await undo(app.page)
   const restored = await storedEllipse(app.page, ellipse.definitionId)
   expectNear(restored.rx, RADII.rx, 'one undo restores rx')
@@ -310,6 +399,8 @@ test('the X handle changes rx, in the ellipse’s own rotated frame', async ({ a
 test('the Y handle changes ry, in the ellipse’s own rotated frame', async ({ app }) => {
   const ellipse = await seedRotatedEllipse(app.page)
   await settleView(app.page)
+  const undoBeforeDrag = await undoDepth(app.page)
+  await openEditEllipse(app.page, ellipse.featureId)
 
   // Pull the Y handle along the placed Y axis: ry 20 → 45, as far as the canvas
   // allows.
@@ -318,9 +409,15 @@ test('the Y handle changes ry, in the ellipse’s own rotated frame', async ({ a
   expect(asked, `the Y drag must stay on the canvas and pull the handle: it reached ${asked}`)
     .toBeGreaterThan(RADII.ry + MIN_PULL)
 
+  const fields = await radiusFields(app.page)
+  expectNear(Number(fields.ry), asked, 'the Y drag fills the panel’s Radius Y field')
+  expect(Number(fields.rx), 'the drag leaves the Radius X field alone').toBe(RADII.rx)
+
+  await saveEditPanel(app.page)
   const after = await storedEllipse(app.page, ellipse.definitionId)
-  expectNear(after.ry, asked, 'the Y drag sets ry')
-  expectNear(after.rx, RADII.rx, 'the Y drag leaves rx alone')
+  expectNear(after.ry, asked, 'Save stores the dragged ry')
+  expectNear(after.rx, RADII.rx, 'Save leaves rx alone')
+  expect(await undoDepth(app.page), 'Save commits one undo step').toBe(undoBeforeDrag + 1)
 
   await undo(app.page)
   const restored = await storedEllipse(app.page, ellipse.definitionId)
@@ -328,11 +425,30 @@ test('the Y handle changes ry, in the ellipse’s own rotated frame', async ({ a
   expectNear(restored.rx, RADII.rx, 'one undo restores rx')
 })
 
+test('Cancel discards a dragged radius like a typed one', async ({ app }) => {
+  const ellipse = await seedRotatedEllipse(app.page)
+  await settleView(app.page)
+  const undoBeforeDrag = await undoDepth(app.page)
+  await openEditEllipse(app.page, ellipse.featureId)
+
+  const reached = await dragRadiusHandle(app.page, 'rx', DRAG)
+  expect(radiusAlong('rx', reached), 'the drag must pull the X handle')
+    .toBeGreaterThan(RADII.rx + MIN_PULL)
+  expectNear(Number((await radiusFields(app.page)).rx), radiusAlong('rx', reached), 'the drag is in the field')
+
+  await cancelEditPanel(app.page)
+  const after = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(after.rx, RADII.rx, 'Cancel puts the stored rx back')
+  expectNear(after.ry, RADII.ry, 'Cancel leaves ry alone')
+  expect(await undoDepth(app.page), 'Cancel leaves the undo history alone').toBe(undoBeforeDrag)
+})
+
 test('a placed centre and rotation stay put through a radius drag', async ({ app }) => {
   const ellipse = await seedRotatedEllipse(app.page)
   await settleView(app.page)
   const before = await getProject(app.page)
   const beforeTransform = (before.features as Array<{ transform: StoredEllipse['transform'] }>)[0].transform
+  await openEditEllipse(app.page, ellipse.featureId)
 
   const reached = await dragRadiusHandle(app.page, 'ry', DRAG)
   expect(radiusAlong('ry', reached), 'the drag must pull the Y handle')

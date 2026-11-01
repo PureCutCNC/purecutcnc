@@ -15,68 +15,112 @@
  */
 
 /**
- * A canned ellipse's radius-handle drag (issue #1112 slice w3e-a).
+ * A canned ellipse's radius-handle drag (issue #1112 slices w3e-a, rt7-g).
  *
- * Dragging is a preview: every pointer move recomputes the parameters the
- * ellipse would have (one axis changed, the placement untouched), and the
- * canvas draws those instead of the stored ones. Nothing is written until the
- * release, so the whole gesture is one `updateFeature` — one undo step, and the
- * same normalize/apply path the Edit-ellipse panel uses.
+ * The handles belong to the **Edit ellipse…** session, not to a plain
+ * selection: a drag only exists while the panel for that ellipse is open
+ * (Frank, round 7: "we should only show dots when in edit ellipse mode and
+ * allow point drag, and manual changes"). Dragging is not an edit of the
+ * project at all — every pointer move writes the dragged radius into the
+ * panel's field text (`cannedEditDraft.ts`), and the panel's ordinary live
+ * preview and Save/Cancel handling do the rest. So a dragged radius is one undo
+ * step on Save and is discarded by Cancel exactly like a typed one, and there
+ * is no direct store write here to drift from the typed path.
  */
 
-import type { CannedShapeData, Matrix2D, Point } from '../../types/project'
+import type { Matrix2D, Point } from '../../types/project'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
-import {
-  normalizeEllipseCannedParams,
-  type EllipseCannedParams,
-} from '../../cannedShapes/generators/ellipse'
+import { ELLIPSE_EDITOR_REQUEST, normalizeEllipseCannedParams } from '../../cannedShapes/generators/ellipse'
+import { editorNormalizedParams } from '../../cannedShapes/generators/editorForm'
 import {
   dragEllipseRadius,
   ellipseRadiusAxisAt,
+  ELLIPSE_RADIUS_MIN,
   type EllipseRadiusAxis,
 } from '../../cannedShapes/ellipseHandles'
+import { setCannedEditDraftField, type CannedEditDraft } from './cannedEditDraft'
 
+/**
+ * The precision a dragged radius lands on: four decimals, the same precision
+ * the canned generators keep their lengths at. The field shows the rounded
+ * number, so the handle, the text and the stored parameters are one value.
+ */
+const RADIUS_FIELD_PRECISION = 10000
+
+/** The fields an ellipse handle edits: the axis name is the editor field key. */
 export interface CannedRadiusDragState {
   featureId: string
-  /** The stored kind, written back with the dragged parameters. */
-  kind: string
   /** The instance placement the handles are read through, fixed for the drag. */
   transform: Matrix2D
   axis: EllipseRadiusAxis
-  /** The stored parameters when the gesture began: an unmoved release is no edit. */
-  start: EllipseCannedParams
-  /** The parameters the release would store: the live preview. */
-  params: EllipseCannedParams
+  /** The parameters the panel's fields now hold: the live preview. */
+  params: { rx: number; ry: number }
+}
+
+export type CannedRadiusHandleFeature = Pick<ResolvedSketchFeature, 'id' | 'canned' | 'transform'>
+
+/** The radius the generator accepts, at field precision and never below the minimum. */
+function fieldRadius(value: number): number {
+  return Math.max(ELLIPSE_RADIUS_MIN, Math.round(value * RADIUS_FIELD_PRECISION) / RADIUS_FIELD_PRECISION)
+}
+
+/** The other radius of a draft, so a drag leaves the axis it is not pulling alone. */
+function storedEllipseParams(feature: Pick<ResolvedSketchFeature, 'canned'>) {
+  if (feature.canned?.kind !== ELLIPSE_CANNED_KIND) return null
+  return normalizeEllipseCannedParams(feature.canned.params)
 }
 
 /**
- * Start a drag on one handle of a placed ellipse. `null` when the feature is
- * not a canned ellipse, its parameters do not normalize, or the index is not a
- * handle — a drag must never guess which radius it means.
+ * The parameters this feature's handles draw at, or `null` when they are not on
+ * screen: a plain selection draws nothing, and only the row the open editor
+ * edits has handles (issue #1112 rt7-g).
+ *
+ * The fields are the ellipse's parameters: the panel's text after the
+ * generator's own validation, or the stored parameters while a field holds a
+ * value it refuses (which is what the preview keeps showing too). Typing a
+ * radius therefore moves its handle, and a drag moves the same fields.
+ */
+export function cannedEditHandleParams(
+  feature: Pick<ResolvedSketchFeature, 'id' | 'canned'>,
+  draft: CannedEditDraft | null,
+  drag: CannedRadiusDragState | null,
+): { rx: number; ry: number } | null {
+  if (!draft || draft.featureId !== feature.id) return null
+  if (draft.kind !== ELLIPSE_CANNED_KIND) return null
+  if (drag && drag.featureId === feature.id) return drag.params
+  if (feature.canned?.kind !== ELLIPSE_CANNED_KIND) return null
+  const typed = editorNormalizedParams(ELLIPSE_EDITOR_REQUEST, draft.values)
+  return (typed ? normalizeEllipseCannedParams(typed) : null) ?? storedEllipseParams(feature)
+}
+
+/**
+ * Start a drag on one handle of the ellipse whose editor is open. `null` when
+ * no such session exists, the feature is not a canned ellipse, its parameters
+ * do not normalize, or the index is not a handle — a drag must never guess
+ * which radius it means.
  */
 export function beginCannedRadiusDrag(
-  feature: Pick<ResolvedSketchFeature, 'id' | 'canned' | 'transform'>,
+  feature: CannedRadiusHandleFeature,
   axisIndex: number,
+  draft: CannedEditDraft | null,
 ): CannedRadiusDragState | null {
   if (feature.canned?.kind !== ELLIPSE_CANNED_KIND) return null
   const axis = ellipseRadiusAxisAt(axisIndex)
   if (!axis) return null
-  const params = normalizeEllipseCannedParams(feature.canned.params)
+  const params = cannedEditHandleParams(feature, draft, null)
   if (!params) return null
   return {
     featureId: feature.id,
-    kind: ELLIPSE_CANNED_KIND,
     transform: feature.transform,
     axis,
-    start: params,
     params,
   }
 }
 
 /**
  * The drag after the pointer moved. The previous state is returned unchanged
- * when the gesture changed nothing, so the caller can redraw only on a change.
+ * when the gesture changed nothing, so the caller only publishes a change.
  */
 export function updateCannedRadiusDrag(
   state: CannedRadiusDragState,
@@ -84,7 +128,9 @@ export function updateCannedRadiusDrag(
 ): CannedRadiusDragState {
   const params = dragEllipseRadius(state.params, state.axis, worldPoint, state.transform)
   if (!params || params === state.params) return state
-  return { ...state, params }
+  const radius = fieldRadius(params[state.axis])
+  if (radius === state.params[state.axis]) return state
+  return { ...state, params: { ...state.params, [state.axis]: radius } }
 }
 
 /**
@@ -108,34 +154,11 @@ export function moveCannedRadiusDrag(
 }
 
 /**
- * Write the dragged parameters exactly once. Called on the release, so the
- * whole gesture is one write and therefore one undo step; the last preview is
- * what gets stored.
- *
- * A press that never moved the handle — or a drag that ended where it began —
- * is not an edit, so nothing is written and `false` is returned. Committing the
- * unchanged parameters anyway would add an undo entry and drop the redo stack
- * for a plain click (issue #1112 review).
+ * Publish the drag as the panel's field text, which is the one edit path a typed
+ * value also takes: the panel re-renders, its live preview writes the shape, and
+ * Save commits the whole session as one undo step. Returns whether the field
+ * changed, so a gated pointer move does not churn the draft.
  */
-export function commitCannedRadiusDrag(
-  state: CannedRadiusDragState,
-  write: (featureId: string, canned: CannedShapeData) => void,
-): boolean {
-  if (state.params.rx === state.start.rx && state.params.ry === state.start.ry) return false
-  write(state.featureId, { kind: state.kind, params: state.params })
-  return true
-}
-
-/**
- * The parameters the canvas draws for one feature: the live preview while its
- * own handle is being dragged, the stored parameters otherwise. A drag never
- * leaks onto another ellipse, which can share the same kind.
- */
-export function cannedRadiusDrawParams(
-  feature: Pick<ResolvedSketchFeature, 'id' | 'canned'>,
-  drag: CannedRadiusDragState | null,
-): EllipseCannedParams | null {
-  if (drag && drag.featureId === feature.id) return drag.params
-  if (feature.canned?.kind !== ELLIPSE_CANNED_KIND) return null
-  return normalizeEllipseCannedParams(feature.canned.params)
+export function publishCannedRadiusDrag(state: CannedRadiusDragState): boolean {
+  return setCannedEditDraftField(state.featureId, state.axis, String(state.params[state.axis]))
 }

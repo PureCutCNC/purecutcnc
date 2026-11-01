@@ -15,20 +15,20 @@
  */
 
 /**
- * Dragging a canned ellipse's radius handles on the canvas (issue #1112 slice
- * w3e-a).
+ * Dragging a canned ellipse's radius handles on the canvas (issue #1112 slices
+ * w3e-a, rt7-g).
  *
- * The gesture belongs to the selected feature, not to a sketch-edit session: a
- * canned shape has no editable sketch, so its handles appear while it is
- * selected and are read through the instance transform. The drag itself is the
- * preview in `cannedRadiusDrag.ts`; this hook owns the refs the pointer handlers
- * and the draw loop share, and the single write on release.
+ * The handles belong to the **Edit ellipse…** session: they are drawn only
+ * while that panel is open for the ellipse, and nothing is drawn for a plain
+ * selection (Frank, round 7). The drag is the preview in `cannedRadiusDrag.ts`;
+ * this hook owns the refs the pointer handlers and the draw loop share, and
+ * turns each pointer move into that panel's field text — there is no store
+ * write here, so Save/Cancel treat a dragged radius like a typed one.
  */
 
 import { useRef } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
-import type { CannedShapeData, Point, Project } from '../../types/project'
-import type { SelectionState } from '../../store/types'
+import type { Point, Project } from '../../types/project'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import {
@@ -39,11 +39,12 @@ import {
 import { computeSketchViewTransform, worldToCanvas } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
 import { distance2 } from './hitTest'
+import { getCannedEditDraft } from './cannedEditDraft'
 import {
   beginCannedRadiusDrag,
-  cannedRadiusDrawParams,
-  commitCannedRadiusDrag,
+  cannedEditHandleParams,
   moveCannedRadiusDrag,
+  publishCannedRadiusDrag,
   type CannedRadiusDragState,
 } from './cannedRadiusDrag'
 
@@ -52,10 +53,8 @@ const RADIUS_HANDLE_HIT_RADIUS = 9
 
 export interface CannedRadiusDragCtx {
   projectRef: MutableRefObject<Project>
-  selectionRef: MutableRefObject<SelectionState>
   canvasRef: RefObject<HTMLCanvasElement | null>
   viewStateRef: MutableRefObject<SketchViewState>
-  updateFeature: (id: string, patch: { canned?: CannedShapeData | null }) => void
   scheduleDraw: () => void
 }
 
@@ -64,6 +63,11 @@ export interface UseCannedRadiusDrag {
   dragRef: MutableRefObject<CannedRadiusDragState | null>
   /** The handle highlighted under the pointer, for the hover readout. */
   hoveredAxisRef: MutableRefObject<EllipseRadiusAxis | null>
+  /**
+   * The parameters this feature's handles draw at while its Edit panel is open;
+   * `null` when it has none on screen (a plain selection draws no handles).
+   */
+  handleParams: (feature: Pick<ResolvedSketchFeature, 'id' | 'canned'>) => { rx: number; ry: number } | null
   /** The handle a press at this canvas point grabs; null when there is none. */
   hitHandle: (point: CanvasPoint) => number | null
   /** Highlight the handle under the pointer and redraw when that changes. */
@@ -78,20 +82,20 @@ export interface UseCannedRadiusDrag {
    * nothing resolved — leaves the handle where it is, like a circle control.
    */
   update: (constrainedPoint: Point | null, dragOrigin: Point | null, applyLock: (point: Point, reference: Point) => Point) => void
-  /** Release: write the dragged parameters once and clear the preview. */
+  /** Release: the panel already holds the dragged field, so only the drag ends. */
   finish: () => void
 }
 
 export function useCannedRadiusDrag(ctx: CannedRadiusDragCtx): UseCannedRadiusDrag {
-  const { projectRef, selectionRef, canvasRef, viewStateRef, updateFeature, scheduleDraw } = ctx
+  const { projectRef, canvasRef, viewStateRef, scheduleDraw } = ctx
   const dragRef = useRef<CannedRadiusDragState | null>(null)
   const hoveredAxisRef = useRef<EllipseRadiusAxis | null>(null)
 
-  /** The selected canned ellipse, which is the only feature with these handles. */
-  function selectedEllipse(): ResolvedSketchFeature | null {
-    const selection = selectionRef.current
-    if (selection.mode !== 'feature' || !selection.selectedFeatureId) return null
-    const feature = resolveFeatureInstance(projectRef.current, selection.selectedFeatureId)
+  /** The row the open editor edits, which is the only feature with these handles. */
+  function editedEllipse(): ResolvedSketchFeature | null {
+    const draft = getCannedEditDraft()
+    if (!draft || draft.kind !== ELLIPSE_CANNED_KIND) return null
+    const feature = resolveFeatureInstance(projectRef.current, draft.featureId)
     if (!feature || feature.locked || feature.canned?.kind !== ELLIPSE_CANNED_KIND) return null
     return feature
   }
@@ -102,11 +106,15 @@ export function useCannedRadiusDrag(ctx: CannedRadiusDragCtx): UseCannedRadiusDr
     return computeSketchViewTransform(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
   }
 
+  function handleParams(feature: Pick<ResolvedSketchFeature, 'id' | 'canned'>): { rx: number; ry: number } | null {
+    return cannedEditHandleParams(feature, getCannedEditDraft(), dragRef.current)
+  }
+
   function hitHandle(point: CanvasPoint): number | null {
-    const feature = selectedEllipse()
+    const feature = editedEllipse()
     const vt = viewTransform()
     if (!feature || !vt) return null
-    const params = cannedRadiusDrawParams(feature, dragRef.current)
+    const params = handleParams(feature)
     if (!params) return null
     const handles = ellipseRadiusHandles(params, feature.transform)
     let best: number | null = null
@@ -137,9 +145,9 @@ export function useCannedRadiusDrag(ctx: CannedRadiusDragCtx): UseCannedRadiusDr
   }
 
   function begin(axisIndex: number): boolean {
-    const feature = selectedEllipse()
+    const feature = editedEllipse()
     if (!feature) return false
-    const started = beginCannedRadiusDrag(feature, axisIndex)
+    const started = beginCannedRadiusDrag(feature, axisIndex, getCannedEditDraft())
     if (!started) return false
     // The press itself changes nothing — the first move is the first radius, the
     // way a circle's handle behaves, so a grab that never moves is not an edit.
@@ -157,19 +165,22 @@ export function useCannedRadiusDrag(ctx: CannedRadiusDragCtx): UseCannedRadiusDr
     const drag = dragRef.current
     if (!drag) return
     const next = moveCannedRadiusDrag(drag, constrainedPoint, dragOrigin, applyLock)
-    if (next !== drag) dragRef.current = next
+    if (next !== drag) {
+      dragRef.current = next
+      // The panel's field is the edit: its own preview and Save/Cancel path
+      // carries the dragged radius into the project (issue #1112 rt7-g).
+      publishCannedRadiusDrag(next)
+    }
     // Redraw either way: a gated move still refreshes the snap readout.
     scheduleDraw()
   }
 
   function finish(): void {
-    const drag = dragRef.current
-    if (!drag) return
+    if (dragRef.current === null && hoveredAxisRef.current === null) return
     dragRef.current = null
     hoveredAxisRef.current = null
-    commitCannedRadiusDrag(drag, (featureId, canned) => updateFeature(featureId, { canned }))
     scheduleDraw()
   }
 
-  return { dragRef, hoveredAxisRef, hitHandle, hover, clearHover, begin, update, finish }
+  return { dragRef, hoveredAxisRef, handleParams, hitHandle, hover, clearHover, begin, update, finish }
 }

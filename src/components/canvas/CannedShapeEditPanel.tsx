@@ -25,7 +25,7 @@
  * and no modal.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { RefObject } from 'react'
 import type { CannedShapeParams } from '../../types/project'
 import type { PendingAddTool } from '../../store/types'
@@ -34,7 +34,10 @@ import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { cannedShapeLabelKey } from '../../cannedShapes'
 import { registerCannedShapeEditor } from '../../cannedShapes/registry'
 import type { CannedShapeEditorRequest } from '../../cannedShapes/generators/editorRequest'
-import { editorInitialValues, editorParamsFromValues } from '../../cannedShapes/generators/editorForm'
+import {
+  editorInitialValues,
+  editorNormalizedParams,
+} from '../../cannedShapes/generators/editorForm'
 import { ELLIPSE_EDITOR_REQUEST } from '../../cannedShapes/generators/ellipse'
 import { SLOT_EDITOR_REQUEST } from '../../cannedShapes/generators/slot'
 import { NGON_EDITOR_REQUEST } from '../../cannedShapes/generators/ngon'
@@ -61,6 +64,14 @@ import { CannedShapeEditReference } from './CreationParameterReferences'
 import { GearFields } from './GearParameterPanel'
 import { RotaryPatternPanel } from './RotaryPatternPanel'
 import { RotarySolidPanel } from './RotarySolidPanel'
+import {
+  closeCannedEditDraft,
+  getCannedEditDraft,
+  openCannedEditDraft,
+  seedCannedEditDraft,
+  setCannedEditDraftField,
+  subscribeCannedEditDraft,
+} from './cannedEditDraft'
 import {
   POLYGON_CANNED_KIND,
   TURN_CANNED_KIND,
@@ -115,8 +126,7 @@ function flatNormalized(
   values: Record<string, string>,
 ): CannedShapeParams | null {
   if (!request) return null
-  const candidate = editorParamsFromValues(request, values)
-  return candidate ? request.normalize(candidate) : null
+  return editorNormalizedParams(request, values)
 }
 
 /**
@@ -218,10 +228,17 @@ function FlatCannedShapeEditPanel({
   const request = canned ? EDITOR_REQUESTS[canned.kind] ?? null : null
   const isGear = canned?.kind === GEAR_CANNED_KIND
   const storedGear = isGear && canned ? normalizeGearCannedParams(canned.params) : null
+  const cannedKind = canned?.kind ?? null
 
-  const [values, setValues] = useState<Record<string, string>>(
-    () => (request && canned ? editorInitialValues(request, canned.params) : {}),
-  )
+  // The fields are the open session's draft, not React state: the canvas radius
+  // handles write the same text, so typing and dragging are one edit path
+  // (issue #1112 rt7-g).
+  const draft = useSyncExternalStore(subscribeCannedEditDraft, getCannedEditDraft, getCannedEditDraft)
+  const draftValues = draft && draft.featureId === featureId && draft.kind === cannedKind
+    ? draft.values
+    : null
+  const values = draftValues
+    ?? (request && canned ? editorInitialValues(request, canned.params) : {})
   const [gearParams, setGearParams] = useState<GearCreationParams>(
     () => (storedGear ? gearCreationParamsOf(storedGear) : defaultGearCreationParams(20)),
   )
@@ -243,6 +260,20 @@ function FlatCannedShapeEditPanel({
     if (!canned) cancelPendingAdd()
   }, [canned, cancelPendingAdd])
 
+  // One session's fields, opened with the stored parameters; closing the panel
+  // ends the session, which is what stops the ellipse drawing its handles.
+  useEffect(() => {
+    if (!canned || !request || !cannedKind) return
+    const current = getCannedEditDraft()
+    if (current && current.featureId === featureId && current.kind === cannedKind) return
+    openCannedEditDraft(featureId, cannedKind, editorInitialValues(request, canned.params))
+    // Opened once per panel. A stored change afterwards is a reseed, not a
+    // reopen — `canned` is rebuilt on every render and would refire this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featureId, request, cannedKind])
+
+  useEffect(() => () => closeCannedEditDraft(featureId), [featureId])
+
   const gearSizeValue = draftNumber(gearSize)
   const normalized = isGear
     ? gearDraft(gearParams, gearSizeValue)
@@ -256,17 +287,15 @@ function FlatCannedShapeEditPanel({
     draft: canned && normalized ? { kind: canned.kind, params: normalized } : null,
   })
 
-  // A radius dragged on the canvas is a stored-parameter change like an Apply,
-  // so an open panel's fields follow it. The field text itself is a draft and
-  // never writes back here (issue #1112 slice w3e-a).
+  // A stored change the fields did not produce (an undo while the panel is
+  // open) lands back in the fields. The panel's own live preview writes the
+  // stored parameters too, so those are skipped: rewriting them would replace
+  // text the user is still typing, or that a handle just dragged.
   const storedParamsKey = canned ? JSON.stringify(canned.params) : ''
   useEffect(() => {
     if (!request || !canned) return
-    // The panel's own live preview writes the stored parameters too; when they
-    // already equal the current draft, the change came from the fields, and
-    // resetting them would rewrite text the user is still typing.
     if (normalized && sameEditorFields(request, canned.params, normalized)) return
-    setValues(editorInitialValues(request, canned.params))
+    seedCannedEditDraft(featureId, editorInitialValues(request, canned.params))
     // The stored parameters are the trigger; `request`/`canned` are rebuilt each
     // render and would refire this on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -349,7 +378,7 @@ function FlatCannedShapeEditPanel({
                 value={values[field.key] ?? ''}
                 onChange={(event) => {
                   const next = event.currentTarget.value
-                  setValues((previous) => ({ ...previous, [field.key]: next }))
+                  setCannedEditDraftField(featureId, field.key, next)
                 }}
               />
             </label>
@@ -374,9 +403,24 @@ function FlatCannedShapeEditPanel({
 /**
  * The registry still keeps the model free of UI: Properties asks for an opener
  * by kind, and the opener arms the same pending session creation uses.
+ *
+ * The editor's fields are opened here, synchronously, rather than waiting for
+ * the panel to mount: the canvas draws the ellipse's radius handles from that
+ * draft, and an open window between the panel appearing and its first effect
+ * would be a frame with the panel up and no handles (issue #1112 rt7-g).
  */
 function openCannedShapeEdit(featureId: string): void {
-  useProjectStore.getState().beginCannedShapeEdit(featureId)
+  const store = useProjectStore.getState()
+  store.beginCannedShapeEdit(featureId)
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, featureId)
+  const canned = feature?.canned
+  const request = canned ? EDITOR_REQUESTS[canned.kind] ?? null : null
+  if (canned && request) {
+    openCannedEditDraft(featureId, canned.kind, editorInitialValues(request, canned.params))
+    return
+  }
+  // A gear or a rotary kind edits other state, not these fields.
+  closeCannedEditDraft()
 }
 
 for (const request of Object.values(EDITOR_REQUESTS)) {
